@@ -9,7 +9,12 @@ import {
   writeUserConfigFileSync,
 } from "../config/config-file.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
-import { checkLlamaServer } from "./llama-server-health.js";
+import {
+  checkLlamaServer,
+  formatLlamaTransportHint,
+  formatLlamaWrongServerHint,
+  llamaWrongServerStatus,
+} from "./llama-server-health.js";
 
 function jsonResponse(body: unknown, ok = true, status = 200) {
   return {
@@ -349,5 +354,44 @@ describe("checkLlamaServer", () => {
       await checkLlamaServer({ url: "http://192.168.1.5:8080", retries: 0 });
       expect(authHeaders(fetchMock)).toEqual(["Bearer operator-key"]);
     });
+  });
+});
+
+describe("llama-server answered 404/405 (ATO-870)", () => {
+  const URL_8090 = "http://127.0.0.1:8090";
+
+  it("reads the status out of the llama-server error text only for 404 and 405", () => {
+    expect(llamaWrongServerStatus("llama-server returned http 404")).toBe(404);
+    expect(
+      llamaWrongServerStatus("llama-server returned http 405: Method Not Allowed"),
+    ).toBe(405);
+    expect(llamaWrongServerStatus("llama-server returned http 400")).toBeNull();
+    expect(llamaWrongServerStatus("llama-server returned http 4040")).toBeNull();
+    expect(llamaWrongServerStatus("fetch failed")).toBeNull();
+    expect(llamaWrongServerStatus("connect ECONNREFUSED 127.0.0.1:8090")).toBeNull();
+  });
+
+  it("says wrong server or no model, names the address and never says start it", () => {
+    for (const status of [404, 405] as const) {
+      const hint = formatLlamaWrongServerHint(URL_8090, status);
+      expect(hint.split("\n")[0]).toBe(
+        `${URL_8090} answered ${status}: this is not llama-server, or no model is loaded there`,
+      );
+      expect(hint).toContain("atomic-agent config set localModels.url <url>");
+      expect(hint).not.toContain("models start");
+      expect(hint).not.toContain("not reachable");
+      expect(hint).not.toContain("\u2014");
+    }
+  });
+
+  it("keeps the unreachable hint when nothing answered", () => {
+    for (const message of ["fetch failed", "connect ECONNREFUSED 127.0.0.1:8090"]) {
+      const hint = formatLlamaTransportHint(URL_8090, message);
+      expect(hint).toContain(`llama-server is not reachable at ${URL_8090}`);
+      expect(hint).toContain("atomic-agent models start");
+    }
+    expect(
+      formatLlamaTransportHint(URL_8090, "llama-server returned http 404"),
+    ).toBe(formatLlamaWrongServerHint(URL_8090, 404));
   });
 });

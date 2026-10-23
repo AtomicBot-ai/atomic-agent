@@ -19,6 +19,7 @@ export {
   trackFromRenderer,
 } from "./core.js";
 export { agentAnalyticsEnv, desktopVersion, installChannelFor } from "./environment.js";
+export { restartTriggerFromWindow, type RestartTrigger } from "./catalog-values.js";
 export {
   agentRestarting,
   agentStartFailed,

@@ -51,26 +51,38 @@
 <!-- Feature modules declare functions only; renderer.js boots the app and calls them. -->
 <script src="config-patch.js"></script>
 <script src="mcp-live.js"></script>
+<script src="mcp-smart-add.js"></script>
 <script src="session-titles.js"></script>
 <script src="context-compaction.js"></script>
 <script src="dead-engine.js"></script>
 <script src="app-update.js"></script>
 <script src="switch-queue.js"></script>
 <script src="chat-list.js"></script>
+<script src="sidebar-nav.js"></script>
 <script src="chat-rename.js"></script>
 <script src="workspace-skills.js"></script>
 <script src="composer-engines.js"></script>
 <script src="composio.js"></script>
+<!-- ATO-859: Telegram pairing from the app, the state and the card; renderer.js wires the IPC. -->
+<script src="telegram-pairing.js"></script>
 <script src="hf-mirror.js"></script>
 <script src="attachments.js"></script>
 <script src="exa-key.js"></script>
 <script src="disk-space.js"></script>
+<!-- ATO-519: a new task in plain words, sent to the agent in a new chat. -->
+<script src="task-ask.js"></script>
+<!-- ATO-669: forgiving ⌘K search; fuzzysort is vendored (MIT, licence beside it). -->
+<script src="vendor/fuzzysort.js"></script>
+<script src="fuzzy-match.js"></script>
 <!-- ATO-824: the streaming transcript is morphed, not replaced, so unchanged nodes (Copy) stay put. -->
 <script src="dom-morph.js"></script>
+<!-- ATO-464: a finished turn's steps fold into one summary line. -->
+<script src="turn-summary.js"></script>
 <!-- A reply's videos and the progress of long tool calls (video.generate). -->
 <script src="chat-media.js"></script>
 <!-- Studio (Images, Video): the shell first, then each page registers itself with it. -->
 <script src="studio/shell.js"></script>
+<script src="studio/recent-prompts.js"></script>
 <script src="studio/images-logic.js"></script>
 <script src="studio/images-view.js"></script>
 <script src="studio/images.js"></script>

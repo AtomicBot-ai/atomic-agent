@@ -1497,6 +1497,26 @@ describe("truncated completion", () => {
     expect(next.feed.at(-1)?.color).toBe("yellow");
   });
 
+  it("says the model looped when a repetitive reply is retried (ATO-414)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 1,
+        cause: "unknown",
+        completionTokens: 0,
+        promptTokens: 0,
+        requestedMaxTokens: 16_384,
+        repetitive: true,
+        retry: { kind: "same_cap", maxTokens: 16_384 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("kept repeating the same text");
+    expect(line).toContain("step 2");
+    expect(line).not.toContain("\u2014");
+  });
+
   it("says no cap was sent when the provider stopped at its own limit", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), {
       type: "agent_event",

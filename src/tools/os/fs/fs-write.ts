@@ -21,6 +21,11 @@ import {
   withReplaceNotes,
   type PriorFile,
 } from "./fs-replace-guard.js";
+import {
+  changedSinceRead,
+  recordOwnWrite,
+  withStaleReadNotice,
+} from "./fs-read-freshness.js";
 import type { FileRestoreStore } from "./fs-restore-store.js";
 import {
   requireFsApproval,
@@ -136,6 +141,12 @@ export function buildOsFsWriteTool(
       // result reports, and — for a user's file about to be replaced —
       // the content the restore copy is taken from.
       const prior = await readPriorFile(target);
+      // A full replace of a file that changed since the model last read
+      // it may drop someone else's change; say so (ATO-659). An append
+      // keeps whatever is there, so it is not asked.
+      const changed =
+        mode === "replace" &&
+        (await changedSinceRead(ctx.fileVersions, target));
       await mkdir(dirname(target), { recursive: true });
       if (mode === "append") {
         const { appendFile } = await import("node:fs/promises");
@@ -143,6 +154,7 @@ export function buildOsFsWriteTool(
       } else {
         await writeFile(target, content, "utf8");
       }
+      await recordOwnWrite(ctx.fileVersions, target);
       const guard =
         prior === null
           ? await noteCreated(options.restore, ctx.sessionId, target)
@@ -170,7 +182,7 @@ export function buildOsFsWriteTool(
       // that had its target moved reads where the file actually landed
       // and keeps working against the right path.
       const wording = describeWrite(mode, prior, linesAfter);
-      return withReplaceNotes(
+      return withStaleReadNotice(withReplaceNotes(
         withParseWarning(
           compressToolResult({
             tool: "os.fs.write",
@@ -196,7 +208,7 @@ export function buildOsFsWriteTool(
           parseWarning,
         ),
         [guard],
-      );
+      ), changed);
     },
   };
 }

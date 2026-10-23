@@ -26,7 +26,7 @@ import type { LogRecord } from "../tracing/structured-logger.js";
  * boolean would pass again the moment one of them came back.
  */
 
-const TEXT_PORT = "127.0.0.1:8080";
+const TEXT_PORT = "127.0.0.1:9931";
 const EMBED_PORT = "127.0.0.1:19092";
 
 interface LocalTraffic {
@@ -253,7 +253,7 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
           {
             id: "local-llama",
             kind: "llama-server",
-            url: "http://127.0.0.1:8080",
+            url: "http://127.0.0.1:9931",
           },
           LOCAL_EMBED_PROVIDER,
         ],
@@ -306,7 +306,7 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
         activeTextProvider: "my-box",
         activeEmbeddingProvider: "local-llama-embed",
         providers: [
-          { id: "my-box", kind: "llama-server", url: "http://127.0.0.1:8080" },
+          { id: "my-box", kind: "llama-server", url: "http://127.0.0.1:9931" },
           LOCAL_EMBED_PROVIDER,
         ],
         toolTransport: "auto",
@@ -333,7 +333,7 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
           {
             id: "local-llama",
             kind: "llama-server",
-            url: "http://127.0.0.1:8080",
+            url: "http://127.0.0.1:9931",
           },
           LOCAL_EMBED_PROVIDER,
         ],
@@ -354,7 +354,7 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
             {
               id: "local-llama",
               kind: "llama-server",
-              url: "http://127.0.0.1:8080",
+              url: "http://127.0.0.1:9931",
             },
             LOCAL_EMBED_PROVIDER,
           ],
@@ -399,7 +399,7 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
           {
             id: "local-llama",
             kind: "llama-server",
-            url: "http://127.0.0.1:8080",
+            url: "http://127.0.0.1:9931",
           },
           LOCAL_EMBED_PROVIDER,
         ],

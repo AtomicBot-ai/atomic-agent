@@ -325,12 +325,13 @@ export function onAgentFrame(ev: { kind?: unknown; payload?: unknown }): void {
  * the chat model had loaded — tens of seconds after serve had looked. So
  * semantic search was off for every session begun on the local route. It is
  * started first now, alone (it is small, and up in seconds), before serve
- * starts: only when the route needs the local server and the file wants
- * embeddings (backend-switch pairEmbeddingServer), in the daemon's turn, and
- * never holding the agent back past `limitMs`.
+ * starts: only when the file wants embeddings (backend-switch
+ * pairEmbeddingServer), in the daemon's turn, and never holding the agent back
+ * past `limitMs`. ATO-378: on a cloud chat route too, since memory search uses
+ * the local embedding model whatever the chat route; `models start-embedding`
+ * starts nothing when the model is not downloaded.
  */
 export async function pairEmbeddingsBeforeServe(limitMs = 20_000): Promise<void> {
-  if (!routeNeedsDaemon(readConfig())) return;
   /* Atomic Core with its backend not on disk yet: an embedding start would
      install it first, inside its 60 s cap, ahead of the launch's own install
      with its bar (main.ts startLocalDaemonAtBoot). Skipped; the embedding

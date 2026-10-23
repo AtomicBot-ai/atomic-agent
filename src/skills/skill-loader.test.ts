@@ -52,14 +52,28 @@ describe("loadSkills", () => {
     expect(result.skills[0]!.source).toBe("global");
   });
 
-  it("project skill shadows global of same name", async () => {
+  it("global skill wins over a project skill of the same name and reports the project copy", async () => {
     await writeSkill(global, "shared", "global version", "0.1.0");
     await writeSkill(project, "shared", "project override", "0.2.0");
     const result = await loadSkills({ globalDir: global, projectDir: project });
     expect(result.skills).toHaveLength(1);
     const winner = result.skills[0]!;
-    expect(winner.manifest.version).toBe("0.2.0");
-    expect(winner.source).toBe("project");
+    expect(winner.manifest.version).toBe("0.1.0");
+    expect(winner.source).toBe("global");
+    expect(result.errors).toHaveLength(1);
+    expect(result.errors[0]!.path).toBe(join(project, "shared"));
+    expect(result.errors[0]!.error).toContain("the project copy is ignored");
+  });
+
+  it("loads a project skill whose name no global skill uses", async () => {
+    await writeSkill(global, "alpha", "global alpha");
+    await writeSkill(project, "beta", "project beta");
+    const result = await loadSkills({ globalDir: global, projectDir: project });
+    expect(result.skills.map((s) => [s.manifest.name, s.source])).toEqual([
+      ["alpha", "global"],
+      ["beta", "project"],
+    ]);
+    expect(result.errors).toEqual([]);
   });
 
   it("keeps source 'global' when projectDir resolves to the same path as globalDir", async () => {

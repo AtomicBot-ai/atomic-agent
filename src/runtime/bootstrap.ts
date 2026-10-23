@@ -45,6 +45,7 @@ import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { ToolOutputSpill } from "../tools/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -283,9 +284,14 @@ export async function createAgentRuntime(
     jobMaxMs: config.tools.shell.jobMaxMs,
     maxJobs: config.tools.shell.maxJobs,
   });
-  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs);
+  // Full outputs of clipped local tool results, one temp folder per
+  // session (ATO-663): removed with the session, and folders left by
+  // sessions that are gone (fusion workers are never stored) swept here.
+  const toolOutputSpill = new ToolOutputSpill();
+  toolOutputSpill.sweepStale();
+  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs, toolOutputSpill);
 
-  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous);
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill);
 
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)

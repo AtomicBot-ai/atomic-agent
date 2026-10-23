@@ -16,6 +16,7 @@ const C = require("../out/main/analytics/classify.js");
 const T = require("../out/main/analytics/chat-turns.js");
 const E = require("../out/main/analytics/environment.js");
 const S = require("../out/main/sentry/scrub.js");
+const CV = require("../out/main/analytics/catalog-values.js");
 
 /* ---- validator ---- */
 
@@ -30,9 +31,20 @@ test("the renderer may only send UI-owned events", () => {
   assert.ok(V.validateEvent("slash_command_used", { command: "help" }, "ui"));
 });
 
+test("the window names only setup finishing; anything else it sends is a manual restart (ATO-274)", () => {
+  assert.equal(CV.restartTriggerFromWindow("setup_finished"), "setup_finished");
+  assert.equal(CV.restartTriggerFromWindow(undefined), "manual");
+  assert.equal(CV.restartTriggerFromWindow("import"), "manual");
+  assert.equal(CV.restartTriggerFromWindow({}), "manual");
+});
+
 test("enum values outside the list become `other`, or the prop's fallback, or are dropped", () => {
   assert.deepEqual(V.validateEvent("message_action", { action: "nope" }, "ui").props, {});
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "weird" }, "main").props, { trigger: "other" });
+  // ATO-274: setup, a workspace change and an import are not manual restarts.
+  for (const trigger of ["setup_finished", "workspace_change", "import"]) {
+    assert.deepEqual(V.validateEvent("agent_restarted", { trigger }, "main").props, { trigger });
+  }
   // ATO-767: the automatic restart after an unexpected exit keeps its own trigger.
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "auto" }, "main").props, { trigger: "auto" });
   assert.deepEqual(V.validateEvent("slash_command_used", { command: "/rm -rf" }, "ui").props, { command: "unknown" });
@@ -230,8 +242,38 @@ test("a turn's summary: first token, tools, steers, approvals, failure category"
   assert.equal(out.length, 1);
   assert.deepEqual(out[0], {
     outcome: "failed", ms_to_first_token: 250, ms_total: 400, queue_wait_ms: 40, steer_count: 1,
-    approvals_asked: 1, tool_calls: 2, tools_used: ["os.shell.run", "mcp"], error_category: "transport", coding_mode: "plan",
+    approvals_asked: 1, tool_calls: 2, tools_used: ["os.shell.run", "mcp"], error_category: "transport", http_status: null,
+    coding_mode: "plan",
   });
+});
+
+test("a turn the agent stopped early (finish reason length) is stopped_early, not completed (ATO-275)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  t.begin("t4");
+  t.observe({ turnId: "t4", kind: "delta", text: "partial" });
+  t.observe({ turnId: "t4", kind: "finish", reason: "length" });
+  t.observe({ turnId: "t4", kind: "done" });
+  t.begin("t5");
+  t.observe({ turnId: "t5", kind: "finish", reason: "stop" });
+  t.observe({ turnId: "t5", kind: "done" });
+  assert.equal(out[0].outcome, "stopped_early");
+  assert.equal(out[0].error_category, null);
+  assert.equal(out[1].outcome, "completed");
+  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "stopped_early" }, "main").props.outcome, "stopped_early");
+});
+
+test("the desktop's own HTTP and network failures are transport, with the status (ATO-275)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  t.begin("t6");
+  t.observe({ turnId: "t6", kind: "error", error: "HTTP 503", transport: true, httpStatus: 503 });
+  t.begin("t7");
+  t.observe({ turnId: "t7", kind: "error", error: "fetch failed", transport: true });
+  t.begin("t8");
+  t.observe({ turnId: "t8", kind: "error", error: "not connected" });
+  assert.deepEqual(out.map((s) => [s.error_category, s.http_status]), [["transport", 503], ["transport", null], [null, null]]);
+  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "failed", http_status: 503 }, "main").props.http_status, 503);
 });
 
 test("a redelivered approval request is counted once (ATO-203)", () => {
@@ -284,4 +326,9 @@ test("messages are dropped unless allowlisted; type names are kept when identifi
   assert.equal(S.safeType("TypeError"), "TypeError");
   assert.equal(S.safeType("Error: /Users/alice"), "Error");
   assert.ok(S.sanitizeStack(Array.from({ length: 50 }, (_, i) => `    at f${i} (/a/b.js:${i + 1}:1)`).join("\n")).length <= S.MAX_FRAMES);
+});
+
+test("app_opened carries whether the mac app runs from Applications (ATO-370)", () => {
+  assert.deepEqual(V.validateEvent("app_opened", { launch_kind: "cold", in_applications: false }, "main").props,
+    { launch_kind: "cold", in_applications: false });
 });

@@ -13,6 +13,13 @@ import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
 import {
+  pairingRequest,
+  readPairingReply,
+  TELEGRAM_PAIRING_PATH,
+  type TelegramPairingOp,
+  type TelegramPairingResult,
+} from "./telegram-pairing.js";
+import {
   agentBinaryCandidates,
   bundledAgentFileName,
   commandLineProbe,
@@ -44,12 +51,21 @@ import {
  *   GET  /v1/models                 OpenAI-compatible model list
  *   POST /v1/chat/completions       the agent loop, streamed as SSE
  *   GET  /api/events                SSE stream of approval requests
- *   POST /api/approval/resolve      allow-once | deny
+ *   POST /api/approval/resolve      allow-once | allow-in-chat | deny
  *
  * The server is bound to 127.0.0.1 on an ephemeral port and gated by a
  * bearer token generated per launch, so nothing outside this app can
  * reach the agent.
  */
+
+/**
+ * What the approval card may answer. `allow-in-chat` (ATO-473) is the
+ * agent's shape grant for the rest of the chat; an agent offers it only
+ * when `/api/capabilities` lists it in `agent.approvalDecisions`, and an
+ * older one answers it with a 400 (the renderer then sends allow-once).
+ */
+export type ApprovalDecision = "allow-once" | "allow-in-chat" | "deny";
+export const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ["allow-once", "allow-in-chat", "deny"];
 
 export type AgentState =
   | "stopped"
@@ -1116,6 +1132,27 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /**
+   * ATO-859: `/api/telegram/pairing` (main/telegram-pairing.ts). A start
+   * answers with the one-time code for the Telegram tab; it is returned to
+   * the caller only, never logged. An agent without the route reads as
+   * `unsupported`.
+   */
+  async telegramPairing(op: TelegramPairingOp, replaceOwner = false): Promise<TelegramPairingResult> {
+    const { method, body } = pairingRequest(op, replaceOwner);
+    try {
+      const res = await fetch(`${this.base()}${TELEGRAM_PAIRING_PATH}`, {
+        method,
+        headers: this.headers(),
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(10_000),
+      });
+      return readPairingReply(res.status, await res.text());
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
   // --- Lane B — context before the first message (item 3) ---
 
   /**
@@ -1289,7 +1326,8 @@ export class AgentClient extends EventEmitter {
       });
       if (!res.ok || !res.body) {
         const detail = res.ok ? "no response body" : `HTTP ${res.status}`;
-        this.emit("chat", { turnId, kind: "error", error: detail });
+        // ATO-275: `transport` / `httpStatus` are for the turn's analytics (chat-turns.ts); the window reads `error`.
+        this.emit("chat", { turnId, kind: "error", error: detail, transport: true, ...(res.ok ? {} : { httpStatus: res.status }) });
         return;
       }
       const completionId = res.headers.get("x-atomic-completion-id");
@@ -1379,6 +1417,8 @@ export class AgentClient extends EventEmitter {
         turnId,
         kind: aborted ? "aborted" : "error",
         error: aborted ? null : err instanceof Error ? err.message : String(err),
+        // ATO-275: the stream broke under the turn (analytics only, see above).
+        ...(aborted ? {} : { transport: true }),
       });
     } finally {
       const ended = this.turns.delete(turnId);
@@ -1429,7 +1469,7 @@ export class AgentClient extends EventEmitter {
 
   async resolveApproval(
     approvalId: string,
-    decision: "allow-once" | "deny",
+    decision: ApprovalDecision,
     reason?: string,
   ): Promise<unknown> {
     const res = await fetch(`${this.base()}/api/approval/resolve`, {

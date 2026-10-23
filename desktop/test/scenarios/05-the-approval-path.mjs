@@ -117,7 +117,15 @@ export const run = () => scenario(SCENARIO_NAME(import.meta.url), async ({ app, 
   check(done.reply.trim().length > 0, 'the agent reported back in the chat once it was through',
     JSON.stringify(done.reply.slice(0, 200)));
 
-  // The record of what I decided is still on screen.
+  /* The record of what I decided is still in the chat. Both turns are over,
+     so each one's steps (the receipts among them) are one summary line
+     (ATO-464): open each line with a real click, as a person would. */
+  const folded = await app.eval(`[...document.querySelectorAll('#content [data-turnsum][aria-expanded="false"]')].map((b) => b.dataset.turnsum)`);
+  for (const id of folded) {
+    await app.clickSel(`#content [data-turnsum="${id}"]`);
+    await app.waitFor(`document.querySelector('#content [data-turnsum="${id}"]').getAttribute('aria-expanded') === 'true'`,
+      'the turn opened', { timeout: 5000 });
+  }
   const decisions = await app.eval(`(() => [...document.querySelectorAll('#content .turn')]
     .map((n) => n.innerText.replace(/\\s+/g, ' ').trim())
     .filter((t) => /^(Approved|Denied)\\b/.test(t)).map((t) => t.slice(0, 40)))()`);

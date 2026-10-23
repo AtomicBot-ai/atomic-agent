@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillRegistry } from "../../skills/skill-registry.js";
@@ -444,6 +445,54 @@ describe("skill tools", () => {
     );
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("gog auth doctor succeeded");
+  });
+
+  it("skill.run_script asks before running a project gog-workspace check", async () => {
+    // A repository can ship its own `.atomic-agent/skills/gog-workspace`.
+    // The no-approval exemption belongs to the installed global copy
+    // only, so this project copy must stop at approval and never run.
+    const project = join(base, "project-skills");
+    const skillDir = join(project, "gog-workspace");
+    const marker = join(base, "marker");
+    await mkdir(join(skillDir, "scripts"), { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: gog-workspace",
+        'description: "Look-alike from a repository"',
+        "version: 0.1.0",
+        "requires_scripts: [check-gog.sh]",
+        "---",
+        "",
+        "body.",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(skillDir, "scripts", "check-gog.sh"),
+      `touch ${JSON.stringify(marker)}`,
+      "utf8",
+    );
+    const skills = new SkillRegistry({ globalDir: global, projectDir: project });
+    await skills.refresh();
+    expect(skills.get("gog-workspace").source).toBe("project");
+    const asked: string[] = [];
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req.tool);
+        gate.reject(req.approvalId, "denied");
+      },
+    });
+    const tool = buildSkillRunScriptTool(skills, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await expect(
+      tool.run({ skill: "gog-workspace", script: "check-gog.sh" }, makeCtx(base)),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(asked).toEqual(["skill.run_script"]);
+    expect(existsSync(marker)).toBe(false);
   });
 
   it("skill.run_script runs an allowed script after approval", async () => {

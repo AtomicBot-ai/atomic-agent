@@ -9,6 +9,7 @@
  * the agent's side and also counts when it lands before `app_opened`.
  */
 
+import type { RestartTrigger } from "./catalog-values.js";
 import { flagsStore, refreshRunMode, shutdownAnalytics, track } from "./core.js";
 
 /** Process start, as near as Node can tell. */
@@ -25,7 +26,7 @@ const L = {
   readySent: false,
   turns: 0,
   lastAgentStart: null as number | null,
-  restartTrigger: null as "manual" | "switch" | "auto" | "other" | null,
+  restartTrigger: null as RestartTrigger | null,
   connectedOnce: false,
   closedSent: false,
 };
@@ -46,7 +47,11 @@ export function noteOrphanReaped(): void {
   L.orphanReaped = true;
 }
 
-export function appOpened(kind: "cold" | "reopen", freshState: boolean): void {
+/**
+ * `inApplications` (ATO-370): whether the mac app runs from /Applications,
+ * the only place it can update itself from. Left out off macOS (null).
+ */
+export function appOpened(kind: "cold" | "reopen", freshState: boolean, inApplications: boolean | null = null): void {
   if (kind === "cold") {
     if (L.openedSent) return;
     L.openedSent = true;
@@ -56,6 +61,7 @@ export function appOpened(kind: "cold" | "reopen", freshState: boolean): void {
     launch_kind: kind,
     fresh_state: freshState,
     prev_session_crashed: kind === "cold" && (L.prevCrashed || L.orphanReaped),
+    ...(inApplications === null ? {} : { in_applications: inApplications }),
   });
 }
 
@@ -82,8 +88,8 @@ function maybeReady(): void {
   });
 }
 
-/** `agent:restart` (manual), a switch's restart, or an automatic one after a crash (ATO-767), said just before the start. */
-export function agentRestarting(trigger: "manual" | "switch" | "auto" | "other"): void {
+/** `agent:restart` (manual, or setup finishing), a switch's restart, an automatic one after a crash (ATO-767), a workspace change or an import (ATO-274), said just before the start. */
+export function agentRestarting(trigger: RestartTrigger): void {
   L.restartTrigger = trigger;
 }
 

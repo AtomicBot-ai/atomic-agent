@@ -241,7 +241,7 @@ async function modelStep(run: Run, check: Check): Promise<void> {
     rows.length === 4
       && badgesOf("qwen-smoke-t45-best") === q([["Recommended", ""]])
       && badgesOf("qwen-smoke-t45-small") === q([["Small model", r.small]])
-      && badgesOf("qwen-smoke-t45-unc") === q([["Use at your own risk", "Use at your own risk"]])
+      && badgesOf("qwen-smoke-t45-unc") === q([["Fewer refusals", "Fewer safety refusals: it may answer requests other models decline."]])
       && badgesOf("gemma-smoke-t45-tight") === q([["Tight fit", "Tight fit on 18 GB. It will run slowly."]]),
     q(rows),
   );
@@ -249,7 +249,8 @@ async function modelStep(run: Run, check: Check): Promise<void> {
     "T45: the caution's sentence is also the row's description, so it reaches the keyboard and a screen reader",
     byId("qwen-smoke-t45-best")?.described === ""
       && byId("qwen-smoke-t45-small")?.described === r.small
-      && byId("gemma-smoke-t45-tight")?.described === "Tight fit on 18 GB. It will run slowly.",
+      && byId("gemma-smoke-t45-tight")?.described === "Tight fit on 18 GB. It will run slowly."
+      && byId("qwen-smoke-t45-unc")?.described === "Fewer safety refusals: it may answer requests other models decline.",
     q(rows.map((x) => [x.id, x.described])),
   );
   check(

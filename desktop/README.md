@@ -159,6 +159,19 @@ start two task schedulers against the same cron jobs.
   (`agent:liveTurns`, `agent:replayApprovals`). At most two reloads a minute
   per window; a third crash in that minute asks instead ("The window keeps
   crashing": Reload or Quit). Smoke task 765 crashes the page on purpose.
+- A right-click on text the page does not handle itself opens the ordinary
+  edit menu (`main/edit-context-menu.ts`, ATO-668): Cut, Copy, Paste and
+  Select All in a field, Copy on selected text, and spelling suggestions plus
+  Add to Dictionary on a misspelled word. The chat row, file chip and mic menus
+  cancel the event in the page, so main never sees those right-clicks.
+  Spellcheck is on (system spellchecker) on macOS and Windows and off on Linux,
+  where Chromium would download Hunspell dictionaries; fields for keys, URLs
+  and paths carry `spellcheck="false"`.
+- View has Actual Size, Zoom In and Zoom Out (`menu.ts zoomItems`, ATO-544):
+  ⌘ = and ⌘ + zoom in, ⌘ - zooms out. ⌘ 0 stays Toggle Sidebar, so Actual
+  Size is ⇧ ⌘ 0 on macOS and Ctrl+Numpad 0 on Windows and Linux (Ctrl ⇧ 0 is
+  Toggle Inspector there). The zoom level is Chromium's own and is not saved
+  by the app.
 
 ## What is real and what is not
 
@@ -203,6 +216,22 @@ Real, driven by the running agent:
   `…`. Long args, summaries and results wrap inside the card;
   nothing widens the transcript. Three or more consecutive calls to the same
   tool fold into one line.
+- a finished turn folds its steps (ATO-464, `renderer/turn-summary.js`):
+  while a turn runs, its reasoning rows, tool calls and approvals are drawn
+  live, one by one. Once it has finished, the reasoning rows, the calls and
+  the approvals the person answered fold into one quiet line above the reply,
+  `Used 4 tools · 12 s` (`Reasoned in 3 steps` when it only thought), with
+  the failed calls counted in red (a denied call or one the turn never ran
+  is not counted as failed). A click opens the steps under the line,
+  which stays where it was; the View menu's Expand / Collapse all tool cards
+  open and fold these lines too, and the inspector's Steps opens the turn of
+  the card it jumps to. Progress notes, system rows, an approval still asking
+  and one the run left unanswered are never folded, and one reasoning row
+  alone stays as it is. The time is the turn's wall time as this window saw
+  it, or for a reopened chat the steps' measured times added up, and nothing
+  when none was measured. Settings › General › Always show steps (off by
+  default, kept per window profile like the theme) leaves every finished
+  turn open, as before.
 - file paths and URLs in replies: files are chips that open in the default
   app, with a right-click menu (Open · Show in Finder · Copy Path · Save As…);
   URLs open in the browser. A mentioned path only becomes a chip when it
@@ -264,7 +293,7 @@ Real, driven by the running agent:
   `DELETE /api/sessions/{id}`, not a splice that the next load undoes; deleting the open
   chat leaves an empty new one.
   Each list header carries a **+** on its own line: the one on Chats starts a
-  new chat, the one on Tasks opens Settings › Tasks with the create form up,
+  new chat, the one on Tasks opens Settings › Tasks on a new task,
   and on the Tasks header `N running` sits to the left of it. The head row —
   the lockup and the workspace chip — carries no plus at all; the user asked
   for it there and nowhere else. The dot on a row is a 6px ring seated on the
@@ -273,11 +302,17 @@ Real, driven by the running agent:
   machine, per viewer — because the agent has no route and no store field for
   either, and its `config.json` is the operator's file. On a machine that has
   never run this window every historical chat is therefore unread until it is
-  opened; that is honest, not a bug. Skills left the sidebar (the user asked
-  for it); ⌘3, the palette and View › Skills still open it, on Settings ›
-  Skills. Collapsed — Setup › Hide or show the sidebar, or a window narrower
-  than 1000px — the two lists stay as a column of dots, each row's tooltip
-  naming it, so the rail is still a way back into a chat; the two list headers
+  opened; that is honest, not a bug. Under New chat stand two section rows,
+  **Tasks** and **Skills** (ATO-457, the owner's call on U-24): the places
+  ⌘ 2 and ⌘ 3 lead to, drawn whether or not any task exists. They open
+  Settings › Tasks and Settings › Skills, the same verbs as the chords, the
+  palette and View › Tasks / Skills, and the row whose tab is open is lit
+  (`renderer/sidebar-nav.js`, unit-tested in `test/sidebar-nav.test.mjs`).
+  Collapsed — Setup › Hide or show the sidebar, or a window narrower
+  than 1000px — the two lists stay as a column of small discs, each holding
+  the first letter (or emoji) of the row's title with the status dot as its
+  badge (ATO-538), so rows differ at a glance; the tooltip still names
+  the row, so the rail is still a way back into a chat; the two list headers
   stay too, stripped to their **+**, because 52px does not hold a label or the
   counter and the rail would otherwise have no way to start anything.
   Expanded, the sidebar reaches up into the 52px title band (the Atomic Chat
@@ -290,10 +325,13 @@ Real, driven by the running agent:
   (`.iconbtn.on`, the same treatment the Inspector and Console buttons use)
   while the sidebar is expanded, and *expanded* is the conjunction of both facts — the flag and the
   breakpoint — so the glow cannot lie on a narrow window. Below 1000px the
-  media query pins 52px whatever the flag says, so the button is **disabled**
-  there rather than left as a live control that does nothing, its tooltip
-  reading `The sidebar is a rail on a narrow window`; ⌘ 0, which does not go
-  through the button, answers with the same sentence. The tooltips in that
+  media query pins the 52px rail whatever the flag says; there the button and
+  ⌘ 0 open the full sidebar as a **drawer** over the content (ATO-538; it used
+  to be disabled, which left a 940-1000px window with no chat list at all).
+  The drawer keeps the rail's 52px in the layout, so the content does not
+  move, lights the button while it is up, and closes on a pick inside it, a
+  click outside it, Escape, ⌘ 0 again or the window growing past 1000px; the
+  collapse kept for a wide window is left as it was. The tooltips in that
   corner are `Hide sidebar (⌘ 0)` and `Console (⇧ ⌘ Y)` — the spellings the
   shortcuts sheet ships, because a toolbar where one chord reads *⌘ 0* and its
   neighbour *Ctrl+Shift+Y* is worse than either spelling alone.
@@ -320,7 +358,7 @@ Real, driven by the running agent:
   `triggerLocalChatModel`) ported into `desktop/main/backend-switch.ts`:
   the same whole-file config writes as `src/tui/persist-llm-provider.ts`
   and `persist-user-local-models-config.ts`, the same daemon side effects
-  (`atag models start|stop`, hybrid recall off after a stop), the same
+  (`atag models start|stop`; a switch to cloud stops only the chat server with `models stop --chat-only` and keeps the embedding server and hybrid recall, ATO-377, while an older agent without that flag stops both and hybrid recall goes off), the same
   `runtime_info` lines in the transcript — followed by an `atag serve`
   restart, because the running agent pins its provider at boot and 0.5.4
   has no reload route. A switch is refused while a turn is running (the
@@ -467,8 +505,17 @@ Honestly degraded, and labelled as such in the UI:
   would open with and reports it through the TUI's own
   `contextUsageFromPrompt`. The installed 0.5.4 answers 404, which the
   desktop caches per connection and falls back to the trace projection.
-- **Session grants.** The HTTP API implements `allow-once` and `deny` only, so
-  the card offers exactly those.
+- **Telegram pairing in the app needs `/api/telegram/pairing`** (ATO-859,
+  `src/http/route-telegram-pairing.ts`). An agent without it answers 404; the
+  Telegram tab asks once per visit and then shows `TG_PAIRING_NOTE` (update the
+  agent, or quit the app and pair under Integrations › Telegram in `atag tui`)
+  instead of a Pair button.
+- **Session grants.** The card offers Allow once and Deny, plus Allow in this
+  chat (ATO-473) for a shell command the agent names a shape for (the binary,
+  `git`; never `bash -c`). That sends `allow-in-chat`, the agent's shape grant
+  for the rest of the chat, and is drawn only when `/api/capabilities` lists
+  it in `agent.approvalDecisions`. An agent that answers it with a 400 gets
+  `allow-once` instead, and the card says the chat part did not happen.
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are in Add
   provider with the TUI's labels. They have no key screen: the step says the
   signed-in CLI runs on the user's plan, warns when `ANTHROPIC_API_KEY` /
@@ -478,6 +525,13 @@ Honestly degraded, and labelled as such in the UI:
   to the network: main answers it from `main/subscription-cli-models.ts`, a
   copy of the agent's Claude list. Whether the CLI is installed and signed in
   is not checked here yet.
+- **The palette search forgives.** ⌘ K ranks commands, Settings sections,
+  chats, tasks and skills with `renderer/fuzzy-match.js` (ATO-669): exact,
+  prefix, word prefix or slash alias, substring and context matches keep
+  their old order, then a subsequence match scored by fuzzysort ("mdl" finds
+  Models, "prvcy" Privacy), then a one-typo match ("modles"). fuzzysort is
+  vendored in `renderer/vendor/` because the renderer loads plain scripts.
+  The chats still fold to five plus an "N more chats" row.
 - **Settings is the TUI menu.** The bottom-left gear (and ⌘ , and Escape with
   nothing else on screen) opens the menu tree from
   `src/tui/menu/menu-registry.ts` with the Manage tabs on the right — minus the
@@ -506,11 +560,17 @@ Honestly degraded, and labelled as such in the UI:
   does not have; the tool counters come from the open session's store rows.
   The Privacy tab shows the effective `analytics.enabled` (the schema default
   when `config.json` has no key, read with `atag config get`), as the TUI does.
-- **Tasks** create through `atag task create` (POST /api/tasks on 0.5.4 takes
-  no schedule), cancel through `DELETE /api/tasks/{id}` and run-now through
-  `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
-  cron-parser. The firings feed is not exposed by the HTTP API, so the task
-  page has no Recent firings section.
+- **Tasks** start in plain words (ATO-519): New task asks one sentence, such
+  as "every weekday at 9, send me a summary", and sends it as the first message
+  of a new chat, where the agent schedules it with its own `tasks.cron` /
+  `tasks.schedule` tools ([task-ask.js](renderer/task-ask.js)). **Set up
+  manually** opens the cron / interval / at form, which creates through
+  `atag task create` (POST /api/tasks on 0.5.4 takes no schedule). Cancel goes
+  through `DELETE /api/tasks/{id}` and run-now through
+  `POST /api/tasks/{id}/run`; the form's Next runs preview is the agent's own
+  cron-parser. With no tasks at all the list hides its filters and search.
+  The firings feed is not exposed by the HTTP API, so the task page has no
+  Recent firings section.
 - **Skills** in cloud mode read the selected session's live workspace catalog
   through HTTP, including `.agents`, `.claude`, `.cursor` and `.pi` skills,
   disabled reasons and the chosen source directory. Before the first message
@@ -535,6 +595,11 @@ Honestly degraded, and labelled as such in the UI:
   route, so an enabled server's state reads `—` (never an inferred up/down)
   and resources/prompts say they are not exposed. Add and remove rewrite
   `mcp.servers` through the whole-file `atag config set` and offer a restart.
+  The Add box takes JSON, a command line (`npx -y @scope/server-x ~/Docs`,
+  `KEY=value` prefixes become `env`, `claude mcp add …` lines too) or an
+  http(s) address (`/sse` paths are SSE, others streamable HTTP), shows what
+  it understood with an editable name, and writes the same entry either way
+  ([mcp-smart-add.js](renderer/mcp-smart-add.js), ATO-510).
 - **LLM** is the TUI's four panes. Local rows come from `atag models list`
   minus the ids `models list-embeddings` lists (the chat route never picks an
   embedding model, and which models those are is a fact the CLI publishes —
@@ -559,7 +624,9 @@ Honestly degraded, and labelled as such in the UI:
   and is NOT offered as a choice in the wizard — no cursor position, no tab
   stop, nothing to click. The best fit — the largest model that runs
   comfortably, never a reduced-refusal one — carries `★ best fit for this
-  machine`. A model in the catalogue's 4B class (`recommendedRamGb ≤ 8`) says
+  machine`. A reduced-refusal model stays in the list, last in its fit band,
+  with a "Fewer refusals" badge whose tooltip says in plain words that it
+  gives fewer safety refusals (ATO-449). A model in the catalogue's 4B class (`recommendedRamGb ≤ 8`) says
   plainly that it is small and will get more wrong, which on a weak machine is
   exactly the model being recommended. An id the vendored table does not know
   — every `custom-…` model added from Hugging Face — renders with no blurb and
@@ -567,6 +634,15 @@ Honestly degraded, and labelled as such in the UI:
   the smoke asserts the two id lists agree so the copy cannot rot in silence.
   Driven on three machine sizes by `npm run drive:models` (68 GB real, 8 GB
   and 4 GB simulated with the test-only `--fake-ram`).
+- **A model under `minRamGb` asks first** (ATO-337, `modelRamWarning` in
+  `renderer.js`). Settings › LLM › Local still lists and downloads it (an
+  operator may provision for another machine), but Download, select or Start
+  on it opens "Not enough memory for this model" with the memory it needs,
+  the memory here and the best model that runs here: Cancel, Use that model,
+  or Download / Run anyway. The composer's picker (it lists such a model only
+  once it is on disk) warns in a toast on the first pick and runs it on the
+  second. "Anyway" holds for that model for the session. Only catalogue
+  figures warn, never a size-based estimate.
 - **`a add from hugging face`** is live. The installed agent exposes no way
   to add one — `atag models --help` has no `add`, there is no HTTP route,
   and the agent's own `resolveHuggingFaceGgufChoices` has callers only
@@ -652,8 +728,14 @@ Honestly degraded, and labelled as such in the UI:
   the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
   0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
   token, unset the owner and flip `telegram.enabled`, each with the restart
-  note. The channel state, bot identity and pairing live inside the serve
-  process: the state reads `unknown`, and pairing says to use `atag tui`.
+  note. Pairing (ATO-859, `renderer/telegram-pairing.js`,
+  `main/telegram-pairing.ts`) goes through the agent's
+  `/api/telegram/pairing`: Pair shows the 6-digit one-time code and the
+  agent's instruction (`/start <code>` to the bot, 5 minutes), the tab polls
+  every 2 s until the code is claimed, and the claim shows as
+  "Paired: @username is now the owner." A paired owner is replaced only from
+  the Owner row's Replace, which takes a second click. The code lives in
+  memory while its window is open and is never logged.
 - **Composio** (Settings › Connections, beside MCP servers and Telegram; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and
@@ -888,6 +970,9 @@ PASS live card never takes a stale trace row
 PASS missing trace file rejects, never hangs
 PASS reopened session carries trace durations
 PASS reopened os.fs.list turn is timed
+PASS a finished turn's steps fold into one summary line
+PASS clicking the summary line opens the turn's steps in place
+PASS Always show steps keeps finished turns open, and turning it off folds them again
 PASS durations read as the TUI prints them
 PASS transcript scrollable for the fold test
 PASS expand keeps the card head in place
@@ -1454,6 +1539,12 @@ without a click.
 - macOS offers no update where it cannot succeed: an app run from the DMG or
   Downloads (not in /Applications), or one signed ad hoc (no TeamIdentifier),
   says why in Settings instead.
+- An app run from outside /Applications also asks at launch (ATO-370,
+  `main/move-to-applications.ts`): "Move Atomic Agent to Applications?" with
+  **Move** / **Not now**. Move calls `app.moveToApplicationsFolder()`, which
+  moves and relaunches the app. Not now asks again on the next launch only;
+  nothing is stored. Never asked in a smoke, dev or unpackaged run.
+  `app_opened.in_applications` counts how many launches are outside.
 - A failed automatic check (offline, no feed) shows nothing. Settings ›
   General › Check now shows the result in plain words.
 - The person's choices are in Electron userData `updates.json` (auto-check,
@@ -1601,6 +1692,7 @@ desktop/
   main/backend-switch.ts the TUI's backend/provider/model decisions, main-side
   main/main.ts           lifecycle, window, IPC, the smoke harness
   main/menu.ts           the native menu bar
+  main/edit-context-menu.ts  the right-click edit menu and spellcheck switch
   main/speech.ts         the one voice-input child: probe, start/stop, audio, install
   main/updater.ts        app updates (electron-updater), only ever on a click
   electron-builder.cjs   the packaging config, and the update feed (ATAG_UPDATE_FEED_URL)

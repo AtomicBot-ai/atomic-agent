@@ -25,7 +25,7 @@ import { FakeBrowserBackend } from "../http/test-harness.js";
  * current provider cannot see.
  */
 
-const LOCAL = "127.0.0.1:8080";
+const LOCAL = "127.0.0.1:9931";
 const CLOUD = "cloud.invalid";
 
 const CLOUD_PROVIDER = {

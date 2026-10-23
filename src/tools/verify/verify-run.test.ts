@@ -115,5 +115,25 @@ describe("describeVerifyRun", () => {
       describeVerifyRun(parseVerifyRunArgs({ kind: "service", start: { cmd: "node", args: ["server.js"] }, ready: { port: 3000 }, requests: [{ path: "/" }] })),
     ).toBe("start `node server.js`, then 1 request(s)");
     expect(describeVerifyRun(parseVerifyRunArgs({ kind: "page", path: "index.html", seconds: 3 }))).toBe("open index.html headless for 3s");
+    expect(
+      describeVerifyRun(parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "python3", args: ["-m", "http.server", "8766"] }, seconds: 2 })),
+    ).toBe("start `python3 -m http.server 8766`, then open http://127.0.0.1:8766/ headless for 2s");
+  });
+});
+
+describe("parseVerifyRunArgs, page with start", () => {
+  it("keeps `start` and waits for the page url by default", () => {
+    const args = parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/index.html", start: { cmd: "python3", args: ["-m", "http.server", "8766"] } });
+    expect(args.start).toEqual({ cmd: "python3", args: ["-m", "http.server", "8766"] });
+    expect(args.ready).toMatchObject({ url: "http://127.0.0.1:8766/index.html", port: undefined });
+  });
+
+  it("uses an explicit ready port or url instead", () => {
+    expect(parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "x" }, ready: { port: 8766 } }).ready).toMatchObject({ port: 8766, url: undefined });
+    expect(parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "x" }, ready: { url: "http://127.0.0.1:8766/health" } }).ready).toMatchObject({ url: "http://127.0.0.1:8766/health" });
+  });
+
+  it("refuses `start` with a file path", () => {
+    expect(() => parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "x" } })).toThrow("page with `start` needs `url`");
   });
 });

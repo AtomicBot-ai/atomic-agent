@@ -101,6 +101,7 @@ export function buildOsWebSearchTool(
       "environment API key. " +
       "Use os.web.fetch to read a chosen result page.",
     readonly: true,
+    untrustedOutput: "web search results",
     async run(rawArgs, ctx) {
       const cfg = options.config.web.search;
       if (!cfg.enabled) {

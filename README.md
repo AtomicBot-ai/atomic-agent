@@ -367,7 +367,7 @@ Every term has to match (`claude vision` is not a substring of any id), a size t
 <details>
 <summary><b>External <code>llama-server</code></b></summary>
 
-Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:8080`), or save the URL in the TUI's LLM tab, External pane:
+Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:9931`, llama-server's own default port since llama.cpp v0.7.0), or save the URL in the TUI's LLM tab, External pane:
 
 ```jsonc
 // <stateDir>/config.json
@@ -554,6 +554,8 @@ Configure MCP servers in `config.json`, and their tools join the same registry a
 }
 ```
 
+To offer only some of a server's tools, list their raw names: `"enabledTools": ["get_issue", "list_issues"]` keeps just those, and `"disabledTools": ["delete_repository"]` drops tools on top of that (or on its own, from the full list). Turned-off tools never reach the prompt and cannot be called; a change applies when the server reconnects.
+
 The TUI MCP panel supports live add / remove without restarting the process. When a stdio server fails to connect, the tail of its stderr is surfaced in the error instead of a bare disconnect message.
 
 </details>
@@ -705,6 +707,8 @@ OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 ```
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
+
+Commands the agent runs (`os.shell.run`, `os.git.*`) do not inherit these secrets: every variable named like a key, token, secret or password, and every known provider key, is removed from the command's environment, so a command slipped in through a web page or a file cannot read `OPENAI_API_KEY` or `TELEGRAM_BOT_TOKEN`. The agent itself still uses them. The names in `tools.shell.envPassthrough` in `config.json` are passed to shell commands anyway; the default is `["GITHUB_TOKEN", "NOTION_API_KEY"]`, which the bundled `github` and `notion` skills read through the shell. Add a name there when a command of yours needs one, or set `[]` to keep those two out as well.
 
 `EXA_API_KEY` is optional. Without it, web search uses Exa's free keyless tier, which runs out quickly, and then DuckDuckGo. When the free limit is reached, or no search provider answers, the search result says so and asks for a free key from <https://dashboard.exa.ai/api-keys>. Apps get the same request as `details.keyRequired` on the `os.web.search` result (`{ provider: "exa", reason: "rate_limited" | "unreachable" | "missing", getKeyUrl, envVar }`); the HTTP stream forwards it as `key_required` on the `tool_result` event.
 

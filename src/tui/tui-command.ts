@@ -715,6 +715,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.startDaemon(),
         onLocalModelsDaemonStopRequested: () =>
           void orchestrator.localModels.stopDaemon(),
+        onLocalModelsChatStopForCloudRequested: () =>
+          void orchestrator.localModels.stopChatForCloudSelection(),
         onLocalModelsDaemonRestartRequested: () =>
           void orchestrator.localModels.restartDaemon(),
         onLocalModelsEmbeddingPullRequested: (id) =>

@@ -74,7 +74,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
   start: () => ipcRenderer.invoke("agent:start"),
-  restart: () => ipcRenderer.invoke("agent:restart"),
+  /** ATO-274: `reason` is "setup_finished" when setup closing asks; analytics only. */
+  restart: (reason?: "setup_finished") => ipcRenderer.invoke("agent:restart", reason),
   onStatus: (cb: (payload: unknown) => void) => on("agent:status", cb),
   onLog: (cb: (payload: unknown) => void) => on("agent:log", cb),
   /** ATO-767: the automatic restarts after an unexpected exit (agent-auto-restart.ts). */
@@ -102,7 +103,7 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Approvals raised by gated tools. */
   onApproval: (cb: (payload: unknown) => void) => on("agent:approval", cb),
-  approve: (approvalId: string, decision: "allow-once" | "deny", reason?: string) =>
+  approve: (approvalId: string, decision: "allow-once" | "allow-in-chat" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),
   /** B01 QA, ATO-198: the turns main streams, for a page that loads while they run. */
   liveTurns: () => ipcRenderer.invoke("agent:liveTurns"),
@@ -246,6 +247,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Agent 0.6.6 live routes (main/agent-live.ts): a deep-merge config patch and per-server MCP control. */
   configPatch: (patch: Record<string, unknown>) => ipcRenderer.invoke("agent:configPatch", patch),
   mcpServer: (name: string, op: "restart" | "enable" | "disable") => ipcRenderer.invoke("agent:mcpServer", { name, op }),
+  /** ATO-859: Telegram pairing on the running agent; a start's answer carries the one-time code for the screen only. */
+  telegramPairing: (op: "start" | "status" | "cancel", replaceOwner?: boolean) =>
+    ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>

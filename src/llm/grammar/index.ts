@@ -9,7 +9,9 @@ export {
   parseToolCall,
   ToolCallParseError,
 } from "./tool-call-grammar.js";
-export type { ToolCallPayload } from "./tool-call-grammar.js";
+export type { ToolCallPayload, ToolCallParseOptions } from "./tool-call-grammar.js";
+export { JSON_FIX, mergeJsonRepair, repairJsonText } from "./repair-tool-call-json.js";
+export type { JsonRepairReport, JsonRepairResult } from "./repair-tool-call-json.js";
 export { createStreamParser } from "./stream-parser.js";
 export type {
   StreamParseEvent,

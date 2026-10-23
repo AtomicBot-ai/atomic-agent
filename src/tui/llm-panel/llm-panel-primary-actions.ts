@@ -240,6 +240,13 @@ function openProviderConfigFor(
   });
 }
 
+/**
+ * The chat route just moved to a cloud model: free the local chat
+ * server. Only the chat side goes (ATO-376); the embedding model keeps
+ * memory search working on the cloud route. A host without the
+ * chat-only seam falls back to the full stop. The `s` key and Stop keep
+ * calling the full stop.
+ */
 export function stopLocalDaemonsForCloudSelection(
   state: TuiState,
   callbacks: TuiAppCallbacks,
@@ -247,9 +254,11 @@ export function stopLocalDaemonsForCloudSelection(
   const localRunning =
     state.localModelsPanel.daemon.running ||
     state.localModelsPanel.daemonPhase === "starting";
-  if (localRunning) {
-    callbacks.onLocalModelsDaemonStopRequested?.();
-  }
+  if (!localRunning) return;
+  const stop =
+    callbacks.onLocalModelsChatStopForCloudRequested ??
+    callbacks.onLocalModelsDaemonStopRequested;
+  void stop?.();
 }
 
 /**

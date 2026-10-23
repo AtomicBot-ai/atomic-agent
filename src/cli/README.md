@@ -13,6 +13,8 @@ Skill list/show/enable/disable accept `--workspace <dir>` for cloud project scop
 
 `config get --with-sha256` prints `{"sha256": "<hex>", "config": {...}}`: the normalised config and the lowercase sha256 of the raw `config.json` bytes it was parsed from, from one read (the empty-string hash when the file is missing). `config set - --expect-sha256 <hex>` writes the stdin payload only while the file still hashes to `<hex>`; otherwise it writes nothing, prints exactly `config changed since it was read` to stderr and exits 3. Without the flag `set -` is unchanged. This is the compare-and-swap the desktop uses since it shares the terminal agent's state dir (ATO-416); see [config-sha256.ts](config-sha256.ts).
 
+On a Windows console, startup switches the code page to UTF-8 (65001) so non-ASCII text and the output of console programs the agent runs are not garbled, and restores the original page on exit. It skips a non-TTY stdout (the desktop app reads through pipes), a console already on UTF-8, and macOS and Linux; a failing `chcp` never stops startup. See [windows-console-utf8.ts](windows-console-utf8.ts) (ATO-221).
+
 ## Desktop state merge
 
 `import atomic-desktop --source <dir> [--json]` merges the desktop app's former state dir (`~/.atomic-agent-desktop`) into the current one (`ATOMIC_AGENT_STATE_DIR`, default `~/.atomic-agent`) when the desktop moves onto the shared dir (ATO-416). The desktop runs it once and moves the plain files (config.json, .env, skills, traces, models) itself; this command handles only the databases:

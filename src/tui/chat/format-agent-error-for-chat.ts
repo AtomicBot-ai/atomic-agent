@@ -1,4 +1,4 @@
-import { formatLlamaUnreachableHint } from "../../llm/llama-server-health.js";
+import { formatLlamaTransportHint } from "../../llm/llama-server-health.js";
 import { LOCAL_ENGINE_DOWN_MESSAGE, LOCAL_ENGINE_START_HINT, looksLikeMidStreamDrop } from "../../llm/reliability/index.js";
 
 const MAX_CHARS = 480;
@@ -6,7 +6,8 @@ const MAX_CHARS = 480;
 /**
  * Where the failed turn was pointed, so a transport failure can say what
  * to actually do about it. The CLI has printed
- * `formatLlamaUnreachableHint` for years; the TUI dropped the same
+ * `formatLlamaUnreachableHint` for years (and `formatLlamaWrongServerHint`
+ * when llama-server answered 404/405); the TUI dropped the same
  * failure as a bare `fetch failed` — this closes that gap. Gated on the
  * active provider being local because for a cloud provider the llama
  * hint would be advice about the wrong server.
@@ -154,8 +155,11 @@ export function formatAgentErrorForChat(
     // below is only an explanation. Stacking both would bury the fix
     // under five lines. The `terminated` case that prompted this — a
     // cloud provider dropping mid-stream — never reaches the local arm.
+    //
+    // A llama-server that ANSWERED 404/405 is up, so the start command
+    // would be wrong there: it gets the wrong-server line instead (ATO-870).
     if (local?.activeProviderIsLocal) {
-      return `${base}\n${formatLlamaUnreachableHint(local.llamaUrl)}`;
+      return `${base}\n${formatLlamaTransportHint(local.llamaUrl, collapsed)}`;
     }
     // Matched on `collapsed`, never on `body`: `body` has been capped at
     // MAX_CHARS, so a drop phrase that sits past that cap survives in

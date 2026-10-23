@@ -8,6 +8,7 @@ import {
   splitReadLines,
   type ReadCoverageDetail,
 } from "./fs-read-coverage.js";
+import type { FileReadVersions } from "./fs-read-freshness.js";
 import { notARegularFileMessage } from "./fs-read-not-a-file.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 
@@ -25,12 +26,35 @@ export const osFsReadTool: ToolDefinition = {
     }
     const canonical = await canonicalize(absolute);
 
-    if (args.offset !== undefined || args.limit !== undefined) {
-      return readByLines(absolute, canonical, info.size, args);
-    }
-    return readByBytes(absolute, canonical, info.size, args);
+    const result =
+      args.offset !== undefined || args.limit !== undefined
+        ? await readByLines(absolute, canonical, info.size, args)
+        : await readByBytes(absolute, canonical, info.size, args);
+    rememberReadVersion(ctx.fileVersions, canonical, info.size, result.details);
+    return result;
   },
 };
+
+/**
+ * Store what this read saw for the "changed since you last read it"
+ * notice on later writes (`fs-read-freshness.ts`). The digest is the
+ * read-coverage one, so the file is hashed once per read, not twice.
+ */
+function rememberReadVersion(
+  store: FileReadVersions | undefined,
+  canonical: string,
+  size: number,
+  details: Record<string, unknown>,
+): void {
+  if (store === undefined) return;
+  const coverageDetail = details[READ_COVERAGE_DETAIL_KEY] as
+    | Partial<ReadCoverageDetail>
+    | undefined;
+  const contentHash = coverageDetail?.contentHash;
+  const hashedBytes = details.bytesRead;
+  if (typeof contentHash !== "string" || typeof hashedBytes !== "number") return;
+  store.record(canonical, { size, hashedBytes, contentHash });
+}
 
 /**
  * Symlink-resolved path, used only as the read-coverage identity so that

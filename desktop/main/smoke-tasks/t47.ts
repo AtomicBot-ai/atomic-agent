@@ -151,6 +151,7 @@ const STATUS = String.raw`(async () => {
   }
   window.__settingsOpen('general'); await tick(60);
   out.general = read();
+  out.tasksEmpty = !TK.rows.length;
   window.__settingsClose();
   return out;
 })()`;
@@ -165,6 +166,7 @@ type Status = {
     resumed?: { auto: boolean; text: string }; held?: string;
   }>;
   general: Line;
+  tasksEmpty?: boolean;
 };
 
 /* Д27: two toasts raised over Settings, measured against its window, then
@@ -306,7 +308,8 @@ async function run(js: Js, check: Check): Promise<void> {
   const counts = s.err ? null : Object.fromEntries(PANES.map((p) => [p, s.panes[p]!.fresh.counts]));
   check(
     "T47 Д26: the counts the readouts carried stay in the panes' toolbars",
-    !!counts && /^\d+ (tasks?|of \d+)$/.test(counts["tasks"]!) && /^\d+ shown$/.test(counts["memory"]!) && /^\d+ servers?$/.test(counts["mcp"]!),
+    // ATO-519 (U-85): with no tasks at all the Tasks toolbar drops its search row, count included.
+    !!counts && (/^\d+ (tasks?|of \d+)$/.test(counts["tasks"]!) || (counts["tasks"] === "" && s.tasksEmpty === true)) && /^\d+ shown$/.test(counts["memory"]!) && /^\d+ servers?$/.test(counts["mcp"]!),
     s.err ?? JSON.stringify(counts),
   );
 

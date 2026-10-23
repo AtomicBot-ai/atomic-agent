@@ -229,6 +229,13 @@ export class LocalModelsOrchestrator {
   private activeTimer: ReturnType<typeof setInterval> | null = null;
   private supervised = false;
   /**
+   * The chat daemon was stopped for a cloud route and the embedding
+   * daemon kept (`stopChatForCloudSelection`). Ownership of the chat side
+   * is dropped so the supervisor does not bring it back, but the kept
+   * embedding daemon is still ours to tear down at exit.
+   */
+  private embeddingKeptForCloud = false;
+  /**
    * True while a daemon the TUI owns is running; used by `shutdown()`.
    * Taking ownership — a start, or adopting a running daemon, by any
    * path — is also what arms the supervisor: its timer must run from
@@ -440,8 +447,9 @@ export class LocalModelsOrchestrator {
     // do not wait for it, the host process exits before the kill lands and
     // llama-server is orphaned in the background.
     let retired = false;
-    if (this.daemonSupervised) {
+    if (this.daemonSupervised || this.embeddingKeptForCloud) {
       this.daemonSupervised = false;
+      this.embeddingKeptForCloud = false;
       const cfg = getConfig();
       // `stopOnExit: false` keeps the model warm between sessions (the
       // operator owns teardown via `models stop`). With it on, only the
@@ -2397,6 +2405,41 @@ export class LocalModelsOrchestrator {
     });
     this.restartInFlight = inFlight;
     return inFlight;
+  }
+
+  /**
+   * The chat route moved to a cloud model (ATO-376): stop only the chat
+   * daemon and keep the embedding daemon, so memory search keeps its
+   * meaning-based half. `memory.embeddings.enabled` is left alone.
+   *
+   * Falls back to the full `stopDaemon` when there is nothing worth
+   * keeping (embeddings off, no catalog model, GGUF not on disk) or the
+   * chat daemon is not up yet, since a start in flight must be cancelled
+   * as before. Ownership of the chat side is dropped so the supervisor
+   * does not restart it on the cloud route. The `s` key and Stop keep
+   * calling `stopDaemon`.
+   */
+  async stopChatForCloudSelection(): Promise<void> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (!chat.running || !this.buildEmbeddingStartOptions(cfg, dataDir)) {
+      return this.stopDaemon();
+    }
+    // Ownership goes before the kill: a supervisor tick that sees the chat
+    // pid dead while the stop is still refreshing would otherwise restart
+    // the chat daemon on the cloud route. A failed stop gives it back.
+    const owned = this.daemonSupervised;
+    this.daemonSupervised = false;
+    if (owned) this.embeddingKeptForCloud = true;
+    const stopped = await this.stopChatDaemonOnly({
+      stoppedLine: "local-llm: chat server stopped, memory search stays on",
+    });
+    if (stopped) return;
+    if (owned) {
+      this.embeddingKeptForCloud = false;
+      this.daemonSupervised = true;
+    }
   }
 
   /**

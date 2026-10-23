@@ -26,7 +26,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -35,6 +35,7 @@ import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
+import { spellcheckEnabled, wireEditContextMenu } from "./edit-context-menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
@@ -235,6 +236,7 @@ import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
+import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
 
 const DEV = process.argv.includes("--dev");
@@ -874,7 +876,9 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
-      spellcheck: false,
+      // ATO-668: on for text fields (edit-context-menu.ts spellcheckEnabled);
+      // fields of keys, URLs and paths opt out with spellcheck="false".
+      spellcheck: spellcheckEnabled(process.platform),
       /* Backlog 03: the first-run latch rides in with the window, so the
          renderer opens the wizard before its first paint instead of after a
          round trip (preload.ts freshAtBoot) — on a fresh install the chat
@@ -890,6 +894,7 @@ function createWindow(): BrowserWindow {
     },
   });
   if (freshHere) FRESH_WINDOW.id = window.webContents.id;
+  wireEditContextMenu(window.webContents);
   /* ATO-765: a crashed page is loaded again (render-recovery.ts). Registered
      before the error reporting so its report can say whether it recovered. */
   const recovery = new RenderRecovery();
@@ -1267,8 +1272,9 @@ function wireIpc(client: AgentClient): void {
 
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
-  ipcMain.handle("agent:restart", async () => {
-    A.agentRestarting("manual");
+  // ATO-274: the window names setup finishing; every other restart from it is the person's own.
+  ipcMain.handle("agent:restart", async (_event, reason: unknown) => {
+    A.agentRestarting(A.restartTriggerFromWindow(reason));
     await client.stop();
     return client.start();
   });
@@ -1473,11 +1479,12 @@ function wireIpc(client: AgentClient): void {
       reason?: string;
     };
     if (typeof approvalId !== "string") return { ok: false, error: "approvalId required" };
-    if (decision !== "allow-once" && decision !== "deny") {
-      return { ok: false, error: "decision must be allow-once or deny" };
+    const known = APPROVAL_DECISIONS.find((d) => d === decision);
+    if (!known) {
+      return { ok: false, error: "decision must be allow-once, allow-in-chat or deny" };
     }
     try {
-      return { ok: true, data: await client.resolveApproval(approvalId, decision, reason) };
+      return { ok: true, data: await client.resolveApproval(approvalId, known, reason) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
@@ -1512,6 +1519,7 @@ function wireIpc(client: AgentClient): void {
     client.status.workingDir = dir;
     // #680: and the next launch starts here too, not back in the home folder.
     writeWorkspace(app.getPath("userData"), dir);
+    A.agentRestarting("workspace_change");   // ATO-274
     await client.stop();
     void client.start();
     return dir;
@@ -2761,7 +2769,8 @@ function wireIpc(client: AgentClient): void {
     };
     return importFromTui(flags, {
       stopAgent: () => client.stop(),
-      startAgent: () => client.start(),
+      // ATO-274: the database arm's restart is the import's, not a manual one.
+      startAgent: () => { A.agentRestarting("import"); return client.start(); },
     }).then((res) => (A.tuiImportDone({ ...flags }, res), res));
   });
 
@@ -2989,11 +2998,15 @@ function wireIpc(client: AgentClient): void {
 function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
   return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
+/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
   navrows: number;
   skillsRow: boolean;
+  /** ATO-457: the standing section rows under New chat, by label. */
+  nav?: string[];
   subtitles: number;
   onRows: number;
   counter: string;
@@ -3040,17 +3053,20 @@ async function smokeTest(): Promise<void> {
   const tuiSnapshot = TUI_BASELINE ?? snapshotTuiState();
 
   await new Promise((r) => setTimeout(r, 1500));
-  // Item 6: the sidebar is two headed lists, so there are no nav rows left to
-  // count. This is still the "render() finished without a TDZ ReferenceError"
-  // canary that the .navrow count used to be.
+  // Item 6: the sidebar is two headed lists, so there are no old .navrow rows
+  // left to count. This is still the "render() finished without a TDZ
+  // ReferenceError" canary that the .navrow count used to be. ATO-457: the
+  // Tasks and Skills section rows under New chat are the owner's standing
+  // entries for ⌘ 2 / ⌘ 3, asserted by label.
   const sb0 = await js<Sb | null>("window.__sidebar ? window.__sidebar() : null");
   check(
     "renderer painted",
     // Calm (S1): Chats first; Tasks is drawn only when the agent holds tasks.
     !!sb0 && sb0.navrows === 0
       && JSON.stringify(sb0.headers) === sidebarHeadersExpected(sb0)
-      && sb0.subtitles === 0 && !sb0.skillsRow,
-    sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
+      && sb0.subtitles === 0 && !sb0.skillsRow
+      && JSON.stringify(sb0.nav) === SIDEBAR_NAV_EXPECTED,
+    sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}, section rows ${JSON.stringify(sb0.nav)}` : "no __sidebar hook",
   );
   // Calm (S1): the toolbar names the open chat; nothing is open at boot, and
   // chat review Д15 took the "New chat" it said then away (the sidebar's New
@@ -3875,7 +3891,10 @@ async function smokeTest(): Promise<void> {
     // item 4: a reopened session carries the trace's durations for every card
     // (the TUI shows 0ms here; the desktop shows the agent's number). A trace can
     // legitimately say 0ms, so the only ms > 0 assertion is on the os.fs.list
-    // turn this run itself made. Known-data check (api-7a8e32e75a4f9298 →
+    // turn this run itself made. ATO-827: and even there a call can finish
+    // inside a millisecond ("2ms, 0ms"), so every card must carry the trace's
+    // own number (0 included) and at least one of them must be above 0. A card
+    // with no trace duration still fails: its source is not "trace". Known-data check (api-7a8e32e75a4f9298 →
     // 9,8,10,71,111,434,17,56,86,668,15) is a manual step, not a smoke assertion.
     // Reopened here, before the fold checks, so those run on a transcript that
     // is known to carry cards instead of inheriting the tool turn's outcome.
@@ -3890,14 +3909,69 @@ async function smokeTest(): Promise<void> {
       `${traced.length}/${reopened.length} cards from the trace in ${sid}`,
     );
     const listed = reopened.filter((c) => c.name === "os.fs.list");
+    const isTimed = (c: (typeof reopened)[number]): boolean => c.source === "trace" && Number.isFinite(c.ms) && c.ms >= 0;
+    const listedTimed = listed.length > 0 && listed.every(isTimed) && listed.some((c) => c.ms > 0);
     check(
       "reopened os.fs.list turn is timed",
-      listed.length > 0 && listed.every((c) => c.ms > 0),
-      listed.map((c) => c.ms + "ms").join(", ") || "no os.fs.list card",
+      listedTimed,
+      listed.map((c) => c.ms + "ms" + (c.source === "trace" ? "" : ` (${c.source ?? "no source"})`)).join(", ") || "no os.fs.list card",
     );
-    if (traced.length !== reopened.length || !listed.every((c) => c.ms > 0)) {
+    if (traced.length !== reopened.length || !listedTimed) {
       process.stdout.write(`DIAG reopened=${JSON.stringify(reopened)}\n`);
     }
+    // ATO-464: the reopened tool turn is finished, so its steps are one quiet
+    // line ("Used 1 tool · 434 ms"), unless Always show steps is on. A click
+    // on that line (the real button) opens the steps under it, the line
+    // staying where it was. Every turn is opened here so the checks below
+    // read the cards themselves.
+    type Sum = { id: string; open: boolean; text: string };
+    const always = await js<boolean>("window.__stepsAlways()");
+    const sums = await js<Sum[]>("window.__turnSums()");
+    check(
+      "a finished turn's steps fold into one summary line",
+      always || (sums.length > 0 && sums.every((x) => !x.open && /^(Used \d+ tools?|Reasoned in \d+ steps?)( \u00b7 \d+ failed)?( \u00b7 (\d+ ms|\d\.\d s|\d+ s|\d+ min \d+ s|\d+ h \d+ min))?$/.test(x.text))),
+      always ? "Always show steps is on: nothing folds" : JSON.stringify(sums),
+    );
+    type SumClick = { open: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number; cardsBefore: number; cardsAfter: number } | null;
+    for (const [n, x] of sums.entries()) {
+      const opened = await js<SumClick>(`window.__clickTurnSum(${JSON.stringify(x.id)})`);
+      if (n === 0) {
+        check(
+          "clicking the summary line opens the turn's steps in place",
+          !!opened && opened.open && opened.cardsAfter > opened.cardsBefore && Math.abs(opened.headAfter - opened.headBefore) <= 1,
+          JSON.stringify(opened),
+        );
+      }
+    }
+
+    // ATO-464: Settings › General › Always show steps, pressed as a person
+    // presses it: on, no finished turn folds; pressed again, it is as it was.
+    const stepsSwitch = await js<{ found: boolean; on: boolean; foldsOn: number; off: boolean; foldsOff: number }>(`(async () => {
+      const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+      const keep = {settings: S.settings, pane: S.settingsPane, always: STEPS.always};
+      const press = () => { const b = document.querySelector('#settings [data-act="steps:always"]'); if (b) b.click(); return !!b; };
+      const folds = () => (renderItems().match(/data-turnsum=/g) || []).length;
+      try {
+        if (keep.always) stepsAlwaysSet(false);
+        window.__settingsOpen('general'); await tick(250);
+        const found = press(); await tick(50);
+        const on = STEPS.always, foldsOn = folds();
+        press(); await tick(50);
+        const off = !STEPS.always, foldsOff = folds();
+        return {found, on, foldsOn, off, foldsOff};
+      } finally {
+        stepsAlwaysSet(keep.always);
+        window.__settingsClose();
+        if (keep.settings) { S.settings = keep.settings; S.settingsPane = keep.pane; }
+        render();
+      }
+    })()`);
+    check(
+      "Always show steps keeps finished turns open, and turning it off folds them again",
+      stepsSwitch.found && stepsSwitch.on && stepsSwitch.foldsOn === 0 && stepsSwitch.off && stepsSwitch.foldsOff > 0 && (always || stepsSwitch.foldsOff === sums.length),
+      JSON.stringify(stepsSwitch),
+    );
+
     // Every finished duration cell reads in words (ATO-237: "850 ms", "4.9 s", "1 min 42 s") or is empty.
     const cells = await js<string[]>("window.__overflow().durations");
     check(
@@ -4924,10 +4998,11 @@ async function sidebarTest(
     let sb = await js<Sb>("window.__sidebar()");
     check(
       // Calm (S1): Chats first, Tasks under it and only when there are tasks.
-      "sidebar is Pinned when anything is pinned, Chats, then Tasks when there are any, with no nav rows",
+      "sidebar is Tasks and Skills rows, Pinned when anything is pinned, Chats, then Tasks when there are any",
       JSON.stringify(sb.headers) === sidebarHeadersExpected(sb)
-        && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
-      `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
+        && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0
+        && JSON.stringify(sb.nav) === SIDEBAR_NAV_EXPECTED,
+      `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}, section rows ${JSON.stringify(sb.nav)}`,
     );
     // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
     // class. This measures the row the user asked for — 30 px, one text line,
@@ -5611,7 +5686,7 @@ async function settingsTest(
   // The create form's preview (form path: tkPreview → app:taskPreview) is the agent's own cron-parser port.
   const preview = await js<{ cron: number; every: number; at: number; bad: string; shown: boolean }>(
     "(async () => { const cron = await window.__taskPreviewForm({kind:'cron', cronExpression:'0 * * * *', message:'x'});"
-    + " const shown = window.__settingsBody().includes('Next firings') && document.querySelectorAll('#settings .setbody #tk-preview .set-firings li').length === 5;"
+    + " const shown = window.__settingsBody().includes('Next runs') && document.querySelectorAll('#settings .setbody #tk-preview .set-firings li').length === 5;"
     + " const every = await window.__taskPreviewForm({kind:'interval', intervalSeconds:'300', message:'x'});"
     + " const at = await window.__taskPreviewForm({kind:'at', atIsoOrMs:'2030-01-01T09:00:00Z', message:'x'});"
     + " const bad = await window.__taskPreviewForm({kind:'cron', cronExpression:'not a cron', message:'x'});"
@@ -7477,7 +7552,7 @@ async function settingsTestPartC(
   // ---- LLM: External pane + the probe ----
   const ext = await js<LlmPane>("window.__llmOpen('external')");
   const extBody = await js<string>("window.__settingsBody()");
-  const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:8080";
+  const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:9931";
   const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
   // The row as drawn: the "Server address" label, the URL, its status chip, and the action pill (the TUI's sentence as its tooltip).
   const extRow = await js<{ label: string; url: string; status: string; effect: string; title: string } | null>(
@@ -7591,6 +7666,12 @@ async function settingsTestPartC(
   const tgPlain = tgLabel.act === "settings:connections" && tgLabel.label === "Connections" && !tgLabel.count && tgLabel.sub === "Telegram";
   const envHas = envPresent(["TELEGRAM_BOT_TOKEN"]).length > 0;
   const dotenvHas = stateDir ? dotenvKeys(stateDir).keys.includes("TELEGRAM_BOT_TOKEN") : false;
+  /* ATO-859: the pairing card pairs in the app (a Pair button under the steps), or, on an agent
+     without /api/telegram/pairing, says to update it (TG_PAIRING_NOTE). Never the old "use atag tui" line. */
+  const tgPairOffer = (body: string) =>
+    (body.includes("Press Pair for a one-time code, then send /start and the code to your bot in Telegram.")
+      || body.includes("This agent cannot pair from the app. Update Atomic Agent, or quit the app, run `atag tui`, open Integrations › Telegram and press p."))
+    && !body.includes("Pairing needs the live channel");
   if (!envHas && !dotenvHas) {
     // The card's one action: the "Paste a bot token" button (Calm S5: its Enter keycap moved to the tooltip).
     const tgCta = await js<{ label: string; key: string } | null>(
@@ -7619,7 +7700,7 @@ async function settingsTestPartC(
       "telegram tab: a token is present → one status in words, no config keys or .env, plain tab label",
       tg.hasToken === true && tgView.status === wantStatus && tgView.titles.includes("Bot token")
         && !/telegram\.enabled|ownerUserId|TELEGRAM_BOT_TOKEN|\.env\b|\bunknown\b/.test(tgBody)
-        && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
+        && tgBody.includes("One last step") === (tg.owner === null) && (tg.owner !== null || tgPairOffer(tgBody)) && tgPlain,
       `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} enabled=${String(tg.enabled)} label=${JSON.stringify(tgLabel)} view=${JSON.stringify(tgView)}`,
     );
   }
@@ -7648,7 +7729,7 @@ async function settingsTestPartC(
         hasToken: saved.state.hasToken === true,
         enabled: enabledNow === true,
         confirmCard: afterBody.includes("One last step — confirm it's you"),
-        pairingLine: afterBody.includes("Pairing needs the live channel — open the Telegram tab in `atag tui` to pair"),
+        pairingLine: tgPairOffer(afterBody),
         restartButton: afterBody.includes("Restart Agent Runtime"),
       };
       check(
@@ -7918,9 +7999,13 @@ async function uiTest(
   await js<number>("window.__pushUser('a short one')");
   await js<number>("window.__pushTool('read_file', {path:'a.txt'}, 'ok', false)");
   await js<number>("window.__pushAssistant('done')");
+  // ATO-464: that turn is finished, so its call folded into a summary line; open it
+  // (the real button) so the row checks below read the card itself.
+  await js<unknown>("window.__turnSums().filter((x) => !x.open).forEach((x) => window.__clickTurnSum(x.id))");
   type Shape = { k: string; glyphs: number; gutter: number | null; end: boolean; endLast: boolean; strip: boolean; left: number };
   const shape = await js<Shape[]>("window.__turnShape()");
-  const tail = shape.slice(-3);
+  // A finished turn's summary line (ATO-464) sits above its steps; the row checks read the rows under it.
+  const tail = shape.filter((t) => t.k !== "turnsum").slice(-3);
   check(
     // Two things, both positive: no row carries a `.avatar` or a `.gutter` (the
     // user's `›` and the assistant's per-message mark), and every row that still
@@ -8593,17 +8678,21 @@ async function isolationAndSwitchTest(
      Pure, no agent involved. The exact file `atag config get` writes into an
      empty directory: localModels.mode external at the schema's own default
      url, no llm block, tui.onboarding all null. decideOnboarding
-     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there. */
-  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there.
+     ATO-834: the default is 9931 now; an install from before carries the
+     old 8080 default nobody chose, and must reach the wizard too. */
+  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9931", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+  const legacyCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
   const configuredCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9999", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
   const managedInExternal = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: "qwen-3.5-4b" } }, llm: {}, tui: { onboarding: {} } });
   const needFresh = await js<boolean>(`window.__needsOnboarding(${freshCfg})`);
+  const needLegacy = await js<boolean>(`window.__needsOnboarding(${legacyCfg})`);
   const needConfigured = await js<boolean>(`window.__needsOnboarding(${configuredCfg})`);
   const needManaged = await js<boolean>(`window.__needsOnboarding(${managedInExternal})`);
   check(
     "state dir: a fresh directory would reach the wizard",
-    needFresh === true && needConfigured === false && needManaged === false,
-    `default url → ${needFresh}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
+    needFresh === true && needLegacy === true && needConfigured === false && needManaged === false,
+    `default url → ${needFresh}; old 8080 default → ${needLegacy}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
   );
 
   // ---- item 9: the import offer reports names, never values ----
@@ -9318,12 +9407,15 @@ async function backendSwitchTest(
       !daemonAfterCloud || toCloud?.daemon === "stop-failed",
       `daemon=${toCloud?.daemon} running=${daemonAfterCloud}`,
     );
-    // Write 2 of activateProvider: a successful stop is followed by
-    // memory.embeddings.enabled=false (the TUI's stopDaemon order).
+    // ATO-377: a stop that kept the embedding server leaves memory.embeddings.enabled
+    // as it was; a stop of both (an agent without `models stop --chat-only`, or no
+    // embedding model to keep) is followed by write 2 of activateProvider, the flag off.
     check(
-      "backend: hybrid recall off after the daemon stop",
-      toCloud?.daemon !== "stopped" || afterCloud?.memory?.embeddings?.enabled === false,
-      `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
+      "backend: hybrid recall kept with the embedding server, off after a stop of both",
+      toCloud?.daemon !== "stopped" || (toCloud.embeddingKept
+        ? afterCloud?.memory?.embeddings?.enabled === afterLocal?.memory?.embeddings?.enabled
+        : afterCloud?.memory?.embeddings?.enabled === false),
+      `daemon=${toCloud?.daemon} embeddingKept=${toCloud?.embeddingKept === true} memory.embeddings.enabled=${afterLocal?.memory?.embeddings?.enabled} → ${afterCloud?.memory?.embeddings?.enabled}`,
     );
     /* These lines used to be pushed into the TRANSCRIPT, so the
        conversation filled up with a commentary on the user's own clicks.
@@ -9604,6 +9696,16 @@ async function pruneIncompleteProvidersAtBoot(): Promise<void> {
   }
 }
 
+/** app.isInApplicationsFolder() off macOS is never asked; null when it throws. */
+function inApplicationsFolder(): boolean | null {
+  if (process.platform !== "darwin") return null;
+  try {
+    return app.isInApplicationsFolder();
+  } catch {
+    return null;
+  }
+}
+
 /** See its call in app.whenReady. Never fatal. */
 function secureStateFilesAtBoot(): void {
   try {
@@ -9797,6 +9899,21 @@ function watchCoreUpdates(): void {
 }
 
 void app.whenReady().then(async () => {
+  /* ATO-370: a mac app run from the DMG or Downloads cannot update itself.
+     Ask before anything starts: Move relaunches the app from /Applications,
+     so nothing of this launch should be running by then. Not now asks again
+     on the next launch (move-to-applications.ts). */
+  if (shouldOfferMove({
+    platform: process.platform, packaged: app.isPackaged, smoke: SMOKE || FIRST_RUN_PROBE, dev: DEV,
+    inApplications: inApplicationsFolder(),
+  })) {
+    const moved = offerMove({
+      ask: () => dialog.showMessageBoxSync(MOVE_PROMPT),
+      move: () => app.moveToApplicationsFolder(),
+      log: (line) => console.error(line),
+    });
+    if (moved === "moved") return;
+  }
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
@@ -9877,7 +9994,7 @@ void app.whenReady().then(async () => {
     const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
     void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(embeddingsFirst).then(() => {
       void agent?.start();
-      A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
+      A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
       else void startLocalDaemonAtBoot();
     });
@@ -11388,9 +11505,11 @@ async function onboardingTest(
        returns immediately during the gap between Enter and that step — and
        Enter here starts async work (the stamp write, then the close). The
        race is invisible on a quiet machine and cost a red run on a busy one.
-       If it genuinely never closes, this still fails, just after 10s. */
+       ATO-827: the close waits for two `atag config get` in a row (obSettle),
+       and on a loaded machine that took longer than 20 s, so the wait is 45 s.
+       If it genuinely never closes, this still fails, just later. */
     let nothing = await settled();
-    for (let i = 0; i < 40 && nothing.open; i += 1) {
+    for (let i = 0; i < 180 && nothing.open; i += 1) {
       await new Promise((r) => setTimeout(r, 250));
       nothing = await js<ObState>("window.__ob()");
     }
@@ -12208,8 +12327,9 @@ async function chromeTest(
   type SbToggle = {
     on: boolean; pressed: string; title: string; state: string; rail: boolean;
     narrow: boolean; expanded: boolean; width: number; bg: string; fg: string; accentText: string;
-    /* review fix (item 2): the control is disabled on a narrow window. */
-    disabled: boolean;
+    /* review fix (item 2): the control was disabled on a narrow window; since
+       ATO-538 it stays live there and opens the sidebar as a drawer. */
+    disabled: boolean; drawer?: boolean;
   };
   type SetBtn = {
     text: string; act: string; title: string; aria: string | null;
@@ -12223,6 +12343,7 @@ async function chromeTest(
     dangerColor?: string | null; right?: number; btnRight?: number | null;
     anchorRight?: number | null; insideBubble?: number;
     btnLeft?: number | null; anchorLeft?: number | null; dot?: boolean; dotLive?: boolean;
+    acted?: boolean;
   };
 
   /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
@@ -12292,25 +12413,32 @@ async function chromeTest(
       check(
         "item 2: the glow tracks the responsive rail, not just the class",
         !narrow.on && narrow.narrow && !narrow.expanded && narrow.state === "open"
-          && !narrow.rail && narrow.width === 52
-          && narrow.disabled && narrow.title === "The sidebar is a rail on a narrow window",
+          && !narrow.rail && narrow.width === 52 && !narrow.drawer
+          && !narrow.disabled && narrow.title === "Show sidebar (⌘ 0)",
         JSON.stringify(narrow),
       );
-      /* r5 review fix — the control used to stay live and do nothing here: the
-         media query pins 52px whatever `.rail` says, so a click flipped the
-         flag with no visual change and aria-pressed read "false" either way.
-         The button is disabled (asserted above) and the chord, which does not
-         go through the button, refuses in words instead of flipping a dead
-         flag. Restores the toasts it reads. */
+      /* ATO-538 (U-106): between the 940px minimum and 1000px the button used
+         to be disabled and ⌘ 0 refused with a toast, so the chat list could
+         not be opened at all. Now the chord (the same verb as the button)
+         opens the full sidebar as a drawer over the content, lights the
+         button, leaves the kept collapse alone, and closes it again. */
       await js<unknown>("window.__clearToasts()");
-      const chord = await js<{ toasts: Array<[string, string, string]>; state: string }>(
-        "(function(){window.__rail();return {toasts:window.__toasts(),state:window.__sbToggle().state};})()",
-      );
+      await js<unknown>("window.__rail()");
+      const opened = await js<SbToggle>("window.__sbToggle()");
+      const toastsAfter = await js<Array<[string, string, string]>>("window.__toasts()");
       check(
-        "item 2: the ⌘ 0 chord refuses on a narrow window instead of flipping a dead flag",
-        chord.state === "open" && chord.toasts.length === 1
-          && chord.toasts[0]![0] === "The sidebar is a rail on a narrow window",
-        JSON.stringify(chord),
+        "item 2: on a narrow window ⌘ 0 opens the sidebar as a drawer",
+        opened.drawer === true && opened.on && opened.pressed === "true" && opened.width === 260
+          && opened.state === "open" && !opened.rail && opened.title === "Hide sidebar (⌘ 0)"
+          && toastsAfter.length === 0,
+        JSON.stringify([opened, toastsAfter]),
+      );
+      await js<unknown>("window.__rail()");
+      const shut = await js<SbToggle>("window.__sbToggle()");
+      check(
+        "item 2: ⌘ 0 again closes the drawer back to the rail",
+        !shut.drawer && !shut.on && shut.width === 52 && shut.state === "open",
+        JSON.stringify(shut),
       );
       await js<unknown>("window.__clearToasts()");
       /* r5 review fix (item 8 coverage) — styles.css duplicates the four rail
@@ -12510,7 +12638,7 @@ async function chromeTest(
       // its menu offers Mark as unread.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
       await wait(1200);
-      type Ctl = { present: boolean; vis: string; railDisplay: string; dot: string; label: string | null; verb: string | null };
+      type Ctl = { present: boolean; vis: string; railDisplay: string; glyph?: string; dataGlyph?: string; dot: string; label: string | null; verb: string | null };
       const readRow = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
         "item 3: a read row's menu offers Mark as unread, and the open chat's row shows its \"…\"",
@@ -12599,9 +12727,12 @@ async function chromeTest(
       );
       await js<unknown>("window.__rail()");
       const inRail = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      // ATO-538: the rail row is not an anonymous dot any more: it paints its
+      // title's glyph, the dot riding it as a badge, and still hides the "…".
       check(
-        "item 3: the collapsed rail keeps only the dot",
-        inRail.present && inRail.railDisplay === "none",
+        "item 3: the collapsed rail keeps the row's glyph and dot, not its \"…\"",
+        inRail.present && inRail.railDisplay === "none"
+          && (inRail.dataGlyph === "" || inRail.glyph === inRail.dataGlyph),
         JSON.stringify(inRail),
       );
       await js<unknown>("window.__rail()");
@@ -12689,10 +12820,17 @@ async function chromeTest(
 
     const asstActs = await js<Acts | null>("window.__msgActs('assistant')");
     const userActs = await js<Acts | null>("window.__msgActs('user')");
+    /* ATO-861: the last reply of a turn without tools also carries "Ask
+       again" before its copy; a turn that drew a tool card or an approval
+       keeps copy alone. The fixture prompt needs no tool, but a model that
+       reaches for one anyway is not this check's failure, so the expectation
+       follows what the transcript drew. */
+    const asstOrder = asstActs && !asstActs.acted ? '["resend","copy"]' : '["copy"]';
+    const asstTitles = asstActs && !asstActs.acted ? '["Ask again","Copy message"]' : '["Copy message"]';
     check(
-      "item 4: every message carries a copy control at its end, and only a user message carries retry",
-      !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === '["copy"]'
-        && JSON.stringify(asstActs.titles) === '["Copy message"]'
+      "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
+      !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
+        && JSON.stringify(asstActs.titles) === asstTitles
         && !!userActs && userActs.present && JSON.stringify(userActs.order) === '["resend","copy"]'
         && JSON.stringify(userActs.titles) === '["Send this message again","Copy message"]',
       `assistant ${JSON.stringify(asstActs)}; user ${JSON.stringify(userActs)}`,
@@ -12765,7 +12903,8 @@ async function chromeTest(
     );
     check(
       "item 4: a streaming reply carries no actions, and a finished one does",
-      !!streamed && streamed.streaming.buttons === 0 && streamed.finished.buttons === 1
+      !!streamed && streamed.streaming.buttons === 0
+        && streamed.finished.buttons === (asstActs && !asstActs.acted ? 2 : 1)
         && streamed.offMessages === 0,
       `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
     );
@@ -12781,6 +12920,24 @@ async function chromeTest(
       `streaming ${JSON.stringify(streamed?.streaming)} vs finished ${JSON.stringify(streamed?.finished)}`
       + " (22px row + 8px margin since chat review Д17, present from the first frame of the reply, so the buttons"
       + " appear inside a box that was already there; nothing is added below it)",
+    );
+    // ATO-863: "Ask again" under the last reply only when its turn used no tools.
+    type ReplyRetry = {
+      plain: string[] | null; tool: string[] | null; earlier: string[] | null; steered: string[] | null;
+      busy: string[] | null; placeholder: string[] | null; stopped: string[] | null; approval: { id: string } | null;
+    };
+    const rr = await js<ReplyRetry>("window.__replyRetry()");
+    const again = '["resend:rr-u:Ask again","copy"]';
+    check(
+      "item 4: the last reply of a turn without tools offers Ask again (data-resend on its question), left of copy",
+      JSON.stringify(rr.plain) === again && JSON.stringify(rr.earlier) === again && JSON.stringify(rr.steered) === again,
+      JSON.stringify({ plain: rr.plain, earlier: rr.earlier, steered: rr.steered }),
+    );
+    check(
+      "item 4: no Ask again after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
+      JSON.stringify(rr.tool) === '["copy"]' && JSON.stringify(rr.busy) === '["copy"]'
+        && JSON.stringify(rr.placeholder) === '["copy"]' && JSON.stringify(rr.stopped) === '["copy"]' && rr.approval === null,
+      JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, stopped: rr.stopped, approval: rr.approval }),
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup

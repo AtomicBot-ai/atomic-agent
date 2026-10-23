@@ -102,6 +102,30 @@ describe("POST /api/webhooks/:name", () => {
     expect(good.status).toBe(202);
   });
 
+  it("rejects a wrong secret of the same or a different length", async () => {
+    harness = await startTestHarness({
+      webhooks: {
+        secure: {
+          userMessageTemplate: "auth {{body.hi}}",
+          secret: "sekret",
+        },
+      },
+    });
+
+    for (const attempt of ["sekreT", "sek", "sekret-and-more", ""]) {
+      const res = await fetch(`${harness.baseUrl}/api/webhooks/secure`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-webhook-secret": attempt,
+        },
+        body: JSON.stringify({ hi: "x" }),
+      });
+      expect(res.status).toBe(401);
+    }
+    expect(harness.runtime.taskStore.list().length).toBe(0);
+  });
+
   it("returns 404 for unknown webhook names", async () => {
     harness = await startTestHarness();
     const res = await fetch(`${harness.baseUrl}/api/webhooks/nope`, {

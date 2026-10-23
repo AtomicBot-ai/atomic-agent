@@ -33,3 +33,37 @@ test("the renderer counts the act and lets it through over first-run setup", asy
   assert.match(src, /BR\.onMenu\(\(command\) => \{[\s\S]*?ANX\.via\('menu'\); act\(command\);/, "menu commands go through act with via: menu");
   assert.match(src, /if \(OB\.open && a === 'help\.report'\) \{ helpReport\(\); return; \}\n    if \(OB\.open\) return;/);
 });
+
+// ATO-544: View has Actual Size / Zoom In / Zoom Out, and none of their keys
+// collides with another menu accelerator (⌘0 stays Toggle Sidebar).
+function accelerators(items, out = []) {
+  for (const i of items) {
+    if (i.accelerator) out.push({ acc: i.accelerator, role: i.role, label: i.label });
+    if (Array.isArray(i.submenu)) accelerators(i.submenu, out);
+  }
+  return out;
+}
+
+for (const platform of ["darwin", "win32", "linux"]) {
+  test(`View has the zoom roles with their own keys (${platform})`, () => {
+    const view = menuTemplate(() => {}, platform).find((m) => m.label === "View");
+    const visible = view.submenu.filter((i) => i.visible !== false);
+    const byRole = (r) => visible.find((i) => i.role === r);
+    assert.equal(byRole("zoomIn").accelerator, "CommandOrControl+=");
+    assert.equal(byRole("zoomOut").accelerator, "CommandOrControl+-");
+    assert.equal(byRole("resetZoom").label, "Actual Size");
+    assert.equal(byRole("resetZoom").accelerator, platform === "darwin" ? "Shift+Command+0" : "CommandOrControl+num0");
+    assert.equal(view.submenu.find((i) => i.label === "Toggle Sidebar").accelerator, "CommandOrControl+0");
+    const hidden = view.submenu.filter((i) => i.visible === false).map((i) => i.accelerator);
+    assert.ok(hidden.includes("CommandOrControl+Plus"), "⌘+ zooms in too");
+  });
+
+  test(`no two menu items share an accelerator (${platform})`, () => {
+    const all = accelerators(menuTemplate(() => {}, platform));
+    const seen = new Map();
+    for (const a of all) {
+      assert.ok(!seen.has(a.acc), `${a.acc} is used by both ${seen.get(a.acc)} and ${a.label || a.role}`);
+      seen.set(a.acc, a.label || a.role);
+    }
+  });
+}

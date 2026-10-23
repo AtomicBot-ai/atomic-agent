@@ -1958,6 +1958,7 @@ export function modelWindow(providerId: string, kind: string, model: string): Pr
      setMemoryEmbeddingsEnabled← src/tui/persist-embedding-hybrid-recall.ts persistMemoryEmbeddingsEnabled
      providerHasKey            ← src/config/resolve-llm-api-key.ts + provider-auth-mode.ts usesExternalCliAuth
      localDaemonRunning/modelsStop ← `atag models status|stop`
+     modelsStopChatOnly        ← `atag models stop --chat-only` (the TUI's stopChatForCloudSelection)
 
    Every write is the whole-file form (`atag config set '<json>'`) because
    `llm.*` has no dotted spelling on 0.5.4. `atag config get` returns the
@@ -2018,7 +2019,7 @@ export async function readWholeConfig(): Promise<{ ok: boolean; config?: UserCon
 function localLlamaUrlFromFile(cfg: UserConfigShape): string {
   const lm = cfg.localModels ?? {};
   if (lm.mode === "managed") return `http://127.0.0.1:${lm.managed?.port ?? 19091}`;
-  return lm.url ?? "http://127.0.0.1:8080";
+  return lm.url ?? "http://127.0.0.1:9931";
 }
 
 /**
@@ -2340,6 +2341,27 @@ export async function modelsStop(opts: { repair?: boolean } = {}): Promise<CliRe
   else stopsAskedFor++;
   if (!opts.repair) tell("stopping");
   return cli(["models", "stop"], 30_000);
+}
+
+/** What an agent with `models stop --chat-only` (ATO-376) prints when it kept the embedding model. */
+const CHAT_ONLY_STOP_KEPT = /^stopped chat model; embedding model kept/m;
+
+/**
+ * ATO-376/377: the Cloud switch's stop. `atag models stop --chat-only` stops
+ * the chat daemon and keeps the embedding daemon, so memory search keeps its
+ * meaning-based half on the cloud route; the agent keeps it only when the file
+ * wants embeddings and the model is on disk. `embeddingKept` says it did. An
+ * older agent ignores the flag and stops both, printing `stopped`: then
+ * `embeddingKept` is false and the caller goes on as after `models stop`.
+ * Told as a stop on purpose, as modelsStop is.
+ */
+export async function modelsStopChatOnly(): Promise<CliResult & { embeddingKept: boolean }> {
+  const h = cliStandIns.getStore();
+  if (h) h.stops++;
+  else stopsAskedFor++;
+  tell("stopping");
+  const res = await cli(["models", "stop", "--chat-only"], 30_000);
+  return { ...res, embeddingKept: res.ok && CHAT_ONLY_STOP_KEPT.test(res.stdout) };
 }
 let stopsAskedFor = 0;
 /** ATO-157: how many `models stop` this process has asked for, whoever asked (a stop moves no other mark). */

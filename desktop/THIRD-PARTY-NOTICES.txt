@@ -19,6 +19,9 @@ The desktop app bundles three typefaces and a set of brand marks:
   Icons (@lobehub/icons-static-svg 1.95.0, MIT); the AI/ML API mark is
   aimlapi.com's own icon. The marks remain the trademarks of their owners
   and identify the model or provider they stand for.
+- The command palette's search uses a copy of fuzzysort 3.1.0 (MIT) in
+  desktop/renderer/vendor/fuzzysort.js; licence text beside it in
+  desktop/renderer/vendor/fuzzysort-LICENSE.txt and in its entry below.
 
 ========================================================================
 @modelcontextprotocol/sdk 1.29.0 — MIT

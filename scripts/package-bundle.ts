@@ -272,7 +272,7 @@ async function main(): Promise<number> {
     "  - External llama.cpp server reachable via HTTP, or use `atomic-agent models`",
     "    for managed local models.",
     "  - Point the runtime at the server (if external), e.g.",
-    "      atomic-agent config set localModels.url http://127.0.0.1:8080",
+    "      atomic-agent config set localModels.url http://127.0.0.1:9931",
     "  - Install Google Chrome or Microsoft Edge (stable channel). Playwright",
     "    browsers are NOT bundled; playwright-core attaches to the system",
     "    browser via --channel=chrome|msedge.",

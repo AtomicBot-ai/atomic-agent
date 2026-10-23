@@ -62,6 +62,7 @@ import {
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
+  stopDaemon,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
   type DownloadJobKind,
   type DownloadJobMode,
@@ -961,8 +962,38 @@ function persistBackendVariantCpu(path: string): void {
   }
 }
 
-export async function runLocalModelsStop(): Promise<number> {
-  const dataDir = getConfig().paths.localModelsDataDir;
+/**
+ * Whether a chat-only stop keeps the embedding model up: the operator
+ * turned embeddings on, picked a catalog model and its GGUF is on disk.
+ * Anything else has no memory search worth keeping, so the stop takes
+ * the embedding side down too, as a plain `stop` does.
+ */
+function embeddingModelWanted(cfg: ReturnType<typeof getConfig>): boolean {
+  const emb = cfg.localModels.embeddings;
+  if (!emb.enabled || !emb.modelId || !isKnownEmbeddingModelId(emb.modelId)) return false;
+  return isEmbeddingModelDownloaded(cfg.paths.localModelsDataDir, getEmbeddingModelDef(emb.modelId));
+}
+
+/**
+ * `models stop` stops both daemons. `--chat-only` (ATO-376) is what a
+ * switch to a cloud chat model uses: it stops the chat daemon and keeps
+ * the embedding one, so memory search keeps its meaning-based half on
+ * the cloud route. Neither form touches `memory.embeddings.enabled`.
+ */
+export async function runLocalModelsStop(opts?: { chatOnly?: boolean }): Promise<number> {
+  const cfg = getConfig();
+  const dataDir = cfg.paths.localModelsDataDir;
+  if (opts?.chatOnly && embeddingModelWanted(cfg)) {
+    try {
+      await stopDaemon(dataDir);
+    } catch (e) {
+      process.stderr.write(`${e instanceof Error ? e.message : String(e)}\n`);
+      return 1;
+    }
+    // Core stays: the embedding model is still one of its sessions.
+    process.stdout.write("stopped chat model; embedding model kept for memory search\n");
+    return 0;
+  }
   try {
     await stopChatAndEmbeddingDaemons(dataDir);
   } catch (e) {
