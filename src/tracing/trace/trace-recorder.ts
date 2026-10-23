@@ -671,6 +671,7 @@ export function createTraceRecorder(
             ...(event.requestedMaxTokens !== undefined
               ? { requestedMaxTokens: event.requestedMaxTokens }
               : {}),
+            ...(event.repetitive === true ? { repetitive: true } : {}),
             retry: event.retry.kind,
             retryValue:
               event.retry.kind === "fit_window"

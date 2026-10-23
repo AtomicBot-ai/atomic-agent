@@ -367,6 +367,12 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   promptTokens: number;
   /** The cap the cut request carried; absent when it carried none. */
   requestedMaxTokens?: number;
+  /**
+   * The cut reply was a loop: one block repeated back to back, either
+   * found in the cut reply or caught while it streamed (the stream was
+   * then aborted). Absent when it did not loop.
+   */
+  repetitive?: true;
   retry: "raise_cap" | "same_cap" | "fit_window";
   retryValue: number;
 }

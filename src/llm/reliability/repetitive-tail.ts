@@ -21,14 +21,27 @@ export const MAX_REPEAT_PERIOD_CHARS = 512;
 const MIN_REPEATS = 4;
 
 /** And the repeated run must cover at least this much text. */
-const MIN_SPAN_CHARS = 256;
+export const MIN_SPAN_CHARS = 256;
 
 export function hasRepetitiveTail(text: string): boolean {
+  return repetitiveTailPeriod(text, MIN_REPEATS) !== null;
+}
+
+/**
+ * The shortest period, in characters, the tail of `text` repeats with,
+ * or `null` when it does not loop: the last
+ * `max(period × minRepeats, MIN_SPAN_CHARS)` characters (trailing
+ * whitespace aside) must be one block repeated exactly.
+ */
+export function repetitiveTailPeriod(
+  text: string,
+  minRepeats: number,
+): number | null {
   const tail = text.trimEnd();
   const n = tail.length;
-  if (n < MIN_SPAN_CHARS) return false;
+  if (n < MIN_SPAN_CHARS) return null;
   for (let period = 1; period <= MAX_REPEAT_PERIOD_CHARS; period += 1) {
-    const span = Math.max(period * MIN_REPEATS, MIN_SPAN_CHARS);
+    const span = Math.max(period * minRepeats, MIN_SPAN_CHARS);
     if (span > n) break;
     let periodic = true;
     for (let k = n - span + period; k < n; k += 1) {
@@ -37,7 +50,7 @@ export function hasRepetitiveTail(text: string): boolean {
         break;
       }
     }
-    if (periodic) return true;
+    if (periodic) return period;
   }
-  return false;
+  return null;
 }

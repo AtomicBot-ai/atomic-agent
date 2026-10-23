@@ -48,6 +48,14 @@ export type {
   DetectedModelFailure,
 } from "./detect-model-failure.js";
 export {
+  STREAM_LOOP_MIN_REPEATS,
+  createStreamRepetitionWatcher,
+} from "./stream-repetition-watcher.js";
+export type {
+  StreamRepetition,
+  StreamRepetitionWatcher,
+} from "./stream-repetition-watcher.js";
+export {
   FABRICATED_TRANSCRIPT_MIN_LINES,
   STREAM_FABRICATION_ABORT_MIN_LINES,
   createFabricatedTranscriptWatcher,

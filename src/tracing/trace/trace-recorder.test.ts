@@ -910,6 +910,25 @@ describe("createTraceRecorder", () => {
     expect(recorded[0]).not.toHaveProperty("requestedMaxTokens");
   });
 
+  it("records that a cut reply was a loop (ATO-331)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trunc-loop", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 2,
+      cause: "unknown",
+      completionTokens: 0,
+      promptTokens: 0,
+      requestedMaxTokens: 16_384,
+      repetitive: true,
+      retry: { kind: "same_cap", maxTokens: 16_384 },
+    });
+    expect(
+      events.find((e) => e.type === "completion_truncated"),
+    ).toMatchObject({ repetitive: true, retry: "same_cap" });
+  });
+
   it("records a truncation retry with its cause, counts and the retry taken", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-trunc", emit, now });
