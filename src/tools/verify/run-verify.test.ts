@@ -101,6 +101,28 @@ describe("runVerify — command", () => {
     expect(out.summary.split("\n")[0]).toBe("verify.run command: ok");
   });
 
+  it("does not hand the agent's keys to the command, but keeps the run's own env (ATO-347)", async () => {
+    process.env.ATO347_VERIFY_API_KEY = "leaked-key-value";
+    process.env.ATO347_VERIFY_PLAIN = "plain-value";
+    try {
+      const out = await runVerify(
+        {
+          kind: "command",
+          cmd: NODE,
+          args: ["-e", "console.log([process.env.ATO347_VERIFY_API_KEY, process.env.ATO347_VERIFY_PLAIN, process.env.ATO347_VERIFY_OWN_TOKEN].join(','))"],
+          env: { ATO347_VERIFY_OWN_TOKEN: "own-value" },
+          checks: ["exit 0"],
+        },
+        ctx(),
+      );
+      expect(out.ok).toBe(true);
+      expect(out.stdoutTail?.trim()).toBe(",plain-value,own-value");
+    } finally {
+      delete process.env.ATO347_VERIFY_API_KEY;
+      delete process.env.ATO347_VERIFY_PLAIN;
+    }
+  });
+
   it("kills the process group on timeout and says so", async () => {
     const out = await runVerify(
       { kind: "command", cmd: NODE, args: ["-e", "setInterval(() => {}, 1000)"], timeoutMs: 500, checks: ["exit 0"] },

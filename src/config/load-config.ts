@@ -385,6 +385,7 @@ export function loadConfig(): AtomicAgentConfig {
         defaultTimeoutMs: user.tools.shell.defaultTimeoutMs,
         jobMaxMs: user.tools.shell.jobMaxMs,
         maxJobs: user.tools.shell.maxJobs,
+        envPassthrough: [...user.tools.shell.envPassthrough],
       },
     },
     log: { level: logLevel },

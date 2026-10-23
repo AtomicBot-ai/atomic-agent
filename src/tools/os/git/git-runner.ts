@@ -3,6 +3,7 @@ import {
   runCommand,
   type CommandResult,
 } from "../../../sandbox/command-runner.js";
+import { buildCommandEnv } from "../../../sandbox/command-env.js";
 import { resolveUserPath } from "../expand-home.js";
 
 /**
@@ -41,13 +42,16 @@ const DEFAULT_MAX_OUTPUT_BYTES = 512 * 1024;
  *    would fail on native Windows where `cat` is not on PATH; an empty pager
  *    plus `--no-pager` is cross-platform.
  *  - Timeout + output-size cap inherited from `runCommand`.
+ *  - The agent's provider keys and tokens are not inherited (ATO-347,
+ *    `buildCommandEnv`): git runs hooks and configured helpers, which
+ *    must not read them. A caller's explicit `env` still wins.
  *  - Repo root resolution — the repo is always validated before git runs
  *    so we fail loudly if the path is outside any repo.
  */
 export async function runGit(options: GitRunOptions): Promise<GitRunResult> {
   const repoRoot = await resolveRepoRoot(options.repo, options.workingDir);
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...buildCommandEnv(process.env),
     ...options.env,
     GIT_PAGER: "",
     GIT_TERMINAL_PROMPT: "0",
