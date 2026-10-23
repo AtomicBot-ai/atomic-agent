@@ -318,7 +318,7 @@ async function embeddings(check: Check): Promise<void> {
     llm: { activeTextProvider: "local-llama", providers: [{ id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:19191" }, cloudEntry] },
     localModels: { mode: "managed", managed: { modelId: OLD, port: 19191 },
       embeddings: { enabled: wanted, modelId: EMB, port: 19192, url: "http://127.0.0.1:19192" } },
-    // After a cloud trip: the Cloud switch turned hybrid recall off.
+    // After a cloud trip on an agent without `models stop --chat-only` (ATO-377): the Cloud switch turned hybrid recall off.
     memory: { embeddings: { enabled: false } },
   });
   const brief = (r: Awaited<ReturnType<typeof standIn>>) =>

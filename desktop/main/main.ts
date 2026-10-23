@@ -9318,12 +9318,15 @@ async function backendSwitchTest(
       !daemonAfterCloud || toCloud?.daemon === "stop-failed",
       `daemon=${toCloud?.daemon} running=${daemonAfterCloud}`,
     );
-    // Write 2 of activateProvider: a successful stop is followed by
-    // memory.embeddings.enabled=false (the TUI's stopDaemon order).
+    // ATO-377: a stop that kept the embedding server leaves memory.embeddings.enabled
+    // as it was; a stop of both (an agent without `models stop --chat-only`, or no
+    // embedding model to keep) is followed by write 2 of activateProvider, the flag off.
     check(
-      "backend: hybrid recall off after the daemon stop",
-      toCloud?.daemon !== "stopped" || afterCloud?.memory?.embeddings?.enabled === false,
-      `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
+      "backend: hybrid recall kept with the embedding server, off after a stop of both",
+      toCloud?.daemon !== "stopped" || (toCloud.embeddingKept
+        ? afterCloud?.memory?.embeddings?.enabled === afterLocal?.memory?.embeddings?.enabled
+        : afterCloud?.memory?.embeddings?.enabled === false),
+      `daemon=${toCloud?.daemon} embeddingKept=${toCloud?.embeddingKept === true} memory.embeddings.enabled=${afterLocal?.memory?.embeddings?.enabled} → ${afterCloud?.memory?.embeddings?.enabled}`,
     );
     /* These lines used to be pushed into the TRANSCRIPT, so the
        conversation filled up with a commentary on the user's own clicks.
