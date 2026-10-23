@@ -4504,14 +4504,6 @@
     },
     {
       "path": "src/tui/approval-key-arbitration.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
-      "anchor": "c",
-      "line": 248,
-      "count": 4
-    },
-    {
-      "path": "src/tui/approval-key-arbitration.test.ts",
       "code": 2739,
       "message": "Type '{ sessionId: string; workingDir: string; llamaUrl: string; browserChannel: string; browserHeadless: true; approvalLevel: number; maxSteps: number; skillCount: number; }' is missing the following properties from type 'TuiSessionInfo': completionMaxTokens, localBackendConfigured",
       "anchor": "return",

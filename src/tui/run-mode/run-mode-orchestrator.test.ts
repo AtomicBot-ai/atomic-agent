@@ -330,7 +330,7 @@ describe("RunModeOrchestrator.setMode", () => {
     expect(app.setActive).not.toHaveBeenCalled();
     expect(
       app.actions.some(
-        (a) => a.type === "composer_notice" && /has no chat model/.test(a.text),
+        (a) => a.type === "composer_notice" && /has no chat model/.test(a.text ?? ""),
       ),
     ).toBe(true);
   });
