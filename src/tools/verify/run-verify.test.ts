@@ -51,6 +51,30 @@ async function freePort(): Promise<number> {
 }
 
 describe("runVerify — command", () => {
+  it("explains a curses program that fails without a terminal (ATO-323)", async () => {
+    const out = await runVerify(
+      {
+        kind: "command",
+        cmd: NODE,
+        args: ["-e", "console.error('_curses.error: setupterm: could not find terminal'); process.exit(1)"],
+        checks: ["exit 0"],
+      },
+      ctx(),
+    );
+    expect(out.ok).toBe(false);
+    expect(out.hint).toContain("full-screen terminal (curses/TUI) program");
+    expect(out.summary).toContain("note: This looks like a full-screen terminal");
+  });
+
+  it("adds no terminal note to an ordinary failure", async () => {
+    const out = await runVerify(
+      { kind: "command", cmd: NODE, args: ["-e", "console.error('AssertionError: 1 != 2'); process.exit(1)"] },
+      ctx(),
+    );
+    expect(out.hint).toBeUndefined();
+    expect(out.summary).not.toContain("note:");
+  });
+
   it("runs in an isolated copy, reports the exit code and output tails, and evaluates checks", async () => {
     await writeFile(join(work, "data.txt"), "hello from the workspace");
     const copies: string[] = [];

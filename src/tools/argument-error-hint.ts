@@ -38,6 +38,13 @@ const ARGUMENT_ERROR_WORDING =
  * the message does not read as an argument error — a runtime failure
  * (ENOENT, a timeout, an approval refusal) gets no key report, which
  * would only be noise there.
+ *
+ * Also `null` when the tool has a schema and the keys are right: every
+ * key sent is one it accepts and every required key is there. A message
+ * about a value (`oldString` not found in the file, after an earlier
+ * edit in the same batch changed it) still names a field in backticks,
+ * and a key report under it sent the model looking for a wrong key that
+ * did not exist (ATO-323).
  */
 export function describeArgumentError(input: {
   tool: string;
@@ -48,6 +55,13 @@ export function describeArgumentError(input: {
   const receivedKeys = Object.keys(input.args);
   const expectedKeys = expectedKeysFor(input.tool);
   const expectedSet = new Set(expectedKeys);
+  if (
+    expectedKeys.length > 0 &&
+    receivedKeys.every((key) => expectedSet.has(key)) &&
+    requiredKeysFor(input.tool).every((key) => input.args[key] !== undefined)
+  ) {
+    return null;
+  }
   const nearest: Array<{ received: string; expected: string }> = [];
   for (const received of receivedKeys) {
     if (expectedSet.has(received)) continue;
@@ -80,6 +94,13 @@ function expectedKeysFor(tool: string): string[] {
     return [];
   }
   return Object.keys(properties as Record<string, unknown>);
+}
+
+function requiredKeysFor(tool: string): string[] {
+  const required = getDefaultArgsJsonSchema(tool)?.required;
+  return Array.isArray(required)
+    ? required.filter((key): key is string => typeof key === "string")
+    : [];
 }
 
 /**
