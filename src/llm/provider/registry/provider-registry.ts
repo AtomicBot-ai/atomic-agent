@@ -2,6 +2,7 @@ import type { AtomicAgentConfig } from "../../../config/index.js";
 import type { LlamaServerClient } from "../../llama-server-client.js";
 import type { ModelProfile } from "../../model-profile.js";
 import type { LlmProvider } from "../llm-provider.js";
+import { entryHasNoChatModel } from "./chat-model-guard.js";
 import { registerBuiltInProviderKinds } from "./register-built-in-providers.js";
 import {
   getProviderFactory,
@@ -48,15 +49,20 @@ async function buildOrSkip(
 
 export class ProviderRegistry {
   private readonly providers: Map<string, LlmProvider>;
+  private readonly entries: Map<string, LlmProviderConfigEntry>;
   private activeTextId: string;
   private readonly activeTextListeners = new Set<(id: string) => void>();
 
   private constructor(
     activeTextId: string,
     providers: Map<string, LlmProvider>,
+    // Defaulted so a registry built without its entries (a test double)
+    // keeps swapping exactly as before: an unknown entry is not refused.
+    entries: Map<string, LlmProviderConfigEntry> = new Map(),
   ) {
     this.activeTextId = activeTextId;
     this.providers = providers;
+    this.entries = entries;
   }
 
   static async fromConfig(
@@ -69,6 +75,7 @@ export class ProviderRegistry {
     registerBuiltInProviderKinds();
     const resolved = resolveLlmConfig(config);
     const built = new Map<string, LlmProvider>();
+    const entries = new Map<string, LlmProviderConfigEntry>();
     for (const entry of resolved.providers) {
       const factory = getProviderFactory(entry.kind);
       if (!factory) {
@@ -82,14 +89,17 @@ export class ProviderRegistry {
         entry.id === resolved.activeTextProvider,
         ctx.logger,
       );
-      if (provider) built.set(entry.id, provider);
+      if (provider) {
+        built.set(entry.id, provider);
+        entries.set(entry.id, entry);
+      }
     }
     if (!built.has(resolved.activeTextProvider)) {
       throw new Error(
         `llm.activeTextProvider "${resolved.activeTextProvider}" is not configured`,
       );
     }
-    return new ProviderRegistry(resolved.activeTextProvider, built);
+    return new ProviderRegistry(resolved.activeTextProvider, built, entries);
   }
 
   /** Id of the provider serving chat right now (may differ from config until it is re-read). */
@@ -117,6 +127,14 @@ export class ProviderRegistry {
     const next = this.providers.get(id);
     if (!next) {
       throw new Error(`llm provider "${id}" is not configured`);
+    }
+    // Refused before anything moves: listeners, the previous provider's
+    // close and every caller's config write all happen after this.
+    const entry = this.entries.get(id);
+    if (entry && entryHasNoChatModel(entry)) {
+      throw new Error(
+        `${entry.kind} provider "${id}" has no chat model and cannot be the active text provider`,
+      );
     }
     const prev = this.providers.get(this.activeTextId);
     this.activeTextId = id;
@@ -182,6 +200,7 @@ export class ProviderRegistry {
     }
     const provider = await factory({ ...ctx, config, entry });
     this.providers.set(id, provider);
+    this.entries.set(id, entry);
   }
 
   async mergeProvidersFromConfig(
@@ -207,6 +226,7 @@ export class ProviderRegistry {
       );
       if (!provider) continue;
       this.providers.set(entry.id, provider);
+      this.entries.set(entry.id, entry);
       added.push(entry.id);
     }
     return added;
@@ -224,6 +244,7 @@ export class ProviderRegistry {
     }
     const prev = this.providers.get(id);
     this.providers.delete(id);
+    this.entries.delete(id);
     if (prev) {
       await prev.close().catch(() => undefined);
     }

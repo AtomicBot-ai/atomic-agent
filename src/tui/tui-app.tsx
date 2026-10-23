@@ -2383,6 +2383,15 @@ export function TuiApp({
                       onPathCancel={() =>
                         dispatch({ type: "approval_path_edit_closed" })
                       }
+                      previewPage={
+                        state.approvalPreviewPage?.approvalId ===
+                        state.pendingApproval.approvalId
+                          ? state.approvalPreviewPage.page
+                          : null
+                      }
+                      onPreviewPage={() =>
+                        dispatch({ type: "approval_preview_paged" })
+                      }
                     />
                   </Box>
                 ) : null}

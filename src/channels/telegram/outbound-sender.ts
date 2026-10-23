@@ -77,6 +77,25 @@ export interface TelegramApi {
       threadId?: number;
     },
   ): Promise<unknown>;
+
+  /**
+   * Upload text held in memory as a document (`sendDocument` with an
+   * in-memory `InputFile`), so nothing is written to disk. Used by the
+   * approval bridge to attach the full command when the prompt's
+   * preview is cut (ATO-876). Optional for the same reason as
+   * `sendFile`; when absent the bridge says in the prompt that the
+   * full command could not be attached.
+   */
+  sendTextDocument?(
+    chatId: number,
+    doc: {
+      filename: string;
+      content: string;
+      caption?: string;
+      /** Forum topic to deliver into, when the chat has topics. */
+      threadId?: number;
+    },
+  ): Promise<unknown>;
 }
 
 export interface TelegramLogger {

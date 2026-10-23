@@ -120,6 +120,17 @@ describe("HotkeyHint scroll chip", () => {
     // regression to the old keys without tripping on the word "approve".
     expect(out).not.toContain("[y]");
     expect(out).not.toContain("[n]");
+    // A preview that fits has no full view to offer (ATO-876).
+    expect(out).not.toContain(`ctrl+${APPROVAL_CHORDS.viewFull}`);
+  });
+
+  it("offers the full command when the approval preview is cut", () => {
+    const preview = Array.from({ length: 30 }, (_, i) => `echo ${i}`).join("\n");
+    const out = renderHint(
+      chatState({ pendingApproval: { ...fakeApproval(), preview } }),
+    );
+    expect(out).toContain(`ctrl+${APPROVAL_CHORDS.viewFull}`);
+    expect(out).toContain("full command");
   });
 });
 
