@@ -291,6 +291,9 @@ export function createTraceRecorder(
           modelId: completion.modelId,
           stop: completion.stop,
           truncated: completion.truncated,
+          ...(completion.stopType !== undefined
+            ? { stopType: completion.stopType }
+            : {}),
           ...(completion.generationId !== undefined
             ? { generationId: completion.generationId }
             : {}),

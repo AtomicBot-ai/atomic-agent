@@ -173,6 +173,12 @@ export interface TraceLlmCompletion extends TraceEventBase {
   modelId: string | null;
   stop: boolean;
   truncated: boolean;
+  /**
+   * llama-server's `stop_type` (`limit` is the reply cap or a context
+   * overflow, `eos`/`word` a normal stop). Absent for other providers
+   * and on traces recorded before it was kept.
+   */
+  stopType?: string;
   /** The provider's generation id, when it sent one. */
   generationId?: string;
 }

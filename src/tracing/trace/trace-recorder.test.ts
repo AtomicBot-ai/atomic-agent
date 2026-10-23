@@ -412,6 +412,42 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records llama-server's stop_type on llm_completion (ATO-329)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-stop", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "llm_raw_completion",
+        stepIndex: 0,
+        attempt: 1,
+        completion: {
+          content: "{",
+          reasoningContent: "",
+          stop: true,
+          truncated: true,
+          stopType: "limit",
+          finishReason: "length",
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "demo",
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 10,
+            predictedTokens: 512,
+          },
+        },
+      },
+    });
+    expect(events.find((e) => e.type === "llm_completion")).toMatchObject({
+      truncated: true,
+      stopType: "limit",
+    });
+  });
+
   it("records a batch trim with the calls that never ran", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-trim", emit, now });

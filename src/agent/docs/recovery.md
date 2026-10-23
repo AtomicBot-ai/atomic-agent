@@ -7,7 +7,7 @@ Owner: src/agent/
 
 Completion parse/validation recovery, transport retry, request-size repair and provider fallback are separate layers. Preserve their attempt budgets and cancellation semantics; a tool error is an ordinary result, not permission to replay its side effects. The streamed parser and unary repair must not emit an already committed delta twice.
 
-A reply cut short is retried by truncation repair with a notice to think less and write a large file in parts. Cloud keeps the cap (two retries per step); local raises it two-fold once, unless the reply ended in a loop. A filled window repacks once per step; six retries over back-to-back cut steps end the turn.
+A reply cut short (on llama-server, `stop_type: "limit"` without a context overflow counts as the reply cap) is retried by truncation repair with a notice to think less and write a large file in parts. Cloud keeps the cap (two retries per step); local raises it two-fold once, unless the reply ended in a loop. A filled window repacks once per step; six retries over back-to-back cut steps end the turn.
 
 A turn uses bounded continuation legs and task-wide limits, not an unlimited inference loop. Progress policy includes repeated calls, result-aware no-progress, read coverage, repeated test commands, wandering and review stalls. Its warnings/refusals are dispatch behavior, not merely prompt suggestions. Graceful no-progress closure is distinct from infrastructure failure. User cancellation records a stopped-turn marker without emitting a second assistant reply; the next request and memory extraction treat the withdrawn task as closed. Ephemeral worker turns do not retain this marker. Subscription CLI installation/sign-in errors are setup failures, rather than waitable provider outages.
 

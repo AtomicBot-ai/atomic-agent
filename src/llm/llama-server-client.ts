@@ -1737,6 +1737,20 @@ function normaliseCompletionResponse(
     payload,
     timings,
   );
+  // llama-server's `truncated` means the context overflowed (prompt, or
+  // the window filling mid-reply). A reply stopped by `n_predict` says so
+  // only in `stop_type: "limit"` (`stopped_limit` on older builds) with
+  // `truncated: false`; reading `truncated` alone took a reply cut at the
+  // cap for a healthy stop. It is reported as `finishReason: "length"`,
+  // the same reply-cap signal the OpenAI-compatible providers give.
+  const stopType =
+    typeof payload.stop_type === "string"
+      ? payload.stop_type
+      : payload.stopped_limit === true
+        ? "limit"
+        : undefined;
+  const contextOverflow = Boolean(payload.truncated);
+  const replyCapHit = stopType === "limit" && !contextOverflow;
   return {
     content: typeof payload.content === "string" ? payload.content : "",
     reasoningContent:
@@ -1744,7 +1758,9 @@ function normaliseCompletionResponse(
         ? payload.reasoning_content
         : "",
     stop: Boolean(payload.stop),
-    truncated: Boolean(payload.truncated),
+    truncated: contextOverflow || replyCapHit,
+    ...(stopType !== undefined ? { stopType } : {}),
+    ...(replyCapHit ? { finishReason: "length" } : {}),
     timing: {
       promptMs: toNumber(timings.prompt_ms),
       predictedMs: toNumber(timings.predicted_ms),
