@@ -24,7 +24,7 @@ import type { SidecarMessage } from "./sidecar-events.js";
  * pushed at the real stdin stream, the response read off stdout.
  */
 
-const TEXT_PORT = "127.0.0.1:8080";
+const TEXT_PORT = "127.0.0.1:9931";
 
 describe("sidecar start_session — local probe gating", () => {
   let stateDir: string;
