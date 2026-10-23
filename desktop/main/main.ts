@@ -3893,8 +3893,8 @@ async function smokeTest(): Promise<void> {
       `${traced.length}/${reopened.length} cards from the trace in ${sid}`,
     );
     const listed = reopened.filter((c) => c.name === "os.fs.list");
-    const timed = (c: (typeof reopened)[number]): boolean => c.source === "trace" && Number.isFinite(c.ms) && c.ms >= 0;
-    const listedTimed = listed.length > 0 && listed.every(timed) && listed.some((c) => c.ms > 0);
+    const isTimed = (c: (typeof reopened)[number]): boolean => c.source === "trace" && Number.isFinite(c.ms) && c.ms >= 0;
+    const listedTimed = listed.length > 0 && listed.every(isTimed) && listed.some((c) => c.ms > 0);
     check(
       "reopened os.fs.list turn is timed",
       listedTimed,
