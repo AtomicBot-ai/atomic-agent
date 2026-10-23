@@ -374,6 +374,10 @@
 .msgact:hover{background:var(--hover);color:var(--ink)}
 .msgact.danger{color:var(--critical)}
 .msgact.danger:hover{background:var(--critical-wash);color:var(--critical)}
+/* ATO-862: under the last reply of a turn that acted, a greyed retry icon whose
+   tooltip says why it does nothing (msgActs). Same muted look as a greyed
+   .micbtn; hover keeps it grey and adds no wash, so it never reads as live. */
+.msgact.msgact-off,.msgact.msgact-off:hover{color:var(--ink-3);opacity:.55;background:none;cursor:default}
 /* ATO-168: on a reply the actions start at the LEFT, under the text they copy
    (Danya: on the right "it flies off who knows where"); the user bubble keeps
    them at its right edge. The last reply's dot (replyDot) is a zero-height

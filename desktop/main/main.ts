@@ -12822,11 +12822,11 @@ async function chromeTest(
     const userActs = await js<Acts | null>("window.__msgActs('user')");
     /* ATO-861: the last reply of a turn without tools also carries "Ask
        again" before its copy; a turn that drew a tool card or an approval
-       keeps copy alone. The fixture prompt needs no tool, but a model that
-       reaches for one anyway is not this check's failure, so the expectation
-       follows what the transcript drew. */
-    const asstOrder = asstActs && !asstActs.acted ? '["resend","copy"]' : '["copy"]';
-    const asstTitles = asstActs && !asstActs.acted ? '["Ask again","Copy message"]' : '["Copy message"]';
+       shows the muted hint there instead (ATO-862). The fixture prompt needs
+       no tool, but a model that reaches for one anyway is not this check's
+       failure, so the expectation follows what the transcript drew. */
+    const asstOrder = asstActs && !asstActs.acted ? '["resend","copy"]' : '["hint","copy"]';
+    const asstTitles = asstActs && !asstActs.acted ? '["Ask again","Copy message"]' : '["Repeating this turn could create or delete files a second time","Copy message"]';
     check(
       "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
       !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
@@ -12904,7 +12904,8 @@ async function chromeTest(
     check(
       "item 4: a streaming reply carries no actions, and a finished one does",
       !!streamed && streamed.streaming.buttons === 0
-        && streamed.finished.buttons === (asstActs && !asstActs.acted ? 2 : 1)
+        // Two either way: Ask again or the muted hint (ATO-862), then copy.
+        && streamed.finished.buttons === 2
         && streamed.offMessages === 0,
       `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
     );
@@ -12925,6 +12926,8 @@ async function chromeTest(
     type ReplyRetry = {
       plain: string[] | null; tool: string[] | null; earlier: string[] | null; steered: string[] | null;
       busy: string[] | null; placeholder: string[] | null; stopped: string[] | null; approval: { id: string } | null;
+      approvalActed: boolean;
+      toolClick: { found: boolean; resends: number; logSame: boolean; focusable: boolean | null };
     };
     const rr = await js<ReplyRetry>("window.__replyRetry()");
     const again = '["resend:rr-u:Ask again","copy"]';
@@ -12935,9 +12938,19 @@ async function chromeTest(
     );
     check(
       "item 4: no Ask again after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
-      JSON.stringify(rr.tool) === '["copy"]' && JSON.stringify(rr.busy) === '["copy"]'
+      JSON.stringify(rr.tool) === '["hint:true:Repeating this turn could create or delete files a second time","copy"]' && JSON.stringify(rr.busy) === '["copy"]'
         && JSON.stringify(rr.placeholder) === '["copy"]' && JSON.stringify(rr.stopped) === '["copy"]' && rr.approval === null,
       JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, stopped: rr.stopped, approval: rr.approval }),
+    );
+    /* ATO-862: where a turn that acted would have had Ask again, a greyed
+       retry icon explains why there is none. It carries no data-resend or
+       data-act (lastActs would read it as resend or '?'), is skipped by Tab,
+       and a real click on it sends nothing. An approval counts as acting too. */
+    check(
+      "item 4: a turn that acted shows the muted retry hint, which sends nothing when clicked",
+      rr.toolClick.found && rr.toolClick.resends === 0 && rr.toolClick.logSame && rr.toolClick.focusable === false
+        && rr.approvalActed === true,
+      JSON.stringify({ toolClick: rr.toolClick, approvalActed: rr.approvalActed }),
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup
