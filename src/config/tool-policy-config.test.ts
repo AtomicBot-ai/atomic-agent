@@ -130,8 +130,8 @@ describe("outbound HTTP and tool configuration ownership", () => {
         get enabled() { events.push("HTTP replacement"); schema.USER_CONFIG_DEFAULTS.http = { ...createHttpDefaults(), enabled: false, approvalMode: "always" }; return undefined; },
         get approvalMode() { events.push("HTTP second replacement"); schema.USER_CONFIG_DEFAULTS.http = { ...createHttpDefaults(), approvalMode: "writes", maxResponseBytes: 7 }; return undefined; },
       }, tools: { shell: {
-        get defaultTimeoutMs() { events.push("shell replacement"); schema.USER_CONFIG_DEFAULTS.tools.shell = { defaultTimeoutMs: 0, jobMaxMs: 3, maxJobs: 2 }; return undefined; },
-        get jobMaxMs() { events.push("whole tools replacement"); schema.USER_CONFIG_DEFAULTS.tools = { shell: { defaultTimeoutMs: 5, jobMaxMs: 1, maxJobs: 7 } }; return undefined; },
+        get defaultTimeoutMs() { events.push("shell replacement"); schema.USER_CONFIG_DEFAULTS.tools.shell = { defaultTimeoutMs: 0, jobMaxMs: 3, maxJobs: 2, envPassthrough: [] }; return undefined; },
+        get jobMaxMs() { events.push("whole tools replacement"); schema.USER_CONFIG_DEFAULTS.tools = { shell: { defaultTimeoutMs: 5, jobMaxMs: 1, maxJobs: 7, envPassthrough: [] } }; return undefined; },
       } } });
       expect(events).toEqual(["HTTP replacement", "HTTP second replacement", "shell replacement", "whole tools replacement"]);
       expect(root.http.enabled).toBe(false);
