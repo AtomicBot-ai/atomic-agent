@@ -49,9 +49,13 @@ export interface LoadSkillsResult {
 
 /**
  * Scan global and project skill directories, parse each SKILL.md, and
- * return a deduplicated list. Project-local skills shadow global ones with
- * the same name. Failures to parse individual skills are collected into
- * `errors` so the loader keeps going.
+ * return a deduplicated list. A global skill wins over a project-local one
+ * with the same name: a checked-out repository must not be able to replace
+ * a skill the user installed (and inherit what that skill is trusted to do,
+ * such as an auto-approved setup check). The ignored project copy is
+ * reported in `errors` so the shadowing is visible rather than silent.
+ * Failures to parse individual skills are collected into `errors` too, so
+ * the loader keeps going.
  */
 export async function loadSkills(
   options: LoadSkillsOptions,
@@ -81,9 +85,18 @@ export async function loadSkills(
     }
   }
   for (const s of projectSkills) {
-    if (isSkillEligibleForPlatform(s.manifest, platform)) {
-      merged.set(s.manifest.name, s);
+    if (!isSkillEligibleForPlatform(s.manifest, platform)) continue;
+    const existing = merged.get(s.manifest.name);
+    if (existing?.source === "global") {
+      errors.push({
+        path: s.rootDir,
+        error:
+          `skill ${s.manifest.name}: a global skill with this name is installed ` +
+          `at ${existing.rootDir}; the project copy is ignored`,
+      });
+      continue;
     }
+    merged.set(s.manifest.name, s);
   }
 
   return {
