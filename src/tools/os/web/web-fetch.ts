@@ -125,6 +125,7 @@ export function buildOsWebFetchTool(
       "per-attempt budget. For raw API/JSON responses, custom headers, " +
       "auth, or POST, use os.http.request instead.",
     readonly: true,
+    untrustedOutput: "a web page",
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs, fetchCfg.timeoutMs);
       let outcome: FetchOutcome;

@@ -68,6 +68,18 @@ describe("the uncensored row on the first-run pick screen", () => {
     expect(hfLine).toBe(uncensoredLine + 1);
   });
 
+  it("says in plain words what the uncensored model is (U-12)", () => {
+    const picks = orderLocalModelPicks(
+      buildLocalModelPicks(16, LOCAL_MODELS_CATALOG),
+    );
+    const frame = frameAt(picks.length - 1, 16);
+    // The row is truncated to the terminal width; the note's opening
+    // words come right after the warning tag, so they always show.
+    const row = frame.split("\n").find((l) => l.includes(UNCENSORED_ID)) ?? "";
+    expect(row).toContain("Use at your own risk · Fewer safety");
+    expect(row).not.toContain("abliterated");
+  });
+
   // The minimal tier drops descriptions but must never drop the warning.
   it("keeps the warning when the tier drops the row details", () => {
     const picks = orderLocalModelPicks(

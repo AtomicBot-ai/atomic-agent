@@ -182,7 +182,9 @@ function note(pick: LocalModelPick, fit: OnboardingFit): string {
   // The warning tag outranks the description — it stays on even in the
   // minimal tier, and truncation eats the sales pitch before it.
   if (pick.tag) parts.push(pick.tag);
-  if (fit.rowDetails) parts.push(pick.description);
+  // An uncensored row explains itself in plain words rather than with
+  // the catalog's technical description.
+  if (fit.rowDetails) parts.push(pick.note ?? pick.description);
   return parts.join(" · ");
 }
 

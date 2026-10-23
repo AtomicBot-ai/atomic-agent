@@ -44,7 +44,7 @@ export interface VerifyRunArgs {
   // command
   readonly cmd?: string;
   readonly args?: readonly string[];
-  // service
+  // service, and optionally page (a server the page is loaded from)
   readonly start?: { readonly cmd: string; readonly args?: readonly string[] };
   readonly ready?: {
     readonly port?: number;
@@ -233,5 +233,24 @@ export function parseVerifyRunArgs(raw: Record<string, unknown>): VerifyRunArgs 
   const path = optionalString(raw.path, "path");
   const url = optionalString(raw.url, "url");
   if ((path === undefined) === (url === undefined)) fail("page needs exactly one of `path` or `url`");
-  return { ...base, path, url, script: parseScript(raw.script) ?? [], probes: parseProbes(raw.probes) ?? [] };
+  const page = { ...base, path, url, script: parseScript(raw.script) ?? [], probes: parseProbes(raw.probes) ?? [] };
+  if (raw.start === undefined || raw.start === null) return page;
+  // A page served by its own server: start it, wait until it is ready,
+  // then open `url`. Without a wait the browser races the server and
+  // gets ERR_CONNECTION_REFUSED.
+  if (url === undefined) fail("page with `start` needs `url` (the address the started server serves), not `path`");
+  const start = record(raw.start, "start");
+  const ready = raw.ready === undefined || raw.ready === null ? {} : record(raw.ready, "ready");
+  const port = optionalInteger(ready.port, "ready.port");
+  const readyUrl = optionalString(ready.url, "ready.url");
+  return {
+    ...page,
+    start: { cmd: requiredString(start.cmd, "start.cmd"), args: optionalStringArray(start.args, "start.args") ?? [] },
+    ready: {
+      port,
+      // Default readiness: the page URL itself answers 2xx.
+      url: readyUrl ?? (port === undefined ? url : undefined),
+      timeoutMs: clampedNumber(ready.timeoutMs, "ready.timeoutMs", VERIFY_READY_DEFAULT_TIMEOUT_MS, VERIFY_RUN_MAX_TIMEOUT_MS),
+    },
+  };
 }

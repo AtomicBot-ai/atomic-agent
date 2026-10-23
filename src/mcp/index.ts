@@ -14,6 +14,7 @@ export { McpManager } from "./mcp-manager.js";
 export type { McpManagerDeps, McpStatusSink } from "./mcp-manager.js";
 
 export { createMcpToolDefinition } from "./mcp-tool-adapter.js";
+export { isMcpToolEnabled } from "./mcp-tool-filter.js";
 export type { McpToolGateOptions } from "./mcp-tool-adapter.js";
 
 export {

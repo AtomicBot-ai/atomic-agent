@@ -137,7 +137,8 @@ function parseMcpTransport(raw: unknown, field: string): McpTransport {
 /**
  * Validate and normalise the `mcp.servers[]` list. Each entry is
  * checked for a valid namespace name, an enabled flag, and a
- * well-formed transport. Duplicate names are rejected — the
+ * well-formed transport. Optional `enabledTools` / `disabledTools`
+ * are lists of raw tool names (null or absent: no filter). Duplicate names are rejected — the
  * namespace becomes the `mcp.<name>.<tool>` prefix and must be
  * unique. Empty input is accepted.
  */
@@ -203,6 +204,14 @@ export function parseMcpServers(
       cfg.env === undefined || cfg.env === null
         ? undefined
         : parseMcpEnv(cfg.env, `${field}[${i}].env`);
+    const enabledTools = parseStringArrayOrNull(
+      cfg.enabledTools,
+      `${field}[${i}].enabledTools`,
+    );
+    const disabledTools = parseStringArrayOrNull(
+      cfg.disabledTools,
+      `${field}[${i}].disabledTools`,
+    );
     out.push({
       name,
       enabled,
@@ -210,6 +219,8 @@ export function parseMcpServers(
       ...(description ? { description } : {}),
       ...(trust ? { trust } : {}),
       ...(env ? { env } : {}),
+      ...(enabledTools ? { enabledTools } : {}),
+      ...(disabledTools ? { disabledTools } : {}),
     });
   }
   return out;

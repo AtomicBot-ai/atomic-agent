@@ -90,6 +90,13 @@ export interface LocalModelDef {
    */
   uncensored?: boolean;
   /**
+   * One plain sentence saying what the model is, shown in the first-run
+   * picker in place of the description. Set on reduced-refusal entries
+   * so a newcomer reads what "uncensored" means instead of only a
+   * warning. Desktop shows the same text.
+   */
+  note?: string;
+  /**
    * Vision capability flag. When `true`, the model has an associated
    * mmproj projector file that llama-server needs (via `--mmproj <path>`)
    * to enable multimodal input. The runtime uses this to gate the
@@ -366,13 +373,16 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     // GGUF that any llama-server loads — and the daemon has no
     // `--model-draft` wiring to use an MTP head anyway.
     id: "qwen-3.8-27b-uncensored",
-    name: "Qwen3.8 27B Uncensored GGUF",
+    // Spelt like the other Qwen entries ("Qwen 3.8 27B GGUF"); the
+    // desktop picker uses the same name, description and note.
+    name: "Qwen 3.8 27B Uncensored GGUF",
     filename: "Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf",
     huggingFaceUrl:
       "https://huggingface.co/JonathanColetti/Qwen3.8-27B-Uncensored-GGUF/resolve/main/Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf",
     fileSizeGb: 16.5,
     sizeLabel: "16.5 GB",
-    description: "Reduced-refusal Qwen3.8 27B (abliterated)",
+    description: "Reduced-refusal Qwen 3.8 27B (abliterated)",
+    note: "Fewer safety refusals: it may answer requests other models decline.",
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
