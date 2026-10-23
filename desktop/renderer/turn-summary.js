@@ -37,19 +37,24 @@ function turnFoldable(m) {
   if (!m) return false;
   if (m.k === 'reason' || m.k === 'tool') return true;
   /* Answered by the person. One still asking stays in sight, and so does one
-     the run left unanswered ("Not answered — the run was stopped"): that is
+     the run left unanswered (its card reads "Not answered"): that is
      news about how the turn ended, not a receipt. */
   return m.k === 'approval' && (m.state === 'approved' || m.state === 'denied');
 }
 
 /** The folds of `log`: Map from the index of a turn's first foldable row to
-    {at, replyId, rows: [indices], tools, reasons, approvals, failed}.
+    {at, replyId, replyAt, rows: [indices], tools, reasons, approvals, failed}.
     opts.runningId: the reply still streaming (its turn is left alone).
-    opts.always: Always show steps (nothing folds). */
+    opts.always: Always show steps (nothing folds).
+    opts.failedOf: whether a call failed, as its card says (renderer.js passes
+    toolState === 'err'). Without it, a call that came back not ok and was
+    neither denied nor left unrun: a Deny is the person's answer, not a failure. */
 function turnFoldsOf(log, opts) {
   const o = opts || {};
   const out = new Map();
   if (o.always || !Array.isArray(log)) return out;
+  const failedOf = typeof o.failedOf === 'function' ? o.failedOf
+    : (m) => m.ok === false && m.outcome !== 'denied' && m.outcome !== 'notrun';
   for (let i = 0; i < log.length; i++) {
     const u = log[i];
     if (!u || u.k !== 'user' || u.steered) continue;
@@ -62,11 +67,11 @@ function turnFoldsOf(log, opts) {
     const tools = rows.filter((x) => log[x].k === 'tool');
     if (tools.length || rows.length >= 2) {
       out.set(rows[0], {
-        at: rows[0], replyId: reply.id, rows,
+        at: rows[0], replyId: reply.id, replyAt: j, rows,
         tools: tools.length,
         reasons: rows.filter((x) => log[x].k === 'reason').length,
         approvals: rows.filter((x) => log[x].k === 'approval').length,
-        failed: tools.filter((x) => log[x].ok === false).length,
+        failed: tools.filter((x) => failedOf(log[x])).length,
       });
     }
     i = j - 1;

@@ -7971,6 +7971,9 @@ async function uiTest(
   await js<number>("window.__pushUser('a short one')");
   await js<number>("window.__pushTool('read_file', {path:'a.txt'}, 'ok', false)");
   await js<number>("window.__pushAssistant('done')");
+  // ATO-464: that turn is finished, so its call folded into a summary line; open it
+  // (the real button) so the row checks below read the card itself.
+  await js<unknown>("window.__turnSums().filter((x) => !x.open).forEach((x) => window.__clickTurnSum(x.id))");
   type Shape = { k: string; glyphs: number; gutter: number | null; end: boolean; endLast: boolean; strip: boolean; left: number };
   const shape = await js<Shape[]>("window.__turnShape()");
   const tail = shape.slice(-3);

@@ -20065,7 +20065,8 @@ function renderItems() {
   const exaHost = exaKeyHost(items);
   /* ATO-464: a finished turn's steps fold into one line (turn-summary.js).
      The turn still streaming is the one S.turnId is on; it is drawn live. */
-  const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always});
+  const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
+    failedOf: (t) => toolState(t) === 'err'});   // red only for what the card itself shows as an error
   const hidden = new Set();
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
@@ -20116,7 +20117,7 @@ function renderItems() {
     own measured times added up; null when nothing was measured, so the line
     prints no number rather than a zero. */
 function turnSumMs(fold, log) {
-  const reply = log.find((x) => x.id === fold.replyId);
+  const reply = log[fold.replyAt];   // by index: a lookup per fold on every frame would grow with the chat
   if (reply && reply.workedMs > 0) return reply.workedMs;
   let ms = 0;
   fold.rows.forEach((x) => {

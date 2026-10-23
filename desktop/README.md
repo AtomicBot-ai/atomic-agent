@@ -208,7 +208,8 @@ Real, driven by the running agent:
   live, one by one. Once it has finished, the reasoning rows, the calls and
   the approvals the person answered fold into one quiet line above the reply,
   `Used 4 tools · 12 s` (`Reasoned in 3 steps` when it only thought), with
-  the failed calls counted in red. A click opens the steps under the line,
+  the failed calls counted in red (a denied call or one the turn never ran
+  is not counted as failed). A click opens the steps under the line,
   which stays where it was; the View menu's Expand / Collapse all tool cards
   open and fold these lines too, and the inspector's Steps opens the turn of
   the card it jumps to. Progress notes, system rows, an approval still asking

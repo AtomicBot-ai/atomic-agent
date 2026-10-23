@@ -65,6 +65,15 @@ test('words stay in sight: notes, system rows, a waiting approval and one the ru
   assert.equal(turnFoldable(log[8]), true);
 });
 
+test('a denied call or one the turn never ran is not "failed"; the card\'s own verdict wins when given', () => {
+  const log = [user(), tool({ok: false, outcome: 'denied'}), approval('denied'), tool({ok: false, outcome: 'notrun'}), tool({ok: false}), reply()];
+  const f = turnFoldsOf(log, {}).get(1);
+  assert.equal(f.tools, 3);
+  assert.equal(f.failed, 1);
+  assert.equal(f.replyAt, 5);
+  assert.equal(turnFoldsOf(log, {failedOf: () => false}).get(1).failed, 0);
+});
+
 test('a steer does not start a turn; the next real message does', () => {
   const log = [user(), tool(), user({steered: true}), tool(), reply(), user(), tool(), reply()];
   const folds = turnFoldsOf(log, {});
@@ -112,5 +121,5 @@ test('the page loads turn-summary.js before renderer.js, which draws with it', a
   const renderer = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   // The click goes through the document-level delegation, never a listener on the line itself.
   assert.match(renderer, /t\.closest\('\[data-turnsum\]'\)/);
-  assert.match(renderer, /turnFoldsOf\(items, \{runningId: S\.turnId \? S\.streamId : null, always: STEPS\.always\}\)/);
+  assert.match(renderer, /turnFoldsOf\(items, \{runningId: S\.turnId \? S\.streamId : null, always: STEPS\.always,\s*failedOf: \(t\) => toolState\(t\) === 'err'\}\)/);
 });
