@@ -48,7 +48,7 @@ describe("loadConfig", () => {
     expect(existsSync(path)).toBe(true);
     const written = JSON.parse(readFileSync(path, "utf8"));
     expect(written.version).toBe(USER_CONFIG_VERSION);
-    expect(config.localModels.url).toBe("http://127.0.0.1:8080");
+    expect(config.localModels.url).toBe("http://127.0.0.1:9931");
     expect(config.localModels.completionMaxTokens).toBe(16_384);
     expect(config.log.level).toBe("info");
     expect(config.agent.approvalLevel).toBe(1);

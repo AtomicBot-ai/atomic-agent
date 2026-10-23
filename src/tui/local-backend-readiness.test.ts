@@ -373,8 +373,17 @@ describe("isLocalBackendConfigured", () => {
 
   it("keeps saying no when the URL was rewritten to the shipped default", () => {
     persistUserLocalLlmUrl("http://192.168.1.50:9090");
+    persistUserLocalLlmUrl("http://127.0.0.1:9931");
+
+    expect(isLocalBackendConfigured()).toBe(false);
+  });
+
+  it("keeps saying no on an untouched install whose first run wrote the old 8080 default", () => {
+    // Every first run writes the defaults to config.json, so installs from
+    // before llama.cpp moved to 9931 carry 8080 without anyone choosing it.
     persistUserLocalLlmUrl("http://127.0.0.1:8080");
 
+    expect(getConfig().localModels.url).toBe("http://127.0.0.1:8080");
     expect(isLocalBackendConfigured()).toBe(false);
   });
 
