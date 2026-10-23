@@ -170,10 +170,19 @@ describe("ApprovalBridge.dispatch", () => {
       { length: 400 },
       (_, i) => `echo ${String(i + 1).padStart(3, "0")} ${"x".repeat(20)}`,
     );
+    script[398] = "echo safe #\u202e";
     script[399] = "rm -rf ~ \u001b[8m";
     const long = script.join("\n");
+    // Every line, with the display-rewriting characters escaped as in
+    // the prompt: a raw right-to-left override would reorder the hidden
+    // lines in the person's text viewer.
+    const visible = [
+      ...script.slice(0, 398),
+      "echo safe #\\u202e",
+      "rm -rf ~ \\x1b[8m",
+    ].join("\n");
 
-    it("sends the exact preview as a .txt document before a cut prompt", async () => {
+    it("sends every line of the preview as a .txt document before a cut prompt", async () => {
       const h = makeHarness();
       await h.bridge.dispatch({ ...req("big"), preview: long }, 7, 5);
       expect(h.api.sendTextDocument).toHaveBeenCalledTimes(1);
@@ -181,7 +190,7 @@ describe("ApprovalBridge.dispatch", () => {
       expect(chatId).toBe(7);
       expect(doc).toEqual({
         filename: "full-command.txt",
-        content: long,
+        content: visible,
         caption: "Full command (400 lines), for the approval below",
         threadId: 5,
       });

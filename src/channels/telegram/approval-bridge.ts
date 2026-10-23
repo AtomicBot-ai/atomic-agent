@@ -3,6 +3,7 @@ import {
   excerptPreview,
   formatApprovalCategory,
   hiddenLinesNote,
+  previewLines,
 } from "../../approval/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
@@ -103,9 +104,10 @@ interface PendingState {
  *    the channel gives up for good, `expireAll()` denies what is
  *    pending at once instead of leaving each turn to its timer.
  * 6. **A cut preview comes with the full command (ATO-876).** When the
- *    preview does not fit one message, the exact preview text is sent
- *    first, to the same chat and topic, as a `.txt` document, and the
- *    prompt says so. If that upload fails the prompt says the full
+ *    preview does not fit one message, every line of the preview is
+ *    sent first, to the same chat and topic, as a `.txt` document, with
+ *    the same control and bidi escaping as the prompt, and the prompt
+ *    says so. If that upload fails the prompt says the full
  *    command could not be attached instead of dropping it silently.
  *
  * Known UX gap (non-functional, deferred to slice 3):
@@ -318,10 +320,13 @@ export class ApprovalBridge {
 
   /**
    * Send the whole preview as a `.txt` document to the approval's own
-   * chat and topic. The content is `request.preview` byte for byte, the
-   * text the tool put up for approval, so what the person reads in the
-   * file is what the prompt is about. Returns whether it was delivered;
-   * a failure is logged and reported in the prompt, never fatal.
+   * chat and topic. The content is every line of `request.preview`, the
+   * text the tool put up for approval, with the characters that could
+   * rewrite the display (terminal controls, bidi overrides) escaped the
+   * same way as in the prompt: a text viewer honours a right-to-left
+   * override, so a raw copy could show the hidden lines in a different
+   * order than they run. Returns whether it was delivered; a failure is
+   * logged and reported in the prompt, never fatal.
    */
   private async attachFullCommand(
     request: ApprovalRequest,
@@ -337,11 +342,12 @@ export class ApprovalBridge {
       });
       return false;
     }
-    const lines = preview.split(/\r\n|\r|\n/).length;
+    const visible = previewLines(preview);
+    const lines = visible.length;
     try {
       await send.call(this.deps.api, chatId, {
         filename: FULL_COMMAND_FILENAME,
-        content: preview,
+        content: visible.join("\n"),
         caption: `Full command (${lines} ${lines === 1 ? "line" : "lines"}), for the approval below`,
         ...(threadId === undefined ? {} : { threadId }),
       });
