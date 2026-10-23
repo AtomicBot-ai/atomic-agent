@@ -332,7 +332,9 @@ function isForeign(path: string): boolean {
 
 /**
  * Top-level `.cursor/rules/*.mdc` and `*.md` files, sorted by name and capped.
- * The folder is listed only when it resolves inside the workspace.
+ * The folder is listed only when it resolves inside the workspace. Rules that
+ * are not always on are dropped here, so they never take a file slot from a
+ * nested instruction file; `read` checks again on the real pass.
  */
 function listCursorRules(root: string, diagnostics: Diagnostics): string[] {
   const dir = join(root, cursorRulesDir);
@@ -346,7 +348,14 @@ function listCursorRules(root: string, diagnostics: Diagnostics): string[] {
     for (const dropped of names.slice(maxCursorRules)) diagnostics.add(`Cursor rules exceed ${maxCursorRules} files; later files were not loaded`, `${cursorRulesDir}/${dropped}`);
     names = names.slice(0, maxCursorRules);
   }
-  return names.map(name => `${cursorRulesDir}/${name}`);
+  return names.map(name => `${cursorRulesDir}/${name}`).filter(path => {
+    let file: { path: string; content: string } | null;
+    // Unreadable or odd files stay in the list; `read` reports them.
+    try { file = readWorkspaceFile(root, join(root, path)); } catch { return true; }
+    if (!file || file.content.includes("\0") || cursorRuleAlwaysApplies(file.content)) return true;
+    diagnostics.add("Skipped Cursor rules that apply only to matching files or on request", path);
+    return false;
+  });
 }
 
 /**

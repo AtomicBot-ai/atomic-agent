@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -253,6 +253,15 @@ describe("cloud project instructions", () => {
     expect(tight.instructions.map(r => r.body)).toEqual(["OWN", "R0"]);
   });
 
+  it("does not let Cursor rules that are not always on take file slots from nested rules", () => {
+    execFileSync("git", ["init", "-q", root]);
+    put("AGENTS.md", "OWN"); put("a/b/c/AGENTS.md", "DEEP");
+    put(".cursor/rules/x1.mdc", "---\nglobs: \"*.ts\"\n---\nTS"); put(".cursor/rules/x2.mdc", "---\ndescription: docs\n---\nDOCS");
+    const result = loadProjectInstructions(root, undefined, { maxFiles: 2 });
+    expect(result.instructions.map(r => r.body)).toEqual(["OWN", "DEEP"]);
+    expect(result.diagnostics.join("\n")).not.toMatch(/deeper files were not loaded/);
+  });
+
   it("loads a rule file once when another tool's file links to an own root rule", () => {
     put("AGENTS.md", "SHARED"); symlinkSync(join(root, "AGENTS.md"), join(root, "GEMINI.md"));
     const result = loadProjectInstructions(root);
@@ -261,6 +270,9 @@ describe("cloud project instructions", () => {
 
   it("notices a new Cursor rule through the watched rules folder", () => {
     put("AGENTS.md", "OWN"); mkdirSync(join(root, ".cursor/rules"), { recursive: true });
+    // Backdate the folder: file timestamps are coarse (a few ms on Linux), so a
+    // file added right after mkdir could otherwise leave its mtime unchanged.
+    utimesSync(join(root, ".cursor/rules"), 1_000, 1_000);
     let loads = 0;
     const cached = createProjectInstructionsCache({ ttlMs: 60_000, now: () => 0, load: (...args) => { loads++; return loadProjectInstructions(...args); } });
     expect(cached(root).instructions.map(r => r.body)).toEqual(["OWN"]);
