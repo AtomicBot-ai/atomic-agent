@@ -183,7 +183,7 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
     for (const [id, grammar] of await grammars()) {
       for (const call of [
         '[{"tool":"os.fs.write","args":{"path":"a.py","content":"def f():"}}]',
-        '[{"tool":"os.shell.run","args":{"command":"ls "}}]',
+        '[{"tool":"os.shell.run","args":{"cmd":"ls "}}]',
         '[{"tool":"finish","args":{"summary":"done:"}}]',
       ]) {
         expect(gbnfAccepts(grammar, "root", call), `${id} ${call}`).toBe(true);
@@ -580,9 +580,10 @@ describe("the reasoning budget (F49)", () => {
     ]) {
       const narrowed = buildGrammarForTools(variant, ["finish"]);
       expect(grammarToolNames(narrowed)).toEqual(["finish", "reply"]);
-      expect(narrowed.replace(/^tool-name ::= .*$/m, "")).toBe(
-        variant.replace(/^tool-name ::= .*$/m, ""),
-      );
+      // the rewrite touches tool-name and, for the shell branch, tool-call
+      const strip = (g: string): string => g.replace(/^tool-name ::= .*$/m, "").replace(/^tool-call ::= .*$/m, "");
+      expect(strip(narrowed)).toBe(strip(variant));
+      expect(narrowed).toMatch(/^tool-call ::= reply-call \| other-call$/m);
     }
   });
 });
