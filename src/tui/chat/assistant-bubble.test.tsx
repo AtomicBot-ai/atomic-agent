@@ -42,6 +42,17 @@ describe("AssistantBubble", () => {
     expect(lastFrame() ?? "").not.toContain("📎");
   });
 
+  it("never shows half-written markdown while streaming", () => {
+    const { lastFrame } = render(
+      <AssistantBubble text={"use **bold and `code and see [docs](https://exa"} streaming />,
+    );
+    const text = lastFrame() ?? "";
+    expect(text).toContain("docs");
+    expect(text).not.toContain("**");
+    expect(text).not.toContain("`");
+    expect(text).not.toContain("](");
+  });
+
   it("renders streaming text without OSC 8 when there is no URL", () => {
     const { lastFrame } = render(
       <AssistantBubble text="thinking about it" streaming />,
