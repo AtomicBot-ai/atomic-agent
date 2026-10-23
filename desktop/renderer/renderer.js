@@ -8021,9 +8021,19 @@ function cpufbApply(n) {
   }
   if (llmVisible()) llmRepaint();
 }
+/* ATO-858: after the switch the agent keeps `localModels.managed.backendVariant: "cpu"`,
+   so later starts run the CPU build with no switch in their output and main's word
+   goes back to null. The saved setting says the model is still on the CPU build.
+   Only on llama.cpp: Atomic Core picks its own build and never reads backendVariant,
+   and the v77 move to Core kept a "cpu" saved under llama.cpp. */
+function cpufbSaved() {
+  const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
+  const m = lm.managed;
+  return lm.mode === 'managed' && !!m && m.engine === 'llama-server' && m.backendVariant === 'cpu';
+}
 /** Settings › Models: the CPU switch, one line. Left out while the failure card is up: that card carries it. */
 function cpufbCardHTML() {
-  if (!CPUFB.on || ENGF.f) return '';
+  if ((!CPUFB.on && !cpufbSaved()) || ENGF.f) return '';
   return '<div class="tk-notice tk-notice--amber llm-cpufb" role="status">' + ic('cpu')
     + '<span class="grow"><span class="llm-note">' + esc(CPUFB_LINE) + '</span></span></div>';
 }
