@@ -9,6 +9,7 @@ import {
 } from "../../compressor/result-compressor.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
 import { resolveUserPath } from "../os/expand-home.js";
+import { toolOutputDir } from "../tool-output-spill.js";
 import type { ToolContext } from "../tool-registry.js";
 import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
 
@@ -75,6 +76,18 @@ export function isOutsideReadRoots(
   if (roots.some((root) => isInside(resolve(root), target))) return false;
   const real = canonical(target);
   return !roots.some((root) => isInside(canonical(resolve(root)), real));
+}
+
+/**
+ * Whether `target` is inside the session's tool-output folder both
+ * lexically AND canonically, so a symlink planted there cannot carry a
+ * read outside the roots (the roots check accepts either form).
+ */
+function isOwnToolOutput(target: string, dir: string): boolean {
+  return (
+    isInside(resolve(dir), target) &&
+    isInside(canonical(resolve(dir)), canonical(target))
+  );
 }
 
 /** Whether `path` is under any of `prefixes`, lexically or canonically. */
@@ -200,12 +213,16 @@ export function sessionReadRefusal(
 function firstTargetOutside(
   tool: string,
   args: Record<string, unknown>,
-  ctx: Pick<ToolContext, "workingDir">,
+  ctx: Pick<ToolContext, "sessionId" | "workingDir">,
   roots: readonly string[],
   scratchInScope: boolean,
 ): string | null {
   const targetsOf = READ_TOOL_TARGETS.get(tool);
   if (targetsOf === undefined) return null;
+  // The session's own saved tool outputs (`tool-output-spill.ts`) are
+  // always readable, by a worker too: the summary hands the model that
+  // path to read instead of re-running the command.
+  const ownOutputs = toolOutputDir(ctx.sessionId);
   for (const raw of targetsOf(args)) {
     if (URL_LIKE.test(raw)) continue;
     let absolute: string;
@@ -217,6 +234,7 @@ function firstTargetOutside(
       continue;
     }
     if (scratchInScope && isScratchPath(absolute)) continue;
+    if (isOwnToolOutput(absolute, ownOutputs)) continue;
     if (isOutsideReadRoots(absolute, roots)) return absolute;
   }
   return null;

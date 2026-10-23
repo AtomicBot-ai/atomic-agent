@@ -3,6 +3,7 @@ import { fullToolResult } from "../compressor/result-compressor.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
 import type { ToolRole } from "./tool-roles.js";
 import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
+import type { ToolOutputSpill } from "./tool-output-spill.js";
 
 export interface ToolContext {
   workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
@@ -74,8 +75,22 @@ export class ToolNotFoundError extends Error {
  * care of dispatch. Individual tools live in their own files and are
  * registered explicitly (no dynamic discovery).
  */
+export interface ToolRegistryOptions {
+  /**
+   * Saves the complete output of a clipped local result to a file and
+   * puts the path in the summary (`tool-output-spill.ts`, ATO-663).
+   * Absent ⇒ local results stay as the tool returned them.
+   */
+  outputSpill?: Pick<ToolOutputSpill, "spill">;
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  private readonly outputSpill: Pick<ToolOutputSpill, "spill"> | undefined;
+
+  constructor(options: ToolRegistryOptions = {}) {
+    this.outputSpill = options.outputSpill;
+  }
 
   register(definition: ToolDefinition): void {
     this.tools.set(definition.name, definition);
@@ -116,6 +131,9 @@ export class ToolRegistry {
     // before dispatch; anything that cannot be coerced is passed
     // through untouched so the tool reports its own error.
     const result = await tool.run(coerceToolArgs(name, args), ctx);
-    return ctx.modelMode === "cloud" ? fullToolResult(result) : result;
+    if (ctx.modelMode === "cloud") return fullToolResult(result);
+    return this.outputSpill
+      ? this.outputSpill.spill(name, ctx.sessionId, result)
+      : result;
   }
 }
