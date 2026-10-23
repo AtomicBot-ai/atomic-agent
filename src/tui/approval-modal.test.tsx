@@ -22,6 +22,7 @@ function request(overrides: Partial<ApprovalRequest> = {}): ApprovalRequest {
 function frameOf(
   req: ApprovalRequest,
   pathDraft: string | null = null,
+  previewPage: number | null = null,
 ): string {
   return (
     render(
@@ -32,6 +33,8 @@ function frameOf(
         onPathChange={() => {}}
         onPathSubmit={() => {}}
         onPathCancel={() => {}}
+        previewPage={previewPage}
+        onPreviewPage={() => {}}
       />,
     ).lastFrame() ?? ""
   );
@@ -197,6 +200,50 @@ describe("ApprovalModal", () => {
     expect(frame).toContain("echo line-20");
     expect(frame).not.toContain("echo line-21");
     expect(frame).toContain("+10 more lines");
+  });
+
+  // ATO-876: the lines past the excerpt could not be read at all before
+  // the decision, so an `rm -rf` on line 25 stayed behind the note.
+  describe("full command view", () => {
+    const script = Array.from({ length: 30 }, (_, i) => `echo line-${i + 1}`);
+    script[29] = "rm -rf ~/projects";
+    const long = request({ preview: script.join("\n") });
+
+    it("offers the full command under a cut preview", () => {
+      const frame = frameOf(long);
+      expect(frame).toContain("+10 more lines");
+      expect(frame).toContain("view full command");
+      expect(frame).toContain("ctrl+z");
+    });
+
+    it("does not offer it when the whole preview is shown", () => {
+      const frame = frameOf(request({ preview: "echo hi\nrm -rf out" }));
+      expect(frame).not.toContain("view full command");
+      expect(frame).not.toContain("ctrl+z");
+    });
+
+    it("shows the first page of the whole command", () => {
+      const frame = frameOf(long, null, 0);
+      expect(frame).toContain("full command (30 lines), page 1 of 2");
+      expect(frame).toContain("echo line-20");
+      expect(frame).not.toContain("echo line-21");
+      expect(frame).toContain("next page");
+    });
+
+    it("reaches the last line on the last page", () => {
+      const frame = frameOf(long, null, 1);
+      expect(frame).toContain("page 2 of 2");
+      expect(frame).toContain("echo line-21");
+      expect(frame).toContain("rm -rf ~/projects");
+      expect(frame).not.toContain("more lines");
+      expect(frame).toContain("back to the short preview");
+    });
+
+    it("ignores a page for a preview that is not cut", () => {
+      const frame = frameOf(request({ preview: "echo hi\nrm -rf out" }), null, 0);
+      expect(frame).not.toContain("full command");
+      expect(frame).toContain("rm -rf out");
+    });
   });
 
   it("keeps a one-line preview next to its label", () => {

@@ -55,7 +55,7 @@ Read docs/interface.md for input/layout/orchestrator edits; the underlying domai
 
 ## Global approval and terminal infrastructure
 
-[ApprovalModal](approval-modal.tsx) remains part of global approval composition: the same pending request can belong to foreground or detached work and takes precedence across features. [Global keys](app-key-bindings.ts), [submit](submit-handler.ts), [TuiApp](tui-app.tsx) and runtime approvals own decisions/retargeting/focus; the view does not own grants. Existing approval-modal, approval-key-arbitration and approval-live-composer suites remain at the root.
+[ApprovalModal](approval-modal.tsx) remains part of global approval composition: the same pending request can belong to foreground or detached work and takes precedence across features. [approval-preview-pages.ts](approval-preview-pages.ts) owns the modal's preview size and the `ctrl+z` full-command pages, offered only while the preview is cut. [Global keys](app-key-bindings.ts), [submit](submit-handler.ts), [TuiApp](tui-app.tsx) and runtime approvals own decisions/retargeting/focus; the view does not own grants. Existing approval-modal, approval-key-arbitration and approval-live-composer suites remain at the root.
 
 Root terminal detection/restoration/output, turn/session attribution, provider-outage state, layout and cross-feature persistence adapters keep their existing owners. Local guides explicitly link those seams; this organization does not imply every root helper should become feature-local or that all type debt is resolved.
 

@@ -311,6 +311,68 @@ describe("reduceTuiState", () => {
     expect(next.status).toBe("running");
   });
 
+  describe("full command view (ATO-876)", () => {
+    const script = Array.from({ length: 30 }, (_, i) => `echo line-${i + 1}`);
+    const request = {
+      approvalId: "a-1",
+      sessionId: "s-1",
+      tool: "os.shell.exec",
+      category: "shell" as const,
+      reason: "dangerous shell command",
+      preview: script.join("\n"),
+    };
+    const raised = (): TuiState =>
+      apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: "s-1" },
+        { type: "approval_requested", request },
+      ]);
+
+    it("pages through the whole command and back to the excerpt", () => {
+      let state = raised();
+      expect(state.approvalPreviewPage).toBeNull();
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toEqual({ approvalId: "a-1", page: 0 });
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toEqual({ approvalId: "a-1", page: 1 });
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toBeNull();
+    });
+
+    it("has nothing to page when the preview fits", () => {
+      const state = apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: "s-1" },
+        {
+          type: "approval_requested",
+          request: { ...request, preview: "echo hi\nrm -rf out" },
+        },
+        { type: "approval_preview_paged" },
+      ]);
+      expect(state.approvalPreviewPage).toBeNull();
+    });
+
+    it("starts a new prompt on its excerpt and forgets the page on resolve", () => {
+      const paged = reduceTuiState(raised(), { type: "approval_preview_paged" });
+      const resolved = reduceTuiState(paged, {
+        type: "approval_resolved",
+        approvalId: "a-1",
+        approved: false,
+      });
+      expect(resolved.approvalPreviewPage).toBeNull();
+      const next = reduceTuiState(paged, {
+        type: "approval_requested",
+        request: { ...request, approvalId: "a-2" },
+      });
+      expect(next.approvalPreviewPage).toBeNull();
+    });
+
+    it("does nothing with no prompt up", () => {
+      const initial = createInitialTuiState(fakeSession());
+      expect(reduceTuiState(initial, { type: "approval_preview_paged" })).toBe(
+        initial,
+      );
+    });
+  });
+
   it("should ignore resolve for unknown approvalId", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = reduceTuiState(initial, {

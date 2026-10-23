@@ -72,6 +72,11 @@ export type TuiAction =
   | { type: "approval_path_edit_changed"; value: string }
   /** Esc in the target field, or the decision that closed the prompt. */
   | { type: "approval_path_edit_closed" }
+  /**
+   * `ctrl+z` (or the button) on a prompt whose preview is cut: show the
+   * next page of the full command, back to the excerpt after the last.
+   */
+  | { type: "approval_preview_paged" }
   /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
   | { type: "composer_selection_changed"; hasSelection: boolean }
   /** Right-click on a text surface: open the cut/copy/paste menu there. */

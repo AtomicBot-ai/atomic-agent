@@ -149,6 +149,41 @@ describe("approvalHotkey", () => {
     ).toBeNull();
   });
 
+  describe("ctrl+z, the full command (ATO-876)", () => {
+    const longScript = Array.from({ length: 30 }, (_, i) => `echo ${i}`).join(
+      "\n",
+    );
+
+    it("is claimed only while the preview is cut", () => {
+      const cut = pending({
+        pendingApproval: writeRequest({ preview: longScript }),
+      });
+      expect(approvalHotkey(cut, "z", key(ctrl))).toBe("view_full");
+      const fits = pending({
+        pendingApproval: writeRequest({ preview: "echo hi\nrm -rf out" }),
+      });
+      expect(approvalHotkey(fits, "z", key(ctrl))).toBeNull();
+      expect(approvalHotkey(pending(), "z", key(ctrl))).toBeNull();
+    });
+
+    it("leaves a bare z to the composer", () => {
+      const cut = pending({
+        pendingApproval: writeRequest({ preview: longScript }),
+      });
+      expect(approvalHotkey(cut, "z", key())).toBeNull();
+    });
+
+    it("does not take any other approval chord", () => {
+      const cut = pending({
+        pendingApproval: writeRequest({ preview: longScript }),
+      });
+      expect(approvalHotkey(cut, "y", key(ctrl))).toBe("approve");
+      expect(approvalHotkey(cut, "d", key(ctrl))).toBe("deny");
+      expect(approvalHotkey(cut, "f", key(ctrl))).toBe("grant_category");
+      expect(approvalHotkey(cut, "b", key(ctrl))).toBe("edit_path");
+    });
+  });
+
   it("says nothing when no prompt is up", () => {
     expect(
       approvalHotkey(createInitialTuiState(session()), "y", key(ctrl)),
@@ -250,6 +285,16 @@ describe("handleAppKey under an approval prompt", () => {
       type: "approval_path_edit_opened",
       path: "/work/site/index.html",
     });
+    expect(c.callbacks.onApprovalDecision).not.toHaveBeenCalled();
+  });
+
+  it("ctrl+z pages the full command without deciding anything", () => {
+    const preview = Array.from({ length: 30 }, (_, i) => `echo ${i}`).join(
+      "\n",
+    );
+    const c = ctx(pending({ pendingApproval: writeRequest({ preview }) }));
+    expect(handleAppKey("z", key({ ctrl: true }), c)).toBe(true);
+    expect(c.dispatch).toHaveBeenCalledWith({ type: "approval_preview_paged" });
     expect(c.callbacks.onApprovalDecision).not.toHaveBeenCalled();
   });
 
