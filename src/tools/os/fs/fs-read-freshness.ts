@@ -1,4 +1,5 @@
 import { open, realpath, stat } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
   retainToolOutput,
   type CompressedToolResult,
@@ -180,7 +181,15 @@ async function canonicalPath(absolute: string): Promise<string> {
   try {
     return await realpath(absolute);
   } catch {
-    return absolute;
+    // A deleted file has no realpath, but its folder usually still does.
+    // Resolving the folder keeps the key the read recorded when the path
+    // runs through a symlink (macOS /var is /private/var), so the deletion
+    // is still seen as a change.
+    try {
+      return join(await realpath(dirname(absolute)), basename(absolute));
+    } catch {
+      return absolute;
+    }
   }
 }
 

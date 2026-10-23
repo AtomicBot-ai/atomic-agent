@@ -28,9 +28,10 @@ describe.skipIf(process.platform === "win32")(
       const result = await runGit({
         workingDir: dir,
         signal: new AbortController().signal,
+        // One printenv per name: BSD printenv on macOS takes a single name.
         args: [
           "-c",
-          "alias.showenv=!printenv ATO347_GIT_PLAIN ATO347_GIT_API_KEY ATO347_GIT_OWN_TOKEN; true",
+          "alias.showenv=!printenv ATO347_GIT_PLAIN; printenv ATO347_GIT_API_KEY; printenv ATO347_GIT_OWN_TOKEN; true",
           "showenv",
         ],
         env: { ATO347_GIT_OWN_TOKEN: "explicit-value" },
