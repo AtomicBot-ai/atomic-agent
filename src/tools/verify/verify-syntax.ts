@@ -19,6 +19,10 @@ import type { ToolDefinition } from "../tool-registry.js";
 import { checkCssSource } from "./check-css-syntax.js";
 import { checkHtmlSource } from "./check-html-syntax.js";
 import {
+  checkLanguageFile,
+  LANGUAGE_SYNTAX_EXTENSIONS,
+} from "./check-language-syntax.js";
+import {
   checkJavaScriptFile,
   checkPythonFile,
   checkShellFile,
@@ -78,6 +82,9 @@ async function checkOne(
     return { ...(await checkHtmlSource(file, await readFile(absolute, "utf8"))) };
   }
   if (ext === ".css") return checkCssSource(file, await readFile(absolute, "utf8"));
+  if (LANGUAGE_SYNTAX_EXTENSIONS.has(ext)) {
+    return { ...(await checkLanguageFile(absolute, ext)), file };
+  }
   return {
     file,
     ok: null,

@@ -272,7 +272,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // the fusion orchestrator gate lets it through (decision D1).
     name: "verify.syntax",
     summary:
-      "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.",
+      "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces, .go/.rb/.php/.lua/.zsh via their own parse-only tool when installed). Read-only. Reports a file with no checker as unchecked, never as passing.",
     argsSchema: "{ files: string[] }",
   },
   {
