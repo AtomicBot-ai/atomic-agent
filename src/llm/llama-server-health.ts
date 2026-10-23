@@ -285,3 +285,48 @@ export function formatLlamaUnreachableHint(url: string): string {
     `  or point elsewhere:  atomic-agent config set localModels.url <url>`,
   ].join("\n");
 }
+
+/**
+ * The status in `llama-server returned http 404` / `http 405`, or null.
+ *
+ * Matched on the message, not on `LlamaServerError.status`: by the time a
+ * failure reaches the chat or the CLI it is the `toLlmFailure` wrapper's
+ * message string, and that literal prefix is the contract (the desktop
+ * recognises the same words, ATO-869). Any other status, and every
+ * transport error that carries no status at all, returns null.
+ */
+export function llamaWrongServerStatus(message: string): 404 | 405 | null {
+  const match = /\bllama-server returned http (404|405)\b/i.exec(message);
+  if (match === null) return null;
+  return match[1] === "404" ? 404 : 405;
+}
+
+/**
+ * The message for a llama-server URL that ANSWERED 404 or 405. Something
+ * is listening there, so "start it with: atomic-agent models start" is
+ * wrong advice: either the address belongs to a different server, or a
+ * llama-server is up with no model behind the route. The fix is the
+ * address (or loading the model), never starting another server.
+ */
+export function formatLlamaWrongServerHint(
+  url: string,
+  status: 404 | 405,
+): string {
+  return [
+    `${url} answered ${status}: this is not llama-server, or no model is loaded there`,
+    "  check the address:   atomic-agent config set localModels.url <url>",
+    "  or in the TUI:       LLM tab › External llama.cpp",
+  ].join("\n");
+}
+
+/**
+ * The hint for a transport failure on the local llama route: the
+ * wrong-server line when llama-server answered 404/405, otherwise the
+ * classic "not reachable, start it" line.
+ */
+export function formatLlamaTransportHint(url: string, message: string): string {
+  const status = llamaWrongServerStatus(message);
+  return status === null
+    ? formatLlamaUnreachableHint(url)
+    : formatLlamaWrongServerHint(url, status);
+}

@@ -165,6 +165,60 @@ describe("formatAgentEvent llama hint", () => {
   });
 });
 
+describe("formatAgentEvent when llama-server answered 404/405 (ATO-870)", () => {
+  const ctx = () => ({
+    llamaHint: HINT,
+    llamaUrl: "http://127.0.0.1:8080",
+    hintShown: { value: false },
+  });
+
+  for (const status of [404, 405]) {
+    it(`says wrong server or no model loaded for a ${status}, not start it`, () => {
+      const line = formatAgentEvent(
+        transportError(`llama-server returned http ${status}`),
+        ctx(),
+      );
+      expect(line).toContain(`! [transport] llama-server returned http ${status}`);
+      expect(line).toContain(
+        `http://127.0.0.1:8080 answered ${status}: this is not llama-server, or no model is loaded there`,
+      );
+      expect(line).toContain("config set localModels.url");
+      expect(line).not.toContain("models start");
+      expect(line).not.toContain("not reachable");
+    });
+  }
+
+  it("decorates loop_failed for a 404 the same way", () => {
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new Error("llama-server returned http 404"),
+        category: "transport" as never,
+      },
+      ctx(),
+    );
+    expect(line).toContain("answered 404: this is not llama-server");
+    expect(line).not.toContain("models start");
+  });
+
+  it("keeps the start hint for a refused connection", () => {
+    const line = formatAgentEvent(
+      transportError("connect ECONNREFUSED 127.0.0.1:8080"),
+      ctx(),
+    );
+    expect(line).toContain("llama-server is not reachable");
+    expect(line).toContain("atomic-agent models start");
+  });
+
+  it("stays out of the way for a 404 on a cloud route", () => {
+    const line = formatAgentEvent(
+      transportError("llama-server returned http 404"),
+      { llamaHint: null, llamaUrl: null, hintShown: { value: false } },
+    );
+    expect(line).toBe("  ! [transport] llama-server returned http 404");
+  });
+});
+
 describe("formatLlamaUnreachableHint", () => {
   it("names the URL, the start command and the config key", () => {
     const hint = formatLlamaUnreachableHint("http://10.0.0.4:9090");

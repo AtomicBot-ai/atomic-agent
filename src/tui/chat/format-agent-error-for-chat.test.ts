@@ -370,6 +370,35 @@ describe("formatAgentErrorForChat", () => {
     );
   });
 
+  it("says wrong server or no model for a llama 404/405 on a local provider (ATO-870)", () => {
+    for (const status of [404, 405]) {
+      const text = formatAgentErrorForChat(
+        "transport",
+        `llama-server returned http ${status}`,
+        { activeProviderIsLocal: true, llamaUrl: "http://127.0.0.1:8090" },
+      );
+      expect(text).toBe(
+        [
+          TRANSPORT,
+          `Details: llama-server returned http ${status}`,
+          `http://127.0.0.1:8090 answered ${status}: this is not llama-server, or no model is loaded there`,
+          "  check the address:   atomic-agent config set localModels.url <url>",
+          "  or in the TUI:       LLM tab › External llama.cpp",
+        ].join("\n"),
+      );
+    }
+  });
+
+  it("keeps the start hint for a refused connection on a local provider", () => {
+    const text = formatAgentErrorForChat(
+      "transport",
+      "connect ECONNREFUSED 127.0.0.1:8090",
+      { activeProviderIsLocal: true, llamaUrl: "http://127.0.0.1:8090" },
+    );
+    expect(text).toContain("llama-server is not reachable at http://127.0.0.1:8090");
+    expect(text).toContain("atomic-agent models start");
+  });
+
   it("keeps the hint away from non-transport failures", () => {
     expect(
       formatAgentErrorForChat("model", "empty completion", {
@@ -476,23 +505,26 @@ describe("formatAgentErrorForChat — llama failures through the real pipeline",
     );
   }
 
-  it("carries the unreachable hint for a llama 404 on a local provider", async () => {
+  it("carries the wrong-server hint for a llama 404 on a local provider", async () => {
     // The one failure where "check your llama URL" is exactly the right
     // advice — a wrong `localModels.url`, or a server that is not a
-    // llama-server — was the one failure that never got it.
+    // llama-server — was the one failure that never got it. Something
+    // answered, so "start it" would be wrong advice (ATO-870).
     const text = await chatTextForLlamaStatus(404);
     expect(text.split("\n")[0]).toBe(TRANSPORT);
     expect(text).toContain(
-      "llama-server is not reachable at http://127.0.0.1:19091",
+      "http://127.0.0.1:19091 answered 404: this is not llama-server, or no model is loaded there",
     );
+    expect(text).not.toContain("models start");
   });
 
-  it("carries the unreachable hint for a llama 405 on a local provider", async () => {
+  it("carries the wrong-server hint for a llama 405 on a local provider", async () => {
     const text = await chatTextForLlamaStatus(405);
     expect(text.split("\n")[0]).toBe(TRANSPORT);
     expect(text).toContain(
-      "llama-server is not reachable at http://127.0.0.1:19091",
+      "http://127.0.0.1:19091 answered 405: this is not llama-server, or no model is loaded there",
     );
+    expect(text).not.toContain("models start");
   });
 
   it("keeps a llama 400 as a grammar failure with no URL advice", async () => {

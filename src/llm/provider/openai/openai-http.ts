@@ -2,6 +2,7 @@ import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
 import { providerServiceName } from "../provider-service-name.js";
+import { isLocalProviderUrl } from "../presets/is-local-provider-url.js";
 import {
   creditLimitRetryContext,
   creditLimitRetryMessage,
@@ -212,6 +213,9 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status === 401 || err.status === 403) {
     return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
   }
+  if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
+    return localServerNotFoundSentence(err.url, err.status);
+  }
   if (err.status === 404) {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
   }
@@ -252,6 +256,42 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   return reason
     ? `${who} rejected the request (${err.status}). ${reason}`
     : `${who} rejected the request (${err.status}).`;
+}
+
+/**
+ * Which program a local OpenAI-compatible server usually is, by its
+ * default port: Atomic Chat's Local API Server on 1337, Ollama on 11434
+ * (the same port rule as `looksLikeAtomicChatUrl` / `looksLikeOllamaUrl`
+ * in `describe-llama-health-failure.ts`, kept inline so the provider
+ * path does not load the local-engine modules). Null for any other port.
+ */
+function localServerProgram(url: string): string | null {
+  let port: string;
+  try {
+    port = new URL(url).port;
+  } catch {
+    return null;
+  }
+  if (port === "1337") return "Atomic Chat";
+  if (port === "11434") return "Ollama";
+  return null;
+}
+
+/**
+ * A 404 or 405 from a server on this machine (ATO-871). A local server
+ * has no account and no model catalogue to get wrong the way a cloud one
+ * does: the reply means the model is not loaded there, or the base URL
+ * points past its API. Keeps "answered 404" / "answered 405" so the
+ * desktop still reads it as the provider having replied.
+ */
+function localServerNotFoundSentence(url: string, status: 404 | 405): string {
+  const program = localServerProgram(url);
+  const server = program === null ? "The local server" : `The local ${program} server`;
+  const remedy = program === null ? "Load the model in that server" : `Load the model in ${program}`;
+  return (
+    `${server} at ${hostOf(url)} answered ${status}: the model is not loaded there, ` +
+    `or this address is not its API. ${remedy}, or check the base URL.`
+  );
 }
 
 /**
