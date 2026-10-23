@@ -27797,6 +27797,7 @@ if (typeof window !== 'undefined') {
     const usr = t.classList.contains('usr');
     return {k: usr ? 'user'
               : t.classList.contains('interim') ? 'interim'
+              : t.classList.contains('tk-turnsum') ? 'turnsum'
               : t.querySelector('.card') ? 'tool'
               : t.querySelector('.appr') ? 'approval'
               : t.querySelector('.disc') ? 'reason'
