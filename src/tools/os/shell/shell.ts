@@ -24,7 +24,6 @@ import {
   coerceShellArgs,
   describeArgsShape,
   formatShellPreview,
-  isOpaqueInterpreterShape,
   needsShellInterpretation,
   resolveShellSpawn,
   shellGrantShape,
