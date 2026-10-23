@@ -178,4 +178,29 @@ describe("ApprovalModal", () => {
     expect(frame).toContain("ctrl+f");
     expect(frame).not.toContain("ctrl+b");
   });
+
+  // ATO-434: a multi-line command was cut at 240 characters with a bare
+  // `…`, so the lines after the cut never reached the person approving.
+  it("shows every line of a multi-line command", () => {
+    const frame = frameOf(
+      request({ preview: "echo hi\nmkdir -p out\nrm -rf out/cache" }),
+    );
+    expect(frame).toContain("echo hi");
+    expect(frame).toContain("mkdir -p out");
+    expect(frame).toContain("rm -rf out/cache");
+    expect(frame).not.toContain("more line");
+  });
+
+  it("says how many lines it hides when a script is too long to show", () => {
+    const script = Array.from({ length: 30 }, (_, i) => `echo line-${i + 1}`).join("\n");
+    const frame = frameOf(request({ preview: script }));
+    expect(frame).toContain("echo line-20");
+    expect(frame).not.toContain("echo line-21");
+    expect(frame).toContain("+10 more lines");
+  });
+
+  it("keeps a one-line preview next to its label", () => {
+    const frame = frameOf(request({ preview: "git push origin main" }));
+    expect(frame).toContain("preview: git push origin main");
+  });
 });
