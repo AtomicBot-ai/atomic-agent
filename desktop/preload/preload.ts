@@ -246,6 +246,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Agent 0.6.6 live routes (main/agent-live.ts): a deep-merge config patch and per-server MCP control. */
   configPatch: (patch: Record<string, unknown>) => ipcRenderer.invoke("agent:configPatch", patch),
   mcpServer: (name: string, op: "restart" | "enable" | "disable") => ipcRenderer.invoke("agent:mcpServer", { name, op }),
+  /** ATO-859: Telegram pairing on the running agent; a start's answer carries the one-time code for the screen only. */
+  telegramPairing: (op: "start" | "status" | "cancel", replaceOwner?: boolean) =>
+    ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>

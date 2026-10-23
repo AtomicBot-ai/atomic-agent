@@ -7591,6 +7591,12 @@ async function settingsTestPartC(
   const tgPlain = tgLabel.act === "settings:connections" && tgLabel.label === "Connections" && !tgLabel.count && tgLabel.sub === "Telegram";
   const envHas = envPresent(["TELEGRAM_BOT_TOKEN"]).length > 0;
   const dotenvHas = stateDir ? dotenvKeys(stateDir).keys.includes("TELEGRAM_BOT_TOKEN") : false;
+  /* ATO-859: the pairing card pairs in the app (a Pair button under the steps), or, on an agent
+     without /api/telegram/pairing, says to update it (TG_PAIRING_NOTE). Never the old "use atag tui" line. */
+  const tgPairOffer = (body: string) =>
+    (body.includes("Press Pair for a one-time code, then send /start and the code to your bot in Telegram.")
+      || body.includes("This agent cannot pair from the app. Update Atomic Agent, or quit the app, run `atag tui`, open Integrations › Telegram and press p."))
+    && !body.includes("Pairing needs the live channel");
   if (!envHas && !dotenvHas) {
     // The card's one action: the "Paste a bot token" button (Calm S5: its Enter keycap moved to the tooltip).
     const tgCta = await js<{ label: string; key: string } | null>(
@@ -7619,7 +7625,7 @@ async function settingsTestPartC(
       "telegram tab: a token is present → one status in words, no config keys or .env, plain tab label",
       tg.hasToken === true && tgView.status === wantStatus && tgView.titles.includes("Bot token")
         && !/telegram\.enabled|ownerUserId|TELEGRAM_BOT_TOKEN|\.env\b|\bunknown\b/.test(tgBody)
-        && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
+        && tgBody.includes("One last step") === (tg.owner === null) && (tg.owner !== null || tgPairOffer(tgBody)) && tgPlain,
       `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} enabled=${String(tg.enabled)} label=${JSON.stringify(tgLabel)} view=${JSON.stringify(tgView)}`,
     );
   }
@@ -7648,7 +7654,7 @@ async function settingsTestPartC(
         hasToken: saved.state.hasToken === true,
         enabled: enabledNow === true,
         confirmCard: afterBody.includes("One last step — confirm it's you"),
-        pairingLine: afterBody.includes("Pairing needs the live channel — open the Telegram tab in `atag tui` to pair"),
+        pairingLine: tgPairOffer(afterBody),
         restartButton: afterBody.includes("Restart Agent Runtime"),
       };
       check(

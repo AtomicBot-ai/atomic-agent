@@ -13,6 +13,13 @@ import { agentEnv, DESKTOP_STATE_DIR } from "./state-dir.js";
 import { localLlamaKeyFor } from "./local-llama-key.js";
 import { chatSessionIdFor } from "./chat-session.js";
 import {
+  pairingRequest,
+  readPairingReply,
+  TELEGRAM_PAIRING_PATH,
+  type TelegramPairingOp,
+  type TelegramPairingResult,
+} from "./telegram-pairing.js";
+import {
   agentBinaryCandidates,
   bundledAgentFileName,
   commandLineProbe,
@@ -1113,6 +1120,27 @@ export class AgentClient extends EventEmitter {
       return { ok: true, supported: true, ...body };
     } catch (err) {
       return { ok: false, supported: true, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-859: `/api/telegram/pairing` (main/telegram-pairing.ts). A start
+   * answers with the one-time code for the Telegram tab; it is returned to
+   * the caller only, never logged. An agent without the route reads as
+   * `unsupported`.
+   */
+  async telegramPairing(op: TelegramPairingOp, replaceOwner = false): Promise<TelegramPairingResult> {
+    const { method, body } = pairingRequest(op, replaceOwner);
+    try {
+      const res = await fetch(`${this.base()}${TELEGRAM_PAIRING_PATH}`, {
+        method,
+        headers: this.headers(),
+        ...(body ? { body: JSON.stringify(body) } : {}),
+        signal: AbortSignal.timeout(10_000),
+      });
+      return readPairingReply(res.status, await res.text());
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
     }
   }
 

@@ -1338,6 +1338,9 @@ const TG = {
   // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
+  // ATO-859: pairing from the app (telegram-pairing.js). `pair.code` is the one-time code while its window is open, never logged;
+  // `pairBusy` while a start or cancel is in flight; `pairTimer` the next poll for the claim.
+  pair:tgPairInitial(), pairBusy:false, pairTimer:null,
 };
 /* Composio pane (composio.js, main/composio-key.ts). `dotenvHas` / `envHas`:
    COMPOSIO_API_KEY is in <stateDir>/.env / this app's environment (names
@@ -1402,14 +1405,16 @@ const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://
   perplexity:'https://www.perplexity.ai/settings/api', dashscope:'https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key',
   nous:'https://portal.nousresearch.com', novita:'https://novita.ai/settings/key-management'};
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
-const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
-// ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
+// ATO-859 / ATO-822 item 1: shown only when the running agent has no pairing route (it answered 404). The terminal's
+// pairing is under Integrations, and the app must be quit first: it holds telegram.lock (shared ~/.atomic-agent, ATO-426).
+const TG_PAIRING_NOTE = 'This agent cannot pair from the app. Update Atomic Agent, or quit the app, run `atag tui`, open Integrations › Telegram and press p.';
 // ATO-435: the pairing steps only make sense with a token and no owner yet; these say what to do instead.
 const TG_PAIR_NEEDS_TOKEN = 'Pairing needs a bot token first. Press t to paste the one from @BotFather.';
-const TG_PAIR_HAS_OWNER = 'The bot is already paired. To pair a different Telegram account, clear the owner first.';
+const TG_PAIR_HAS_OWNER = 'The bot is already paired. To pair a different Telegram account, press Replace beside the owner and confirm.';
 // ATO-435: a double-click on Remove token / Clear owner must not arm and confirm in one go.
 const TG_CONFIRM_MIN_MS = 400;
-const TG_PAIR_HOWTO = 'The desktop app can\'t pair yet. Quit it, run `atag tui`, open Telegram under Integrations and press p to start pairing, then DM your bot. Reopen the app and press Check again.';
+// ATO-859: the agent's own instruction line replaces this once a code is on screen.
+const TG_PAIR_HOWTO = 'Press Pair for a one-time code, then send /start and the code to your bot in Telegram. The code works once, for 5 minutes.';
 
 /* ---- Item 5: file attachments — what a turn actually wrote ----
    The strip under an assistant reply is sourced ONLY from write-tool cards.
@@ -26671,16 +26676,16 @@ if (BR) {
 }
 
 /* ---------------- Telegram tab (setup-state.ts, telegram-panel.tsx, telegram-token-prompt.tsx,
-   tui-telegram-orchestrator.ts, telegram-key-bindings.ts). The channel state, bot identity and
-   pairing live inside the serve process's channel — nothing on the HTTP API exposes them, so
-   the tab reads the config and the saved token's presence, and says where pairing happens. ---------------- */
+   tui-telegram-orchestrator.ts, telegram-key-bindings.ts). The tab reads the config and the saved
+   token's presence. Pairing goes through the agent's /api/telegram/pairing (ATO-859,
+   telegram-pairing.js); an agent without that route gets TG_PAIRING_NOTE instead. ---------------- */
 
 function telegramVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'telegram'; }
 function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t && typeof t === 'object' ? t : null; }
 function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
 function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
-function telegramTabEntered() { TG.confirm = null; tgRefresh(); }
+function telegramTabEntered() { TG.confirm = null; tgRefresh(); tgPairProbe(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
 /* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
    Review fix: a refresh asked for while one was in flight used to be DROPPED
@@ -26734,12 +26739,14 @@ function telegramTab() {
       + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div>';
   } else {
     body += tgStatusHTML(enabled, owner);
-    // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
+    // setup-state.ts needs_pairing. ATO-859: the card pairs here, through the agent's pairing route.
     if (owner === null) {
-      body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-        // ATO-426: no agent route pairs from here, so the card says where pairing happens instead of promising a DM works.
-        + '<p>' + esc(TG_PAIR_HOWTO) + '</p>'
-        + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
+      body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair'}, {esc}) + '</div>';
+    } else if (TG.pair.phase !== 'idle' || TG.pair.error) {
+      // Replacing the owner (confirmed beside the Owner row): the same card, until its window ends.
+      body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--blue">' + ic('user') + '</span><b>Pair a different Telegram account</b></div>'
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace'}, {esc}) + '</div>';
     }
     body += tgRowsHTML(enabled, owner);
   }
@@ -26783,6 +26790,8 @@ function tgRowsHTML(enabled, owner) {
       + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearToken' ? 'Click again to remove' : 'Remove token') + '</button>')
     + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
       '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>'
+      // ATO-859: replacing the owner pairs a new account; like Clear owner it takes a second click (ATO-718: only after confirmation).
+      + (TG.pair.supported !== false ? '<button class="btn btn-s sm" data-act="telegram:pairReplace"' + (busy || TG.pairBusy ? ' disabled' : '') + '>' + (TG.confirm === 'pairReplace' ? 'Click again to replace' : 'Replace') + '</button>' : '')
       + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearOwner' ? 'Click again to clear' : 'Clear owner') + '</button>') : '')
     + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
     + '</div>'
@@ -26881,7 +26890,7 @@ function telegramAct(what) {
   const arg = what.slice(verb.length + 1);
   // ATO-426: removing the token or the owner takes a second click on the same button; any other action disarms it.
   const armed = TG.confirm;
-  const confirmVerb = verb === 'clearToken' || verb === 'clearOwner';
+  const confirmVerb = verb === 'clearToken' || verb === 'clearOwner' || verb === 'pairReplace';
   // ATO-435: the second click of a double-click lands within ~400 ms; it is not a confirmation.
   if (confirmVerb && armed === verb && Date.now() - TG.confirmAt < TG_CONFIRM_MIN_MS) return;
   TG.confirm = null;
@@ -26896,13 +26905,75 @@ function telegramAct(what) {
   // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
   if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
-  if (verb === 'pair') { tgSetMessage(tgPairLine(), 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
+  // ATO-859: `o` and `/telegram pair` start pairing when there is a token and no owner; otherwise they say what to do.
+  if (verb === 'pair') { const line = tgPairLine(); if (line) { tgSetMessage(line, 'info'); tgRepaint(); } else tgPairStart(false); return; }
+  if (verb === 'pairStart') { tgPairStart(tgOwner() !== null); return; }
+  if (verb === 'pairReplace') { tgPairStart(true); return; }
+  if (verb === 'pairCancel') { tgPairCancel(); return; }
 }
-/** ATO-435: what `o` and `/telegram pair` say — the pairing steps only when there is a token and no owner. */
+/** ATO-435: what `o` and `/telegram pair` say instead of pairing, or null when they may pair. */
 function tgPairLine() {
   if (tgHasToken() === false) return TG_PAIR_NEEDS_TOKEN;
   if (tgOwner() !== null) return TG_PAIR_HAS_OWNER;
-  return TG_PAIR_HOWTO;
+  if (TG.pair.supported === false) return TG_PAIRING_NOTE;
+  return null;
+}
+/* ATO-859: pairing through the agent's /api/telegram/pairing (telegram-pairing.js for the state and
+   the card). `replace` carries the operator's confirmation to replace a paired owner (ATO-718). The
+   code is kept in TG.pair while its window is open and is never logged. */
+async function tgPairStart(replace) {
+  if (TG.pairBusy) return;
+  if (!BR || !BR.telegramPairing) { TG.pair = Object.assign({}, TG.pair, {supported:false}); tgRepaint(); return; }
+  TG.pairBusy = true; tgRepaint();
+  let res;
+  try { res = await BR.telegramPairing('start', !!replace); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  TG.pairBusy = false;
+  TG.pair = tgPairApply(TG.pair, 'start', res, Date.now());
+  if (TG.pair.askReplace) {
+    // The agent knows an owner the tab did not (paired elsewhere): read it, and let the next Replace click confirm.
+    TG.pair.askReplace = false; TG.confirm = 'pairReplace'; TG.confirmAt = 0;
+    tgSetMessage(TG_PAIR_HAS_OWNER, 'info');
+    await tgRefresh();
+  }
+  tgRepaint(); tgPairSchedule();
+}
+async function tgPairCancel() {
+  if (TG.pairBusy || !BR || !BR.telegramPairing) return;
+  TG.pairBusy = true; tgRepaint();
+  let res;
+  try { res = await BR.telegramPairing('cancel'); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  TG.pairBusy = false;
+  TG.pair = tgPairApply(TG.pair, 'cancel', res, Date.now());
+  tgRepaint(); tgPairSchedule();
+}
+/* Whether this agent can pair, asked once per visit: a 404 turns the card into TG_PAIRING_NOTE before anyone presses Pair. */
+async function tgPairProbe() {
+  if (!BR || !BR.telegramPairing) return;
+  let res;
+  try { res = await BR.telegramPairing('status'); } catch { return; }
+  TG.pair = tgPairApply(TG.pair, 'status', res, Date.now());
+  tgRepaint(); tgPairSchedule();
+}
+function tgPairSchedule() {
+  if (TG.pairTimer) { clearTimeout(TG.pairTimer); TG.pairTimer = null; }
+  if (tgPairPolling(TG.pair)) TG.pairTimer = setTimeout(tgPairPoll, TG_PAIR_POLL_MS);
+}
+/* Asks whether the code was claimed. A claim persists the owner in the agent, so the tab reads the config again and says who paired. */
+async function tgPairPoll() {
+  TG.pairTimer = null;
+  if (!BR || !BR.telegramPairing || !tgPairPolling(TG.pair)) return;
+  let res;
+  try { res = await BR.telegramPairing('status'); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  if (!tgPairPolling(TG.pair)) return; // cancelled or restarted while the poll was out
+  TG.pair = tgPairApply(TG.pair, 'status', res, Date.now());
+  if (TG.pair.phase === 'paired') {
+    // "Paired: @username is now the owner." becomes the tab's message and the card goes back to rest: the owner row shows who it is now.
+    const line = TG.pair.pairedLine;
+    TG.pair = Object.assign(tgPairInitial(), {supported:true});
+    tgSetMessage(line, 'info');
+    await tgRefresh();
+  }
+  tgRepaint(); tgPairSchedule();
 }
 /* telegram-key-bindings.ts: list-mode letters; the token prompt owns its input. */
 function telegramKey(e, k, inText) {
@@ -26913,8 +26984,8 @@ function telegramKey(e, k, inText) {
   }
   if (inText || e.metaKey || e.ctrlKey || e.altKey) return false;
   if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
-  // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
-  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIR_HOWTO, 'info'), tgRepaint(); return true; }
+  // Enter = the connect flow's next step: paste a token, else (no owner) pair (ATO-859).
+  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) telegramAct('pair'); return true; }
   // ATO-426: no T / O here; removing the token or the owner is a button that asks for a second click.
   const map = {e:'enable', t:'token', o:'pair', r:'restart', R:'refresh'};
   if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
@@ -27347,7 +27418,9 @@ if (typeof window !== 'undefined') {
   window.__llmProbe = (url) => (BR ? BR.llamaProbe(url) : Promise.resolve({ok:false, error:'no bridge'}));
   window.__llmExternalSave = async (url) => { llmSetMode('external'); LLMP.externalDraft = String(url); LLMP.externalInvalid = false; llmRepaint(); const n = document.getElementById('llm-url'); if (n) n.value = String(url); await llmExternalSave(); return window.__llmPane(); };
   window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: tgRestartOwed(),
-    lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error});
+    lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error,
+    // ATO-859: where pairing stands, never the code itself.
+    pair: {phase: TG.pair.phase, supported: TG.pair.supported, hasCode: !!TG.pair.code, pairedLine: TG.pair.pairedLine, error: TG.pair.error}});
   window.__telegramAct = (what) => { telegramAct(what); return window.__telegram(); };
   window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };
   window.__telegramClearToken = async () => { await tgClearToken(); return window.__telegram(); };
