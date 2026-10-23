@@ -24,6 +24,7 @@ interface TestHarness {
     sendMessage: ReturnType<typeof vi.fn>;
     editMessageText: ReturnType<typeof vi.fn>;
     answerCallbackQuery: ReturnType<typeof vi.fn>;
+    sendTextDocument: ReturnType<typeof vi.fn>;
   };
   approvals: {
     resolve: ReturnType<typeof vi.fn>;
@@ -42,6 +43,7 @@ function makeHarness(overrides: Partial<ApprovalBridgeDeps> = {}): TestHarness {
   const sendMessage = vi.fn(async () => ({ message_id: 99 }));
   const editMessageText = vi.fn(async () => undefined);
   const answerCallbackQuery = vi.fn(async () => undefined);
+  const sendTextDocument = vi.fn(async () => ({ message_id: 98 }));
   const scheduled: ScheduledEntry[] = [];
   const schedule = (cb: () => void, ms: number): (() => void) => {
     const entry: ScheduledEntry = { fire: cb, ms, cancelled: false };
@@ -55,6 +57,7 @@ function makeHarness(overrides: Partial<ApprovalBridgeDeps> = {}): TestHarness {
       sendMessage,
       editMessageText,
       answerCallbackQuery,
+      sendTextDocument,
     },
     approvals: { resolve },
     ownerUserId: 42,
@@ -65,7 +68,7 @@ function makeHarness(overrides: Partial<ApprovalBridgeDeps> = {}): TestHarness {
   });
   return {
     bridge,
-    api: { sendMessage, editMessageText, answerCallbackQuery },
+    api: { sendMessage, editMessageText, answerCallbackQuery, sendTextDocument },
     approvals: { resolve, decisions },
     scheduled,
     fireFirst: () => {
@@ -159,6 +162,74 @@ describe("ApprovalBridge.dispatch", () => {
     // The resource list after the preview survives the cut.
     expect(text.endsWith("resources:\n- /work")).toBe(true);
     expect(h.bridge.pendingCount()).toBe(1);
+  });
+
+  // ATO-876: the lines past the cut could not be read before deciding.
+  describe("full command as a file", () => {
+    const script = Array.from(
+      { length: 400 },
+      (_, i) => `echo ${String(i + 1).padStart(3, "0")} ${"x".repeat(20)}`,
+    );
+    script[399] = "rm -rf ~ \u001b[8m";
+    const long = script.join("\n");
+
+    it("sends the exact preview as a .txt document before a cut prompt", async () => {
+      const h = makeHarness();
+      await h.bridge.dispatch({ ...req("big"), preview: long }, 7, 5);
+      expect(h.api.sendTextDocument).toHaveBeenCalledTimes(1);
+      const [chatId, doc] = h.api.sendTextDocument.mock.calls[0]!;
+      expect(chatId).toBe(7);
+      expect(doc).toEqual({
+        filename: "full-command.txt",
+        content: long,
+        caption: "Full command (400 lines), for the approval below",
+        threadId: 5,
+      });
+      // The file comes first, so the prompt sits right under it.
+      expect(h.api.sendTextDocument.mock.invocationCallOrder[0]!).toBeLessThan(
+        h.api.sendMessage.mock.invocationCallOrder[0]!,
+      );
+      const text = h.api.sendMessage.mock.calls[0]![1] as string;
+      expect(text).toContain("more lines\n  full command: sent as a file above");
+      expect(text.length).toBeLessThanOrEqual(4096);
+      expect(h.bridge.pendingCount()).toBe(1);
+    });
+
+    it("sends no file when the whole preview fits", async () => {
+      const h = makeHarness();
+      await h.bridge.dispatch(
+        { ...req("ml"), preview: "echo hi\nrm -rf out/cache" },
+        7,
+      );
+      expect(h.api.sendTextDocument).not.toHaveBeenCalled();
+      const text = h.api.sendMessage.mock.calls[0]![1] as string;
+      expect(text).not.toContain("full command");
+    });
+
+    it("says the full command is missing when the upload fails, and still asks", async () => {
+      const h = makeHarness();
+      h.api.sendTextDocument.mockImplementationOnce(async () => {
+        throw new Error("network down");
+      });
+      await h.bridge.dispatch({ ...req("big"), preview: long }, 7);
+      const text = h.api.sendMessage.mock.calls[0]![1] as string;
+      expect(text).toContain(
+        "full command: could not be attached, deny if you cannot check it",
+      );
+      expect(text).not.toContain("sent as a file above");
+      expect(h.approvals.decisions).toEqual([]);
+      expect(h.bridge.pendingCount()).toBe(1);
+    });
+
+    it("says the full command is missing when the bot cannot upload", async () => {
+      const sendMessage = vi.fn(async (..._args: unknown[]) => ({
+        message_id: 99,
+      }));
+      const h = makeHarness({ api: { sendMessage } });
+      await h.bridge.dispatch({ ...req("big"), preview: long }, 7);
+      const text = sendMessage.mock.calls[0]![1] as string;
+      expect(text).toContain("full command: could not be attached");
+    });
   });
 
   it("auto-denies immediately when sendMessage rejects", async () => {
