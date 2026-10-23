@@ -466,6 +466,17 @@ export interface AgentRuntime {
   getSessionCompaction(sessionId: string): SessionCompaction | null;
   cancelSessionCompaction(sessionId: string): boolean;
   /**
+   * One refinement pass over a composer draft (the TUI's `/enhance`).
+   * A sub-call under its own `enhance:` fallback partition, output bound
+   * and deadline: it creates no turn, writes nothing to the session, and
+   * the caller keeps the draft on any failure. Optional so hosts and test
+   * doubles that never offer it need not implement it.
+   */
+  enhancePrompt?(
+    draft: string,
+    options?: { sessionId?: string; signal?: AbortSignal },
+  ): Promise<import("./prompt-enhancer.js").PromptEnhanceResult>;
+  /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
    * sent (the desktop's `POST /api/context-preview`). `sessionId` null

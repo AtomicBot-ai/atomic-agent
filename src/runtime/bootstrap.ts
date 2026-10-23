@@ -1,6 +1,7 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
+import { enhancePrompt } from "./prompt-enhancer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
@@ -718,6 +719,23 @@ export async function createAgentRuntime(
     compactSession: compaction.compactSession,
     getSessionCompaction: compaction.getSessionCompaction,
     cancelSessionCompaction: compaction.cancelSessionCompaction,
+    enhancePrompt: (draft: string, enhanceOptions?: { sessionId?: string; signal?: AbortSignal }) => {
+      if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down" });
+      return enhancePrompt(draft, {
+        complete: (params) => llmComplete(params),
+        slotId: () => slotManager.sideCallSlotId(),
+        // Same wire-shape rule as session naming: a cloud link answers a
+        // bare prompt with an empty `content`.
+        toolTransport: resolveActiveLlmSlice().transport,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
+        ...(enhanceOptions?.sessionId ? { sessionId: enhanceOptions.sessionId } : {}),
+        ...(enhanceOptions?.signal ? { signal: enhanceOptions.signal } : {}),
+        onError: (err: unknown) =>
+          logger.debug("prompt enhance failed", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+      });
+    },
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,

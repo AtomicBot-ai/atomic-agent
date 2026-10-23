@@ -112,6 +112,12 @@ export type TuiAction =
   | { type: "abort_disarmed" }
   | { type: "input_changed"; value: string }
   /**
+   * `/enhance` came back: put `value` in the composer, but only while it
+   * still holds `expected` (the draft that was sent). An edit made while
+   * the rewrite ran wins, and the notice says the rewrite was dropped.
+   */
+  | { type: "composer_draft_replaced"; expected: string; value: string }
+  /**
    * Orchestrator acknowledges a chat message submission: we wipe step/feed
    * state for the new turn, keep history and metrics cumulative, and flip
    * to running. The orchestrator is responsible for actually starting the

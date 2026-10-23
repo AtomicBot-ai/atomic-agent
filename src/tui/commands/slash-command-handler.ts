@@ -29,6 +29,11 @@ export interface SlashDispatchResult {
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
   readonly compactionVerb?: "run" | "show";
+  /**
+   * `/enhance <text>`: the draft to rewrite. The buffer is left holding
+   * the draft itself, and the caller hands the rewrite back to it.
+   */
+  readonly enhancePromptText?: string;
   /** When true the editor buffer should be cleared after dispatch. */
   readonly clearBuffer: boolean;
   /** When true the caller should invoke `onAbort`. */
@@ -252,6 +257,15 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return parsed.args === "" || parsed.args === "show"
         ? pureActions([], { compactionVerb: parsed.args === "show" ? "show" : "run" })
         : pureActions([], { systemMessage: "Usage: /compact [show]" });
+    case "enhance":
+      // Opt-in and never sends: the draft goes back into the composer
+      // right away, and the rewrite replaces it there for review.
+      return parsed.args === ""
+        ? pureActions([], { systemMessage: ENHANCE_USAGE })
+        : pureActions([{ type: "input_changed", value: parsed.args }], {
+            enhancePromptText: parsed.args,
+            clearBuffer: false,
+          });
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
     case "chat":
@@ -474,6 +488,9 @@ function dispatchModeSub(args: string): SlashDispatchResult {
   }
   return pureActions([{ type: "coding_mode_cycled", mode: match }]);
 }
+
+const ENHANCE_USAGE =
+  "Usage: /enhance <your prompt>. Rewrites it in the composer for you to review; nothing is sent.";
 
 function pureActions(
   actions: readonly TuiAction[],

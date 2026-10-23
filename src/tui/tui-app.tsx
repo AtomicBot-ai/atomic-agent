@@ -292,6 +292,8 @@ export interface TuiAppCallbacks {
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
   onCompactionRequested?(verb: "run" | "show"): void;
+  /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */
+  onPromptEnhanceRequested?(draft: string): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */

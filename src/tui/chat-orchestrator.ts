@@ -218,6 +218,8 @@ export class ChatOrchestrator {
   private pendingUpdateVersion: string | null = null;
   private readonly queue: string[] = [];
   private readonly pendingCompactions = new Set<string>();
+  /** One `/enhance` at a time: a second would race the first for the buffer. */
+  private enhancingPrompt = false;
   /**
    * Messages refused since the queue last had room, so a burst reads as
    * one escalating counter instead of N identical lines. Reset by the
@@ -1758,6 +1760,41 @@ export class ChatOrchestrator {
       // snapshot plus whatever traces we already collected.
     }
     return ids.slice(0, DEBUG_BUNDLE_TRACE_LIMIT);
+  }
+
+  /**
+   * `/enhance <draft>`: one refinement pass through the runtime's
+   * sub-call, its result handed back to the composer for review. Never
+   * sends anything. The slash handler already put the draft back in the
+   * buffer, so on any failure the person simply keeps what they wrote,
+   * and the rewrite only lands if they have not edited it meanwhile
+   * (`composer_draft_replaced`).
+   */
+  async enhancePrompt(draft: string): Promise<void> {
+    if (!this.runtime.enhancePrompt) {
+      this.bus.emit({ type: "composer_notice", text: "Prompt enhancement is not available here." });
+      return;
+    }
+    if (this.enhancingPrompt) {
+      this.bus.emit({ type: "composer_notice", text: "Already enhancing a prompt; wait for it to finish." });
+      return;
+    }
+    this.enhancingPrompt = true;
+    this.bus.emit({ type: "composer_notice", text: "Enhancing your prompt…" });
+    try {
+      const sessionId = this.session?.id;
+      const result = await this.runtime.enhancePrompt(draft, sessionId ? { sessionId } : {});
+      if (result.ok) {
+        this.bus.emit({ type: "composer_draft_replaced", expected: draft, value: result.text });
+      } else {
+        this.bus.emit({ type: "composer_notice", text: `Could not enhance the prompt (${result.reason}). Your text is unchanged.` });
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      this.bus.emit({ type: "composer_notice", text: `Could not enhance the prompt (${reason}). Your text is unchanged.` });
+    } finally {
+      this.enhancingPrompt = false;
+    }
   }
 
   async compactContext(verb: "run" | "show"): Promise<void> {

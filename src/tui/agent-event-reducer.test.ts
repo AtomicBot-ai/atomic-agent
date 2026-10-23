@@ -2536,3 +2536,23 @@ it("shows a waiting message immediately and consumes the runtime echo only once"
   const unchanged = reduceTuiState(state,{type:"message_waiting_for_model",sessionId:"other",text:"not here"});
   expect(unchanged).toBe(state);
 });
+
+describe("reduceTuiState composer_draft_replaced", () => {
+  it("puts the rewrite in the composer while it still holds the draft", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("Fix the login bug.");
+    expect(state.composerNotice).toContain("Review it");
+  });
+
+  it("keeps an edit made while the rewrite ran", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login, and the logout" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("fix login, and the logout");
+    expect(state.composerNotice).toContain("not applied");
+  });
+});

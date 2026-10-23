@@ -270,6 +270,9 @@ export function runSlashCommand(
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
   if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb);
+  if (result.enhancePromptText !== undefined) {
+    callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);
+  }
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
