@@ -14,6 +14,11 @@ import {
   toStrictJsonSchema,
 } from "./strict-tool-schema.js";
 import { withoutTopLevelNullArgs } from "./openai-strict-tools.js";
+import {
+  mergeJsonRepair,
+  repairJsonText,
+  type JsonRepairReport,
+} from "../../grammar/repair-tool-call-json.js";
 
 const REPLY_TOOL = "reply";
 const FINISH_TOOL = "finish";
@@ -248,10 +253,23 @@ export class ToolCallArgumentsParseError extends Error {
  * malformed argument string must never be silently treated the same as an
  * intentional empty call.
  */
-function parseArguments(raw: string): Record<string, unknown> {
+function parseArguments(
+  raw: string,
+  repair?: (report: JsonRepairReport) => void,
+): Record<string, unknown> {
   const trimmed = raw.trim();
   if (!trimmed) return {};
-  const parsed = JSON.parse(trimmed) as unknown;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch (err) {
+    // ATO-637: one mechanical repair before the step pays for a retry.
+    // The caller reports it; the step decides whether the call may run.
+    const fixed = repair ? repairJsonText(trimmed) : null;
+    if (fixed === null) throw err;
+    repair!(fixed);
+    parsed = fixed.value;
+  }
   if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
     return parsed as Record<string, unknown>;
   }
@@ -312,11 +330,17 @@ export function openAiToolCallsToBatch(
   options?: ToolBatchOptions,
 ): ToolCallBatch {
   const calls: ToolCallPayload[] = [];
+  let jsonRepair: JsonRepairReport | undefined;
+  const noteRepair = options?.repairJson
+    ? (report: JsonRepairReport): void => {
+        jsonRepair = mergeJsonRepair(jsonRepair, report);
+      }
+    : undefined;
   for (const tc of toolCalls) {
     const name = nameUnescape(tc.function.name);
     let args: Record<string, unknown>;
     try {
-      args = parseArguments(tc.function.arguments);
+      args = parseArguments(tc.function.arguments, noteRepair);
       const widened = options?.strictWidenedArgs?.get(tc.function.name);
       if (widened && widened.size > 0) {
         args = dropNullArgs(args, widened);
@@ -335,13 +359,14 @@ export function openAiToolCallsToBatch(
   }
   const reasoning =
     reasoningText && reasoningText.length > 0 ? reasoningText : undefined;
+  const repaired = jsonRepair !== undefined ? { jsonRepair } : {};
   if (calls.length === 0) {
-    return { kind: "batch", calls: [], reasoning };
+    return { kind: "batch", calls: [], reasoning, ...repaired };
   }
   if (calls.length === 1) {
-    return { kind: "batch", calls, reasoning };
+    return { kind: "batch", calls, reasoning, ...repaired };
   }
-  return { kind: "batch", calls, reasoning };
+  return { kind: "batch", calls, reasoning, ...repaired };
 }
 
 /**
@@ -356,8 +381,14 @@ export function withStrictNullArgumentDrop(
 ): ToolCallAdapter {
   return {
     ...adapter,
-    toolCallsToBatch: (toolCalls, reasoningText) => {
-      const batch = adapter.toolCallsToBatch(toolCalls, reasoningText);
+    toolCallsToBatch: (toolCalls, reasoningText, options) => {
+      // Only the repair flag goes through: this wrapper already drops
+      // every top-level null, so the strict map stays unused as before.
+      const batch = adapter.toolCallsToBatch(
+        toolCalls,
+        reasoningText,
+        options?.repairJson ? { repairJson: true } : undefined,
+      );
       return {
         ...batch,
         calls: batch.calls.map((call) => {

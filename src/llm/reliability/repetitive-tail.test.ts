@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasRepetitiveTail } from "./repetitive-tail.js";
+import { hasRepetitiveTail, repetitiveTailPeriod } from "./repetitive-tail.js";
 
 describe("hasRepetitiveTail", () => {
   it("catches a short block repeated until the cap", () => {
@@ -33,5 +33,12 @@ describe("hasRepetitiveTail", () => {
 
   it("does not flag text shorter than the minimum span", () => {
     expect(hasRepetitiveTail("ab".repeat(50))).toBe(false);
+  });
+
+  it("reports the period of the loop and honours a higher repeat count", () => {
+    const block = "Let me read the regulations first, then draft the summary section by section, one part per step. ";
+    expect(repetitiveTailPeriod(block.repeat(5), 4)).toBe(block.length);
+    expect(repetitiveTailPeriod(block.repeat(5), 8)).toBeNull();
+    expect(repetitiveTailPeriod(block.repeat(9), 8)).toBe(block.length);
   });
 });

@@ -1,6 +1,9 @@
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  formatShellPreview,
   needsShellInterpretation,
+  quotePosixArg,
   resolveShellSpawn,
 } from "./shell-interpretation.js";
 
@@ -116,5 +119,58 @@ describe("resolveShellSpawn on POSIX", () => {
       args: ["/c", "dir", "C:\\"],
       windowsVerbatimArguments: false,
     });
+  });
+});
+
+// ATO-433: the approval preview joined argv with spaces, so
+// `bash -c "echo 'ux tour' > f.txt"` read as a different command.
+describe("formatShellPreview", () => {
+  it.skipIf(process.platform === "win32")(
+    "quotes a direct exec so sh reads back the same argv",
+    () => {
+      const args = ["-c", "echo 'ux tour' > f.txt", "", "$HOME", "a b", "plain/path.txt"];
+      const preview = formatShellPreview("bash", args, false);
+      expect(preview).toBe(
+        "bash -c 'echo '\\''ux tour'\\'' > f.txt' '' '$HOME' 'a b' plain/path.txt",
+      );
+      // What a shell makes of the preview is the argv that runs.
+      const out = execFileSync("sh", [
+        "-c",
+        `printf '%s\\0' ${preview}`,
+      ]).toString("utf8");
+      expect(out.split("\0").slice(0, -1)).toEqual(["bash", ...args]);
+    },
+  );
+
+  it("shows the subshell line as it runs on POSIX", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    expect(formatShellPreview("echo hi | cat", [], true)).toBe("echo hi | cat");
+  });
+
+  it("quotes for cmd.exe on Windows", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    expect(
+      formatShellPreview("C:\\Program Files\\tool.exe", ["say \"hi\"", "x"], false),
+    ).toBe('"C:\\Program Files\\tool.exe" "say ""hi""" x');
+    expect(formatShellPreview("dir", ["C:\\My Files"], true)).toBe(
+      'dir "C:\\My Files"',
+    );
+  });
+
+  it("leaves plain tokens bare", () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("linux");
+    expect(formatShellPreview("git", ["log", "--oneline", "-5"], false)).toBe(
+      "git log --oneline -5",
+    );
+  });
+});
+
+describe("quotePosixArg", () => {
+  it("quotes empty, spaced and metacharacter tokens, and escapes single quotes", () => {
+    expect(quotePosixArg("")).toBe("''");
+    expect(quotePosixArg("a b")).toBe("'a b'");
+    expect(quotePosixArg("x>y")).toBe("'x>y'");
+    expect(quotePosixArg("it's")).toBe("'it'\\''s'");
+    expect(quotePosixArg("--name=value")).toBe("--name=value");
   });
 });

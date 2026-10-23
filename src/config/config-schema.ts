@@ -993,6 +993,15 @@ export interface UserConfigFile {
 // old 1500 default cut thinking models off mid-thought. An older file
 // holding exactly 1500 (written by the schema, not the operator) migrates
 // to `0`; any other value is a deliberate choice and is kept.
+// Unversioned, additive: `tools.shell.envPassthrough` (default
+// `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
+// `os.git.*` no longer inherit the agent's provider keys, bot tokens or
+// any variable named like a KEY, TOKEN, SECRET or PASSWORD
+// (`src/sandbox/command-env.ts`); the names listed here are passed to
+// shell commands anyway. The default keeps the bundled `github` and
+// `notion` skills working. An older file has no field and takes the
+// default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
+// other inherited key; the fix is one line in config.
 export const USER_CONFIG_VERSION = 78;
 
 /**

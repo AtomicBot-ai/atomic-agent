@@ -26,7 +26,7 @@ describe("which backend the route is on", () => {
     ["a llama.cpp the operator runs", () => localState("external"), "custom"],
     // `localModels.mode` defaults to `external` in config, so an
     // untouched install genuinely is pointed at a llama.cpp this app does
-    // not manage — at the default `127.0.0.1:8080`. Reading that as
+    // not manage — at the default `127.0.0.1:9931`. Reading that as
     // `local` would claim a managed backend nobody set up.
     [
       "nothing configured at all",

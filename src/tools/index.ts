@@ -3,7 +3,13 @@ import { finishTool } from "./finish.js";
 import { replyTool } from "./conversation/index.js";
 
 export { ToolRegistry, ToolNotFoundError } from "./tool-registry.js";
-export type { ToolContext, ToolDefinition } from "./tool-registry.js";
+export type { ToolContext, ToolDefinition, ToolRegistryOptions } from "./tool-registry.js";
+export {
+  FULL_OUTPUT_PATH_DETAIL,
+  SPILL_TOOLS,
+  ToolOutputSpill,
+  toolOutputDir,
+} from "./tool-output-spill.js";
 export { finishTool } from "./finish.js";
 export { replyTool } from "./conversation/index.js";
 

@@ -118,7 +118,7 @@ function formatTraceEvent(event: TraceEvent, raw: boolean): string {
     case "provider_recovered":
       return `${head} waited=${Math.round(event.waitedMs / 1000)}s`;
     case "completion_truncated":
-      return `${head} step=${event.stepIndex} cause=${event.cause} reply=${event.completionTokens} prompt=${event.promptTokens} cap=${event.requestedMaxTokens ?? "none"} retry=${event.retry}:${event.retryValue}`;
+      return `${head} step=${event.stepIndex} cause=${event.cause} reply=${event.completionTokens} prompt=${event.promptTokens} cap=${event.requestedMaxTokens ?? "none"}${event.repetitive === true ? " repetitive" : ""} retry=${event.retry}:${event.retryValue}`;
     case "prompt_repacked":
       return `${head} step=${event.stepIndex} window=${event.contextWindow} source=${event.source} prompt=${event.promptTokens}`;
     case "loop_detected":

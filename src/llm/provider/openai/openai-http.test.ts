@@ -719,6 +719,51 @@ describe("humanizeOpenAiHttpError", () => {
     );
   });
 
+  describe("404/405 from a server on this machine (ATO-871)", () => {
+    const local = (status: number, url: string, label = "atomic-chat") =>
+      new OpenAiHttpError("raw", status, url, false, null, label);
+
+    it("names Atomic Chat on 1337 and keeps the answered status", () => {
+      for (const status of [404, 405]) {
+        expect(
+          humanizeOpenAiHttpError(local(status, "http://127.0.0.1:1337/v1/chat/completions")),
+        ).toBe(
+          `The local Atomic Chat server at 127.0.0.1:1337 answered ${status}: the model is not loaded there, ` +
+            "or this address is not its API. Load the model in Atomic Chat, or check the base URL.",
+        );
+      }
+    });
+
+    it("names Ollama on 11434", () => {
+      for (const status of [404, 405]) {
+        expect(
+          humanizeOpenAiHttpError(local(status, "http://localhost:11434/v1/chat/completions", "ollama")),
+        ).toBe(
+          `The local Ollama server at localhost:11434 answered ${status}: the model is not loaded there, ` +
+            "or this address is not its API. Load the model in Ollama, or check the base URL.",
+        );
+      }
+    });
+
+    it("says the local server for any other local port", () => {
+      const text = humanizeOpenAiHttpError(local(404, "http://127.0.0.1:1234/v1/chat/completions", "lmstudio"));
+      expect(text).toBe(
+        "The local server at 127.0.0.1:1234 answered 404: the model is not loaded there, " +
+          "or this address is not its API. Load the model in that server, or check the base URL.",
+      );
+      expect(text).not.toContain("\u2014");
+    });
+
+    it("leaves a cloud 404 and 405 as they were", () => {
+      const cloud = (status: number) =>
+        new OpenAiHttpError(`openai provider ${status}: `, status, "https://openrouter.ai/api/v1/chat/completions", false, null, "openrouter");
+      expect(humanizeOpenAiHttpError(cloud(404))).toBe(
+        '"openrouter" answered 404 (not found). The model id or the base URL is likely wrong.',
+      );
+      expect(humanizeOpenAiHttpError(cloud(405))).toBe('"openrouter" rejected the request (405).');
+    });
+  });
+
   it("claims a retry count only for classes the client retries", () => {
     expect(humanizeOpenAiHttpError(mk(401))).not.toContain("Tried");
     expect(humanizeOpenAiHttpError(mk(404))).not.toContain("Tried");

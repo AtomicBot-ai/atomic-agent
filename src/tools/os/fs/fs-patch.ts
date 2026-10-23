@@ -3,11 +3,20 @@ import { readFile, writeFile } from "node:fs/promises";
 import { dirname, basename } from "node:path";
 import { applyPatch, parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
-import { compressToolResult } from "../../../compressor/result-compressor.js";
+import {
+  compressToolResult,
+  type CompressedToolResult,
+} from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import { checkChangedFile } from "./fs-content-check.js";
 import { withParseWarning } from "./fs-parse-check.js";
 import { dryRunFile, type PreviewOutcome } from "./fs-patch-preview.js";
+import {
+  changedSinceRead,
+  recordOwnWrite,
+  staleReadNoticeFor,
+  withStaleReadNotice,
+} from "./fs-read-freshness.js";
 import {
   guardReplacedFile,
   priorFromText,
@@ -77,11 +86,27 @@ export function buildOsFsPatchTool(
         ctx.signal,
       );
 
+      // Files that changed since the model last read them (ATO-659): a
+      // fuzzy hunk can land on text the model never saw, and a refused
+      // one most likely failed for exactly this reason. Noted, not refused.
+      const changedPaths: string[] = [];
+      for (const p of previews) {
+        if (await changedSinceRead(ctx.fileVersions, p.absolute)) {
+          changedPaths.push(p.absolute);
+        }
+      }
+      const noteChanged = (result: CompressedToolResult): CompressedToolResult =>
+        withStaleReadNotice(
+          result,
+          changedPaths.length > 0,
+          staleReadNoticeFor(changedPaths),
+        );
+
       if (!allApplicable) {
         // Refuse to partially apply: either the whole patch lands, or we
         // bail before writing anything. This keeps the agent's mental
         // model simple and avoids half-broken trees.
-        return buildResult(previews, "apply-refused");
+        return noteChanged(buildResult(previews, "apply-refused"));
       }
 
       const parseWarnings: string[] = [];
@@ -101,6 +126,7 @@ export function buildOsFsPatchTool(
           );
         }
         await writeFile(outcome.absolute, patched, "utf8");
+        await recordOwnWrite(ctx.fileVersions, outcome.absolute);
         guards.push(await guardAfterPatch(options, ctx, outcome, patched));
         const warning = parseWarningAfterPatch(
           outcome,
@@ -110,13 +136,13 @@ export function buildOsFsPatchTool(
         if (warning !== null) parseWarnings.push(warning);
       }
 
-      return withReplaceNotes(
+      return noteChanged(withReplaceNotes(
         withParseWarning(
           buildResult(previews, "applied"),
           parseWarnings.length > 0 ? parseWarnings.join("\n") : null,
         ),
         guards,
-      );
+      ));
     },
   };
 }

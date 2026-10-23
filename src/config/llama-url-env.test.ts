@@ -36,7 +36,7 @@ describe("ATOMIC_AGENT_LLAMA_URL", () => {
 
   it("is not read: the URL resolves from localModels.url", () => {
     process.env[DEAD_ENV] = "http://127.0.0.1:9999";
-    expect(loadConfig().localModels.url).toBe("http://127.0.0.1:8080");
+    expect(loadConfig().localModels.url).toBe("http://127.0.0.1:9931");
   });
 
   it.each([

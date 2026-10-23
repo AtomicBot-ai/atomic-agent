@@ -685,6 +685,16 @@ export class ApprovalGate {
   }
 
   /**
+   * The request `approvalId` is parked on, or `null` once it is resolved
+   * or dropped. For a host that must check what a decision may grant
+   * before it sends one: the HTTP route offers "allow in this chat" only
+   * where the request carries a shape (`canGrantShape`).
+   */
+  pendingRequest(approvalId: string): ApprovalRequest | null {
+    return this.pending.get(approvalId)?.request ?? null;
+  }
+
+  /**
    * Whether `approvalId` still waits for a decision here. False once it
    * is resolved, or dropped because the turn that asked was aborted. A
    * session can hold more than one request at a time (calls of different

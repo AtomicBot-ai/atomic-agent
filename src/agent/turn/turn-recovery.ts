@@ -195,6 +195,7 @@ export function recoverTurnStep(
       ...(detail.requestedMaxTokens !== undefined
         ? { requestedMaxTokens: detail.requestedMaxTokens }
         : {}),
+      ...(detail.repetitive === true ? { repetitive: true as const } : {}),
       retry,
     });
     deps.logger?.warn("completion truncated; retrying the step", {
@@ -205,6 +206,7 @@ export function recoverTurnStep(
       promptTokens: detail.promptTokens,
       // `null` in the log: the request carried no cap at all.
       requestedMaxTokens: detail.requestedMaxTokens ?? null,
+      repetitive: detail.repetitive === true,
       retry: retry.kind,
       attempt: stepTruncationAttempts + 1,
       ...(retryCap !== undefined

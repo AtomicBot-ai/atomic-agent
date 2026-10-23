@@ -11,7 +11,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 
 ## localModels
 
-- `localModels.url` (default `"http://127.0.0.1:8080"`).
+- `localModels.url` (default `"http://127.0.0.1:9931"`, llama-server's own default port since llama.cpp v0.7.0; Docker images still listen on 8080).
 - `localModels.mode` (default `"external"`).
 - `localModels.completionMaxTokens` (default `16384`).
 - `localModels.useServerTemplate` (default `"auto"`).
@@ -91,6 +91,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 - `tools.shell.defaultTimeoutMs` (default `600000`).
 - `tools.shell.jobMaxMs` (default `3600000`).
 - `tools.shell.maxJobs` (default `3`).
+- `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
 
 ## sessions
 

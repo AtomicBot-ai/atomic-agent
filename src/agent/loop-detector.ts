@@ -15,6 +15,7 @@ import {
   type ReadObservation,
 } from "./read-coverage.js";
 import { ProbeRuns, probeFamily } from "./wandering-spread.js";
+import { FileReadVersions } from "../tools/os/fs/fs-read-freshness.js";
 
 /**
  * Cap on distinct outcome fingerprints tracked in one turn; the oldest
@@ -140,6 +141,13 @@ export class ToolLoopTracker {
    * window spread is kept only for the absolute ceiling.
    */
   private readonly probeRuns = new ProbeRuns();
+  /**
+   * What `os.fs.read` last saw of each file this turn, handed to tools as
+   * `ToolContext.fileVersions` so a write, edit or patch can say when its
+   * target changed since the model read it (ATO-659,
+   * `fs-read-freshness.ts`). Per turn, like every other detector here.
+   */
+  readonly fileVersions = new FileReadVersions();
 
   constructor(options: ToolLoopTrackerOptions = {}) {
     this.warningThreshold = Math.max(2, options.warningThreshold ?? 3);

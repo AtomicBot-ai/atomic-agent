@@ -1,4 +1,5 @@
 import { getConfig, USER_CONFIG_DEFAULTS } from "../config/index.js";
+import { LEGACY_EXTERNAL_LLAMA_URL } from "../config/local-models/local-models-defaults.js";
 import {
   getLocalModelDef,
   isBackendDownloaded,
@@ -39,7 +40,8 @@ export function isCloudTextProviderReady(): boolean {
  * as opposed to untouched defaults. Two signals count: a selected managed
  * model, and an external URL the user typed instead of the shipped one.
  * Everything else a fresh install carries — `llm.activeTextProvider`
- * resolving to `local-llama`, the default `http://127.0.0.1:8080`, the
+ * resolving to `local-llama`, the default `http://127.0.0.1:9931` (or the
+ * pre-ATO-834 `http://127.0.0.1:8080` that older first runs wrote), the
  * embeddings daemon toggle, which drives a different port and says nothing
  * about the chat server — is a default nobody chose and must not count, or
  * the first-run screen goes back to blaming the user for a server they
@@ -58,7 +60,11 @@ export function isLocalBackendConfigured(): boolean {
   // `managed.port`, so the comparison below only means anything when the
   // operator is on the external path.
   if (cfg.localModels.mode !== "external") return false;
-  return cfg.localModels.url !== USER_CONFIG_DEFAULTS.localModels.url;
+  const url = cfg.localModels.url;
+  return (
+    url !== USER_CONFIG_DEFAULTS.localModels.url &&
+    url !== LEGACY_EXTERNAL_LLAMA_URL
+  );
 }
 
 /**

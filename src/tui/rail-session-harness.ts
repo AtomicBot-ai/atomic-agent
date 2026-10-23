@@ -199,7 +199,7 @@ export function harness(stored: StoredSession[], options: StubOptions = {}) {
   const pins: string[][] = [];
   const orchestrator = new ChatOrchestrator(stubRuntime(stored, options), bus, {
     maxSteps: 5,
-    llamaUrl: "http://127.0.0.1:8080",
+    llamaUrl: "http://127.0.0.1:9931",
     readGateFacts: cloudGateFacts,
     sessionRailLayout: {
       read: () => ({ order, pinned }),

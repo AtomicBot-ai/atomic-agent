@@ -405,6 +405,11 @@ export interface TuiAppCallbacks {
   /** Ask the orchestrator to stop the llama-server daemon. */
   onLocalModelsDaemonStopRequested?(): void | Promise<void>;
   /**
+   * The chat route moved to a cloud model: stop only the chat daemon and
+   * keep the embedding one, so memory search keeps working (ATO-376).
+   */
+  onLocalModelsChatStopForCloudRequested?(): void | Promise<void>;
+  /**
    * Bounce a wedged llama-server: stop the chat daemon and start it
    * again. Distinct from stop-then-start by hand, which also tears down
    * the embedding daemon and turns hybrid recall off.
