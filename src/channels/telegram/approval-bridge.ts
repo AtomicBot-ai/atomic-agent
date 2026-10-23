@@ -1,5 +1,9 @@
 import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
-import { formatApprovalCategory } from "../../approval/index.js";
+import {
+  excerptPreview,
+  formatApprovalCategory,
+  hiddenLinesNote,
+} from "../../approval/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { withThread, type TelegramApi } from "./outbound-sender.js";
@@ -374,28 +378,72 @@ function buildKeyboard(approvalId: string): {
 }
 
 /**
+ * Telegram caps one `sendMessage` at 4096 UTF-16 units, and a failed
+ * send auto-denies the request. The approval text stays under this,
+ * with headroom, by cutting the preview (ATO-434).
+ */
+const APPROVAL_MESSAGE_MAX_CHARS = 4000;
+
+/** Indent of each preview line. */
+const PREVIEW_INDENT = "  ";
+
+/**
  * Render an `ApprovalRequest` as plain text. We deliberately do not
  * use Telegram's MarkdownV2 — escaping rules around backticks /
  * underscores in tool names and previews are easy to get wrong, and
  * a corrupted Markdown payload breaks the prompt. Plain text is
  * unambiguous; it just renders without a fixed-width preview block.
+ *
+ * Every preview line is shown while the message fits. A preview too
+ * long for one message keeps whole lines from the top and ends with
+ * "+N more lines", so the person approving knows the command goes on;
+ * before, an oversized message simply failed and the request was denied.
  */
 function formatApprovalText(req: ApprovalRequest): string {
-  const lines: string[] = [
+  const head: string[] = [
     "Approval requested",
     `tool: ${req.tool}`,
     `kind: ${formatApprovalCategory(req.category)}`,
   ];
-  if (req.reason) lines.push(`reason: ${req.reason}`);
+  if (req.reason) head.push(`reason: ${req.reason}`);
+  const tail: string[] = [];
+  if (req.affectedResources && req.affectedResources.length > 0) {
+    tail.push("resources:");
+    for (const r of req.affectedResources) tail.push(`- ${r}`);
+  }
+  const lines = [...head];
   if (req.preview) {
     lines.push("preview:");
-    for (const previewLine of req.preview.split("\n")) {
-      lines.push(`  ${previewLine}`);
-    }
+    // What is left for the preview once everything else is counted,
+    // including a newline before each line and its indent, and room
+    // for the note. Never below a few lines' worth, so a very long
+    // reason cannot squeeze the command out entirely.
+    const fixed = [...lines, ...tail].join("\n").length;
+    const roomForNote = 40;
+    const budget = Math.max(
+      400,
+      APPROVAL_MESSAGE_MAX_CHARS - fixed - roomForNote,
+    );
+    const indented = req.preview
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => `${PREVIEW_INDENT}${line}`)
+      .join("\n");
+    const excerpt = excerptPreview(indented, {
+      maxLines: Number.POSITIVE_INFINITY,
+      // `+1` for the newline that joins the preview to `preview:`.
+      maxChars: budget - 1,
+    });
+    lines.push(...excerpt.lines);
+    const note = hiddenLinesNote(excerpt.hiddenLines);
+    if (note !== null) lines.push(`${PREVIEW_INDENT}${note}`);
   }
-  if (req.affectedResources && req.affectedResources.length > 0) {
-    lines.push("resources:");
-    for (const r of req.affectedResources) lines.push(`- ${r}`);
-  }
-  return lines.join("\n");
+  lines.push(...tail);
+  const text = lines.join("\n");
+  // Last guard for what the preview budget cannot cover (a reason or a
+  // resource list that alone is past the limit): a cut message is
+  // still a prompt the person can answer; an oversized one is a denial.
+  return text.length <= APPROVAL_MESSAGE_MAX_CHARS
+    ? text
+    : `${text.slice(0, APPROVAL_MESSAGE_MAX_CHARS - 1)}…`;
 }

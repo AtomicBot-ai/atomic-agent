@@ -12,6 +12,11 @@ import {
   type ApprovalCategory,
 } from "../approval/approval-level.js";
 import {
+  excerptPreview,
+  hiddenLinesNote,
+  type PreviewExcerptLimits,
+} from "../approval/approval-preview.js";
+import {
   APPROVAL_CHORDS,
   canEditPath,
   decideApproval,
@@ -94,12 +99,7 @@ export function ApprovalModal({
           <Text color="gray">reason: </Text>
           {request.reason}
         </Text>
-        {request.preview ? (
-          <Text>
-            <Text color="gray">preview: </Text>
-            {clip(request.preview, 240)}
-          </Text>
-        ) : null}
+        {request.preview ? <ApprovalPreview preview={request.preview} /> : null}
         {request.affectedResources && request.affectedResources.length > 0 ? (
           <Text>
             <Text color="gray">affects: </Text>
@@ -225,9 +225,39 @@ function footerHint(grantable: boolean, category: ApprovalCategory): string {
   return `approve covers this call once; the session grants last until the app exits (never persisted); loosen the standing stance with the coding-mode control in the composer · ${typing}`;
 }
 
-function clip(value: string, limit: number): string {
-  if (value.length <= limit) return value;
-  return `${value.slice(0, limit - 1)}…`;
+/**
+ * How much of a preview the modal shows (ATO-434). Enough for a typical
+ * multi-line script or a short diff while the decision buttons stay on
+ * a laptop-sized terminal; anything longer says how many lines it hides.
+ */
+const PREVIEW_LIMITS: PreviewExcerptLimits = { maxLines: 20, maxChars: 1200 };
+
+/**
+ * The command (or diff, or URL) under decision. One line sits next to
+ * its label as before; several go one per row under it, so a script
+ * reads as the script it is. A cut used to be a bare `…` at character
+ * 240, hiding the lines after it; now it is whole lines plus a note.
+ */
+function ApprovalPreview({ preview }: { preview: string }): ReactElement {
+  const excerpt = excerptPreview(preview, PREVIEW_LIMITS);
+  const note = hiddenLinesNote(excerpt.hiddenLines);
+  if (excerpt.lines.length === 1 && note === null) {
+    return (
+      <Text>
+        <Text color="gray">preview: </Text>
+        {excerpt.lines[0]}
+      </Text>
+    );
+  }
+  return (
+    <Box flexDirection="column">
+      <Text color="gray">preview:</Text>
+      {excerpt.lines.map((line, index) => (
+        <Text key={index}>{`  ${line}`}</Text>
+      ))}
+      {note === null ? null : <Text color="gray">{`  ${note}`}</Text>}
+    </Box>
+  );
 }
 
 /**
