@@ -209,9 +209,14 @@ const GRAMMAR_EXIT_TOOL = "reply";
  * The split `tool-call` rule of a grammar whose `reply` has its own branch
  * (#681): `reply-call` carries reply with the guarded text rule, and
  * `tool-name` (the generic branch) does not list it. An older grammar
- * without the split keeps `reply` in `tool-name`.
+ * without the split keeps `reply` in `tool-name`. `shell-call` is the same
+ * idea for `os.shell.run`, whose `cmd` must be a non-empty string; it is
+ * optional here so a grammar from before that branch still narrows.
  */
-const SPLIT_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call \| other-call$/m;
+const SPLIT_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call( \| shell-call)?( \| other-call)?$/m;
+
+/** Tools with a dedicated branch of the split rule, outside `tool-name`. */
+const SHELL_TOOL = "os.shell.run";
 
 /** `tool-call` when `reply` is the only name a request admits. */
 const REPLY_ONLY_TOOL_CALL_RULE = "tool-call ::= reply-call";
@@ -294,17 +299,23 @@ function replaceToolNameRule(grammar: string, names: string[]): string {
 
 /**
  * The per-request rewrite of a split grammar: `reply` stays on its own
- * branch, `tool-name` lists the other names. With no other name the
- * generic branch is dropped from `tool-call` instead (an empty
- * alternation is not valid GBNF); `tool-name` is left as it was, an
+ * branch, `os.shell.run` keeps its own branch when the request admits it
+ * (and the base grammar has one), `tool-name` lists the other names. A
+ * branch with nothing to carry is dropped from `tool-call` (an empty
+ * alternation is not valid GBNF); `tool-name` is then left as it was, an
  * unreferenced rule llama.cpp still parses.
  */
 function narrowSplitGrammar(grammar: string, names: string[]): string {
-  const others = names.filter((name) => name !== GRAMMAR_EXIT_TOOL);
-  if (others.length === 0) {
-    return grammar.replace(SPLIT_TOOL_CALL_RULE_RE, REPLY_ONLY_TOOL_CALL_RULE);
-  }
-  return replaceToolNameRule(grammar, others);
+  const hasShellBranch = /^shell-call ::= /m.test(grammar);
+  const keepShell = hasShellBranch && names.includes(SHELL_TOOL);
+  const others = names.filter(
+    (name) => name !== GRAMMAR_EXIT_TOOL && !(hasShellBranch && name === SHELL_TOOL),
+  );
+  const branches = ["reply-call"];
+  if (keepShell) branches.push("shell-call");
+  if (others.length > 0) branches.push("other-call");
+  const narrowed = grammar.replace(SPLIT_TOOL_CALL_RULE_RE, `tool-call ::= ${branches.join(" | ")}`);
+  return others.length > 0 ? replaceToolNameRule(narrowed, others) : narrowed;
 }
 
 /**
@@ -316,16 +327,20 @@ function narrowSplitGrammar(grammar: string, names: string[]): string {
  */
 export function grammarToolNames(grammar: string): string[] | null {
   if (REPLY_ONLY_TOOL_CALL_RULE_RE.test(grammar)) return [GRAMMAR_EXIT_TOOL];
-  const match = grammar.match(TOOL_NAME_RULE_RE);
-  if (!match) return null;
-  const body = match[0].slice("tool-name ::= ".length);
+  const split = grammar.match(SPLIT_TOOL_CALL_RULE_RE);
   const names: string[] = [];
-  for (const alt of body.split("|")) {
-    const literal = alt.trim().match(/^"\\"(.*)\\""$/);
-    if (!literal) return null;
-    names.push(literal[1]!);
+  if (!split || split[2] !== undefined) {
+    const match = grammar.match(TOOL_NAME_RULE_RE);
+    if (!match) return null;
+    const body = match[0].slice("tool-name ::= ".length);
+    for (const alt of body.split("|")) {
+      const literal = alt.trim().match(/^"\\"(.*)\\""$/);
+      if (!literal) return null;
+      names.push(literal[1]!);
+    }
   }
-  if (SPLIT_TOOL_CALL_RULE_RE.test(grammar)) names.push(GRAMMAR_EXIT_TOOL);
+  if (split) names.push(GRAMMAR_EXIT_TOOL);
+  if (split?.[1] !== undefined) names.push(SHELL_TOOL);
   return Array.from(new Set(names)).sort();
 }
 
