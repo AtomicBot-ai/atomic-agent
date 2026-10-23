@@ -61,6 +61,7 @@ const SEL = {
   rows:[], models:[], modelsFor:null, modelsBusy:false, modelsErr:null,
   local:[], localBusy:false, addOpen:false, presetCur:0,
   pulling:null, pullLine:'', busy:false, err:null,
+  ramWarned:null, // ATO-337: the model the memory warning was shown for; the next pick of it runs
 };
 /* Item 1 (plan hand-off). The offer that follows a finished plan-mode turn,
    ported from src/tui/components/plan-handoff.tsx. `on` is the offer itself;
@@ -1348,7 +1349,8 @@ const LLMP = {
   health:null, // /health.llama for the External row's status
   envKeys:null, dotenvKeys:null, // key NAMES present (never values)
   busy:false, statusLine:null, statusSource:null, msg:null,
-  confirm:null, // {kind:'removeProvider'|'removeLocal'|'removeEmbedding', id, error, submitting}
+  confirm:null, // {kind:'removeProvider'|'removeLocal'|'removeEmbedding'|'ramOver', id, error, submitting}
+  ramOk:null, // ATO-337: the model id "Run anyway" was pressed for, this session
   externalDraft:null, externalInvalid:false, steerUrl:null,
   fallbackPicker:null, // {cursor}
   daemonPhase:null, // 'starting' | 'stopping' while a `models start|stop` runs (the TUI's daemonPhase)
@@ -11481,6 +11483,27 @@ function bestModelFor(models, ram) {
   return ordered.length ? ordered[0] : null;
 }
 
+/**
+ * ATO-337: what to say before a model this machine is under the catalogue's
+ * minimum for is downloaded or started. The rows already say "will not run";
+ * this is the click on one. Only for catalogue figures (fitFor's `known`):
+ * a size-based estimate is not firm enough to stand in the way.
+ * `alt` is the best model that does run here (bestModelFor), or null.
+ * @returns {{title: string, text: string, alt: object|null}|null}
+ */
+function modelRamWarning(model, models, ram) {
+  const have = Number(ram) || 0;
+  const min = Number(model && model.minRamGb) || 0;
+  if (!model || !have || !min) return null;
+  const fit = fitFor(model, have);
+  if (fit.v !== 'over' || !fit.known) return null;
+  const alt = bestModelFor((models || []).filter((m) => m && m.id !== model.id), have);
+  return {title: 'Not enough memory for this model',
+    text: 'This model needs ' + min + ' GB of memory. ' + THIS_MACHINE_CAP + ' has ' + have + ' GB.'
+      + (alt ? ' ' + llmModelName(alt) + ' runs here.' : ''),
+    alt};
+}
+
 /** The facts line under a model's name: size, context, vision, disk state. */
 function modelFactsLine(model) {
   const parts = [model.size, model.context + ' context'];
@@ -17366,6 +17389,13 @@ async function selActivate(row) {
     return;
   }
   if (row.type === 'localModel') {
+    /* ATO-337: a model this machine is under the minimum for (listed here
+       only once it is on disk) warns on the first pick and runs on the
+       second, for the rest of the session. */
+    if (SEL.ramWarned !== row.id) {
+      const warn = modelRamWarning((SEL.local || []).find((m) => m && m.id === row.id), SEL.local, hostRamGb());
+      if (warn) { SEL.ramWarned = row.id; toast(warn.title, warn.text + ' Pick it again to run it anyway.', 'bad'); return; }
+    }
     if (!row.downloaded) { selPull(row.id); return; }
     // Close immediately; progress and failures remain beside the composer.
     SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…';
@@ -25666,6 +25696,16 @@ function llmModalHTML() {
     // While it works Cancel waits (a removal half-done is worse than one finished or refused).
     const acts = (label, yes) => '<div class="acts"><button class="btn btn-s sm" data-act="llm:cancel"' + (c.submitting ? ' disabled' : '') + '>Cancel</button>'
       + '<button class="btn btn-df sm" data-act="llm:confirm"' + (yes.disabled ? ' disabled' : '') + (yes.title ? ' title="' + esc(yes.title) + '"' : '') + '>' + esc(label) + '</button></div>';
+    // ATO-337: amber, as nothing failed; the operator may provision for another machine.
+    if (c.kind === 'ramOver') {
+      const alt = c.altId ? (LLMP.local || []).find((m) => m && m.id === c.altId) : null;
+      return '<div class="tk-modal tk-modal--warn llm-modal" role="alertdialog">'
+        + '<div class="llm-modal-h"><span class="tk-ico tk-ico--amber">' + ic('info') + '</span><h4>Not enough memory for this model</h4></div>'
+        + '<p>' + esc(c.text) + '</p>'
+        + '<div class="acts"><button class="btn btn-s sm" data-act="llm:cancel">Cancel</button>'
+        + (alt ? '<button class="btn btn-s sm" data-act="llm:ramAlt">' + esc('Use ' + llmModelName(alt)) + '</button>' : '')
+        + '<button class="btn btn-p sm" data-act="llm:confirm">' + (c.download ? 'Download anyway' : 'Run anyway') + '</button></div></div>';
+    }
     if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + providerWord(c.id) + '?')
       + err + busy + acts('Remove', {disabled:c.submitting}) + '</div>';
     /* ATO-119: any model on disk, the one in use and the embedding models
@@ -26435,12 +26475,31 @@ function llmPull(kind, id) {
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
+/* ATO-337: press a local chat model's row by id, with the cursor on it. */
+function llmPrimaryForLocal(id) {
+  const rows = llmLocalRows();
+  const i = rows.findIndex((r) => r.kind === 'localTextModel' && r.model.id === id);
+  if (i < 0) { llmRepaint(); return; }
+  LLMP.cursor.local = i;
+  llmPrimary(rows[i]);
+}
 /* llm-panel-primary-actions.ts triggerLocalChatModel / triggerLocalEmbeddingModel / triggerCloud*, ported. */
 async function llmPrimary(row) {
   if (!row || !BR) return;
   if (row.kind === 'localTextModel') {
     const m = row.model;
     if (!m.downloaded && llmNoRoom(m)) return;
+    /* ATO-337: a model this machine is under the minimum for asks first
+       (download, use or start), naming one that runs here; "anyway" holds
+       for that model for the rest of the session. */
+    if (row.primaryAction !== 'current' && LLMP.ramOk !== m.id) {
+      const warn = modelRamWarning(m, LLMP.local, hostRamGb());
+      if (warn) {
+        LLMP.confirm = {kind:'ramOver', id:m.id, altId: warn.alt ? warn.alt.id : null, text: warn.text,
+          download: !m.downloaded, error:null, submitting:false};
+        llmRepaint(); return;
+      }
+    }
     if (!m.downloaded) { llmPull('chat', m.id); return; }
     if (row.primaryAction === 'start') { await llmDaemon('start'); return; }
     if (row.primaryAction === 'current') { llmRefresh(); return; }
@@ -26705,6 +26764,13 @@ function llmAct(what) {
     const c = LLMP.confirm; if (!c) return;
     if (c.kind === 'removeProvider') llmRemoveProviderConfirm();
     else if (c.kind === 'removeLocal' || c.kind === 'removeEmbedding') llmRemoveLocalConfirm();
+    else if (c.kind === 'ramOver') { LLMP.confirm = null; LLMP.ramOk = c.id; llmPrimaryForLocal(c.id); }
+    return;
+  }
+  // ATO-337: the warning's suggestion, as if its row had been pressed.
+  if (verb === 'ramAlt') {
+    const c = LLMP.confirm; if (!c || c.kind !== 'ramOver' || !c.altId) return;
+    LLMP.confirm = null; llmPrimaryForLocal(c.altId);
     return;
   }
   // Д31: Cloud or Fusion, chosen before what it needs is there — that, opened here.

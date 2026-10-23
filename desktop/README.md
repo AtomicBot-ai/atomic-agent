@@ -622,6 +622,15 @@ Honestly degraded, and labelled as such in the UI:
   the smoke asserts the two id lists agree so the copy cannot rot in silence.
   Driven on three machine sizes by `npm run drive:models` (68 GB real, 8 GB
   and 4 GB simulated with the test-only `--fake-ram`).
+- **A model under `minRamGb` asks first** (ATO-337, `modelRamWarning` in
+  `renderer.js`). Settings › LLM › Local still lists and downloads it (an
+  operator may provision for another machine), but Download, select or Start
+  on it opens "Not enough memory for this model" with the memory it needs,
+  the memory here and the best model that runs here: Cancel, Use that model,
+  or Download / Run anyway. The composer's picker (it lists such a model only
+  once it is on disk) warns in a toast on the first pick and runs it on the
+  second. "Anyway" holds for that model for the session. Only catalogue
+  figures warn, never a size-based estimate.
 - **`a add from hugging face`** is live. The installed agent exposes no way
   to add one — `atag models --help` has no `add`, there is no HTTP route,
   and the agent's own `resolveHuggingFaceGgufChoices` has callers only
