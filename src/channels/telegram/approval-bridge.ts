@@ -435,7 +435,7 @@ function formatApprovalText(req: ApprovalRequest): string {
       maxChars: budget - 1,
     });
     lines.push(...excerpt.lines);
-    const note = hiddenLinesNote(excerpt.hiddenLines);
+    const note = hiddenLinesNote(excerpt.hiddenLines, excerpt.cutChars);
     if (note !== null) lines.push(`${PREVIEW_INDENT}${note}`);
   }
   lines.push(...tail);

@@ -13,6 +13,7 @@ describe("excerptPreview (ATO-434)", () => {
     expect(excerptPreview(SCRIPT, { maxLines: 20, maxChars: 1000 })).toEqual({
       lines: ["echo hi", "mkdir -p out", "rm -rf out/cache"],
       hiddenLines: 0,
+      cutChars: 0,
     });
   });
 
@@ -20,6 +21,7 @@ describe("excerptPreview (ATO-434)", () => {
     expect(excerptPreview(SCRIPT, { maxLines: 2, maxChars: 1000 })).toEqual({
       lines: ["echo hi", "mkdir -p out"],
       hiddenLines: 1,
+      cutChars: 0,
     });
   });
 
@@ -28,6 +30,7 @@ describe("excerptPreview (ATO-434)", () => {
     expect(excerptPreview(SCRIPT, { maxLines: 20, maxChars: 25 })).toEqual({
       lines: ["echo hi", "mkdir -p out"],
       hiddenLines: 1,
+      cutChars: 0,
     });
   });
 
@@ -36,6 +39,25 @@ describe("excerptPreview (ATO-434)", () => {
     const excerpt = excerptPreview(`${long}\nsecond`, { maxLines: 20, maxChars: 10 });
     expect(excerpt.lines).toEqual([`${"x".repeat(9)}…`]);
     expect(excerpt.hiddenLines).toBe(1);
+    expect(excerpt.cutChars).toBe(41);
+  });
+
+  it("says how much of a padded one-liner is cut, so the tail is not silently lost", () => {
+    const padded = `echo ${" ".repeat(1200)}; rm -rf ~`;
+    const excerpt = excerptPreview(padded, { maxLines: 20, maxChars: 1200 });
+    expect(excerpt.hiddenLines).toBe(0);
+    expect(excerpt.cutChars).toBe(padded.length - 1199);
+    expect(hiddenLinesNote(excerpt.hiddenLines, excerpt.cutChars)).toBe(
+      `… +${padded.length - 1199} more characters`,
+    );
+  });
+
+  it("shows terminal escapes and bidi overrides as text instead of passing them through", () => {
+    const sneaky = "echo safe\u001b[8m; rm -rf ~\u001b[0m \u202eevil";
+    expect(previewLines(sneaky)).toEqual([
+      "echo safe\\x1b[8m; rm -rf ~\\x1b[0m \\u202eevil",
+    ]);
+    expect(previewLines("a\tb")).toEqual(["a\tb"]);
   });
 
   it("reads CRLF line endings as line breaks", () => {
@@ -48,5 +70,7 @@ describe("hiddenLinesNote", () => {
     expect(hiddenLinesNote(0)).toBeNull();
     expect(hiddenLinesNote(1)).toBe("… +1 more line");
     expect(hiddenLinesNote(12)).toBe("… +12 more lines");
+    expect(hiddenLinesNote(0, 1)).toBe("… +1 more character");
+    expect(hiddenLinesNote(3, 40)).toBe("… +40 more characters, +3 more lines");
   });
 });

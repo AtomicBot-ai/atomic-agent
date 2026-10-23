@@ -240,7 +240,7 @@ const PREVIEW_LIMITS: PreviewExcerptLimits = { maxLines: 20, maxChars: 1200 };
  */
 function ApprovalPreview({ preview }: { preview: string }): ReactElement {
   const excerpt = excerptPreview(preview, PREVIEW_LIMITS);
-  const note = hiddenLinesNote(excerpt.hiddenLines);
+  const note = hiddenLinesNote(excerpt.hiddenLines, excerpt.cutChars);
   if (excerpt.lines.length === 1 && note === null) {
     return (
       <Text>
