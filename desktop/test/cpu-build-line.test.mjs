@@ -37,7 +37,7 @@ function card({ config = null, on = null, failure = null } = {}) {
   for (const name of ["cpufbSaved", "cpufbCardHTML"]) vm.runInContext(fn(name), c);
   return c.cpufbCardHTML();
 }
-const managed = (backendVariant) => ({ localModels: { mode: "managed", managed: { modelId: "m", backendVariant } } });
+const managed = (backendVariant, engine = "llama-server") => ({ localModels: { mode: "managed", managed: { modelId: "m", engine, backendVariant } } });
 const LINE = "Switched to the CPU build";
 
 test("a later start on the saved CPU build still shows the line", () => {
@@ -54,6 +54,8 @@ test("no line without the switch or the saved CPU build", () => {
   assert.equal(card({ config: managed("vulkan") }), "");
   assert.equal(card({ config: { localModels: { mode: "external", managed: { backendVariant: "cpu" } } } }), "");
   assert.equal(card({ config: { localModels: { mode: "managed" } } }), "");
+  // Atomic Core picks its own build and ignores backendVariant (a "cpu" left from llama.cpp).
+  assert.equal(card({ config: managed("cpu", "atomic-core") }), "");
   assert.equal(card(), "");
 });
 
