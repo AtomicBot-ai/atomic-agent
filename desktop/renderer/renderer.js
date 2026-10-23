@@ -5074,6 +5074,8 @@ function shortcutsSheet() {
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
     ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    // ATO-544: View menu zoom (menu.ts zoomItems). ⇧ Ctrl 0 is Toggle Inspector off macOS.
+    ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size',IS_MAC ? '⇧ ⌘ 0' : 'Ctrl Num0',''],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop (no approval on screen)','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
     ['Allow the approval on screen once','⌘ ↩','Ctrl ↩'],['Deny the approval on screen','⌘ .','Ctrl .'],
