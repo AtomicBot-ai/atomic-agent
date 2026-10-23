@@ -77,6 +77,19 @@ describe("runtime session phases", () => {
     expect(events).toEqual(["trace:one", "shell:one", "store:one"]);
   });
 
+  it("delete wrapper removes the session's saved tool outputs before the row", () => {
+    const events: string[] = [];
+    const store = { delete(id: string) { events.push(`store:${id}`); } };
+    installRuntimeSessionDelete(
+      store,
+      id => events.push(`trace:${id}`),
+      { endSession: id => { events.push(`shell:${id}`); return []; } },
+      { removeSession: id => { events.push(`outputs:${id}`); } },
+    );
+    store.delete("one");
+    expect(events).toEqual(["trace:one", "shell:one", "outputs:one", "store:one"]);
+  });
+
   it("delete wrapper retains failure precedence before the original deletion", () => {
     const events: string[] = [];
     const failure = new Error("trace failed");

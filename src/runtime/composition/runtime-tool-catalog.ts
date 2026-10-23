@@ -13,6 +13,7 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
+import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
 import { buildBrowserTools } from "../../tools/browser/index.js";
@@ -43,10 +44,11 @@ export function createRuntimeToolRegistry(
   config: AtomicAgentConfig,
   browserBackend: BrowserBackend,
   dangerous: DangerousToolOptions,
+  outputSpill?: ToolOutputSpill,
 ) {
 
 
-  const toolRegistry = new ToolRegistry();
+  const toolRegistry = new ToolRegistry(outputSpill ? { outputSpill } : {});
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
   if (config.browser.enabled) {
