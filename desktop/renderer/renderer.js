@@ -8021,9 +8021,16 @@ function cpufbApply(n) {
   }
   if (llmVisible()) llmRepaint();
 }
+/* ATO-858: after the switch the agent keeps `localModels.managed.backendVariant: "cpu"`,
+   so later starts run the CPU build with no switch in their output and main's word
+   goes back to null. The saved setting says the model is still on the CPU build. */
+function cpufbSaved() {
+  const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
+  return lm.mode === 'managed' && !!lm.managed && lm.managed.backendVariant === 'cpu';
+}
 /** Settings › Models: the CPU switch, one line. Left out while the failure card is up: that card carries it. */
 function cpufbCardHTML() {
-  if (!CPUFB.on || ENGF.f) return '';
+  if ((!CPUFB.on && !cpufbSaved()) || ENGF.f) return '';
   return '<div class="tk-notice tk-notice--amber llm-cpufb" role="status">' + ic('cpu')
     + '<span class="grow"><span class="llm-note">' + esc(CPUFB_LINE) + '</span></span></div>';
 }
