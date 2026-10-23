@@ -8,7 +8,11 @@ import {
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
-import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
+import {
+  formatLlamaUnreachableHint,
+  formatLlamaWrongServerHint,
+  llamaWrongServerStatus,
+} from "../llm/llama-server-health.js";
 import { LOCAL_ENGINE_START_HINT, isLocalEngineDown } from "../llm/reliability/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
@@ -211,17 +215,48 @@ async function promptApproval(
 const TRANSPORT_NO_ANSWER =
   /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|timeout/i;
 
+/** What `formatAgentEvent` needs to decorate a local-route failure. */
+export interface LlamaHintContext {
+  /** `formatLlamaUnreachableHint(url)`, or null off the local route. */
+  llamaHint?: string | null;
+  /**
+   * `localModels.url`, set together with `llamaHint`: names the address
+   * in the wrong-server line when llama-server answered 404/405.
+   */
+  llamaUrl?: string | null;
+  hintShown?: { value: boolean };
+}
+
+/**
+ * The hint for this failure, or null. A llama-server that answered
+ * 404/405 is running, so it gets "wrong server or no model loaded"
+ * rather than "start it" (ATO-870); a transport error where nothing
+ * answered keeps the unreachable hint.
+ */
+function pickLlamaHint(
+  category: string,
+  message: string,
+  ctx: LlamaHintContext,
+): string | null {
+  if (category !== "transport" || !ctx.llamaHint) return null;
+  const status = llamaWrongServerStatus(message);
+  if (status !== null) {
+    return ctx.llamaUrl ? formatLlamaWrongServerHint(ctx.llamaUrl, status) : null;
+  }
+  return TRANSPORT_NO_ANSWER.test(message) ? ctx.llamaHint : null;
+}
+
 function withLlamaHint(
   base: string,
   category: string,
   message: string,
-  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+  ctx?: LlamaHintContext,
 ): string {
-  if (!ctx?.llamaHint || ctx.hintShown?.value) return base;
-  if (category !== "transport" || !TRANSPORT_NO_ANSWER.test(message))
-    return base;
+  if (!ctx || ctx.hintShown?.value) return base;
+  const hint = pickLlamaHint(category, message, ctx);
+  if (hint === null) return base;
   if (ctx.hintShown) ctx.hintShown.value = true;
-  const indented = ctx.llamaHint
+  const indented = hint
     .split("\n")
     .map((line) => `    ${line}`)
     .join("\n");
@@ -241,7 +276,7 @@ function withLlamaHint(
  */
 export function formatAgentEvent(
   event: AgentLoopEvent,
-  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+  ctx?: LlamaHintContext,
 ): string | null {
   switch (event.type) {
     case "user_message":
@@ -431,10 +466,12 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   // The hint only applies when a transport failure means "local llama is
   // down" — i.e. the active text route IS the local server. On a cloud
   // route the same category points at the provider, not at llama.
-  const llamaHint =
-    resolveLlmConfig(config).activeTextProvider === "local-llama"
-      ? formatLlamaUnreachableHint(config.localModels.url)
-      : null;
+  const onLocalRoute =
+    resolveLlmConfig(config).activeTextProvider === "local-llama";
+  const llamaHint = onLocalRoute
+    ? formatLlamaUnreachableHint(config.localModels.url)
+    : null;
+  const llamaUrl = onLocalRoute ? config.localModels.url : null;
   const hintShown = { value: false };
 
   const runtime = await createAgentRuntime({
@@ -447,7 +484,11 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         // `eventHook` argument of `runTurn` (see `driveTurn`). This
         // global handler only feeds the diagnostic stderr stream so
         // the operator can watch the macro-turn lifecycle.
-        const line = formatAgentEvent(event, { llamaHint, hintShown });
+        const line = formatAgentEvent(event, {
+          llamaHint,
+          llamaUrl,
+          hintShown,
+        });
         if (line) process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {

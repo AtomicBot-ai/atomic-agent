@@ -1,5 +1,6 @@
 import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
 import type { LlmFailureContext } from "../../error-reporting/index.js";
+import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import { readChatDaemonPidState, type ChatDaemonPidState } from "../../local-llm/index.js";
@@ -36,9 +37,14 @@ export function describeLlmFailure(
     context.outageWaitedMs = event.outage.waitedMs;
     context.outageAttempts = event.outage.attempts;
   }
+  const requestUrl = readRequestUrl(event.error);
+  if (requestUrl !== undefined) context.requestUrl = requestUrl;
   let config: AtomicAgentConfig;
   try {
     config = deps.readConfig();
+    if (requestUrl !== undefined) {
+      context.managedPorts = managedPortsOf(config.localModels);
+    }
     context.providerId = readFailingLink(event.error) ?? resolveLlmConfig(config).activeTextProvider;
     const localEngine = resolveTurnLocalEngine(config, context.providerId);
     if (localEngine === undefined) return context;
@@ -53,4 +59,25 @@ export function describeLlmFailure(
     context.daemonState = "unknown";
   }
   return context;
+}
+
+/** How far down `cause` the request URL is looked for. */
+const MAX_URL_CAUSE_DEPTH = 4;
+
+/**
+ * The URL the failed request went to: `.url` on the error or on one of
+ * its causes (`toLlmFailure`'s wrapper copies it off the
+ * `LlamaServerError` / `OpenAiHttpError` underneath, and the cause keeps
+ * it too). Raw: the error reporter reduces it to `request_route` and
+ * `port_class` and sends nothing else of it (ATO-872).
+ */
+function readRequestUrl(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < MAX_URL_CAUSE_DEPTH; depth += 1) {
+    if (typeof current !== "object" || current === null) return undefined;
+    const url = (current as { url?: unknown }).url;
+    if (typeof url === "string" && url.length > 0) return url;
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
 }
