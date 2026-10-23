@@ -535,6 +535,11 @@ Honestly degraded, and labelled as such in the UI:
   route, so an enabled server's state reads `—` (never an inferred up/down)
   and resources/prompts say they are not exposed. Add and remove rewrite
   `mcp.servers` through the whole-file `atag config set` and offer a restart.
+  The Add box takes JSON, a command line (`npx -y @scope/server-x ~/Docs`,
+  `KEY=value` prefixes become `env`, `claude mcp add …` lines too) or an
+  http(s) address (`/sse` paths are SSE, others streamable HTTP), shows what
+  it understood with an editable name, and writes the same entry either way
+  ([mcp-smart-add.js](renderer/mcp-smart-add.js), ATO-510).
 - **LLM** is the TUI's four panes. Local rows come from `atag models list`
   minus the ids `models list-embeddings` lists (the chat route never picks an
   embedding model, and which models those are is a fact the CLI publishes —

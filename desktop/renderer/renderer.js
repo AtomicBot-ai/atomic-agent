@@ -7375,8 +7375,12 @@ document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
   // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
   if (e.target.id === 'skp-hubq') { SKP.hubQuery = e.target.value; return; }
+  // ATO-510: the server name in the add box's review block.
+  if (e.target.id === 'mcp-name') { if (MCP.addModal) { MCP.addModal.name = e.target.value; MCP.addModal.error = null; } return; }
   if (e.target.id === 'mcp-json') {
     if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; }
+    // ATO-510: only the review block repaints (the caret stays in the box).
+    const det = $('#mcp-detect'); if (det) det.innerHTML = mcpAddPreview();
     // ATO-514: Add stays off until something is pasted (a toggle, not a render: the caret stays).
     const add = $('[data-act="mcp:addSubmit"]'); if (add) add.disabled = !e.target.value.trim() || !!(MCP.addModal && MCP.addModal.submitting);
     return;
@@ -8411,6 +8415,8 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
+  // ATO-510: Enter in the review block's name field adds too.
+  if (k === 'Enter' && e.target.id === 'mcp-name' && MCP.addModal) { e.preventDefault(); mcpAddSubmit(MCP.addModal.json); return; }
   // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
   if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
@@ -23803,17 +23809,40 @@ function mcpAddModalHTML() {
     /* Plain words (Danya, 30.09): the old line named two other products'
        config "envelopes", and two more lines explained key chords and the
        stdio auto-promotion. Every shape it listed is still accepted. */
-    + '<p>Paste the server\u2019s config (JSON). It\u2019s usually in the server\u2019s README.</p>'
-    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Example:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    /* ATO-510 (U-74): one box for JSON, a command or an address
+       (mcp-smart-add.js); what it understood shows under it for a check. */
+    + '<p>Paste the server\u2019s config (JSON), the command that starts it, or its address. It\u2019s usually in the server\u2019s README.</p>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Examples:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + '<div id="mcp-detect">' + mcpAddPreview() + '</div>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
     + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
     + '<div class="acts"><span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
     + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting || !String(m.json || '').trim() ? ' disabled' : '') + '>Add</button></div></div>';
 }
-/** The add box's example, laid out on lines the way a README shows it. */
+/** The add box's examples: a command, an address, and JSON laid out on lines the way a README shows it. */
 function mcpJsonExample() {
-  return '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@github/mcp-server"]\n    }\n  }\n}';
+  return 'npx -y @modelcontextprotocol/server-filesystem ~/Documents\n\nhttps://mcp.example.com/mcp\n\n'
+    + '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@github/mcp-server"]\n    }\n  }\n}';
+}
+/* ATO-510: the box's text as mcp-smart-add.js reads it. A name typed in the
+   review block wins over the made-up one until the text gives a new made-up
+   name (another package or host was pasted). */
+function mcpAddParsed() {
+  const m = MCP.addModal;
+  if (!m) return null;
+  const res = mcpParseAddInput(m.json, {name:m.name || '', home:homeDir()});
+  if (res.auto !== undefined && res.auto !== m.auto) {
+    const typed = m.auto !== null && m.name;
+    m.auto = res.auto;
+    if (typed) { m.name = null; return mcpParseAddInput(m.json, {home:homeDir()}); }
+  }
+  return res;
+}
+function mcpAddPreview() {
+  const m = MCP.addModal;
+  const res = mcpAddParsed();
+  return res ? mcpAddPreviewHTML(res, m.name, {esc}) : '';
 }
 function mcpRemoveModalHTML() {
   const c = MCP.removeConfirm;
@@ -23826,53 +23855,8 @@ function mcpRemoveModalHTML() {
     + '<button class="btn btn-g sm" data-act="mcp:removeCancel"' + (c.submitting ? ' disabled' : '') + '>Keep</button>'
     + '<button class="btn btn-df sm" data-act="mcp:removeConfirm"' + (c.submitting ? ' disabled' : '') + '>Remove</button></div></div>';
 }
-/* persist-mcp-server.ts parseAddServerJson: the three accepted shapes —
-   a bare object, the `{ mcpServers: { name: {…} } }` envelope with exactly
-   one entry, and the `command`/`args` (or `url`/`serverUrl`) shortcut
-   promoted into `transport`. The schema itself (name regex, transport
-   shape, trust enum) is checked by the CLI on the write. */
-function mcpNormalizeShortcut(obj) {
-  if (obj.transport !== undefined) return obj;
-  if (typeof obj.command === 'string') {
-    const out = Object.assign({}, obj); delete out.command; delete out.args; delete out.cwd;
-    const transport = {kind:'stdio', command:obj.command};
-    if (obj.args !== undefined) transport.args = obj.args;
-    if (obj.cwd !== undefined) transport.cwd = obj.cwd;
-    out.transport = transport; return out;
-  }
-  const rawUrl = typeof obj.url === 'string' ? obj.url : typeof obj.serverUrl === 'string' ? obj.serverUrl : null;
-  if (rawUrl !== null) {
-    const out = Object.assign({}, obj); delete out.url; delete out.serverUrl; delete out.headers; delete out.type;
-    const transport = {kind:obj.type === 'sse' ? 'sse' : 'streamable_http', url:rawUrl};
-    if (obj.headers !== undefined) transport.headers = obj.headers;
-    out.transport = transport; return out;
-  }
-  return obj;
-}
-function mcpParseAddJson(raw) {
-  const trimmed = String(raw || '').trim();
-  if (!trimmed.length) return {ok:false, error:'Paste a server config first.'};
-  let parsed;
-  try { parsed = JSON.parse(trimmed); } catch (err) { return {ok:false, error:'This isn\u2019t valid JSON. Check for a missing comma, quote or bracket (' + (err && err.message ? err.message : String(err)) + ').'}; }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {ok:false, error:'Paste one server config: a JSON object in { } braces.'};
-  let candidate;
-  const envelope = parsed.mcpServers;
-  if (envelope !== undefined) {
-    if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return {ok:false, error:'"mcpServers" should hold the server by name, like the example.'};
-    const entries = Object.entries(envelope);
-    if (!entries.length) return {ok:false, error:'"mcpServers" is empty. Paste exactly one server.'};
-    if (entries.length > 1) return {ok:false, error:'Paste exactly one server. This has ' + entries.length + ' in "mcpServers".'};
-    const [keyName, value] = entries[0];
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return {ok:false, error:'`mcpServers[' + JSON.stringify(keyName) + ']` must be an object'};
-    if (typeof value.name === 'string' && value.name !== keyName) return {ok:false, error:'name mismatch: envelope key ' + JSON.stringify(keyName) + ' vs inner ' + JSON.stringify(value.name)};
-    candidate = mcpNormalizeShortcut(Object.assign({name:keyName}, value));
-  } else {
-    candidate = mcpNormalizeShortcut(parsed);
-  }
-  if (Object.hasOwn(candidate, '__proto__') || Object.hasOwn(candidate, 'constructor') || Object.hasOwn(candidate, 'prototype')) return {ok:false, error:'refusing a prototype key'};
-  if (typeof candidate.name !== 'string' || !candidate.name.trim()) return {ok:false, error:'mcp.servers: name: expected a non-empty string'};
-  return {ok:true, server:candidate};
-}
+/* The JSON shapes (persist-mcp-server.ts parseAddServerJson), commands and
+   addresses are read by mcp-smart-add.js (mcpParseAddInput, mcpParseAddJson). */
 /* The write: read the user file right before, append, and write the list.
    On 0.6.6 that is PATCH /api/config (config-patch.js): the running agent
    re-reads its config, so the new row's Restart connects it at once. An
@@ -23884,7 +23868,7 @@ async function mcpAddSubmit(json) {
   const m = MCP.addModal;
   if (!BR || !m || m.submitting) return {ok:false, error:'no add modal'};
   m.json = json; m.error = null;
-  const parsed = mcpParseAddJson(json);
+  const parsed = mcpAddParsed();
   if (!parsed.ok) { ANX.mcpAdded(false); m.error = parsed.error; render(); return parsed; }
   m.submitting = true; render();
   const cfg = await BR.config();
@@ -23940,7 +23924,7 @@ function mcpAct(what) {
     else if (MCP_TAB_ORDER.includes(arg)) MCP.detailTab = arg;
     MCP.detailCursor = 0; render(); return;
   }
-  if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false}; MCP.removeConfirm = null; render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
+  if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false, name:null, auto:null}; MCP.removeConfirm = null; render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
   if (verb === 'addSubmit') { const n = $('#mcp-json'); mcpAddSubmit(n ? n.value : (MCP.addModal ? MCP.addModal.json : '')); return; }
   if (verb === 'addCancel') { MCP.addModal = null; render(); return; }
   if (verb === 'remove') { const name = sel(); if (!name) return; MCP.removeConfirm = {name, error:null, submitting:false}; render(); return; }
@@ -23956,7 +23940,7 @@ function mcpAct(what) {
    Enter starts a new line, Add (or ⌘/Ctrl+Enter, routed in the keydown
    handler before the composer's own ⌘+Enter) adds the server. */
 function mcpKey(e, k, inText) {
-  if (e.target.id === 'mcp-json') {
+  if (e.target.id === 'mcp-json' || e.target.id === 'mcp-name') {
     if (k === 'Escape') { e.preventDefault(); MCP.addModal = null; render(); return true; }
     return false;
   }
@@ -24020,7 +24004,7 @@ if (typeof window !== 'undefined') {
   window.__mcp = () => ({mode: MCP.mode, rows: mcpRows().length, servers: mcpServers().map((s) => s && s.name), detailName: MCP.detailName, detailTab: MCP.detailTab,
     addModal: MCP.addModal ? Object.assign({}, MCP.addModal) : null, removeConfirm: MCP.removeConfirm ? Object.assign({}, MCP.removeConfirm) : null,
     msg: MCP.msg ? MCP.msg.text : '', lastError: MCP.lastError, refreshed: MCP.lastRefreshedAt});
-  window.__mcpParse = (json) => mcpParseAddJson(json);
+  window.__mcpParse = (json) => mcpParseAddInput(json, {home:homeDir()});
   window.__mcpAct = (what) => { mcpAct(what); return window.__mcp(); };
   window.__mcpAddSubmit = async (json) => { if (!MCP.addModal) mcpAct('add'); const r = await mcpAddSubmit(json); return Object.assign({}, r, {state: window.__mcp()}); };
   window.__mcpRemove = async (name) => { mcpAct('remove:' + name); await mcpRemoveConfirm(); return window.__mcp(); };
