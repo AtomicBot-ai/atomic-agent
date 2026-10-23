@@ -3899,6 +3899,59 @@ async function smokeTest(): Promise<void> {
     if (traced.length !== reopened.length || !listed.every((c) => c.ms > 0)) {
       process.stdout.write(`DIAG reopened=${JSON.stringify(reopened)}\n`);
     }
+    // ATO-464: the reopened tool turn is finished, so its steps are one quiet
+    // line ("Used 1 tool · 434 ms"), unless Always show steps is on. A click
+    // on that line (the real button) opens the steps under it, the line
+    // staying where it was. Every turn is opened here so the checks below
+    // read the cards themselves.
+    type Sum = { id: string; open: boolean; text: string };
+    const always = await js<boolean>("window.__stepsAlways()");
+    const sums = await js<Sum[]>("window.__turnSums()");
+    check(
+      "a finished turn's steps fold into one summary line",
+      always || (sums.length > 0 && sums.every((x) => !x.open && /^(Used \d+ tools?|Reasoned in \d+ steps?)( \u00b7 \d+ failed)?( \u00b7 (\d+ ms|\d\.\d s|\d+ s|\d+ min \d+ s|\d+ h \d+ min))?$/.test(x.text))),
+      always ? "Always show steps is on: nothing folds" : JSON.stringify(sums),
+    );
+    type SumClick = { open: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number; cardsBefore: number; cardsAfter: number } | null;
+    for (const [n, x] of sums.entries()) {
+      const opened = await js<SumClick>(`window.__clickTurnSum(${JSON.stringify(x.id)})`);
+      if (n === 0) {
+        check(
+          "clicking the summary line opens the turn's steps in place",
+          !!opened && opened.open && opened.cardsAfter > opened.cardsBefore && Math.abs(opened.headAfter - opened.headBefore) <= 1,
+          JSON.stringify(opened),
+        );
+      }
+    }
+
+    // ATO-464: Settings › General › Always show steps, pressed as a person
+    // presses it: on, no finished turn folds; pressed again, it is as it was.
+    const stepsSwitch = await js<{ found: boolean; on: boolean; foldsOn: number; off: boolean; foldsOff: number }>(`(async () => {
+      const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+      const keep = {settings: S.settings, pane: S.settingsPane, always: STEPS.always};
+      const press = () => { const b = document.querySelector('#settings [data-act="steps:always"]'); if (b) b.click(); return !!b; };
+      const folds = () => (renderItems().match(/data-turnsum=/g) || []).length;
+      try {
+        if (keep.always) stepsAlwaysSet(false);
+        window.__settingsOpen('general'); await tick(250);
+        const found = press(); await tick(50);
+        const on = STEPS.always, foldsOn = folds();
+        press(); await tick(50);
+        const off = !STEPS.always, foldsOff = folds();
+        return {found, on, foldsOn, off, foldsOff};
+      } finally {
+        stepsAlwaysSet(keep.always);
+        window.__settingsClose();
+        if (keep.settings) { S.settings = keep.settings; S.settingsPane = keep.pane; }
+        render();
+      }
+    })()`);
+    check(
+      "Always show steps keeps finished turns open, and turning it off folds them again",
+      stepsSwitch.found && stepsSwitch.on && stepsSwitch.foldsOn === 0 && stepsSwitch.off && stepsSwitch.foldsOff > 0 && (always || stepsSwitch.foldsOff === sums.length),
+      JSON.stringify(stepsSwitch),
+    );
+
     // Every finished duration cell reads in words (ATO-237: "850 ms", "4.9 s", "1 min 42 s") or is empty.
     const cells = await js<string[]>("window.__overflow().durations");
     check(
@@ -7919,6 +7972,9 @@ async function uiTest(
   await js<number>("window.__pushUser('a short one')");
   await js<number>("window.__pushTool('read_file', {path:'a.txt'}, 'ok', false)");
   await js<number>("window.__pushAssistant('done')");
+  // ATO-464: that turn is finished, so its call folded into a summary line; open it
+  // (the real button) so the row checks below read the card itself.
+  await js<unknown>("window.__turnSums().filter((x) => !x.open).forEach((x) => window.__clickTurnSum(x.id))");
   type Shape = { k: string; glyphs: number; gutter: number | null; end: boolean; endLast: boolean; strip: boolean; left: number };
   const shape = await js<Shape[]>("window.__turnShape()");
   const tail = shape.slice(-3);

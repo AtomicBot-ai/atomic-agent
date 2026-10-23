@@ -203,6 +203,22 @@ Real, driven by the running agent:
   `…`. Long args, summaries and results wrap inside the card;
   nothing widens the transcript. Three or more consecutive calls to the same
   tool fold into one line.
+- a finished turn folds its steps (ATO-464, `renderer/turn-summary.js`):
+  while a turn runs, its reasoning rows, tool calls and approvals are drawn
+  live, one by one. Once it has finished, the reasoning rows, the calls and
+  the approvals the person answered fold into one quiet line above the reply,
+  `Used 4 tools · 12 s` (`Reasoned in 3 steps` when it only thought), with
+  the failed calls counted in red (a denied call or one the turn never ran
+  is not counted as failed). A click opens the steps under the line,
+  which stays where it was; the View menu's Expand / Collapse all tool cards
+  open and fold these lines too, and the inspector's Steps opens the turn of
+  the card it jumps to. Progress notes, system rows, an approval still asking
+  and one the run left unanswered are never folded, and one reasoning row
+  alone stays as it is. The time is the turn's wall time as this window saw
+  it, or for a reopened chat the steps' measured times added up, and nothing
+  when none was measured. Settings › General › Always show steps (off by
+  default, kept per window profile like the theme) leaves every finished
+  turn open, as before.
 - file paths and URLs in replies: files are chips that open in the default
   app, with a right-click menu (Open · Show in Finder · Copy Path · Save As…);
   URLs open in the browser. A mentioned path only becomes a chip when it
@@ -892,6 +908,9 @@ PASS live card never takes a stale trace row
 PASS missing trace file rejects, never hangs
 PASS reopened session carries trace durations
 PASS reopened os.fs.list turn is timed
+PASS a finished turn's steps fold into one summary line
+PASS clicking the summary line opens the turn's steps in place
+PASS Always show steps keeps finished turns open, and turning it off folds them again
 PASS durations read as the TUI prints them
 PASS transcript scrollable for the fold test
 PASS expand keeps the card head in place

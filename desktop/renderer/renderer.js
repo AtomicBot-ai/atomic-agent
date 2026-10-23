@@ -5541,6 +5541,12 @@ function generalPane() {
         + '<button class="btn btn-s sm" data-act="workspace:choose"' + (BR ? '' : ' disabled') + '>Change…</button>'
       + '</div>'
       + tpNotifyRowHTML()
+      // ATO-464: finished turns fold their steps into one line unless this is on.
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Always show steps</div>'
+          + '<div class="d">Keep the reasoning and tool calls of a finished reply open. When off, they fold into one line you can click to open.</div></div>'
+        + setSwitchHTML({on: STEPS.always, act: 'steps:always', label: 'Always show steps', title: 'Turn always showing steps ' + (STEPS.always ? 'off' : 'on')})
+      + '</div>'
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
           + '<div class="d">Crash reports and coarse usage counts (including which buttons and menus are used, by action name only, and download and startup timings), tied only to an install id. Your messages, paths and tool arguments are never sent with analytics. '
@@ -6438,6 +6444,8 @@ function act(a) {
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
   if (a === 'notify:toggle') { close(); tpNotifyToggle(); return; }
   if (a === 'names:toggle') { close(); nameChatsSet(!nameChatsOn()); return; }
+  // ATO-464: Settings › General › Always show steps (turn-summary.js).
+  if (a === 'steps:always') { close(); stepsAlwaysSet(!STEPS.always); render(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
   // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
@@ -6510,7 +6518,11 @@ function act(a) {
                            try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
                            // ATO-251: read again once the new theme has painted.
                            syncChromeTheme(); syncWindowGround(); render(); syncWindowGroundSoon(); return; }
-  if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
+  if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; });
+                           // ATO-464: and the finished turns folded into a line open (or fold) with them.
+                           if (v === 'expand') turnFoldsOf(S.log, {runningId: S.turnId ? S.streamId : null}).forEach((f) => TURN_OPEN.add(f.replyId));
+                           else TURN_OPEN.clear();
+                           render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
   /* ATO-165: the chat row's menu — opened by the row's "…" control, a
      right-click on the row, or the context-menu key on it (openChatMenu).
@@ -7287,6 +7299,9 @@ document.addEventListener('click', (e) => {
   if (sdet && sdet.parentElement) { SETDET[sdet.dataset.setdet] = !sdet.parentElement.open; return; }
   const adet = t.closest('[data-apprdet]');
   if (adet) { const m = S.log.find((x) => x.id === adet.dataset.apprdet); if (m && adet.parentElement) m.open = !adet.parentElement.open; return; }
+  // ATO-464: a finished turn's summary line opens or folds its steps in place.
+  const tsum = t.closest('[data-turnsum]');
+  if (tsum) { turnSumToggle(tsum.dataset.turnsum); return; }
   const tg = t.closest('[data-toggle]');
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
@@ -7294,7 +7309,8 @@ document.addEventListener('click', (e) => {
   const sd = t.closest('[data-sysdet]');   // ATO-380: a failed turn's Details (sysDetailHTML)
   if (sd) { const m = S.log.find((x) => x.id === sd.dataset.sysdet); if (m) { m.detOpen = !m.detOpen; repaintEntry(m, '.sys-det-t'); } return; }
   const go = t.closest('[data-goto]');
-  if (go) { const el = document.getElementById('card-' + go.dataset.goto);
+  if (go) { let el = document.getElementById('card-' + go.dataset.goto);
+            if (!el && turnSumReveal(go.dataset.goto)) el = document.getElementById('card-' + go.dataset.goto);   // ATO-464
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
   // r5 item 4: real <button> elements inside a `.turn`, so no other selector in
   // this handler competes for them.
@@ -10069,6 +10085,8 @@ function onChatEvent(ev) {
        on screen always ends its busy: a chat runs one turn at a time, so
        another entry RUNNING still holds for it is one whose end never came. */
     if (!(turnSid && turnSid !== S.sessionId && screenTurnId())) S.busy = false;
+    // ATO-464: how long the turn worked, for its summary line once its steps fold.
+    if (item && S.turnStartedAt && !item.workedMs) item.workedMs = Math.max(0, (ev.at || Date.now()) - S.turnStartedAt);
     S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
@@ -20112,8 +20130,24 @@ function renderItems() {
   const items = S.log; let html = '';
   // ATO-328: the one call the Exa key card goes under, below its row (or below the fold that holds it).
   const exaHost = exaKeyHost(items);
+  /* ATO-464: a finished turn's steps fold into one line (turn-summary.js).
+     The turn still streaming is the one S.turnId is on; it is drawn live. */
+  const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
+    failedOf: (t) => toolState(t) === 'err'});   // red only for what the card itself shows as an error
+  const hidden = new Set();
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
+    const fold = folds.get(i);
+    if (fold) {
+      const open = TURN_OPEN.has(fold.replyId);
+      html += turnSumHTML(fold, open, turnSumMs(fold, items), {esc, ic, dur});
+      if (!open) fold.rows.forEach((x) => hidden.add(x));
+    }
+    if (hidden.has(i)) {
+      // The Exa key card asks for something, so it stays in sight under the line.
+      if (exaHost && m.id === exaHost) html += exaKeyTurnHTML(m);
+      continue;
+    }
     if (m.k === 'tool') {
       let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
       const run = items.slice(i, j + 1);
@@ -20144,6 +20178,48 @@ function renderItems() {
     if (exaHost && m.id === exaHost) html += exaKeyTurnHTML(m);
   }
   return html;
+}
+/** ATO-464: how long a folded turn worked. The wall time this window saw
+    (the reply's `workedMs`, stamped at the turn's end), else the steps'
+    own measured times added up; null when nothing was measured, so the line
+    prints no number rather than a zero. */
+function turnSumMs(fold, log) {
+  const reply = log[fold.replyAt];   // by index: a lookup per fold on every frame would grow with the chat
+  if (reply && reply.workedMs > 0) return reply.workedMs;
+  let ms = 0;
+  fold.rows.forEach((x) => {
+    const m = log[x];
+    if (m.k === 'tool') {
+      const st = toolState(m), took = toolTook(m);
+      if (took && st !== 'deny' && st !== 'skip') ms += took.ms;   // ATO-197: a wait for an answer is no work
+    } else if (m.k === 'reason' && m.startedAt && m.endedAt) ms += (m.thoughtMs || 0) + (m.endedAt - m.startedAt);
+  });
+  return ms > 0 ? ms : null;
+}
+/** ATO-464: open or fold a finished turn's steps, its summary line kept where it was. */
+function turnSumToggle(replyId) {
+  if (TURN_OPEN.has(replyId)) TURN_OPEN.delete(replyId); else TURN_OPEN.add(replyId);
+  const sc = $('#scroller');
+  const head = () => document.querySelector('#turnsum-' + CSS.escape(replyId) + ' .turnsum');
+  const h0 = head();
+  if (!sc || !h0) { render(); return; }
+  const before = h0.getBoundingClientRect().top;
+  S.stick = false;   // the click is on this line: keep it under the pointer, not the bottom of the chat
+  if (!repaintTranscript()) { render(); return; }
+  const h1 = head();
+  const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+/** ATO-464: open the folded turn that holds row `id` (the inspector's Steps
+    jumps to a card). True when it was folded and is drawn open now. */
+function turnSumReveal(id) {
+  const at = S.log.findIndex((x) => x.id === id);
+  if (at < 0) return false;
+  for (const f of turnFoldsOf(S.log, {runningId: S.turnId ? S.streamId : null}).values()) {
+    if (f.rows.includes(at) && !TURN_OPEN.has(f.replyId)) { TURN_OPEN.add(f.replyId); render(); return true; }
+  }
+  return false;
 }
 /* ============================================================
    ATO-328: web search asks for an Exa key (exa-key.js)
@@ -21248,6 +21324,7 @@ if (typeof window !== 'undefined') {
   };
   window.__scrollCardTo = (i, px) => {
     const m = S.log.filter((x) => x.k === 'tool')[i]; const sc = $('#scroller');
+    if (m && !document.getElementById('card-' + m.id)) turnSumReveal(m.id);   // ATO-464: in a folded turn: open it
     if (m && !document.getElementById('card-' + m.id)) { // folded into a group: unfold the run it belongs to
       let s = S.log.indexOf(m); while (s > 0 && S.log[s - 1].k === 'tool' && S.log[s - 1].name === m.name) s--;
       if (document.getElementById('group-' + S.log[s].id)) { OPEN_GROUPS.add(S.log[s].id); expandGroupInPlace(S.log[s].id); }
@@ -21283,6 +21360,29 @@ if (typeof window !== 'undefined') {
             cardsBefore, cardsAfter:document.querySelectorAll('.card').length,
             groupsBefore, groupsAfter:document.querySelectorAll('[data-group]').length};
   };
+}
+
+/* Hooks for --smoke: ATO-464, a finished turn's summary line. __turnSums
+   reads what is on screen; __clickTurnSum presses the REAL button (the
+   document click listener → [data-turnsum] → turnSumToggle), so the check
+   fails if that branch stops opening the steps in place. */
+if (typeof window !== 'undefined') {
+  window.__turnSums = () => [...document.querySelectorAll('#scroller [data-turnsum]')].map((b) => ({
+    id: b.dataset.turnsum, open: b.getAttribute('aria-expanded') === 'true',
+    text: [...b.querySelectorAll('span')].map((n) => n.textContent).filter((t) => t !== '\u00b7').join(' \u00b7 '),
+  }));
+  window.__clickTurnSum = (id) => {
+    const sc = $('#scroller');
+    const head = () => document.querySelector('#turnsum-' + CSS.escape(id) + ' .turnsum');
+    const h0 = head(); if (!sc || !h0) return null;
+    const headBefore = h0.getBoundingClientRect().top, scrollBefore = sc.scrollTop;
+    const cardsBefore = document.querySelectorAll('#scroller .card').length;
+    h0.click();
+    const h1 = head();
+    return {open: !!h1 && h1.getAttribute('aria-expanded') === 'true', headBefore, headAfter: h1 ? h1.getBoundingClientRect().top : NaN,
+            scrollBefore, scrollAfter: sc.scrollTop, cardsBefore, cardsAfter: document.querySelectorAll('#scroller .card').length};
+  };
+  window.__stepsAlways = () => STEPS.always;
 }
 
 /* Hooks for --smoke: item 4 — cards stay inside the transcript column, durations
