@@ -12975,11 +12975,13 @@ function obConfiguredHTML() {
 
 /** ATO-822 item 5: what a local switch result says about the model server.
  *  `untouched` is a server found up for this very model (backend-switch.ts
- *  bringUpLocalDaemon); `skipped` and `superseded` started nothing. */
+ *  bringUpLocalDaemon); `skipped` and `superseded` started nothing.
+ *  `stop-failed` is the old model's server refusing to stop, so the new one
+ *  was never started: a failure too. */
 function obLocalStartOf(res) {
   const d = res && res.daemon;
   if (d === 'started' || d === 'restarted' || d === 'untouched') return 'started';
-  if (d === 'start-failed') return 'failed';
+  if (d === 'start-failed' || d === 'stop-failed') return 'failed';
   return null;
 }
 

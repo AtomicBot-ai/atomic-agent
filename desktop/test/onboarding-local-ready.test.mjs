@@ -44,6 +44,12 @@ test("a start that failed is not called ready, and carries no green tick", () =>
   assert.match(s.html, /<i:alert>/);
 });
 
+test("the old model's server refusing to stop is a failed start too", () => {
+  const s = screen("local", { ok: true, daemon: "stop-failed", daemonLine: "local-llm: stop failed" });
+  assert.equal(s.label, "Local model selected, but it did not start");
+  assert.doesNotMatch(s.html, /<i:check>/);
+});
+
 test("a pick whose start was not seen says selected, not ready", () => {
   for (const res of [undefined, { ok: true, daemon: "skipped" }, { ok: true, daemon: "superseded" }, { ok: true }]) {
     const s = screen("local", res);
