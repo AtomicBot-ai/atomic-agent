@@ -6,7 +6,8 @@
    Loaded after styles.css (tokens + kit). Colours come from tokens only.
 
    Geometry the smoke measures and this file keeps:
-   - #sidebar is 260px wide open and 52px as a rail. The floating panel is
+   - #sidebar is 260px wide open and 52px as a rail (a narrow window's drawer
+     is 260px too, over the content). The floating panel is
      painted by #sidebar::before inside that box (8px gutter on the window
      side), so the box widths stay what the checks read.
    - Sidebar rows are one line; the row's dot is a 6px ring with a 1px border.
@@ -114,6 +115,12 @@
 .sb-new-ic{display:flex;align-items:center;justify-content:center;width:16px;height:16px;color:var(--ink-2)}
 .sb-new-ic svg{width:15px;height:15px}
 .sb-new-lb{flex:1;min-width:0}
+/* ATO-457: Tasks and Skills, standing rows under New chat (renderer.js
+   sidebarNavHTML). Same row as New chat; the one whose Settings tab is open is lit. */
+.sb-nav{display:flex;flex-direction:column;gap:1px;margin-top:2px}
+.sb-nav .sb-nav-row{margin-top:0}
+.sb-nav-row.on{background:var(--brand-wash);color:var(--blue)}
+.sb-nav-row.on .sb-new-ic{color:var(--blue)}
 
 .sb-lists{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-bottom:6px}
 .sb-list{display:flex;flex-direction:column;gap:1px}
@@ -216,23 +223,45 @@
 #sidebar.rail .sb-footwrap{display:flex;justify-content:center}
 #sidebar.rail .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
 #sidebar.rail .sb-new{width:32px;height:32px;padding:0;justify-content:center;align-self:center}
+/* ATO-538 (U-106): a rail row is no longer an anonymous dot. It paints its
+   title's first letter or emoji (data-g, renderer.js railGlyph) in a small
+   disc, the status dot riding its top-right corner as a badge; the name stays
+   in the tooltip. A row with no glyph keeps the plain dot. */
+#sidebar.rail .sesrow[data-g]::before{
+  content:attr(data-g);display:flex;align-items:center;justify-content:center;width:24px;height:24px;
+  border-radius:50%;background:var(--well);color:var(--ink-2);font:600 12px/1 var(--font-ui);
+}
+#sidebar.rail .sesrow.on[data-g]::before{background:transparent;color:var(--blue)}
+#sidebar.rail .sesrow[data-g] .sdot{position:absolute;top:1px;right:3px}
+/* The responsive rail: the same rules below 1000px, unless the toggle opened
+   the sidebar as a drawer (ATO-538): then it is the full 260px sidebar laid
+   over the content. Its flow width stays 52px (the negative margin), so the
+   content does not move under it. */
 @media (max-width:1000px){
-  #sidebar{width:52px;padding:10px 10px 18px;margin-top:0}
-  #sidebar::before{top:0;left:4px;right:4px}
-  #sidebar .sb-top{display:none}
-  #sidebar .wschip,#sidebar .sesrow .t1,#sidebar .sesmore,
-  #sidebar .loadmore,#sidebar .sb-empty,#sidebar .sb-settings-lb,#sidebar .sb-new-lb{display:none}
-  #sidebar .sb-head{justify-content:center;height:36px}
-  #sidebar .sb-head > svg{position:static}
-  #sidebar .sb-list-head{justify-content:center;padding:0;margin-top:6px}
-  #sidebar .sb-list-head > span{display:none}
-  #sidebar .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
-  #sidebar .sesrow{justify-content:center;padding:0;height:28px}
-  #sidebar .sesrow::after{display:none}
-  #sidebar .sb-lists{scrollbar-width:none}
-  #sidebar .sb-footwrap{display:flex;justify-content:center}
-  #sidebar .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
-  #sidebar .sb-new{width:32px;height:32px;padding:0;justify-content:center;align-self:center}
+  #sidebar:not(.drawer){width:52px;padding:10px 10px 18px;margin-top:0}
+  #sidebar:not(.drawer)::before{top:0;left:4px;right:4px}
+  #sidebar:not(.drawer) .sb-top{display:none}
+  #sidebar:not(.drawer) .wschip,#sidebar:not(.drawer) .sesrow .t1,#sidebar:not(.drawer) .sesmore,
+  #sidebar:not(.drawer) .loadmore,#sidebar:not(.drawer) .sb-empty,#sidebar:not(.drawer) .sb-settings-lb,#sidebar:not(.drawer) .sb-new-lb{display:none}
+  #sidebar:not(.drawer) .sb-head{justify-content:center;height:36px}
+  #sidebar:not(.drawer) .sb-head > svg{position:static}
+  #sidebar:not(.drawer) .sb-list-head{justify-content:center;padding:0;margin-top:6px}
+  #sidebar:not(.drawer) .sb-list-head > span{display:none}
+  #sidebar:not(.drawer) .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
+  #sidebar:not(.drawer) .sesrow{justify-content:center;padding:0;height:28px}
+  #sidebar:not(.drawer) .sesrow::after{display:none}
+  #sidebar:not(.drawer) .sb-lists{scrollbar-width:none}
+  #sidebar:not(.drawer) .sb-footwrap{display:flex;justify-content:center}
+  #sidebar:not(.drawer) .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
+  #sidebar:not(.drawer) .sb-new{width:32px;height:32px;padding:0;justify-content:center;align-self:center}
+  #sidebar:not(.drawer) .sesrow[data-g]::before{
+    content:attr(data-g);display:flex;align-items:center;justify-content:center;width:24px;height:24px;
+    border-radius:50%;background:var(--well);color:var(--ink-2);font:600 12px/1 var(--font-ui);
+  }
+  #sidebar:not(.drawer) .sesrow.on[data-g]::before{background:transparent;color:var(--blue)}
+  #sidebar:not(.drawer) .sesrow[data-g] .sdot{position:absolute;top:1px;right:3px}
+  #sidebar.drawer{width:260px;margin-right:-208px;margin-top:0;padding:10px 8px 18px 16px;z-index:17}
+  #sidebar.drawer::before{top:0;box-shadow:var(--sh-pop)}
 }
 
 /* ---------------- content ---------------- */

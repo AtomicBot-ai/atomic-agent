@@ -302,11 +302,17 @@ Real, driven by the running agent:
   machine, per viewer — because the agent has no route and no store field for
   either, and its `config.json` is the operator's file. On a machine that has
   never run this window every historical chat is therefore unread until it is
-  opened; that is honest, not a bug. Skills left the sidebar (the user asked
-  for it); ⌘3, the palette and View › Skills still open it, on Settings ›
-  Skills. Collapsed — Setup › Hide or show the sidebar, or a window narrower
-  than 1000px — the two lists stay as a column of dots, each row's tooltip
-  naming it, so the rail is still a way back into a chat; the two list headers
+  opened; that is honest, not a bug. Under New chat stand two section rows,
+  **Tasks** and **Skills** (ATO-457, the owner's call on U-24): the places
+  ⌘ 2 and ⌘ 3 lead to, drawn whether or not any task exists. They open
+  Settings › Tasks and Settings › Skills, the same verbs as the chords, the
+  palette and View › Tasks / Skills, and the row whose tab is open is lit
+  (`renderer/sidebar-nav.js`, unit-tested in `test/sidebar-nav.test.mjs`).
+  Collapsed — Setup › Hide or show the sidebar, or a window narrower
+  than 1000px — the two lists stay as a column of small discs, each holding
+  the first letter (or emoji) of the row's title with the status dot as its
+  badge (ATO-538), so rows differ at a glance; the tooltip still names
+  the row, so the rail is still a way back into a chat; the two list headers
   stay too, stripped to their **+**, because 52px does not hold a label or the
   counter and the rail would otherwise have no way to start anything.
   Expanded, the sidebar reaches up into the 52px title band (the Atomic Chat
@@ -319,10 +325,13 @@ Real, driven by the running agent:
   (`.iconbtn.on`, the same treatment the Inspector and Console buttons use)
   while the sidebar is expanded, and *expanded* is the conjunction of both facts — the flag and the
   breakpoint — so the glow cannot lie on a narrow window. Below 1000px the
-  media query pins 52px whatever the flag says, so the button is **disabled**
-  there rather than left as a live control that does nothing, its tooltip
-  reading `The sidebar is a rail on a narrow window`; ⌘ 0, which does not go
-  through the button, answers with the same sentence. The tooltips in that
+  media query pins the 52px rail whatever the flag says; there the button and
+  ⌘ 0 open the full sidebar as a **drawer** over the content (ATO-538; it used
+  to be disabled, which left a 940-1000px window with no chat list at all).
+  The drawer keeps the rail's 52px in the layout, so the content does not
+  move, lights the button while it is up, and closes on a pick inside it, a
+  click outside it, Escape, ⌘ 0 again or the window growing past 1000px; the
+  collapse kept for a wide window is left as it was. The tooltips in that
   corner are `Hide sidebar (⌘ 0)` and `Console (⇧ ⌘ Y)` — the spellings the
   shortcuts sheet ships, because a toolbar where one chord reads *⌘ 0* and its
   neighbour *Ctrl+Shift+Y* is worse than either spelling alone.
