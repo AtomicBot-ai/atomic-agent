@@ -11,8 +11,12 @@
  * what it means and what to check instead.
  */
 
+// Only messages a full-screen program prints when it cannot get a
+// terminal. Generic tty noise (`Inappropriate ioctl for device`, `not a
+// tty` from stty, gpg or docker -t) also shows up in runs that failed for
+// another reason, and the note would then point the model the wrong way.
 const TERMINAL_FAILURE =
-  /setupterm|could not find terminal|_curses\.error|Error opening terminal|initscr|cbreak\(\) returned ERR|Inappropriate ioctl for device|not a tty|stdin is not a terminal|stdout is not a terminal/i;
+  /setupterm|could not find terminal|_curses\.error|Error opening terminal|initscr|cbreak\(\) returned ERR|Raw mode is not supported|stdin is not a terminal|stdout is not a terminal/i;
 
 export const TERMINAL_APP_HINT =
   "This looks like a full-screen terminal (curses/TUI) program. verify.run runs commands without a terminal, so such a program cannot be checked this way. " +
