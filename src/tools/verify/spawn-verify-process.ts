@@ -11,9 +11,15 @@
  * emptied, which stops every proxy-honouring client (curl, npm, pip,
  * fetch under undici's env proxy, most SDKs). It is not a sandbox: a
  * raw socket ignores it.
+ *
+ * The command is model-chosen like an `os.shell.run` one, so it gets the
+ * same filtered environment (ATO-347, `buildCommandEnv`): no provider
+ * keys, bot tokens or other secret-looking variables. A run's own `env`
+ * still wins.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 
+import { buildCommandEnv } from "../../sandbox/command-env.js";
 import { killProcessTree } from "../../sandbox/kill-process-tree.js";
 import {
   buildDirectInvocation,
@@ -119,7 +125,7 @@ export function spawnVerifyProcess(
   const child = spawn(invocation.command, invocation.args, {
     cwd: options.cwd,
     env: {
-      ...process.env,
+      ...buildCommandEnv(process.env),
       ...(options.network ? {} : networkBlockEnv()),
       ...(options.env ?? {}),
     },
