@@ -243,7 +243,7 @@ export const EVENTS: Record<string, EventSpec> = {
   approval_answered: {
     owner: "ui",
     props: {
-      choice: en(["allow_once", "deny", "abort", "deny_with_text"]),
+      choice: en(["allow_once", "allow_in_chat", "deny", "abort", "deny_with_text"]),
       category: en(APPROVAL_CATEGORIES),
       level: int({ max: 9, nullable: true }),
       input: en(["click", "key"]),

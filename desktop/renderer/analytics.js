@@ -96,11 +96,12 @@ const ANX = (() => {
   /* ---------- approvals ---------- */
   const apprShownAt = new WeakMap();
   function apprShown(req) { try { if (req && typeof req === 'object') apprShownAt.set(req, Date.now()); } catch (e) { /* ignore */ } }
-  /* key: y / n / esc / s / a from the card, or 'prose' for a typed refusal. */
+  /* key: y / n / esc / s / a / c (allow in this chat, ATO-473) from the card, or 'prose' for a typed refusal. */
   function apprAnswered(req, key) {
     if (!req || typeof req !== 'object') return;
     const choice = key === 'prose' ? 'deny_with_text'
       : key === 'esc' ? 'abort'
+      : key === 'c' ? 'allow_in_chat'
       : (key === 'y' || key === 's' || key === 'a') ? 'allow_once' : 'deny';
     const at = apprShownAt.get(req);
     const cats = reg(() => CATS.map((c) => c[0]), []);

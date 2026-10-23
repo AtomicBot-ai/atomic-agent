@@ -467,8 +467,12 @@ Honestly degraded, and labelled as such in the UI:
   would open with and reports it through the TUI's own
   `contextUsageFromPrompt`. The installed 0.5.4 answers 404, which the
   desktop caches per connection and falls back to the trace projection.
-- **Session grants.** The HTTP API implements `allow-once` and `deny` only, so
-  the card offers exactly those.
+- **Session grants.** The card offers Allow once and Deny, plus Allow in this
+  chat (ATO-473) for a shell command the agent names a shape for (the binary,
+  `git`; never `bash -c`). That sends `allow-in-chat`, the agent's shape grant
+  for the rest of the chat, and is drawn only when `/api/capabilities` lists
+  it in `agent.approvalDecisions`. An agent that answers it with a 400 gets
+  `allow-once` instead, and the card says the chat part did not happen.
 - **Subscription-CLI providers** (`claude-cli`, `codex-cli`) are in Add
   provider with the TUI's labels. They have no key screen: the step says the
   signed-in CLI runs on the user's plan, warns when `ANTHROPIC_API_KEY` /

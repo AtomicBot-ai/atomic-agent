@@ -44,12 +44,21 @@ import {
  *   GET  /v1/models                 OpenAI-compatible model list
  *   POST /v1/chat/completions       the agent loop, streamed as SSE
  *   GET  /api/events                SSE stream of approval requests
- *   POST /api/approval/resolve      allow-once | deny
+ *   POST /api/approval/resolve      allow-once | allow-in-chat | deny
  *
  * The server is bound to 127.0.0.1 on an ephemeral port and gated by a
  * bearer token generated per launch, so nothing outside this app can
  * reach the agent.
  */
+
+/**
+ * What the approval card may answer. `allow-in-chat` (ATO-473) is the
+ * agent's shape grant for the rest of the chat; an agent offers it only
+ * when `/api/capabilities` lists it in `agent.approvalDecisions`, and an
+ * older one answers it with a 400 (the renderer then sends allow-once).
+ */
+export type ApprovalDecision = "allow-once" | "allow-in-chat" | "deny";
+export const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ["allow-once", "allow-in-chat", "deny"];
 
 export type AgentState =
   | "stopped"
@@ -1429,7 +1438,7 @@ export class AgentClient extends EventEmitter {
 
   async resolveApproval(
     approvalId: string,
-    decision: "allow-once" | "deny",
+    decision: ApprovalDecision,
     reason?: string,
   ): Promise<unknown> {
     const res = await fetch(`${this.base()}/api/approval/resolve`, {

@@ -3401,6 +3401,10 @@ function apprCard(m) {
     + '</div></div>'
     + '<div class="apprbtns">'
       + '<button class="btn sm appr-yes" data-appr="y" title="Allow this one call' + (current ? ' (' + apprKeyLabel('y') + ')' : '') + '">Allow once' + keyOn('y') + '</button>'
+      /* ATO-473: the agent's shape grant, for a command it can name (m.shape,
+         never `bash -c`), on an agent that takes it (apprChatOk). No key: the
+         chords stay Allow once and Deny. */
+      + (apprChatOk(m) ? '<button class="btn sm btn-s appr-chat" data-appr="c" title="' + esc('Allow this call, and ' + m.shape + ' commands for the rest of this chat without asking') + '">Allow in this chat</button>' : '')
       + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny' + (current ? ' (' + apprKeyLabel('n') + ')' : '') + '">Deny' + keyOn('n') + '</button>'
       + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run">Abort run</button>'
     + '</div>'
@@ -3421,9 +3425,9 @@ function apprCard(m) {
         + (m.reason ? '<dt>Reason</dt><dd>' + esc(apprHomePaths(m.reason)) + '</dd>' : '')
         + (pv && pv !== '(no preview)' ? '<dt>Preview</dt><dd><div class="previewblk">' + esc(pv) + '</div></dd>' : '')
       + '</dl>'
-      /* The one approval surface for "ask me less" is the mode control in the
-         composer (src/tui/approval-modal.tsx footerHint); the agent's HTTP
-         API carries allow-once and deny only, so no session grant is drawn. */
+      /* "Ask me less" for everything is the mode control in the composer
+         (src/tui/approval-modal.tsx footerHint). For one command there is
+         Allow in this chat above (ATO-473), when the agent can name it. */
       + '<div class="apprmode">To be asked less often, change the <button class="apprlink" data-act="modes">mode</button> in the composer.</div>'
     + '</details>'
     + '</div>';
@@ -3458,6 +3462,15 @@ const APPR_FALLBACK = {
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
   paid_generation:'make a paid image in the cloud',
 };
+/** ATO-473: whether the card offers "Allow in this chat". The agent grants
+    the request's command shape (the binary, `git`) for the rest of the chat;
+    it names one only for a command it can see into (never `bash -c`), and an
+    agent that does not list `allow-in-chat` on /api/capabilities answers it
+    with a 400, so there the button is not drawn at all. */
+function apprChatOk(m) {
+  const decisions = LIVE_CAPS && LIVE_CAPS.agent && LIVE_CAPS.agent.approvalDecisions;
+  return !!m.shape && m.cat === 'shell' && Array.isArray(decisions) && decisions.includes('allow-in-chat');
+}
 /** The question: "Allow Atomic Agent to run `touch approved.txt`?" (html). */
 function apprAsk(m) {
   const q = (h) => 'Allow Atomic Agent to ' + h + '?';
@@ -5918,9 +5931,9 @@ function diagAct(what) {
   }
 }
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
-   + session grants, no ladder. The desktop's approval path only offers
-   allow-once/deny, so the runtime never accumulates grants and the TUI's
-   "none active" line is the truth here. The toggle is `atag config set
+   + session grants, no ladder. The desktop's approval path offers
+   allow-once/deny, plus "Allow in this chat" (ATO-473), a shape grant the
+   card's own receipt names; this pane does not list grants. The toggle is `atag config set
    analytics.enabled`; the running agent keeps its boot-time client, so
    the note and the Restart button say so.
    Д47–Д50 (Danya, 30.09): a read-scope change the agent takes at once is a
@@ -10792,8 +10805,27 @@ function apprNoLongerWaiting(req) {
   // The busy look answerLive put up was for a turn that is not running.
   if (req.sessionId && req.sessionId === S.agentSession && !sessionTurnId(req.sessionId)) S.busy = false;
 }
+/* ATO-473: an "Allow in this chat" the agent did not take (a 400: a request
+   it names no command for, or an agent older than the capability it listed)
+   is still a yes to this call. It goes again as allow-once, the narrower yes
+   the person also gave, and the card says the chat part did not happen. A
+   "not pending" answer is left alone: the request is over either way. */
+function apprChatFallback(req, decision, res) {
+  const took = !!(res && res.ok !== false && res.data && res.data.resolved === true);
+  if (decision !== 'allow-in-chat') return res;
+  if (took) return Object.assign({}, res, {chatGranted: true});
+  if (!res || res.ok === false || approvalNotWaiting(res.data)) return res;
+  return BR.approve(req.approvalId, 'allow-once').then((again) => {
+    if (again && again.ok !== false && again.data && again.data.resolved === true) {
+      placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
+        text:'Allowed once. This agent can\u2019t remember it for the chat, so it will ask again next time.'});
+    }
+    return again;
+  });
+}
 function answerLive(req, key) {
-  const approve = key === 'y' || key === 's' || key === 'a';
+  const approve = key === 'y' || key === 's' || key === 'a' || key === 'c';
+  const inChat = key === 'c' && apprChatOk(req);
   ANX.apprAnswered(req, key);
   // Backlog 25: an older card answered by its own button (see the click
   // delegator) leaves the newest request, and its card, open.
@@ -10830,9 +10862,14 @@ function answerLive(req, key) {
   /* Q60 review: whether the agent took it, for a replay of the same request
      (onApprovalEvent): only a confirmed answer keeps the card closed. */
   req.answering = true; delete req.landed;
-  BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
+  const decision = inChat ? 'allow-in-chat' : approve ? 'allow-once' : 'deny';
+  BR.approve(req.approvalId, decision).then((res) => apprChatFallback(req, decision, res)).then((res) => {
     req.answering = false;
     req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
+    if (inChat && req.landed && res.chatGranted) {
+      placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
+        text:'Allowed in this chat. Atomic Agent won\u2019t ask again about ' + req.shape + ' commands until you start a new chat.'});
+    }
     if (res && res.ok !== false && approvalNotWaiting(res.data)) apprNoLongerWaiting(req);
     else if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();
