@@ -189,9 +189,62 @@ const OPAQUE_INTERPRETER_SHAPES: ReadonlySet<string> = new Set([
   "zsh",
   "dash",
   "ksh",
+  "fish",
+  "cmd",
+  "powershell",
+  "pwsh",
+  // Wrappers that run whatever binary their arguments name: a grant on
+  // `env` or `xargs` would silence every binary behind it.
+  "env",
+  "xargs",
+  "sudo",
+  "doas",
+  "nohup",
+  "nice",
+  "timeout",
+  "time",
+  "exec",
+  "eval",
+  "command",
+  "builtin",
 ]);
 
 /** True when `[a]` (shape grant) must be withheld for `shape`. */
 export function isOpaqueInterpreterShape(shape: string): boolean {
   return OPAQUE_INTERPRETER_SHAPES.has(shape);
+}
+
+/**
+ * What a subshell line can do beyond running its first word: sequence
+ * (`;`, newline, `&&`), pipe, redirect, substitute (`$(…)`, backticks,
+ * `$VAR`) or group. Unlike `SHELL_METACHAR_RE` this includes newlines,
+ * which `sh -c` reads as `;`.
+ */
+const SHELL_COMPOUND_RE = /[|&;<>$`(){}\r\n]/;
+
+/**
+ * The shape a shell call's grant (`[a]`, desktop "Allow in this chat")
+ * is keyed on, or `undefined` when none may be offered or matched.
+ *
+ * The shape is the binary name, so it is only a true description of the
+ * call when that binary is all that runs:
+ *  - a subshell line that sequences, pipes, redirects or substitutes
+ *    runs more than its first word (`git status && curl … | sh`, or
+ *    `git log` then `rm -rf …` on the next line), so it has no shape:
+ *    neither granted from it nor auto-approved by a `git` grant;
+ *  - a command named by path (`./git`, `/tmp/x/git`) may be a script
+ *    the model just wrote, so a `git` grant does not cover it;
+ *  - opaque interpreters and wrappers (`bash`, `env`, `xargs`) hide
+ *    what runs in their arguments (`isOpaqueInterpreterShape`).
+ */
+export function shellGrantShape(
+  guardCmd: string,
+  commandLine: string,
+  useShell: boolean,
+): string | undefined {
+  if (useShell && SHELL_COMPOUND_RE.test(commandLine)) return undefined;
+  const bin = guardCmd.trim();
+  if (bin.length === 0 || /[\\/]/.test(bin)) return undefined;
+  const shape = bin.toLowerCase();
+  return isOpaqueInterpreterShape(shape) ? undefined : shape;
 }

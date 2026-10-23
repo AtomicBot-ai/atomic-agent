@@ -13,7 +13,6 @@ import { resolveUserPath } from "../expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
 import {
-  basenameCommand,
   checkShellCommandGuard,
   execWriteTargets,
   isGogCommand,
@@ -23,9 +22,9 @@ import {
 import {
   coerceShellArgs,
   describeArgsShape,
-  isOpaqueInterpreterShape,
   needsShellInterpretation,
   resolveShellSpawn,
+  shellGrantShape,
 } from "./shell-interpretation.js";
 import {
   classifyShellCall,
@@ -49,6 +48,7 @@ import {
 export {
   isOpaqueInterpreterShape,
   needsShellInterpretation,
+  shellGrantShape,
 } from "./shell-interpretation.js";
 
 export interface OsShellToolOptions extends DangerousToolOptions {
@@ -222,15 +222,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           }) ?? false
         );
       if (guardVerdict.action === "approval_required" && !scopedByFanout) {
-        // Shape grant unit: the normalised binary the guard itself keyed
-        // on (basename, lowercased), so `[a]` covers exactly the argv[0]
-        // that would run: `git`, not `/usr/bin/GIT` or a path. Withheld
-        // for opaque interpreters (`bash -c …`) where the binary name
-        // hides what runs — see `isOpaqueInterpreterShape`.
-        const shape = basenameCommand(guardInput.cmd).toLowerCase();
-        const commandShape = isOpaqueInterpreterShape(shape)
-          ? undefined
-          : shape;
+        // Shape grant unit: the bare binary name (lowercased), so `[a]`
+        // and "Allow in this chat" cover exactly the argv[0] that would
+        // run: `git`, not `./git` or a compound line that starts with
+        // `git`. Withheld for those and for opaque interpreters
+        // (`bash -c …`) where the binary name hides what runs — see
+        // `shellGrantShape`.
+        const commandShape = shellGrantShape(
+          guardInput.cmd,
+          commandLine,
+          useShell,
+        );
         await requireApproval(
           options,
           {
