@@ -22,6 +22,7 @@
     price: null, priceKey: '', pop: null, modelQ: '', adv: false, modeWhy: null,
     dir: '', focusPath: null,
     chatItem: null,   // a picture opened from a chat that Studio did not make ("From chat")
+    recent: typeof studioRecentLoad === 'function' ? studioRecentLoad('image') : [], recentOpen: false,   // ATO-809: prompts sent before
   };
   /* key → {state:'loading'|'ok'|'fail', url}. Thumbnails stay; full pictures only the last few. */
   const PICS = new Map();
@@ -282,6 +283,7 @@
     IM.jobCount = b.req.count || 1;
     IM.jobErr = null;
     IM.recipe = false;
+    if (typeof studioRecentRemember === 'function' && b.req.prompt) { IM.recent = studioRecentRemember('image', IM.recent, b.req.prompt); IM.recentOpen = false; paintForm(); }
     paintStage(); paintFoot(); paintGallery();
   }
 
@@ -536,6 +538,15 @@
         const m = simgFindModel(IM.catalog, a.slice(bar + 1), a.slice(0, bar));
         if (m) chooseModel(m);
         IM.modeWhy = null; IM.pop = null; save(); paintForm(); paintPop(); refreshPrice();
+        return;
+      }
+      case 'recent': IM.recentOpen = !IM.recentOpen; paintForm(); return;
+      case 'recent-use': {
+        const t = IM.recent[Number(a)];
+        IM.recentOpen = false;
+        if (typeof t === 'string') { IM.form.prompt = t; if (IM.formMsg) { IM.formMsg = ''; paintFoot(); } save(); }
+        paintForm();
+        { const ta = document.getElementById('sti-prompt'); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }
         return;
       }
       case 'idea': IM.form.prompt = a; paintForm(); { const t = document.getElementById('sti-prompt'); if (t) t.focus(); } save(); return;

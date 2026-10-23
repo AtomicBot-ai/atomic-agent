@@ -493,7 +493,21 @@ Not bridge calls; the pages use them instead of reaching into renderer.js.
 | `STUDIO.openFile(path)` | "Open in Studio" under a reply's pictures and clips: the gallery's item when Studio made it, otherwise the file on its own as "From chat" (Save as… / Show in Finder through `BR.imageSaveAs` / `imageReveal` for pictures, `BR.replySaveAs` / `replyReveal` for clips, home folder only) |
 | `STUDIO.dataUrlToBytes(url)` | `{type, bytes}`; `fetch()` of a `data:` URL is refused by the window's `connect-src 'none'` |
 
+## Recent prompts (studio/recent-prompts.js)
+
+Not a bridge call. Each page keeps the last 12 prompts it sent (after
+`generateImage` / `generateVideo` resolved `ok`), newest first, in
+localStorage under `atag.studio.recent.image` / `atag.studio.recent.video`.
+A prompt sent again moves up (same text ignoring case and spacing); blanks are
+not kept. Under the prompt box a **Recent** chip (shown once there is one)
+opens the list; a click puts that prompt back in the box. Rules are pure
+(`studioRecentAdd`, `studioRecentParse`), tested in
+`test/studio-recent-prompts.test.mjs`.
+
 ## Not in this foundation
 
 - Stopping an engine install, or a load, half-way.
 - Local image-to-video (Core refuses it).
+- "Improve prompt" (ATO-809): neither the agent's HTTP API nor main has a
+  one-shot completion to rewrite a prompt with the chat model; `agent:chat`
+  runs a full agent turn and keeps it as a chat session.
