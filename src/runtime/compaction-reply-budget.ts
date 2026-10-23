@@ -22,11 +22,17 @@ export interface CompactionReplyBudget {
  * summary target (`summaryMaxTokens`) stays what the prompt asks for and
  * what the length check enforces; the reply allowance adds reasoning
  * room so a thinking model is not cut off before it writes the summary.
+ *
+ * `outputCap` is the provider entry's own `maxOutputTokens`, when set: a
+ * model that cannot write more answers a larger allowance with a 400, so
+ * the reserve shrinks to fit under it. It never goes below the summary
+ * target; a cap smaller than that sends the target, as before the reserve.
  */
-export function compactionReplyBudget(window: number, summaryMaxTokens: number, reasoningReserveTokens: number): CompactionReplyBudget {
+export function compactionReplyBudget(window: number, summaryMaxTokens: number, reasoningReserveTokens: number, outputCap?: number): CompactionReplyBudget {
   const room = window - summaryMaxTokens - COMPACTION_REQUEST_MARGIN_TOKENS;
   const cap = Number.isFinite(room) ? Math.max(0, Math.floor(room * REASONING_RESERVE_MAX_SHARE)) : reasoningReserveTokens;
-  const reasoningReserve = Math.max(0, Math.min(reasoningReserveTokens, cap));
+  const underOutputCap = outputCap === undefined ? Infinity : outputCap - summaryMaxTokens;
+  const reasoningReserve = Math.max(0, Math.min(reasoningReserveTokens, cap, underOutputCap));
   return {
     reasoningReserve,
     maxTokens: summaryMaxTokens + reasoningReserve,

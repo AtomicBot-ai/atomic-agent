@@ -8,7 +8,7 @@ import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { assistantReplyTurn, assistantToolCallTurn, toolResultTurn, userTurn } from "../session/conversation-turn.js";
 import { createEmptySessionState, recordTurn, type SessionState } from "../session/session-state.js";
 import { prepareCompactionSource } from "./context-compaction-chunks.js";
-import { summarizeWithModel, summaryRejection } from "./context-compaction-model.js";
+import { summarizeWithModel, summaryRejection, type ModelSummaryRoute } from "./context-compaction-model.js";
 
 function session(): SessionState {
   let state = createEmptySessionState({ id: "chat", workingDir: "/work" });
@@ -31,7 +31,7 @@ function input(state: SessionState): BuildPromptInput {
 const completion: CompletionResult = { content: "Goal: report on freight orders and invoices.", reasoningContent: "", stop: true, truncated: false,
   timing: { promptTokens: 100, predictedTokens: 20, promptMs: 1, predictedMs: 1 }, cacheHitTokens: 0, slotId: -1, modelId: "test-model" };
 
-async function requestFor(through: number): Promise<LlmStreamParams> {
+async function requestFor(through: number, route: ModelSummaryRoute = { providerId: "current", transport: "grammar", serverTemplate: true }): Promise<LlmStreamParams> {
   const state = session();
   const promptInput = input(state);
   const complete = vi.fn(async (_params: LlmStreamParams) => completion);
@@ -39,7 +39,7 @@ async function requestFor(through: number): Promise<LlmStreamParams> {
     input: promptInput, prompt: buildPrompt(promptInput),
     plan: { reason: "manual", from: 0, through, summaryMaxTokens: 250, targetTokens: 2000, tokensBefore: 3000 },
     config: { ...createCompactionDefaults(), mode: "model", summaryMaxTokens: 250 },
-    route: { providerId: "current", transport: "grammar", serverTemplate: true },
+    route,
     previous: "", source: prepareCompactionSource(state.turns, 0, through), signal: new AbortController().signal,
     tally: { usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0, chunkCount: 0, totalTimeoutMs: 0 },
     emit: () => {}, complete, sideCallSlotId: () => 3,
@@ -77,6 +77,14 @@ describe("model summary reply allowance", () => {
     expect(request.reasoningEffort).toBe("low");
     expect(request.chat!.system).toContain("Keep the entire summary within 250 tokens.");
   });
+
+  it("stays under the provider entry's explicit output cap", async () => {
+    const capped = await requestFor(2, { providerId: "current", transport: "native_tools", serverTemplate: false, maxOutputTokens: 400 });
+    expect(capped.maxTokens).toBe(400);
+    expect(capped.maxOutputTokens).toBe(400);
+    const tiny = await requestFor(2, { providerId: "current", transport: "native_tools", serverTemplate: false, maxOutputTokens: 100 });
+    expect(tiny.maxTokens).toBe(250);
+  });
 });
 
 describe("summaryRejection", () => {
@@ -98,6 +106,8 @@ describe("summaryRejection", () => {
     expect(summaryRejection(reply({ finishReason: "length" }), completion.content, 250, 1000)).toContain("cut off");
     expect(summaryRejection(reply({ content: "<think>done</think>", reasoningContent: "" }), "", 250, 1000)).toBe("The model returned only thinking and no summary.");
     expect(summaryRejection(reply({ content: "" }), "", 250, 1000)).toBe("The model returned an empty summary.");
+    const noReasoningField = { ...completion, reasoningContent: undefined } as unknown as CompletionResult;
+    expect(summaryRejection(noReasoningField, completion.content, 250, 1000)).toBeNull();
     const long = "word ".repeat(2000);
     expect(summaryRejection(reply({ content: long }), long, 250, 1000)).toContain("longer than its 250-token limit");
     expect(summaryRejection(reply({ toolCalls: [{ id: "c", type: "function", function: { name: "x", arguments: "{}" } }] }), "x", 250, 1000)).toContain("tool calls");

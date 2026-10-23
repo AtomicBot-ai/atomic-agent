@@ -66,6 +66,8 @@ export interface ModelSummaryRoute {
   transport: ToolCallTransport;
   serverTemplate: boolean;
   contextWindow?: number | null;
+  /** The provider entry's explicit `maxOutputTokens`; the reply allowance stays under it. */
+  maxOutputTokens?: number;
 }
 
 export interface ModelSummaryRequest {
@@ -98,7 +100,7 @@ export async function summarizeWithModel(request: ModelSummaryRequest): Promise<
     const window = Math.min(route.contextWindow ?? Infinity, prompt.contextWindow ?? prompt.conversationCapEffective);
     // The reply allowance carries reasoning room on top of the summary target, and
     // the input budget gives that room up, so the whole request still fits the window.
-    const { maxTokens, inputBudget } = compactionReplyBudget(window, plan.summaryMaxTokens, config.reasoningReserveTokens);
+    const { maxTokens, inputBudget } = compactionReplyBudget(window, plan.summaryMaxTokens, config.reasoningReserveTokens, route.maxOutputTokens);
     let summary = request.previous;
     let model: string | null = null;
     const source = prepared.text;
@@ -181,7 +183,8 @@ export async function summarizeWithModel(request: ModelSummaryRequest): Promise<
 export function summaryRejection(result: CompletionResult, summary: string, summaryMaxTokens: number, replyMaxTokens: number): string | null {
   if (result.toolCalls?.length) return "The model answered with tool calls instead of a summary.";
   // Reasoning arrived in its own channel, or the text was nothing but reasoning.
-  const thought = result.reasoningContent.trim() !== "" || (!summary && result.content.trim() !== "");
+  // A provider that skips the field must not turn a usable reply into a TypeError.
+  const thought = ((result.reasoningContent as string | undefined) ?? "").trim() !== "" || (!summary && result.content.trim() !== "");
   if (result.truncated || result.finishReason === "length") {
     return !summary && thought
       ? `The model spent its whole reply allowance (${replyMaxTokens} tokens) on thinking and wrote no summary. Raise agent.compaction.reasoningReserveTokens or turn thinking off for this model.`

@@ -126,7 +126,11 @@ gives up the reserve so the request fits the window; the reserve is at most a
 quarter of the room left after the summary target and a 1024-token margin, so a
 small window shrinks it rather than leaving too little input to compact. The
 4096-token default covers what reasoning models typically spend on a summary
-at low effort; it is a ceiling, not a cost, and `0` sends no reserve. Calls ask
+at low effort; it is a ceiling, not a cost, and `0` sends no reserve.
+When the provider entry sets `maxOutputTokens`, the reserve shrinks so the reply
+allowance stays under it (a model past its output limit answers with a 400); it
+never drops below the summary target, so a cap smaller than the target still
+sends the target, as before the reserve. Calls ask
 for low reasoning effort, and a local or private-network OpenAI-compatible
 server also receives `chat_template_kwargs: { enable_thinking: false }` (a
 server-templated llama-server route already sends the same switch). Strict cloud

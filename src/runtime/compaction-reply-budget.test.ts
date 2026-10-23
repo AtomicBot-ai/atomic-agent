@@ -21,4 +21,11 @@ describe("compactionReplyBudget", () => {
     expect(compactionReplyBudget(131072, 2048, 0)).toMatchObject({ reasoningReserve: 0, maxTokens: 2048 });
     expect(compactionReplyBudget(2000, 1500, 4096)).toMatchObject({ reasoningReserve: 0, maxTokens: 1500, inputBudget: 2000 - 1500 - COMPACTION_REQUEST_MARGIN_TOKENS });
   });
+
+  it("keeps the reply allowance under the provider entry's own output cap, never below the summary target", () => {
+    expect(compactionReplyBudget(131072, 2048, 4096, 4096)).toEqual({ reasoningReserve: 2048, maxTokens: 4096, inputBudget: 131072 - 2048 - 2048 - COMPACTION_REQUEST_MARGIN_TOKENS });
+    expect(compactionReplyBudget(131072, 2048, 4096, 16384)).toMatchObject({ reasoningReserve: 4096, maxTokens: 6144 });
+    // A cap below the summary target sends the target, as before the reserve existed.
+    expect(compactionReplyBudget(131072, 2048, 4096, 1000)).toMatchObject({ reasoningReserve: 0, maxTokens: 2048 });
+  });
 });

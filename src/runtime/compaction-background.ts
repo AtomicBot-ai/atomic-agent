@@ -113,7 +113,7 @@ export function createBackgroundCompaction(deps: BackgroundCompactionDependencie
     const maxTokens = Math.floor(plan.summaryMaxTokens * ROLLING_SUMMARY_SHARE);
     const window = Math.min(route.contextWindow ?? Infinity, prompt.contextWindow ?? prompt.conversationCapEffective);
     // Half of the input room the summary call will have once its reasoning reserve is set aside.
-    const sourceCap = Math.min(ROLLING_JOB_MAX_SOURCE_TOKENS, Math.floor(compactionReplyBudget(window, maxTokens, config.reasoningReserveTokens).inputBudget / 2));
+    const sourceCap = Math.min(ROLLING_JOB_MAX_SOURCE_TOKENS, Math.floor(compactionReplyBudget(window, maxTokens, config.reasoningReserveTokens, route.maxOutputTokens).inputBudget / 2));
     if (maxTokens < 64 || sourceCap < 512) return false;
     const source = renderRollingSource(state.turns, from, plan.through, sourceCap);
     if (!source || estimateTokens(source.text) < ROLLING_MIN_SOURCE_TOKENS) return false;
