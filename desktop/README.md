@@ -559,7 +559,9 @@ Honestly degraded, and labelled as such in the UI:
   and is NOT offered as a choice in the wizard — no cursor position, no tab
   stop, nothing to click. The best fit — the largest model that runs
   comfortably, never a reduced-refusal one — carries `★ best fit for this
-  machine`. A model in the catalogue's 4B class (`recommendedRamGb ≤ 8`) says
+  machine`. A reduced-refusal model stays in the list, last in its fit band,
+  with a "Fewer refusals" badge whose tooltip says in plain words that it
+  gives fewer safety refusals (ATO-449). A model in the catalogue's 4B class (`recommendedRamGb ≤ 8`) says
   plainly that it is small and will get more wrong, which on a weak machine is
   exactly the model being recommended. An id the vendored table does not know
   — every `custom-…` model added from Hugging Face — renders with no blurb and

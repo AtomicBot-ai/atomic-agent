@@ -11261,6 +11261,12 @@ function isSmallModel(model) {
 /* Calm (S6): one quiet line, not a paragraph. Same truth: quick and fine
    for everyday work, weaker at long multi-step tool work. */
 const SMALL_MODEL_CAUTION = 'A small model: quick, but weaker at long multi-step work.';
+/* ATO-449 (U-12): reduced-refusal weights stay in the first-run list, but say
+   in plain words what they are. The catalogue's own tag ("Use at your own
+   risk") warned without explaining; this is the note, and its short word is
+   the row's badge. */
+const UNCENSORED_NOTE = 'Fewer safety refusals: it may answer requests other models decline.';
+const UNCENSORED_WORD = 'Fewer refusals';
 
 /**
  * The catalogue ordered for THIS machine: best fit first, and within a
@@ -13114,8 +13120,8 @@ function obModelRowLabel(model, isBest, noteId) {
 function obModelNote(model) {
   const note = modelPickNote(model, OB.ram);
   if (!note || note.v === 'over') return null;
-  // The reduced-refusal tag ("Use at your own risk") is short enough to be its own word.
-  const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model' : note.text;
+  const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model'
+    : note.text === UNCENSORED_NOTE ? UNCENSORED_WORD : note.text;
   return {word, text: note.text, warn: note.v === 'tight' || !!model.uncensored};
 }
 
@@ -13180,7 +13186,7 @@ function modelPickNote(model, ram) {
     return {v:'over', text: need + (ram ? '. ' + THIS_MACHINE_CAP + ' has ' + ram + ' GB.' : '.')};
   }
   if (fit.v === 'tight') return {v:'tight', text:'Tight fit on ' + ram + ' GB. It will run slowly.'};
-  if (model.uncensored && model.tag) return {v:'caution', text: String(model.tag)};
+  if (model.uncensored) return {v:'caution', text: UNCENSORED_NOTE};
   if (isSmallModel(model)) return {v:'caution', text: SMALL_MODEL_CAUTION};
   return null;
 }

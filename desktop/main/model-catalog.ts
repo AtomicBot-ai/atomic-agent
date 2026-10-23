@@ -189,8 +189,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.8-27b-uncensored",
-    name: "Qwen3.8 27B Uncensored GGUF",
-    description: "Reduced-refusal Qwen3.8 27B (abliterated)",
+    name: "Qwen 3.8 27B Uncensored GGUF",
+    description: "Reduced-refusal Qwen 3.8 27B (abliterated)",
     minRamGb: 20,
     recommendedRamGb: 32,
     sizeGb: 16.5,
