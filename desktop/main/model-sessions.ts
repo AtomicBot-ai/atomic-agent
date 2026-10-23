@@ -31,12 +31,26 @@
  * exiting and the other starting at worst leaves the daemon up one session
  * longer, or stops it a moment before the newcomer brings it back.
  *
+ * ATO-418, pid reuse. A marker left by a crash or a forced logoff names a
+ * pid the system may give to an unrelated process later, and the bare
+ * liveness test then reads it as a session still using the model, so quit
+ * keeps the model running for nobody. On macOS and Linux the desktop's own
+ * marker therefore records its process start time on a second line
+ * (process-start.ts), and a marker counts as live only when its pid is alive
+ * AND that start still matches. The agent reads only the file NAME (its
+ * session-registry.ts says the content is not read back), so the extra line
+ * changes nothing there. A marker with no second line (the terminal's, or
+ * the desktop's on Windows, where reading a start costs a PowerShell run)
+ * keeps the old pid-only test.
+ *
  * Nothing here imports state-dir.ts (which imports this module for the env
  * name), so the functions take the data dir as an argument.
  */
 
-import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+import { pidFileOwnerAlive, pidFileText, processStartOf, recordedStart } from "./process-start.js";
 
 /** The env var the agent reads to treat a marker with this pid as itself. */
 export const SESSION_PARENT_PID_ENV = "ATOMIC_AGENT_SESSION_PARENT_PID";
@@ -60,17 +74,22 @@ export function modelSessionPidAlive(pid: number): boolean {
 }
 
 /**
- * registerSession: write `<dataDir>/sessions/<pid>` holding the pid. Returns
+ * registerSession: write `<dataDir>/sessions/<pid>` holding the pid, and on
+ * macOS and Linux the process start on a second line (ATO-418). Returns
  * the release for the clean-exit path; releasing twice is safe. Best effort,
  * as the agent's is: a desktop that could not register behaves like the
  * desktop before ATO-416, which is no worse than that.
  */
-export function registerModelSession(dataDir: string, pid: number = process.pid): () => void {
+export function registerModelSession(
+  dataDir: string,
+  pid: number = process.pid,
+  startOf: (pid: number) => string | null = processStartOf,
+): () => void {
   const dir = modelSessionsDir(dataDir);
   const file = join(dir, String(pid));
   try {
     mkdirSync(dir, { recursive: true });
-    writeFileSync(file, String(pid));
+    writeFileSync(file, pidFileText(pid, startOf(pid)));
   } catch {
     // see above
   }
@@ -87,13 +106,16 @@ export function registerModelSession(dataDir: string, pid: number = process.pid)
  * hasOtherLiveSessions, answering WHICH pids rather than whether: every live
  * marker but `selfPid`'s. Stale markers (a dead pid, a name that is not a
  * pid) are deleted as they are met, as the agent does, so neither side
- * accumulates garbage. `alive` is the liveness test, a parameter only so the
+ * accumulates garbage. A marker that recorded a process start is live only
+ * while the process with that pid still has that start (ATO-418): a reused
+ * pid is a stale marker. `alive` and `startOf` are parameters only so the
  * suite can drive the function without real processes.
  */
 export function otherLiveModelSessions(
   dataDir: string,
   selfPid: number = process.pid,
   alive: (pid: number) => boolean = modelSessionPidAlive,
+  startOf: (pid: number) => string | null = processStartOf,
 ): number[] {
   const dir = modelSessionsDir(dataDir);
   let entries: string[];
@@ -107,7 +129,7 @@ export function otherLiveModelSessions(
     const pid = Number.parseInt(entry, 10);
     const valid = Number.isFinite(pid) && pid > 0 && String(pid) === entry;
     if (valid && pid === selfPid) continue;
-    if (valid && alive(pid)) {
+    if (valid && pidFileOwnerAlive(pid, markerStart(join(dir, entry)), alive, startOf)) {
       others.push(pid);
       continue;
     }
@@ -120,6 +142,15 @@ export function otherLiveModelSessions(
   return others;
 }
 
+/** The start a marker recorded; null for a bare-pid marker or one that cannot be read. */
+function markerStart(file: string): string | null {
+  try {
+    return recordedStart(readFileSync(file, "utf8"));
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The quit's decision, pure apart from the stale-marker sweep: stop the
  * shared model server only when nobody else holds a live marker. `others`
@@ -129,7 +160,8 @@ export function quitMayStopModel(
   dataDir: string,
   selfPid: number = process.pid,
   alive: (pid: number) => boolean = modelSessionPidAlive,
+  startOf: (pid: number) => string | null = processStartOf,
 ): { stop: boolean; others: number[] } {
-  const others = otherLiveModelSessions(dataDir, selfPid, alive);
+  const others = otherLiveModelSessions(dataDir, selfPid, alive, startOf);
   return { stop: others.length === 0, others };
 }

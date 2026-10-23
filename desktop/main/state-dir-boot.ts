@@ -81,8 +81,9 @@ process.env.ATOMIC_AGENT_STATE_DIR = DESKTOP_STATE_DIR;
  * into the shared directory once (state-migrate.ts). It runs HERE, before the
  * fresh-run latch below, so a directory that has just been filled is not
  * taken for a first run, and before anything is started on it. A no-op unless
- * this app runs on the shared directory by default (not one named by the
- * environment) and the old directory holds a setup not merged yet. Never
+ * this app runs on the shared directory (by default, or because the
+ * environment named that very directory, ATO-418) and the old directory
+ * holds a setup not merged yet. Never
  * throws: on failure the app runs on the shared directory anyway.
  */
 export const DESKTOP_STATE_MERGE = runDesktopStateMigrationAtBoot(DESKTOP_STATE_DIR, STATE_DIR_FROM_ENV, {

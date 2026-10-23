@@ -135,7 +135,8 @@ export async function checks116(js: Js, check: Check): Promise<void> {
       const self = process.pid;
       const release = registerModelSession(dir, self);
       const marker = join(dir, "sessions", String(self));
-      const written = existsSync(marker) && readFileSync(marker, "utf8") === String(self);
+      // ATO-418: the first line is the pid; macOS and Linux add the process start on a second.
+      const written = existsSync(marker) && readFileSync(marker, "utf8").split("\n")[0] === String(self);
       const aloneReal = quitMayStopModel(dir, self);
       // Another session, alive by the stand-in liveness test; a dead one; a file that is not a pid.
       const other = 424242;

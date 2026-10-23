@@ -1298,7 +1298,12 @@ its own, `~/.atomic-agent-desktop`, for the testing phase: *"None of the keys
 should be shared between the TUI and the desktop app, at least during the
 testing phase."* That phase is over. What an earlier desktop kept in
 `~/.atomic-agent-desktop` is brought over once by `main/state-migrate.ts`;
-`LEGACY_DESKTOP_STATE_DIR` in `main/state-dir.ts` names that directory.)
+`LEGACY_DESKTOP_STATE_DIR` in `main/state-dir.ts` names that directory. An
+`ATOMIC_AGENT_STATE_DIR` that names `~/.atomic-agent` itself does not hold
+that merge back, only one naming another folder does. A database copied as
+is gets the importer's clean-up (`main/copied-db-cleanup.ts`): a chat left
+running ends as interrupted, a running task goes back to pending. The
+window's notice says when model folders or traces could not be moved.)
 
 What sharing one directory takes:
 - **No private ports on the shared directory.** `claimDesktopPorts` moves a
@@ -1307,7 +1312,10 @@ What sharing one directory takes:
 - **Quit does not kill a model the terminal is using.** The desktop drops a
   marker into the agent's model-session registry
   (`<dataDir>/sessions/<pid>`, `main/model-sessions.ts`, a port of
-  `src/local-llm/server/session-registry.ts`) and removes it on exit; every
+  `src/local-llm/server/session-registry.ts`) and removes it on exit; on
+  macOS and Linux the marker also records the process start time
+  (`main/process-start.ts`), so a pid reused after a crash does not count as
+  a live session (Windows keeps the pid-only check); every
   `atag` it spawns carries `ATOMIC_AGENT_SESSION_PARENT_PID`. On quit and
   before an update, `models stop` and the kill of leftovers are skipped while
   another live marker exists: the last one out stops the server.
