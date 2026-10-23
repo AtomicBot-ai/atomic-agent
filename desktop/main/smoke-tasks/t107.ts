@@ -139,7 +139,7 @@ async function oneShotNote(js: Js, check: Check, agent: StandIn): Promise<void> 
     const keep = {mode: TK.mode, form: TK.form, msg: TK.msg, note: TK.note, toasts: S.toasts.slice(), id: S.toastId};
     try {
       TK.mode = 'create'; TK.form = tkNewForm();
-      Object.assign(TK.form, {kind: 'at', atIsoOrMs: ${q(AT)}, message: 'smoke t107: a one-shot that is never created'});
+      Object.assign(TK.form, {manual: true, kind: 'at', atIsoOrMs: ${q(AT)}, message: 'smoke t107: a one-shot that is never created'});
       const res = await tkPreview();
       const f = TK.form;
       const html = f ? tkPreviewHTML(f) : '';
