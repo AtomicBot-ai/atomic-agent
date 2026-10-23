@@ -163,7 +163,7 @@ function report(results: readonly SyntaxFileResult[]): VerifySyntaxReport {
 export const verifySyntaxTool: ToolDefinition = {
   name: VERIFY_SYNTAX_TOOL,
   description:
-    "Syntax-check files, one checker per file by extension: .js/.cjs/.mjs/.json in-process (then node --check), .ts/.tsx via the project's tsc --noEmit, .py via python3, .sh/.bash via bash -n, .html inline <script> blocks (plus a warning for content after </html>), .css brace balance. Read-only, writes nothing. A file with no checker is reported as unchecked, never as passing.",
+    "Syntax-check files, one checker per file by extension: .js/.cjs/.mjs/.json in-process (then node --check), .ts/.tsx via the project's tsc --noEmit, .py via python3, .sh/.bash via bash -n, .html inline <script> blocks (plus a warning for content after </html>), .css brace balance, .go/.rb/.php/.lua/.zsh via gofmt -l -e, ruby -c, php -l, luac -p, zsh -n when that tool is installed. Read-only, writes nothing. A file with no checker is reported as unchecked, never as passing.",
   readonly: true,
   async run(rawArgs, ctx): Promise<CompressedToolResult> {
     const files = parseVerifySyntaxArgs(rawArgs);
