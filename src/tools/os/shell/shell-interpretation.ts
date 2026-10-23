@@ -167,11 +167,54 @@ export function resolveShellSpawn(
   useShell: boolean,
 ): SpawnInvocation {
   if (!useShell) return buildDirectInvocation(cmd, execArgs);
-  const commandLine =
-    execArgs.length > 0 && process.platform === "win32"
-      ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
-      : [cmd, ...execArgs].join(" ");
-  return buildSubshellInvocation(commandLine);
+  return buildSubshellInvocation(subshellLine(cmd, execArgs));
+}
+
+/** The line the subshell is handed: see `resolveShellSpawn`. */
+function subshellLine(cmd: string, execArgs: readonly string[]): string {
+  return execArgs.length > 0 && process.platform === "win32"
+    ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
+    : [cmd, ...execArgs].join(" ");
+}
+
+/** Characters a POSIX shell reads literally outside quotes. */
+const POSIX_PLAIN_TOKEN_RE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/**
+ * One argv token as a POSIX shell would need it written to read it back
+ * unchanged: as is when it holds only plain characters, otherwise in
+ * single quotes, an embedded `'` closed, escaped and reopened (`'\''`).
+ */
+export function quotePosixArg(token: string): string {
+  if (token.length === 0) return "''";
+  if (POSIX_PLAIN_TOKEN_RE.test(token)) return token;
+  return `'${token.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The command as the approval prompt shows it (ATO-433). A plain
+ * `join(" ")` dropped the argv boundaries, so `bash` with
+ * `["-c", "echo 'ux tour' > f.txt"]` read `bash -c echo 'ux tour' >
+ * f.txt`, a different command from the one that runs.
+ *
+ * - Direct exec: every token quoted the way the platform shell would
+ *   need it (`quotePosixArg`; `quoteCmdArg` on Windows), so pasting the
+ *   preview into a terminal runs the same argv.
+ * - Subshell: the exact line the subshell is handed, since that line
+ *   is what runs (on POSIX the legacy raw join, on Windows with the
+ *   arguments quoted for cmd.exe).
+ *
+ * Display only: the spawn, the guard and the write-target checks keep
+ * reading the argv and lines they read before.
+ */
+export function formatShellPreview(
+  cmd: string,
+  execArgs: readonly string[],
+  useShell: boolean,
+): string {
+  if (useShell) return subshellLine(cmd, execArgs);
+  const quote = process.platform === "win32" ? quoteCmdArg : quotePosixArg;
+  return [cmd, ...execArgs].map(quote).join(" ");
 }
 
 /**

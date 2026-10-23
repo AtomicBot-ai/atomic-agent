@@ -188,3 +188,43 @@ describe("os.shell.run says when it ran with no arguments (F40)", () => {
     expect(result.summary).not.toContain("ran with no arguments");
   });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "os.shell.run approval preview keeps argument boundaries (ATO-433)",
+  () => {
+    let dir: string;
+
+    beforeEach(async () => {
+      dir = await mkdtemp(join(tmpdir(), "atomic-shell-preview-"));
+    });
+
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("quotes the `bash -c` body as one argument, and runs it unchanged", async () => {
+      const previews: string[] = [];
+      const gate = new ApprovalGate({
+        emit: (req) => {
+          previews.push(req.preview ?? "");
+          gate.resolve({ approvalId: req.approvalId, approved: true });
+        },
+      });
+      const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+      const result = await tool.run(
+        { cmd: "bash", args: ["-c", "echo 'ux tour' > tour-note.txt"] },
+        {
+          workingDir: dir,
+          sessionId: "test-session",
+          stepIndex: 0,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(previews).toEqual([
+        "bash -c 'echo '\\''ux tour'\\'' > tour-note.txt'",
+      ]);
+      expect(result.status).toBe("ok");
+      expect(await readFile(join(dir, "tour-note.txt"), "utf8")).toBe("ux tour\n");
+    });
+  },
+);
