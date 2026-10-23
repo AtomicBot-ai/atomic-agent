@@ -104,6 +104,7 @@ function turnRequestFields(params: LlmStreamParams) {
     ...(params.requestTimeoutMs !== undefined
       ? { requestTimeoutMs: params.requestTimeoutMs }
       : {}),
+    ...(params.disableThinking ? { disableThinking: true } : {}),
   };
 }
 

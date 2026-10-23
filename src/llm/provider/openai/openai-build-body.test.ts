@@ -677,3 +677,32 @@ describe("reasoning effort and the turn's output ceiling (F20)", () => {
     expect(buildOpenAiChatBody({ prompt: "hi" }, "m", false)).not.toHaveProperty("max_tokens");
   });
 });
+
+describe("buildOpenAiChatBody: the template's thinking switch", () => {
+  const ask = (request: Parameters<typeof buildOpenAiChatBody>[0], options: Parameters<typeof buildOpenAiChatBody>[7], extraBody?: Record<string, unknown>) =>
+    buildOpenAiChatBody(request, "m", false, extraBody, undefined, undefined, undefined, options);
+
+  it("asks a local server not to think when the request disables thinking", () => {
+    const body = ask({ prompt: "hi", reasoningEffort: "low", disableThinking: true }, { providerKind: "openai-compatible", templateKwargs: true });
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    expect(body.reasoning_effort).toBe("low");
+    expect(body).not.toHaveProperty("disableThinking");
+  });
+
+  it("sends nothing to a server that does not take template arguments", () => {
+    for (const options of [{ providerKind: "openai-compatible" }, { providerKind: "openrouter" }, {}]) {
+      const body = ask({ prompt: "hi", disableThinking: true }, options);
+      expect(body).not.toHaveProperty("chat_template_kwargs");
+      expect(body).not.toHaveProperty("disableThinking");
+    }
+  });
+
+  it("leaves an ordinary request untouched on a local server", () => {
+    expect(ask({ prompt: "hi" }, { providerKind: "openai-compatible", templateKwargs: true })).not.toHaveProperty("chat_template_kwargs");
+  });
+
+  it("lets the entry's own extraBody win", () => {
+    const body = ask({ prompt: "hi", disableThinking: true }, { templateKwargs: true }, { chat_template_kwargs: { enable_thinking: true } });
+    expect(body.chat_template_kwargs).toEqual({ enable_thinking: true });
+  });
+});
