@@ -1454,6 +1454,12 @@ without a click.
 - macOS offers no update where it cannot succeed: an app run from the DMG or
   Downloads (not in /Applications), or one signed ad hoc (no TeamIdentifier),
   says why in Settings instead.
+- An app run from outside /Applications also asks at launch (ATO-370,
+  `main/move-to-applications.ts`): "Move Atomic Agent to Applications?" with
+  **Move** / **Not now**. Move calls `app.moveToApplicationsFolder()`, which
+  moves and relaunches the app. Not now asks again on the next launch only;
+  nothing is stored. Never asked in a smoke, dev or unpackaged run.
+  `app_opened.in_applications` counts how many launches are outside.
 - A failed automatic check (offline, no feed) shows nothing. Settings ›
   General › Check now shows the result in plain words.
 - The person's choices are in Electron userData `updates.json` (auto-check,

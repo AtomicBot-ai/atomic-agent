@@ -235,6 +235,7 @@ import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
+import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
 
 const DEV = process.argv.includes("--dev");
@@ -9604,6 +9605,16 @@ async function pruneIncompleteProvidersAtBoot(): Promise<void> {
   }
 }
 
+/** app.isInApplicationsFolder() off macOS is never asked; null when it throws. */
+function inApplicationsFolder(): boolean | null {
+  if (process.platform !== "darwin") return null;
+  try {
+    return app.isInApplicationsFolder();
+  } catch {
+    return null;
+  }
+}
+
 /** See its call in app.whenReady. Never fatal. */
 function secureStateFilesAtBoot(): void {
   try {
@@ -9797,6 +9808,21 @@ function watchCoreUpdates(): void {
 }
 
 void app.whenReady().then(async () => {
+  /* ATO-370: a mac app run from the DMG or Downloads cannot update itself.
+     Ask before anything starts: Move relaunches the app from /Applications,
+     so nothing of this launch should be running by then. Not now asks again
+     on the next launch (move-to-applications.ts). */
+  if (shouldOfferMove({
+    platform: process.platform, packaged: app.isPackaged, smoke: SMOKE || FIRST_RUN_PROBE, dev: DEV,
+    inApplications: inApplicationsFolder(),
+  })) {
+    const moved = offerMove({
+      ask: () => dialog.showMessageBoxSync(MOVE_PROMPT),
+      move: () => app.moveToApplicationsFolder(),
+      log: (line) => console.error(line),
+    });
+    if (moved === "moved") return;
+  }
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
@@ -9877,7 +9903,7 @@ void app.whenReady().then(async () => {
     const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
     void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(embeddingsFirst).then(() => {
       void agent?.start();
-      A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
+      A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
       else void startLocalDaemonAtBoot();
     });
