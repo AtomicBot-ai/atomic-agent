@@ -183,7 +183,7 @@ describe("reply text cannot close on an unescaped prose quote (#681)", () => {
     for (const [id, grammar] of await grammars()) {
       for (const call of [
         '[{"tool":"os.fs.write","args":{"path":"a.py","content":"def f():"}}]',
-        '[{"tool":"os.shell.run","args":{"command":"ls "}}]',
+        '[{"tool":"os.shell.run","args":{"cmd":"ls "}}]',
         '[{"tool":"finish","args":{"summary":"done:"}}]',
       ]) {
         expect(gbnfAccepts(grammar, "root", call), `${id} ${call}`).toBe(true);
@@ -580,9 +580,10 @@ describe("the reasoning budget (F49)", () => {
     ]) {
       const narrowed = buildGrammarForTools(variant, ["finish"]);
       expect(grammarToolNames(narrowed)).toEqual(["finish", "reply"]);
-      expect(narrowed.replace(/^tool-name ::= .*$/m, "")).toBe(
-        variant.replace(/^tool-name ::= .*$/m, ""),
-      );
+      // the rewrite touches tool-name and, for the shell branch, tool-call
+      const strip = (g: string): string => g.replace(/^tool-name ::= .*$/m, "").replace(/^tool-call ::= .*$/m, "");
+      expect(strip(narrowed)).toBe(strip(variant));
+      expect(narrowed).toMatch(/^tool-call ::= reply-call \| other-call$/m);
     }
   });
 });
@@ -759,6 +760,9 @@ describe("buildGrammarForTools — the per-request grammar", () => {
           expect(narrowedLines[i], profile.id).toBe(
             'tool-name ::= "\\"os.fs.read\\""',
           );
+        } else if (baseLines[i]!.startsWith("tool-call ::=")) {
+          // os.shell.run is not in this set, so its branch is dropped.
+          expect(narrowedLines[i], profile.id).toBe("tool-call ::= reply-call | other-call");
         } else {
           expect(narrowedLines[i], profile.id).toBe(baseLines[i]);
         }
@@ -839,5 +843,70 @@ describe("buildGrammarForTools — the per-request grammar", () => {
   it("reports null for the static base grammar, whose rule is made of sub-rules", async () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
     expect(grammarToolNames(base)).toBeNull();
+  });
+});
+
+describe("os.shell.run cannot be called with empty args", () => {
+  /**
+   * Under the generic `object` rule `{"tool":"os.shell.run","args":{}}` was
+   * legal, and small local models took that way out instead of writing the
+   * command they had just planned (Nemotron 3.5 Bolt E4B, 23.10.2026: the
+   * call failed, the script never ran, the turn ended without its file).
+   * The shell has its own branch: `cmd` first, a non-empty string.
+   */
+  const EMPTY = '[{"tool":"os.shell.run","args":{}}]';
+  const EMPTY_CMD = '[{"tool":"os.shell.run","args":{"cmd":""}}]';
+  const CMD = '[{"tool":"os.shell.run","args":{"cmd":"python3","args":["extract.py"]}}]';
+  const CMD_ONLY = '[{"tool":"os.shell.run","args":{"cmd":"ls -la"}}]';
+
+  it("rejects empty args and an empty cmd, and accepts a real command", async () => {
+    const plain = buildGrammarForTools(await buildGrammar(PLAIN_INSTRUCT_PROFILE), ["os.shell.run", "os.fs.read"]);
+    expect(gbnfAccepts(plain, "root", EMPTY)).toBe(false);
+    expect(gbnfAccepts(plain, "root", EMPTY_CMD)).toBe(false);
+    expect(gbnfAccepts(plain, "root", CMD)).toBe(true);
+    expect(gbnfAccepts(plain, "root", CMD_ONLY)).toBe(true);
+    // reasoning profiles share the branch; their roots start with a thought, so check the args rule itself
+    for (const profile of [QWEN_THINK_PROFILE, GEMMA4_THINK_PROFILE]) {
+      const g = await buildGrammar(profile);
+      expect(gbnfAccepts(g, "shell-args", "{}"), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"cmd":""}'), profile.id).toBe(false);
+      expect(gbnfAccepts(g, "shell-args", '{"cmd":"python3","args":["extract.py"]}'), profile.id).toBe(true);
+      expect(gbnfAccepts(g, "shell-args", '{"cmd":"<|channel>"}'), profile.id).toBe(false);
+    }
+  });
+
+  it("the static grammar file has no generic way to name os.shell.run", () => {
+    const { readFileSync } = require("node:fs") as typeof import("node:fs");
+    const { resolve } = require("node:path") as typeof import("node:path");
+    const grammar = readFileSync(resolve(__dirname, "../../../grammars/tool-call.gbnf"), "utf8");
+    const osToolLine = grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
+    expect(osToolLine).not.toContain('"shell.run"');
+    expect(gbnfAccepts(grammar, "root", EMPTY)).toBe(false);
+    expect(gbnfAccepts(grammar, "root", CMD)).toBe(true);
+  });
+
+  it("a request that admits the shell keeps its branch and lists it", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const g = buildGrammarForTools(base, ["os.fs.read", "os.shell.run"]);
+    expect(g).toMatch(/^tool-call ::= reply-call \| shell-call \| other-call$/m);
+    expect(g).toMatch(/^tool-name ::= "\\"os\.fs\.read\\""$/m);
+    expect(grammarToolNames(g)).toEqual(["os.fs.read", "os.shell.run", "reply"]);
+  });
+
+  it("a request without the shell drops its branch, so no shell call can be emitted", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const g = buildGrammarForTools(base, ["os.fs.read"]);
+    expect(g).toMatch(/^tool-call ::= reply-call \| other-call$/m);
+    expect(grammarToolNames(g)).toEqual(["os.fs.read", "reply"]);
+    expect(gbnfAccepts(g, "root", CMD)).toBe(false);
+  });
+
+  it("shell plus reply only: no generic branch at all", async () => {
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const g = buildGrammarForTools(base, ["os.shell.run"]);
+    expect(g).toMatch(/^tool-call ::= reply-call \| shell-call$/m);
+    expect(grammarToolNames(g)).toEqual(["os.shell.run", "reply"]);
+    expect(gbnfAccepts(g, "root", CMD_ONLY)).toBe(true);
+    expect(gbnfAccepts(g, "root", '[{"tool":"os.fs.read","args":{"path":"a"}}]')).toBe(false);
   });
 });
