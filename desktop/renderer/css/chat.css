@@ -181,6 +181,19 @@
 .discbody{margin:2px 0 4px 16px;padding:2px 0 2px 16px;border-left:2px solid var(--bd-2);
   color:var(--ink-2);font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
 
+/* a finished turn folded into one line (ATO-464, turn-summary.js): the
+   reasoning line's box and ink, so the line reads as one more quiet step,
+   the failures in red words and the time small, as on a tool line. */
+.turnsum{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-height:32px;padding:0 12px 0 10px;border-radius:var(--r-row);
+  font-size:13.5px;color:var(--ink-3);white-space:nowrap;transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+.turnsum svg{flex:none;width:14px;height:14px}
+.turnsum:hover{background:var(--hover);color:var(--ink-2)}
+.turnsum[aria-expanded="true"]{color:var(--ink-2)}
+.turnsum .ts-l{min-width:0;overflow:hidden;text-overflow:ellipsis}
+.turnsum .ts-sep{flex:none}
+.turnsum .ts-bad{flex:none;color:var(--critical)}
+.turnsum .ts-du{flex:none;font-size:12px;font-variant-numeric:tabular-nums}
+
 /* "Working…" (0.6.7 item 10) — from the send to the turn's first step or word
    (workingRowHTML). It takes the reasoning line's box: the height, inset, gap
    and type of `.disc`, the spinner in the chevron's 14px slot, so the
