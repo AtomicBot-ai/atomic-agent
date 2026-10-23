@@ -21,7 +21,7 @@ Roles builder/orchestrator/full shape prompt descriptions, native schemas and gr
 
 ## Guards and file safety
 
-Unknown argument and control-marker guards act before dispatch. Read-scope uses working-directory and user-named roots. Declared input files have replacement protections and a restore path; workers cannot decide to replace the user's declared inputs. Shell commands that outlive the default timeout can become detached jobs; explicit wait/kill/jobs have different intent.
+Unknown argument and control-marker guards act before dispatch. On the way back, a tool that sets `untrustedOutput` (web fetch and search, `os.http.request`, MCP tools, MCP resources and prompts) gets its summary framed as external data with chat-template markers neutralised by `ToolRegistry.invoke`; the browser world snapshot has its markers neutralised when rendered. Read-scope uses working-directory and user-named roots. Declared input files have replacement protections and a restore path; workers cannot decide to replace the user's declared inputs. Shell commands that outlive the default timeout can become detached jobs; explicit wait/kill/jobs have different intent.
 
 Reply attachments are validated regular files, resolved to absolute paths, deduplicated and bounded before a reply succeeds. Consumers use result paths and deliver the same optional attachment field across TUI, sidecar and chat channels.
 

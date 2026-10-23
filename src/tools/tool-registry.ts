@@ -1,6 +1,7 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { fullToolResult } from "../compressor/result-compressor.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
+import { markUntrustedResult } from "./untrusted-tool-output.js";
 import type { ToolRole } from "./tool-roles.js";
 
 export interface ToolContext {
@@ -49,6 +50,13 @@ export interface ToolDefinition {
   name: string;
   description: string;
   readonly: boolean;
+  /**
+   * Set when the result carries text from outside (a web page, an MCP
+   * server): a short label naming the source. The registry then
+   * neutralises chat-template markers in the summary and frames it as
+   * data, not instructions (`untrusted-tool-output.ts`).
+   */
+  untrustedOutput?: string;
   run: (
     args: Record<string, unknown>,
     ctx: ToolContext,
@@ -109,6 +117,9 @@ export class ToolRegistry {
     // before dispatch; anything that cannot be coerced is passed
     // through untouched so the tool reports its own error.
     const result = await tool.run(coerceToolArgs(name, args), ctx);
-    return ctx.modelMode === "cloud" ? fullToolResult(result) : result;
+    const shown = ctx.modelMode === "cloud" ? fullToolResult(result) : result;
+    return tool.untrustedOutput === undefined
+      ? shown
+      : markUntrustedResult(shown, tool.untrustedOutput);
   }
 }

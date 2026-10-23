@@ -11,6 +11,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [tool-roles.ts](tool-roles.ts)
 - [unknown-argument-guard.ts](unknown-argument-guard.ts)
 - [control-marker-guard.ts](control-marker-guard.ts)
+- [untrusted-tool-output.ts](untrusted-tool-output.ts)
 
 ## Ownership and dependencies
 
