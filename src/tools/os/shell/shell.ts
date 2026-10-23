@@ -4,6 +4,7 @@ import {
   awaitJobExit,
   startCommandJob,
 } from "../../../sandbox/command-job.js";
+import { buildCommandEnv } from "../../../sandbox/command-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
@@ -71,6 +72,13 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * whose jobs die only at the ceiling.
    */
   jobs?: ShellJobRegistry;
+  /**
+   * `tools.shell.envPassthrough`: names copied into the command's
+   * environment even though they look like a secret. Everything else
+   * secret-looking is stripped (`buildCommandEnv`, ATO-347). Omitted ⇒
+   * none, so embedders and tests get the filtered environment too.
+   */
+  envPassthrough?: readonly string[];
 }
 
 export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
@@ -266,8 +274,11 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // Its own process group, so a stop reaches what the command
       // started too (`sleep 30 &` behind a subshell used to outlive the
       // shell and hold the result until it ended).
+      // Built per call, from the live env, so a key added to `.env`
+      // mid-session is filtered the same way.
       const job = startCommandJob(spawnSpec.command, spawnSpec.args, {
         cwd,
+        env: buildCommandEnv(process.env, options.envPassthrough ?? []),
         ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
         ...(spawnSpec.windowsVerbatimArguments
           ? { windowsVerbatimArguments: true }

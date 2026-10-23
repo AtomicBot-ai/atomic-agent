@@ -255,7 +255,12 @@ describe("loadConfig", () => {
         approvalLevel: 5,
       },
       tools: {
-        shell: { defaultTimeoutMs: 1_800_000, jobMaxMs: 7_200_000, maxJobs: 5 },
+        shell: {
+          defaultTimeoutMs: 1_800_000,
+          jobMaxMs: 7_200_000,
+          maxJobs: 5,
+          envPassthrough: ["GITHUB_TOKEN"],
+        },
       },
     });
     const config = loadConfig();
@@ -268,6 +273,7 @@ describe("loadConfig", () => {
       defaultTimeoutMs: 1_800_000,
       jobMaxMs: 7_200_000,
       maxJobs: 5,
+      envPassthrough: ["GITHUB_TOKEN"],
     });
   });
 

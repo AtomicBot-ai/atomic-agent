@@ -12,6 +12,7 @@ This area owns the implementation of `os.shell.run`, including its command, jobs
 - [shell-jobs.ts](shell-jobs.ts) owns per-session records and ceiling timers around sandbox CommandJob instances. Runtime bootstrap injects its registry and calls endTurn/endSession/endAll; kept jobs survive turn end, but not session/shutdown/ceiling cleanup. Embedders that omit a registry get the documented private-registry behavior.
 - [shell-job-calls.ts](shell-job-calls.ts) handles job lookup, wait, kill, collection and detached-result rendering. IDs are scoped to the session that started the job.
 - [shell-result.ts](shell-result.ts) renders output and exit/timeout observations. [node-check-notice.ts](node-check-notice.ts) explains commands whose successful exit does not establish that every named file was checked.
+- Every command spawns with [the filtered environment](../../../sandbox/command-env.ts): provider keys, bot tokens and other secret-looking variables are removed, except the names in `tools.shell.envPassthrough` (passed in as `envPassthrough`; omitted means none). A variable the command line sets itself is unaffected.
 
 The existing [shell-command-guard](../shell-command-guard/index.ts) owns command classification, normalization and policy rules. It is shared with agent verification command classification and remains a separate owner. Approval owns grants and interaction; sandbox owns process execution. This directory does not own runtime shutdown ordering or configuration defaults.
 
