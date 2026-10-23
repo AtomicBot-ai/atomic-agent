@@ -224,7 +224,7 @@ export const EVENTS: Record<string, EventSpec> = {
   chat_turn_ui: {
     owner: "main",
     props: {
-      outcome: en(["completed", "failed", "cancelled"]),
+      outcome: en(["completed", "step_limit", "failed", "cancelled"]),
       ms_to_first_token: int({ nullable: true }),
       ms_total: ms,
       queue_wait_ms: ms,
@@ -233,6 +233,7 @@ export const EVENTS: Record<string, EventSpec> = {
       tool_calls: int(),
       tools_used: { kind: "tools" },
       error_category: en(ERROR_CATEGORIES, { nullable: true }),
+      http_status: { kind: "int", min: 100, max: 599, nullable: true },
       coding_mode: en(CODING_MODES, { nullable: true }),
     },
   },
