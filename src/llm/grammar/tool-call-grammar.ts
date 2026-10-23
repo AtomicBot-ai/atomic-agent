@@ -2,6 +2,11 @@ import { readFileSync, existsSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  mergeJsonRepair,
+  repairJsonText,
+  type JsonRepairReport,
+} from "./repair-tool-call-json.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEV_TOOL_CALL_GRAMMAR_PATH = resolve(
@@ -72,11 +77,28 @@ export interface ToolCallBatch {
    * group.
    */
   maxWaveSize?: number;
+  /**
+   * Set when the call JSON only parsed after `repairJsonText` fixed it
+   * (ATO-637; asked for with `repairJson`). The step decides whether a
+   * repaired batch may run (`step-json-repair.ts`). Absent ⇒ the JSON
+   * parsed as emitted.
+   */
+  jsonRepair?: JsonRepairReport;
 }
 
 export interface ReasoningTagOptions {
   openTag?: string;
   closeTag?: string;
+}
+
+/** Parser behaviour beyond reasoning tags. */
+export interface ToolCallParseOptions {
+  /**
+   * Try `repairJsonText` on JSON that does not parse before throwing,
+   * and report it on `ToolCallBatch.jsonRepair`. Off by default: only
+   * the step, which can check the result against the registry, asks.
+   */
+  repairJson?: boolean;
 }
 
 export class ToolCallParseError extends Error {
@@ -189,29 +211,28 @@ export function parseToolCall(
 export function parseToolCalls(
   raw: string,
   options: ReasoningTagOptions = {},
+  parseOptions: ToolCallParseOptions = {},
 ): ToolCallBatch {
   const extracted = extractReasoning(raw, options);
-  const { jsonText, kind } = extractJsonRoot(extracted.body);
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(jsonText);
-  } catch (error) {
-    throw new ToolCallParseError(
-      `invalid tool-call JSON: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  }
+  const repair: RepairState = { enabled: parseOptions.repairJson === true };
+  const { parsed, kind } = parseRoot(extracted.body, repair);
 
   const reasoning = extracted.reasoning;
+  const repaired = (): Pick<ToolCallBatch, "jsonRepair"> =>
+    repair.report !== undefined ? { jsonRepair: repair.report } : {};
   if (kind === "object") {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       throw new ToolCallParseError("tool-call root must be a JSON object");
     }
-    const normalized = normalizeToolCall(parsed as Record<string, unknown>);
+    const normalized = normalizeToolCall(
+      parsed as Record<string, unknown>,
+      repair,
+    );
     return {
       kind: "single",
       calls: [normalized],
       ...(reasoning.length > 0 ? { reasoning } : {}),
+      ...repaired(),
     };
   }
   if (!Array.isArray(parsed)) {
@@ -230,16 +251,67 @@ export function parseToolCalls(
         `tool-call array entry ${i} must be a JSON object`,
       );
     }
-    calls.push(normalizeToolCall(entry as Record<string, unknown>));
+    calls.push(normalizeToolCall(entry as Record<string, unknown>, repair));
   }
   return {
     kind: "batch",
     calls,
     ...(reasoning.length > 0 ? { reasoning } : {}),
+    ...repaired(),
   };
 }
 
-function normalizeToolCall(payload: Record<string, unknown>): ToolCallPayload {
+/** Whether repair is allowed for this parse, and what it changed so far. */
+interface RepairState {
+  enabled: boolean;
+  report?: JsonRepairReport;
+}
+
+/**
+ * The root value of the body. A root that does not parse, or a body
+ * whose root never closed, gets one `repairJsonText` attempt when
+ * repair is enabled; otherwise the original error stands.
+ */
+function parseRoot(
+  body: string,
+  repair: RepairState,
+): { parsed: unknown; kind: "object" | "array" } {
+  let root: ExtractedRoot;
+  try {
+    root = extractJsonRoot(body);
+  } catch (error) {
+    // No complete root at all (a truncated call): repair from the first
+    // opener, if allowed and if that yields an object or an array.
+    const start = body.search(/[[{]/);
+    const fixed =
+      repair.enabled && start >= 0 ? repairJsonText(body.slice(start)) : null;
+    if (fixed === null || fixed.value === null || typeof fixed.value !== "object") {
+      throw error;
+    }
+    repair.report = mergeJsonRepair(repair.report, fixed);
+    return {
+      parsed: fixed.value,
+      kind: Array.isArray(fixed.value) ? "array" : "object",
+    };
+  }
+  try {
+    return { parsed: JSON.parse(root.jsonText), kind: root.kind };
+  } catch (error) {
+    const fixed = repair.enabled ? repairJsonText(root.jsonText) : null;
+    if (fixed === null) {
+      throw new ToolCallParseError(
+        `invalid tool-call JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    repair.report = mergeJsonRepair(repair.report, fixed);
+    return { parsed: fixed.value, kind: root.kind };
+  }
+}
+
+function normalizeToolCall(
+  payload: Record<string, unknown>,
+  repair: RepairState = { enabled: false },
+): ToolCallPayload {
   const tool = readToolName(payload);
   if (tool.length === 0) {
     throw new ToolCallParseError(
@@ -247,7 +319,7 @@ function normalizeToolCall(payload: Record<string, unknown>): ToolCallPayload {
     );
   }
 
-  const args = readArgs(payload);
+  const args = readArgs(payload, repair);
   return { tool, args };
 }
 
@@ -261,7 +333,10 @@ function readToolName(payload: Record<string, unknown>): string {
   return "";
 }
 
-function readArgs(payload: Record<string, unknown>): Record<string, unknown> {
+function readArgs(
+  payload: Record<string, unknown>,
+  repair: RepairState,
+): Record<string, unknown> {
   const nested = payload.args ?? payload.arguments;
   if (nested !== undefined) {
     if (typeof nested === "string") {
@@ -269,9 +344,14 @@ function readArgs(payload: Record<string, unknown>): Record<string, unknown> {
       try {
         parsed = JSON.parse(nested);
       } catch (error) {
-        throw new ToolCallParseError(
-          `tool-call arguments must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
-        );
+        const fixed = repair.enabled ? repairJsonText(nested) : null;
+        if (fixed === null) {
+          throw new ToolCallParseError(
+            `tool-call arguments must be valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+        repair.report = mergeJsonRepair(repair.report, fixed);
+        parsed = fixed.value;
       }
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
         throw new ToolCallParseError("tool-call args must be a JSON object");
