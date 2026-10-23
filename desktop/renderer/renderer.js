@@ -2813,6 +2813,19 @@ function isLastReply(m) {
   }
   return false;
 }
+/* ATO-861: the question a reply answers, when its turn used no tools. Walks
+   back from the reply to the nearest user message that is not a steer; a tool
+   card or an approval on the way means the turn acted, and the answer is null.
+   null too when the question is empty, as resendUser would send nothing. */
+function replyRetryAsk(m) {
+  const at = S.log.findIndex((x) => x.id === m.id);
+  for (let i = at - 1; i >= 0; i--) {
+    const x = S.log[i];
+    if (x.k === 'tool' || x.k === 'approval') return null;
+    if (x.k === 'user' && !x.steered) return String(x.text || '').trim() ? x : null;
+  }
+  return null;
+}
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2836,7 +2849,18 @@ function msgActs(m) {
   const cls = m.k === 'assistant' && isLastReply(m) ? 'msgacts msgacts-last' : 'msgacts';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
     + ic('copy') + '</button>';
-  if (m.k !== 'user') return '<div class="' + cls + '">' + copy + '</div>';
+  if (m.k !== 'user') {
+    /* ATO-861: under the last reply of a turn that used no tools, "Ask again"
+       sends the question once more through the same data-resend path as the
+       user bubble's retry (resendUser). A turn that ran a tool or asked for an
+       approval did something, and repeating it is not a harmless re-ask, so
+       no button there. Never while a turn runs, never under a placeholder. */
+    const ask = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy ? replyRetryAsk(m) : null;
+    const again = ask
+      ? '<button class="msgact" data-resend="' + esc(ask.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>'
+      : '';
+    return '<div class="' + cls + '">' + again + copy + '</div>';
+  }
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
   // BOTH kinds, so a `.msgacts.usr` element would have matched nothing in
@@ -29338,7 +29362,15 @@ if (typeof window !== 'undefined') {
     const last = btns[btns.length - 1];
     // ATO-168: a reply's actions start at the LEFT (after the last reply's dot), so its first button's left edge is reported too.
     const dot = t.querySelector('.enddot');
-    return {present: true, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
+    /* ATO-863: whether the reply's turn drew a tool card or an approval, read
+       from the DOM between the reply and the question above it, so the smoke
+       knows whether "Ask again" belongs under it without asking the code
+       under test. */
+    let acted = false;
+    for (let p = t.previousElementSibling; p && !p.classList.contains('usr'); p = p.previousElementSibling) {
+      if (p.classList.contains('tk-step') || p.querySelector('.appr')) { acted = true; break; }
+    }
+    return {present: true, acted, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
             btnLeft: btns[0] ? Math.round(btns[0].getBoundingClientRect().left) : null,
             anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
@@ -29350,6 +29382,44 @@ if (typeof window !== 'undefined') {
             btnRight: last ? Math.round(last.getBoundingClientRect().right) : null,
             anchorRight: anchor ? Math.round(anchor.getBoundingClientRect().right) : null,
             insideBubble: document.querySelectorAll('.bubble .msgact').length};
+  };
+  /* ATO-863: the last reply's own buttons on drawn transcripts, so the smoke
+     can hold "Ask again" to a turn without tools. Each case is rendered for
+     real and read back from the DOM; nothing is sent. The approval case is
+     read from replyRetryAsk only, because an approval card needs a live
+     request to draw. */
+  window.__replyRetry = () => {
+    const keep = {log: S.log, busy: S.busy, streamId: S.streamId};
+    const lastActs = () => {
+      const t = Array.from(document.querySelectorAll('.turn')).filter((r) => r.querySelector('.prose:not(.usr)')).pop();
+      const box = t ? t.querySelector('.msgacts') : null;
+      if (!box) return null;
+      return Array.from(box.querySelectorAll('button')).map((b) => b.dataset.resend
+        ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
+        : b.dataset.copy ? 'copy' : '?');
+    };
+    const drawn = (log, busy) => { S.log = log; S.busy = !!busy; S.streamId = null; render(); return lastActs(); };
+    const tool = {id: 'rr-t', k: 'tool', name: 'os.fs.list_dir', arg: '~', where: 'local', ms: 4, ok: true, open: false, out: 'a.txt'};
+    try {
+      const out = {
+        plain: drawn([{id: 'rr-u', k: 'user', text: 'hello, how are you?'}, {id: 'rr-a', k: 'assistant', text: 'fine, thanks'}]),
+        tool: drawn([{id: 'rr-u', k: 'user', text: 'list my files'}, tool, {id: 'rr-a', k: 'assistant', text: 'one file'}]),
+        // A tool in an EARLIER turn does not count against this one.
+        earlier: drawn([{id: 'rr-u0', k: 'user', text: 'list my files'}, tool, {id: 'rr-a0', k: 'assistant', text: 'one file'},
+                        {id: 'rr-u', k: 'user', text: 'thanks'}, {id: 'rr-a', k: 'assistant', text: 'you are welcome'}]),
+        // A steer folded into the turn is not the turn's question.
+        steered: drawn([{id: 'rr-u', k: 'user', text: 'write a haiku'}, {id: 'rr-s', k: 'user', text: 'about rain', steered: true},
+                        {id: 'rr-a', k: 'assistant', text: 'rain on the window'}]),
+        busy: drawn([{id: 'rr-u', k: 'user', text: 'hello'}, {id: 'rr-a', k: 'assistant', text: 'hi'}], true),
+        placeholder: drawn([{id: 'rr-u', k: 'user', text: 'hello'}, {id: 'rr-a', k: 'assistant', text: '(no reply)', placeholder: true}]),
+      };
+      S.log = [{id: 'rr-u', k: 'user', text: 'delete the old logs'}, {id: 'rr-p', k: 'approval', state: 'approved'},
+               {id: 'rr-a', k: 'assistant', text: 'done'}];
+      out.approval = replyRetryAsk(S.log[2]);
+      return out;
+    } finally {
+      S.log = keep.log; S.busy = keep.busy; S.streamId = keep.streamId; render();
+    }
   };
   /* `:hover` cannot be synthesised from script, so the hover half of the
      contract is asserted as the rule's own text; its `:focus-within` twin is

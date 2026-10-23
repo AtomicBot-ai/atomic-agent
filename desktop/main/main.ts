@@ -12223,6 +12223,7 @@ async function chromeTest(
     dangerColor?: string | null; right?: number; btnRight?: number | null;
     anchorRight?: number | null; insideBubble?: number;
     btnLeft?: number | null; anchorLeft?: number | null; dot?: boolean; dotLive?: boolean;
+    acted?: boolean;
   };
 
   /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
@@ -12689,10 +12690,17 @@ async function chromeTest(
 
     const asstActs = await js<Acts | null>("window.__msgActs('assistant')");
     const userActs = await js<Acts | null>("window.__msgActs('user')");
+    /* ATO-861: the last reply of a turn without tools also carries "Ask
+       again" before its copy; a turn that drew a tool card or an approval
+       keeps copy alone. The fixture prompt needs no tool, but a model that
+       reaches for one anyway is not this check's failure, so the expectation
+       follows what the transcript drew. */
+    const asstOrder = asstActs && !asstActs.acted ? '["resend","copy"]' : '["copy"]';
+    const asstTitles = asstActs && !asstActs.acted ? '["Ask again","Copy message"]' : '["Copy message"]';
     check(
-      "item 4: every message carries a copy control at its end, and only a user message carries retry",
-      !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === '["copy"]'
-        && JSON.stringify(asstActs.titles) === '["Copy message"]'
+      "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
+      !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
+        && JSON.stringify(asstActs.titles) === asstTitles
         && !!userActs && userActs.present && JSON.stringify(userActs.order) === '["resend","copy"]'
         && JSON.stringify(userActs.titles) === '["Send this message again","Copy message"]',
       `assistant ${JSON.stringify(asstActs)}; user ${JSON.stringify(userActs)}`,
@@ -12765,7 +12773,8 @@ async function chromeTest(
     );
     check(
       "item 4: a streaming reply carries no actions, and a finished one does",
-      !!streamed && streamed.streaming.buttons === 0 && streamed.finished.buttons === 1
+      !!streamed && streamed.streaming.buttons === 0
+        && streamed.finished.buttons === (asstActs && !asstActs.acted ? 2 : 1)
         && streamed.offMessages === 0,
       `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
     );
@@ -12781,6 +12790,24 @@ async function chromeTest(
       `streaming ${JSON.stringify(streamed?.streaming)} vs finished ${JSON.stringify(streamed?.finished)}`
       + " (22px row + 8px margin since chat review Д17, present from the first frame of the reply, so the buttons"
       + " appear inside a box that was already there; nothing is added below it)",
+    );
+    // ATO-863: "Ask again" under the last reply only when its turn used no tools.
+    type ReplyRetry = {
+      plain: string[] | null; tool: string[] | null; earlier: string[] | null; steered: string[] | null;
+      busy: string[] | null; placeholder: string[] | null; approval: { id: string } | null;
+    };
+    const rr = await js<ReplyRetry>("window.__replyRetry()");
+    const again = '["resend:rr-u:Ask again","copy"]';
+    check(
+      "item 4: the last reply of a turn without tools offers Ask again (data-resend on its question), left of copy",
+      JSON.stringify(rr.plain) === again && JSON.stringify(rr.earlier) === again && JSON.stringify(rr.steered) === again,
+      JSON.stringify({ plain: rr.plain, earlier: rr.earlier, steered: rr.steered }),
+    );
+    check(
+      "item 4: no Ask again after a tool card or an approval, while a turn runs, or under a placeholder",
+      JSON.stringify(rr.tool) === '["copy"]' && JSON.stringify(rr.busy) === '["copy"]'
+        && JSON.stringify(rr.placeholder) === '["copy"]' && rr.approval === null,
+      JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, approval: rr.approval }),
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup
