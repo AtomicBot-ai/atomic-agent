@@ -13,7 +13,7 @@ const TITLES = {
 const EMBEDDING_NOTE =
   "Optional — leave it empty to continue without hybrid embedding recall.";
 const PLACEHOLDERS = {
-  chat: "http://127.0.0.1:8080",
+  chat: "http://127.0.0.1:9931",
   embedding: "http://127.0.0.1:19092",
 } as const;
 const PROBING = "probing /health…";

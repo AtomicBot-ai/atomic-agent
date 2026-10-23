@@ -45,7 +45,7 @@ describe("configCommand", () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout);
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.localModels.url).toBe("http://127.0.0.1:8080");
+    expect(parsed.localModels.url).toBe("http://127.0.0.1:9931");
     expect(parsed.agent.maxSteps).toBe(25);
   });
 

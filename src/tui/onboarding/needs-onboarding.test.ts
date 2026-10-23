@@ -101,7 +101,7 @@ describe("decideOnboarding", () => {
 
   it("still opens on the shipped defaults — a default URL nobody chose is not a backend", () => {
     expect(getConfig().localModels.mode).toBe("external");
-    expect(getConfig().localModels.url).toBe("http://127.0.0.1:8080");
+    expect(getConfig().localModels.url).toBe("http://127.0.0.1:9931");
     expect(needsOnboarding()).toBe(true);
   });
 

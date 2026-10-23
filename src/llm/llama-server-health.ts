@@ -1,5 +1,6 @@
 import { getConfig } from "../config/index.js";
 import { apiKeyForUrl } from "../local-llm/server/managed-api-key.js";
+import { llamaDefaultPortNote } from "./llama-default-port-note.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { verifyGuardedEndpoint } from "./llama-server-auth-probe.js";
 
@@ -279,9 +280,11 @@ export async function checkLlamaServer(
  * should say this instead.
  */
 export function formatLlamaUnreachableHint(url: string): string {
+  const portNote = llamaDefaultPortNote(url);
   return [
     `llama-server is not reachable at ${url}`,
     "  start it with:       atomic-agent models start",
     `  or point elsewhere:  atomic-agent config set localModels.url <url>`,
+    ...(portNote ? [`  ${portNote}`] : []),
   ].join("\n");
 }

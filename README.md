@@ -367,7 +367,7 @@ Every term has to match (`claude vision` is not a substring of any id), a size t
 <details>
 <summary><b>External <code>llama-server</code></b></summary>
 
-Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:8080`), or save the URL in the TUI's LLM tab, External pane:
+Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:9931`, llama-server's own default port since llama.cpp v0.7.0), or save the URL in the TUI's LLM tab, External pane:
 
 ```jsonc
 // <stateDir>/config.json

@@ -39,6 +39,12 @@ describe("local model configuration domain seams", () => {
       .toMatchObject({ field: "synthetic.cap", reason: "expected integer in [64, 131072], got 63" });
   });
 
+  it("looks for an External llama.cpp on llama-server's own default port 9931 when no url is stored", () => {
+    expect(createLocalModelsDefaults().url).toBe("http://127.0.0.1:9931");
+    expect(parseLocal({}).url).toBe("http://127.0.0.1:9931");
+    expect(parseLocal({ url: "http://127.0.0.1:8080" }).url).toBe("http://127.0.0.1:8080");
+  });
+
   it("creates fresh mutable nested defaults and output arrays in the original key order", () => {
     const defaults = createLocalModelsDefaults();
     const other = createLocalModelsDefaults();

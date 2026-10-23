@@ -27,6 +27,10 @@ Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before 
 
 Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound, as it was before version 68. llama.cpp clamps a grammar repetition to 1,999 characters, so the old default of 1500 tokens was really 499 and cut thinking models off mid-thought. Every file since version 68 carries the value the schema wrote, so for input versions below 78 a stored value of exactly `1500` is read as that default and becomes `0`. Any other value, including a lower positive bound, is kept, and a missing field takes the new default. From version 78 an explicit `1500` is honoured. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
+## External llama.cpp URL default
+
+The default `localModels.url` is `http://127.0.0.1:9931`, llama-server's own default port since llama.cpp v0.7.0; it was `http://127.0.0.1:8080` before. This is a default change with no migration and no version bump. Every first run writes the full defaults, so existing files carry `8080` whether or not anyone chose it, and a stored `8080` cannot be told apart from a deliberate pick: the official Docker images and older llama-server builds still listen there. Stored values are therefore kept, and only a file with no `url` takes the new default. The first-run check reads both `9931` and `8080` on the external path as an untouched default, and the unreachable hint names both ports for a loopback URL on either.
+
 ## Scalar validation
 
 [config-primitives](../config-primitives.ts) owns the shared scalar validators. The composing schema re-exports the same parser functions and the existing [error class](../config-validation-error.ts); function and error identity are preserved. This module does not load defaults, migrations or the root API.

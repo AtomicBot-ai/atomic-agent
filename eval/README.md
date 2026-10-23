@@ -59,7 +59,7 @@ npm run eval:lint           # tsc --noEmit over eval/
 
 Each case spawns the agent with a fresh temp `ATOMIC_AGENT_STATE_DIR`.
 Without `ATOMIC_AGENT_EVAL_LLAMA_URL` the agent falls back to the user
-config default (`http://127.0.0.1:8080`) and every case times out on
+config default (`http://127.0.0.1:9931`) and every case times out on
 the llama health-check (≈16s). Set this to the URL your llama-server
 actually listens on.
 
