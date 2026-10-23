@@ -3017,6 +3017,14 @@ function clipWords(s, n) {
   const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   return t.length > n ? t.slice(0, n - 1) + '\u2026' : t;
 }
+/* ATO-432: lines of a command after its first one. The card and the step
+   line show only the first, so a script whose first line is `echo hi` read
+   as `echo hi` alone; they now say how much more there is. */
+function moreLines(s) {
+  const t = String(s == null ? '' : s).trim();
+  return t ? t.split('\n').length - 1 : 0;
+}
+function moreLinesNote(n) { return n > 0 ? ' (+' + plural(n, 'more line') + ')' : ''; }
 /* "os.proc.list" -> "proc list", "mcp.docs.search" -> "docs search". */
 function toolWords(name) {
   return String(name || 'tool').replace(/^(os|mcp)\./, '').replace(/[._]+/g, ' ').trim() || 'a tool';
@@ -3081,9 +3089,10 @@ function toolLine(m) {
   if (n === 'os.fs.grep' && a.pattern) return 'Searched files for ' + quote(a.pattern);
   if (n === 'os.shell.run' && (a.cmd || a.command)) {
     const argv = Array.isArray(a.args) ? a.args : [];
-    const line = [a.cmd || a.command].concat(argv).join(' ').split('\n')[0];
+    const full = [a.cmd || a.command].concat(argv).join(' ').trim();
+    const line = full.split('\n')[0];
     const ex = /^exit:\s*(-?\d+|\S+)/m.exec(out);
-    return 'Ran ' + code(clipWords(line, 80)) + (ex && ex[1] !== '0' ? ' \u00b7 exit ' + esc(ex[1]) : '');
+    return 'Ran ' + code(clipWords(line, 80)) + esc(moreLinesNote(moreLines(full))) + (ex && ex[1] !== '0' ? ' \u00b7 exit ' + esc(ex[1]) : '');
   }
   if ((n === 'os.web.search' || n === 'browser.search' || n === 'web.search') && a.query) return 'Searched the web for ' + quote(a.query);
   if ((n === 'os.web.fetch' || n === 'browser.navigate') && a.url) return 'Opened ' + code(toolHost(a.url));
@@ -3410,7 +3419,7 @@ function apprCard(m) {
        waiting; it is never the answer. Said on this chat's own live request:
        another thread's question has nothing to do with the box. */
     + (typed ? '<div class="apprfoot">A message typed below goes to the agent; this request still waits for Allow or Deny.</div>' : '')
-    + '<details class="apprdet"' + (m.open ? ' open' : '') + '><summary data-apprdet="' + m.id + '">' + ic('chevR') + 'Details</summary>'
+    + '<details class="apprdet"' + ((m.open === undefined ? apprMultiline(m) : m.open) ? ' open' : '') + '><summary data-apprdet="' + m.id + '">' + ic('chevR') + 'Details</summary>'
       + '<dl class="aplate">'
         + '<dt>Tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
         + '<dt>Category</dt><dd><span class="badge">' + esc(m.kind) + '</span> <span class="cap">'
@@ -3468,7 +3477,8 @@ function apprAsk(m) {
   let mt;
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
     const cmd = pv && pv !== '(no preview)' ? firstLine(pv) : '';
-    if (cmd) return q('run ' + apprCode(cmd));
+    // ATO-432: a multiline command says so; the whole of it is open under Details (apprMultiline).
+    if (cmd) return q('run ' + apprCode(cmd) + esc(moreLinesNote(moreLines(pv))));
   }
   if (m.cat === 'fs_read_outside') {
     if ((mt = /^read (.+?) — /.exec(r))) return q('read ' + apprCode(apprPath(mt[1])));
@@ -3494,6 +3504,12 @@ function apprAsk(m) {
     return q(esc(clause.replace(/(^|\s)(\/[^\s"]+)/g, (all, sp, p) => sp + apprPath(p))));
   }
   return q(APPR_FALLBACK[m.cat] || 'go ahead');
+}
+/** ATO-432: a shell request whose command has more than one line. Its card
+    opens Details (the full Preview) from the start, until the person closes it. */
+function apprMultiline(m) {
+  const pv = String(m.preview || '').trim();
+  return (m.cat === 'shell' || m.tool === 'os.shell.run') && pv !== '(no preview)' && moreLines(pv) > 0;
 }
 /** One line of what allowing it does, or '' when there is nothing to add (html). */
 function apprWhy(m) {
