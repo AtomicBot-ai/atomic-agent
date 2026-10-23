@@ -79,6 +79,12 @@ test('a failed poll changes nothing; the next one tries again', () => {
   assert.equal(p.phase, 'waiting');
   assert.equal(p.code, '048213');
   assert.equal(p.error, null);
+  // ...but only until the window is past its expiry: an agent that never answers again must not keep
+  // the code on screen and the tab polling forever.
+  const late = P.tgPairApply(waiting, 'status', {ok:false, error:'agent is not running'}, NOW + 300_000 + P.TG_PAIR_GRACE_MS + 1);
+  assert.equal(late.phase, 'expired');
+  assert.equal(late.code, null);
+  assert.equal(P.tgPairPolling(late), false);
 });
 
 test('an agent without the route (404) shows the update note instead of a Pair button', () => {
@@ -133,6 +139,10 @@ test('renderer wiring: the pairing helper loads before renderer.js; the IPC and 
   for (const verb of ['pairStart', 'pairReplace', 'pairCancel']) assert.ok(source.includes("verb === '" + verb + "'"), verb);
   // Replacing a paired owner takes a second click, like Clear owner (ATO-718).
   assert.ok(source.includes("verb === 'clearToken' || verb === 'clearOwner' || verb === 'pairReplace'"));
+  // Polling runs only while the Telegram tab is on screen; entering the tab asks again (and handles a claim the same way).
+  assert.match(source, /if \(tgPairPolling\(TG\.pair\) && telegramVisible\(\)\) TG\.pairTimer = setTimeout\(tgPairPoll, TG_PAIR_POLL_MS\)/);
+  assert.match(source, /function telegramTabEntered\(\) \{[^}]*tgPairProbe\(\)/);
+  assert.ok(source.includes('await tgPairOnStatus(res, false);') && source.includes('await tgPairOnStatus(res, true);'));
   // The smoke hook never exposes the code itself.
   assert.ok(source.includes('hasCode: !!TG.pair.code'));
   assert.ok(!/console\.(log|info|warn|error)\([^)]*pair\.code/.test(source));

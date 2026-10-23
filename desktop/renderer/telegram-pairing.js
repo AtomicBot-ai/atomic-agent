@@ -28,10 +28,13 @@ function tgPairInitial() {
 function tgPairApply(pair, op, res, now) {
   const p = Object.assign({}, pair, {askReplace:false});
   const ended = (phase, extra) => Object.assign(p, {phase, code:null, expiresAt:null, instruction:null}, extra || {});
+  const pastExpiry = p.phase === 'waiting' && typeof p.expiresAt === 'number' && typeof now === 'number' && now > p.expiresAt + TG_PAIR_GRACE_MS;
   if (res && res.unsupported) return ended('idle', {supported:false, error:null});
   if (!res || res.ok !== true) {
-    // A poll that fails (the agent restarting, a timeout) changes nothing; the next one tries again.
-    if (op === 'status') return p;
+    // A poll that fails (the agent restarting, a timeout) changes nothing and the next one tries again,
+    // until the window is past its expiry: then it ends here, so an agent that never answers again
+    // does not keep the code on screen and the tab polling forever.
+    if (op === 'status') return pastExpiry ? ended('expired', {error:null}) : p;
     const code = res && res.code;
     if (code === 'owner_already_paired') return Object.assign(p, {supported:true, error:null, askReplace:true});
     if (code === 'telegram_not_running') return ended('idle', {supported:true, error:TG_PAIR_NOT_RUNNING});
@@ -56,7 +59,7 @@ function tgPairApply(pair, op, res, now) {
   if (d.status === 'expired' || d.status === 'idle') return ended('expired', {error:null});
   if (d.status === 'cancelled') return ended('idle', {error:null});
   if (d.status === 'failed') return ended('idle', {error:'Pairing failed: ' + (typeof d.error === 'string' && d.error ? d.error : 'no reason given')});
-  if (typeof p.expiresAt === 'number' && typeof now === 'number' && now > p.expiresAt + TG_PAIR_GRACE_MS) return ended('expired', {error:null});
+  if (pastExpiry) return ended('expired', {error:null});
   return p;
 }
 

@@ -26946,25 +26946,31 @@ async function tgPairCancel() {
   TG.pair = tgPairApply(TG.pair, 'cancel', res, Date.now());
   tgRepaint(); tgPairSchedule();
 }
-/* Whether this agent can pair, asked once per visit: a 404 turns the card into TG_PAIRING_NOTE before anyone presses Pair. */
+/* Whether this agent can pair, asked once per visit: a 404 turns the card into TG_PAIRING_NOTE before anyone presses Pair.
+   It also picks up a window left open on an earlier visit: polling pauses while the tab is hidden. */
 async function tgPairProbe() {
   if (!BR || !BR.telegramPairing) return;
   let res;
   try { res = await BR.telegramPairing('status'); } catch { return; }
-  TG.pair = tgPairApply(TG.pair, 'status', res, Date.now());
-  tgRepaint(); tgPairSchedule();
+  await tgPairOnStatus(res, false);
 }
 function tgPairSchedule() {
   if (TG.pairTimer) { clearTimeout(TG.pairTimer); TG.pairTimer = null; }
-  if (tgPairPolling(TG.pair)) TG.pairTimer = setTimeout(tgPairPoll, TG_PAIR_POLL_MS);
+  // Only while the Telegram tab is on screen; telegramTabEntered asks again on the way back.
+  if (tgPairPolling(TG.pair) && telegramVisible()) TG.pairTimer = setTimeout(tgPairPoll, TG_PAIR_POLL_MS);
 }
-/* Asks whether the code was claimed. A claim persists the owner in the agent, so the tab reads the config again and says who paired. */
+/* Asks whether the code was claimed. */
 async function tgPairPoll() {
   TG.pairTimer = null;
-  if (!BR || !BR.telegramPairing || !tgPairPolling(TG.pair)) return;
+  if (!BR || !BR.telegramPairing || !tgPairPolling(TG.pair) || !telegramVisible()) return;
   let res;
   try { res = await BR.telegramPairing('status'); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
-  if (!tgPairPolling(TG.pair)) return; // cancelled or restarted while the poll was out
+  await tgPairOnStatus(res, true);
+}
+/* A status reply, from a poll or the probe on entering the tab. A claim persists the owner in the agent,
+   so the tab reads the config again and says who paired. */
+async function tgPairOnStatus(res, fromPoll) {
+  if (fromPoll && !tgPairPolling(TG.pair)) return; // cancelled or restarted while the poll was out
   TG.pair = tgPairApply(TG.pair, 'status', res, Date.now());
   if (TG.pair.phase === 'paired') {
     // "Paired: @username is now the owner." becomes the tab's message and the card goes back to rest: the owner row shows who it is now.
