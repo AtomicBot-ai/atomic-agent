@@ -23,6 +23,12 @@ export { composioIntegration } from "./composio-integration.js";
 export { telegramIntegration } from "./telegram-integration.js";
 export { discordIntegration } from "./discord-integration.js";
 export {
+  EXA_API_KEY_ENV,
+  EXA_INTEGRATION_ID,
+  EXA_KEY_FIELD,
+  exaIntegration,
+} from "./exa-integration.js";
+export {
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
   githubIntegration,

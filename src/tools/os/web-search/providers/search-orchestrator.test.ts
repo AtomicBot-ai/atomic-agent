@@ -628,6 +628,8 @@ describe("an Exa primary without a key", () => {
     );
     expect(unavailable.message).toContain("https://dashboard.exa.ai/api-keys");
     expect(unavailable.message).toContain("EXA_API_KEY=...");
+    // The terminal has a place for the key now (ATO-345).
+    expect(unavailable.message).toContain("open /integrations, choose Web search (Exa)");
     expect(unavailable.message).toContain("Do not repeat this search");
     expect(unavailable.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
   });

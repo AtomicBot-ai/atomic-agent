@@ -76,7 +76,10 @@ export function buildUnavailableMessage(input: {
     lines.push(
       `To fix it: get a free Exa API key at ${EXA_GET_KEY_URL} and add it. ` +
         "In the desktop app, paste it into the key card in the chat or in Settings. " +
-        `In the terminal, add \`${envVar}=...\` to the agent's .env file ` +
+        (envVar === "EXA_API_KEY"
+          ? "In the terminal, open /integrations, choose Web search (Exa) and paste it there; the next search uses it. " +
+            `Or add \`${envVar}=...\` to the agent's .env file `
+          : `In the terminal, add \`${envVar}=...\` to the agent's .env file `) +
         "(~/.atomic-agent/.env, or $ATOMIC_AGENT_STATE_DIR/.env) and restart the agent.",
     );
   } else {
