@@ -6,6 +6,7 @@ import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { readErrnoCode } from "./errno-code.js";
 import { discardResponseBody } from "./discard-response-body.js";
 import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
+import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -1041,7 +1042,12 @@ export class LlamaServerClient {
       let buffer = "";
       let accumulated = "";
       let accumulatedReasoning = "";
-      while (true) {
+      // A small local model that falls into a loop spends the whole cap
+      // on it (minutes, on a slow machine). Cut it as soon as the tail
+      // is one block repeated; the step is retried at the same cap.
+      const repetition = createStreamRepetitionWatcher();
+      let looped: CompletionResult | null = null;
+      while (looped === null) {
         const { value, done } = await reader.read();
         if (done) break;
         // A byte arrived: the server is alive, so start the clock over —
@@ -1067,6 +1073,20 @@ export class LlamaServerClient {
               accumulated += delta;
               accumulatedReasoning += reasoningDelta;
               yield { delta, reasoningDelta, done: false };
+              const loop = parsed.stop
+                ? null
+                : repetition.push(delta, reasoningDelta);
+              if (loop !== null) {
+                looped = {
+                  ...finalResult,
+                  content: accumulated,
+                  reasoningContent: accumulatedReasoning,
+                  stop: false,
+                  truncated: true,
+                  earlyStop: { reason: "repetition", ...loop },
+                };
+                break;
+              }
             }
             if (parsed.stop) {
               this.recordThroughput(parsed);
@@ -1082,6 +1102,16 @@ export class LlamaServerClient {
           }
           eventEnd = buffer.indexOf("\n\n");
         }
+      }
+      if (looped !== null) {
+        // Close the connection now, not when the consumer gets round to
+        // finishing this generator: closing it is what makes llama-server
+        // stop generating and free the slot. The `finally` below sees the
+        // abort and leaves it be.
+        void reader?.cancel().catch(() => undefined);
+        controller.abort();
+        yield { delta: "", reasoningDelta: "", done: true };
+        return looped;
       }
       return finalResult;
     } catch (err) {
@@ -1737,6 +1767,20 @@ function normaliseCompletionResponse(
     payload,
     timings,
   );
+  // llama-server's `truncated` means the context overflowed (prompt, or
+  // the window filling mid-reply). A reply stopped by `n_predict` says so
+  // only in `stop_type: "limit"` (`stopped_limit` on older builds) with
+  // `truncated: false`; reading `truncated` alone took a reply cut at the
+  // cap for a healthy stop. It is reported as `finishReason: "length"`,
+  // the same reply-cap signal the OpenAI-compatible providers give.
+  const stopType =
+    typeof payload.stop_type === "string"
+      ? payload.stop_type
+      : payload.stopped_limit === true
+        ? "limit"
+        : undefined;
+  const contextOverflow = Boolean(payload.truncated);
+  const replyCapHit = stopType === "limit" && !contextOverflow;
   return {
     content: typeof payload.content === "string" ? payload.content : "",
     reasoningContent:
@@ -1744,7 +1788,9 @@ function normaliseCompletionResponse(
         ? payload.reasoning_content
         : "",
     stop: Boolean(payload.stop),
-    truncated: Boolean(payload.truncated),
+    truncated: contextOverflow || replyCapHit,
+    ...(stopType !== undefined ? { stopType } : {}),
+    ...(replyCapHit ? { finishReason: "length" } : {}),
     timing: {
       promptMs: toNumber(timings.prompt_ms),
       predictedMs: toNumber(timings.predicted_ms),

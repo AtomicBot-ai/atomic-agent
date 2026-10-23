@@ -848,8 +848,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.requestedMaxTokens !== undefined
           ? `cap ${event.requestedMaxTokens}`
           : "no cap sent";
+      // A loop the stream watcher cut has no meaningful token count or
+      // cap to report: say what happened instead.
       const line =
-        event.retry.kind === "raise_cap"
+        event.repetitive === true && event.retry.kind === "same_cap"
+          ? `» The model kept repeating the same text, so its reply was stopped. Retrying step ${event.stepIndex + 1} and asking it not to repeat`
+          : event.retry.kind === "raise_cap"
           ? `» ${cut} (${cap}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
           : event.retry.kind === "same_cap"
             ? `» ${cut} (${cap}). Retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap and asking for a shorter reply`

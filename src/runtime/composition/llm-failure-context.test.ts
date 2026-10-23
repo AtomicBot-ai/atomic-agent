@@ -75,6 +75,25 @@ describe("describeLlmFailure", () => {
     });
   });
 
+  it("passes the failed request's URL and the managed ports on for the route tags (ATO-872)", () => {
+    const cfg = config({ mode: "external" });
+    (cfg.localModels as { managed: { port?: number } }).managed.port = 19091;
+    const inner = Object.assign(new Error("llama-server returned http 404"), {
+      url: "http://127.0.0.1:8080/v1/chat/completions",
+    });
+    const wrapper = new Error("llama-server returned http 404", { cause: inner });
+    expect(describeLlmFailure({ error: wrapper }, deps(cfg))).toMatchObject({
+      requestUrl: "http://127.0.0.1:8080/v1/chat/completions",
+      managedPorts: [19091],
+    });
+  });
+
+  it("leaves the URL out when the error carries none", () => {
+    const context = describeLlmFailure({ error: new Error("fetch failed") }, deps(config({})));
+    expect(context.requestUrl).toBeUndefined();
+    expect(context.managedPorts).toBeUndefined();
+  });
+
   it("a probe that throws reports unknown instead of losing the event", () => {
     const d = { readConfig: () => config({}), readDaemonPidState: () => { throw new Error("EACCES"); } };
     expect(describeLlmFailure({ error: new Error("x") }, d).daemonState).toBe("unknown");

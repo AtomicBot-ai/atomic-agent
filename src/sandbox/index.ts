@@ -1,4 +1,9 @@
 export { isBrokenPipe, runCommand } from "./command-runner.js";
+export {
+  buildCommandEnv,
+  isSecretEnvName,
+  KNOWN_SECRET_ENV_VARS,
+} from "./command-env.js";
 export type { CommandOptions, CommandResult } from "./command-runner.js";
 export {
   DEFAULT_JOB_OUTPUT_BYTES,

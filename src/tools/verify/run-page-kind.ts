@@ -81,6 +81,12 @@ export function defaultBrowserLauncher(
   };
 }
 
+/** 127.0.0.1 and friends, `localhost`, `::1`. */
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  return host === "localhost" || host.endsWith(".localhost") || host === "::1" || /^127(?:\.\d{1,3}){3}$/.test(host);
+}
+
 function push(list: string[], entry: string): void {
   if (list.length < LIST_CAP) list.push(entry);
 }
@@ -152,7 +158,9 @@ export async function runPageKind(
   try {
     const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     if (!args.network) {
-      await context.route(/^https?:\/\//, (route) => {
+      // Loopback stays reachable: a page served by the run's own `start`
+      // server (or any local dev server) is not "the network".
+      await context.route((url) => /^https?:$/.test(url.protocol) && !isLoopbackHost(url.hostname), (route) => {
         push(requestFailures, `${route.request().url()} blocked (network: false)`);
         return route.abort("blockedbyclient");
       });

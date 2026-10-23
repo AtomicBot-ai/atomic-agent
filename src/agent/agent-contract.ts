@@ -628,6 +628,8 @@ export type AgentLoopEvent =
       promptTokens: number;
       /** The cap the cut request carried; absent when it carried none. */
       requestedMaxTokens?: number;
+      /** The cut reply was a loop (`TruncationDetail.repetitive`). */
+      repetitive?: true;
       retry: TruncationRetry;
     }
   | {

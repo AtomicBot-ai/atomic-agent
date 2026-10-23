@@ -71,6 +71,28 @@ describe("describeArgumentError", () => {
     ).toBeNull();
   });
 
+  it("adds no key report when the keys are right and only a value is wrong", () => {
+    // ATO-323: an edit whose oldString an earlier edit of the same batch
+    // had already changed. The keys were correct; a key report sent the
+    // model hunting for a wrong key.
+    expect(
+      describeArgumentError({
+        tool: "os.fs.edit",
+        args: { path: "game.py", oldString: "old", newString: "new" },
+        message: "os.fs.edit: `oldString` was not found in the target file.",
+      }),
+    ).toBeNull();
+  });
+
+  it("still reports keys when a required key is missing", () => {
+    const hint = describeArgumentError({
+      tool: "os.fs.edit",
+      args: { oldString: "old", newString: "new" },
+      message: "os.fs.edit: `path` must be a non-empty string",
+    });
+    expect(hint?.message).toContain("received keys: oldString, newString");
+  });
+
   it("does not suggest a key that is further than two edits away", () => {
     const hint = describeArgumentError({
       tool: "os.fs.read",

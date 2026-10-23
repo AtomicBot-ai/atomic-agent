@@ -4,6 +4,7 @@ import {
   awaitJobExit,
   startCommandJob,
 } from "../../../sandbox/command-job.js";
+import { buildCommandEnv } from "../../../sandbox/command-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
@@ -13,7 +14,6 @@ import { resolveUserPath } from "../expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
 import {
-  basenameCommand,
   checkShellCommandGuard,
   execWriteTargets,
   isGogCommand,
@@ -23,9 +23,10 @@ import {
 import {
   coerceShellArgs,
   describeArgsShape,
-  isOpaqueInterpreterShape,
+  formatShellPreview,
   needsShellInterpretation,
   resolveShellSpawn,
+  shellGrantShape,
 } from "./shell-interpretation.js";
 import {
   classifyShellCall,
@@ -49,6 +50,7 @@ import {
 export {
   isOpaqueInterpreterShape,
   needsShellInterpretation,
+  shellGrantShape,
 } from "./shell-interpretation.js";
 
 export interface OsShellToolOptions extends DangerousToolOptions {
@@ -71,6 +73,13 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * whose jobs die only at the ceiling.
    */
   jobs?: ShellJobRegistry;
+  /**
+   * `tools.shell.envPassthrough`: names copied into the command's
+   * environment even though they look like a secret. Everything else
+   * secret-looking is stripped (`buildCommandEnv`, ATO-347). Omitted ⇒
+   * none, so embedders and tests get the filtered environment too.
+   */
+  envPassthrough?: readonly string[];
 }
 
 export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
@@ -222,15 +231,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           }) ?? false
         );
       if (guardVerdict.action === "approval_required" && !scopedByFanout) {
-        // Shape grant unit: the normalised binary the guard itself keyed
-        // on (basename, lowercased), so `[a]` covers exactly the argv[0]
-        // that would run: `git`, not `/usr/bin/GIT` or a path. Withheld
-        // for opaque interpreters (`bash -c …`) where the binary name
-        // hides what runs — see `isOpaqueInterpreterShape`.
-        const shape = basenameCommand(guardInput.cmd).toLowerCase();
-        const commandShape = isOpaqueInterpreterShape(shape)
-          ? undefined
-          : shape;
+        // Shape grant unit: the bare binary name (lowercased), so `[a]`
+        // and "Allow in this chat" cover exactly the argv[0] that would
+        // run: `git`, not `./git` or a compound line that starts with
+        // `git`. Withheld for those and for opaque interpreters
+        // (`bash -c …`) where the binary name hides what runs — see
+        // `shellGrantShape`.
+        const commandShape = shellGrantShape(
+          guardInput.cmd,
+          commandLine,
+          useShell,
+        );
         await requireApproval(
           options,
           {
@@ -238,7 +249,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
             tool: "os.shell.run",
             category: "shell",
             reason: `${guardVerdict.reason} in ${cwd}`,
-            preview: commandLine,
+            // Quoted like the shell would need it, so the human approves
+            // the argv that runs, not a re-joined look-alike (ATO-433).
+            preview: formatShellPreview(cmd, execArgs, useShell),
             affectedResources: [cwd],
             ...(commandShape !== undefined ? { commandShape } : {}),
             targetPaths,
@@ -266,8 +279,11 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // Its own process group, so a stop reaches what the command
       // started too (`sleep 30 &` behind a subshell used to outlive the
       // shell and hold the result until it ended).
+      // Built per call, from the live env, so a key added to `.env`
+      // mid-session is filtered the same way.
       const job = startCommandJob(spawnSpec.command, spawnSpec.args, {
         cwd,
+        env: buildCommandEnv(process.env, options.envPassthrough ?? []),
         ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
         ...(spawnSpec.windowsVerbatimArguments
           ? { windowsVerbatimArguments: true }

@@ -167,11 +167,54 @@ export function resolveShellSpawn(
   useShell: boolean,
 ): SpawnInvocation {
   if (!useShell) return buildDirectInvocation(cmd, execArgs);
-  const commandLine =
-    execArgs.length > 0 && process.platform === "win32"
-      ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
-      : [cmd, ...execArgs].join(" ");
-  return buildSubshellInvocation(commandLine);
+  return buildSubshellInvocation(subshellLine(cmd, execArgs));
+}
+
+/** The line the subshell is handed: see `resolveShellSpawn`. */
+function subshellLine(cmd: string, execArgs: readonly string[]): string {
+  return execArgs.length > 0 && process.platform === "win32"
+    ? [cmd, ...execArgs.map(quoteCmdArg)].join(" ")
+    : [cmd, ...execArgs].join(" ");
+}
+
+/** Characters a POSIX shell reads literally outside quotes. */
+const POSIX_PLAIN_TOKEN_RE = /^[A-Za-z0-9_@%+=:,./-]+$/;
+
+/**
+ * One argv token as a POSIX shell would need it written to read it back
+ * unchanged: as is when it holds only plain characters, otherwise in
+ * single quotes, an embedded `'` closed, escaped and reopened (`'\''`).
+ */
+export function quotePosixArg(token: string): string {
+  if (token.length === 0) return "''";
+  if (POSIX_PLAIN_TOKEN_RE.test(token)) return token;
+  return `'${token.replace(/'/g, "'\\''")}'`;
+}
+
+/**
+ * The command as the approval prompt shows it (ATO-433). A plain
+ * `join(" ")` dropped the argv boundaries, so `bash` with
+ * `["-c", "echo 'ux tour' > f.txt"]` read `bash -c echo 'ux tour' >
+ * f.txt`, a different command from the one that runs.
+ *
+ * - Direct exec: every token quoted the way the platform shell would
+ *   need it (`quotePosixArg`; `quoteCmdArg` on Windows), so pasting the
+ *   preview into a terminal runs the same argv.
+ * - Subshell: the exact line the subshell is handed, since that line
+ *   is what runs (on POSIX the legacy raw join, on Windows with the
+ *   arguments quoted for cmd.exe).
+ *
+ * Display only: the spawn, the guard and the write-target checks keep
+ * reading the argv and lines they read before.
+ */
+export function formatShellPreview(
+  cmd: string,
+  execArgs: readonly string[],
+  useShell: boolean,
+): string {
+  if (useShell) return subshellLine(cmd, execArgs);
+  const quote = process.platform === "win32" ? quoteCmdArg : quotePosixArg;
+  return [cmd, ...execArgs].map(quote).join(" ");
 }
 
 /**
@@ -189,9 +232,62 @@ const OPAQUE_INTERPRETER_SHAPES: ReadonlySet<string> = new Set([
   "zsh",
   "dash",
   "ksh",
+  "fish",
+  "cmd",
+  "powershell",
+  "pwsh",
+  // Wrappers that run whatever binary their arguments name: a grant on
+  // `env` or `xargs` would silence every binary behind it.
+  "env",
+  "xargs",
+  "sudo",
+  "doas",
+  "nohup",
+  "nice",
+  "timeout",
+  "time",
+  "exec",
+  "eval",
+  "command",
+  "builtin",
 ]);
 
 /** True when `[a]` (shape grant) must be withheld for `shape`. */
 export function isOpaqueInterpreterShape(shape: string): boolean {
   return OPAQUE_INTERPRETER_SHAPES.has(shape);
+}
+
+/**
+ * What a subshell line can do beyond running its first word: sequence
+ * (`;`, newline, `&&`), pipe, redirect, substitute (`$(…)`, backticks,
+ * `$VAR`) or group. Unlike `SHELL_METACHAR_RE` this includes newlines,
+ * which `sh -c` reads as `;`.
+ */
+const SHELL_COMPOUND_RE = /[|&;<>$`(){}\r\n]/;
+
+/**
+ * The shape a shell call's grant (`[a]`, desktop "Allow in this chat")
+ * is keyed on, or `undefined` when none may be offered or matched.
+ *
+ * The shape is the binary name, so it is only a true description of the
+ * call when that binary is all that runs:
+ *  - a subshell line that sequences, pipes, redirects or substitutes
+ *    runs more than its first word (`git status && curl … | sh`, or
+ *    `git log` then `rm -rf …` on the next line), so it has no shape:
+ *    neither granted from it nor auto-approved by a `git` grant;
+ *  - a command named by path (`./git`, `/tmp/x/git`) may be a script
+ *    the model just wrote, so a `git` grant does not cover it;
+ *  - opaque interpreters and wrappers (`bash`, `env`, `xargs`) hide
+ *    what runs in their arguments (`isOpaqueInterpreterShape`).
+ */
+export function shellGrantShape(
+  guardCmd: string,
+  commandLine: string,
+  useShell: boolean,
+): string | undefined {
+  if (useShell && SHELL_COMPOUND_RE.test(commandLine)) return undefined;
+  const bin = guardCmd.trim();
+  if (bin.length === 0 || /[\\/]/.test(bin)) return undefined;
+  const shape = bin.toLowerCase();
+  return isOpaqueInterpreterShape(shape) ? undefined : shape;
 }

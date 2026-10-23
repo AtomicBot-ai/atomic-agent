@@ -154,6 +154,22 @@ describe("turn recovery decisions and shared state", () => {
     expect(rejected).toEqual({ kind: "failure", cancelled: false, category: "model", runError: error, creditRefused: false });
   });
 
+  it("retries a reply the stream cut for looping at the same cap, and says it looped (ATO-331)", async () => {
+    const turn = createTurnLoopState();
+    const events: AgentLoopEvent[] = [];
+    const deps: TurnRecoveryDependencies = { onEvent: (event) => events.push(event) };
+    const looped = new ModelError("truncated", "model kept repeating", {
+      transport: "grammar", stage: "initial",
+      truncation: { cause: "unknown", completionTokens: 0, promptTokens: 0, requestedMaxTokens: 8_192, repetitive: true },
+    });
+    expect(recoverTurnStep(looped, context(), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(turn.truncationRetry?.maxTokens).toBe(8_192);
+    expect(turn.pendingNotice).toContain("repeating the same text");
+    expect(events.filter((event) => event.type === "completion_truncated")).toEqual([
+      expect.objectContaining({ repetitive: true, retry: { kind: "same_cap", maxTokens: 8_192 } }),
+    ]);
+  });
+
   it("a cloud step is retried twice under the same cap, then the third cut fails the turn", async () => {
     const turn = createTurnLoopState();
     const events: AgentLoopEvent[] = [];

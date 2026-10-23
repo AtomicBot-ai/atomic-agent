@@ -345,6 +345,102 @@ describe("detectModelFailure", () => {
     ).toBe("context_window");
   });
 
+  // ATO-329: llama-server's `stop_type: "limit"` without an overflow is
+  // the reply cap. Blaming the window there would learn prompt + reply as
+  // the window and shrink every later prompt for nothing.
+  it("blames the reply cap when llama-server says it stopped at n_predict", () => {
+    const completion = makeCompletion({
+      content: '{"tool":"os.fs.write","args":{"content":"abc',
+      truncated: true,
+      stopType: "limit",
+      finishReason: "length",
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 3_000,
+        predictedTokens: 16_384,
+      },
+    });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 16_384,
+    });
+    expect(result?.truncation).toEqual({
+      cause: "reply_cap",
+      completionTokens: 16_384,
+      promptTokens: 3_000,
+      requestedMaxTokens: 16_384,
+    });
+    expect(result?.message).toContain("it spent the reply cap");
+  });
+
+  it("still blames the window for a llama-server overflow at stop_type eos", () => {
+    const completion = makeCompletion({
+      content: "",
+      truncated: true,
+      stopType: "eos",
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 7_000,
+        predictedTokens: 900,
+      },
+    });
+    expect(
+      detectModelFailure(completion, { requestedMaxTokens: 8_192 })?.truncation
+        ?.cause,
+    ).toBe("context_window");
+  });
+
+  it("does not print an unknown cap for a reply-cap cut with no cap reported", () => {
+    const completion = makeCompletion({
+      content: "abc",
+      truncated: true,
+      stopType: "limit",
+      finishReason: "length",
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 10,
+        predictedTokens: 512,
+      },
+    });
+    const result = detectModelFailure(completion, { requestedMaxTokens: 0 });
+    expect(result?.truncation?.cause).toBe("reply_cap");
+    expect(result?.message).not.toContain("undefined");
+  });
+
+  it("reports a reply the stream watcher cut for looping as a repetitive truncation", () => {
+    const completion = makeCompletion({
+      content: `{"text":"ok ${"}]\"}]".repeat(60)}`,
+      stop: false,
+      truncated: true,
+      earlyStop: { reason: "repetition", channel: "content", periodChars: 5 },
+    });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 16_384,
+    });
+    expect(result?.reason).toBe("truncated");
+    expect(result?.truncation?.repetitive).toBe(true);
+    // No count came back, so no wall is blamed; the retry keeps the cap.
+    expect(result?.truncation?.cause).toBe("unknown");
+    expect(result?.message).toContain("kept repeating the same text");
+    expect(result?.message).not.toContain("—");
+  });
+
+  it("marks a watcher cut as repetitive even when only the reasoning looped", () => {
+    const completion = makeCompletion({
+      content: "short",
+      reasoningContent: "Wait, let me check. ".repeat(20),
+      stop: false,
+      truncated: true,
+      earlyStop: { reason: "repetition", channel: "reasoning", periodChars: 20 },
+    });
+    expect(
+      detectModelFailure(completion, { requestedMaxTokens: 512 })?.truncation
+        ?.repetitive,
+    ).toBe(true);
+  });
+
   it("reports empty output when content is blank", () => {
     const completion = makeCompletion({
       content: "   ",

@@ -172,16 +172,17 @@ describe("ChatLog", () => {
     expect(text).toContain("partial reply…");
   });
 
-  it("skips markdown during streaming so partial `**` does not flicker", () => {
+  it("renders an unclosed `**` as bold while streaming, without literal markers", () => {
     const state: TuiState = {
       ...createInitialTuiState(BASE_SESSION),
       streamingAssistantText: "hello **bold",
     };
     const { lastFrame } = render(<ChatLog state={state} />);
     const text = strip(lastFrame() ?? "");
-    // Literal asterisks must survive while the reply is still coming in —
-    // we only lex markdown once the turn finalises.
-    expect(text).toContain("**bold");
+    // The open marker is closed for rendering, so the stream shows what
+    // the final reply will show instead of a literal `**bold`.
+    expect(text).toContain("hello bold");
+    expect(text).not.toContain("**");
   });
 
   it("applies markdown to the finalised assistant message", () => {

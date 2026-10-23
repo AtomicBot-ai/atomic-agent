@@ -127,6 +127,40 @@ describe("ApprovalBridge.dispatch", () => {
     expect(h.bridge.pendingCount()).toBe(1);
   });
 
+  // ATO-434: a multi-line command must reach Telegram in full, and one
+  // too long for a single message must still send, saying what it hides.
+  it("shows every line of a multi-line command", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(
+      { ...req("ml"), preview: "echo hi\nmkdir -p out\nrm -rf out/cache" },
+      7,
+    );
+    const text = h.api.sendMessage.mock.calls[0]![1] as string;
+    expect(text).toContain("preview:\n  echo hi\n  mkdir -p out\n  rm -rf out/cache");
+    expect(text).not.toContain("more line");
+  });
+
+  it("keeps an oversized preview inside one message and counts the hidden lines", async () => {
+    const h = makeHarness();
+    const script = Array.from(
+      { length: 400 },
+      (_, i) => `echo ${String(i + 1).padStart(3, "0")} ${"x".repeat(20)}`,
+    ).join("\n");
+    await h.bridge.dispatch(
+      { ...req("big"), preview: script, affectedResources: ["/work"] },
+      7,
+    );
+    const text = h.api.sendMessage.mock.calls[0]![1] as string;
+    expect(text.length).toBeLessThanOrEqual(4096);
+    expect(text).toContain("  echo 001 ");
+    const shown = text.split("\n").filter((l) => l.startsWith("  echo ")).length;
+    expect(shown).toBeGreaterThan(50);
+    expect(text).toContain(`  … +${400 - shown} more lines`);
+    // The resource list after the preview survives the cut.
+    expect(text.endsWith("resources:\n- /work")).toBe(true);
+    expect(h.bridge.pendingCount()).toBe(1);
+  });
+
   it("auto-denies immediately when sendMessage rejects", async () => {
     const h = makeHarness();
     h.api.sendMessage.mockImplementationOnce(async () => {

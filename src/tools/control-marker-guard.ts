@@ -107,6 +107,22 @@ const MARKER_ALTERNATION = [
 
 /** A marker anywhere in the value. */
 const ANYWHERE = new RegExp(MARKER_ALTERNATION);
+/** Every marker in the value, for replacement. */
+const EVERYWHERE = new RegExp(MARKER_ALTERNATION, "g");
+
+/** What a neutralised marker reads as in text shown to the model. */
+export const NEUTRALISED_MARKER = "[special token removed]";
+
+/**
+ * The same markers on the way IN: text from outside (a web page, a search
+ * snippet, an MCP server's answer) that carries `<|im_start|>` or
+ * `<channel|>` can make a local model read it as a new turn or a thought
+ * channel. Each marker is replaced with {@link NEUTRALISED_MARKER}; the
+ * rest of the text is untouched.
+ */
+export function neutraliseControlMarkers(text: string): string {
+  return text.replace(EVERYWHERE, NEUTRALISED_MARKER);
+}
 /** A marker at the start of a line. */
 const LINE_START = new RegExp(`^(?:${MARKER_ALTERNATION})`, "m");
 /** A marker at the start of a line of a unified-diff body. */

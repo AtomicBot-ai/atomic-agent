@@ -147,6 +147,13 @@ export function parseDepsFor(
 
 
 /**
+ * Every step parse may repair broken call JSON mechanically (ATO-637);
+ * `parseStepBatch` then accepts the repaired batch only when it is a
+ * valid call of a known tool (`step-json-repair.ts`).
+ */
+const REPAIR_JSON = { repairJson: true } as const;
+
+/**
  * Non-throwing parser wrapper. The step executor uses it to distinguish
  * a malformed first attempt (retryable) from any other error shape.
  * Returns a `ToolCallBatch` that may carry a single call (legacy
@@ -190,6 +197,7 @@ export function tryParseToolCalls(
           reasoning,
           {
             ...(strictWidenedArgs ? { strictWidenedArgs } : {}),
+            repairJson: true,
           },
         );
         if (batch.calls.length === 0) {
@@ -221,6 +229,8 @@ export function tryParseToolCalls(
       const replyText = completion.content;
       if (typeof replyText === "string" && replyText.trim().length > 0) {
         try {
+          // No repair here: content that is not a clean call array is
+          // delivered as a reply below, as before.
           const grammarBatch = parseToolCalls(
             normalizeContent(completion, profile, assumeOpenReasoning),
             getReasoningTagOptions(profile),
@@ -280,6 +290,7 @@ export function tryParseToolCalls(
           const grammarBatch = parseToolCalls(
             reasoningText,
             getReasoningTagOptions(profile),
+            REPAIR_JSON,
           );
           if (grammarBatch.calls.length > 0) {
             const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
@@ -309,6 +320,7 @@ export function tryParseToolCalls(
     const batch = parseToolCalls(
       normalizeContent(completion, profile, assumeOpenReasoning),
       getReasoningTagOptions(profile),
+      REPAIR_JSON,
     );
     return { ok: true, batch };
   } catch (err) {

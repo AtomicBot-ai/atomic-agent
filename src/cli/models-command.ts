@@ -39,7 +39,8 @@ const HELP =
     '  use <id>                      Set active model and switch mode to "managed"',
     "  status                        Show mode, backend version, active model, daemon/health",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
-    "  stop                          Stop daemon (SIGTERM → SIGKILL after 3s)",
+    "  stop [--chat-only]            Stop daemon (SIGTERM → SIGKILL after 3s); --chat-only",
+    "                                keeps the embedding model running for memory search",
     "  engine [status|check|atomic-core|llama-server]  Inspect or choose the local engine",
     "  stop-embedding                Stop the embedding model through its engine",
     "  update                        Install the supported engine and inference backend",
@@ -115,7 +116,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
           signal: cancel.signal,
         });
       case "stop":
-        return runLocalModelsStop();
+        return runLocalModelsStop({ chatOnly: args.includes("--chat-only") });
       case "update":
         return await runLocalModelsUpdate(cancel.signal);
       case "remove":
