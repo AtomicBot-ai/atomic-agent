@@ -162,13 +162,18 @@ export class ToolOutputSpill {
   removeSession(sessionId: string): void {
     this.used.delete(sessionId);
     this.counters.delete(sessionId);
-    removeInside(this.baseDir ?? toolOutputBaseDir(), this.dirFor(sessionId));
+    const base = this.baseDir ?? toolOutputBaseDir();
+    if (!isOwnPlainDir(base)) return;
+    removeInside(base, this.dirFor(sessionId));
   }
 
   /** Remove session folders not touched for `maxAgeMs`. Best effort; returns how many went. */
   sweepStale(maxAgeMs: number = STALE_SPILL_MS, now: number = Date.now()): number {
     const base = this.baseDir ?? toolOutputBaseDir();
     let removed = 0;
+    // Never sweep a base someone else made first on a shared /tmp: its
+    // entries are theirs to swap for links while we recurse.
+    if (!isOwnPlainDir(base)) return 0;
     let names: string[];
     try {
       names = readdirSync(base);
@@ -198,16 +203,23 @@ export class ToolOutputSpill {
     mkdirSync(base, { recursive: true, mode: 0o700 });
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     for (const path of [base, dir]) {
-      const info = lstatSync(path);
-      if (!info.isDirectory() || info.isSymbolicLink()) {
-        throw new Error("tool output folder is not a plain directory");
-      }
-      const uid = process.getuid?.();
-      if (uid !== undefined && info.uid !== uid) {
-        throw new Error("tool output folder belongs to another user");
+      if (!isOwnPlainDir(path)) {
+        throw new Error("tool output folder is a link or belongs to another user");
       }
     }
     return dir;
+  }
+}
+
+/** A real directory (not a link) owned by this process's user. */
+function isOwnPlainDir(path: string): boolean {
+  try {
+    const info = lstatSync(path);
+    if (!info.isDirectory() || info.isSymbolicLink()) return false;
+    const uid = process.getuid?.();
+    return uid === undefined || info.uid === uid;
+  } catch {
+    return false;
   }
 }
 

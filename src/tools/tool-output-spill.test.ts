@@ -131,6 +131,25 @@ describe("ToolOutputSpill (ATO-663)", () => {
     expect(existsSync(join(base, "fresh"))).toBe(true);
   });
 
+  it("neither sweeps nor removes through a base folder that is a link", () => {
+    mkdirSync(join(base, "old"));
+    const longAgo = (Date.now() - STALE_SPILL_MS - 60_000) / 1000;
+    utimesSync(join(base, "old"), longAgo, longAgo);
+    mkdirSync(join(base, "s-1"));
+    const parent = mkdtempSync(join(tmpdir(), "atomic-spill-link-"));
+    try {
+      const link = join(parent, "base");
+      symlinkSync(base, link);
+      const linked = new ToolOutputSpill({ baseDir: link });
+      expect(linked.sweepStale()).toBe(0);
+      linked.removeSession("s-1");
+      expect(existsSync(join(base, "old"))).toBe(true);
+      expect(existsSync(join(base, "s-1"))).toBe(true);
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   it("turns any session id into one path segment", () => {
     expect(toolOutputDir("../../etc", base)).toBe(join(base, "_etc"));
   });
