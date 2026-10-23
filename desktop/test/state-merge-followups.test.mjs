@@ -188,7 +188,8 @@ function makeTasksDb(file) {
 
 const rows = (file, sql) => {
   const db = new DatabaseSync(file, { readOnly: true });
-  try { return db.prepare(sql).all(); } finally { db.close(); }
+  // node:sqlite rows have a null prototype; plain copies compare with deepEqual.
+  try { return db.prepare(sql).all().map((r) => ({ ...r })); } finally { db.close(); }
 };
 
 test("cleanCopiedDatabase ends live chats as interrupted and puts running tasks back to pending", () => {
