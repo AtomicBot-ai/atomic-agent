@@ -478,6 +478,13 @@ Honestly degraded, and labelled as such in the UI:
   to the network: main answers it from `main/subscription-cli-models.ts`, a
   copy of the agent's Claude list. Whether the CLI is installed and signed in
   is not checked here yet.
+- **The palette search forgives.** ⌘ K ranks commands, Settings sections,
+  chats, tasks and skills with `renderer/fuzzy-match.js` (ATO-669): exact,
+  prefix, word prefix or slash alias, substring and context matches keep
+  their old order, then a subsequence match scored by fuzzysort ("mdl" finds
+  Models, "prvcy" Privacy), then a one-typo match ("modles"). fuzzysort is
+  vendored in `renderer/vendor/` because the renderer loads plain scripts.
+  The chats still fold to five plus an "N more chats" row.
 - **Settings is the TUI menu.** The bottom-left gear (and ⌘ , and Escape with
   nothing else on screen) opens the menu tree from
   `src/tui/menu/menu-registry.ts` with the Manage tabs on the right — minus the

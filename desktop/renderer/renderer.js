@@ -4444,25 +4444,17 @@ function palRows() {
   const all = [];
   PAL.forEach(([g, rows]) => rows.forEach((r) => all.push({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4], g})));
   if (!q) return null; // grouped rendering
-  const score = (r) => {
-    const t = r.t.toLowerCase();
-    if (t === q) return 0;
-    if (t.startsWith(q)) return 1;
-    if (t.split(/[\s·]+/).some((w) => w.startsWith(q))) return 2;
-    if (t.includes(q)) return 3;
-    if ((r.cx || '').toLowerCase().includes(q)) return 4;
-    // The slash alias ("/llm", "/feed"): typed with or without its slash.
-    if ((r.sc || '').startsWith('/') && r.sc.slice(1).startsWith(q.replace(/^\//, ''))) return 2;
-    return 9;
-  };
-  const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
+  // ATO-669: fuzzyRank (fuzzy-match.js) keeps the old exact/prefix/substring order
+  // and adds a subsequence tier ("mdl" finds Models) and a one-typo tier after it.
+  const score = (r) => fuzzyRank(q, r.t, r);
+  const hits = all.map((r, i) => ({r, i, s:score(r)})).filter((x) => x.s !== Infinity).sort((a, b) => a.s - b.s || a.i - b.i).map((x) => x.r);
   // cross-entity. ATO-453: chats used to stop at three title matches, so with many
   // similar chats the one you wanted never showed. They are ranked like the commands
   // above; ties keep the agent's order, most recent first.
   // ATO-824 (owner, 22.10): the first PAL_CHATS_SHOWN, then one "N more chats" row,
   // then tasks and skills, which up to 20 chats pushed out of sight. The row shows
   // every matching chat for this query in place (palMoreChats).
-  const chats = SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
+  const chats = SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k !== Infinity)
     .sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.s);
   const allChats = S.palMoreFor === q || chats.length <= PAL_CHATS_SHOWN + 1;
   (allChats ? chats : chats.slice(0, PAL_CHATS_SHOWN))
@@ -4471,9 +4463,9 @@ function palRows() {
     const more = chats.length - PAL_CHATS_SHOWN;
     hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
   }
-  TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
+  fuzzyFilter(q, TASKS, (t) => t.t).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
-  SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
+  fuzzyFilter(q, SKILLS, (s) => s.t).slice(0, 3)
     .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:SK.workingDir ? 'skill:compose:' + s.t : 'room:skills', badge:'skill'}));
   return hits;
 }
