@@ -25082,7 +25082,10 @@ function llmRowHTML(row, index, cursor) {
       + (name !== m.id ? ' <span class="llm-id mono">' + esc(m.id) + '</span>' : '')
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
       + (best ? ' <span class="tk-chip tk-chip--sm llm-ib tk-chip--indigo"' + (row.bestWhy ? ' title="' + esc(row.bestWhy) + '"' : '') + '>★ best fit for this machine</span>' : '')
-      + (chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
+      /* ATO-449: a reduced-refusal model says what it is here too, with the
+         first-run list's word and sentence, not the catalogue's bare tag. */
+      + (chat && m.uncensored && !best ? ' <span class="tk-chip tk-chip--sm llm-ib tk-chip--blue" title="' + esc(UNCENSORED_NOTE) + '">' + esc(UNCENSORED_WORD) + '</span>'
+        : chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
       + llmRowBadgesHTML(row)
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
       + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');

@@ -64,3 +64,7 @@ test('a standard model gets no note', () => {
   const { pick } = load();
   assert.equal(pick({ id: 'qwen-3.8-27b', recommendedRamGb: 32 }, 64), null);
 });
+
+test('Settings › Models labels a reduced-refusal row with the same word and sentence, not the bare tag', () => {
+  assert.match(renderer, /chat && m\.uncensored && !best \? [^\n]*title="' \+ esc\(UNCENSORED_NOTE\) \+ '">' \+ esc\(UNCENSORED_WORD\)/);
+});
