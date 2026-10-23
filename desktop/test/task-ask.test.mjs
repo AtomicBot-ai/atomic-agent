@@ -49,7 +49,9 @@ test("a new task opens on the plain-words step, and the manual form is one click
   assert.match(renderer, /data-act="tasks:manual"/);
   assert.match(renderer, /data-act="tasks:plain"/);
   // The sentence goes out as a new chat's first message through the composer's own submit().
-  assert.match(renderer, /function tkAsk\(\) \{[\s\S]*?act\('session:new'\);[\s\S]*?submit\(\);/);
+  assert.match(renderer, /function tkAsk\(\) \{[\s\S]*?act\('session:new'\);[\s\S]*?submit\(undefined, \{plain:true\}\);/);
+  // Files waiting in the composer are not swept into the task request, and a draft in the box survives it.
+  assert.match(renderer, /function tkAsk\(\) \{[\s\S]*?const kept = S\.draft[\s\S]*?if \(kept && !S\.draft\)/);
 });
 
 test("an empty task list hides filters and search and shows the example hint", () => {

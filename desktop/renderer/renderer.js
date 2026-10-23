@@ -21990,16 +21990,21 @@ function tkAskHTML(f) {
     + '</div>';
 }
 /* ATO-519: the sentence goes out as the first message of a new chat, through
-   the composer's own submit(), as a message typed there would. */
+   the composer's own submit(), as a message typed there would. It is sent
+   `plain`: files waiting in the composer stay for a message of the person's
+   own (as Continue and the plan hand-off do), and a draft that was in the
+   box carries into the new chat, as ⌘ N carries it, instead of being lost. */
 function tkAsk() {
   const f = TK.form;
   const text = f ? taskAskMessage(f.ask) : '';
   if (!text) return {ok:false, error:'nothing to send'};
   TK.mode = 'list'; TK.form = null;
+  const kept = S.draft || '';
   act('session:new');
   S.draft = text;
-  const e = $('#entry'); if (e) e.value = text;
-  submit();
+  const e = $('#entry'); if (e) { e.value = text; autosize(e); }
+  submit(undefined, {plain:true});
+  if (kept && !S.draft) { S.draft = kept; const box = $('#entry'); if (box) { box.value = kept; autosize(box); } }
   return {ok:true, text};
 }
 function tkPreviewHTML(f) {
