@@ -215,6 +215,13 @@ export interface CompletionResult {
   /** Raw OpenAI tool_calls when transport is native_tools. */
   toolCalls?: ReadonlyArray<OpenAiToolCall>;
   finishReason?: string | null;
+  /**
+   * llama-server's own `stop_type` (`eos`, `word`, `limit`, `none`), as
+   * it sent it. Only the llama-server client sets it. `limit` with
+   * `finishReason: "length"` is a reply cut at `n_predict`; `limit` on a
+   * context overflow keeps `finishReason` unset.
+   */
+  stopType?: string;
   /** Set when the runtime cut the completion short. See `CompletionEarlyStop`. */
   earlyStop?: CompletionEarlyStop;
   /**

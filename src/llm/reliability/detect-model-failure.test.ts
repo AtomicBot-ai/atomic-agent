@@ -345,6 +345,70 @@ describe("detectModelFailure", () => {
     ).toBe("context_window");
   });
 
+  // ATO-329: llama-server's `stop_type: "limit"` without an overflow is
+  // the reply cap. Blaming the window there would learn prompt + reply as
+  // the window and shrink every later prompt for nothing.
+  it("blames the reply cap when llama-server says it stopped at n_predict", () => {
+    const completion = makeCompletion({
+      content: '{"tool":"os.fs.write","args":{"content":"abc',
+      truncated: true,
+      stopType: "limit",
+      finishReason: "length",
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 3_000,
+        predictedTokens: 16_384,
+      },
+    });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 16_384,
+    });
+    expect(result?.truncation).toEqual({
+      cause: "reply_cap",
+      completionTokens: 16_384,
+      promptTokens: 3_000,
+      requestedMaxTokens: 16_384,
+    });
+    expect(result?.message).toContain("it spent the reply cap");
+  });
+
+  it("still blames the window for a llama-server overflow at stop_type eos", () => {
+    const completion = makeCompletion({
+      content: "",
+      truncated: true,
+      stopType: "eos",
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 7_000,
+        predictedTokens: 900,
+      },
+    });
+    expect(
+      detectModelFailure(completion, { requestedMaxTokens: 8_192 })?.truncation
+        ?.cause,
+    ).toBe("context_window");
+  });
+
+  it("does not print an unknown cap for a reply-cap cut with no cap reported", () => {
+    const completion = makeCompletion({
+      content: "abc",
+      truncated: true,
+      stopType: "limit",
+      finishReason: "length",
+      timing: {
+        promptMs: 1,
+        predictedMs: 1,
+        promptTokens: 10,
+        predictedTokens: 512,
+      },
+    });
+    const result = detectModelFailure(completion, { requestedMaxTokens: 0 });
+    expect(result?.truncation?.cause).toBe("reply_cap");
+    expect(result?.message).not.toContain("undefined");
+  });
+
   it("reports empty output when content is blank", () => {
     const completion = makeCompletion({
       content: "   ",
