@@ -1812,7 +1812,8 @@ export class ChatOrchestrator {
     }
   }
 
-  private cancelPromptEnhance(): void {
+  /** Stop a running `/enhance` quietly; idle Esc and every exit path call it. */
+  cancelPromptEnhance(): void {
     this.promptEnhance?.abort();
     this.promptEnhance = null;
   }

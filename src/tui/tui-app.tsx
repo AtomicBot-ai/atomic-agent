@@ -294,6 +294,8 @@ export interface TuiAppCallbacks {
   onCompactionRequested?(verb: "run" | "show"): void;
   /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */
   onPromptEnhanceRequested?(draft: string): void;
+  /** Idle Esc: stop a running `/enhance` (no-op when none is running). */
+  onPromptEnhanceCancel?(): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
@@ -1709,6 +1711,10 @@ export function TuiApp({
     // and the half-typed message with it — was a trap: no hint strip ever
     // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
     // on Ctrl+C twice and `/quit`; Esc clears the draft first.
+    // Idle Esc is also the cancel for a running `/enhance`: it never
+    // reaches `onAbort`, so without this the rewrite kept running after
+    // the draft it was for had been cleared.
+    callbacks.onPromptEnhanceCancel?.();
     if (state.inputValue.length > 0) {
       dispatch({ type: "input_changed", value: "" });
       return;

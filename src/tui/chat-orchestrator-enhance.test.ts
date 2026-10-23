@@ -139,7 +139,7 @@ describe("ChatOrchestrator /enhance", () => {
     orchestrator.abortCurrentTurn();
   });
 
-  it("aborts the running enhance on Esc, and a new one can start after", async () => {
+  it("aborts the running enhance on a turn abort, and a new one can start after", async () => {
     const signals: AbortSignal[] = [];
     const hanging = hangingEnhance();
     const { orchestrator } = setup((draft, options) => {
@@ -153,5 +153,24 @@ describe("ChatOrchestrator /enhance", () => {
     expect(signals.map((s) => s.aborted)).toEqual([true, false]);
     orchestrator.abortCurrentTurn();
     await second;
+  });
+
+  it("stops quietly through cancelPromptEnhance, the idle-Esc callback", async () => {
+    let signal: AbortSignal | undefined;
+    const hanging = hangingEnhance();
+    const { orchestrator, actions } = setup((draft, options) => {
+      signal = options?.signal;
+      return hanging(draft, options);
+    });
+    const pending = orchestrator.enhancePrompt("draft");
+    orchestrator.cancelPromptEnhance();
+    await pending;
+    expect(signal?.aborted).toBe(true);
+    expect(notices(actions).some((n) => n.startsWith("Could not enhance"))).toBe(false);
+    // Not left busy: the next /enhance runs.
+    const next = orchestrator.enhancePrompt("again");
+    expect(notices(actions)).not.toContain("Already enhancing a prompt; wait for it to finish.");
+    orchestrator.cancelPromptEnhance();
+    await next;
   });
 });

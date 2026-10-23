@@ -193,6 +193,9 @@ function runEnhanceCurrentDraft(
   if (draft.length === 0 || draft.startsWith("/")) {
     dispatch({ type: "runtime_info", line: ENHANCE_USAGE });
     dispatch({ type: "system_message", text: ENHANCE_USAGE });
+    // A buffer holding the command itself (`/enhance`, or `/enh` from the
+    // palette) has done its job; an empty one has nothing to clear.
+    if (draft.length > 0) dispatch({ type: "input_changed", value: "" });
     return;
   }
   dispatch({ type: "input_changed", value: draft });

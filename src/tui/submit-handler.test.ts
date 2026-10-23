@@ -748,12 +748,20 @@ describe("bare /enhance", () => {
     expect(dispatched).not.toContainEqual({ type: "input_changed", value: "" });
   });
 
-  it("answers usage without wiping the buffer when there is no draft to enhance", () => {
+  it("answers usage and clears only the command itself when there is no draft", () => {
     const onPromptEnhanceRequested = vi.fn();
     const dispatched: Array<{ type: string; value?: string }> = [];
-    const state = { ...createInitialTuiState(fakeSession()), inputValue: "/enh" };
+    const state = { ...createInitialTuiState(fakeSession()), inputValue: "/enhance" };
     runSlashCommand("/enhance", state, (a) => dispatched.push(a as { type: string; value?: string }), stubCallbacks({ onPromptEnhanceRequested }));
     expect(onPromptEnhanceRequested).not.toHaveBeenCalled();
+    expect(dispatched.some((a) => a.type === "system_message")).toBe(true);
+    expect(dispatched).toContainEqual({ type: "input_changed", value: "" });
+  });
+
+  it("answers usage from an empty composer without touching it", () => {
+    const dispatched: Array<{ type: string; value?: string }> = [];
+    const state = createInitialTuiState(fakeSession());
+    runSlashCommand("/enhance", state, (a) => dispatched.push(a as { type: string; value?: string }), stubCallbacks());
     expect(dispatched.some((a) => a.type === "system_message")).toBe(true);
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
   });

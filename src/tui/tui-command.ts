@@ -507,6 +507,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionNewRequested: () => orchestrator.newSession(),
         onCompactionRequested: (verb) => { void orchestrator.compactContext(verb); },
         onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
+        onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
