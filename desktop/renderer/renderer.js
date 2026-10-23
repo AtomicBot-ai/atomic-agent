@@ -2813,6 +2813,20 @@ function isLastReply(m) {
   }
   return false;
 }
+/** ATO-861: the question reply m answers, or null when that turn ran a tool.
+    Walks back to the nearest user message that is not a steer (a steer was
+    folded into the same turn); a tool card or an approval row on the way means
+    the agent acted, and asking again would act again, so there is no retry.
+    The log is the same shape live and after reopening (sessionTurnsToLog). */
+function plainTurnQuestion(m) {
+  const at = S.log.findIndex((x) => x.id === m.id);
+  for (let i = at - 1; i >= 0; i--) {
+    const x = S.log[i];
+    if (x.k === 'tool' || x.k === 'approval') return null;
+    if (x.k === 'user' && !x.steered) return String(x.text || '').trim() ? x : null;
+  }
+  return null;
+}
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2833,10 +2847,18 @@ function msgActs(m) {
      shown, so a newcomer sees there is something to do with an answer
      without having to find the hover. Icons only; the names live in each
      button's tooltip and aria-label. */
-  const cls = m.k === 'assistant' && isLastReply(m) ? 'msgacts msgacts-last' : 'msgacts';
+  const last = m.k === 'assistant' && isLastReply(m);
+  const cls = last ? 'msgacts msgacts-last' : 'msgacts';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
     + ic('copy') + '</button>';
-  if (m.k !== 'user') return '<div class="' + cls + '">' + copy + '</div>';
+  if (m.k !== 'user') {
+    /* ATO-861: the last reply of a turn that ran no tool can be asked again,
+       through the question's own data-resend path (resendUser). Not while a
+       turn runs: resendUser would only park the text in the composer. */
+    const q = last && !S.busy ? plainTurnQuestion(m) : null;
+    const again = q ? '<button class="msgact" data-resend="' + esc(q.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>' : '';
+    return '<div class="' + cls + '">' + again + copy + '</div>';
+  }
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
   // BOTH kinds, so a `.msgacts.usr` element would have matched nothing in
