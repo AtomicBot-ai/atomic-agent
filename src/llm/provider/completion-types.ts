@@ -193,12 +193,25 @@ export interface CompletionTiming {
  * transcript lines seen when it was cut. Not a truncation and not a
  * provider failure: the completion is judged like one whose text was
  * detected as fabricated after it finished.
+ *
+ * `repetition`: a local model's reply fell into a loop, one block of
+ * `periodChars` characters repeated back to back
+ * (`createStreamRepetitionWatcher`), so the llama-server stream was
+ * aborted. The completion is marked `truncated`, and
+ * `detectModelFailure` reports it as a repetitive truncation: the step
+ * is retried without raising the cap.
  */
-export interface CompletionEarlyStop {
-  reason: "fabricated_transcript";
-  calls: number;
-  results: number;
-}
+export type CompletionEarlyStop =
+  | {
+      reason: "fabricated_transcript";
+      calls: number;
+      results: number;
+    }
+  | {
+      reason: "repetition";
+      channel: "content" | "reasoning";
+      periodChars: number;
+    };
 
 export interface CompletionResult {
   servedModelMode?: import("../model-mode.js").ResolvedModelMode;

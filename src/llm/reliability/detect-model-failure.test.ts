@@ -409,6 +409,38 @@ describe("detectModelFailure", () => {
     expect(result?.message).not.toContain("undefined");
   });
 
+  it("reports a reply the stream watcher cut for looping as a repetitive truncation", () => {
+    const completion = makeCompletion({
+      content: `{"text":"ok ${"}]\"}]".repeat(60)}`,
+      stop: false,
+      truncated: true,
+      earlyStop: { reason: "repetition", channel: "content", periodChars: 5 },
+    });
+    const result = detectModelFailure(completion, {
+      requestedMaxTokens: 16_384,
+    });
+    expect(result?.reason).toBe("truncated");
+    expect(result?.truncation?.repetitive).toBe(true);
+    // No count came back, so no wall is blamed; the retry keeps the cap.
+    expect(result?.truncation?.cause).toBe("unknown");
+    expect(result?.message).toContain("kept repeating the same text");
+    expect(result?.message).not.toContain("—");
+  });
+
+  it("marks a watcher cut as repetitive even when only the reasoning looped", () => {
+    const completion = makeCompletion({
+      content: "short",
+      reasoningContent: "Wait, let me check. ".repeat(20),
+      stop: false,
+      truncated: true,
+      earlyStop: { reason: "repetition", channel: "reasoning", periodChars: 20 },
+    });
+    expect(
+      detectModelFailure(completion, { requestedMaxTokens: 512 })?.truncation
+        ?.repetitive,
+    ).toBe(true);
+  });
+
   it("reports empty output when content is blank", () => {
     const completion = makeCompletion({
       content: "   ",

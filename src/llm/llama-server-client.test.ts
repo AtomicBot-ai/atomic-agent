@@ -1007,6 +1007,112 @@ describe("LlamaServerClient.completeStream transport release", () => {
       value: undefined,
     });
   });
+
+  // ATO-331 / ATO-414: a local model stuck closing `}]"}]` would stream it
+  // until the reply cap ran out. The client cuts it once the tail loops.
+  it("aborts a reply that loops and reports it as a repetition stop", async () => {
+    const encoder = new TextEncoder();
+    let signal: AbortSignal | undefined;
+    let cancelled = false;
+    let sent = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        signal = init.signal ?? undefined;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"content":"{\\"text\\":\\"Use direct verbs","stop":false}\n\n',
+                ),
+              );
+            },
+            // One chunk round and round, never a stop: the stream only
+            // ends if the client closes it.
+            pull(controller) {
+              sent += 1;
+              controller.enqueue(
+                encoder.encode('data: {"content":"}]\\"}]","stop":false}\n\n'),
+              );
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }),
+    });
+
+    const iterator = client.completeStream({ prompt: "hi" });
+    let final: CompletionResult | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) {
+        final = next.value;
+        break;
+      }
+    }
+    expect(final!.truncated).toBe(true);
+    expect(final!.stop).toBe(false);
+    expect(final!.earlyStop).toEqual({
+      reason: "repetition",
+      channel: "content",
+      periodChars: 5,
+    });
+    expect(final!.content.startsWith('{"text":"Use direct verbs')).toBe(true);
+    // Cut within a few hundred characters, not at the cap.
+    expect(final!.content.length).toBeLessThan(400);
+    expect(sent).toBeLessThan(100);
+    expect(signal?.aborted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cancelled).toBe(true);
+  });
+
+  it("does not cut a long reply whose lines differ", async () => {
+    const encoder = new TextEncoder();
+    const rows = Array.from(
+      { length: 200 },
+      (_, i) => `| ${i} | item ${i} | ${(i * 37) % 101} |\n`,
+    );
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const row of rows) {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ content: row, stop: false })}\n\n`,
+                    ),
+                  );
+                }
+                controller.enqueue(
+                  encoder.encode('data: {"content":"","stop":true}\n\n'),
+                );
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "hi" });
+    let final: CompletionResult | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) {
+        final = next.value;
+        break;
+      }
+    }
+    expect(final!.earlyStop).toBeUndefined();
+    expect(final!.truncated).toBe(false);
+    expect(final!.content).toBe(rows.join(""));
+  });
 });
 
 /**

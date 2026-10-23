@@ -80,6 +80,16 @@ export function detectModelFailure(
       options.contextWindow ?? null,
       options.defaultReplyCap,
     );
+    // The stream watcher already cut this reply for looping: it is a
+    // repetitive truncation whatever the tail check below would say, and
+    // no cap or window was hit, so the message names neither.
+    if (completion.earlyStop?.reason === "repetition") {
+      return {
+        reason: "truncated",
+        message: REPETITION_STOP_MESSAGE,
+        truncation: { ...classified, repetitive: true },
+      };
+    }
     // A model that thought in circles loops in its reasoning; one that
     // wrote in circles loops in the body. The body is the later text.
     const truncation: TruncationDetail = hasRepetitiveTail(
@@ -114,6 +124,11 @@ export function detectModelFailure(
   }
   return null;
 }
+
+/** What the user reads when a looping reply was cut and its retry failed too. */
+export const REPETITION_STOP_MESSAGE =
+  "model response stopped: the model kept repeating the same text over and over. " +
+  "Try again, or use a larger model";
 
 /**
  * A reply that stopped this close to the cap spent the cap. Servers
