@@ -2018,7 +2018,7 @@ export async function readWholeConfig(): Promise<{ ok: boolean; config?: UserCon
 function localLlamaUrlFromFile(cfg: UserConfigShape): string {
   const lm = cfg.localModels ?? {};
   if (lm.mode === "managed") return `http://127.0.0.1:${lm.managed?.port ?? 19091}`;
-  return lm.url ?? "http://127.0.0.1:8080";
+  return lm.url ?? "http://127.0.0.1:9931";
 }
 
 /**

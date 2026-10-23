@@ -7477,7 +7477,7 @@ async function settingsTestPartC(
   // ---- LLM: External pane + the probe ----
   const ext = await js<LlmPane>("window.__llmOpen('external')");
   const extBody = await js<string>("window.__settingsBody()");
-  const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:8080";
+  const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:9931";
   const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
   // The row as drawn: the "Server address" label, the URL, its status chip, and the action pill (the TUI's sentence as its tooltip).
   const extRow = await js<{ label: string; url: string; status: string; effect: string; title: string } | null>(
@@ -8593,17 +8593,21 @@ async function isolationAndSwitchTest(
      Pure, no agent involved. The exact file `atag config get` writes into an
      empty directory: localModels.mode external at the schema's own default
      url, no llm block, tui.onboarding all null. decideOnboarding
-     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there. */
-  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there.
+     ATO-834: the default is 9931 now; an install from before carries the
+     old 8080 default nobody chose, and must reach the wizard too. */
+  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9931", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+  const legacyCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
   const configuredCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9999", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
   const managedInExternal = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: "qwen-3.5-4b" } }, llm: {}, tui: { onboarding: {} } });
   const needFresh = await js<boolean>(`window.__needsOnboarding(${freshCfg})`);
+  const needLegacy = await js<boolean>(`window.__needsOnboarding(${legacyCfg})`);
   const needConfigured = await js<boolean>(`window.__needsOnboarding(${configuredCfg})`);
   const needManaged = await js<boolean>(`window.__needsOnboarding(${managedInExternal})`);
   check(
     "state dir: a fresh directory would reach the wizard",
-    needFresh === true && needConfigured === false && needManaged === false,
-    `default url → ${needFresh}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
+    needFresh === true && needLegacy === true && needConfigured === false && needManaged === false,
+    `default url → ${needFresh}; old 8080 default → ${needLegacy}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
   );
 
   // ---- item 9: the import offer reports names, never values ----
