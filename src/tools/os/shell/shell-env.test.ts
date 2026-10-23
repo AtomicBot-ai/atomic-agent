@@ -49,8 +49,9 @@ describe.skipIf(process.platform === "win32")(
       });
     }
 
+    // One printenv per name: BSD printenv on macOS takes a single name.
     const line =
-      "printenv ATO347_PLAIN ATO347_TEST_API_KEY ATO347_PASS_TOKEN; echo end";
+      "printenv ATO347_PLAIN; printenv ATO347_TEST_API_KEY; printenv ATO347_PASS_TOKEN; echo end";
 
     it("strips key and token variables and keeps the rest", async () => {
       const result = await tool().run({ cmd: line }, makeCtx());
