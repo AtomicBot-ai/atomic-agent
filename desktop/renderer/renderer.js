@@ -10823,6 +10823,12 @@ function apprChatFallback(req, decision, res) {
     return again;
   });
 }
+/* The receipt for a taken "Allow in this chat". A system row's text is html,
+   and the shape is the binary name the model chose, so it is escaped. */
+function apprChatGrantedNote(req) {
+  return {id:nid(), k:'system', apprNote:true,
+    text:'Allowed in this chat. Atomic Agent won\u2019t ask again about <code>' + esc(req.shape) + '</code> commands until you start a new chat.'};
+}
 function answerLive(req, key) {
   const approve = key === 'y' || key === 's' || key === 'a' || key === 'c';
   const inChat = key === 'c' && apprChatOk(req);
@@ -10866,10 +10872,7 @@ function answerLive(req, key) {
   BR.approve(req.approvalId, decision).then((res) => apprChatFallback(req, decision, res)).then((res) => {
     req.answering = false;
     req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
-    if (inChat && req.landed && res.chatGranted) {
-      placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
-        text:'Allowed in this chat. Atomic Agent won\u2019t ask again about ' + req.shape + ' commands until you start a new chat.'});
-    }
+    if (inChat && req.landed && res.chatGranted) placeAfterRow(req, apprChatGrantedNote(req));
     if (res && res.ok !== false && approvalNotWaiting(res.data)) apprNoLongerWaiting(req);
     else if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();

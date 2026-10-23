@@ -24,6 +24,12 @@ function fn(name) {
   return source.slice(at + 1, source.indexOf("\n}\n", at) + 2);
 }
 
+function constLine(name) {
+  const at = source.indexOf("\nconst " + name + " = ");
+  assert.ok(at >= 0, name + " is a top-level const in renderer.js");
+  return source.slice(at + 1, source.indexOf("\n", at + 1) + 1);
+}
+
 function context({ decisions, replies = [] } = {}) {
   const sent = [];
   const notes = [];
@@ -38,7 +44,8 @@ function context({ decisions, replies = [] } = {}) {
     nid: () => "n" + notes.length,
     placeAfterRow: (req, row) => notes.push(row.text),
   });
-  for (const name of ["apprChatOk", "approvalNotWaiting", "apprChatFallback"]) vm.runInContext(fn(name), c);
+  vm.runInContext(constLine("esc").replace(/^const /, "var "), c);
+  for (const name of ["apprChatOk", "approvalNotWaiting", "apprChatFallback", "apprChatGrantedNote"]) vm.runInContext(fn(name), c);
   return { c, sent, notes };
 }
 
@@ -62,6 +69,14 @@ test("a taken allow-in-chat is marked so the card can say what was granted", asy
   const res = await c.apprChatFallback(gitReq, "allow-in-chat", { ok: true, data: { resolved: true, grant: "chat" } });
   assert.equal(res.chatGranted, true);
   assert.deepEqual(sent, [], "nothing is sent twice");
+});
+
+test("the receipt names the command, escaped: a system row's text is html", () => {
+  const { c } = context();
+  assert.match(c.apprChatGrantedNote(gitReq).text, /about <code>git<\/code> commands until you start a new chat/);
+  const evil = c.apprChatGrantedNote({ ...gitReq, shape: "<img src=x onerror=alert(1)>" }).text;
+  assert.ok(!evil.includes("<img"), "the shape is not drawn as markup");
+  assert.match(evil, /&lt;img/);
 });
 
 test("a 400 to allow-in-chat goes again as allow-once and says the chat part did not happen", async () => {
