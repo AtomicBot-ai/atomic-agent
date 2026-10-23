@@ -1,7 +1,7 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
-import { enhancePrompt } from "./prompt-enhancer.js";
+import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
@@ -620,8 +620,10 @@ export async function createAgentRuntime(
   let swarmForShutdown: SwarmRegistry | null = null;
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
+  // In-flight `/enhance` passes; shutdown aborts them beside naming.
+  const pendingPromptEnhances = new Set<AbortController>();
   const lifecycle = createRuntimeLifecycle({
-    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight, compaction,
+    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, pendingPromptEnhances, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
     embeddingBackfill: memoryEmbeddings,
     get scheduler() { return scheduler; },
@@ -721,12 +723,15 @@ export async function createAgentRuntime(
     cancelSessionCompaction: compaction.cancelSessionCompaction,
     enhancePrompt: (draft: string, enhanceOptions?: { sessionId?: string; signal?: AbortSignal }) => {
       if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down" });
+      const partition = promptEnhancePartition(enhanceOptions?.sessionId);
       return enhancePrompt(draft, {
         complete: (params) => llmComplete(params),
         slotId: () => slotManager.sideCallSlotId(),
         // Same wire-shape rule as session naming: a cloud link answers a
-        // bare prompt with an empty `content`.
-        toolTransport: resolveActiveLlmSlice().transport,
+        // bare prompt with an empty `content`. Resolved through the
+        // partition's own standing override, like compaction's route.
+        toolTransport: resolveActiveLlmSlice(fallbackChain.standingOverrideFor(partition) ?? undefined).transport,
+        pending: pendingPromptEnhances,
         serverTemplate: getConfig().localModels.useServerTemplate !== "off",
         ...(enhanceOptions?.sessionId ? { sessionId: enhanceOptions.sessionId } : {}),
         ...(enhanceOptions?.signal ? { signal: enhanceOptions.signal } : {}),

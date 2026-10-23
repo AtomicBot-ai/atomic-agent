@@ -126,19 +126,121 @@ describe("enhancePrompt", () => {
   });
 });
 
+describe("enhancePrompt against the person's own text", () => {
+  it("keeps a draft's own <think> tags in a prose answer", async () => {
+    const draft = "Explain why the parser drops <think> blocks before the answer.";
+    const rewrite = "Explain why the parser drops <think> blocks that appear before the answer, with an example.";
+    const result = await enhancePrompt(draft, {
+      complete: async () => ({ content: rewrite }),
+      slotId: () => 0,
+    });
+    expect(result).toEqual({ ok: true, text: rewrite });
+  });
+
+  it("never strips reasoning out of the tool arguments", async () => {
+    const rewrite = "Rename <think> to <reasoning> in the template and keep the tests passing.";
+    const result = await enhancePrompt("rename think tag to reasoning", {
+      complete: async () => ({
+        content: "",
+        toolCalls: [{ function: { name: "emit_enhanced_prompt", arguments: JSON.stringify({ prompt: rewrite }) } }],
+      }),
+      slotId: () => 0,
+      toolTransport: "native_tools",
+    });
+    expect(result).toEqual({ ok: true, text: rewrite });
+  });
+
+  it("refuses a rewrite that came back much shorter than the draft", async () => {
+    const draft = "Add retry with backoff to the uploader, keep the 3 attempt cap, log each retry, and update the docs.";
+    const result = await enhancePrompt(draft, {
+      complete: async () => ({ content: "Add retry." }),
+      slotId: () => 0,
+    });
+    expect(result.ok).toBe(false);
+  });
+});
+
+describe("enhancePrompt lifecycle", () => {
+  it("holds its controller in the pending set only while it runs", async () => {
+    const pending = new Set<AbortController>();
+    let seen = 0;
+    const result = await enhancePrompt("draft", {
+      complete: async () => {
+        seen = pending.size;
+        return { content: "Rewritten draft." };
+      },
+      slotId: () => 0,
+      pending,
+    });
+    expect(result.ok).toBe(true);
+    expect(seen).toBe(1);
+    expect(pending.size).toBe(0);
+  });
+
+  it("stops when shutdown aborts the pending set", async () => {
+    const pending = new Set<AbortController>();
+    const call = enhancePrompt("draft", {
+      complete: (params) =>
+        new Promise((_, reject) => {
+          params.signal.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+      slotId: () => 0,
+      pending,
+    });
+    for (const controller of pending) controller.abort();
+    expect(await call).toEqual({ ok: false, reason: "cancelled" });
+    expect(pending.size).toBe(0);
+  });
+
+  it("reports a failure building the request and still cleans up", async () => {
+    const pending = new Set<AbortController>();
+    const result = await enhancePrompt("draft", {
+      complete: async () => ({ content: "x" }),
+      slotId: () => {
+        throw new Error("no slot");
+      },
+      pending,
+    });
+    expect(result).toEqual({ ok: false, reason: "no slot" });
+    expect(pending.size).toBe(0);
+  });
+});
+
 describe("sanitizeEnhancedPrompt", () => {
   it("drops the wrapping a model reaches for", () => {
-    expect(sanitizeEnhancedPrompt("<think>hm</think>\nImproved prompt: Do X.")).toBe("Do X.");
-    expect(sanitizeEnhancedPrompt("```\nDo X.\nThen Y.\n```")).toBe("Do X.\nThen Y.");
-    expect(sanitizeEnhancedPrompt('"Do X."')).toBe("Do X.");
+    const draft = "do x";
+    expect(sanitizeEnhancedPrompt("<think>hm</think>\nImproved prompt: Do X.", { draft })).toBe("Do X.");
+    expect(sanitizeEnhancedPrompt("```\nDo X.\nThen Y.\n```", { draft })).toBe("Do X.\nThen Y.");
+    expect(sanitizeEnhancedPrompt('"Do X."', { draft })).toBe("Do X.");
   });
 
   it("keeps quotes that are part of the prompt", () => {
-    expect(sanitizeEnhancedPrompt('"a" and "b"')).toBe('"a" and "b"');
+    expect(sanitizeEnhancedPrompt('"a" and "b"', { draft: "a and b" })).toBe('"a" and "b"');
+  });
+
+  it("keeps the quotes of a wholly quoted draft", () => {
+    expect(sanitizeEnhancedPrompt('"Say hello."', { draft: '"say hello"' })).toBe('"Say hello."');
+  });
+
+  it("keeps a leading Prompt: label the draft itself opens with", () => {
+    expect(sanitizeEnhancedPrompt("Prompt: a haiku about rain.", { draft: "prompt: haiku rain" })).toBe(
+      "Prompt: a haiku about rain.",
+    );
+  });
+
+  it("does not merge two separate code blocks into one", () => {
+    const two = "```\na()\n```\nthen\n```\nb()\n```";
+    expect(sanitizeEnhancedPrompt(two, { draft: "run a then b" })).toBe(two);
+  });
+
+  it("keeps reasoning-looking text the draft itself contains", () => {
+    expect(
+      sanitizeEnhancedPrompt("Thinking process: write it as a numbered list.", { draft: "Thinking process: list it" }),
+    ).toBe("Thinking process: write it as a numbered list.");
   });
 
   it("answers null when nothing survives", () => {
-    expect(sanitizeEnhancedPrompt("  ")).toBeNull();
+    expect(sanitizeEnhancedPrompt("  ", { draft: "x" })).toBeNull();
   });
 });
 
@@ -149,6 +251,15 @@ describe("extractEnhancedPromptText", () => {
         content: "Prose answer.",
         toolCalls: [{ id: "c1", type: "function", function: { name: "emit_enhanced_prompt", arguments: "{oops" } }],
       }),
-    ).toBe("Prose answer.");
+    ).toEqual({ text: "Prose answer.", fromTool: false });
+  });
+
+  it("falls back to prose when the tool returns an empty prompt", () => {
+    expect(
+      extractEnhancedPromptText({
+        content: "Prose answer.",
+        toolCalls: [{ function: { name: "emit_enhanced_prompt", arguments: JSON.stringify({ prompt: "" }) } }],
+      }),
+    ).toEqual({ text: "Prose answer.", fromTool: false });
   });
 });

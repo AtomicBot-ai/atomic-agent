@@ -2547,6 +2547,25 @@ describe("reduceTuiState composer_draft_replaced", () => {
     expect(state.composerNotice).toContain("Review it");
   });
 
+  it("says so when the rewrite matches the draft", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "Fix the login bug." },
+      { type: "composer_draft_replaced", expected: "Fix the login bug.", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("Fix the login bug.");
+    expect(state.composerNotice).toContain("already reads clearly");
+  });
+
+  it("says the draft was sent when the composer is empty", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login" },
+      { type: "input_changed", value: "" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("");
+    expect(state.composerNotice).toContain("sent or cleared");
+  });
+
   it("keeps an edit made while the rewrite ran", () => {
     const state = apply(createInitialTuiState(fakeSession()), [
       { type: "input_changed", value: "fix login, and the logout" },

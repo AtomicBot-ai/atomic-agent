@@ -354,7 +354,9 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         return {
           ...state,
           composerNotice:
-            "Enhanced prompt not applied: the draft changed while it ran.",
+            state.inputValue.trim().length === 0
+              ? "Enhanced prompt not applied: the draft was sent or cleared while it ran."
+              : "Enhanced prompt not applied: the draft changed while it ran.",
         };
       }
       return {

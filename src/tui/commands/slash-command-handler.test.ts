@@ -565,9 +565,10 @@ describe("/enhance", () => {
     );
   });
 
-  it("answers usage, and runs nothing, without a draft", () => {
+  it("leaves bare /enhance to the caller, which can see the composer, and never clears it", () => {
     const result = dispatchSlashCommand("/enhance");
     expect(result.enhancePromptText).toBeUndefined();
-    expect(result.systemMessage).toContain("Usage: /enhance");
+    expect(result.enhanceCurrentDraft).toBe(true);
+    expect(result.clearBuffer).toBe(false);
   });
 });
