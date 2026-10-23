@@ -241,6 +241,7 @@ export async function executeBatch(
           ? { userGroundingTexts: ctx.userGroundingTexts }
           : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
+        ...(ctx.tracker ? { fileVersions: ctx.tracker.fileVersions } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {
