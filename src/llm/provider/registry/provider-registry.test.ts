@@ -126,6 +126,58 @@ describe("ProviderRegistry", () => {
       logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
     });
     expect(registry.listIds()).toContain("embed-only");
+    await expect(registry.swapActive("embed-only")).rejects.toThrow(
+      /has no chat model and cannot be the active text provider/,
+    );
+    expect(registry.activeTextProviderId).toBe("chat-provider");
+  });
+
+  it("lets a chatless entry become active once a rebuild pins a chat model (ATO-386)", async () => {
+    registerBuiltInProviderKinds();
+    const logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never;
+    const llm = (embedOnly: { defaultChatModel?: string }) => ({
+      activeTextProvider: "chat-provider",
+      activeEmbeddingProvider: "embed-only",
+      toolTransport: "auto" as const,
+      providers: [
+        {
+          id: "chat-provider",
+          kind: "openai-compatible",
+          baseUrl: "https://example.invalid",
+          defaultChatModel: "gpt-4",
+        },
+        {
+          id: "embed-only",
+          kind: "openai-compatible",
+          baseUrl: "https://example.invalid",
+          defaultEmbeddingModel: "nomic-embed-text",
+          ...embedOnly,
+        },
+      ],
+    });
+    const before = { ...getConfig(), llm: llm({}) } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(before, {
+      config: before,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger,
+    });
+    await expect(registry.swapActive("embed-only")).rejects.toThrow(
+      /no chat model/,
+    );
+    // What `/model embed-only <model-id>` and the TUI model picker do:
+    // write the pin, rebuild that one provider, then switch. The guard
+    // must read the rebuilt entry, not the one captured at boot.
+    const after = {
+      ...getConfig(),
+      llm: llm({ defaultChatModel: "qwen3-8b" }),
+    } as AtomicAgentConfig;
+    await registry.replaceProviderFromConfig("embed-only", after, {
+      config: after,
+      logger,
+    });
+    await registry.swapActive("embed-only");
+    expect(registry.activeTextProviderId).toBe("embed-only");
   });
 
   it("allows a defaultEmbeddingModel-only provider with no userModels (#410)", async () => {

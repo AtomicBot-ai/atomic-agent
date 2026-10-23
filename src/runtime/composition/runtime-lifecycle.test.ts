@@ -67,6 +67,17 @@ describe("runtime lifecycle ownership", () => {
     expect(events).toEqual(order);
   });
 
+  it("aborts an in-flight prompt enhance on shutdown", async () => {
+    const events: string[] = [];
+    const { resources } = fixture(events);
+    const enhance = new AbortController();
+    const pendingPromptEnhances = new Set([enhance]);
+    const lifecycle = createRuntimeLifecycle({ ...resources, pendingPromptEnhances });
+    await lifecycle.shutdown();
+    expect(enhance.signal.aborted).toBe(true);
+    expect(pendingPromptEnhances.size).toBe(0);
+  });
+
   it("keeps the existing scheduler drain position and immediate second-shutdown return", async () => {
     const events: string[] = [];
     let release: () => void = () => {};

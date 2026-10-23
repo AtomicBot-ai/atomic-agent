@@ -101,3 +101,55 @@ export function hiddenLinesNote(
   }
   return parts.length === 0 ? null : `… ${parts.join(", ")}`;
 }
+
+/** Whether `excerptPreview` would leave any of `preview` out. */
+export function isPreviewCut(
+  preview: string,
+  limits: PreviewExcerptLimits,
+): boolean {
+  const excerpt = excerptPreview(preview, limits);
+  return excerpt.hiddenLines > 0 || excerpt.cutChars > 0;
+}
+
+/**
+ * The whole preview split into pages that each fit `limits` (ATO-876),
+ * for a surface that has to show all of it, a page at a time, before
+ * the person decides. Every character of the preview is on exactly one
+ * page, in order: lines are kept whole where they fit, and a line
+ * longer than `maxChars` is split across pieces of that size rather
+ * than cut. Controls are escaped the same way as in the excerpt.
+ */
+export function pagePreview(
+  preview: string,
+  limits: PreviewExcerptLimits,
+): string[][] {
+  const width = Math.max(1, limits.maxChars);
+  const pieces: string[] = [];
+  for (const line of previewLines(preview)) {
+    if (line.length <= width) {
+      pieces.push(line);
+      continue;
+    }
+    for (let at = 0; at < line.length; at += width) {
+      pieces.push(line.slice(at, at + width));
+    }
+  }
+  const pages: string[][] = [];
+  let page: string[] = [];
+  let used = 0;
+  for (const piece of pieces) {
+    const separator = page.length > 0 ? 1 : 0;
+    const full =
+      page.length >= limits.maxLines ||
+      used + separator + piece.length > width;
+    if (page.length > 0 && full) {
+      pages.push(page);
+      page = [];
+      used = 0;
+    }
+    used += (page.length > 0 ? 1 : 0) + piece.length;
+    page.push(piece);
+  }
+  if (page.length > 0) pages.push(page);
+  return pages;
+}

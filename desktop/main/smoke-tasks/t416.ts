@@ -215,13 +215,15 @@ export async function checks416(js: Js, check: Check): Promise<void> {
       const g = (over: Partial<Parameters<typeof mergeGate>[0]>) => mergeGate({ currentDir: shared, sharedDir: shared, legacyDir: legacy, fromEnv: false, ...over }).run;
       const table = {
         runs: g({}),
-        fromEnv: g({ fromEnv: true }),
+        // ATO-418: an env that names the shared directory itself still merges; one naming another does not.
+        envNamesShared: g({ fromEnv: true }),
+        fromEnv: g({ fromEnv: true, currentDir: join(root, "elsewhere") }),
         otherDir: g({ currentDir: join(root, "elsewhere") }),
         noLegacySetup: g({ legacyDir: none }),
         sameDirs: g({ legacyDir: shared }),
       };
       check("T416 (a): the gate runs only on the shared default directory with an earlier desktop setup",
-        table.runs && !table.fromEnv && !table.otherDir && !table.noLegacySetup && !table.sameDirs, show(table));
+        table.runs && table.envNamesShared && !table.fromEnv && !table.otherDir && !table.noLegacySetup && !table.sameDirs, show(table));
       mkdirSync(shared, { recursive: true });
       writeFileSync(join(shared, MERGE_MARKER), JSON.stringify({ ok: false, attempts: MAX_ATTEMPTS }));
       const gaveUp = g({});

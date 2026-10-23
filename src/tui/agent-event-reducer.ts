@@ -24,6 +24,7 @@ import {
   fusionWorkerLineColor,
 } from "./format-fusion-worker-line.js";
 import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
+import { nextApprovalPreviewPage } from "./approval-preview-pages.js";
 import {
   appendChatMessage,
   appendFeed,
@@ -272,6 +273,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // A redirect re-prompts for the new target; the previous
         // prompt's draft must not leak into it.
         approvalPathDraft: null,
+        approvalPreviewPage: null,
       };
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
@@ -279,6 +281,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         pendingApproval: null,
         approvalPathDraft: null,
+        approvalPreviewPage: null,
         // Resolving the visible turn's request resumes that turn:
         // `running`. Resolving a background turn's request resumes a
         // turn this transcript is not showing — the visible status
@@ -296,6 +299,20 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, approvalPathDraft: action.value };
     case "approval_path_edit_closed":
       return { ...state, approvalPathDraft: null };
+    case "approval_preview_paged": {
+      const request = state.pendingApproval;
+      if (!request) return state;
+      const current =
+        state.approvalPreviewPage?.approvalId === request.approvalId
+          ? state.approvalPreviewPage.page
+          : null;
+      const next = nextApprovalPreviewPage(request, current);
+      return {
+        ...state,
+        approvalPreviewPage:
+          next === null ? null : { approvalId: request.approvalId, page: next },
+      };
+    }
       return { ...state, pendingApproval: null, status: "running" };
     case "composer_notice":
       if (state.composerNotice === action.text) return state;
@@ -349,6 +366,26 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         inputHistoryDraft: null,
       };
     }
+    case "composer_draft_replaced":
+      if (state.inputValue !== action.expected) {
+        return {
+          ...state,
+          composerNotice:
+            state.inputValue.trim().length === 0
+              ? "Enhanced prompt not applied: the draft was sent or cleared while it ran."
+              : "Enhanced prompt not applied: the draft changed while it ran.",
+        };
+      }
+      return {
+        ...state,
+        inputValue: action.value,
+        inputHistoryCursor: null,
+        inputHistoryDraft: null,
+        composerNotice:
+          action.value === action.expected
+            ? "The prompt already reads clearly; nothing changed."
+            : "Enhanced prompt is in the composer. Review it, then press Enter to send.",
+      };
     case "message_waiting_for_model":
       if (action.sessionId !== state.session.sessionId) return state;
       return { ...appendUserMessage(state, action.text), pendingModelMessage: { sessionId: action.sessionId, text: action.text } };

@@ -90,6 +90,8 @@ export interface LlmStreamParams {
   maxOutputTokens?: number;
   /** The turn's reasoning effort (`RunTurnOptions.reasoningEffort`). */
   reasoningEffort?: ReasoningEffort;
+  /** See `CompletionRequest.disableThinking`. */
+  disableThinking?: boolean;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;

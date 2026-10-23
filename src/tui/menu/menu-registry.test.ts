@@ -239,6 +239,10 @@ const V0_2_2_SLASH_COMMANDS = [
     description: "summarize older context; show displays the saved summary",
   },
   {
+    name: "enhance",
+    description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",

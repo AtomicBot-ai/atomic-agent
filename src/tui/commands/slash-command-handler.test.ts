@@ -547,3 +547,28 @@ describe("context compaction commands", () => {
     expect(dispatchSlashCommand("/help").systemMessage).not.toContain("/compound");
   });
 });
+
+describe("/enhance", () => {
+  it("keeps the draft in the composer and asks for one rewrite, never sending it", () => {
+    const result = dispatchSlashCommand("/enhance fix the login bug");
+    expect(result).toMatchObject({
+      enhancePromptText: "fix the login bug",
+      clearBuffer: false,
+      forwardAsMessage: false,
+    });
+    expect(result.actions).toEqual([{ type: "input_changed", value: "fix the login bug" }]);
+  });
+
+  it("keeps a multi-line draft whole", () => {
+    expect(dispatchSlashCommand("/enhance first line\nsecond line").enhancePromptText).toBe(
+      "first line\nsecond line",
+    );
+  });
+
+  it("leaves bare /enhance to the caller, which can see the composer, and never clears it", () => {
+    const result = dispatchSlashCommand("/enhance");
+    expect(result.enhancePromptText).toBeUndefined();
+    expect(result.enhanceCurrentDraft).toBe(true);
+    expect(result.clearBuffer).toBe(false);
+  });
+});

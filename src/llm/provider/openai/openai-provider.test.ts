@@ -582,3 +582,32 @@ describe("OpenAiProvider without defaultChatModel", () => {
     ).rejects.toThrow(/has no defaultChatModel configured/);
   });
 });
+
+describe("OpenAiProvider template thinking switch", () => {
+  const sentBody = async (providerKind: string | undefined, baseUrl: string, request: CompletionRequest) => {
+    const fetchImpl = fakeFetch({ role: "assistant", content: "ok" });
+    await new OpenAiProvider({
+      id: "test", baseUrl, apiKey: "", defaultChatModel: "qwen-test",
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      ...(providerKind ? { providerKind } : {}),
+    }).complete(request);
+    const init = (fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1];
+    return JSON.parse(String(init.body)) as Record<string, unknown>;
+  };
+
+  it("sends enable_thinking false to a local OpenAI-compatible server for a no-thinking request", async () => {
+    for (const kind of ["openai-compatible", "qwen-openai-compatible"]) {
+      const body = await sentBody(kind, "http://127.0.0.1:8080", { prompt: "sum", disableThinking: true });
+      expect(body.chat_template_kwargs).toEqual({ enable_thinking: false });
+    }
+  });
+
+  it("never sends it to a public endpoint or an unknown kind", async () => {
+    expect(await sentBody("openai-compatible", "https://api.openai.com/v1", { prompt: "sum", disableThinking: true })).not.toHaveProperty("chat_template_kwargs");
+    expect(await sentBody(undefined, "http://127.0.0.1:8080", { prompt: "sum", disableThinking: true })).not.toHaveProperty("chat_template_kwargs");
+  });
+
+  it("does not send it for a request that did not ask", async () => {
+    expect(await sentBody("openai-compatible", "http://localhost:1234", { prompt: "turn" })).not.toHaveProperty("chat_template_kwargs");
+  });
+});

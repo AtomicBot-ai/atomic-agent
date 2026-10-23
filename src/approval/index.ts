@@ -27,6 +27,8 @@ export type { ApprovalCategory, ApprovalLevel } from "./approval-level.js";
 export {
   excerptPreview,
   hiddenLinesNote,
+  isPreviewCut,
+  pagePreview,
   previewLines,
 } from "./approval-preview.js";
 export type {

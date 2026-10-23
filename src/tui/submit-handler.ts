@@ -1,5 +1,6 @@
 import {
   dispatchSlashCommand,
+  ENHANCE_USAGE,
   type SlashDispatchResult,
 } from "./commands/slash-command-handler.js";
 import { runRunModeVerb } from "./commands/run-mode-verb.js";
@@ -177,6 +178,30 @@ function handleSessionPickerSubmit(
   dispatch({ type: "input_changed", value: "" });
 }
 
+/**
+ * Bare `/enhance`. From the menu the composer still holds the person's
+ * draft, so that is what gets enhanced; typed or picked in the palette
+ * the buffer is the command itself, and the answer is the usage line.
+ * Either way the buffer is left as it was.
+ */
+function runEnhanceCurrentDraft(
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const draft = state.inputValue.trim();
+  if (draft.length === 0 || draft.startsWith("/")) {
+    dispatch({ type: "runtime_info", line: ENHANCE_USAGE });
+    dispatch({ type: "system_message", text: ENHANCE_USAGE });
+    // A buffer holding the command itself (`/enhance`, or `/enh` from the
+    // palette) has done its job; an empty one has nothing to clear.
+    if (draft.length > 0) dispatch({ type: "input_changed", value: "" });
+    return;
+  }
+  dispatch({ type: "input_changed", value: draft });
+  callbacks.onPromptEnhanceRequested?.(draft);
+}
+
 export function runSlashCommand(
   raw: string,
   state: TuiState,
@@ -270,6 +295,10 @@ export function runSlashCommand(
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
   if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb);
+  if (result.enhancePromptText !== undefined) {
+    callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);
+  }
+  if (result.enhanceCurrentDraft) runEnhanceCurrentDraft(state, dispatch, callbacks);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {

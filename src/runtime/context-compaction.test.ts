@@ -20,6 +20,7 @@ import type { CompactionEvent } from "../agent/compaction-control.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 import { planCompactionChunks, prepareCompactionSource } from "./context-compaction-chunks.js";
 import type { LlmStreamParams } from "../agent/step/step-contract.js";
+import { compactionReplyBudget } from "./compaction-reply-budget.js";
 
 let dir: string;
 beforeEach(() => {
@@ -69,10 +70,11 @@ describe("compaction configuration and projection", () => {
   it("defaults old config and rejects invalid ratios", () => {
     expect(getConfig().agent.compaction).toEqual(createCompactionDefaults());
     expect(parseCompactionConfig(undefined, createCompactionDefaults())).toEqual(createCompactionDefaults());
-    expect(createCompactionDefaults()).toMatchObject({ mode: "auto", timeoutMs: 600000, maxTotalTimeoutMs: 600000 });
+    expect(createCompactionDefaults()).toMatchObject({ mode: "auto", timeoutMs: 600000, maxTotalTimeoutMs: 600000, reasoningReserveTokens: 4096 });
+    expect(parseCompactionConfig({ reasoningReserveTokens: 0 }, createCompactionDefaults()).reasoningReserveTokens).toBe(0);
     expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ mode: "auto", timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
     for (const mode of ["auto", "model", "extractive"]) expect(parseCompactionConfig({ mode }, createCompactionDefaults()).mode).toBe(mode);
-    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { mode: "fast" }, { mode: 1 }]) {
+    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { reasoningReserveTokens: -1 }, { reasoningReserveTokens: 1.5 }, { mode: "fast" }, { mode: 1 }]) {
       expect(() => parseCompactionConfig(raw, createCompactionDefaults())).toThrow();
     }
   });
@@ -350,7 +352,12 @@ describe("atomic compaction", () => {
     const plan = planCompaction(state, buildPrompt(largeInput), f.config)!;
     const requests = f.complete.mock.calls.map(([p]) => p);
     expect(requests.length).toBeGreaterThan(1);
-    expect(requests.every((p) => estimateTokens(p.prompt) <= 12000 - plan.summaryMaxTokens - 1024)).toBe(true);
+    // The reply allowance includes reasoning room, and the input gives that room up.
+    const budget = compactionReplyBudget(12000, plan.summaryMaxTokens, f.config.reasoningReserveTokens);
+    expect(budget.maxTokens).toBeGreaterThan(plan.summaryMaxTokens);
+    expect(requests.every((p) => estimateTokens(p.prompt) <= budget.inputBudget)).toBe(true);
+    expect(requests.every((p) => p.maxTokens === budget.maxTokens && p.maxOutputTokens === budget.maxTokens && p.disableThinking === true)).toBe(true);
+    expect(requests.every((p) => p.chat!.system.includes(`Keep the entire summary within ${plan.summaryMaxTokens} tokens.`))).toBe(true);
     const sentSource = requests.map((p) => p.chat!.user.split(/New conversation records \(part starting at character \d+\):\n/)[1]).join("");
     const original = state.turns.slice(plan.from, plan.through).map((turn, i) => `Record ${plan.from + i}: ${JSON.stringify(turn)}`).join("\n");
     expect(sentSource).toBe(original);
@@ -399,7 +406,7 @@ describe("atomic compaction", () => {
       expect(request.chat!.user).toContain("CURRENT: finish the button first, never publish it.");
       expect(request.chat!.user).toContain("LATEST: keep keyboard shortcuts; do not repeat completed reads.");
       expect(request.chat!.system).toContain("not establish new goals");
-      expect(estimateTokens(request.prompt)).toBeLessThanOrEqual(12000 - f.config.summaryMaxTokens - 1024);
+      expect(estimateTokens(request.prompt)).toBeLessThanOrEqual(compactionReplyBudget(12000, f.config.summaryMaxTokens, f.config.reasoningReserveTokens).inputBudget);
     }
   });
   it("retains old state when request anchors leave no room instead of truncating them", async () => {
