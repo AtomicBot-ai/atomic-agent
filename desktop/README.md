@@ -264,7 +264,7 @@ Real, driven by the running agent:
   `DELETE /api/sessions/{id}`, not a splice that the next load undoes; deleting the open
   chat leaves an empty new one.
   Each list header carries a **+** on its own line: the one on Chats starts a
-  new chat, the one on Tasks opens Settings › Tasks with the create form up,
+  new chat, the one on Tasks opens Settings › Tasks on a new task,
   and on the Tasks header `N running` sits to the left of it. The head row —
   the lockup and the workspace chip — carries no plus at all; the user asked
   for it there and nowhere else. The dot on a row is a 6px ring seated on the
@@ -506,11 +506,17 @@ Honestly degraded, and labelled as such in the UI:
   does not have; the tool counters come from the open session's store rows.
   The Privacy tab shows the effective `analytics.enabled` (the schema default
   when `config.json` has no key, read with `atag config get`), as the TUI does.
-- **Tasks** create through `atag task create` (POST /api/tasks on 0.5.4 takes
-  no schedule), cancel through `DELETE /api/tasks/{id}` and run-now through
-  `POST /api/tasks/{id}/run`; the next-firings preview is the agent's own
-  cron-parser. The firings feed is not exposed by the HTTP API, so the task
-  page has no Recent firings section.
+- **Tasks** start in plain words (ATO-519): New task asks one sentence, such
+  as "every weekday at 9, send me a summary", and sends it as the first message
+  of a new chat, where the agent schedules it with its own `tasks.cron` /
+  `tasks.schedule` tools ([task-ask.js](renderer/task-ask.js)). **Set up
+  manually** opens the cron / interval / at form, which creates through
+  `atag task create` (POST /api/tasks on 0.5.4 takes no schedule). Cancel goes
+  through `DELETE /api/tasks/{id}` and run-now through
+  `POST /api/tasks/{id}/run`; the form's Next runs preview is the agent's own
+  cron-parser. With no tasks at all the list hides its filters and search.
+  The firings feed is not exposed by the HTTP API, so the task page has no
+  Recent firings section.
 - **Skills** in cloud mode read the selected session's live workspace catalog
   through HTTP, including `.agents`, `.claude`, `.cursor` and `.pi` skills,
   disabled reasons and the chosen source directory. Before the first message

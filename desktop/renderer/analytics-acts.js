@@ -76,7 +76,7 @@ const ANX_ACTS = (() => {
         neighbor:L, open:L, page:UPDOWN, refresh:L},
       tasks:{auto:L, back:L, cancel:L, cancelConfirm:L, cancelKeep:L, clearSearch:L, detail:L,
         filter:set(taskFilters), kind:{cron:L, interval:L, at:L}, new:L, open:L, page:UPDOWN,
-        refresh:L, run:L, search:L, submit:L},
+        refresh:L, run:L, search:L, submit:L, ask:L, manual:L, plain:L, example:L},
       llm:{mode:Object.assign(set(llmModes), {next:L, prev:L}), add:L, autoUpdate:L, back:L, backend:L,
         cancel:L, cancelPull:L, configure:L, confirm:L, daemon:L, device:L, edit:L, embToggle:L,
         embedding:L, enter:L, external:{cancel:L, save:L, edit:L}, filter:L, logs:L, logsRefresh:L,
