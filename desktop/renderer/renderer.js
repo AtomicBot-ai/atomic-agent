@@ -2816,9 +2816,13 @@ function isLastReply(m) {
 /* ATO-861: the question a reply answers, when its turn used no tools. Walks
    back from the reply to the nearest user message that is not a steer; a tool
    card or an approval on the way means the turn acted, and the answer is null.
-   null too when the question is empty, as resendUser would send nothing. */
+   null too when the question is empty, as resendUser would send nothing,
+   and when a later message follows the reply: a turn that ended as "(no
+   reply)" or "(stopped)" leaves the reply above it as the last real one, and
+   re-asking that older question is not retrying the one that just failed. */
 function replyRetryAsk(m) {
   const at = S.log.findIndex((x) => x.id === m.id);
+  if (at < 0 || S.log.slice(at + 1).some((x) => x.k === 'user')) return null;
   for (let i = at - 1; i >= 0; i--) {
     const x = S.log[i];
     if (x.k === 'tool' || x.k === 'approval') return null;
@@ -29368,7 +29372,8 @@ if (typeof window !== 'undefined') {
        under test. */
     let acted = false;
     for (let p = t.previousElementSibling; p && !p.classList.contains('usr'); p = p.previousElementSibling) {
-      if (p.classList.contains('tk-step') || p.querySelector('.appr')) { acted = true; break; }
+      // A tool card (single or folded run, [data-tool]), the Exa key card, or an approval; a reasoning row is also .tk-step but is not an action.
+      if (p.classList.contains('exak-turn') || p.querySelector('[data-tool], .appr')) { acted = true; break; }
     }
     return {present: true, acted, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
             btnLeft: btns[0] ? Math.round(btns[0].getBoundingClientRect().left) : null,
@@ -29390,15 +29395,15 @@ if (typeof window !== 'undefined') {
      request to draw. */
   window.__replyRetry = () => {
     const keep = {log: S.log, busy: S.busy, streamId: S.streamId};
-    const lastActs = () => {
-      const t = Array.from(document.querySelectorAll('.turn')).filter((r) => r.querySelector('.prose:not(.usr)')).pop();
+    const lastActs = (real) => {
+      const t = Array.from(document.querySelectorAll('.turn')).filter((r) => r.querySelector(real ? '.prose:not(.usr):not(.tk-ph)' : '.prose:not(.usr)')).pop();
       const box = t ? t.querySelector('.msgacts') : null;
       if (!box) return null;
       return Array.from(box.querySelectorAll('button')).map((b) => b.dataset.resend
         ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy' : '?');
     };
-    const drawn = (log, busy) => { S.log = log; S.busy = !!busy; S.streamId = null; render(); return lastActs(); };
+    const drawn = (log, busy, real) => { S.log = log; S.busy = !!busy; S.streamId = null; render(); return lastActs(real); };
     const tool = {id: 'rr-t', k: 'tool', name: 'os.fs.list_dir', arg: '~', where: 'local', ms: 4, ok: true, open: false, out: 'a.txt'};
     try {
       const out = {
@@ -29412,6 +29417,9 @@ if (typeof window !== 'undefined') {
                         {id: 'rr-a', k: 'assistant', text: 'rain on the window'}]),
         busy: drawn([{id: 'rr-u', k: 'user', text: 'hello'}, {id: 'rr-a', k: 'assistant', text: 'hi'}], true),
         placeholder: drawn([{id: 'rr-u', k: 'user', text: 'hello'}, {id: 'rr-a', k: 'assistant', text: '(no reply)', placeholder: true}]),
+        // A later turn that ended as "(stopped)": the real reply above it (read past the placeholder) must not re-ask the older question.
+        stopped: drawn([{id: 'rr-u0', k: 'user', text: 'hello'}, {id: 'rr-a0', k: 'assistant', text: 'hi'},
+                        {id: 'rr-u', k: 'user', text: 'write a long story'}, {id: 'rr-a', k: 'assistant', text: '(stopped)', placeholder: true}], false, true),
       };
       S.log = [{id: 'rr-u', k: 'user', text: 'delete the old logs'}, {id: 'rr-p', k: 'approval', state: 'approved'},
                {id: 'rr-a', k: 'assistant', text: 'done'}];

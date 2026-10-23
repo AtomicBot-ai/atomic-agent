@@ -12794,7 +12794,7 @@ async function chromeTest(
     // ATO-863: "Ask again" under the last reply only when its turn used no tools.
     type ReplyRetry = {
       plain: string[] | null; tool: string[] | null; earlier: string[] | null; steered: string[] | null;
-      busy: string[] | null; placeholder: string[] | null; approval: { id: string } | null;
+      busy: string[] | null; placeholder: string[] | null; stopped: string[] | null; approval: { id: string } | null;
     };
     const rr = await js<ReplyRetry>("window.__replyRetry()");
     const again = '["resend:rr-u:Ask again","copy"]';
@@ -12804,10 +12804,10 @@ async function chromeTest(
       JSON.stringify({ plain: rr.plain, earlier: rr.earlier, steered: rr.steered }),
     );
     check(
-      "item 4: no Ask again after a tool card or an approval, while a turn runs, or under a placeholder",
+      "item 4: no Ask again after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
       JSON.stringify(rr.tool) === '["copy"]' && JSON.stringify(rr.busy) === '["copy"]'
-        && JSON.stringify(rr.placeholder) === '["copy"]' && rr.approval === null,
-      JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, approval: rr.approval }),
+        && JSON.stringify(rr.placeholder) === '["copy"]' && JSON.stringify(rr.stopped) === '["copy"]' && rr.approval === null,
+      JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, stopped: rr.stopped, approval: rr.approval }),
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup
