@@ -275,6 +275,10 @@ describe("handleAppKey under an approval prompt", () => {
       ctrlCArmed: false,
       setCtrlCArmed: vi.fn(),
       sidebarVisible: false,
+      menuLeaderArmed: false,
+      setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(),
+      activateComposerSwitch: vi.fn(),
     };
   }
 
