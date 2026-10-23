@@ -19,6 +19,12 @@ export type {
 
 export { buildRouteTable } from "./route-table.js";
 
+export { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
+export type {
+  PairingStatus,
+  TelegramPairingHandlers,
+} from "./route-telegram-pairing.js";
+
 export { openaiError } from "./openai-errors.js";
 export type { OpenAiErrorPayload } from "./openai-errors.js";
 
