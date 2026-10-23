@@ -433,6 +433,9 @@ const OB = {
   pendingMmproj: null,
   /** Whether an IPC on the way here already bounced `atag serve`. */
   restarted: false,
+  /** ATO-822 item 5: how the local model's start went when setup selected it
+   *  (obLocalStartOf): 'started', 'failed', or null when nothing said. */
+  localStart: null,
   /** r5 item 7 review fix: the in-flight `useManagedMode()` write. Picking
    *  local records managed mode NOW so a quit mid-download does not lose
    *  the choice — but `models update` REFUSES outside managed mode
@@ -13152,11 +13155,39 @@ function obModelLabel() {
   return id.indexOf('custom-') === 0 ? id.replace(/^custom-/, '') : id;
 }
 
-/** configuredLabel (onboarding-screen.tsx:298-302). */
+/** configuredLabel (onboarding-screen.tsx:298-302). ATO-822 item 5: "Local
+ *  model ready" only once the model really started (OB.localStart). A pick
+ *  whose start was not seen says it is selected; a start that failed says so
+ *  (the reason is in the transcript, bswReport). */
 function obConfiguredLabel() {
-  if (OB.outcome === 'local') return 'Local model ready';
+  if (OB.outcome === 'local') {
+    if (OB.localStart === 'started') return 'Local model ready';
+    if (OB.localStart === 'failed') return 'Local model selected, but it did not start';
+    return 'Local model selected';
+  }
   if (OB.outcome === 'cloud') return OB_COPY.cloudReadyLabel;
   return 'Backend ready';
+}
+
+/** The configured line: the green tick only for something that is ready. */
+function obConfiguredHTML() {
+  const text = obConfiguredLabel();
+  if (OB.outcome !== 'local' || OB.localStart === 'started') return obReadyHTML(text);
+  const failed = OB.localStart === 'failed';
+  return '<div class="ob-h ob-ready"><span class="ob-ok tk-ico tk-ico--sm ' + (failed ? 'tk-ico--red' : 'tk-ico--blue') + '">'
+    + ic(failed ? 'alert' : 'info') + '</span>' + esc(text) + '</div>';
+}
+
+/** ATO-822 item 5: what a local switch result says about the model server.
+ *  `untouched` is a server found up for this very model (backend-switch.ts
+ *  bringUpLocalDaemon); `skipped` and `superseded` started nothing.
+ *  `stop-failed` is the old model's server refusing to stop, so the new one
+ *  was never started: a failure too. */
+function obLocalStartOf(res) {
+  const d = res && res.daemon;
+  if (d === 'started' || d === 'restarted' || d === 'untouched') return 'started';
+  if (d === 'start-failed' || d === 'stop-failed') return 'failed';
+  return null;
 }
 
 /**
@@ -13628,7 +13659,7 @@ function obProposeHTML() {
     // The same tone as the route cards on the choose step.
     '<span class="tk-ico tk-ico--blue">' + ic(local ? 'laptop' : 'cloud') + '</span>',
   ];
-  return obReadyHTML(obConfiguredLabel())
+  return obConfiguredHTML()
     + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join(' ')) + '</div>'
     + '<div class="ob-list">'
     + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail), '', '', icons[i], (OB.cursor % 2) === i ? obTickHTML() : '')).join('') + '</div>';
@@ -14672,6 +14703,7 @@ async function obActivateLocal(id) {
   }
   bswReport(res);
   OB.restarted = !!res.restart;
+  OB.localStart = obLocalStartOf(res);
   obDispatch({type:'local_models_pull_finished', kind:'chat'});
 }
 
@@ -15627,6 +15659,7 @@ async function openOnboarding(at) {
     outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false, leftEarly: false,
+    localStart: null,
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
@@ -29289,7 +29322,7 @@ if (typeof window !== 'undefined') {
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
       importAgents: [], importOptions: [], importReport: null, introTyped: false,
-      settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null});
+      settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null, localStart: null});
     /* r5 item 7 review fix: the stamps are NO LONGER pre-marked here. They
        used to be, which short-circuited obStampOnce for the whole driven
        pass — so the five acceptance lines about write-on-arrival had no
