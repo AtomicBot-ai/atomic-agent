@@ -23,6 +23,8 @@ import {
 import {
   coerceShellArgs,
   describeArgsShape,
+  formatShellPreview,
+  isOpaqueInterpreterShape,
   needsShellInterpretation,
   resolveShellSpawn,
   shellGrantShape,
@@ -248,7 +250,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
             tool: "os.shell.run",
             category: "shell",
             reason: `${guardVerdict.reason} in ${cwd}`,
-            preview: commandLine,
+            // Quoted like the shell would need it, so the human approves
+            // the argv that runs, not a re-joined look-alike (ATO-433).
+            preview: formatShellPreview(cmd, execArgs, useShell),
             affectedResources: [cwd],
             ...(commandShape !== undefined ? { commandShape } : {}),
             targetPaths,
