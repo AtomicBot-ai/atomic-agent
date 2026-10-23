@@ -336,7 +336,7 @@ Real, driven by the running agent:
   `triggerLocalChatModel`) ported into `desktop/main/backend-switch.ts`:
   the same whole-file config writes as `src/tui/persist-llm-provider.ts`
   and `persist-user-local-models-config.ts`, the same daemon side effects
-  (`atag models start|stop`, hybrid recall off after a stop), the same
+  (`atag models start|stop`; a switch to cloud stops only the chat server with `models stop --chat-only` and keeps the embedding server and hybrid recall, ATO-377, while an older agent without that flag stops both and hybrid recall goes off), the same
   `runtime_info` lines in the transcript — followed by an `atag serve`
   restart, because the running agent pins its provider at boot and 0.5.4
   has no reload route. A switch is refused while a turn is running (the

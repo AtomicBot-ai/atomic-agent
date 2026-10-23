@@ -23,6 +23,12 @@ import {
  * when it is still on), and the Cloud switch asks the model server's status
  * beside that read when a stop looks needed and nothing can be starting.
  *
+ * ATO-377: the Cloud switch's stop is `models stop --chat-only`. An agent
+ * that has it keeps the embedding server and the switch leaves the flag on
+ * (no second write); the stand-in answers as one when `chatOnly` is set. By
+ * default it answers `stopped`, as an older agent that ignores the flag and
+ * stops both does, and the switch turns the flag off as before.
+ *
  * Checked here by counting: main's real switch code runs inside
  * withSwitchStandIn, where every `atag` call it makes is answered by a
  * stand-in that keeps a config in memory, and the daemon's bookkeeping (its
@@ -76,12 +82,16 @@ interface World {
   /** What a pid file would say (the early look's hint); the status itself says `daemonUp`. Defaults to `daemonUp`. */
   pidAlive?: boolean;
   stopFails?: boolean;
+  /** ATO-377: the agent knows `models stop --chat-only` and kept the embedding server. */
+  chatOnly?: boolean;
   /** Called as a verb is asked, before it is answered: something else happening meanwhile. */
   meanwhile?: (verb: string, nth: number, book: StandInBook) => Promise<void> | void;
 }
 interface Run {
   res: SwitchResult;
   calls: string[];
+  /** Every call's whole argv. */
+  argv: string[][];
   file: Cfg;
   events: DaemonLifecycle[];
   count: (verb: string) => number;
@@ -94,6 +104,7 @@ async function run(start: Cfg, world: World, act: () => Promise<SwitchResult>): 
   const box = { file: JSON.parse(JSON.stringify(start)) as Cfg };
   let up = world.daemonUp;
   const calls: string[] = [];
+  const argv: string[][] = [];
   const events: DaemonLifecycle[] = [];
   const said = (stdout: string): CliResult => ({ ok: true, stdout, stderr: "" });
   const refused = (error: string): CliResult => ({ ok: false, stdout: "", stderr: "", error });
@@ -101,6 +112,7 @@ async function run(start: Cfg, world: World, act: () => Promise<SwitchResult>): 
   const standIn = async (args: string[], input?: string): Promise<CliResult> => {
     const verb = args.slice(0, 2).join(" ");
     calls.push(verb);
+    argv.push([...args]);
     const nth = calls.filter((c) => c === verb).length;
     await new Promise((r) => setTimeout(r, 5));   // a process is never instant: lets side-by-side calls overlap
     if (world.meanwhile && book) await world.meanwhile(verb, nth, book);
@@ -118,7 +130,9 @@ async function run(start: Cfg, world: World, act: () => Promise<SwitchResult>): 
       case "models stop":
         if (world.stopFails) return refused("smoke stand-in: the stop failed");
         up = false;
-        return said("stopped\n");
+        return said(world.chatOnly && args[2] === "--chat-only"
+          ? "stopped chat model; embedding model kept for memory search\n"
+          : "stopped\n");
       case "models start":
         up = true;
         return said("chat: started pid 4242, healthy on port 19091\n");
@@ -145,7 +159,7 @@ async function run(start: Cfg, world: World, act: () => Promise<SwitchResult>): 
     },
   );
   return {
-    res, calls, file: box.file, events,
+    res, calls, argv, file: box.file, events,
     count: (verb) => calls.filter((c) => c === verb).length,
     at: (verb) => calls.indexOf(verb),
   };
@@ -171,6 +185,11 @@ export async function checks62(_js: Js, check: Check): Promise<void> {
     q(a.calls),
   );
   check(
+    "T62 (ATO-377): the switch asks the agent to stop only the chat server (`models stop --chat-only`)",
+    q(a.argv.filter((v) => v[0] === "models" && v[1] === "stop")) === q([["models", "stop", "--chat-only"]]),
+    q(a.argv),
+  );
+  check(
     "T62: the switch's stop is told as a stop on purpose — to the check's own listener, never the app's supervisor",
     q(a.events) === q(["stopping"]),
     q(a.events),
@@ -185,14 +204,26 @@ export async function checks62(_js: Js, check: Check): Promise<void> {
     brief(a2),
   );
 
-  // b — hybrid recall still on: its flag goes off after the stop, as the TUI does it.
+  // b — hybrid recall still on, an agent that stopped both (no `--chat-only`): its flag goes off after the stop, as before.
   const b = await run(file({ embeddings: true }), { daemonUp: true }, () => switchBackend("cloud"));
   check(
-    "T62: with hybrid recall on, the stop is followed by the one write that turns it off (two reads, two writes in all)",
+    "T62: with hybrid recall on and an agent that stopped both servers, the stop is followed by the one write that turns it off (two reads, two writes in all)",
     b.res.ok && b.res.daemon === "stopped" && b.count("config get") === 2 && b.count("config set") === 2
       && b.calls.lastIndexOf("config set") > b.at("models stop")
       && b.file.memory?.embeddings?.enabled === false && b.file.llm?.activeTextProvider === CLOUD,
     brief(b),
+  );
+
+  // b1 — ATO-377: an agent that kept the embedding server: the flag stays on, nothing more is read or written.
+  const b1 = await run(file({ embeddings: true }), { daemonUp: true, chatOnly: true }, () => switchBackend("cloud"));
+  check(
+    "T62 (ATO-377): when the agent kept the embedding server, hybrid recall stays on (one read, one write) and the line says so",
+    b1.res.ok && b1.res.daemon === "stopped" && b1.res.embeddingKept === true && b1.res.restart === true
+      && b1.count("config get") === 1 && b1.count("config set") === 1 && b1.count("models stop") === 1
+      && b1.file.memory?.embeddings?.enabled === true && b1.file.llm?.activeTextProvider === CLOUD
+      && b1.res.daemonLine === "local-llm: chat server stopped, memory search stays on"
+      && q(b1.events) === q(["stopping"]),
+    brief(b1, { line: b1.res.daemonLine, mem: b1.file.memory }),
   );
 
   // b2 — off in the file the switch wrote, but another write of this process landed during the stop: the file is read again.

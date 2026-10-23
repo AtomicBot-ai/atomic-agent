@@ -24,6 +24,7 @@ import {
   modelsStart,
   modelsStartEmbedding,
   modelsStop,
+  modelsStopChatOnly,
   stopEmbeddingServer,
   modelsUse,
   providerHasKey,
@@ -105,6 +106,8 @@ export interface SwitchResult {
   daemon?: DaemonEffect;
   /** The TUI's runtime_info line for the daemon effect, when there is one. */
   daemonLine?: string;
+  /** ATO-377: the Cloud switch stopped only the chat server; the embedding one and memory.embeddings.enabled stay. */
+  embeddingKept?: boolean;
   /** main.ts restarts `atag serve` when true (restartAfterSwitch says when it does not). */
   restart?: boolean;
   /** Set by main.ts's applySwitch: the switch landed, but `atag serve` was not restarted under the turns still running — it restarts once the last one ends. */
@@ -284,14 +287,23 @@ async function activate(
   let restart = w.changed;
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
+  let embeddingKept = false;
   if (cloud && !keepFusion) {
     // A stop never waits out a load (item 11): a bring-up on its way is ended, its start killed.
     supersedeBringUp();
     // A stop decision: whatever is still there, answering or not (item 31), is stopped and said so.
     const up = early && early.still() ? await early.running : await localDaemonRunning({ reapWedged: false });
     if (up) {
-      const s = await modelsStop();
-      if (s.ok) {
+      /* ATO-377: only the chat server goes; the embedding one stays for memory
+         search and its flag is not written (the TUI's stopChatForCloudSelection).
+         An agent without `--chat-only`, or a file with no embedding model to
+         keep, stops both, and the flag goes off as before. */
+      const s = await modelsStopChatOnly();
+      if (s.ok && s.embeddingKept) {
+        daemon = "stopped";
+        embeddingKept = true;
+        daemonLine = "local-llm: chat server stopped, memory search stays on";
+      } else if (s.ok) {
         daemon = "stopped";
         daemonLine = "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)";
         /* The file as this activation wrote it has the flag off already, and no
@@ -314,6 +326,7 @@ async function activate(
     transport: transportFor(id),
     daemon,
     daemonLine,
+    ...(embeddingKept ? { embeddingKept } : {}),
     restart,
   };
 }
@@ -476,10 +489,11 @@ type Paired = { paired: boolean; line?: string };
  * model running the embedding server never started — an embedding model
  * enabled or downloaded later, one that had stopped, all stayed off. The TUI
  * pairs them in-process (ensureEmbeddingPaired); the CLI now can too (`models
- * start-embedding`, agent side). A Cloud switch also writes
- * `memory.embeddings.enabled = false` as it stops both servers (the TUI's
- * stopDaemon order), and nothing here put it back on the way back to local,
- * where the TUI latches it on once its server runs. `atag serve` reads both
+ * start-embedding`, agent side). A Cloud switch used to write
+ * `memory.embeddings.enabled = false` as it stopped both servers; it now stops
+ * only the chat one and leaves the flag (ATO-377), and still writes it off
+ * with an older agent that stops both. Nothing here put it back on the way
+ * back to local, where the TUI latches it on once its server runs. `atag serve` reads both
  * only as it boots.
  *
  * Asked in the daemon's turn, once the chat server is up (and at launch before
@@ -1027,7 +1041,8 @@ async function afterRunModeWrite(res: {
   }
   else if (plan === "background") bringUpBehindSwap(modelId);
   // The seats no longer need it (a seat moved to the cloud): a start on its way is moot, and what it spawned goes.
-  else if (!opts.daemonByCaller && supersedeBringUp()) await modelsStop();
+  // ATO-377: its chat server only; the embedding one stays for memory search (an older agent stops both).
+  else if (!opts.daemonByCaller && supersedeBringUp()) await modelsStopChatOnly();
   return {
     ok: true,
     providerId: leg,
