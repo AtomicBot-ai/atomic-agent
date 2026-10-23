@@ -175,8 +175,13 @@ export function buildSkillRunScriptTool(
         `args: ${scriptArgs.join(" ")}`,
       ].join("\n");
 
+      // Only the copy installed in the global skills directory is trusted
+      // for this exemption. A same-named skill from a project folder is
+      // ordinary repository content and goes through approval like any
+      // other script.
       const autoApprovedGogCheck =
         !ctx.workspaceSkills &&
+        record.source === "global" &&
         record.manifest.name === "gog-workspace" &&
         scriptName === "check-gog.sh" &&
         scriptArgs.length === 0;
