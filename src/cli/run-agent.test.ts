@@ -171,6 +171,18 @@ describe("formatLlamaUnreachableHint", () => {
     expect(hint).toContain("http://10.0.0.4:9090");
     expect(hint).toContain("atomic-agent models start");
     expect(hint).toContain("localModels.url");
+    expect(hint).not.toContain("9931");
+  });
+
+  it("names both llama-server default ports when the local default does not answer", () => {
+    // llama.cpp moved its default port from 8080 to 9931; older installs
+    // carry 8080 in config.json while a fresh llama-server sits on 9931.
+    for (const url of ["http://127.0.0.1:8080", "http://127.0.0.1:9931"]) {
+      const hint = formatLlamaUnreachableHint(url);
+      expect(hint).toContain(`llama-server is not reachable at ${url}`);
+      expect(hint).toContain("port 9931 by default");
+      expect(hint).toContain("Docker images use 8080");
+    }
   });
 });
 

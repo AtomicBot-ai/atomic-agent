@@ -4,6 +4,7 @@ import type { HealthResult } from "./llama-server-health.js";
 // provider wizard agree on what "local" means.
 import { isLocalProviderUrl } from "./provider/presets/is-local-provider-url.js";
 import { isLoopbackUrlOnPort } from "../local-llm/server/managed-api-key.js";
+import { llamaDefaultPortNote } from "./llama-default-port-note.js";
 
 /**
  * The loopback ports the agent's own engine (Atomic Core) listens on:
@@ -130,7 +131,12 @@ export function describeLlamaHealthFailure(
         `For a server started by atomic-agent, the key is in ` +
         `<models dir>/llama-server.key.`
       );
-    default:
-      return `local-llm /health failed at ${url}: ${health.error ?? "unknown"}`;
+    default: {
+      const line = `local-llm /health failed at ${url}: ${health.error ?? "unknown"}`;
+      // No HTTP answer at all on a default port: the server is most
+      // likely on the other one (llama.cpp moved 8080 to 9931).
+      const portNote = health.status === null ? llamaDefaultPortNote(url) : null;
+      return portNote ? `${line}. ${portNote}` : line;
+    }
   }
 }
