@@ -5,8 +5,12 @@
  * turn when no work came after it). Only counts, durations, enums and
  * built-in tool names are kept — never text.
  *
- * ATO-275: a turn the agent ended on its step limit (`finish` with reason
- * `length`, the runtime's `max_steps`) is `step_limit`, not `completed`.
+ * ATO-275: a turn the agent stopped before it finished (`finish` with
+ * reason `length`, the runtime's `max_steps`) is `stopped_early`, not
+ * `completed`. `max_steps` is every early stop, not only the step ceiling
+ * (src/agent: TaskStopCause step_ceiling / time_ceiling / no_progress /
+ * credit_exhausted, and a step error recovery gave up on), and the stream
+ * does not say which, so the outcome does not claim one.
  * The desktop's own transport failures (an HTTP error from the agent's
  * server, a fetch that broke: AgentClient marks them `transport`) carry
  * `error_category: "transport"` and the HTTP status when there was one.
@@ -16,7 +20,7 @@ import { ERROR_CATEGORIES } from "./catalog.js";
 import { toolBucket } from "./validate.js";
 
 export interface TurnSummary {
-  outcome: "completed" | "step_limit" | "failed" | "cancelled";
+  outcome: "completed" | "stopped_early" | "failed" | "cancelled";
   ms_to_first_token: number | null;
   ms_total: number;
   queue_wait_ms: number;
@@ -44,7 +48,7 @@ interface Turn {
   workAfterError: boolean;
   category: string | null;
   httpStatus: number | null;
-  hitStepLimit: boolean;
+  stoppedEarly: boolean;
 }
 
 // `tool_update`: a long call (video.generate) still working, so a held error was not the end.
@@ -84,7 +88,7 @@ export class ChatTurnTracker {
       workAfterError: false,
       category: null,
       httpStatus: null,
-      hitStepLimit: false,
+      stoppedEarly: false,
     });
   }
 
@@ -118,7 +122,7 @@ export class ChatTurnTracker {
     if (kind === "session_id" && typeof payload.session_id === "string") t.sessionId = payload.session_id;
     if (kind === "delta" && t.firstTokenAt === null) t.firstTokenAt = this.now();
     if (kind === "steer_applied") t.steers += 1;
-    if (kind === "finish" && ev.reason === "length") t.hitStepLimit = true;
+    if (kind === "finish" && ev.reason === "length") t.stoppedEarly = true;
     if (kind === "tool_progress") {
       t.toolCalls += 1;
       if (typeof payload.session_id === "string") t.sessionId = payload.session_id;
@@ -143,7 +147,7 @@ export class ChatTurnTracker {
       t.category = categoryOf(ev.category) ?? (ev.transport === true ? "transport" : null) ?? t.category;
       if (typeof ev.httpStatus === "number" && Number.isInteger(ev.httpStatus)) t.httpStatus = ev.httpStatus;
     } else if (kind === "done") {
-      outcome = t.heldError && !t.workAfterError ? "failed" : t.hitStepLimit ? "step_limit" : "completed";
+      outcome = t.heldError && !t.workAfterError ? "failed" : t.stoppedEarly ? "stopped_early" : "completed";
     }
     if (!outcome) return;
     this.turns.delete(ev.turnId);

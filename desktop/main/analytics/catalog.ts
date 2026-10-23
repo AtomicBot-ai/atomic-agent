@@ -224,7 +224,7 @@ export const EVENTS: Record<string, EventSpec> = {
   chat_turn_ui: {
     owner: "main",
     props: {
-      outcome: en(["completed", "step_limit", "failed", "cancelled"]),
+      outcome: en(["completed", "stopped_early", "failed", "cancelled"]),
       ms_to_first_token: int({ nullable: true }),
       ms_total: ms,
       queue_wait_ms: ms,

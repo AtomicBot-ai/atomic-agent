@@ -235,7 +235,7 @@ test("a turn's summary: first token, tools, steers, approvals, failure category"
   });
 });
 
-test("a turn the agent ended on its step limit is step_limit, not completed (ATO-275)", () => {
+test("a turn the agent stopped early (finish reason length) is stopped_early, not completed (ATO-275)", () => {
   const out = [];
   const t = new T.ChatTurnTracker((s) => out.push(s));
   t.begin("t4");
@@ -245,10 +245,10 @@ test("a turn the agent ended on its step limit is step_limit, not completed (ATO
   t.begin("t5");
   t.observe({ turnId: "t5", kind: "finish", reason: "stop" });
   t.observe({ turnId: "t5", kind: "done" });
-  assert.equal(out[0].outcome, "step_limit");
+  assert.equal(out[0].outcome, "stopped_early");
   assert.equal(out[0].error_category, null);
   assert.equal(out[1].outcome, "completed");
-  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "step_limit" }, "main").props.outcome, "step_limit");
+  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "stopped_early" }, "main").props.outcome, "stopped_early");
 });
 
 test("the desktop's own HTTP and network failures are transport, with the status (ATO-275)", () => {
