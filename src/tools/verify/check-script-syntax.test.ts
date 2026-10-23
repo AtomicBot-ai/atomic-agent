@@ -1,4 +1,4 @@
-import { mkdtemp, rm, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -7,6 +7,8 @@ import {
   checkJavaScriptFile,
   checkPythonFile,
   checkShellFile,
+  nodeCheck,
+  nodeForSyntaxCheck,
   runChecker,
 } from "./check-script-syntax.js";
 
@@ -71,6 +73,39 @@ describe("checkJavaScriptFile", () => {
     expect(out.ok).toBe(false);
     expect(out.checker).toBe("node-vm");
   });
+});
+
+describe("nodeCheck in a release build", () => {
+  it("uses node from PATH when this process is the release binary", () => {
+    expect(nodeForSyntaxCheck(true, "/opt/atomic-agent/atomic-agent")).toBe("node");
+    expect(nodeForSyntaxCheck(false, "/usr/local/bin/node")).toBe("/usr/local/bin/node");
+  });
+
+  it("reports unchecked, not failed, when no Node.js is found", async () => {
+    const path = await file("a.mjs", "export const a = 1;\n");
+    const out = await nodeCheck(path, path, "atag-no-such-node-xyz");
+    expect(out.ok).toBeNull();
+    expect(out.error).toMatch(/no Node\.js found on PATH/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "reports unchecked when the binary does not know --check",
+    async () => {
+      // The release binary answered `--check` with this and exit 1, and
+      // every file was counted as a syntax failure.
+      const fake = await file(
+        "fake-agent",
+        "#!/bin/sh\necho 'unknown command: --check' >&2\nexit 1\n",
+      );
+      await chmod(fake, 0o755);
+      const path = await file("a.mjs", "export const a = 1;\n");
+      const out = await nodeCheck(path, path, fake);
+      expect(out.ok).toBeNull();
+      expect(out.checker).toBe("node --check");
+      expect(out.error).toContain("node --check did not run");
+      expect(out.error).toContain("unknown command: --check");
+    },
+  );
 });
 
 describe("checkPythonFile", () => {

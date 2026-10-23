@@ -19,8 +19,14 @@ export {
   checkJavaScriptSource,
   checkPythonFile,
   checkShellFile,
+  nodeCheck,
+  nodeForSyntaxCheck,
   runChecker,
 } from "./check-script-syntax.js";
+export {
+  checkLanguageFile,
+  LANGUAGE_SYNTAX_EXTENSIONS,
+} from "./check-language-syntax.js";
 export type { CheckerRun } from "./check-script-syntax.js";
 export { checkCssSource, CSS_CHECKER } from "./check-css-syntax.js";
 export {
