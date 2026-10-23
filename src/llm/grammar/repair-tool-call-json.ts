@@ -15,8 +15,8 @@
  *   closed in order.
  *
  * Anything else (a closer that does not match its opener, a key with no
- * value at the end, text that still does not parse) returns `null`, and
- * the caller keeps its original parse error.
+ * value or a bare number at the end, text that still does not parse)
+ * returns `null`, and the caller keeps its original parse error.
  *
  * The result says which fixes were applied and whether the text had to
  * be closed at the end, because a closed value may be cut short: the
@@ -126,6 +126,10 @@ export function repairJsonText(input: string): JsonRepairResult | null {
     out = dropTrailingComma(out, fixes);
     // A key waiting for its value has nothing honest to close with.
     if (/:\s*$/.test(out)) return null;
+    // A number right before the cut may itself be cut (`"pid": 12` of
+    // `1234`, `"limit": 1` of `100`); closing it would run a different
+    // value, and no later check can tell.
+    if (/\d\s*$/.test(out)) return null;
     while (stack.length > 0) out += stack.pop();
     fixes.add(JSON_FIX.unclosedBrackets);
   }

@@ -55,8 +55,10 @@ describe("repairJsonText (ATO-637)", () => {
     expect(fixed?.closedBrackets).toBe(true);
   });
 
-  it("gives up on a key with no value, a mismatched closer, or text that is not JSON", () => {
+  it("gives up on a key with no value, a number at the cut, a mismatched closer, or text that is not JSON", () => {
     expect(repairJsonText('[{"tool":"x","args":{"path":')).toBeNull();
+    expect(repairJsonText('[{"tool":"os.proc.kill","args":{"pid":12')).toBeNull();
+    expect(repairJsonText('{"limit": 1 ')).toBeNull();
     expect(repairJsonText('[{"tool":"x"]')).toBeNull();
     expect(repairJsonText("{{garbage")).toBeNull();
     expect(repairJsonText("{ not json")).toBeNull();
