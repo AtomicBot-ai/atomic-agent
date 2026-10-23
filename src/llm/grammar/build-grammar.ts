@@ -219,7 +219,6 @@ const SPLIT_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call( \| shell-call)?( \| 
 const SHELL_TOOL = "os.shell.run";
 
 /** `tool-call` when `reply` is the only name a request admits. */
-const REPLY_ONLY_TOOL_CALL_RULE = "tool-call ::= reply-call";
 const REPLY_ONLY_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call$/m;
 
 /**
