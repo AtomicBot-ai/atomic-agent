@@ -6,6 +6,7 @@ import "./node-env-bootstrap.js";
 import { isSea } from "node:sea";
 import { argv } from "node:process";
 import { exitAfterFlush } from "./exit-after-flush.js";
+import { ensureUtf8Console } from "./windows-console-utf8.js";
 import { runAgentCommand } from "./run-agent.js";
 import { debugReplCommand } from "./debug-repl.js";
 import { skillCommand } from "./skill.js";
@@ -197,6 +198,8 @@ function userArgsFromArgv(): string[] {
 installTransportDeadlines();
 
 async function main(): Promise<number> {
+  // Windows only: UTF-8 console code page for this run, restored on exit.
+  ensureUtf8Console();
   const [command, ...rest] = userArgsFromArgv();
   if (command === "-h" || command === "--help") {
     printHelp();
