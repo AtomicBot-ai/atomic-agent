@@ -9387,12 +9387,14 @@ function providerFailure(ev) {
     every cloud HTTP error (401, 402, 404, 429, 400) and a missing or
     signed-out CLI as `transport`; its sentence names the status, e.g.
     '"openrouter" answered 404 (not found).' or '... (429).' (openai-http.ts
-    humanizeOpenAiHttpError). No status ("fetch failed", a refused
-    connection, a timeout) is the endpoint not answering. */
+    humanizeOpenAiHttpError). A llama-server entry says 'llama-server
+    returned http 404: …' (llama-server-client.ts, ATO-869). No status
+    ("fetch failed", a refused connection, a timeout) is the endpoint not
+    answering. */
 function providerReplied(ev) {
   const msg = String((ev && ev.error) || '');
   return String((ev && ev.category) || '') === 'transport'
-    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|isn't installed \(the|is not signed in\.|was not found on PATH\.|ended its reply with an error|reported an error in the middle of its reply/.test(msg);
+    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|\breturned http [1-5]\d\d\b|isn't installed \(the|is not signed in\.|was not found on PATH\.|ended its reply with an error|reported an error in the middle of its reply/.test(msg);
 }
 
 /** How long this turn had been going, in words. */
@@ -9414,12 +9416,25 @@ function turnFailure(ev) {
      Details. */
   if (providerReplied(ev)) {
     const id = selActiveProviderId();
+    const wrong = localWrongServerLine(ev, id);
+    if (wrong) return {text: esc(wrong), detail: String(ev.error)};
     return {text: esc("Couldn't get a reply from " + (id ? providerWord(id) : 'the provider') + '.'
       + (turnWaited() ? ' The turn gave up' + turnWaited() + '.' : '')), detail: String(ev.error)};
   }
   const cat = String((ev && ev.category) || '');
   return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
     detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
+}
+
+/** ATO-869: a local server that answered 404 or 405 is up, but it is not a
+    model server or has no model loaded (often another program on the old
+    port). '' for anything else. */
+function localWrongServerLine(ev, id) {
+  if (!id || !waitIsLocalServer(id)) return '';
+  if (!/\b(?:returned http|answered) 40[45]\b|\(40[45]\)/.test(String((ev && ev.error) || ''))) return '';
+  const host = providerHost((selProviders() || []).find((p) => p.id === id));
+  return (host ? 'The server at ' + host : 'The local server') + ' is not a model server, or no model is loaded there.'
+    + ' Check the address in Settings › Models.';
 }
 
 /** ATO-771/772: a turn that failed because the managed local model is not
