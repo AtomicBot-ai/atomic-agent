@@ -174,6 +174,12 @@ export function createTelegramPairingHandlers(): TelegramPairingHandlers {
       sendError(res, 400, openaiError(`Invalid JSON: ${message}`));
       return;
     }
+    // `null`, an array or a bare value parses as JSON but is no options object;
+    // reading `replaceOwner` off `null` would throw and answer 500.
+    if (body === null || typeof body !== "object" || Array.isArray(body)) {
+      sendError(res, 400, openaiError("Body must be a JSON object", "invalid_request_error"));
+      return;
+    }
     if (body.replaceOwner !== undefined && typeof body.replaceOwner !== "boolean") {
       sendError(res, 400, openaiError("replaceOwner must be a boolean", "invalid_request_error", "replaceOwner"));
       return;

@@ -220,6 +220,27 @@ describe("/api/telegram/pairing", () => {
     expect(res.status).toBe(400);
   });
 
+  it("rejects a JSON body that is not an object with 400, not 500", async () => {
+    harness = await startTestHarness();
+    const stub = stubChannel(harness, { owner: 42 });
+    for (const body of [null, [true], true]) {
+      expect((await req(harness, "POST", body)).status).toBe(400);
+    }
+    expect(stub.calls).toHaveLength(0);
+  });
+
+  it("answers 503 when the agent has no Telegram channel", async () => {
+    harness = await startTestHarness();
+    (harness.runtime as { telegramChannel: unknown }).telegramChannel = null;
+    for (const method of ["POST", "GET", "DELETE"] as const) {
+      const res = await req(harness, method);
+      expect(res.status).toBe(503);
+      expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
+        "telegram_unavailable",
+      );
+    }
+  });
+
   it("DELETE cancels the window and the GET says cancelled, not expired", async () => {
     harness = await startTestHarness();
     stubChannel(harness);
