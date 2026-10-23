@@ -8004,7 +8004,8 @@ async function uiTest(
   await js<unknown>("window.__turnSums().filter((x) => !x.open).forEach((x) => window.__clickTurnSum(x.id))");
   type Shape = { k: string; glyphs: number; gutter: number | null; end: boolean; endLast: boolean; strip: boolean; left: number };
   const shape = await js<Shape[]>("window.__turnShape()");
-  const tail = shape.slice(-3);
+  // A finished turn's summary line (ATO-464) sits above its steps; the row checks read the rows under it.
+  const tail = shape.filter((t) => t.k !== "turnsum").slice(-3);
   check(
     // Two things, both positive: no row carries a `.avatar` or a `.gutter` (the
     // user's `›` and the assistant's per-message mark), and every row that still
