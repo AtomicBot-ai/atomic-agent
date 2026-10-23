@@ -12427,7 +12427,7 @@ async function chromeTest(
       const toastsAfter = await js<Array<[string, string, string]>>("window.__toasts()");
       check(
         "item 2: on a narrow window ⌘ 0 opens the sidebar as a drawer",
-        opened.drawer && opened.on && opened.pressed === "true" && opened.width === 260
+        opened.drawer === true && opened.on && opened.pressed === "true" && opened.width === 260
           && opened.state === "open" && !opened.rail && opened.title === "Hide sidebar (⌘ 0)"
           && toastsAfter.length === 0,
         JSON.stringify([opened, toastsAfter]),
