@@ -26,7 +26,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -1473,11 +1473,12 @@ function wireIpc(client: AgentClient): void {
       reason?: string;
     };
     if (typeof approvalId !== "string") return { ok: false, error: "approvalId required" };
-    if (decision !== "allow-once" && decision !== "deny") {
-      return { ok: false, error: "decision must be allow-once or deny" };
+    const known = APPROVAL_DECISIONS.find((d) => d === decision);
+    if (!known) {
+      return { ok: false, error: "decision must be allow-once, allow-in-chat or deny" };
     }
     try {
-      return { ok: true, data: await client.resolveApproval(approvalId, decision, reason) };
+      return { ok: true, data: await client.resolveApproval(approvalId, known, reason) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }

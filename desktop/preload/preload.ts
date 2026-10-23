@@ -102,7 +102,7 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Approvals raised by gated tools. */
   onApproval: (cb: (payload: unknown) => void) => on("agent:approval", cb),
-  approve: (approvalId: string, decision: "allow-once" | "deny", reason?: string) =>
+  approve: (approvalId: string, decision: "allow-once" | "allow-in-chat" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),
   /** B01 QA, ATO-198: the turns main streams, for a page that loads while they run. */
   liveTurns: () => ipcRenderer.invoke("agent:liveTurns"),
