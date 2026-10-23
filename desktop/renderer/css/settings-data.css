@@ -115,6 +115,8 @@ input.tk-inp.sd-name{width:100%;font:400 12px/1.5 var(--font-mono)}
 .sd-pairhead{display:flex;align-items:center;gap:10px}
 .sd-pairhead b{font-size:15px;font-weight:600;color:var(--ink)}
 .sd-pair p{margin:0;font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+/* ATO-859: the one-time pairing code, large enough to read off the screen and type into Telegram */
+.sd-paircode{font:600 28px/1.2 var(--font-mono);letter-spacing:.18em;color:var(--ink);user-select:all}
 /* Д36: the one status over the rows — what it means, then Connected or Not connected. */
 .sd-tgstatus.tk-card{padding:4px 0}
 .sd-tgstatus .tk-setrow{gap:14px;min-height:64px}

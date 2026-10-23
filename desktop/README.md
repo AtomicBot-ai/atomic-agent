@@ -505,6 +505,11 @@ Honestly degraded, and labelled as such in the UI:
   would open with and reports it through the TUI's own
   `contextUsageFromPrompt`. The installed 0.5.4 answers 404, which the
   desktop caches per connection and falls back to the trace projection.
+- **Telegram pairing in the app needs `/api/telegram/pairing`** (ATO-859,
+  `src/http/route-telegram-pairing.ts`). An agent without it answers 404; the
+  Telegram tab asks once per visit and then shows `TG_PAIRING_NOTE` (update the
+  agent, or quit the app and pair under Integrations › Telegram in `atag tui`)
+  instead of a Pair button.
 - **Session grants.** The card offers Allow once and Deny, plus Allow in this
   chat (ATO-473) for a shell command the agent names a shape for (the binary,
   `git`; never `bash -c`). That sends `allow-in-chat`, the agent's shape grant
@@ -716,8 +721,14 @@ Honestly degraded, and labelled as such in the UI:
   the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
   0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
   token, unset the owner and flip `telegram.enabled`, each with the restart
-  note. The channel state, bot identity and pairing live inside the serve
-  process: the state reads `unknown`, and pairing says to use `atag tui`.
+  note. Pairing (ATO-859, `renderer/telegram-pairing.js`,
+  `main/telegram-pairing.ts`) goes through the agent's
+  `/api/telegram/pairing`: Pair shows the 6-digit one-time code and the
+  agent's instruction (`/start <code>` to the bot, 5 minutes), the tab polls
+  every 2 s until the code is claimed, and the claim shows as
+  "Paired: @username is now the owner." A paired owner is replaced only from
+  the Owner row's Replace, which takes a second click. The code lives in
+  memory while its window is open and is never logged.
 - **Composio** (Settings › Connections, beside MCP servers and Telegram; the
   palette's Composio row) is the TUI Integrations tab's Composio row
   (`src/integrations/composio-integration.ts`, its setup walkthrough and

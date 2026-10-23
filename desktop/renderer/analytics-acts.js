@@ -83,8 +83,8 @@ const ANX_ACTS = (() => {
         pricing:L, refresh:L, remove:L, removeAt:L, restartModel:L, row:L, select:L, steer:{y:L, n:L}, tune:L,
         fb:{add:L, local:L, move:L, pick:L, pickCancel:L, remove:L, select:L},
         hf:{add:L, back:L, cancel:L, clear:L, close:L, look:L, mirror:L, row:L}},
-      telegram:{advanced:L, clearOwner:L, clearToken:L, enable:L, disable:L, pair:L, refresh:L,
-        restart:L, start:L, stop:L, token:L, tokenCancel:L, tokenSave:L},
+      telegram:{advanced:L, clearOwner:L, clearToken:L, enable:L, disable:L, pair:L, pairCancel:L,
+        pairReplace:L, pairStart:L, refresh:L, restart:L, start:L, stop:L, token:L, tokenCancel:L, tokenSave:L},
       // Settings › Connections › Composio (renderer.js composioAct); never the key.
       composio:{check:L, enable:L, key:L, keyCancel:L, keySave:L, refresh:L, removeKey:L, restart:L},
       // ATO-328: Save on the Exa key card (chat) or its Settings row; never the key.
