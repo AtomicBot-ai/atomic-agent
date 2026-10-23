@@ -121,4 +121,31 @@ describe("LocalModelsOrchestrator.stopChatForCloudSelection", () => {
     expect(inner.daemonSupervised).toBe(true);
     expect(inner.embeddingKeptForCloud).toBe(false);
   });
+
+  it("drops ownership before the chat daemon is killed", async () => {
+    const { orchestrator, inner, chatOnly } = build();
+    let ownedDuringStop: boolean | null = null;
+    chatOnly.mockImplementation(async () => {
+      ownedDuringStop = inner.daemonSupervised;
+      return true;
+    });
+    inner.daemonSupervised = true;
+    await orchestrator.stopChatForCloudSelection();
+    // A supervisor tick in the stop's window must not see the dead chat
+    // pid as ours and restart it on the cloud route.
+    expect(ownedDuringStop).toBe(false);
+  });
+
+  it("tears the kept embedding daemon down at exit", async () => {
+    const { orchestrator, inner } = build();
+    const silent = vi
+      .spyOn(orchestrator as unknown as { stopDaemonSilent: () => Promise<void> }, "stopDaemonSilent")
+      .mockResolvedValue();
+    inner.daemonSupervised = true;
+    await orchestrator.stopChatForCloudSelection();
+    expect(inner.daemonSupervised).toBe(false);
+    await orchestrator.shutdown();
+    expect(silent).toHaveBeenCalledTimes(1);
+    expect(inner.embeddingKeptForCloud).toBe(false);
+  });
 });

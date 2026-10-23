@@ -2426,13 +2426,20 @@ export class LocalModelsOrchestrator {
     if (!chat.running || !this.buildEmbeddingStartOptions(cfg, dataDir)) {
       return this.stopDaemon();
     }
+    // Ownership goes before the kill: a supervisor tick that sees the chat
+    // pid dead while the stop is still refreshing would otherwise restart
+    // the chat daemon on the cloud route. A failed stop gives it back.
     const owned = this.daemonSupervised;
+    this.daemonSupervised = false;
+    if (owned) this.embeddingKeptForCloud = true;
     const stopped = await this.stopChatDaemonOnly({
       stoppedLine: "local-llm: chat server stopped, memory search stays on",
     });
-    if (!stopped) return;
-    if (owned) this.embeddingKeptForCloud = true;
-    this.daemonSupervised = false;
+    if (stopped) return;
+    if (owned) {
+      this.embeddingKeptForCloud = false;
+      this.daemonSupervised = true;
+    }
   }
 
   /**
