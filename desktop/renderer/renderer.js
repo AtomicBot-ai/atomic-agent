@@ -806,7 +806,7 @@ const XPULL = {key:null, percent:0, transferredBytes:0, totalBytes:0, sawProgres
    to the functions that use them, several hundred lines below it — safe
    only because OB.open starts false, and a TDZ ReferenceError inside the
    first paint the moment anything opens the flow synchronously. */
-const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';   // USER_CONFIG_DEFAULTS.localModels.url
+const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:9931';   // USER_CONFIG_DEFAULTS.localModels.url
 /* Which leading tokens of a hint are the chord rather than the sentence.
    The footer is one string in the TUI because a terminal has no chips;
    this splits it back apart so the desktop can draw the keycaps it has. */
@@ -937,8 +937,18 @@ let UNVERIFIED = [];
    against this exact string and does NOT count the default it never
    chose — needsOnboarding() below may not count it either, or a genuinely
    fresh state directory reaches the chat window with no backend and no
-   wizard. */
-const DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';
+   wizard.
+   ATO-834: llama-server moved its default port from 8080 to 9931 (llama.cpp
+   v0.7.0) and the agent's default followed. Every first run writes the
+   defaults to config.json, so installs from before carry 8080 that nobody
+   chose: the agent's LEGACY_EXTERNAL_LLAMA_URL. Both count as untouched,
+   as they do in isLocalBackendConfigured. */
+const DEFAULT_LLAMA_URL = 'http://127.0.0.1:9931';
+const LEGACY_LLAMA_URL = 'http://127.0.0.1:8080';
+/* True for a localModels.url that is one of the shipped defaults. */
+function llamaUrlUntouched(url) {
+  return url === DEFAULT_LLAMA_URL || url === LEGACY_LLAMA_URL;
+}
 
 /* ---- r5 item 10: optimistic switching ----
    The user's words: "when he clicks to switch, it is already switched, but
@@ -3649,7 +3659,8 @@ function composer() {
 }
 
 /* Calm (S6, U16) — no route anyone chose. Skipping setup leaves the agent's
-   own default: the external llama.cpp route at 127.0.0.1:8080, which nobody
+   own default: the external llama.cpp route at 127.0.0.1:9931 (8080 on
+   installs from before llama.cpp moved), which nobody
    picked (needsOnboarding does not count it either). The composer used to
    draw that as "Custom server · llama.cpp", a route to a server that is not
    there. Now it says what is true and offers the way out: one "Set up a
@@ -3661,7 +3672,7 @@ function composerNeedsSetup() {
   if (selBackend() !== 'custom') return false;
   const lm = LIVE_CONFIG.localModels || {};
   const url = lm.url || DEFAULT_LLAMA_URL;
-  if (url !== DEFAULT_LLAMA_URL) return false;
+  if (!llamaUrlUntouched(url)) return false;
   return !(EXT.url === url && EXT.model);
 }
 /* The first-run wizard's pull runs in DL, which the composer never read: it
@@ -11152,7 +11163,7 @@ function needsOnboarding(cfg, readyIds) {
          writes exactly that default, so without this the desktop's first
          run lands in a chat window with no backend and no wizard. */
   const managedReady = lm.managed && lm.managed.modelId;
-  const localConfigured = lm.mode === 'external' && lm.url && lm.url !== DEFAULT_LLAMA_URL;
+  const localConfigured = lm.mode === 'external' && lm.url && !llamaUrlUntouched(lm.url);
   const llm = (cfg && cfg.llm) || {};
   const active = (llm.providers || []).find((p) => p.id === llm.activeTextProvider);
   const cloudReady = !!active && active.kind !== 'llama-server'
@@ -15203,7 +15214,7 @@ async function obReadiness() {
   const config = (cfg && cfg.ok && cfg.config) || {};
   const lm = config.localModels || {};
   out.localReady = !!((lm.mode === 'managed' && lm.managed && lm.managed.modelId)
-    || (lm.mode === 'external' && lm.url && lm.url !== OB_DEFAULT_LLAMA_URL));
+    || (lm.mode === 'external' && lm.url && lm.url !== OB_DEFAULT_LLAMA_URL && lm.url !== LEGACY_LLAMA_URL));
   out.stamps = (config.tui && config.tui.onboarding) || {};
   return out;
 }
@@ -24043,7 +24054,7 @@ function llmBlock() {
   const llm = LIVE_CONFIG && LIVE_CONFIG.llm;
   if (llm && Array.isArray(llm.providers)) return llm;
   const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
-  const url = lm.mode === 'managed' ? 'http://127.0.0.1:' + ((lm.managed && lm.managed.port) || 19091) : (lm.url || 'http://127.0.0.1:8080');
+  const url = lm.mode === 'managed' ? 'http://127.0.0.1:' + ((lm.managed && lm.managed.port) || 19091) : (lm.url || DEFAULT_LLAMA_URL);
   return {activeTextProvider:'local-llama', activeEmbeddingProvider:'local-llama', toolTransport:'auto', providers:[{id:'local-llama', kind:'llama-server', url}]};
 }
 function llmProviders() { return (llmBlock().providers || []).filter((p) => p && typeof p.id === 'string'); }
@@ -24459,7 +24470,7 @@ function llmCloudRows() {
 function llmExternalRows() {
   const lm = llmLocalModels();
   const active = lm.mode === 'external' && llmLocalActive();
-  const url = lm.url || 'http://127.0.0.1:8080';
+  const url = lm.url || DEFAULT_LLAMA_URL;
   return [{kind:'externalUrl', id:'external-url', url, active, available:true, primaryAction: active ? 'current' : 'use',
     enterEffect: active ? 'Enter: edit the base URL' : 'Enter: point the chat route at an external llama.cpp',
     text: 'base URL ' + url + ' [' + llmExternalStatus(active) + ']'}];
