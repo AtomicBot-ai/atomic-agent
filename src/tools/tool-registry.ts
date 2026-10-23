@@ -2,6 +2,7 @@ import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { fullToolResult } from "../compressor/result-compressor.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
 import type { ToolRole } from "./tool-roles.js";
+import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
 
 export interface ToolContext {
   workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
@@ -43,6 +44,12 @@ export interface ToolContext {
    * to the provider serving the step, not the one active at boot.
    */
   providerId?: string;
+  /**
+   * What `os.fs.read` last saw of each file this turn, so `os.fs.write`,
+   * `os.fs.edit` and `os.fs.patch` can say when their target changed
+   * since (`fs-read-freshness.ts`, ATO-659). Absent ⇒ no notice.
+   */
+  fileVersions?: FileReadVersions;
 }
 
 export interface ToolDefinition {
