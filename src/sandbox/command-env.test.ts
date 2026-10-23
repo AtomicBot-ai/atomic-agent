@@ -76,6 +76,14 @@ describe("isSecretEnvName", () => {
       "DEPLOY_PRIVATE_KEY",
       "LICENSE_KEY",
       "SIGNING_KEYS",
+      "GITHUB_PAT",
+      "GH_PAT",
+      "SUPABASE_JWT",
+      "NPM_CONFIG__AUTH",
+      "BASIC_AUTH",
+      "SESSION_COOKIE",
+      "BW_SESSION",
+      "OP_SESSION_my_team",
     ]) {
       expect(isSecretEnvName(name), name).toBe(true);
     }
@@ -92,6 +100,12 @@ describe("isSecretEnvName", () => {
       "MONKEY_BUSINESS",
       "JAVA_HOME",
       "HTTPS_PROXY",
+      "PASSWORD_STORE_DIR",
+      "TOKENIZERS_PARALLELISM",
+      "XDG_SESSION_TYPE",
+      "DBUS_SESSION_BUS_ADDRESS",
+      "PKG_CONFIG_PATH",
+      "KEYBOARD_LAYOUT",
     ]) {
       expect(isSecretEnvName(name), name).toBe(false);
     }

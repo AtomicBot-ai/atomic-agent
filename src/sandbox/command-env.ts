@@ -95,6 +95,7 @@ const SECRET_SUBSTRINGS = [
   "API_KEY",
   "PRIVATE_KEY",
   "ACCESS_KEY",
+  "COOKIE",
 ];
 
 /**
@@ -104,12 +105,42 @@ const SECRET_SUBSTRINGS = [
  */
 const KEY_SEGMENTS = new Set(["KEY", "KEYS"]);
 
+/**
+ * Other whole segments that name a credential: a personal access token
+ * (`GITHUB_PAT`, `GH_PAT`) or a bearer JWT (`SUPABASE_JWT`).
+ */
+const CREDENTIAL_SEGMENTS = new Set(["PAT", "JWT"]);
+
+/**
+ * Password-manager unlock sessions: `bw unlock` prints `BW_SESSION`,
+ * `op signin` sets `OP_SESSION_<account>`. Either one opens the whole
+ * vault, so they go even though `SESSION` alone (`XDG_SESSION_TYPE`,
+ * `DBUS_SESSION_BUS_ADDRESS`) is ordinary.
+ */
+const VAULT_SESSION = /^(BW_SESSION|OP_SESSION_.+)$/;
+
+/**
+ * Names the substrings above would catch that are settings, not
+ * secrets, and that common tools break without: `pass` reads its store
+ * location from `PASSWORD_STORE_DIR` (and its other `PASSWORD_STORE_*`
+ * options), Hugging Face `tokenizers` reads `TOKENIZERS_PARALLELISM`.
+ */
+const NOT_SECRET = /^(PASSWORD_STORE_.+|TOKENIZERS_PARALLELISM)$/;
+
 /** Whether `name` looks like it holds a credential. */
 export function isSecretEnvName(name: string): boolean {
   const upper = name.toUpperCase();
   if (KNOWN.has(upper)) return true;
+  if (VAULT_SESSION.test(upper)) return true;
+  if (NOT_SECRET.test(upper)) return false;
   if (SECRET_SUBSTRINGS.some((part) => upper.includes(part))) return true;
-  return upper.split(/[^A-Z0-9]+/).some((segment) => KEY_SEGMENTS.has(segment));
+  const segments = upper.split(/[^A-Z0-9]+/).filter(Boolean);
+  // `_AUTH` at the end is an auth value (`NPM_CONFIG__AUTH`, `BASIC_AUTH`);
+  // `SSH_AUTH_SOCK` and `XAUTHORITY` are paths and do not end in it.
+  if (segments.at(-1) === "AUTH") return true;
+  return segments.some(
+    (segment) => KEY_SEGMENTS.has(segment) || CREDENTIAL_SEGMENTS.has(segment),
+  );
 }
 
 /**
