@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   excerptPreview,
   hiddenLinesNote,
+  isPreviewCut,
+  pagePreview,
   previewLines,
 } from "./approval-preview.js";
 
@@ -72,5 +74,66 @@ describe("hiddenLinesNote", () => {
     expect(hiddenLinesNote(12)).toBe("… +12 more lines");
     expect(hiddenLinesNote(0, 1)).toBe("… +1 more character");
     expect(hiddenLinesNote(3, 40)).toBe("… +40 more characters, +3 more lines");
+  });
+});
+
+describe("pagePreview (ATO-876)", () => {
+  const limits = { maxLines: 20, maxChars: 1200 };
+
+  it("puts a short command on one page", () => {
+    expect(pagePreview(SCRIPT, limits)).toEqual([
+      ["echo hi", "mkdir -p out", "rm -rf out/cache"],
+    ]);
+  });
+
+  it("shows every line of a long script once, in order, the last one included", () => {
+    const lines = Array.from({ length: 45 }, (_, i) => `echo line-${i + 1}`);
+    lines[44] = "rm -rf ~";
+    const pages = pagePreview(lines.join("\n"), limits);
+    expect(pages.map((page) => page.length)).toEqual([20, 20, 5]);
+    expect(pages.flat()).toEqual(lines);
+    expect(pages.at(-1)?.at(-1)).toBe("rm -rf ~");
+  });
+
+  it("splits a line past the character budget instead of cutting it", () => {
+    const padded = `echo ${" ".repeat(3000)}; rm -rf ~`;
+    const pages = pagePreview(padded, limits);
+    expect(pages.length).toBe(3);
+    for (const page of pages) {
+      expect(page.join("\n").length).toBeLessThanOrEqual(1200);
+    }
+    expect(pages.flat().join("")).toBe(padded);
+  });
+
+  it("keeps each page inside the character budget", () => {
+    const lines = Array.from({ length: 10 }, () => "x".repeat(500));
+    const pages = pagePreview(lines.join("\n"), limits);
+    for (const page of pages) {
+      expect(page.join("\n").length).toBeLessThanOrEqual(1200);
+    }
+    expect(pages.flat()).toEqual(lines);
+  });
+
+  it("escapes controls the same way the excerpt does", () => {
+    expect(pagePreview("echo \u001b[8mhidden", limits)).toEqual([
+      ["echo \\x1b[8mhidden"],
+    ]);
+  });
+});
+
+describe("isPreviewCut (ATO-876)", () => {
+  const limits = { maxLines: 20, maxChars: 1200 };
+
+  it("is false when the excerpt shows everything", () => {
+    expect(isPreviewCut(SCRIPT, limits)).toBe(false);
+  });
+
+  it("is true when lines are left out", () => {
+    const script = Array.from({ length: 25 }, (_, i) => `echo ${i}`).join("\n");
+    expect(isPreviewCut(script, limits)).toBe(true);
+  });
+
+  it("is true when the one line shown is cut", () => {
+    expect(isPreviewCut("x".repeat(1300), limits)).toBe(true);
   });
 });

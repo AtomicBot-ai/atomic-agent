@@ -12,6 +12,7 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { formatApprovalCategory } from "../approval/approval-level.js";
+import { approvalPreviewTruncated } from "./approval-preview-pages.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import {
   handleMenuKey,
@@ -911,7 +912,13 @@ export function decideApproval(
 
 /** What a keystroke means to the approval prompt, if anything. */
 export type ApprovalHotkey =
-  "approve" | "grant_category" | "grant_shape" | "edit_path" | "deny" | "abort";
+  | "approve"
+  | "grant_category"
+  | "grant_shape"
+  | "edit_path"
+  | "view_full"
+  | "deny"
+  | "abort";
 
 /**
  * The chord each approval verb answers to, and the label the button
@@ -946,6 +953,14 @@ export type ApprovalHotkey =
  *
  * That leaves `ctrl+y`, `ctrl+d`, `ctrl+f` and `ctrl+b`.
  *
+ * **`ctrl+z` pages the full command (ATO-876).** It is not a verdict,
+ * so it may be the odd one out: it is offered only while the preview
+ * is cut, and every press shows the next page of the whole command,
+ * back to the excerpt after the last. `ctrl+v` (paste), `ctrl+j`
+ * (newline), `ctrl+h` / `ctrl+i` / `ctrl+m` (backspace, tab and return
+ * on most terminals) were taken; `ctrl+z` reaches the app as a key
+ * because the TUI runs in raw mode, where it does not suspend.
+ *
  * **Why `ctrl+b` does two jobs.** `[a]` (grant this command shape) is
  * offered only for a `shell` request, and `[e]` (edit the target path)
  * only where `redirectablePath` is set — which `os.fs.write` is the
@@ -960,6 +975,8 @@ export const APPROVAL_CHORDS = {
   grantCategory: "f",
   /** Shape grant and path edit share this — see above. */
   contextual: "b",
+  /** Next page of a cut preview; only while the preview is cut. */
+  viewFull: "z",
 } as const;
 
 /**
@@ -1000,6 +1017,9 @@ export function approvalHotkey(
   if (lower === APPROVAL_CHORDS.contextual) {
     if (canGrantShape(request)) return "grant_shape";
     if (canEditPath(request)) return "edit_path";
+  }
+  if (lower === APPROVAL_CHORDS.viewFull && approvalPreviewTruncated(request)) {
+    return "view_full";
   }
   return null;
 }
@@ -1118,6 +1138,9 @@ function handleApprovalKey(
         type: "approval_path_edit_opened",
         path: request.redirectablePath ?? "",
       });
+      return true;
+    case "view_full":
+      ctx.dispatch({ type: "approval_preview_paged" });
       return true;
     case "deny":
       decideApproval(request, false, ctx);

@@ -479,6 +479,7 @@ export function reduceUiAction(
         runStartedAt: action.running ? Date.now() : null,
         pendingApproval: null,
         approvalPathDraft: null,
+        approvalPreviewPage: null,
         lastRunStatus: null,
         runHistory: [],
         sessionPickerOpen: false,
