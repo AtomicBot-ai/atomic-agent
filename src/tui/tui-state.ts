@@ -402,6 +402,12 @@ export interface TuiState {
    */
   approvalPathDraft: string | null;
   /**
+   * The page of the full command the approval prompt is showing, or
+   * `null` for the usual excerpt (ATO-876). Keyed by `approvalId` so a
+   * page left over from an earlier prompt can never apply to a new one.
+   */
+  approvalPreviewPage: { approvalId: string; page: number } | null;
+  /**
    * Whether the composer currently holds a text selection. Lifted out of
    * the editor for exactly one reason: Ctrl+C means "copy" while text is
    * selected and "stop / quit" otherwise, and the two handlers live in
@@ -869,6 +875,7 @@ export function createInitialTuiState(
     reasoning: [],
     pendingApproval: null,
     approvalPathDraft: null,
+    approvalPreviewPage: null,
     composerHasSelection: false,
     composerNotice: null,
     providerOutage: null,

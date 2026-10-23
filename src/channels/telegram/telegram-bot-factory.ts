@@ -377,8 +377,23 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
     if (file.kind === "video") return bot.api.sendVideo(chatId, input, { ...other, supports_streaming: true });
     return bot.api.sendDocument(chatId, input, other);
   };
+  // Text that only exists in memory (the full command behind a cut
+  // approval preview) goes up as a document without touching disk.
+  const sendTextDocument = async (
+    chatId: number,
+    doc: { filename: string; content: string; caption?: string; threadId?: number },
+  ): Promise<unknown> => {
+    const input = new grammy.InputFile(
+      new TextEncoder().encode(doc.content),
+      doc.filename,
+    );
+    return bot.api.sendDocument(chatId, input, {
+      ...(doc.caption === undefined ? {} : { caption: doc.caption }),
+      ...(doc.threadId === undefined ? {} : { message_thread_id: doc.threadId }),
+    });
+  };
   const api = bot.api as unknown as BotInstance["api"];
-  Object.assign(api, { downloadFile, sendFile });
+  Object.assign(api, { downloadFile, sendFile, sendTextDocument });
   const instance: BotInstance = {
     api,
     setTextHandler(handler) {

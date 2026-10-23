@@ -43,6 +43,7 @@ import { getConfig } from "../config/index.js";
 import { LOCAL_PROVIDER_KIND } from "../config/llm-run-mode-config.js";
 import type { RunModeName } from "../config/llm-run-mode-config.js";
 import {
+  entryHasNoChatModel,
   resolveLlmConfig,
   type LlmProviderConfigEntry,
   type ResolvedLlmConfig,
@@ -466,6 +467,18 @@ function resolveTarget(
     return {
       ok: false,
       message: `Usage: ${code("/model <provider> <model-id>")}.`,
+    };
+  }
+  // Checked here, before anything is written, so the refusal reads as a
+  // usage answer; `ProviderRegistry.swapActive` refuses the same entry
+  // for every other caller.
+  if (modelId === null && entryHasNoChatModel(entry)) {
+    return {
+      ok: false,
+      message: [
+        `${code(entry.id)} is a ${code(entry.kind)} provider with no chat model, so it cannot be the active text provider.`,
+        `Pin a chat model first (${code(`/model ${entry.id} <model-id>`)}) or keep using it for embeddings only.`,
+      ].join(" "),
     };
   }
   if (modelId !== null && MODEL_PIN_IGNORED_KINDS.has(entry.kind)) {
