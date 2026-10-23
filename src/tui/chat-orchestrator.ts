@@ -219,6 +219,11 @@ export class ChatOrchestrator {
   private readonly queue: string[] = [];
   private readonly pendingCompactions = new Set<string>();
   /**
+   * The running `/enhance`, if any. One at a time (a second would race
+   * the first for the buffer); aborted on send, Esc, switch, new and quit.
+   */
+  private promptEnhance: AbortController | null = null;
+  /**
    * Messages refused since the queue last had room, so a burst reads as
    * one escalating counter instead of N identical lines. Reset by the
    * first push that fits again.
@@ -934,6 +939,7 @@ export class ChatOrchestrator {
 
   switchSession(sessionId: string): void {
     if (this.quitting) return;
+    this.cancelPromptEnhance();
     if (this.currentController && this.session?.id === sessionId) {
       // Enter on the picker row that is already open, mid-run.
       // Re-loading would replace the live transcript with the stale
@@ -1255,6 +1261,7 @@ export class ChatOrchestrator {
 
   newSession(): void {
     if (this.quitting) return;
+    this.cancelPromptEnhance();
     // A running turn keeps running in its old thread — see
     // `leaveCurrentSession`. A fresh session starts with no point
     // exceptions of its own; the previous thread's grants are cleared
@@ -1290,6 +1297,9 @@ export class ChatOrchestrator {
   }
 
   sendMessage(text: string): void {
+    // Sending is the person's answer to the draft; a rewrite landing in
+    // the composer after it would be noise.
+    this.cancelPromptEnhance();
     if (this.holdComposerSubmission(text)) return;
     if (this.quitting) return;
     this.ensureSession();
@@ -1760,6 +1770,54 @@ export class ChatOrchestrator {
     return ids.slice(0, DEBUG_BUNDLE_TRACE_LIMIT);
   }
 
+  /**
+   * `/enhance <draft>`: one refinement pass through the runtime's
+   * sub-call, its result handed back to the composer for review. Never
+   * sends anything. The slash handler already put the draft back in the
+   * buffer, so on any failure the person simply keeps what they wrote,
+   * and the rewrite only lands if they have not edited it meanwhile
+   * (`composer_draft_replaced`).
+   */
+  async enhancePrompt(draft: string): Promise<void> {
+    if (!this.runtime.enhancePrompt) {
+      this.bus.emit({ type: "composer_notice", text: "Prompt enhancement is not available here." });
+      return;
+    }
+    if (this.promptEnhance) {
+      this.bus.emit({ type: "composer_notice", text: "Already enhancing a prompt; wait for it to finish." });
+      return;
+    }
+    const controller = new AbortController();
+    this.promptEnhance = controller;
+    this.bus.emit({ type: "composer_notice", text: "Enhancing your prompt…" });
+    try {
+      const sessionId = this.session?.id;
+      const result = await this.runtime.enhancePrompt(draft, {
+        ...(sessionId ? { sessionId } : {}),
+        signal: controller.signal,
+      });
+      // Cancelled by the person (send, Esc, switch): say nothing.
+      if (controller.signal.aborted) return;
+      if (result.ok) {
+        this.bus.emit({ type: "composer_draft_replaced", expected: draft, value: result.text });
+      } else {
+        this.bus.emit({ type: "composer_notice", text: `Could not enhance the prompt (${result.reason}). Your text is unchanged.` });
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.bus.emit({ type: "composer_notice", text: `Could not enhance the prompt (${reason}). Your text is unchanged.` });
+    } finally {
+      if (this.promptEnhance === controller) this.promptEnhance = null;
+    }
+  }
+
+  /** Stop a running `/enhance` quietly; idle Esc and every exit path call it. */
+  cancelPromptEnhance(): void {
+    this.promptEnhance?.abort();
+    this.promptEnhance = null;
+  }
+
   async compactContext(verb: "run" | "show"): Promise<void> {
     const id = this.session?.id;
     if (!id) { this.notify("No conversation to compact yet."); return; }
@@ -1803,6 +1861,7 @@ export class ChatOrchestrator {
    * N of them silently is worse than one line in the transcript.
    */
   abortCurrentTurn(): void {
+    this.cancelPromptEnhance();
     if (this.session) this.runtime.cancelSessionCompaction?.(this.session.id);
     const dropped = [...this.queue];
     if (dropped.length > 0) {
@@ -1825,6 +1884,7 @@ export class ChatOrchestrator {
   quit(): void {
     if (this.quitting) return;
     this.quitting = true;
+    this.cancelPromptEnhance();
     this.clearQueue();
     this.currentController?.abort();
     this.detachedTurns.abortAll();

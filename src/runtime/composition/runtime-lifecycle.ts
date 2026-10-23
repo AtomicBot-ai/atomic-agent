@@ -29,6 +29,8 @@ export interface RuntimeLifecycleResources {
   readonly shellJobs: Pick<ShellJobRegistry, "endAll">;
   readonly reflectionRunner: Pick<ReflectionRunner, "abortPending"> | undefined;
   readonly pendingSessionNamings: Set<AbortController>;
+  /** In-flight `/enhance` passes (`runtime.enhancePrompt`), aborted with naming. */
+  readonly pendingPromptEnhances?: Set<AbortController>;
   readonly turnsInFlight: Pick<TurnsInFlight, "settleCancelled">;
   readonly browserBackend: Pick<BrowserBackend, "shutdown">;
   readonly mcpManager: Pick<McpManager, "shutdown">;
@@ -121,6 +123,9 @@ export function createRuntimeLifecycle(resources: RuntimeLifecycleResources) {
     // Same race, same reason, for session naming (`pendingSessionNamings`).
     for (const naming of pendingSessionNamings) naming.abort();
     pendingSessionNamings.clear();
+    // And for a prompt rewrite nobody will read once the host is gone.
+    for (const enhance of resources.pendingPromptEnhances ?? []) enhance.abort();
+    resources.pendingPromptEnhances?.clear();
     // And for the embedding backfill: abort its in-flight embed now, and
     // wait for it (below) before the notes store it writes into closes.
     const backfillStopped = resources.embeddingBackfill?.stop().catch(() => {});
