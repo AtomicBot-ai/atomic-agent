@@ -514,7 +514,8 @@ is greyed (`aria-disabled`, reason in its tooltip) while the box is empty, a
 rewrite runs, or `improveReady()` says no chat model can answer; the page asks
 `improveReady()` each time it shows. A click sends the prompt to
 `improvePrompt`, puts the answer in the box and offers **Undo** until the box
-is edited. Main (main/studio-improve-prompt.ts) asks the active text provider
+is edited. The box stays editable meanwhile; if it was edited before the answer
+came, the typed text stays and the answer is dropped (`studioImproveLands`). Main (main/studio-improve-prompt.ts) asks the active text provider
 (Fusion: its orchestrator) once on its OpenAI-compatible chat endpoint with
 that entry's `defaultChatModel ?? model`, or a local llama-server on its URL;
 no chat session is made and the key never reaches the window. Subscription

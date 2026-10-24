@@ -10,6 +10,7 @@
 const STUDIO_IMPROVE_EMPTY = 'Type a prompt first';
 const STUDIO_IMPROVE_CHECKING = 'Checking the chat model';
 const STUDIO_IMPROVE_OLD_BUILD = 'Improve prompt needs a newer app build';
+const STUDIO_IMPROVE_EDITED = 'You edited the prompt while it was being rewritten, so your text was kept.';
 
 /** A page's Improve state before anything is known. */
 function studioImproveBlank() {
@@ -87,6 +88,20 @@ async function studioImproveRun(br, kind, text, st) {
   return next;
 }
 
+/**
+ * After a rewrite came back: whether it may replace the box. The box still
+ * holds `current`; it held `sent` when the rewrite was asked for. The box
+ * stays editable while a rewrite runs, so text typed meanwhile wins over the
+ * rewrite (it would be lost otherwise, Undo only knows `sent`).
+ */
+function studioImproveLands(st, sent, current) {
+  if (String(current == null ? '' : current) === String(sent == null ? '' : sent)) return true;
+  st.undo = null;
+  st.err = STUDIO_IMPROVE_EDITED;
+  return false;
+}
+
 if (typeof module !== 'undefined') {
-  module.exports = {STUDIO_IMPROVE_EMPTY, studioImproveBlank, studioImproveWhy, studioImproveHTML, studioImproveSync, studioImproveCheck, studioImproveRun};
+  module.exports = {STUDIO_IMPROVE_EMPTY, STUDIO_IMPROVE_EDITED, studioImproveBlank, studioImproveWhy, studioImproveHTML, studioImproveSync, studioImproveCheck, studioImproveRun,
+    studioImproveLands};
 }

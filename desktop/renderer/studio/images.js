@@ -646,10 +646,12 @@
   async function improve() {
     const st = IM.improve;
     if (!st || typeof studioImproveRun !== 'function' || studioImproveWhy(IM.form.prompt, st)) return;
-    const run = studioImproveRun(br(), 'image', IM.form.prompt, st);
+    const sent = IM.form.prompt;
+    const run = studioImproveRun(br(), 'image', sent, st);
     paintForm();
     const next = await run;
-    if (next !== null) { IM.form.prompt = next; if (IM.formMsg) { IM.formMsg = ''; paintFoot(); } save(); }
+    // Typed into the box meanwhile: keep that text (studioImproveLands).
+    if (next !== null && studioImproveLands(st, sent, IM.form.prompt)) { IM.form.prompt = next; if (IM.formMsg) { IM.formMsg = ''; paintFoot(); } save(); }
     paintForm();
   }
 

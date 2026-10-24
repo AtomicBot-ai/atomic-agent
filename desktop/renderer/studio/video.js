@@ -680,10 +680,18 @@
     async function improve() {
       const st = S.improve;
       if (!st || typeof g.studioImproveRun !== 'function' || g.studioImproveWhy(S.form.prompt, st)) return;
-      const run = g.studioImproveRun(BR(), KIND, S.form.prompt, st);
+      const sent = S.form.prompt;
+      const run = g.studioImproveRun(BR(), KIND, sent, st);
       paint('form');
       const next = await run;
-      if (next !== null) { S.form.prompt = next; S.notice = null; saveForm(); paint('foot'); }
+      // Typed into the box meanwhile: keep that text (studioImproveLands).
+      if (next !== null && g.studioImproveLands(st, sent, S.form.prompt)) {
+        S.form.prompt = next; S.notice = null; saveForm(); paint('foot');
+        /* paint('form') keeps a focused textarea's own value, so a box clicked
+           into while waiting would show the old text over the new prompt. */
+        const ta = S.root && S.root.querySelector('[data-vfield="prompt"]');
+        if (ta) ta.value = next;
+      }
       paint('form');
     }
 

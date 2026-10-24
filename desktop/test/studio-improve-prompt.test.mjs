@@ -79,6 +79,15 @@ test('a run puts main\'s prompt back and keeps the old one for Undo; a failure k
   assert.equal(sent, false);
 });
 
+test('a rewrite that comes back after the box was edited keeps the typed text', () => {
+  const st = ready({ undo: 'a fox' });
+  assert.equal(R.studioImproveLands(st, 'a fox', 'a fox'), true);
+  assert.equal(st.undo, 'a fox');
+  assert.equal(R.studioImproveLands(st, 'a fox', 'a fox in the snow'), false);
+  assert.equal(st.undo, null);
+  assert.equal(st.err, R.STUDIO_IMPROVE_EDITED);
+});
+
 /* ---------- wiring (both pages) ---------- */
 
 test('index.html loads improve-prompt.js before the Studio pages', () => {
@@ -100,6 +109,10 @@ test('both pages draw the button with the prompt box and handle its verbs', () =
   assert.match(video, /case 'improve':/);
   assert.match(video, /case 'improve-undo':/);
   assert.match(video, /studioImproveCheck\(/);
+  // The answer lands only on the text it was asked for; the video page also sets a focused box's value.
+  assert.match(images, /studioImproveLands\(st, sent, IM\.form\.prompt\)/);
+  assert.match(video, /studioImproveLands\(st, sent, S\.form\.prompt\)/);
+  assert.match(video, /if \(ta\) ta\.value = next;/);
   const preload = readFileSync(new URL('../preload/preload.ts', import.meta.url), 'utf8');
   assert.match(preload, /improveReady: \(\) => ipcRenderer\.invoke\("studio:improveReady"\)/);
   assert.match(preload, /improvePrompt: \(kind: "image" \| "video", prompt: string\) => ipcRenderer\.invoke\("studio:improvePrompt", kind, prompt\)/);

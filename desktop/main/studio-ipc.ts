@@ -69,7 +69,9 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal
     localKey: (url) => localLlamaKeyFor(url) ?? readCoreModelKey(managedDataDir(null), url),
   };
   ipcMain.handle("studio:improveReady", () => answer(() => improveReady(improve)));
-  ipcMain.handle("studio:improvePrompt", (_e, kind: unknown, prompt: unknown) => improvePrompt(improve, kind, prompt));
+  // CONTRACT.md: every call resolves. A hand-edited config the route cannot read must not reject.
+  ipcMain.handle("studio:improvePrompt", (_e, kind: unknown, prompt: unknown) => improvePrompt(improve, kind, prompt)
+    .catch(() => ({ ok: false, error: { code: "IMPROVE_FAILED", message: "Could not improve the prompt. Try again." } })));
   const pricing = new StudioPricing(opts.request ?? fetch);
   /** Folders the folder dialog returned this session: the only ones setOutputDir takes. */
   const chosenDirs = new Set<string>();
