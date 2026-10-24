@@ -122,6 +122,9 @@
 .llm-pane .llm-effect--download.llm-effect--nodisk{color:var(--ink-3)}
 .llm-pane .llm-row:hover .llm-effect.llm-effect--nodisk:not(.llm-effect--current):not(.llm-effect--downloading){background:none}
 .llm-pane .llm-effect .tk-spin{width:12px;height:12px}
+/* ATO-900: the memory model's card says its own state: a chip beside its name, a line under it, a red line for a failure. */
+.llm-pane .llm-memst .tk-spin{width:11px;height:11px;border-width:1.5px;margin-right:2px}
+.llm-pane .llm-row .llm-memline--failed,.llm-pane .llm-row .llm-memline--engine{color:var(--critical)}
 /* A second verb on a row (Remove, Edit): quiet text, a fill on hover. */
 .llm-pane .llm-rowact{flex:none;display:inline-flex;align-items:center;height:26px;padding:0 9px;border-radius:var(--r-pill);
   font:500 12.5px/1 var(--font-ui);color:var(--ink-2);cursor:pointer;transition:background-color var(--t-state) var(--ease),color var(--t-state) var(--ease)}
