@@ -376,8 +376,19 @@
 .msgact.danger:hover{background:var(--critical-wash);color:var(--critical)}
 /* ATO-862: under the last reply of a turn that acted, a greyed retry icon whose
    tooltip says why it does nothing (msgActs). Same muted look as a greyed
-   .micbtn; hover keeps it grey and adds no wash, so it never reads as live. */
-.msgact.msgact-off,.msgact.msgact-off:hover{color:var(--ink-3);opacity:.55;background:none;cursor:default}
+   .micbtn; hover keeps it grey and adds no wash, so it never reads as live.
+   ATO-900: the tooltip is drawn here from data-tip, not left to a native
+   title (msgActs says why). The fade sits on the icon, not the button, so
+   the tooltip inside the button is not faded with it. It opens above the
+   icon, left-aligned with it (the row starts at the reply's left edge), and
+   takes no pointer events, so it never covers a click on the reply. */
+.msgact.msgact-off,.msgact.msgact-off:hover{position:relative;color:var(--ink-3);background:none;cursor:default}
+.msgact.msgact-off svg{opacity:.55}
+.msgact-off[data-tip]::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 6px);z-index:5;
+  width:max-content;max-width:280px;white-space:normal;text-align:left;padding:5px 10px;border-radius:var(--r-kbd);background:var(--lift);box-shadow:var(--sh-pop);
+  color:var(--ink);font:400 12px/16px var(--font-ui);letter-spacing:0;opacity:0;pointer-events:none;
+  transition:opacity var(--t-state) var(--ease)}
+.msgact-off[data-tip]:hover::after{opacity:1;transition-delay:300ms}
 /* ATO-168: on a reply the actions start at the LEFT, under the text they copy
    (Danya: on the right "it flies off who knows where"); the user bubble keeps
    them at its right edge. The last reply's dot (replyDot) is a zero-height
