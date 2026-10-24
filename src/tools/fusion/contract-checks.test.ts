@@ -7,6 +7,7 @@ import {
   applyCheckOutcomes,
   applyContractFindings,
   contentProvides,
+  contractChecklistPasses,
   describeMissing,
   inspectContractProvides,
   renderContractLine,
@@ -17,6 +18,7 @@ import {
 import type { DelegateContract } from "./contract.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { WorkerTaskResult } from "./worker-result.js";
+import { runChecks as runVerifyChecks } from "../verify/run-verify.js";
 
 function row(over: Partial<WorkerTaskResult> = {}): WorkerTaskResult {
   return {
@@ -215,16 +217,87 @@ describe("applyContractFindings", () => {
 describe("runContractChecks", () => {
   const ctx = { workingDir: "/repo", signal: new AbortController().signal };
 
-  it("reports declared checks as NOT RUN when no runner is wired — never as passed", async () => {
-    const out = await runContractChecks([{ kind: "command", cmd: "x" }], undefined, ctx);
-    expect(out.outcomes).toEqual([]);
+  it("reports every declared checklist item as UNCHECKED when no runner is wired", async () => {
+    const out = await runContractChecks(
+      [{ item: "build launches", kind: "command", cmd: "x" }],
+      undefined,
+      ctx,
+    );
+    expect(out.outcomes).toEqual([
+      {
+        item: "build launches",
+        checked: false,
+        ok: false,
+        detail: "not run — no check runner is wired",
+      },
+    ]);
     expect(out.checksSkipped).toBe("1 check not run — no check runner is wired");
+    expect(contractChecklistPasses({ findings: [], checks: out.outcomes, checksSkipped: out.checksSkipped })).toBe(false);
   });
 
   it("does nothing for an empty list", async () => {
     const runner = vi.fn<ContractCheckRunner>();
     expect(await runContractChecks([], runner, ctx)).toEqual({ outcomes: [] });
     expect(runner).not.toHaveBeenCalled();
+  });
+
+  it("catches the #491 producer/consumer field-meaning mismatch with a real boundary fixture", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "fusion-contract-boundary-"));
+    mkdirSync(join(dir, "js"));
+    const drawPath = join(dir, "js", "bodies-draw.js");
+    // The producer is correct: w is world-space and o is the local offset.
+    writeFileSync(
+      join(dir, "js", "bodies.js"),
+      "globalThis.PHYS={corners:(b)=>[{w:{x:b.pos.x+1,y:b.pos.y+2,z:b.pos.z+3},o:{x:1,y:2,z:3}}]};",
+    );
+    const checkScript = [
+      "const fs=require(\"fs\"),vm=require(\"vm\");",
+      "vm.runInThisContext(fs.readFileSync(\"js/bodies.js\",\"utf8\"));",
+      "vm.runInThisContext(fs.readFileSync(\"js/bodies-draw.js\",\"utf8\"));",
+      "const b={pos:{x:10,y:20,z:30}};",
+      "const c=globalThis.PHYS.corners(b)[0];",
+      "const shapeOk=c.w.x===11&&c.w.y===22&&c.w.z===33&&c.o.x===1&&c.o.y===2&&c.o.z===3;",
+      "const consumerOk=globalThis.drawProjectedX(b)===11;",
+      "if(!shapeOk||!consumerOk){console.error(JSON.stringify({c,projected:globalThis.drawProjectedX(b)}));process.exit(1);}",
+    ].join("");
+    const checks = [
+      {
+        task: "draw",
+        kind: "command",
+        cmd: process.execPath,
+        args: ["-e", checkScript],
+        checks: ["exit 0"],
+      },
+    ];
+    const runCtx = { workingDir: dir, signal: new AbortController().signal };
+    try {
+      // Exact #491 failure: the consumer projects o as though it were the world point.
+      writeFileSync(
+        drawPath,
+        "globalThis.drawProjectedX=(b)=>globalThis.PHYS.corners(b)[0].o.x;",
+      );
+      const broken = await runContractChecks(checks, runVerifyChecks, runCtx);
+      expect(broken.outcomes).toHaveLength(1);
+      expect(broken.outcomes[0]?.ok).toBe(false);
+      expect(
+        applyCheckOutcomes([row({ id: "draw" })], broken.outcomes)[0],
+      ).toMatchObject({ status: "failed" });
+
+      // Corrected consumer uses the world-space field described by provides.shape.
+      writeFileSync(
+        drawPath,
+        "globalThis.drawProjectedX=(b)=>globalThis.PHYS.corners(b)[0].w.x;",
+      );
+      const fixed = await runContractChecks(checks, runVerifyChecks, runCtx);
+      expect(fixed.outcomes).toEqual([
+        expect.objectContaining({ task: "draw", ok: true }),
+      ]);
+      expect(
+        applyCheckOutcomes([row({ id: "draw" })], fixed.outcomes)[0],
+      ).toMatchObject({ status: "ok" });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("hands the runner the specs WITHOUT the task key and pairs results back by index", async () => {
@@ -238,8 +311,8 @@ describe("runContractChecks", () => {
     }));
     const out = await runContractChecks(
       [
-        { task: "a", kind: "command", cmd: "node" },
-        { kind: "command", cmd: "npm" },
+        { task: "a", item: "node parses", kind: "command", cmd: "node" },
+        { item: "tests pass", kind: "command", cmd: "npm" },
       ],
       runner,
       ctx,
@@ -249,8 +322,8 @@ describe("runContractChecks", () => {
       ctx,
     );
     expect(out.outcomes).toEqual([
-      { task: "a", ok: true, detail: "exit 0" },
-      { ok: false, detail: "npm: exit code 1 line two" },
+      { task: "a", item: "node parses", checked: true, ok: true, detail: "exit 0" },
+      { item: "tests pass", checked: true, ok: false, detail: "npm: exit code 1 line two" },
     ]);
   });
 
@@ -261,17 +334,25 @@ describe("runContractChecks", () => {
       ctx,
     );
     expect(short.outcomes).toEqual([
-      { task: "a", ok: true, detail: "passed" },
-      { task: "b", ok: false, detail: "the runner returned no result" },
+      { task: "a", item: "check-1", checked: true, ok: true, detail: "passed" },
+      { task: "b", item: "check-2", checked: false, ok: false, detail: "the runner returned no result" },
     ]);
+    expect(contractChecklistPasses({ findings: [], checks: short.outcomes })).toBe(false);
     const thrown = await runContractChecks(
-      [{ cmd: "x" }],
+      [{ item: "page is healthy", cmd: "x" }],
       async () => {
         throw new Error("no browser available");
       },
       ctx,
     );
-    expect(thrown.outcomes).toEqual([]);
+    expect(thrown.outcomes).toEqual([
+      {
+        item: "page is healthy",
+        checked: false,
+        ok: false,
+        detail: "not run — the check runner failed: no browser available",
+      },
+    ]);
     expect(thrown.checksSkipped).toBe(
       "1 check not run — the check runner failed: no browser available",
     );
@@ -286,6 +367,10 @@ describe("runContractChecks", () => {
       signal: controller.signal,
     });
     expect(runner).not.toHaveBeenCalled();
+    expect(out.outcomes).toEqual([
+      { item: "check-1", checked: false, ok: false, detail: "not run — the turn was cancelled" },
+      { item: "check-2", checked: false, ok: false, detail: "not run — the turn was cancelled" },
+    ]);
     expect(out.checksSkipped).toBe("2 checks not run — the turn was cancelled");
   });
 });
@@ -330,6 +415,31 @@ describe("applyCheckOutcomes", () => {
   });
 });
 
+describe("contractChecklistPasses", () => {
+  it("requires every declared item to have actually run and passed", () => {
+    expect(contractChecklistPasses({
+      findings: [],
+      checks: [
+        { item: "wall breaks", checked: true, ok: true, detail: "passed" },
+        { item: "boxes move", checked: true, ok: true, detail: "passed" },
+      ],
+    })).toBe(true);
+    expect(contractChecklistPasses({
+      findings: [],
+      checks: [{ item: "wall breaks", checked: true, ok: false, detail: "failed" }],
+    })).toBe(false);
+    expect(contractChecklistPasses({
+      findings: [],
+      checks: [{ item: "wall breaks", checked: false, ok: false, detail: "not run" }],
+    })).toBe(false);
+    expect(contractChecklistPasses({
+      findings: [],
+      checks: [],
+      checksSkipped: "1 check not run — no runner",
+    })).toBe(false);
+  });
+});
+
 describe("renderContractLine", () => {
   const present: ContractFinding = { task: "a", kind: "file", name: "a.js", where: ["a.js"], present: true };
   const missing: ContractFinding = { task: "b", kind: "symbol", name: "HD.Ship.reset", where: ["js/ship.js"], present: false };
@@ -362,22 +472,30 @@ describe("renderContractLine", () => {
     );
   });
 
-  it("carries call-level check failures and the reason checks did not run", () => {
+  it("names every checklist item and distinguishes PASS, FAIL and UNCHECKED", () => {
     expect(
       renderContractLine({
         findings: [],
-        checks: [{ ok: false, detail: "status 500" }, { task: "a", ok: true, detail: "ok" }],
+        checks: [
+          { item: "service responds", checked: true, ok: false, detail: "status 500" },
+          { task: "a", item: "page loads", checked: true, ok: true, detail: "ok" },
+          { task: "a", item: "wall breaks", checked: false, ok: false, detail: "not run" },
+        ],
       }),
-    ).toBe("contract: call-level checks: 1 of 1 failed — status 500");
-    expect(
-      renderContractLine({
-        findings: [],
-        checks: [{ task: "a", ok: false, detail: "x" }, { task: "a", ok: true, detail: "y" }],
-      }),
-    ).toBe("contract: checks: 1 of 2 failed (see the task rows)");
+    ).toBe(
+      "contract: checklist: service responds=FAIL — status 500; [a] page loads=PASS; [a] wall breaks=UNCHECKED — not run",
+    );
     expect(
       renderContractLine({ findings: [], checks: [], checksSkipped: "2 checks not run — no check runner is wired" }),
     ).toBe("contract: 2 checks not run — no check runner is wired");
+  });
+
+  it("preserves all maximum-length verdicts despite verbose findings", () => {
+    const checks = Array.from({ length: 16 }, (_, i) => ({
+      item: `${i}-`.padEnd(120, "x"), checked: i !== 15, ok: i < 14, detail: "bad ".repeat(100),
+    }));
+    const line = renderContractLine({ findings: [missing], checks, warnings: ["w".repeat(2000)] })!;
+    checks.forEach((check, i) => expect(line).toContain(`${check.item}=${i === 15 ? "UNCHECKED" : i === 14 ? "FAIL" : "PASS"}`));
   });
 
   it("carries the warnings the call ran with, after everything else", () => {

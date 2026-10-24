@@ -446,6 +446,7 @@ export class AgentLoop {
                     fusionState = recordDelegation(
                       fusionState,
                       delegationProducedWork(result),
+                      result,
                     );
                   },
                 }
@@ -679,6 +680,11 @@ export class AgentLoop {
           ...(outcome.progressNote !== undefined ? { progressNote: true } : {}),
           ...(stallSignal !== null ? { reviewStall: stallSignal } : {}),
         });
+        if (outcome.terminal !== null && fusionState.blockedChecklist !== undefined) {
+          turn.reason = "failed";
+          state = { ...state, status: "failed", lastError: "fusion_checklist: failing or unchecked behavior items" };
+          break;
+        }
         if (outcome.terminal === "session") {
           turn.reason = "finish";
           turn.endedOnFinalizationStep = finalizationStep;

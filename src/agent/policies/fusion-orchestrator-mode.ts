@@ -76,6 +76,12 @@ export interface FusionOrchestratorState {
    * one ("send the rework back out").
    */
   delegations: number;
+  /** Complete failing checklist verdict; blocks terminal success. */
+  blockedChecklist?: string;
+  /** A missing opt-in checklist, not a failed or malformed declared check. */
+  checklistPolicyRefusal?: boolean;
+  /** Latest complete checklist verdict, retained for terminal reporting even after PASS. */
+  checklistVerdict?: string;
   /**
    * Consecutive fan-outs in which **no worker executed a single step**.
    * Reset by any fan-out that ran something, however badly it went.
@@ -265,8 +271,46 @@ export function delegationProducedWork(result: {
 export function recordDelegation(
   state: FusionOrchestratorState,
   producedWork = true,
+  result?: CompressedToolResult,
 ): FusionOrchestratorState {
+  const checklistPassed = result?.details.checklistPassed;
+  const explicitVerdict =
+    typeof result?.details.checklistVerdict === "string" &&
+    result.details.checklistVerdict.trim().length > 0
+      ? result.details.checklistVerdict
+      : undefined;
+  const resultVerdict =
+    explicitVerdict ??
+    (typeof checklistPassed === "boolean" ? result?.summary : undefined);
+  const clearedPolicyRefusal = state.checklistPolicyRefusal === true &&
+    result?.status === "ok" && result.details.checklistNotRequired === true;
+  const hadDeclaredBlock = state.blockedChecklist !== undefined &&
+    state.checklistPolicyRefusal !== true;
+  const incomingPolicyRefusal = checklistPassed === false &&
+    result?.details.checklistPolicyRefusal === true;
+  // A policy warning never replaces an outstanding declaration's evidence.
+  const preserveDeclaredBlock = hadDeclaredBlock && incomingPolicyRefusal;
+  const blockedChecklist =
+    checklistPassed === true || clearedPolicyRefusal
+      ? undefined
+      : preserveDeclaredBlock
+        ? state.blockedChecklist
+        : checklistPassed === false
+          ? resultVerdict ?? result?.summary
+          : state.blockedChecklist;
+  const checklistVerdict = clearedPolicyRefusal
+    ? undefined
+    : preserveDeclaredBlock
+      ? state.checklistVerdict
+      : typeof checklistPassed === "boolean"
+        ? resultVerdict ?? result?.summary
+        : state.checklistVerdict;
+  const checklistPolicyRefusal = blockedChecklist !== undefined && !hadDeclaredBlock &&
+    (checklistPassed === false ? incomingPolicyRefusal : state.checklistPolicyRefusal === true);
   return {
+    ...(checklistPolicyRefusal ? { checklistPolicyRefusal: true } : {}),
+    ...(blockedChecklist === undefined ? {} : { blockedChecklist }),
+    ...(checklistVerdict === undefined ? {} : { checklistVerdict }),
     delegations: state.delegations + 1,
     barrenDelegations: producedWork ? 0 : state.barrenDelegations + 1,
   };

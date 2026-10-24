@@ -460,6 +460,7 @@ export function registerRuntimeFusionAndReadScope(input: {
   runTurn: FusionDelegateDeps["runTurn"];
   createEphemeralSession: FusionDelegateDeps["createEphemeralSession"];
   resolveOriginalRequest: (sessionId: string) => string | undefined;
+  resolveOperatorTurnId: (sessionId: string) => string | undefined;
   declaredInputs: DeclaredInputsRegistry;
   prepareLocalLink: FusionDelegateDeps["warmWorkerBackend"];
   emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
@@ -493,6 +494,8 @@ export function registerRuntimeFusionAndReadScope(input: {
         runTurn(session, userMessage, turnOptions),
       createEphemeralSession,
       resolveOriginalRequest: resolveOriginalRequest,
+      resolveOperatorTurnId: input.resolveOperatorTurnId,
+      requireBehaviorChecklist: () => getConfig().llm?.runMode?.fusion?.requireBehaviorChecklist === true,
       declaredInputs,
       // The worker leg's pricing, when the catalogue or a hand-priced
       // entry knows it — the status table's spend line.
