@@ -122,11 +122,12 @@ export function cleanLocale(l: string): string | undefined {
  * `agent_restarted.trigger` (ATO-274). `manual` is the person's own restart
  * (Settings, the palette); finishing setup, a new workspace folder and a
  * data import restart the agent too and are told apart, so `manual` can be
- * read as "something felt stuck".
+ * read as "something felt stuck". `telegram` is the Telegram tab's Restart
+ * agent, which applies a token, owner or on/off change (ATO-900 item 6).
  */
-export const RESTART_TRIGGERS = ["manual", "switch", "auto", "other", "setup_finished", "workspace_change", "import"] as const;
+export const RESTART_TRIGGERS = ["manual", "switch", "auto", "other", "setup_finished", "workspace_change", "import", "telegram"] as const;
 export type RestartTrigger = (typeof RESTART_TRIGGERS)[number];
-/** The window's `agent:restart` says why only for setup; anything else it sends is a manual restart. */
+/** The window's `agent:restart` says why only for setup and the Telegram tab; anything else it sends is a manual restart. */
 export function restartTriggerFromWindow(reason: unknown): RestartTrigger {
-  return reason === "setup_finished" ? "setup_finished" : "manual";
+  return reason === "setup_finished" || reason === "telegram" ? reason : "manual";
 }

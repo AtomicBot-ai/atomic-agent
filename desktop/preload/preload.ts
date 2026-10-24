@@ -74,8 +74,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
   start: () => ipcRenderer.invoke("agent:start"),
-  /** ATO-274: `reason` is "setup_finished" when setup closing asks; analytics only. */
-  restart: (reason?: "setup_finished") => ipcRenderer.invoke("agent:restart", reason),
+  /** ATO-274: `reason` is "setup_finished" when setup closing asks, "telegram" from the Telegram tab (ATO-900); analytics only. */
+  restart: (reason?: "setup_finished" | "telegram") => ipcRenderer.invoke("agent:restart", reason),
   onStatus: (cb: (payload: unknown) => void) => on("agent:status", cb),
   onLog: (cb: (payload: unknown) => void) => on("agent:log", cb),
   /** ATO-767: the automatic restarts after an unexpected exit (agent-auto-restart.ts). */

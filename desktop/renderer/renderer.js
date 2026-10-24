@@ -1373,9 +1373,11 @@ const TG = {
   message:null, lastError:null, busy:false,
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   confirmAt:0, // ATO-435: when it was armed; a second click sooner than TG_CONFIRM_MIN_MS is the same double-click
-  // The message's kind ('owed' carries a change the agent loads at start, 'restarting' is the restart's own line,
-  // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
+  // The message's kind ('owed' carries a change the agent loads at start, 'info' anything else) and the agent
+  // generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
+  // ATO-900 item 6: the tab's own Restart agent (telegram-restart.js): restarting, then its result, said in place.
+  restart:tgRestartInitial(),
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
   // ATO-859: pairing from the app (telegram-pairing.js). `pair.code` is the one-time code while its window is open, never logged;
   // `pairBusy` while a start or cancel is in flight; `pairTimer` the next poll for the claim.
@@ -27099,7 +27101,7 @@ function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t 
 function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
 function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
-function telegramTabEntered() { TG.confirm = null; tgRefresh(); tgPairProbe(); }
+function telegramTabEntered() { TG.confirm = null; if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial(); tgRefresh(); tgPairProbe(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
 /* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
    Review fix: a refresh asked for while one was in flight used to be DROPPED
@@ -27156,11 +27158,11 @@ function telegramTab() {
     // setup-state.ts needs_pairing. ATO-859: the card pairs here, through the agent's pairing route.
     if (owner === null) {
       body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair'}, {esc}) + '</div>';
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
     } else if (TG.pair.phase !== 'idle' || TG.pair.error) {
       // Replacing the owner (confirmed beside the Owner row): the same card, until its window ends.
       body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--blue">' + ic('user') + '</span><b>Pair a different Telegram account</b></div>'
-        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace'}, {esc}) + '</div>';
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
     }
     body += tgRowsHTML(enabled, owner);
   }
@@ -27181,7 +27183,7 @@ function tgStatusHTML(enabled, owner) {
   const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
     : owner === null ? 'Almost there: confirm your Telegram account below.'
     : enabled !== true ? 'Turned off: the bot does not answer until you turn it on below.'
-    : 'Waiting for a restart: the agent loads the token and these settings when it starts.';
+    : 'Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.';
   // The tab is read on entry and after its own writes; Check again reads it once more (the `R` key), e.g. after pairing elsewhere.
   return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
     + '<span class="tk-ico tk-ico--blue">' + ic('send') + '</span>'
@@ -27207,23 +27209,28 @@ function tgRowsHTML(enabled, owner) {
       // ATO-859: replacing the owner pairs a new account; like Clear owner it takes a second click (ATO-718: only after confirmation).
       + (TG.pair.supported !== false ? '<button class="btn btn-s sm" data-act="telegram:pairReplace"' + (busy || TG.pairBusy ? ' disabled' : '') + '>' + (TG.confirm === 'pairReplace' ? 'Click again to replace' : 'Replace') + '</button>' : '')
       + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearOwner' ? 'Click again to clear' : 'Clear owner') + '</button>') : '')
-    + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
+    + row('Restart the bot', 'Restarts the agent, and the bot with it. The app stays open.',
+      '<button class="btn btn-s sm" data-act="telegram:restart"' + (TG.restart.phase === 'restarting' ? ' disabled' : '') + '>Restart</button>')
     + '</div>'
     + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token']);
 }
-/* What the last action left: an error, its message, and the restart a
-   change is still owed. Once a new agent is up, the restart's own line and
-   the messages that waited for it have nothing left to say. */
+/* What the last action left: an error, its message, the restart a change
+   is still owed, and the restart's own line (telegram-restart.js). Once a new
+   agent is up, the messages that waited for it have nothing left to say, and
+   the restart's line says how it went. ATO-900 item 6: every line that asks
+   for a restart has the primary Restart agent beside it and says the app
+   stays open; while the restart runs or after it failed, its own line says
+   so instead. */
 function tgNoticesHTML() {
-  const owed = tgRestartOwed();
-  const stale = TG.msgGen !== AGENT_GEN && (TG.msgKind === 'owed' || TG.msgKind === 'restarting');
+  const owed = tgRestartOwed() && !tgRestartSpeaks(TG.restart);
+  const stale = TG.msgGen !== AGENT_GEN && TG.msgKind === 'owed';
   const msg = TG.message && !stale ? TG.message : null;
-  const restarting = !!msg && TG.msgKind === 'restarting';
-  const restartBtn = '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>';
+  const restartBtn = tgRestartButtonHTML(TG.restart, {esc, ic});
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
   return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
-    + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">It takes effect after a restart.</span>', restartBtn)
-      : (msg ? note(esc(msg)) : '') + (owed && !restarting ? note('A change here takes effect after a restart.', restartBtn) : ''));
+    + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">' + esc(TG_RESTART_APPLY) + '</span>', restartBtn)
+      : (msg && !(TG.msgKind === 'owed' && tgRestartSpeaks(TG.restart)) ? note(esc(msg)) : '') + (owed ? note(esc(TG_RESTART_APPLY), restartBtn) : ''))
+    + tgRestartNoticeHTML(TG.restart, {esc, ic});
 }
 /* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
@@ -27241,6 +27248,7 @@ function tgTokenPromptHTML() {
 /* `kind`: 'owed' — a change the agent loads at start, so a restart is owed from now; 'restarting'; 'info'. */
 function tgSetMessage(text, kind) {
   TG.message = text; TG.msgKind = kind || 'info'; TG.msgGen = AGENT_GEN; TG.lastError = null;
+  if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial();   // a new action's line replaces the last restart's
   if (kind === 'owed') TG.owedGen = AGENT_GEN;
 }
 /* tui-telegram-orchestrator.ts submitToken: empty fails locally, then
@@ -27316,14 +27324,34 @@ function telegramAct(what) {
   if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
   if (verb === 'clearOwner') { tgClearOwner(); return; }
   // `r — restart` restarts the channel in the TUI; the desktop restarts the agent runtime, which restarts the channel with it.
-  // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
-  if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
+  if (verb === 'restart') { tgRestart(); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
   // ATO-859: `o` and `/telegram pair` start pairing when there is a token and no owner; otherwise they say what to do.
   if (verb === 'pair') { const line = tgPairLine(); if (line) { tgSetMessage(line, 'info'); tgRepaint(); } else tgPairStart(false); return; }
   if (verb === 'pairStart') { tgPairStart(tgOwner() !== null); return; }
   if (verb === 'pairReplace') { tgPairStart(true); return; }
   if (verb === 'pairCancel') { tgPairCancel(); return; }
+}
+/* ATO-900 item 6: Restart agent, from any line in the tab that asks for one. It
+   restarts the agent in place (the app stays open), says so while it runs, then
+   reads the tab again and says the result there: connected, what is still
+   missing, or why the agent did not start. A running reply would end with the
+   restart, so it is refused in place while one runs. */
+async function tgRestart() {
+  if (!BR || TG.restart.phase === 'restarting') return;
+  if (restartStopsTurn()) { TG.restart = tgRestartRefused(); tgRepaint(); return; }
+  TG.restart = tgRestartStart(); tgRepaint();
+  S.log.push({id:nid(), k:'system', text:'restarting the agent…'});
+  let st = null;
+  try { st = await BR.restart('telegram'); } catch (e) { st = {state:'error', error:String((e && e.message) || e)}; }
+  applyStatus(st);
+  if (st && st.state === 'connected') {
+    // The agent now has Telegram running if it can: a "not running" pairing error is out of date.
+    if (TG.pair.error === TG_PAIR_NOT_RUNNING) TG.pair = Object.assign({}, TG.pair, {error:null});
+    await tgRefresh();
+  }
+  TG.restart = tgRestartResult(st, {hasToken: tgHasToken(), owner: tgOwner(), enabled: tgEnabled()});
+  tgRepaint();
 }
 /** ATO-435: what `o` and `/telegram pair` say instead of pairing, or null when they may pair. */
 function tgPairLine() {
@@ -27837,7 +27865,7 @@ if (typeof window !== 'undefined') {
   window.__llmFallbackPersist = async (chain, appendLocal) => { await llmFallbackPersist(chain, appendLocal); return window.__llmPane(); };
   window.__llmProbe = (url) => (BR ? BR.llamaProbe(url) : Promise.resolve({ok:false, error:'no bridge'}));
   window.__llmExternalSave = async (url) => { llmSetMode('external'); LLMP.externalDraft = String(url); LLMP.externalInvalid = false; llmRepaint(); const n = document.getElementById('llm-url'); if (n) n.value = String(url); await llmExternalSave(); return window.__llmPane(); };
-  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: tgRestartOwed(),
+  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: tgRestartOwed(), restartPhase: TG.restart.phase,
     lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error,
     // ATO-859: where pairing stands, never the code itself.
     pair: {phase: TG.pair.phase, supported: TG.pair.supported, hasCode: !!TG.pair.code, pairedLine: TG.pair.pairedLine, error: TG.pair.error}});
