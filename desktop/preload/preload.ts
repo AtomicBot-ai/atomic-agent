@@ -206,6 +206,9 @@ contextBridge.exposeInMainWorld("atomic", {
     /* The local chat model and local generations on one memory (main/studio-gpu-share.ts):
        whether chat is paused for Studio, the generation running, how many are queued, chat turns held. */
     gpuShare: () => ipcRenderer.invoke("studio:gpuShare"),
+    /* ATO-809: Improve prompt (main/studio-improve-prompt.ts): whether a chat model can rewrite, and one rewrite. */
+    improveReady: () => ipcRenderer.invoke("studio:improveReady"),
+    improvePrompt: (kind: "image" | "video", prompt: string) => ipcRenderer.invoke("studio:improvePrompt", kind, prompt),
     onGpuShare: (cb: (state: unknown) => void) => on("studio:gpuShare", cb),
   },
   /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */

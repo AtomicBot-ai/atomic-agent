@@ -80,9 +80,23 @@ test('each page keeps its own list in localStorage, and a storage that throws is
 
 const attr = (v, a) => 'data-x="' + v + (a ? ':' + a : '') + '"';
 
-test('nothing is drawn until a prompt has been sent', () => {
-  assert.equal(R.studioRecentHTML([], false, attr), '');
-  assert.equal(R.studioRecentHTML(null, true, attr), '');
+test('before any prompt is sent the chip is greyed and the empty state shows (ATO-900 item 4)', () => {
+  for (const html of [R.studioRecentHTML([], false, attr), R.studioRecentHTML(null, true, attr)]) {
+    assert.match(html, /class="st-recent-chip off"/);
+    assert.match(html, /aria-disabled="true"/);
+    assert.ok(html.includes(R.STUDIO_RECENT_EMPTY));
+    assert.equal(R.STUDIO_RECENT_EMPTY, 'Your recent prompts show here');
+    assert.doesNotMatch(html, /data-x="recent/);
+  }
+});
+
+test('the lead (Improve prompt) sits in the same row as the chip, with or without prompts', () => {
+  const lead = '<button class="lead">Improve prompt</button>';
+  for (const list of [[], ['a fox']]) {
+    const html = R.studioRecentHTML(list, false, attr, lead);
+    assert.ok(html.indexOf(lead) > html.indexOf('st-ptools'));
+    assert.ok(html.indexOf(lead) < html.indexOf('st-recent-chip'));
+  }
 });
 
 test('closed: only the Recent chip; open: one button per prompt, escaped, with its index', () => {

@@ -23,6 +23,7 @@
     dir: '', focusPath: null,
     chatItem: null,   // a picture opened from a chat that Studio did not make ("From chat")
     recent: typeof studioRecentLoad === 'function' ? studioRecentLoad('image') : [], recentOpen: false,   // ATO-809: prompts sent before
+    improve: typeof studioImproveBlank === 'function' ? studioImproveBlank() : null,   // ATO-809: Improve prompt (improve-prompt.js)
   };
   /* key → {state:'loading'|'ok'|'fail', url}. Thumbnails stay; full pictures only the last few. */
   const PICS = new Map();
@@ -549,6 +550,10 @@
         { const ta = document.getElementById('sti-prompt'); if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); } }
         return;
       }
+      case 'improve': improve(); return;
+      case 'improve-undo':
+        if (IM.improve && IM.improve.undo !== null) { IM.form.prompt = IM.improve.undo; IM.improve.undo = null; IM.improve.err = ''; save(); paintForm(); }
+        return;
       case 'idea': IM.form.prompt = a; paintForm(); { const t = document.getElementById('sti-prompt'); if (t) t.focus(); } save(); return;
       case 'clear': if (a === 'mask') IM.form.mask = null; else IM.form.source = null; paintForm(); return;
       case 'unref': IM.form.refs = IM.form.refs.filter((_, n) => n !== Number(a)); paintForm(); return;
@@ -632,6 +637,22 @@
     }
   }
 
+  /* ATO-809: Improve prompt. Whether a chat model can answer is asked each time the page shows (Settings may have changed it). */
+  function checkImprove() {
+    if (!IM.improve || typeof studioImproveCheck !== 'function') return;
+    studioImproveCheck(br(), IM.improve).then(() => { if (IM.shown) paintForm(); });
+  }
+
+  async function improve() {
+    const st = IM.improve;
+    if (!st || typeof studioImproveRun !== 'function' || studioImproveWhy(IM.form.prompt, st)) return;
+    const run = studioImproveRun(br(), 'image', IM.form.prompt, st);
+    paintForm();
+    const next = await run;
+    if (next !== null) { IM.form.prompt = next; if (IM.formMsg) { IM.formMsg = ''; paintFoot(); } save(); }
+    paintForm();
+  }
+
   function randSeed() { return Math.floor(Math.random() * 2147483647); }
 
   /* ---------- DOM listeners on the page's root ---------- */
@@ -641,6 +662,11 @@
       const t = e.target, f = IM.form;
       if (t.id === 'sti-prompt') {
         f.prompt = t.value;
+        if (IM.improve) {
+          IM.improve.undo = null;
+          if (typeof studioImproveSync === 'function') studioImproveSync(root.querySelector('.st-improve'), f.prompt, IM.improve);
+          const u = root.querySelector('.st-improve-undo'); if (u) u.remove();
+        }
         if (IM.formMsg) { IM.formMsg = ''; paintFoot(); }
         save();
         return;
@@ -713,10 +739,12 @@
       loadCatalog();
       loadGallery(false);
       loadDir();
+      checkImprove();
     },
     onShow() {
       IM.shown = true;
       if (!IM.catalog && !IM.catLoading) loadCatalog();
+      checkImprove();
       paintAll();
       const t = document.getElementById('sti-prompt');
       if (t && !IM.form.prompt) t.focus();

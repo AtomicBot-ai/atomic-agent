@@ -1326,7 +1326,7 @@ function sameIds(a: readonly SearchedModel[], b: readonly SearchedModel[]): bool
    --------------------------------------------------------------- */
 
 /** Where a kind's OpenAI-compatible chat endpoint lives. */
-function chatCompletionsUrl(kind: string, baseUrl?: string): string | null {
+export function chatCompletionsUrl(kind: string, baseUrl?: string): string | null {
   // The agent's own normalizeOpenAiBaseUrl rule: strip a trailing `/v1`
   // so the path is never doubled.
   const root = (u: string) => u.replace(/\/+$/, "").replace(/\/v1$/, "");
@@ -2016,7 +2016,7 @@ export async function readWholeConfig(): Promise<{ ok: boolean; config?: UserCon
 }
 
 /** persist-llm-provider.ts localLlamaUrlFromFile. */
-function localLlamaUrlFromFile(cfg: UserConfigShape): string {
+export function localLlamaUrlFromFile(cfg: UserConfigShape): string {
   const lm = cfg.localModels ?? {};
   if (lm.mode === "managed") return `http://127.0.0.1:${lm.managed?.port ?? 19091}`;
   return lm.url ?? "http://127.0.0.1:9931";

@@ -83,6 +83,8 @@ Every call resolves (never rejects) to
 | `localState()` | `{ downloads: LocalDownload[], engine: LocalEngine \| null }` running now (after a window reload) |
 | `onLocal(cb)` | subscribe; returns unsubscribe. `cb(event: LocalEvent)` on every change |
 | `gpuShare()` | `GpuShareState \| null` now (see "Memory shared with the chat model") |
+| `improveReady()` | `{ready, why}`: whether "Improve prompt" can ask a chat model now; `why` is the button's tooltip when not (see "Improve prompt") |
+| `improvePrompt(kind, prompt)` | `{prompt}`: one rewrite of `prompt` for the `'image'` or `'video'` page; errors `INVALID_REQUEST` (empty), `NO_CHAT_MODEL`, `IMPROVE_FAILED` |
 | `onGpuShare(cb)` | subscribe; returns unsubscribe. `cb(state: GpuShareState)` on every change |
 
 `gallery`, `pin`, `galleryDelete` ids: image `<jobId>-<NN>`, video the job id.
@@ -499,15 +501,27 @@ Not a bridge call. Each page keeps the last 12 prompts it sent (after
 `generateImage` / `generateVideo` resolved `ok`), newest first, in
 localStorage under `atag.studio.recent.image` / `atag.studio.recent.video`.
 A prompt sent again moves up (same text ignoring case and spacing); blanks are
-not kept. Under the prompt box a **Recent** chip (shown once there is one)
-opens the list; a click puts that prompt back in the box. Rules are pure
+not kept. Under the prompt box a **Recent** chip opens the list; a click puts
+that prompt back in the box. Before the first prompt the chip is greyed and
+"Your recent prompts show here" stands in for the list. Rules are pure
 (`studioRecentAdd`, `studioRecentParse`), tested in
 `test/studio-recent-prompts.test.mjs`.
+
+## Improve prompt (studio/improve-prompt.js)
+
+A button in the same row as **Recent**, always shown with the prompt box. It
+is greyed (`aria-disabled`, reason in its tooltip) while the box is empty, a
+rewrite runs, or `improveReady()` says no chat model can answer; the page asks
+`improveReady()` each time it shows. A click sends the prompt to
+`improvePrompt`, puts the answer in the box and offers **Undo** until the box
+is edited. Main (main/studio-improve-prompt.ts) asks the active text provider
+(Fusion: its orchestrator) once on its OpenAI-compatible chat endpoint with
+that entry's `defaultChatModel ?? model`, or a local llama-server on its URL;
+no chat session is made and the key never reaches the window. Subscription
+CLI providers cannot answer; the local chat model cannot while a local
+generation has it paused.
 
 ## Not in this foundation
 
 - Stopping an engine install, or a load, half-way.
 - Local image-to-video (Core refuses it).
-- "Improve prompt" (ATO-809): neither the agent's HTTP API nor main has a
-  one-shot completion to rewrite a prompt with the chat model; `agent:chat`
-  runs a full agent turn and keeps it as a chat session.
