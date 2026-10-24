@@ -1,8 +1,9 @@
 /* Studio › recent prompts (ATO-809): the last prompts a Studio page sent,
    newest first, one list per page (images, video). A click under the prompt
-   box puts one back. Kept in localStorage (`atag.studio.recent.<kind>`), the
-   same per-viewer store the pages keep their forms in; losing it loses only
-   the list. Loaded before the pages; declares only.
+   box puts one back; before the first one an empty state shows instead.
+   Kept in localStorage (`atag.studio.recent.<kind>`), the same per-viewer
+   store the pages keep their forms in; losing it loses only the list.
+   Loaded before the pages; declares only.
 
    The list rules (trim, dedupe, cap, order) are pure and tested in
    test/studio-recent-prompts.test.mjs. */
@@ -51,19 +52,30 @@ function studioRecentLabel(text, max) {
   return flat.length > n ? flat.slice(0, n - 1).trimEnd() + '…' : flat;
 }
 
+/** The empty state under the prompt box before any prompt was sent. */
+const STUDIO_RECENT_EMPTY = 'Your recent prompts show here';
+
 /**
- * The Recent chip under a prompt box and, when `open`, the list under it.
- * `attr(verb, arg)` gives a button's click attribute in the page's own scheme
- * (verbs `recent` to toggle, `recent-use` with the index); nothing when the
- * list is empty.
+ * The row under a prompt box: `lead` (the Improve prompt button,
+ * studio/improve-prompt.js) and the Recent chip, then, when `open`, the list.
+ * Always drawn: with no prompt sent yet the chip is greyed and the empty state
+ * says where they will show (ATO-900 item 4: hidden until the first generation,
+ * the list looked missing). `attr(verb, arg)` gives a button's click attribute
+ * in the page's own scheme (verbs `recent` to toggle, `recent-use` with the index).
  */
-function studioRecentHTML(list, open, attr) {
+function studioRecentHTML(list, open, attr, lead) {
   const items = Array.isArray(list) ? list : [];
-  if (!items.length) return '';
   const e = (x) => String(x).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
   const icon = typeof ic === 'function' ? ic('clock') : '';
-  return '<div class="st-recent">'
-    + '<button class="st-recent-chip' + (open ? ' on' : '') + '" ' + attr('recent', '') + ' aria-expanded="' + (open ? 'true' : 'false') + '">' + icon + '<span>Recent</span></button>'
+  const row = '<div class="st-ptools">' + (lead || '');
+  if (!items.length) {
+    return '<div class="st-recent">' + row
+      + '<button class="st-recent-chip off" aria-disabled="true" title="' + STUDIO_RECENT_EMPTY + '">' + icon + '<span>Recent</span></button></div>'
+      + '<div class="st-recent-empty" role="note">' + STUDIO_RECENT_EMPTY + '</div>'
+      + '</div>';
+  }
+  return '<div class="st-recent">' + row
+    + '<button class="st-recent-chip' + (open ? ' on' : '') + '" ' + attr('recent', '') + ' aria-expanded="' + (open ? 'true' : 'false') + '">' + icon + '<span>Recent</span></button></div>'
     + (open ? '<div class="st-recent-list" role="list">'
       + items.map((t, i) => '<button class="st-recent-item" role="listitem" ' + attr('recent-use', String(i)) + ' title="' + e(t) + '">' + e(studioRecentLabel(t)) + '</button>').join('')
       + '</div>' : '')
@@ -88,6 +100,6 @@ function studioRecentRemember(kind, list, prompt) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {STUDIO_RECENT_MAX, studioRecentKey, studioRecentParse, studioRecentAdd, studioRecentLabel, studioRecentHTML, studioRecentStoreKey,
+  module.exports = {STUDIO_RECENT_MAX, STUDIO_RECENT_EMPTY, studioRecentKey, studioRecentParse, studioRecentAdd, studioRecentLabel, studioRecentHTML, studioRecentStoreKey,
     studioRecentLoad, studioRecentRemember};
 }

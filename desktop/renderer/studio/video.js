@@ -386,6 +386,7 @@
       outDir: null, busy: false, notice: null,
       focusPath: null,   // "Open in Studio" waiting for the gallery's first page
       recent: typeof g.studioRecentLoad === 'function' ? g.studioRecentLoad(KIND) : [], recentOpen: false,   // ATO-809: prompts sent before (recent-prompts.js)
+      improve: typeof g.studioImproveBlank === 'function' ? g.studioImproveBlank() : null,   // ATO-809: Improve prompt (improve-prompt.js)
     };
     let priceTimer = null, estTimer = null;
 
@@ -670,6 +671,30 @@
       paint();
     }
 
+    /* ATO-809: Improve prompt. Whether a chat model can answer is asked each time the page shows (Settings may have changed it). */
+    function checkImprove() {
+      if (!S.improve || typeof g.studioImproveCheck !== 'function') return;
+      g.studioImproveCheck(BR(), S.improve).then(() => { if (S.shown && S.root) paint('form'); });
+    }
+
+    async function improve() {
+      const st = S.improve;
+      if (!st || typeof g.studioImproveRun !== 'function' || g.studioImproveWhy(S.form.prompt, st)) return;
+      const sent = S.form.prompt;
+      const run = g.studioImproveRun(BR(), KIND, sent, st);
+      paint('form');
+      const next = await run;
+      // Typed into the box meanwhile: keep that text (studioImproveLands).
+      if (next !== null && g.studioImproveLands(st, sent, S.form.prompt)) {
+        S.form.prompt = next; S.notice = null; saveForm(); paint('foot');
+        /* paint('form') keeps a focused textarea's own value, so a box clicked
+           into while waiting would show the old text over the new prompt. */
+        const ta = S.root && S.root.querySelector('[data-vfield="prompt"]');
+        if (ta) ta.value = next;
+      }
+      paint('form');
+    }
+
     async function stop() {
       const br = BR();
       if (!br || !S.job) return;
@@ -880,6 +905,10 @@
           if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
           break;
         }
+        case 'improve': improve(); break;
+        case 'improve-undo':
+          if (S.improve && S.improve.undo !== null) { f.prompt = S.improve.undo; S.improve.undo = null; S.improve.err = ''; saveForm(); paint('form'); paint('foot'); }
+          break;
         case 'generate': generate(); break;
         case 'stop': stop(); break;
         case 'dismiss': S.jobError = null; S.notice = null; paint('stage'); paint('foot'); break;
@@ -914,7 +943,14 @@
       });
       root.addEventListener('input', (ev) => {
         const t = ev.target;
-        if (t.matches('[data-vfield="prompt"]')) { S.form.prompt = t.value; S.notice = null; saveForm(); paint('foot'); }
+        if (t.matches('[data-vfield="prompt"]')) {
+          S.form.prompt = t.value; S.notice = null; saveForm(); paint('foot');
+          if (S.improve) {
+            S.improve.undo = null;
+            if (typeof g.studioImproveSync === 'function') g.studioImproveSync(root.querySelector('.st-improve'), S.form.prompt, S.improve);
+            const u = root.querySelector('.st-improve-undo'); if (u) u.remove();
+          }
+        }
         else if (t.matches('[data-vfield="negative"]')) { S.form.negativePrompt = t.value; saveForm(); }
         else if (t.matches('[data-vfield="pickerq"]')) { S.pickerQuery = t.value; paint('picker-list'); }
       });
@@ -963,7 +999,10 @@
       let h = '';
       h += '<label class="studio-lbl" for="sv-prompt">Prompt</label>'
         + '<textarea id="sv-prompt" class="studio-ta" data-vfield="prompt" rows="4" placeholder="' + (f.mode === 'image' ? 'What happens next (optional)' : 'A fox closes a book and smiles at the camera. Slow push-in.') + '">' + escHtml(f.prompt) + '</textarea>';
-      if (typeof g.studioRecentHTML === 'function') h += g.studioRecentHTML(S.recent, S.recentOpen, (v, a) => 'data-vact="' + v + '"' + (a ? ' data-v="' + escHtml(a) + '"' : ''));
+      if (typeof g.studioRecentHTML === 'function') {
+        h += g.studioRecentHTML(S.recent, S.recentOpen, (v, a) => 'data-vact="' + v + '"' + (a ? ' data-v="' + escHtml(a) + '"' : ''),
+          typeof g.studioImproveHTML === 'function' ? g.studioImproveHTML(f.prompt, S.improve, (v) => 'data-vact="' + v + '"') : '');
+      }
       if (m && m.negativePrompt) {
         h += '<label class="studio-lbl" for="sv-neg">Leave out</label>'
           + '<input id="sv-neg" class="studio-input" data-vfield="negative" placeholder="blur, text, watermark" value="' + escHtml(f.negativePrompt) + '">';
@@ -1278,6 +1317,7 @@
         paint();
         if (!S.catalog) loadCatalog();
         loadGallery(); loadOutDir(); recoverJob();
+        checkImprove();
       },
       onEvent(ev) {
         const job = ev && ev.job ? ev.job : ev;
@@ -1288,6 +1328,7 @@
         if (S.root) paint();
         if (S.job && BR()) BR().job(KIND, S.job.id).then((r) => { if (r && r.ok && r.data) onJob(r.data); });
         loadGallery();
+        checkImprove();
       },
       onHide() { S.shown = false; S.pickerOpen = false; S.libraryOpen = false; },
       focusFile,

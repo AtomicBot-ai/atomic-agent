@@ -21,10 +21,13 @@ import { copyFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename } from "node:path";
 
+import { readWholeConfig } from "./agent-cli.js";
 import { imageDataUrl } from "./image-data-url.js";
+import { localLlamaKeyFor, managedDataDir, readCoreModelKey } from "./local-llama-key.js";
 import type { StudioKind } from "./studio-catalog.js";
 import { StudioCoreError } from "./studio-core-client.js";
 import { studioErrorBody } from "./studio-errors.js";
+import { improvePrompt, improveReady, type ImproveDeps } from "./studio-improve-prompt.js";
 import { StudioMedia, type StudioMediaDeps } from "./studio-media.js";
 import { insideRoots, realPathOf } from "./studio-paths.js";
 import { StudioPricing, type StudioPriceParams } from "./studio-pricing.js";
@@ -58,6 +61,17 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal
   // The chat model paused for a local generation, generations queued, chat turns held (studio-gpu-share.ts).
   opts.gpu?.onState((state) => push("studio:gpuShare", state));
   ipcMain.handle("studio:gpuShare", () => answer(async () => opts.gpu?.state() ?? null));
+  /* ATO-809: Improve prompt, one rewrite by the chat model (studio-improve-prompt.ts).
+     The window sends the page's kind and the prompt; the provider, its key and URL stay here. */
+  const improve: ImproveDeps = {
+    readConfig: readWholeConfig,
+    localPaused: () => opts.gpu?.state().chat === "yielded",
+    localKey: (url) => localLlamaKeyFor(url) ?? readCoreModelKey(managedDataDir(null), url),
+  };
+  ipcMain.handle("studio:improveReady", () => answer(() => improveReady(improve)));
+  // CONTRACT.md: every call resolves. A hand-edited config the route cannot read must not reject.
+  ipcMain.handle("studio:improvePrompt", (_e, kind: unknown, prompt: unknown) => improvePrompt(improve, kind, prompt)
+    .catch(() => ({ ok: false, error: { code: "IMPROVE_FAILED", message: "Could not improve the prompt. Try again." } })));
   const pricing = new StudioPricing(opts.request ?? fetch);
   /** Folders the folder dialog returned this session: the only ones setOutputDir takes. */
   const chosenDirs = new Set<string>();
