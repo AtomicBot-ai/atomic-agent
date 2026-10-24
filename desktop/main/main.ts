@@ -1272,7 +1272,7 @@ function wireIpc(client: AgentClient): void {
 
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
-  // ATO-274: the window names setup finishing; every other restart from it is the person's own.
+  // ATO-274: the window names setup finishing and the Telegram tab's Restart agent (ATO-900); every other restart from it is the person's own.
   ipcMain.handle("agent:restart", async (_event, reason: unknown) => {
     A.agentRestarting(A.restartTriggerFromWindow(reason));
     await client.stop();
@@ -7730,7 +7730,8 @@ async function settingsTestPartC(
         enabled: enabledNow === true,
         confirmCard: afterBody.includes("One last step — confirm it's you"),
         pairingLine: tgPairOffer(afterBody),
-        restartButton: afterBody.includes("Restart Agent Runtime"),
+        // ATO-900 item 6: the restart line has its own Restart agent button and says the app stays open.
+        restartButton: afterBody.includes("Restart agent") && afterBody.includes("The app stays open."),
       };
       check(
         "telegram tab: the token lands in .env quoted, 0600, other keys kept, and the connect chain enables telegram",
