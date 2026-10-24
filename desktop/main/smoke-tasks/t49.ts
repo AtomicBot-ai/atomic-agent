@@ -9,7 +9,9 @@ import { BrowserWindow } from "electron";
  * it is the Connect Telegram card alone, after it one Connected / Not
  * connected status over rows in words — Connected only with Telegram on and
  * no change still waiting for a restart — with a Check again that reads the
- * tab anew, and a restart's lines that go once the new agent is up.
+ * tab anew, and a restart's lines that go once the new agent is up. ATO-900
+ * item 6: those lines carry a primary Restart agent, say the app stays open,
+ * and the restart says its result in place.
  * Д39 Memory's empty channels said "No votes yet" and nothing about it.
  * Д40 Tasks had a hole beside its filters: Refresh and New task share their row.
  * Д47 Privacy's read-scope change put a blue line above the rows that pushed
@@ -102,7 +104,7 @@ async function telegram(js: Js, check: Check): Promise<void> {
     children: number; refresh: boolean; notices: Array<{ text: string; restart: boolean }> };
   const r = await safe<Record<"none" | "pairing" | "connected" | "off" | "unknown" | "owed" | "after" | "restarting" | "restartingOwed" | "restarted", State>>(js, `(() => {
     const saved = {keysKnown: TG.keysKnown, dotenv: TG.dotenvKeys, env: TG.envKeys, mode: TG.mode, message: TG.message, msgKind: TG.msgKind,
-      msgGen: TG.msgGen, owedGen: TG.owedGen, lastError: TG.lastError, cfg: TG.cfg, keysBusy: TG.keysBusy, live: LIVE_CONFIG};
+      msgGen: TG.msgGen, owedGen: TG.owedGen, lastError: TG.lastError, cfg: TG.cfg, keysBusy: TG.keysBusy, restart: TG.restart, live: LIVE_CONFIG};
     const technical = /telegram\\.enabled|ownerUserId|TELEGRAM_BOT_TOKEN|\\.env\\b|\\bunknown\\b/;
     const set = (token, telegram) => { TG.dotenvKeys = token ? ['TELEGRAM_BOT_TOKEN'] : []; LIVE_CONFIG = Object.assign({}, saved.live || {}, {telegram}); };
     const draw = () => {
@@ -113,10 +115,10 @@ async function telegram(js: Js, check: Check): Promise<void> {
         advanced: /Advanced/.test(box.textContent) || !!box.querySelector('[data-act="telegram:advanced"]'),
         technical: technical.test(box.textContent), pairing: /One last step/.test(box.textContent), children: pane ? pane.children.length : -1,
         refresh: !!box.querySelector('.sd-tgstatus [data-act="telegram:refresh"]'),
-        notices: [...box.querySelectorAll('.tk-notice')].map((n) => ({text: n.textContent.replace(/\\s+/g, ' ').trim(), restart: !!n.querySelector('[data-act="agent:restart"]')}))};
+        notices: [...box.querySelectorAll('.tk-notice')].map((n) => ({text: n.textContent.replace(/\\s+/g, ' ').trim(), restart: !!n.querySelector('[data-act="telegram:restart"].btn-p:not([disabled])')}))};
     };
     try {
-      Object.assign(TG, {keysKnown: true, envKeys: [], mode: 'list', message: null, msgKind: 'info', msgGen: AGENT_GEN, owedGen: null, lastError: null, cfg: null, keysBusy: false});
+      Object.assign(TG, {keysKnown: true, envKeys: [], mode: 'list', message: null, msgKind: 'info', msgGen: AGENT_GEN, owedGen: null, lastError: null, cfg: null, keysBusy: false, restart: tgRestartInitial()});
       const out = {};
       set(false, {enabled: false, ownerUserId: null}); out.none = draw();
       set(true, {enabled: true, ownerUserId: null}); out.pairing = draw();
@@ -128,13 +130,15 @@ async function telegram(js: Js, check: Check): Promise<void> {
       set(true, {enabled: true, ownerUserId: 4242});
       tgSetMessage('Telegram turned on.', 'owed'); out.owed = draw();
       TG.owedGen = AGENT_GEN - 1; TG.msgGen = AGENT_GEN - 1; out.after = draw();
-      tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); out.restarting = draw();
+      // ATO-900 item 6: the tab's Restart agent says it is running in place of the owed line, then its result.
+      tgSetMessage('Telegram turned on.', 'owed'); TG.restart = tgRestartStart(); out.restarting = draw();
       TG.owedGen = AGENT_GEN; out.restartingOwed = draw();
-      TG.owedGen = AGENT_GEN - 1; TG.msgGen = AGENT_GEN - 1; out.restarted = draw();
+      TG.owedGen = AGENT_GEN - 1; TG.msgGen = AGENT_GEN - 1;
+      TG.restart = tgRestartResult({state: 'connected'}, {hasToken: true, owner: 4242, enabled: true}); out.restarted = draw();
       return out;
     } finally {
       Object.assign(TG, {keysKnown: saved.keysKnown, dotenvKeys: saved.dotenv, envKeys: saved.env, mode: saved.mode, message: saved.message, msgKind: saved.msgKind,
-        msgGen: saved.msgGen, owedGen: saved.owedGen, lastError: saved.lastError, cfg: saved.cfg, keysBusy: saved.keysBusy});
+        msgGen: saved.msgGen, owedGen: saved.owedGen, lastError: saved.lastError, cfg: saved.cfg, keysBusy: saved.keysBusy, restart: saved.restart});
       LIVE_CONFIG = saved.live;
     }
   })()`);
@@ -151,16 +155,17 @@ async function telegram(js: Js, check: Check): Promise<void> {
     r.err ?? show({ pairing: r.pairing, connected: r.connected, off: r.off, unknown: r.unknown }),
   );
   check(
-    "T49 (Д36): a change waiting for a restart is not Connected, and its one notice offers the restart; once a new agent is up, Connected and no notice",
+    "T49 (Д36, ATO-900): a change waiting for a restart is not Connected, and its one notice offers Restart agent and says the app stays open; once a new agent is up, Connected and no notice",
     !r.err && r.owed.status === "Not connected" && /restart/i.test(r.owed.line) && r.owed.notices.length === 1 && r.owed.notices[0]!.restart
-      && /^Telegram turned on\. It takes effect after a restart\./.test(r.owed.notices[0]!.text)
+      && /^Telegram turned on\. Restart the agent to apply this\. The app stays open\./.test(r.owed.notices[0]!.text)
       && r.after.status === "Connected" && r.after.notices.length === 0,
     r.err ?? show({ owed: r.owed, after: r.after }),
   );
   check(
-    "T49 (Д36): \"Restarting the agent…\" shows alone while the restart runs, and goes once the new agent is up",
+    "T49 (Д36, ATO-900): \"Restarting the agent…\" shows alone while the restart runs, and once the new agent is up its result says the bot is connected",
     !r.err && r.restarting.notices.length === 1 && /^Restarting the agent/.test(r.restarting.notices[0]!.text) && !r.restarting.notices[0]!.restart
-      && r.restartingOwed.notices.length === 1 && !r.restartingOwed.notices[0]!.restart && r.restarted.notices.length === 0,
+      && r.restartingOwed.notices.length === 1 && !r.restartingOwed.notices[0]!.restart
+      && r.restarted.notices.length === 1 && /^The agent restarted and the bot is connected\./.test(r.restarted.notices[0]!.text) && !r.restarted.notices[0]!.restart,
     r.err ?? show({ restarting: r.restarting.notices, restartingOwed: r.restartingOwed.notices, restarted: r.restarted.notices }),
   );
 

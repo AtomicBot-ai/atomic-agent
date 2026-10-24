@@ -16,8 +16,19 @@
 .sb-studio-row.on{background:var(--brand-wash)}
 .sb-studio-row.on .sb-new-ic{color:var(--accent)}
 .sb-studio-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);flex:none;margin-left:auto;animation:st-pulse 1.4s infinite}
+/* ATO-900: in the 52px rail the "Studio" header word ran past the panel's
+   edge. The rail keeps the Images and Video icons (shell.css gives .sb-new
+   its 32px cell there) and trades the header for the hairline the chat lists
+   use between them. The narrow-window rail is the same, at the 1000px
+   breakpoint shell.css uses. */
+#sidebar.rail .sb-studio-head{display:none}
+#sidebar.rail .sb-studio::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 4px;background:var(--bd)}
 #sidebar.rail .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
-@media (max-width:999px){#sidebar:not(.drawer) .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}}
+@media (max-width:1000px){
+  #sidebar:not(.drawer) .sb-studio-head{display:none}
+  #sidebar:not(.drawer) .sb-studio::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 4px;background:var(--bd)}
+  #sidebar:not(.drawer) .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
+}
 @keyframes st-pulse{50%{opacity:.35}}
 
 /* chat: under a reply's pictures that Studio made */
@@ -61,8 +72,18 @@
 /* `.studio .st-link`: `.studio button{color:inherit}` above outranks a bare class and made the link grey body text. */
 .studio .st-link{color:var(--accent);background:none;border:0;padding:0;font-size:12px;font-weight:500;cursor:pointer;text-decoration:underline;text-underline-offset:2px;text-decoration-color:color-mix(in srgb,var(--accent) 45%,transparent)}
 .studio .st-link:hover{text-decoration-color:currentColor}
-/* ATO-809: Recent prompts under a prompt box (studio/recent-prompts.js), Images and Video alike. */
+/* ATO-809: Improve prompt and Recent prompts under a prompt box (studio/improve-prompt.js, studio/recent-prompts.js), Images and Video alike. */
 .studio .st-recent{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+.studio .st-ptools{display:flex;align-items:center;flex-wrap:wrap;gap:8px}
+.studio .st-improve{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:var(--r-pill);border:1px solid color-mix(in srgb,var(--brand) 40%,var(--bd));background:var(--brand-wash);font-size:12px;font-weight:500;color:var(--accent);cursor:pointer}
+.studio .st-improve svg{width:13px;height:13px}
+.studio .st-improve:hover{border-color:var(--brand)}
+.studio .st-improve.off{background:transparent;border-color:var(--bd);color:var(--ink-3);cursor:default}
+.studio .st-improve.busy{cursor:progress}
+.studio .st-improve-err{flex-basis:100%;font-size:12px;color:var(--critical)}
+.studio .st-recent-chip.off{opacity:.55;cursor:default}
+.studio .st-recent-chip.off:hover{background:transparent;color:var(--ink-2)}
+.studio .st-recent-empty{font-size:12px;color:var(--ink-3)}
 .studio .st-recent-chip{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:var(--r-pill);border:1px solid var(--bd);background:transparent;font-size:12px;color:var(--ink-2);cursor:pointer}
 .studio .st-recent-chip svg{width:13px;height:13px}
 .studio .st-recent-chip:hover,.studio .st-recent-chip.on{background:var(--hover);color:var(--ink)}

@@ -1193,7 +1193,7 @@ function sidebarExpanded() { return S.sidebar !== 'rail' && !NARROW.matches; }
    to be disabled there (r5 review fix: the media query pinned 52px whatever
    `.rail` said, so a click changed nothing). Between the 940px minimum window
    and 1000px that left no way to see the chat list at all. Now the toggle and
-   ⌘ 0 open the full sidebar as a drawer over the content on a narrow window
+   ⌘ \ open the full sidebar as a drawer over the content on a narrow window
    (sidebar-nav.js toggleSidebar); S.sidebar, the collapse kept for a wide
    window, is left alone. The drawer closes on a pick inside it, a click
    outside it, Escape, or the window growing past 1000px. */
@@ -1345,6 +1345,7 @@ const LLMP = {
   status:null, statusBusy:false, statusErr:null, // `atag models status`
   local:null, localBusy:false, localErr:null, lastRefreshedAt:null, // `atag models list` rows
   emb:null, embDaemon:null, // `atag models list-embeddings` rows + its trailer
+  embAct:null, embWatch:0, // ATO-900: {id, busy, error} for the memory model's card while its click runs, or after it failed; the load watch's token
   served:null, // ATO-125: {chat, embedding} — what the managed servers say they run, asked on their ports (cli:modelsServed)
   models:[], modelsFor:null, modelsBusy:false, modelsErr:null, // `atag models search --json` for the Cloud text-models block
   modelsStale:false, modelsRetry:null, // ATO-318: the list is the app's built-in one (the live fetch did not come back); the one timed retry
@@ -1373,9 +1374,11 @@ const TG = {
   message:null, lastError:null, busy:false,
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   confirmAt:0, // ATO-435: when it was armed; a second click sooner than TG_CONFIRM_MIN_MS is the same double-click
-  // The message's kind ('owed' carries a change the agent loads at start, 'restarting' is the restart's own line,
-  // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
+  // The message's kind ('owed' carries a change the agent loads at start, 'info' anything else) and the agent
+  // generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
+  // ATO-900 item 6: the tab's own Restart agent (telegram-restart.js): restarting, then its result, said in place.
+  restart:tgRestartInitial(),
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
   // ATO-859: pairing from the app (telegram-pairing.js). `pair.code` is the one-time code while its window is open, never logged;
   // `pairBusy` while a start or cancel is in flight; `pairTimer` the next poll for the claim.
@@ -1932,7 +1935,7 @@ const PAL = [
   ]],
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
-    ['sidebar','Hide or show the sidebar','','⌘ 0','toggle:sidebar'],
+    ['sidebar','Hide or show the sidebar','','⌘ \\','toggle:sidebar'],
     ['skills','Enable or disable a skill…','','','settings:skills'],
     ['tasks','Create, cancel or run a task…','','','settings:tasks'],
     ['key','Analytics','','','settings:general'],
@@ -2951,13 +2954,20 @@ function msgActs(m) {
        ATO-862: in its place a turn that acted shows a muted retry icon that
        only explains why: no data-resend and no data-act, so a click reaches
        no handler and sends nothing; aria-disabled for assistive tech and
-       tabindex -1 so Tab does not stop on a control that does nothing. */
+       tabindex -1 so Tab does not stop on a control that does nothing.
+       ATO-900: its sentence is drawn by CSS from data-tip on hover
+       (chat.css), not by a native title. The native tooltip waits for the
+       pointer to rest on the SAME node, and the renders that land just
+       after a turn ends (render() rebuilds #content) replace that node, so
+       on the reply people hover first the tooltip never came up. A CSS
+       :hover follows the new node at once. No title too, or the sentence
+       would show twice. */
     const last = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy;
     const ask = last ? replyRetryAsk(m) : null;
     const again = ask
       ? '<button class="msgact" data-resend="' + esc(ask.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>'
       : last && replyTurnActed(m)
-        ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" title="' + ACTED_RETRY_HINT
+        ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
         : '';
     return '<div class="' + cls + '">' + again + copy + '</div>';
@@ -5220,9 +5230,9 @@ function shortcutsSheet() {
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
-    ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
-    // ATO-544: View menu zoom (menu.ts zoomItems). ⇧ Ctrl 0 is Toggle Inspector off macOS.
-    ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size',IS_MAC ? '⇧ ⌘ 0' : 'Ctrl Num0',''],
+    ['Toggle sidebar','⌘ \\','Ctrl \\'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    // ATO-544: View menu zoom (menu.ts zoomItems). ATO-900: ⌘ 0 is Actual Size, as in every Mac app and browser.
+    ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size','⌘ 0',''],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop (no approval on screen)','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
     ['Allow the approval on screen once','⌘ ↩','Ctrl ↩'],['Deny the approval on screen','⌘ .','Ctrl .'],
@@ -6611,7 +6621,7 @@ function act(a) {
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
-  // ATO-538: below 1000px the button and ⌘ 0 open or close the drawer instead
+  // ATO-538: below 1000px the button and ⌘ \ open or close the drawer instead
   // (sidebar-nav.js toggleSidebar); S.sidebar keeps the wide window's collapse.
   if (k === 'toggle')    { close();
                            if (v === 'sidebar') {
@@ -7118,7 +7128,7 @@ function shortcutKey(e) {
   if (k.length !== 1 || k.charCodeAt(0) < 128) return k;
   if (/^Key[A-Z]$/.test(c)) return e.shiftKey ? c.slice(3) : c.slice(3).toLowerCase();
   if (/^Digit[0-9]$/.test(c)) return c.slice(5);
-  return {Period: '.', Comma: ',', Slash: '/', Enter: 'Enter'}[c] || k;
+  return {Period: '.', Comma: ',', Slash: '/', Backslash: '\\', Enter: 'Enter'}[c] || k;
 }
 
 /* 05.10: the approval chord a keydown is, if any: 'y' for ⌘↩ (Ctrl+↩ off
@@ -8585,14 +8595,15 @@ document.addEventListener('keydown', (e) => {
   // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
   if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
-     too. ⌘N, ⌘0, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
+     too. ⌘N, ⌘\, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
      and Windows already match on a Russian layout; with the page taking
      them as well, that layout now goes the way a Latin one always has.
      ⌘↩ and ⌘. are only shown in the menu (menu.ts), so nothing fires them
-     twice. */
+     twice. ATO-900: ⌘0 is not here: it is View › Actual Size, a menu role
+     the page leaves alone; the sidebar is ⌘\. */
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
-                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
+                 '\\':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts', '5':'studio:open:images', '6':'studio:open:video'};   // Studio: ⌘5 Images, ⌘6 Video
     if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
     /* ATO-224: ⌘↩ (Ctrl+↩) is Send only with nothing over the chat. With a
@@ -24769,7 +24780,12 @@ function llmLocalRows() {
     else if (!embActive || !m.active) { primary = 'use'; effect = 'Enter: select model'; }
     else if (!embEnabled) { primary = 'enable'; effect = 'Enter: enable local embeddings for ' + m.id; }
     else { primary = embWorks ? 'current' : 'start'; effect = embWorks ? 'Current: local embeddings/' + m.id : 'Enter: start embedding daemon for ' + m.id; }
-    rows.push({kind:'localEmbeddingModel', id:'local-embedding:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect,
+    // ATO-900: the card says what its click did, on the card (memory-model-card.js).
+    const act = LLMP.embAct && LLMP.embAct.id === m.id ? LLMP.embAct : null;
+    const mem = memCardState({downloaded: m.downloaded, pulling: pull, picked: embActive && m.active, enabled: embEnabled,
+      running: !!(LLMP.embDaemon && LLMP.embDaemon.running), health: LLMP.embDaemon ? LLMP.embDaemon.health : '',
+      busy: !!(act && act.busy), error: act ? act.error : null, engine: ENGF.f, chatUp: llmDaemonUp()});
+    rows.push({kind:'localEmbeddingModel', id:'local-embedding:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect, mem, memBusy: !!(act && act.busy),
       text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'});
   });
   return rows;
@@ -25435,13 +25451,15 @@ function llmRowHTML(row, index, cursor) {
   const open = '<button class="tuirow tk-li llm-row' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + (row.active ? ' is-active' : '')
     + '" data-llm-row="' + esc(row.id) + '"' + extra + (why ? ' aria-describedby="llm-why-' + index + '"' : '') + ' data-act="llm:row:' + index + '">'
     + (why ? '<span hidden id="llm-why-' + index + '">' + esc(why) + '</span>' : '');
-  const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
+  // ATO-900: the memory model memory search is set to wears the selected radio whatever its server is doing; its chip says that.
+  const mem = row.kind === 'localEmbeddingModel' ? row.mem : null;
+  const radio = '<span class="tk-radio' + (row.active || (mem && mem.selected) ? ' on' : '') + '" aria-hidden="true"></span>';
   /* ATO-507: a download with no room for it on this disk: the pill is greyed
      (llmPrimary refuses it) and the row says why, under its blurb. */
   const disk = (row.kind === 'localTextModel' || row.kind === 'localEmbeddingModel') && row.primaryAction === 'download'
     ? modelDiskFit(row.model) : {ok: true};
   // The action a click (or Enter) takes on this row, as a pill; the TUI's sentence is its tooltip.
-  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + (disk.ok ? '' : ' llm-effect--nodisk" aria-disabled="true')
+  const effect = mem && row.memBusy ? '' : '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + (disk.ok ? '' : ' llm-effect--nodisk" aria-disabled="true')
     + '" title="' + esc(disk.ok ? row.enterEffect : disk.text) + '">'
     + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(llmEffectLabel(row)) + '</span>';
   // A second verb on the row: a span with its own act (the delegate resolves the innermost [data-act]).
@@ -25462,18 +25480,24 @@ function llmRowHTML(row, index, cursor) {
         : chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
       + llmRowBadgesHTML(row)
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
-      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
+      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '')
+      + (mem ? ' <span class="tk-chip tk-chip--sm llm-ib llm-memst tk-chip--' + esc(mem.tone) + '" data-memcard="' + esc(mem.key) + '">'
+        + (mem.spin ? '<span class="tk-spin"></span>' : '') + esc(mem.word) + '</span>' : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
       + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
       // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
       + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
       + (disk.ok ? '' : '<span class="llm-best-why llm-disk-why">' + esc(disk.text) + '</span>')
+      // ATO-900: what the click did, or why it could not, under the card's name; read out as it changes.
+      + (mem ? '<span class="llm-best-why llm-memline llm-memline--' + esc(mem.key) + '" role="status">' + esc(mem.line) + '</span>' : '')
       + '</span>'
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops
          first (llmRemoveStops). Not while it is coming down. */
-      + (m.downloaded && row.primaryAction !== 'downloading' ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      + (m.downloaded && row.primaryAction !== 'downloading' && !(mem && row.memBusy) ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      // ATO-900: the one action that fixes a failed card (Retry, or the engine's Download again), beside the row's pill.
+      + (mem && mem.act ? rowAct(mem.act === 'llm:embRetry' ? 'llm:embRetry:' + index : mem.act, mem.label) : '')
       + effect + '</button>';
   }
   if (row.kind === 'cloudProvider') {
@@ -26239,11 +26263,13 @@ function llmStopRefusal(held) {
       : held.elsewhere ? ' The agent is answering elsewhere (Telegram, a task or a bot).' : ' Another chat is still answering.');
 }
 async function llmDaemon(which) {
-  if (!BR || LLMP.daemonPhase) return;
+  // ATO-900: the answer goes back to the caller too (the memory model's card says a failed start on itself).
+  if (!BR) return null;
+  if (LLMP.daemonPhase) return {ok:false, error:'another start or stop is running, try again in a moment'};
   // A stop ends a turn the server is answering, this window's or one the agent runs for Telegram, a task or a bot.
   if (which === 'stop') {
     const held = await llmTurnsRunning();
-    if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return; }
+    if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return {ok:false, error:llmStopRefusal(held)}; }
   }
   LLMP.daemonPhase = which === 'stop' ? 'stopping' : 'starting'; llmRepaint();
   const res = which === 'stop' ? await BR.modelsStop() : await BR.modelsStart();
@@ -26254,6 +26280,7 @@ async function llmDaemon(which) {
   else if (which === 'start' && res.alreadyRunning) LLMP.msg = {text: res.stdout && res.stdout.trim() ? res.stdout.trim().split('\n').pop() : 'local-llm: daemon already running'};
   else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
+  return res;
 }
 /* ATO-852: Restart model for a server that rejects its model's key: what
    `models status` advises, `models stop` then `models start`, in one press.
@@ -26278,17 +26305,18 @@ async function llmRestartModel() {
   await llmRefreshStatus();
 }
 async function llmEmbToggle() {
-  if (!BR) return;
+  if (!BR) return null;
   const enabled = llmEmbCfg().enabled === true;
   // local-models-orchestrator.ts toggleEmbeddingEnabled; `use-embedding <id>` enables + selects, `--disable` turns it off.
   const target = enabled ? '--disable' : (llmEmbCfg().modelId || 'nomic-embed-text-v1.5');
   LLMP.busy = true; llmRepaint();
   const res = await BR.modelsUseEmbedding(target);
   LLMP.busy = false;
-  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return res; }
   LLMP.msg = {text:'local-llm: embeddings ' + (enabled ? 'disabled' : 'enabled')};
   await refreshLiveConfig();
   llmRefresh();
+  return res;
 }
 /* ATO-130: the update waits its turn behind a model start (or a switch) on its
    way; "updating…" said otherwise all that time. Main tells which it is
@@ -26529,6 +26557,37 @@ function llmPull(kind, id) {
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
+/* ATO-900: the memory model's card while its click runs. A step returns
+   null, or the sentence its card says under Failed. After a step that went
+   through, the list is read again (the embedding server's state comes from
+   `models list-embeddings`, which the 5 s status poll does not read), and
+   again while that server loads, so the card turns Running without a click. */
+function llmEmbBusy() { return !!(LLMP.embAct && LLMP.embAct.busy); }
+async function llmEmbRun(id, step) {
+  LLMP.embAct = {id, busy:true, error:null}; llmRepaint();
+  let error = null;
+  try { error = await step(); } catch (err) { error = memCardError(null, err && err.message ? err.message : String(err)); }
+  /* A read that throws must not leave the card on Starting…: llmPrimary
+     ignores every memory model click while embAct is busy. */
+  if (!error) { try { await llmRefresh(); } catch (err) { /* the 5 s status poll and the next click read again */ } }
+  LLMP.embAct = error ? {id, busy:false, error} : null;
+  llmRepaint();
+  if (!error) llmEmbWatch(id);
+}
+/** While the server for the memory model loads (or was only just asked to start), read the list again every 3 s, for at most 30 s. */
+async function llmEmbWatch(id) {
+  const token = ++LLMP.embWatch;
+  for (let i = 0; i < 10; i++) {
+    const d = LLMP.embDaemon;
+    const m = (LLMP.emb || []).find((x) => x.id === id);
+    const loading = !!(d && d.running && String(d.health || '').toLowerCase() !== 'ok');
+    const settling = i < 2 && !!m && m.active && llmEmbCfg().enabled === true && !(d && d.running);
+    if (!loading && !settling) return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (token !== LLMP.embWatch || LLMP.embAct) return;
+    await llmRefresh();
+  }
+}
 /* ATO-337: press a local chat model's row by id, with the cursor on it. */
 function llmPrimaryForLocal(id) {
   const rows = llmLocalRows();
@@ -26562,19 +26621,24 @@ async function llmPrimary(row) {
   }
   if (row.kind === 'localEmbeddingModel') {
     const m = row.model;
-    if (LLMP.pulling) return;
+    if (LLMP.pulling || llmEmbBusy()) return;
     if (!m.downloaded && llmNoRoom(m)) return;
-    if (!m.downloaded) { llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
-    if (!m.active) {
-      const res = await BR.modelsUseEmbedding(m.id);
-      if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
-      if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama');
-      await refreshLiveConfig(); llmRefresh(); return;
-    }
-    if (!llmLocalEmbActive()) { await llmWrite('activeEmbeddingProvider', 'local-llama'); await refreshLiveConfig(); }
-    if (llmEmbCfg().enabled !== true) { llmEmbToggle(); return; }
-    if (!(LLMP.embDaemon && LLMP.embDaemon.running)) { await llmDaemon('start'); return; }
-    llmRefresh();
+    if (!m.downloaded) { LLMP.embAct = null; llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
+    if (row.primaryAction === 'current') { LLMP.embAct = null; llmRefresh(); return; }
+    // ATO-900: one step per click, as before, with the card saying Starting… while it runs and Failed with the reason after.
+    await llmEmbRun(m.id, async () => {
+      if (!m.active) {
+        const res = await BR.modelsUseEmbedding(m.id);
+        if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); return memCardError(res); }
+        if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama');
+        await refreshLiveConfig();
+        return null;
+      }
+      if (!llmLocalEmbActive()) { await llmWrite('activeEmbeddingProvider', 'local-llama'); await refreshLiveConfig(); }
+      if (llmEmbCfg().enabled !== true) { const res = await llmEmbToggle(); return res && res.ok !== false ? null : memCardError(res); }
+      if (!(LLMP.embDaemon && LLMP.embDaemon.running)) { const res = await llmDaemon('start'); return res && res.ok !== false ? null : memCardError(res); }
+      return null;
+    });
     return;
   }
   if (row.kind === 'cloudProvider') {
@@ -26758,6 +26822,13 @@ function llmAct(what) {
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
   if (verb === 'daemon') { llmDaemon(llmServerUp() ? 'stop' : 'start'); return; }
   if (verb === 'restartModel') { llmRestartModel(); return; }
+  // ATO-900: the memory model card's Retry: its click again, with the failure cleared first.
+  if (verb === 'embRetry') {
+    const row = llmLocalRows()[+arg];
+    if (!row || row.kind !== 'localEmbeddingModel') return;
+    LLMP.cursor.local = +arg; LLMP.embAct = null;
+    llmPrimary(row); return;
+  }
   // ATO-125: the server runs another model than the one picked — restart it on the picked one.
   if (verb === 'usePicked') { const id = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId; if (id) llmUseLocalModel(id); return; }
   if (verb === 'hf') {
@@ -27099,7 +27170,7 @@ function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t 
 function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
 function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
-function telegramTabEntered() { TG.confirm = null; tgRefresh(); tgPairProbe(); }
+function telegramTabEntered() { TG.confirm = null; if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial(); tgRefresh(); tgPairProbe(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
 /* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
    Review fix: a refresh asked for while one was in flight used to be DROPPED
@@ -27156,11 +27227,11 @@ function telegramTab() {
     // setup-state.ts needs_pairing. ATO-859: the card pairs here, through the agent's pairing route.
     if (owner === null) {
       body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair'}, {esc}) + '</div>';
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
     } else if (TG.pair.phase !== 'idle' || TG.pair.error) {
       // Replacing the owner (confirmed beside the Owner row): the same card, until its window ends.
       body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--blue">' + ic('user') + '</span><b>Pair a different Telegram account</b></div>'
-        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace'}, {esc}) + '</div>';
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
     }
     body += tgRowsHTML(enabled, owner);
   }
@@ -27181,7 +27252,7 @@ function tgStatusHTML(enabled, owner) {
   const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
     : owner === null ? 'Almost there: confirm your Telegram account below.'
     : enabled !== true ? 'Turned off: the bot does not answer until you turn it on below.'
-    : 'Waiting for a restart: the agent loads the token and these settings when it starts.';
+    : 'Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.';
   // The tab is read on entry and after its own writes; Check again reads it once more (the `R` key), e.g. after pairing elsewhere.
   return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
     + '<span class="tk-ico tk-ico--blue">' + ic('send') + '</span>'
@@ -27207,23 +27278,28 @@ function tgRowsHTML(enabled, owner) {
       // ATO-859: replacing the owner pairs a new account; like Clear owner it takes a second click (ATO-718: only after confirmation).
       + (TG.pair.supported !== false ? '<button class="btn btn-s sm" data-act="telegram:pairReplace"' + (busy || TG.pairBusy ? ' disabled' : '') + '>' + (TG.confirm === 'pairReplace' ? 'Click again to replace' : 'Replace') + '</button>' : '')
       + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearOwner' ? 'Click again to clear' : 'Clear owner') + '</button>') : '')
-    + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
+    + row('Restart the bot', 'Restarts the agent, and the bot with it. The app stays open.',
+      '<button class="btn btn-s sm" data-act="telegram:restart"' + (TG.restart.phase === 'restarting' ? ' disabled' : '') + '>Restart</button>')
     + '</div>'
     + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token']);
 }
-/* What the last action left: an error, its message, and the restart a
-   change is still owed. Once a new agent is up, the restart's own line and
-   the messages that waited for it have nothing left to say. */
+/* What the last action left: an error, its message, the restart a change
+   is still owed, and the restart's own line (telegram-restart.js). Once a new
+   agent is up, the messages that waited for it have nothing left to say, and
+   the restart's line says how it went. ATO-900 item 6: every line that asks
+   for a restart has the primary Restart agent beside it and says the app
+   stays open; while the restart runs or after it failed, its own line says
+   so instead. */
 function tgNoticesHTML() {
-  const owed = tgRestartOwed();
-  const stale = TG.msgGen !== AGENT_GEN && (TG.msgKind === 'owed' || TG.msgKind === 'restarting');
+  const owed = tgRestartOwed() && !tgRestartSpeaks(TG.restart);
+  const stale = TG.msgGen !== AGENT_GEN && TG.msgKind === 'owed';
   const msg = TG.message && !stale ? TG.message : null;
-  const restarting = !!msg && TG.msgKind === 'restarting';
-  const restartBtn = '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>';
+  const restartBtn = tgRestartButtonHTML(TG.restart, {esc, ic});
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
   return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
-    + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">It takes effect after a restart.</span>', restartBtn)
-      : (msg ? note(esc(msg)) : '') + (owed && !restarting ? note('A change here takes effect after a restart.', restartBtn) : ''));
+    + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">' + esc(TG_RESTART_APPLY) + '</span>', restartBtn)
+      : (msg && !(TG.msgKind === 'owed' && tgRestartSpeaks(TG.restart)) ? note(esc(msg)) : '') + (owed ? note(esc(TG_RESTART_APPLY), restartBtn) : ''))
+    + tgRestartNoticeHTML(TG.restart, {esc, ic});
 }
 /* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
@@ -27241,6 +27317,7 @@ function tgTokenPromptHTML() {
 /* `kind`: 'owed' — a change the agent loads at start, so a restart is owed from now; 'restarting'; 'info'. */
 function tgSetMessage(text, kind) {
   TG.message = text; TG.msgKind = kind || 'info'; TG.msgGen = AGENT_GEN; TG.lastError = null;
+  if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial();   // a new action's line replaces the last restart's
   if (kind === 'owed') TG.owedGen = AGENT_GEN;
 }
 /* tui-telegram-orchestrator.ts submitToken: empty fails locally, then
@@ -27316,14 +27393,39 @@ function telegramAct(what) {
   if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
   if (verb === 'clearOwner') { tgClearOwner(); return; }
   // `r — restart` restarts the channel in the TUI; the desktop restarts the agent runtime, which restarts the channel with it.
-  // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
-  if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
+  if (verb === 'restart') { tgRestart(); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
   // ATO-859: `o` and `/telegram pair` start pairing when there is a token and no owner; otherwise they say what to do.
   if (verb === 'pair') { const line = tgPairLine(); if (line) { tgSetMessage(line, 'info'); tgRepaint(); } else tgPairStart(false); return; }
   if (verb === 'pairStart') { tgPairStart(tgOwner() !== null); return; }
   if (verb === 'pairReplace') { tgPairStart(true); return; }
   if (verb === 'pairCancel') { tgPairCancel(); return; }
+}
+/* ATO-900 item 6: Restart agent, from any line in the tab that asks for one. It
+   restarts the agent in place (the app stays open), says so while it runs, then
+   reads the tab again and says the result there: connected, what is still
+   missing, or why the agent did not start. A running reply would end with the
+   restart, so it is refused in place while one runs. */
+async function tgRestart() {
+  if (!BR || TG.restart.phase === 'restarting') return;
+  if (restartStopsTurn()) { TG.restart = tgRestartRefused(); tgRepaint(); return; }
+  TG.restart = tgRestartStart(); tgRepaint();
+  S.log.push({id:nid(), k:'system', text:'restarting the agent…'});
+  let st = null;
+  try { st = await BR.restart('telegram'); } catch (e) { st = {state:'error', error:String((e && e.message) || e)}; }
+  /* The tab's own read after the restart may fail (a rejected IPC). The result
+     is still said from what is known: left at 'restarting', the button would
+     stay disabled for good, since nothing else clears that phase. */
+  try {
+    applyStatus(st);
+    if (st && st.state === 'connected') {
+      // The agent now has Telegram running if it can: a "not running" pairing error is out of date.
+      if (TG.pair.error === TG_PAIR_NOT_RUNNING) TG.pair = Object.assign({}, TG.pair, {error:null});
+      await tgRefresh();
+    }
+  } catch (e) { /* the status above is what the result reads */ }
+  TG.restart = tgRestartResult(st, {hasToken: tgHasToken(), owner: tgOwner(), enabled: tgEnabled()});
+  tgRepaint();
 }
 /** ATO-435: what `o` and `/telegram pair` say instead of pairing, or null when they may pair. */
 function tgPairLine() {
@@ -27837,7 +27939,7 @@ if (typeof window !== 'undefined') {
   window.__llmFallbackPersist = async (chain, appendLocal) => { await llmFallbackPersist(chain, appendLocal); return window.__llmPane(); };
   window.__llmProbe = (url) => (BR ? BR.llamaProbe(url) : Promise.resolve({ok:false, error:'no bridge'}));
   window.__llmExternalSave = async (url) => { llmSetMode('external'); LLMP.externalDraft = String(url); LLMP.externalInvalid = false; llmRepaint(); const n = document.getElementById('llm-url'); if (n) n.value = String(url); await llmExternalSave(); return window.__llmPane(); };
-  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: tgRestartOwed(),
+  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: tgRestartOwed(), restartPhase: TG.restart.phase,
     lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error,
     // ATO-859: where pairing stands, never the code itself.
     pair: {phase: TG.pair.phase, supported: TG.pair.supported, hasCode: !!TG.pair.code, pairedLine: TG.pair.pairedLine, error: TG.pair.error}});
@@ -28344,6 +28446,28 @@ if (typeof window !== 'undefined') {
   window.__clearToasts = () => { S.toasts = []; renderToasts(); return S.toasts.length; };
   window.__openPalette = () => { act('palette'); return S.overlay; };
   window.__rail = () => { act('toggle:sidebar'); return window.__sbHeads(); };
+  /* ATO-900: what the 52px rail draws. Every visible box inside #sidebar
+     (the Studio header word ran past the edge), every text label left on
+     screen, and the cells of the rows (New chat, the section rows, Studio,
+     chats, tasks) with their size and centre, so the column can be held to
+     one cell size on one centre line. */
+  window.__railFit = () => {
+    const sb = document.querySelector('#sidebar');
+    const box = sb.getBoundingClientRect();
+    const seen = (el) => !!el.offsetParent && el.getBoundingClientRect().width > 0;
+    const over = [...sb.querySelectorAll('*')].filter(seen).filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.left < box.left - 0.5 || r.right > box.right + 0.5;
+    }).map((el) => (el.className && el.className.baseVal === undefined ? String(el.className) : el.tagName) + ':' + (el.textContent || '').trim().slice(0, 20));
+    const labels = [...sb.querySelectorAll('.sb-new-lb, .sb-studio-head, .sb-list-head > span, .sesrow .t1, .sb-settings-lb, .wschip')]
+      .filter(seen).map((el) => (el.textContent || '').trim());
+    const cells = [...sb.querySelectorAll('.sb-new, .sesrow')].filter(seen).map((el) => {
+      const r = el.getBoundingClientRect();
+      return {w: Math.round(r.width), h: Math.round(r.height), centre: Math.round(r.left + r.width / 2 - box.left)};
+    });
+    return {width: Math.round(box.width), over, labels, cells,
+            studio: !!sb.querySelector('.sb-studio-row'), chats: sb.querySelectorAll('.sesrow').length};
+  };
   window.__menuSubRows = () => document.querySelectorAll('#settings .menurow.sub, #settings .menurow.parent').length;
   /* Item 5: the focus ring is re-applied on every render while MENUFOCUS.want
      is up, so the flag has to drop the moment focus leaves the first menu row.
@@ -29854,7 +29978,8 @@ if (typeof window !== 'undefined') {
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
             order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.classList.contains('msgact-off') ? 'hint' : '?'),
-            titles: btns.map((b) => b.getAttribute('title')),
+            // ATO-900: the muted hint names itself in data-tip (a CSS tooltip), the others in title.
+            titles: btns.map((b) => b.getAttribute('title') || b.getAttribute('data-tip')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
             right: Math.round(br.right),
             btnRight: last ? Math.round(last.getBoundingClientRect().right) : null,
@@ -29872,13 +29997,15 @@ if (typeof window !== 'undefined') {
       const t = Array.from(document.querySelectorAll('.turn')).filter((r) => r.querySelector(real ? '.prose:not(.usr):not(.tk-ph)' : '.prose:not(.usr)')).pop();
       const box = t ? t.querySelector('.msgacts') : null;
       if (!box) return null;
-      /* ATO-862: the muted hint reads as hint:<aria-disabled>:<title>; one
-         that gained a data-resend or data-act would read as resend or '?'. */
+      /* ATO-862: the muted hint reads as hint:<aria-disabled>:<tip>; one
+         that gained a data-resend or data-act would read as resend or '?'.
+         ATO-900: its sentence is data-tip (the CSS tooltip), and one that
+         also carried a native title would show it twice, so it reads '?'. */
       return Array.from(box.querySelectorAll('button')).map((b) => b.dataset.resend
         ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy'
-          : b.classList.contains('msgact-off') && !b.dataset.act && b.getAttribute('aria-label') === b.getAttribute('title')
-            ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('title') : '?');
+          : b.classList.contains('msgact-off') && !b.dataset.act && !b.hasAttribute('title') && b.getAttribute('aria-label') === b.getAttribute('data-tip')
+            ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('data-tip') : '?');
     };
     const drawn = (log, busy, real) => { S.log = log; S.busy = !!busy; S.streamId = null; render(); return lastActs(real); };
     const tool = {id: 'rr-t', k: 'tool', name: 'os.fs.list_dir', arg: '~', where: 'local', ms: 4, ok: true, open: false, out: 'a.txt'};
@@ -29907,6 +30034,13 @@ if (typeof window !== 'undefined') {
       resendUser = function () { resends++; };
       try { if (hint) hint.click(); } finally { resendUser = realResend; }
       out.toolClick = {found: !!hint, resends, logSame: S.log.length === logLen, focusable: hint ? hint.tabIndex >= 0 : null};
+      /* ATO-900: the hint's tooltip is its ::after, filled from data-tip,
+         hidden at rest and shown by the hover rule (read as text, since
+         :hover cannot be synthesised; __cssRule). The pseudo-element takes
+         no pointer events, so it never covers the reply above it. */
+      const tip = hint ? getComputedStyle(hint, '::after') : null;
+      out.toolTip = {content: tip ? tip.content : null, opacity: tip ? tip.opacity : null, events: tip ? tip.pointerEvents : null,
+                     hover: window.__cssRule('.msgact-off[data-tip]:hover::after')};
       S.log = [{id: 'rr-u', k: 'user', text: 'delete the old logs'}, {id: 'rr-p', k: 'approval', state: 'approved'},
                {id: 'rr-a', k: 'assistant', text: 'done'}];
       out.approval = replyRetryAsk(S.log[2]);

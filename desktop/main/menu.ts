@@ -90,19 +90,20 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
         item("Skills", "room:skills", "CommandOrControl+3"),
         item("Memory", "settings:memory", "CommandOrControl+4"),
         sep,
-        item("Toggle Sidebar", "toggle:sidebar", "CommandOrControl+0"),
+        /* ATO-900: ⌘\\ (Ctrl+\\), the sidebar chord of VS Code and Cursor.
+           ⌘0 is Actual Size, as in every Mac app and browser. */
+        item("Toggle Sidebar", "toggle:sidebar", "CommandOrControl+\\"),
         item("Toggle Inspector", "toggle:inspector", alt("0")),
         item("Toggle Console", "toggle:console", "Shift+CommandOrControl+Y"),
         sep,
         item("Expand All Tool Cards", "cards:expand", alt("E")),
         item("Collapse All Tool Cards", "cards:collapse", alt("K")),
         sep,
-        /* ATO-544: page zoom, so text can be made larger (WCAG 1.4.4). ⌘0 is
-           Toggle Sidebar, so Actual Size is ⇧⌘0 on macOS; off macOS that chord
-           is Toggle Inspector (alt above), so it is Ctrl+Numpad 0 there, as
-           in VS Code. ⌘= is the visible Zoom In because ⌘+ needs Shift on
-           most layouts; the hidden twins take ⌘+ and the numpad keys. */
-        ...zoomItems(mac),
+        /* ATO-544: page zoom, so text can be made larger (WCAG 1.4.4).
+           ATO-900: Actual Size is ⌘0 (Ctrl+0), the chord every Mac app and
+           browser gives it. ⌘= is the visible Zoom In because ⌘+ needs Shift
+           on most layouts; the hidden twins take ⌘+ and the numpad keys. */
+        ...zoomItems(),
         sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),
@@ -175,16 +176,16 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
 }
 
 /** View › Actual Size / Zoom In / Zoom Out (ATO-544), plus hidden twins for the other keys that mean the same. */
-export function zoomItems(mac: boolean): MenuItemConstructorOptions[] {
+export function zoomItems(): MenuItemConstructorOptions[] {
   const hidden = (role: "zoomIn" | "zoomOut" | "resetZoom", accelerator: string): MenuItemConstructorOptions =>
     ({ role, accelerator, visible: false, acceleratorWorksWhenHidden: true });
   return [
-    { role: "resetZoom", label: "Actual Size", accelerator: mac ? "Shift+Command+0" : "CommandOrControl+num0" },
+    { role: "resetZoom", label: "Actual Size", accelerator: "CommandOrControl+0" },
     { role: "zoomIn", label: "Zoom In", accelerator: "CommandOrControl+=" },
     { role: "zoomOut", label: "Zoom Out", accelerator: "CommandOrControl+-" },
     hidden("zoomIn", "CommandOrControl+Plus"),
     hidden("zoomIn", "CommandOrControl+numadd"),
     hidden("zoomOut", "CommandOrControl+numsub"),
-    ...(mac ? [hidden("resetZoom", "Command+num0")] : []),
+    hidden("resetZoom", "CommandOrControl+num0"),
   ];
 }

@@ -204,7 +204,8 @@
 .sb-settings-lb{flex:1;min-width:0;text-align:left}
 
 /* ---------------- the rail (52px) ---------------- */
-/* Dots, the two pluses and the gear; names stay in the rows' titles. The
+/* Icons and glyph discs only, no text label (ATO-900); names stay in the
+   rows' tooltips. The
    panel is inset 4px each side so everything centres on the 52px box. The
    same rules apply without the class below 1000px. */
 #sidebar.rail{width:52px;padding:10px 10px 18px;margin-top:0}
@@ -217,7 +218,13 @@
 #sidebar.rail .sb-list-head{justify-content:center;padding:0;margin-top:6px}
 #sidebar.rail .sb-list-head > span{display:none}
 #sidebar.rail .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
-#sidebar.rail .sesrow{justify-content:center;padding:0;height:28px}
+/* ATO-900: a rail row is the same 32px cell as New chat, the section rows,
+   Studio and the gear, on the same centre line, so the column reads as one
+   set of controls; a header with no plus (Chats, Pinned) gives the rail
+   nothing to show and folds away, the hairline between lists stays. */
+#sidebar.rail .sb-list-head:not(:has(button)){display:none}
+#sidebar.rail .sb-list{gap:2px}
+#sidebar.rail .sesrow{justify-content:center;align-self:center;width:32px;height:32px;padding:0}
 #sidebar.rail .sesrow::after{display:none}
 #sidebar.rail .sb-lists{scrollbar-width:none}
 #sidebar.rail .sb-footwrap{display:flex;justify-content:center}
@@ -232,7 +239,7 @@
   border-radius:50%;background:var(--well);color:var(--ink-2);font:600 12px/1 var(--font-ui);
 }
 #sidebar.rail .sesrow.on[data-g]::before{background:transparent;color:var(--blue)}
-#sidebar.rail .sesrow[data-g] .sdot{position:absolute;top:1px;right:3px}
+#sidebar.rail .sesrow[data-g] .sdot{position:absolute;top:3px;right:3px}
 /* The responsive rail: the same rules below 1000px, unless the toggle opened
    the sidebar as a drawer (ATO-538): then it is the full 260px sidebar laid
    over the content. Its flow width stays 52px (the negative margin), so the
@@ -248,7 +255,9 @@
   #sidebar:not(.drawer) .sb-list-head{justify-content:center;padding:0;margin-top:6px}
   #sidebar:not(.drawer) .sb-list-head > span{display:none}
   #sidebar:not(.drawer) .sb-list + .sb-list::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 0;background:var(--bd)}
-  #sidebar:not(.drawer) .sesrow{justify-content:center;padding:0;height:28px}
+  #sidebar:not(.drawer) .sb-list-head:not(:has(button)){display:none}
+  #sidebar:not(.drawer) .sb-list{gap:2px}
+  #sidebar:not(.drawer) .sesrow{justify-content:center;align-self:center;width:32px;height:32px;padding:0}
   #sidebar:not(.drawer) .sesrow::after{display:none}
   #sidebar:not(.drawer) .sb-lists{scrollbar-width:none}
   #sidebar:not(.drawer) .sb-footwrap{display:flex;justify-content:center}
@@ -259,7 +268,7 @@
     border-radius:50%;background:var(--well);color:var(--ink-2);font:600 12px/1 var(--font-ui);
   }
   #sidebar:not(.drawer) .sesrow.on[data-g]::before{background:transparent;color:var(--blue)}
-  #sidebar:not(.drawer) .sesrow[data-g] .sdot{position:absolute;top:1px;right:3px}
+  #sidebar:not(.drawer) .sesrow[data-g] .sdot{position:absolute;top:3px;right:3px}
   #sidebar.drawer{width:260px;margin-right:-208px;margin-top:0;padding:10px 8px 18px 16px;z-index:17}
   #sidebar.drawer::before{top:0;box-shadow:var(--sh-pop)}
 }

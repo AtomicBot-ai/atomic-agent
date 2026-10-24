@@ -168,10 +168,11 @@ start two task schedulers against the same cron jobs.
   where Chromium would download Hunspell dictionaries; fields for keys, URLs
   and paths carry `spellcheck="false"`.
 - View has Actual Size, Zoom In and Zoom Out (`menu.ts zoomItems`, ATO-544):
-  ⌘ = and ⌘ + zoom in, ⌘ - zooms out. ⌘ 0 stays Toggle Sidebar, so Actual
-  Size is ⇧ ⌘ 0 on macOS and Ctrl+Numpad 0 on Windows and Linux (Ctrl ⇧ 0 is
-  Toggle Inspector there). The zoom level is Chromium's own and is not saved
-  by the app.
+  ⌘ = and ⌘ + zoom in, ⌘ - zooms out, and ⌘ 0 (Ctrl+0, or Numpad 0) is
+  Actual Size, as in every Mac app and browser (ATO-900). Toggle Sidebar is
+  `⌘ \` (`Ctrl+\`), the page also matching it by the physical key on a
+  non-Latin layout. The zoom level is Chromium's own and is not saved by the
+  app.
 
 ## What is real and what is not
 
@@ -312,9 +313,14 @@ Real, driven by the running agent:
   than 1000px — the two lists stay as a column of small discs, each holding
   the first letter (or emoji) of the row's title with the status dot as its
   badge (ATO-538), so rows differ at a glance; the tooltip still names
-  the row, so the rail is still a way back into a chat; the two list headers
-  stay too, stripped to their **+**, because 52px does not hold a label or the
-  counter and the rail would otherwise have no way to start anything.
+  the row, so the rail is still a way back into a chat. The rail draws no
+  text at all (ATO-900): every row, New chat, Tasks, Skills, Images, Video and
+  each chat, is the same 32px cell on the rail's centre line; Studio's header
+  word gives way to the hairline the lists use between them; a list header
+  with a **+** (Tasks) keeps just that plus, and one without (Chats, Pinned)
+  folds away. Smoke `chromeTest` reads `window.__railFit()` on both the
+  collapsed and the narrow-window rail: nothing past the 52px edge, no label
+  on screen, one cell size on one centre.
   Expanded, the sidebar reaches up into the 52px title band (the Atomic Chat
   layout): its top row (`.sb-top`) has the macOS traffic lights on the left
   and two 32px icon buttons on the right, Search (the palette, ⌘ K) and the
@@ -326,14 +332,14 @@ Real, driven by the running agent:
   while the sidebar is expanded, and *expanded* is the conjunction of both facts — the flag and the
   breakpoint — so the glow cannot lie on a narrow window. Below 1000px the
   media query pins the 52px rail whatever the flag says; there the button and
-  ⌘ 0 open the full sidebar as a **drawer** over the content (ATO-538; it used
+  ⌘ \ open the full sidebar as a **drawer** over the content (ATO-538; it used
   to be disabled, which left a 940-1000px window with no chat list at all).
   The drawer keeps the rail's 52px in the layout, so the content does not
   move, lights the button while it is up, and closes on a pick inside it, a
-  click outside it, Escape, ⌘ 0 again or the window growing past 1000px; the
+  click outside it, Escape, ⌘ \ again or the window growing past 1000px; the
   collapse kept for a wide window is left as it was. The tooltips in that
-  corner are `Hide sidebar (⌘ 0)` and `Console (⇧ ⌘ Y)` — the spellings the
-  shortcuts sheet ships, because a toolbar where one chord reads *⌘ 0* and its
+  corner are `Hide sidebar (⌘ \)` and `Console (⇧ ⌘ Y)` — the spellings the
+  shortcuts sheet ships, because a toolbar where one chord reads `⌘ \` and its
   neighbour *Ctrl+Shift+Y* is worse than either spelling alone.
 - **What the sidebar cannot know on 0.5.4.** `GET /api/sessions` never
   reports `running`: the store is written only when a turn ends, and no route
@@ -610,6 +616,15 @@ Honestly degraded, and labelled as such in the UI:
   `models use`, `models start|stop`, `s`/`d`/`E`/`B`/`U`/`G` through the
   matching `models` subcommands and `localModels.managed.autoUpdate`, `L`
   tails `<dataDir>/llama-server.log`.
+- **The memory model's card** (Settings › Models › Embedding models,
+  ATO-900) says what a click did on the card itself, not only in the status
+  line at the top: Starting… with a spinner while the step runs or the server
+  loads, Running with the selected radio once its server answers, Not
+  running / Off / Not downloaded for a picked model that waits on the row's
+  Start / Turn on / Download, Failed with the reason and Retry when the step
+  did not go through, and Engine not ready with Download again when the local
+  engine failed. The mapping is [memory-model-card.js](renderer/memory-model-card.js);
+  after a step the list is read again for up to 30 s while the server loads.
 - **The local-model recommendation** ranks that catalogue against the machine
   it is running on, in the first-run picker and in Settings › LLM › Local, off
   the same two functions (`fitFor` / `orderModelsByFit` in `renderer.js`) so
@@ -728,7 +743,15 @@ Honestly degraded, and labelled as such in the UI:
   the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
   0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
   token, unset the owner and flip `telegram.enabled`, each with the restart
-  note. Pairing (ATO-859, `renderer/telegram-pairing.js`,
+  note. Every line in the tab that asks for a restart (that note, the
+  "Waiting for a restart" status and the pairing card's "Telegram is not
+  running") has a primary Restart agent beside it and says the app stays
+  open; the Restart the bot row's own Restart does the same (ATO-900 item 6,
+  `renderer/telegram-restart.js`): it restarts the agent in place
+  (`agent_restarted` trigger `telegram`), shows Restarting…, then the
+  result in the same place (connected, what is still missing, or why the
+  agent did not start), and is refused in place while a reply is running.
+  Pairing (ATO-859, `renderer/telegram-pairing.js`,
   `main/telegram-pairing.ts`) goes through the agent's
   `/api/telegram/pairing`: Pair shows the 6-digit one-time code and the
   agent's instruction (`/start <code>` to the bot, 5 minutes), the tab polls

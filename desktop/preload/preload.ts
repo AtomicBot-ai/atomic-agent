@@ -74,8 +74,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Process supervision. */
   status: () => ipcRenderer.invoke("agent:status"),
   start: () => ipcRenderer.invoke("agent:start"),
-  /** ATO-274: `reason` is "setup_finished" when setup closing asks; analytics only. */
-  restart: (reason?: "setup_finished") => ipcRenderer.invoke("agent:restart", reason),
+  /** ATO-274: `reason` is "setup_finished" when setup closing asks, "telegram" from the Telegram tab (ATO-900); analytics only. */
+  restart: (reason?: "setup_finished" | "telegram") => ipcRenderer.invoke("agent:restart", reason),
   onStatus: (cb: (payload: unknown) => void) => on("agent:status", cb),
   onLog: (cb: (payload: unknown) => void) => on("agent:log", cb),
   /** ATO-767: the automatic restarts after an unexpected exit (agent-auto-restart.ts). */
@@ -206,6 +206,9 @@ contextBridge.exposeInMainWorld("atomic", {
     /* The local chat model and local generations on one memory (main/studio-gpu-share.ts):
        whether chat is paused for Studio, the generation running, how many are queued, chat turns held. */
     gpuShare: () => ipcRenderer.invoke("studio:gpuShare"),
+    /* ATO-809: Improve prompt (main/studio-improve-prompt.ts): whether a chat model can rewrite, and one rewrite. */
+    improveReady: () => ipcRenderer.invoke("studio:improveReady"),
+    improvePrompt: (kind: "image" | "video", prompt: string) => ipcRenderer.invoke("studio:improvePrompt", kind, prompt),
     onGpuShare: (cb: (state: unknown) => void) => on("studio:gpuShare", cb),
   },
   /** ATO-404/405: composer attachments (main/attachments-ipc.ts). */
