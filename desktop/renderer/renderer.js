@@ -1193,7 +1193,7 @@ function sidebarExpanded() { return S.sidebar !== 'rail' && !NARROW.matches; }
    to be disabled there (r5 review fix: the media query pinned 52px whatever
    `.rail` said, so a click changed nothing). Between the 940px minimum window
    and 1000px that left no way to see the chat list at all. Now the toggle and
-   ⌘ 0 open the full sidebar as a drawer over the content on a narrow window
+   ⌘ \ open the full sidebar as a drawer over the content on a narrow window
    (sidebar-nav.js toggleSidebar); S.sidebar, the collapse kept for a wide
    window, is left alone. The drawer closes on a pick inside it, a click
    outside it, Escape, or the window growing past 1000px. */
@@ -1932,7 +1932,7 @@ const PAL = [
   ]],
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
-    ['sidebar','Hide or show the sidebar','','⌘ 0','toggle:sidebar'],
+    ['sidebar','Hide or show the sidebar','','⌘ \\','toggle:sidebar'],
     ['skills','Enable or disable a skill…','','','settings:skills'],
     ['tasks','Create, cancel or run a task…','','','settings:tasks'],
     ['key','Analytics','','','settings:general'],
@@ -5220,9 +5220,9 @@ function shortcutsSheet() {
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
-    ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
-    // ATO-544: View menu zoom (menu.ts zoomItems). ⇧ Ctrl 0 is Toggle Inspector off macOS.
-    ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size',IS_MAC ? '⇧ ⌘ 0' : 'Ctrl Num0',''],
+    ['Toggle sidebar','⌘ \\','Ctrl \\'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    // ATO-544: View menu zoom (menu.ts zoomItems). ATO-900: ⌘ 0 is Actual Size, as in every Mac app and browser.
+    ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size','⌘ 0',''],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop (no approval on screen)','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
     ['Allow the approval on screen once','⌘ ↩','Ctrl ↩'],['Deny the approval on screen','⌘ .','Ctrl .'],
@@ -6611,7 +6611,7 @@ function act(a) {
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
-  // ATO-538: below 1000px the button and ⌘ 0 open or close the drawer instead
+  // ATO-538: below 1000px the button and ⌘ \ open or close the drawer instead
   // (sidebar-nav.js toggleSidebar); S.sidebar keeps the wide window's collapse.
   if (k === 'toggle')    { close();
                            if (v === 'sidebar') {
@@ -7118,7 +7118,7 @@ function shortcutKey(e) {
   if (k.length !== 1 || k.charCodeAt(0) < 128) return k;
   if (/^Key[A-Z]$/.test(c)) return e.shiftKey ? c.slice(3) : c.slice(3).toLowerCase();
   if (/^Digit[0-9]$/.test(c)) return c.slice(5);
-  return {Period: '.', Comma: ',', Slash: '/', Enter: 'Enter'}[c] || k;
+  return {Period: '.', Comma: ',', Slash: '/', Backslash: '\\', Enter: 'Enter'}[c] || k;
 }
 
 /* 05.10: the approval chord a keydown is, if any: 'y' for ⌘↩ (Ctrl+↩ off
@@ -8585,14 +8585,15 @@ document.addEventListener('keydown', (e) => {
   // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
   if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
-     too. ⌘N, ⌘0, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
+     too. ⌘N, ⌘\, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
      and Windows already match on a Russian layout; with the page taking
      them as well, that layout now goes the way a Latin one always has.
      ⌘↩ and ⌘. are only shown in the menu (menu.ts), so nothing fires them
-     twice. */
+     twice. ATO-900: ⌘0 is not here: it is View › Actual Size, a menu role
+     the page leaves alone; the sidebar is ⌘\. */
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
-                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
+                 '\\':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts', '5':'studio:open:images', '6':'studio:open:video'};   // Studio: ⌘5 Images, ⌘6 Video
     if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
     /* ATO-224: ⌘↩ (Ctrl+↩) is Send only with nothing over the chat. With a
@@ -28344,6 +28345,28 @@ if (typeof window !== 'undefined') {
   window.__clearToasts = () => { S.toasts = []; renderToasts(); return S.toasts.length; };
   window.__openPalette = () => { act('palette'); return S.overlay; };
   window.__rail = () => { act('toggle:sidebar'); return window.__sbHeads(); };
+  /* ATO-900: what the 52px rail draws. Every visible box inside #sidebar
+     (the Studio header word ran past the edge), every text label left on
+     screen, and the cells of the rows (New chat, the section rows, Studio,
+     chats, tasks) with their size and centre, so the column can be held to
+     one cell size on one centre line. */
+  window.__railFit = () => {
+    const sb = document.querySelector('#sidebar');
+    const box = sb.getBoundingClientRect();
+    const seen = (el) => !!el.offsetParent && el.getBoundingClientRect().width > 0;
+    const over = [...sb.querySelectorAll('*')].filter(seen).filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.left < box.left - 0.5 || r.right > box.right + 0.5;
+    }).map((el) => (el.className && el.className.baseVal === undefined ? String(el.className) : el.tagName) + ':' + (el.textContent || '').trim().slice(0, 20));
+    const labels = [...sb.querySelectorAll('.sb-new-lb, .sb-studio-head, .sb-list-head > span, .sesrow .t1, .sb-settings-lb, .wschip')]
+      .filter(seen).map((el) => (el.textContent || '').trim());
+    const cells = [...sb.querySelectorAll('.sb-new, .sesrow')].filter(seen).map((el) => {
+      const r = el.getBoundingClientRect();
+      return {w: Math.round(r.width), h: Math.round(r.height), centre: Math.round(r.left + r.width / 2 - box.left)};
+    });
+    return {width: Math.round(box.width), over, labels, cells,
+            studio: !!sb.querySelector('.sb-studio-row'), chats: sb.querySelectorAll('.sesrow').length};
+  };
   window.__menuSubRows = () => document.querySelectorAll('#settings .menurow.sub, #settings .menurow.parent').length;
   /* Item 5: the focus ring is re-applied on every render while MENUFOCUS.want
      is up, so the flag has to drop the moment focus leaves the first menu row.
