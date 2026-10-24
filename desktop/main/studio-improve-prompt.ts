@@ -17,18 +17,25 @@
 import {
   apiKeyCharsOk,
   chatCompletionsUrl,
-  isKeylessLocalProviderEntry,
   localLlamaUrlFromFile,
   providerIsUsable,
   resolveKeyValue,
   type ProviderEntry,
   type UserConfigShape,
 } from "./agent-cli.js";
+import { isLocalServerUrl } from "./local-server-url.js";
 
 export type ImproveKind = "image" | "video";
 
 /** CONTRACT.md: a prompt is at most 8000 characters. */
 export const IMPROVE_PROMPT_MAX = 8000;
+
+/** The rewrite's own room, and the reserve a thinking pass may spend before it. */
+export const IMPROVE_ANSWER_TOKENS = 1024;
+export const IMPROVE_THINKING_RESERVE = 3072;
+
+/** A reply with reasoning and no text: the whole budget went on thinking. */
+export const IMPROVE_ALL_THINKING = "The model spent its whole answer thinking. Try again or pick a model without thinking.";
 
 /** The line under a greyed button when there is no chat model to ask. */
 export const IMPROVE_NO_MODEL = "Set up a chat model in Settings to improve prompts.";
@@ -38,7 +45,11 @@ export interface ImproveTarget {
   url: string;
   model: string;
   entry: ProviderEntry;
-  /** A llama-server on this machine (the managed chat model or a custom URL). */
+  /**
+   * A server that renders its own chat template (a llama-server, Atomic Core,
+   * or an OpenAI-compatible server on this machine or the local network):
+   * the request may carry `chat_template_kwargs`. Never a public cloud host.
+   */
   local: boolean;
 }
 
@@ -80,7 +91,7 @@ export function improveRoute(
   const model = (fusion?.orchestratorProvider === entry.id && fusion.orchestratorModel) || entry.defaultChatModel || entry.model;
   if (!url || !model) return { ok: false, why: IMPROVE_NO_MODEL };
   if (!usable(entry)) return { ok: false, why: "Add an API key for the chat model in Settings to improve prompts." };
-  return { ok: true, target: { url, model, entry, local: isKeylessLocalProviderEntry(entry) } };
+  return { ok: true, target: { url, model, entry, local: isLocalServerUrl(url) } };
 }
 
 function instructions(kind: ImproveKind): string {
@@ -91,8 +102,25 @@ function instructions(kind: ImproveKind): string {
     + "Stay under 120 words. Answer with the improved prompt only: no title, no quotes, no notes.";
 }
 
-/** The chat completions body for one rewrite. */
-export function improveRequestBody(model: string, kind: ImproveKind, prompt: string): Record<string, unknown> {
+/** The output budget: the rewrite plus a thinking reserve, never above the entry's own cap. */
+export function improveMaxTokens(maxOutputTokens?: number): number {
+  const want = IMPROVE_ANSWER_TOKENS + IMPROVE_THINKING_RESERVE;
+  return typeof maxOutputTokens === "number" && Number.isInteger(maxOutputTokens) && maxOutputTokens > 0
+    ? Math.min(want, maxOutputTokens)
+    : want;
+}
+
+/**
+ * The chat completions body for one rewrite. `local` (ImproveTarget.local):
+ * ask the server's chat template not to think, which a local reasoning model
+ * honours; a public endpoint may reject the unknown field, so it never gets it.
+ */
+export function improveRequestBody(
+  model: string,
+  kind: ImproveKind,
+  prompt: string,
+  opts: { local?: boolean; maxOutputTokens?: number } = {},
+): Record<string, unknown> {
   return {
     model,
     messages: [
@@ -100,10 +128,20 @@ export function improveRequestBody(model: string, kind: ImproveKind, prompt: str
       { role: "user", content: prompt.trim().slice(0, IMPROVE_PROMPT_MAX) },
     ],
     // Room for a reasoning model's thinking before the answer.
-    max_tokens: 1024,
+    max_tokens: improveMaxTokens(opts.maxOutputTokens),
     temperature: 0.7,
     stream: false,
+    ...(opts.local ? { chat_template_kwargs: { enable_thinking: false } } : {}),
   };
+}
+
+/** Whether a reply with no prompt in it still carried reasoning (separate field, or only <think> text). */
+export function improveReplyOnlyThought(body: unknown): boolean {
+  const message = (body as { choices?: Array<{ message?: Record<string, unknown> }> } | null)?.choices?.[0]?.message;
+  if (!message) return false;
+  const said = (v: unknown) => typeof v === "string" && v.trim().length > 0;
+  if (said(message.reasoning_content) || said(message.reasoning)) return true;
+  return typeof message.content === "string" && /<think>|<\/think>/i.test(message.content);
 }
 
 /** The rewritten prompt in a chat completions answer, cleaned; '' when there is none. */
@@ -115,7 +153,8 @@ export function improvedPromptOf(body: unknown): string {
     : Array.isArray(raw)
       ? raw.map((p) => (p && typeof (p as { text?: unknown }).text === "string" ? (p as { text: string }).text : "")).join("")
       : "";
-  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^[\s\S]*<\/think>/i, "");
+  // Closed blocks, a close whose opening the server stripped, and a block cut off by the budget.
+  text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").replace(/^[\s\S]*<\/think>/i, "").replace(/<think>[\s\S]*$/i, "");
   text = text.trim().replace(/^```[a-z]*\s*/i, "").replace(/\s*```$/, "").trim();
   text = text.replace(/^(?:improved prompt|prompt)\s*:\s*/i, "").trim();
   const pairs: Array<[string, string]> = [['"', '"'], ["'", "'"], ["“", "”"]];
@@ -163,7 +202,7 @@ export async function improvePrompt(deps: ImproveDeps, kind: unknown, prompt: un
   if (!text) return fail("INVALID_REQUEST", "Type a prompt first.");
   const route = await routeNow(deps);
   if (!route.ok) return fail("NO_CHAT_MODEL", route.why);
-  const { url, model, entry } = route.target;
+  const { url, model, entry, local } = route.target;
 
   const headers: Record<string, string> = { "content-type": "application/json", ...(entry.headers ?? {}) };
   const key = entry.kind === "llama-server" ? (deps.localKey?.(url) ?? null) : resolveKeyValue(entry);
@@ -177,7 +216,7 @@ export async function improvePrompt(deps: ImproveDeps, kind: unknown, prompt: un
     res = await (deps.request ?? fetch)(url, {
       method: "POST",
       headers,
-      body: JSON.stringify(improveRequestBody(model, k, text)),
+      body: JSON.stringify(improveRequestBody(model, k, text, { local, maxOutputTokens: entry.maxOutputTokens })),
       signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (err) {
@@ -194,6 +233,6 @@ export async function improvePrompt(deps: ImproveDeps, kind: unknown, prompt: un
   let body: unknown;
   try { body = await res.json(); } catch { body = null; }
   const improved = improvedPromptOf(body);
-  if (!improved) return fail("IMPROVE_FAILED", "The chat model gave no prompt back. Try again.");
+  if (!improved) return fail("IMPROVE_FAILED", improveReplyOnlyThought(body) ? IMPROVE_ALL_THINKING : "The chat model gave no prompt back. Try again.");
   return { ok: true, data: { prompt: improved } };
 }

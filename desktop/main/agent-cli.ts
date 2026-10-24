@@ -597,6 +597,8 @@ export interface ProviderEntry {
   headers?: Record<string, string>;
   defaultChatModel?: string;
   model?: string;
+  /** The provider's output cap (src/config/llm-config.ts), when the entry sets one. */
+  maxOutputTokens?: number;
   subscriptionCli?: { cli?: string };
   modelMode?: ModelMode;
   modelModes?: Record<string, ModelMode>;

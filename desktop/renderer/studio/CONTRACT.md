@@ -520,7 +520,13 @@ came, the typed text stays and the answer is dropped (`studioImproveLands`). Mai
 that entry's `defaultChatModel ?? model`, or a local llama-server on its URL;
 no chat session is made and the key never reaches the window. Subscription
 CLI providers cannot answer; the local chat model cannot while a local
-generation has it paused.
+generation has it paused. The request leaves room for a thinking pass
+(1024 tokens for the prompt plus a 3072 reserve, never above the entry's
+`maxOutputTokens`). A llama-server, Atomic Core or an OpenAI-compatible server
+on this machine or the local network is also asked not to think
+(`chat_template_kwargs: {enable_thinking: false}`); a public cloud host never
+gets that field. A reply that only thought says so: "The model spent its whole
+answer thinking. Try again or pick a model without thinking."
 
 ## Not in this foundation
 

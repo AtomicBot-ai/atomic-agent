@@ -191,6 +191,50 @@ test('the answer is cleaned: thinking, fences, a label and wrapping quotes go', 
   assert.equal(M.improvedPromptOf({ choices: [{ message: { content: [{ type: 'text', text: 'a fox' }] } }] }), 'a fox');
 });
 
+test('a local server is asked not to think; a public cloud host never gets the field', () => {
+  const local = M.improveRequestBody('m', 'image', 'a fox', { local: true });
+  assert.deepEqual(local.chat_template_kwargs, { enable_thinking: false });
+  const cloudBody = M.improveRequestBody('m', 'image', 'a fox', { local: false });
+  assert.equal('chat_template_kwargs' in cloudBody, false);
+  assert.equal('chat_template_kwargs' in M.improveRequestBody('m', 'image', 'a fox'), false);
+  // The route decides: llama-server and a LAN or loopback openai-compatible server are local, a cloud host is not.
+  const lan = M.improveRoute({ llm: { activeTextProvider: 'lan', providers: [{ id: 'lan', kind: 'openai-compatible', baseUrl: 'http://192.168.1.20:8000/v1', model: 'q' }] } }, yes);
+  assert.equal(lan.target.local, true);
+  const ollama = M.improveRoute({ llm: { activeTextProvider: 'ollama', providers: [{ id: 'ollama', kind: 'openai-compatible', baseUrl: 'http://localhost:11434/v1', model: 'q' }] } }, yes);
+  assert.equal(ollama.target.local, true);
+  const pub = M.improveRoute({ llm: { activeTextProvider: 'x', providers: [{ id: 'x', kind: 'openai-compatible', baseUrl: 'https://api.example.com/v1', apiKey: 'k', model: 'q' }] } }, yes);
+  assert.equal(pub.target.local, false);
+  for (const kind of ['openrouter', 'aimlapi', 'gemini']) {
+    const r = M.improveRoute({ llm: { activeTextProvider: 'c', providers: [{ id: 'c', kind, apiKey: 'k', model: 'q' }] } }, yes);
+    assert.equal(r.target.local, false, kind);
+  }
+});
+
+test('the output budget leaves room for thinking, capped by the entry\'s maxOutputTokens', () => {
+  assert.equal(M.improveRequestBody('m', 'image', 'a fox').max_tokens, 4096);
+  assert.equal(M.improveRequestBody('m', 'image', 'a fox', { maxOutputTokens: 2000 }).max_tokens, 2000);
+  assert.equal(M.improveRequestBody('m', 'image', 'a fox', { maxOutputTokens: 100000 }).max_tokens, 4096);
+  assert.equal(M.improveMaxTokens(0), 4096);
+});
+
+test('a reply that only thought says so; a cut-off think block is not taken as the prompt', async () => {
+  assert.equal(M.improvedPromptOf({ choices: [{ message: { content: '<think>the fox should be red, and' } }] }), '');
+  assert.equal(M.improveReplyOnlyThought({ choices: [{ message: { content: '', reasoning_content: 'hmm' } }] }), true);
+  assert.equal(M.improveReplyOnlyThought({ choices: [{ message: { content: '' } }] }), false);
+  const answer = (message) => async () => new Response(JSON.stringify({ choices: [{ message }] }), { status: 200 });
+  const local = { localModels: { mode: 'managed', managed: { modelId: 'qwen-4b' } }, llm: { activeTextProvider: 'local-llama', providers: [{ id: 'local-llama', kind: 'llama-server', url: 'http://127.0.0.1:19091' }] } };
+  const readConfig = async () => ({ ok: true, config: local });
+  const thought = await M.improvePrompt({ readConfig, request: answer({ content: null, reasoning_content: 'thinking all the way' }) }, 'image', 'a fox');
+  assert.equal(thought.error.message, M.IMPROVE_ALL_THINKING);
+  assert.equal(M.IMPROVE_ALL_THINKING, 'The model spent its whole answer thinking. Try again or pick a model without thinking.');
+  const empty = await M.improvePrompt({ readConfig, request: answer({ content: '' }) }, 'image', 'a fox');
+  assert.match(empty.error.message, /gave no prompt back/);
+  // The local request carried the no-thinking field.
+  let sent = null;
+  await M.improvePrompt({ readConfig, request: async (_u, init) => { sent = JSON.parse(init.body); return new Response('{}', { status: 200 }); } }, 'image', 'a fox');
+  assert.deepEqual(sent.chat_template_kwargs, { enable_thinking: false });
+});
+
 test('improvePrompt sends the key in the header only and returns the rewrite', async () => {
   const seen = [];
   const deps = {
@@ -202,6 +246,7 @@ test('improvePrompt sends the key in the header only and returns the rewrite', a
   assert.equal(seen.length, 1);
   assert.equal(seen[0].init.headers.authorization, 'Bearer sk-test');
   assert.ok(!seen[0].init.body.includes('sk-test'));
+  assert.ok(!seen[0].init.body.includes('chat_template_kwargs'));
 });
 
 test('improvePrompt: empty text, no chat model, a refused key and a paused local model each answer without throwing', async () => {
