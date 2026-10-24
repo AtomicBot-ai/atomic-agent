@@ -16,8 +16,19 @@
 .sb-studio-row.on{background:var(--brand-wash)}
 .sb-studio-row.on .sb-new-ic{color:var(--accent)}
 .sb-studio-dot{width:7px;height:7px;border-radius:50%;background:var(--brand);flex:none;margin-left:auto;animation:st-pulse 1.4s infinite}
+/* ATO-900: in the 52px rail the "Studio" header word ran past the panel's
+   edge. The rail keeps the Images and Video icons (shell.css gives .sb-new
+   its 32px cell there) and trades the header for the hairline the chat lists
+   use between them. The narrow-window rail is the same, at the 1000px
+   breakpoint shell.css uses. */
+#sidebar.rail .sb-studio-head{display:none}
+#sidebar.rail .sb-studio::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 4px;background:var(--bd)}
 #sidebar.rail .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
-@media (max-width:999px){#sidebar:not(.drawer) .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}}
+@media (max-width:1000px){
+  #sidebar:not(.drawer) .sb-studio-head{display:none}
+  #sidebar:not(.drawer) .sb-studio::before{content:"";flex:none;width:24px;height:1px;margin:6px auto 4px;background:var(--bd)}
+  #sidebar:not(.drawer) .sb-studio-dot{position:absolute;top:5px;right:5px;margin:0}
+}
 @keyframes st-pulse{50%{opacity:.35}}
 
 /* chat: under a reply's pictures that Studio made */

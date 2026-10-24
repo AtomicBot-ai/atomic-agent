@@ -12331,6 +12331,10 @@ async function chromeTest(
        ATO-538 it stays live there and opens the sidebar as a drawer. */
     disabled: boolean; drawer?: boolean;
   };
+  type RailFit = {
+    width: number; over: string[]; labels: string[];
+    cells: Array<{ w: number; h: number; centre: number }>; studio: boolean; chats: number;
+  };
   type SetBtn = {
     text: string; act: string; title: string; aria: string | null;
     classes: string; bg: string; fg: string;
@@ -12362,18 +12366,30 @@ async function chromeTest(
     check(
       "item 2: the sidebar button is on while the sidebar is open",
       sbt.on && sbt.pressed === "true" && sbt.state === "open" && !sbt.rail
-        && sbt.title === "Hide sidebar (⌘ 0)" && sbt.width === 260,
+        && sbt.title === "Hide sidebar (⌘ \\)" && sbt.width === 260,
       JSON.stringify(sbt),
     );
     // __rail() drives the real act('toggle:sidebar'), the same verb the button
-    // and ⌘0 reach.
+    // and ⌘\ reach (ATO-900: ⌘0 is View › Actual Size).
     await js<unknown>("window.__rail()");
     const railed = await js<SbToggle>("window.__sbToggle()");
     check(
       "item 2: collapsing the sidebar turns the button off",
       !railed.on && railed.pressed === "false" && railed.state === "rail" && railed.rail
-        && railed.width === 52 && railed.title === "Show sidebar (⌘ 0)",
+        && railed.width === 52 && railed.title === "Show sidebar (⌘ \\)",
       JSON.stringify(railed),
+    );
+    /* ATO-900: the owner's build showed the rail's chats ragged and the word
+       "Studio" running past its edge. Nothing inside the 52px box may stick
+       out of it, no text label may stay on screen, and every row cell (New
+       chat, Tasks, Skills, Studio, the chats) is one 32px cell on the centre. */
+    const railFitHolds = (f: RailFit) => f.width === 52 && f.over.length === 0 && f.labels.length === 0
+      && f.cells.length > 0 && f.cells.every((c) => c.w === 32 && c.h === 32 && Math.abs(c.centre - 26) <= 1);
+    const railFit = await js<RailFit>("window.__railFit()");
+    check(
+      "ATO-900: the collapsed rail draws icons and glyph discs only, nothing past its edge, one cell size on one centre",
+      railFitHolds(railFit),
+      JSON.stringify(railFit),
     );
     // --- item 3 and item 8 in the rail, while it is collapsed ---------------
     const railBtn = await js<SetBtn | null>("window.__settingsBtn()");
@@ -12414,11 +12430,11 @@ async function chromeTest(
         "item 2: the glow tracks the responsive rail, not just the class",
         !narrow.on && narrow.narrow && !narrow.expanded && narrow.state === "open"
           && !narrow.rail && narrow.width === 52 && !narrow.drawer
-          && !narrow.disabled && narrow.title === "Show sidebar (⌘ 0)",
+          && !narrow.disabled && narrow.title === "Show sidebar (⌘ \\)",
         JSON.stringify(narrow),
       );
       /* ATO-538 (U-106): between the 940px minimum and 1000px the button used
-         to be disabled and ⌘ 0 refused with a toast, so the chat list could
+         to be disabled and the chord refused with a toast, so the chat list could
          not be opened at all. Now the chord (the same verb as the button)
          opens the full sidebar as a drawer over the content, lights the
          button, leaves the kept collapse alone, and closes it again. */
@@ -12427,18 +12443,25 @@ async function chromeTest(
       const opened = await js<SbToggle>("window.__sbToggle()");
       const toastsAfter = await js<Array<[string, string, string]>>("window.__toasts()");
       check(
-        "item 2: on a narrow window ⌘ 0 opens the sidebar as a drawer",
+        "item 2: on a narrow window ⌘ \\ opens the sidebar as a drawer",
         opened.drawer === true && opened.on && opened.pressed === "true" && opened.width === 260
-          && opened.state === "open" && !opened.rail && opened.title === "Hide sidebar (⌘ 0)"
+          && opened.state === "open" && !opened.rail && opened.title === "Hide sidebar (⌘ \\)"
           && toastsAfter.length === 0,
         JSON.stringify([opened, toastsAfter]),
       );
       await js<unknown>("window.__rail()");
       const shut = await js<SbToggle>("window.__sbToggle()");
       check(
-        "item 2: ⌘ 0 again closes the drawer back to the rail",
+        "item 2: ⌘ \\ again closes the drawer back to the rail",
         !shut.drawer && !shut.on && shut.width === 52 && shut.state === "open",
         JSON.stringify(shut),
+      );
+      // ATO-900: the narrow window's rail (no class, the media query) holds the same shape.
+      const narrowFit = await js<RailFit>("window.__railFit()");
+      check(
+        "ATO-900: the narrow window's rail draws icons and glyph discs only, nothing past its edge",
+        railFitHolds(narrowFit),
+        JSON.stringify(narrowFit),
       );
       await js<unknown>("window.__clearToasts()");
       /* r5 review fix (item 8 coverage) — styles.css duplicates the four rail

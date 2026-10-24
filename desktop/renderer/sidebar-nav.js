@@ -11,7 +11,7 @@
  * now carries a glyph (the first letter, digit or emoji of its title) that the
  * rail paints in a small disc, with the status dot as a badge on it; the full
  * name stays in the row's tooltip. And below 1000px, where the rail is forced
- * by the window width, the sidebar toggle (and ⌘ 0) opens the full sidebar as a
+ * by the window width, the sidebar toggle (and ⌘ \) opens the full sidebar as a
  * drawer over the content instead of refusing. */
 
 /** The standing section rows, top to bottom. `pane` is the open Settings tab
@@ -41,7 +41,7 @@ function railGlyph(title) {
   return '';
 }
 
-/* What the sidebar toggle (button and ⌘ 0) does. On a wide window it flips
+/* What the sidebar toggle (button and ⌘ \) does. On a wide window it flips
    the collapse the operator keeps (`sidebar`: 'open' | 'rail'). On a narrow
    one the width already forces the rail, so it opens or closes the drawer and
    leaves the kept collapse alone. A wide window never holds a drawer. */
@@ -56,7 +56,7 @@ function toggleSidebar(st) {
 function sidebarToggleView(st) {
   const s = st || {};
   const open = s.narrow ? !!s.drawer : s.sidebar !== 'rail';
-  return {open, label: open ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)'};
+  return {open, label: open ? 'Hide sidebar (⌘ \\)' : 'Show sidebar (⌘ \\)'};
 }
 
 if (typeof module !== 'undefined') module.exports = {sidebarNavItems, railGlyph, toggleSidebar, sidebarToggleView};
