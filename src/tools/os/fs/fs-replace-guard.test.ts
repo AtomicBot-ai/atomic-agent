@@ -407,6 +407,12 @@ describe("replace guard (F36)", () => {
                 apiKeyEnv: "EXA_API_KEY",
               },
               brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+              anysearch: {
+                endpoint: "https://api.anysearch.com/v1/search",
+                apiKeyEnv: "ANYSEARCH_API_KEY",
+                zone: null,
+                language: null,
+              },
             },
             fetch: {
               timeoutMs: 30_000,
