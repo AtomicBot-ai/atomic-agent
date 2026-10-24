@@ -27344,12 +27344,17 @@ async function tgRestart() {
   S.log.push({id:nid(), k:'system', text:'restarting the agent…'});
   let st = null;
   try { st = await BR.restart('telegram'); } catch (e) { st = {state:'error', error:String((e && e.message) || e)}; }
-  applyStatus(st);
-  if (st && st.state === 'connected') {
-    // The agent now has Telegram running if it can: a "not running" pairing error is out of date.
-    if (TG.pair.error === TG_PAIR_NOT_RUNNING) TG.pair = Object.assign({}, TG.pair, {error:null});
-    await tgRefresh();
-  }
+  /* The tab's own read after the restart may fail (a rejected IPC). The result
+     is still said from what is known: left at 'restarting', the button would
+     stay disabled for good, since nothing else clears that phase. */
+  try {
+    applyStatus(st);
+    if (st && st.state === 'connected') {
+      // The agent now has Telegram running if it can: a "not running" pairing error is out of date.
+      if (TG.pair.error === TG_PAIR_NOT_RUNNING) TG.pair = Object.assign({}, TG.pair, {error:null});
+      await tgRefresh();
+    }
+  } catch (e) { /* the status above is what the result reads */ }
   TG.restart = tgRestartResult(st, {hasToken: tgHasToken(), owner: tgOwner(), enabled: tgEnabled()});
   tgRepaint();
 }

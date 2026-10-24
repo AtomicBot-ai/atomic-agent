@@ -97,4 +97,8 @@ test('renderer wiring: the helper loads before renderer.js; every restart line i
   assert.equal((source.match(/restart:tgRestartButtonHTML\(TG\.restart, \{esc, ic\}\)/g) || []).length, 2, 'both pairing cards get the button');
   // A running reply would end with the restart: refused in place.
   assert.match(source, /async function tgRestart\(\) \{[\s\S]*?if \(restartStopsTurn\(\)\) \{ TG\.restart = tgRestartRefused\(\)/);
+  // A failed read of the tab after the restart still says the result: left at
+  // 'restarting', the button would stay disabled with nothing to clear it.
+  const body = source.slice(source.indexOf('async function tgRestart() {'), source.indexOf('\n}\n', source.indexOf('async function tgRestart() {')));
+  assert.match(body, /try \{[\s\S]*?await tgRefresh\(\);[\s\S]*?\} catch \(e\) \{[^}]*\}\n  TG\.restart = tgRestartResult\(/);
 });

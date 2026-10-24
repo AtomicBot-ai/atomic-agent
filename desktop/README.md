@@ -729,9 +729,9 @@ Honestly degraded, and labelled as such in the UI:
   0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
   token, unset the owner and flip `telegram.enabled`, each with the restart
   note. Every line in the tab that asks for a restart (that note, the
-  "Waiting for a restart" status, the pairing card's "Telegram is not
-  running" and the Restart the bot row) has a primary Restart agent beside
-  it and says the app stays open (ATO-900 item 6,
+  "Waiting for a restart" status and the pairing card's "Telegram is not
+  running") has a primary Restart agent beside it and says the app stays
+  open; the Restart the bot row's own Restart does the same (ATO-900 item 6,
   `renderer/telegram-restart.js`): it restarts the agent in place
   (`agent_restarted` trigger `telegram`), shows Restarting…, then the
   result in the same place (connected, what is still missing, or why the
