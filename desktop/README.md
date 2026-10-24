@@ -610,6 +610,15 @@ Honestly degraded, and labelled as such in the UI:
   `models use`, `models start|stop`, `s`/`d`/`E`/`B`/`U`/`G` through the
   matching `models` subcommands and `localModels.managed.autoUpdate`, `L`
   tails `<dataDir>/llama-server.log`.
+- **The memory model's card** (Settings › Models › Embedding models,
+  ATO-900) says what a click did on the card itself, not only in the status
+  line at the top: Starting… with a spinner while the step runs or the server
+  loads, Running with the selected radio once its server answers, Not
+  running / Off / Not downloaded for a picked model that waits on the row's
+  Start / Turn on / Download, Failed with the reason and Retry when the step
+  did not go through, and Engine not ready with Download again when the local
+  engine failed. The mapping is [memory-model-card.js](renderer/memory-model-card.js);
+  after a step the list is read again for up to 30 s while the server loads.
 - **The local-model recommendation** ranks that catalogue against the machine
   it is running on, in the first-run picker and in Settings › LLM › Local, off
   the same two functions (`fitFor` / `orderModelsByFit` in `renderer.js`) so

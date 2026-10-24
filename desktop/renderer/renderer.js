@@ -1345,6 +1345,7 @@ const LLMP = {
   status:null, statusBusy:false, statusErr:null, // `atag models status`
   local:null, localBusy:false, localErr:null, lastRefreshedAt:null, // `atag models list` rows
   emb:null, embDaemon:null, // `atag models list-embeddings` rows + its trailer
+  embAct:null, embWatch:0, // ATO-900: {id, busy, error} for the memory model's card while its click runs, or after it failed; the load watch's token
   served:null, // ATO-125: {chat, embedding} — what the managed servers say they run, asked on their ports (cli:modelsServed)
   models:[], modelsFor:null, modelsBusy:false, modelsErr:null, // `atag models search --json` for the Cloud text-models block
   modelsStale:false, modelsRetry:null, // ATO-318: the list is the app's built-in one (the live fetch did not come back); the one timed retry
@@ -24769,7 +24770,12 @@ function llmLocalRows() {
     else if (!embActive || !m.active) { primary = 'use'; effect = 'Enter: select model'; }
     else if (!embEnabled) { primary = 'enable'; effect = 'Enter: enable local embeddings for ' + m.id; }
     else { primary = embWorks ? 'current' : 'start'; effect = embWorks ? 'Current: local embeddings/' + m.id : 'Enter: start embedding daemon for ' + m.id; }
-    rows.push({kind:'localEmbeddingModel', id:'local-embedding:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect,
+    // ATO-900: the card says what its click did, on the card (memory-model-card.js).
+    const act = LLMP.embAct && LLMP.embAct.id === m.id ? LLMP.embAct : null;
+    const mem = memCardState({downloaded: m.downloaded, pulling: pull, picked: embActive && m.active, enabled: embEnabled,
+      running: !!(LLMP.embDaemon && LLMP.embDaemon.running), health: LLMP.embDaemon ? LLMP.embDaemon.health : '',
+      busy: !!(act && act.busy), error: act ? act.error : null, engine: ENGF.f, chatUp: llmDaemonUp()});
+    rows.push({kind:'localEmbeddingModel', id:'local-embedding:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect, mem, memBusy: !!(act && act.busy),
       text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'});
   });
   return rows;
@@ -25435,13 +25441,15 @@ function llmRowHTML(row, index, cursor) {
   const open = '<button class="tuirow tk-li llm-row' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + (row.active ? ' is-active' : '')
     + '" data-llm-row="' + esc(row.id) + '"' + extra + (why ? ' aria-describedby="llm-why-' + index + '"' : '') + ' data-act="llm:row:' + index + '">'
     + (why ? '<span hidden id="llm-why-' + index + '">' + esc(why) + '</span>' : '');
-  const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
+  // ATO-900: the memory model memory search is set to wears the selected radio whatever its server is doing; its chip says that.
+  const mem = row.kind === 'localEmbeddingModel' ? row.mem : null;
+  const radio = '<span class="tk-radio' + (row.active || (mem && mem.selected) ? ' on' : '') + '" aria-hidden="true"></span>';
   /* ATO-507: a download with no room for it on this disk: the pill is greyed
      (llmPrimary refuses it) and the row says why, under its blurb. */
   const disk = (row.kind === 'localTextModel' || row.kind === 'localEmbeddingModel') && row.primaryAction === 'download'
     ? modelDiskFit(row.model) : {ok: true};
   // The action a click (or Enter) takes on this row, as a pill; the TUI's sentence is its tooltip.
-  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + (disk.ok ? '' : ' llm-effect--nodisk" aria-disabled="true')
+  const effect = mem && row.memBusy ? '' : '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + (disk.ok ? '' : ' llm-effect--nodisk" aria-disabled="true')
     + '" title="' + esc(disk.ok ? row.enterEffect : disk.text) + '">'
     + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(llmEffectLabel(row)) + '</span>';
   // A second verb on the row: a span with its own act (the delegate resolves the innermost [data-act]).
@@ -25462,18 +25470,24 @@ function llmRowHTML(row, index, cursor) {
         : chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
       + llmRowBadgesHTML(row)
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
-      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
+      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '')
+      + (mem ? ' <span class="tk-chip tk-chip--sm llm-ib llm-memst tk-chip--' + esc(mem.tone) + '" data-memcard="' + esc(mem.key) + '">'
+        + (mem.spin ? '<span class="tk-spin"></span>' : '') + esc(mem.word) + '</span>' : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
       + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
       // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
       + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
       + (disk.ok ? '' : '<span class="llm-best-why llm-disk-why">' + esc(disk.text) + '</span>')
+      // ATO-900: what the click did, or why it could not, under the card's name; read out as it changes.
+      + (mem ? '<span class="llm-best-why llm-memline llm-memline--' + esc(mem.key) + '" role="status">' + esc(mem.line) + '</span>' : '')
       + '</span>'
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops
          first (llmRemoveStops). Not while it is coming down. */
-      + (m.downloaded && row.primaryAction !== 'downloading' ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      + (m.downloaded && row.primaryAction !== 'downloading' && !(mem && row.memBusy) ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      // ATO-900: the one action that fixes a failed card (Retry, or the engine's Download again), beside the row's pill.
+      + (mem && mem.act ? rowAct(mem.act === 'llm:embRetry' ? 'llm:embRetry:' + index : mem.act, mem.label) : '')
       + effect + '</button>';
   }
   if (row.kind === 'cloudProvider') {
@@ -26239,11 +26253,13 @@ function llmStopRefusal(held) {
       : held.elsewhere ? ' The agent is answering elsewhere (Telegram, a task or a bot).' : ' Another chat is still answering.');
 }
 async function llmDaemon(which) {
-  if (!BR || LLMP.daemonPhase) return;
+  // ATO-900: the answer goes back to the caller too (the memory model's card says a failed start on itself).
+  if (!BR) return null;
+  if (LLMP.daemonPhase) return {ok:false, error:'another start or stop is running, try again in a moment'};
   // A stop ends a turn the server is answering, this window's or one the agent runs for Telegram, a task or a bot.
   if (which === 'stop') {
     const held = await llmTurnsRunning();
-    if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return; }
+    if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return {ok:false, error:llmStopRefusal(held)}; }
   }
   LLMP.daemonPhase = which === 'stop' ? 'stopping' : 'starting'; llmRepaint();
   const res = which === 'stop' ? await BR.modelsStop() : await BR.modelsStart();
@@ -26254,6 +26270,7 @@ async function llmDaemon(which) {
   else if (which === 'start' && res.alreadyRunning) LLMP.msg = {text: res.stdout && res.stdout.trim() ? res.stdout.trim().split('\n').pop() : 'local-llm: daemon already running'};
   else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
+  return res;
 }
 /* ATO-852: Restart model for a server that rejects its model's key: what
    `models status` advises, `models stop` then `models start`, in one press.
@@ -26278,17 +26295,18 @@ async function llmRestartModel() {
   await llmRefreshStatus();
 }
 async function llmEmbToggle() {
-  if (!BR) return;
+  if (!BR) return null;
   const enabled = llmEmbCfg().enabled === true;
   // local-models-orchestrator.ts toggleEmbeddingEnabled; `use-embedding <id>` enables + selects, `--disable` turns it off.
   const target = enabled ? '--disable' : (llmEmbCfg().modelId || 'nomic-embed-text-v1.5');
   LLMP.busy = true; llmRepaint();
   const res = await BR.modelsUseEmbedding(target);
   LLMP.busy = false;
-  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return res; }
   LLMP.msg = {text:'local-llm: embeddings ' + (enabled ? 'disabled' : 'enabled')};
   await refreshLiveConfig();
   llmRefresh();
+  return res;
 }
 /* ATO-130: the update waits its turn behind a model start (or a switch) on its
    way; "updating…" said otherwise all that time. Main tells which it is
@@ -26529,6 +26547,35 @@ function llmPull(kind, id) {
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
+/* ATO-900: the memory model's card while its click runs. A step returns
+   null, or the sentence its card says under Failed. After a step that went
+   through, the list is read again (the embedding server's state comes from
+   `models list-embeddings`, which the 5 s status poll does not read), and
+   again while that server loads, so the card turns Running without a click. */
+function llmEmbBusy() { return !!(LLMP.embAct && LLMP.embAct.busy); }
+async function llmEmbRun(id, step) {
+  LLMP.embAct = {id, busy:true, error:null}; llmRepaint();
+  let error = null;
+  try { error = await step(); } catch (err) { error = memCardError(null, err && err.message ? err.message : String(err)); }
+  if (!error) await llmRefresh();
+  LLMP.embAct = error ? {id, busy:false, error} : null;
+  llmRepaint();
+  if (!error) llmEmbWatch(id);
+}
+/** While the server for the memory model loads (or was only just asked to start), read the list again every 3 s, for at most 30 s. */
+async function llmEmbWatch(id) {
+  const token = ++LLMP.embWatch;
+  for (let i = 0; i < 10; i++) {
+    const d = LLMP.embDaemon;
+    const m = (LLMP.emb || []).find((x) => x.id === id);
+    const loading = !!(d && d.running && String(d.health || '').toLowerCase() !== 'ok');
+    const settling = i < 2 && !!m && m.active && llmEmbCfg().enabled === true && !(d && d.running);
+    if (!loading && !settling) return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (token !== LLMP.embWatch || LLMP.embAct) return;
+    await llmRefresh();
+  }
+}
 /* ATO-337: press a local chat model's row by id, with the cursor on it. */
 function llmPrimaryForLocal(id) {
   const rows = llmLocalRows();
@@ -26562,19 +26609,24 @@ async function llmPrimary(row) {
   }
   if (row.kind === 'localEmbeddingModel') {
     const m = row.model;
-    if (LLMP.pulling) return;
+    if (LLMP.pulling || llmEmbBusy()) return;
     if (!m.downloaded && llmNoRoom(m)) return;
-    if (!m.downloaded) { llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
-    if (!m.active) {
-      const res = await BR.modelsUseEmbedding(m.id);
-      if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
-      if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama');
-      await refreshLiveConfig(); llmRefresh(); return;
-    }
-    if (!llmLocalEmbActive()) { await llmWrite('activeEmbeddingProvider', 'local-llama'); await refreshLiveConfig(); }
-    if (llmEmbCfg().enabled !== true) { llmEmbToggle(); return; }
-    if (!(LLMP.embDaemon && LLMP.embDaemon.running)) { await llmDaemon('start'); return; }
-    llmRefresh();
+    if (!m.downloaded) { LLMP.embAct = null; llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
+    if (row.primaryAction === 'current') { LLMP.embAct = null; llmRefresh(); return; }
+    // ATO-900: one step per click, as before, with the card saying Starting… while it runs and Failed with the reason after.
+    await llmEmbRun(m.id, async () => {
+      if (!m.active) {
+        const res = await BR.modelsUseEmbedding(m.id);
+        if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); return memCardError(res); }
+        if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama');
+        await refreshLiveConfig();
+        return null;
+      }
+      if (!llmLocalEmbActive()) { await llmWrite('activeEmbeddingProvider', 'local-llama'); await refreshLiveConfig(); }
+      if (llmEmbCfg().enabled !== true) { const res = await llmEmbToggle(); return res && res.ok !== false ? null : memCardError(res); }
+      if (!(LLMP.embDaemon && LLMP.embDaemon.running)) { const res = await llmDaemon('start'); return res && res.ok !== false ? null : memCardError(res); }
+      return null;
+    });
     return;
   }
   if (row.kind === 'cloudProvider') {
@@ -26758,6 +26810,13 @@ function llmAct(what) {
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
   if (verb === 'daemon') { llmDaemon(llmServerUp() ? 'stop' : 'start'); return; }
   if (verb === 'restartModel') { llmRestartModel(); return; }
+  // ATO-900: the memory model card's Retry: its click again, with the failure cleared first.
+  if (verb === 'embRetry') {
+    const row = llmLocalRows()[+arg];
+    if (!row || row.kind !== 'localEmbeddingModel') return;
+    LLMP.cursor.local = +arg; LLMP.embAct = null;
+    llmPrimary(row); return;
+  }
   // ATO-125: the server runs another model than the one picked — restart it on the picked one.
   if (verb === 'usePicked') { const id = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId; if (id) llmUseLocalModel(id); return; }
   if (verb === 'hf') {
