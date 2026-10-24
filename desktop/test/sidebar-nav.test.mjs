@@ -69,10 +69,10 @@ test('on a narrow window (940-1000px) the toggle opens and closes the drawer, ke
 });
 
 test('the toggle is lit while the full sidebar is on screen, and says what a press does', () => {
-  assert.deepEqual(sidebarToggleView({narrow: false, sidebar: 'open'}), {open: true, label: 'Hide sidebar (⌘ 0)'});
-  assert.deepEqual(sidebarToggleView({narrow: false, sidebar: 'rail'}), {open: false, label: 'Show sidebar (⌘ 0)'});
-  assert.deepEqual(sidebarToggleView({narrow: true, sidebar: 'open', drawer: false}), {open: false, label: 'Show sidebar (⌘ 0)'});
-  assert.deepEqual(sidebarToggleView({narrow: true, sidebar: 'rail', drawer: true}), {open: true, label: 'Hide sidebar (⌘ 0)'});
+  assert.deepEqual(sidebarToggleView({narrow: false, sidebar: 'open'}), {open: true, label: 'Hide sidebar (⌘ \\)'});
+  assert.deepEqual(sidebarToggleView({narrow: false, sidebar: 'rail'}), {open: false, label: 'Show sidebar (⌘ \\)'});
+  assert.deepEqual(sidebarToggleView({narrow: true, sidebar: 'open', drawer: false}), {open: false, label: 'Show sidebar (⌘ \\)'});
+  assert.deepEqual(sidebarToggleView({narrow: true, sidebar: 'rail', drawer: true}), {open: true, label: 'Hide sidebar (⌘ \\)'});
 });
 
 test('the responsive rail rules give way to the drawer, and the rail paints the glyph', () => {
@@ -82,4 +82,18 @@ test('the responsive rail rules give way to the drawer, and the rail paints the 
   assert.match(narrow, /#sidebar\.drawer\{width:260px;margin-right:-208px/);
   assert.doesNotMatch(narrow.slice(0, narrow.indexOf('\n}\n')), /\n  #sidebar\{width:52px/, 'a bare #sidebar rule would pin the drawer to 52px');
   assert.match(css, /#sidebar\.rail \.sesrow\[data-g\]::before\{\s*content:attr\(data-g\)/);
+});
+
+// ATO-900: the owner saw "Studio" run past the rail's edge and the chats ragged.
+test('the rail shows no Studio header word and draws every row as one 32px cell', () => {
+  const shell = readFileSync(new URL('../renderer/css/shell.css', import.meta.url), 'utf8');
+  const studio = readFileSync(new URL('../renderer/css/studio.css', import.meta.url), 'utf8');
+  for (const scope of ['#sidebar\\.rail', '#sidebar:not\\(\\.drawer\\)']) {
+    assert.match(studio, new RegExp(scope + ' \\.sb-studio-head\\{display:none\\}'), `${scope}: the Studio header is hidden`);
+    assert.match(shell, new RegExp(scope + ' \\.sesrow\\{[^}]*width:32px;height:32px'), `${scope}: a chat row is a 32px cell`);
+    assert.match(shell, new RegExp(scope + ' \\.sb-new\\{width:32px;height:32px'), `${scope}: New chat, the section rows and Studio are 32px cells`);
+  }
+  const narrow = studio.slice(studio.indexOf('@media (max-width:1000px){'));
+  assert.match(narrow, /#sidebar:not\(\.drawer\) \.sb-studio-head\{display:none\}/, 'Studio follows the 1000px breakpoint shell.css uses');
+  assert.doesNotMatch(studio, /max-width:999px/);
 });

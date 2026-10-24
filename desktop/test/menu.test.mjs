@@ -35,7 +35,8 @@ test("the renderer counts the act and lets it through over first-run setup", asy
 });
 
 // ATO-544: View has Actual Size / Zoom In / Zoom Out, and none of their keys
-// collides with another menu accelerator (⌘0 stays Toggle Sidebar).
+// collides with another menu accelerator. ATO-900: ⌘0 is Actual Size, as in
+// every Mac app and browser, and Toggle Sidebar moved to ⌘\.
 function accelerators(items, out = []) {
   for (const i of items) {
     if (i.accelerator) out.push({ acc: i.accelerator, role: i.role, label: i.label });
@@ -52,8 +53,8 @@ for (const platform of ["darwin", "win32", "linux"]) {
     assert.equal(byRole("zoomIn").accelerator, "CommandOrControl+=");
     assert.equal(byRole("zoomOut").accelerator, "CommandOrControl+-");
     assert.equal(byRole("resetZoom").label, "Actual Size");
-    assert.equal(byRole("resetZoom").accelerator, platform === "darwin" ? "Shift+Command+0" : "CommandOrControl+num0");
-    assert.equal(view.submenu.find((i) => i.label === "Toggle Sidebar").accelerator, "CommandOrControl+0");
+    assert.equal(byRole("resetZoom").accelerator, "CommandOrControl+0");
+    assert.equal(view.submenu.find((i) => i.label === "Toggle Sidebar").accelerator, "CommandOrControl+\\");
     const hidden = view.submenu.filter((i) => i.visible === false).map((i) => i.accelerator);
     assert.ok(hidden.includes("CommandOrControl+Plus"), "⌘+ zooms in too");
   });
@@ -67,3 +68,15 @@ for (const platform of ["darwin", "win32", "linux"]) {
     }
   });
 }
+
+// ATO-900: the page's own chords follow the menu. ⌘0 is left to Actual Size,
+// and the sidebar answers ⌘\ (by the physical key on a non-Latin layout too).
+test("the page maps ⌘\\ to the sidebar and leaves ⌘0 to Actual Size", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
+  const map = src.match(/const map = \{k:'palette',[\s\S]*?\};/)[0];
+  assert.match(map, /'\\\\':'toggle:sidebar'/);
+  assert.doesNotMatch(map, /'0':/);
+  assert.match(src, /Backslash: '\\\\'/);
+  assert.doesNotMatch(src, /sidebar[^\n]*⌘ 0/, "no tooltip, palette row or sheet row names ⌘ 0 for the sidebar");
+});
