@@ -12928,6 +12928,7 @@ async function chromeTest(
       busy: string[] | null; placeholder: string[] | null; stopped: string[] | null; approval: { id: string } | null;
       approvalActed: boolean;
       toolClick: { found: boolean; resends: number; logSame: boolean; focusable: boolean | null };
+      toolTip: { content: string | null; opacity: string | null; events: string | null; hover: string | null };
     };
     const rr = await js<ReplyRetry>("window.__replyRetry()");
     const again = '["resend:rr-u:Ask again","copy"]';
@@ -12951,6 +12952,19 @@ async function chromeTest(
       rr.toolClick.found && rr.toolClick.resends === 0 && rr.toolClick.logSame && rr.toolClick.focusable === false
         && rr.approvalActed === true,
       JSON.stringify({ toolClick: rr.toolClick, approvalActed: rr.approvalActed }),
+    );
+    /* ATO-900: the hint's sentence showed on no hover in a real build. It is
+       now a CSS tooltip (the button's ::after, from data-tip): data-tip
+       is its content, it is hidden at rest and takes no pointer events, and
+       the hover rule opens it. :hover cannot be driven from script, so that
+       rule is read as text, as the row's own reveal rule is above. */
+    check(
+      "item 4: the muted retry hint carries its sentence as a tooltip that opens on hover",
+      // Chromium reports the content resolved or as the attr() itself; rr.tool above pins data-tip's text.
+      (rr.toolTip.content === '"Repeating this turn could create or delete files a second time"' || rr.toolTip.content === "attr(data-tip)")
+        && rr.toolTip.opacity === "0" && rr.toolTip.events === "none"
+        && !!rr.toolTip.hover && /opacity:\s*1/.test(rr.toolTip.hover),
+      JSON.stringify(rr.toolTip),
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup

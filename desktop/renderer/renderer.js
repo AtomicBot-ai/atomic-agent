@@ -2951,13 +2951,20 @@ function msgActs(m) {
        ATO-862: in its place a turn that acted shows a muted retry icon that
        only explains why: no data-resend and no data-act, so a click reaches
        no handler and sends nothing; aria-disabled for assistive tech and
-       tabindex -1 so Tab does not stop on a control that does nothing. */
+       tabindex -1 so Tab does not stop on a control that does nothing.
+       ATO-900: its sentence is drawn by CSS from data-tip on hover
+       (chat.css), not by a native title. The native tooltip waits for the
+       pointer to rest on the SAME node, and the renders that land just
+       after a turn ends (render() rebuilds #content) replace that node, so
+       on the reply people hover first the tooltip never came up. A CSS
+       :hover follows the new node at once. No title too, or the sentence
+       would show twice. */
     const last = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy;
     const ask = last ? replyRetryAsk(m) : null;
     const again = ask
       ? '<button class="msgact" data-resend="' + esc(ask.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>'
       : last && replyTurnActed(m)
-        ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" title="' + ACTED_RETRY_HINT
+        ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
         : '';
     return '<div class="' + cls + '">' + again + copy + '</div>';
@@ -29854,7 +29861,8 @@ if (typeof window !== 'undefined') {
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
             order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.classList.contains('msgact-off') ? 'hint' : '?'),
-            titles: btns.map((b) => b.getAttribute('title')),
+            // ATO-900: the muted hint names itself in data-tip (a CSS tooltip), the others in title.
+            titles: btns.map((b) => b.getAttribute('title') || b.getAttribute('data-tip')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
             right: Math.round(br.right),
             btnRight: last ? Math.round(last.getBoundingClientRect().right) : null,
@@ -29872,13 +29880,15 @@ if (typeof window !== 'undefined') {
       const t = Array.from(document.querySelectorAll('.turn')).filter((r) => r.querySelector(real ? '.prose:not(.usr):not(.tk-ph)' : '.prose:not(.usr)')).pop();
       const box = t ? t.querySelector('.msgacts') : null;
       if (!box) return null;
-      /* ATO-862: the muted hint reads as hint:<aria-disabled>:<title>; one
-         that gained a data-resend or data-act would read as resend or '?'. */
+      /* ATO-862: the muted hint reads as hint:<aria-disabled>:<tip>; one
+         that gained a data-resend or data-act would read as resend or '?'.
+         ATO-900: its sentence is data-tip (the CSS tooltip), and one that
+         also carried a native title would show it twice, so it reads '?'. */
       return Array.from(box.querySelectorAll('button')).map((b) => b.dataset.resend
         ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy'
-          : b.classList.contains('msgact-off') && !b.dataset.act && b.getAttribute('aria-label') === b.getAttribute('title')
-            ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('title') : '?');
+          : b.classList.contains('msgact-off') && !b.dataset.act && !b.hasAttribute('title') && b.getAttribute('aria-label') === b.getAttribute('data-tip')
+            ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('data-tip') : '?');
     };
     const drawn = (log, busy, real) => { S.log = log; S.busy = !!busy; S.streamId = null; render(); return lastActs(real); };
     const tool = {id: 'rr-t', k: 'tool', name: 'os.fs.list_dir', arg: '~', where: 'local', ms: 4, ok: true, open: false, out: 'a.txt'};
@@ -29907,6 +29917,13 @@ if (typeof window !== 'undefined') {
       resendUser = function () { resends++; };
       try { if (hint) hint.click(); } finally { resendUser = realResend; }
       out.toolClick = {found: !!hint, resends, logSame: S.log.length === logLen, focusable: hint ? hint.tabIndex >= 0 : null};
+      /* ATO-900: the hint's tooltip is its ::after, filled from data-tip,
+         hidden at rest and shown by the hover rule (read as text, since
+         :hover cannot be synthesised; __cssRule). The pseudo-element takes
+         no pointer events, so it never covers the reply above it. */
+      const tip = hint ? getComputedStyle(hint, '::after') : null;
+      out.toolTip = {content: tip ? tip.content : null, opacity: tip ? tip.opacity : null, events: tip ? tip.pointerEvents : null,
+                     hover: window.__cssRule('.msgact-off[data-tip]:hover::after')};
       S.log = [{id: 'rr-u', k: 'user', text: 'delete the old logs'}, {id: 'rr-p', k: 'approval', state: 'approved'},
                {id: 'rr-a', k: 'assistant', text: 'done'}];
       out.approval = replyRetryAsk(S.log[2]);
