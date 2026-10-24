@@ -26557,7 +26557,9 @@ async function llmEmbRun(id, step) {
   LLMP.embAct = {id, busy:true, error:null}; llmRepaint();
   let error = null;
   try { error = await step(); } catch (err) { error = memCardError(null, err && err.message ? err.message : String(err)); }
-  if (!error) await llmRefresh();
+  /* A read that throws must not leave the card on Starting…: llmPrimary
+     ignores every memory model click while embAct is busy. */
+  if (!error) { try { await llmRefresh(); } catch (err) { /* the 5 s status poll and the next click read again */ } }
   LLMP.embAct = error ? {id, busy:false, error} : null;
   llmRepaint();
   if (!error) llmEmbWatch(id);
