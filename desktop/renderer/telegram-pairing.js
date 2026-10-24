@@ -16,7 +16,7 @@ const TG_PAIR_POLL_MS = 2000;
 /* A window the agent still calls open is ended here this long after it should have expired. */
 const TG_PAIR_GRACE_MS = 5000;
 const TG_PAIR_EXPIRED = 'The code expired. Press Pair for a new one.';
-const TG_PAIR_NOT_RUNNING = 'Telegram is not running in the agent yet. Restart the agent, then press Pair.';
+const TG_PAIR_NOT_RUNNING = 'Telegram is not running in the agent yet. Restart the agent, then press Pair. The app stays open.';
 
 function tgPairInitial() {
   return {phase:'idle', supported:null, code:null, expiresAt:null, instruction:null, botUsername:null, pairedLine:null,
@@ -66,8 +66,10 @@ function tgPairApply(pair, op, res, now) {
 /* Whether the tab should ask again in TG_PAIR_POLL_MS. */
 function tgPairPolling(pair) { return !!pair && pair.phase === 'waiting'; }
 
-/* The pairing card's inside. `ctx`: {howto, note, busy, label}; `h`: {esc}.
-   `label` names the start button ('Pair', or the replace wording). */
+/* The pairing card's inside. `ctx`: {howto, note, busy, label, restart?}; `h`: {esc}.
+   `label` names the start button ('Pair', or the replace wording). `restart` is the
+   Restart agent button's markup (telegram-restart.js): when the agent said Telegram
+   is not running, it stands beside Pair as the step to take first (ATO-900 item 6). */
 function tgPairCardHTML(pair, ctx, h) {
   const esc = h.esc;
   const p = pair || tgPairInitial();
@@ -84,6 +86,10 @@ function tgPairCardHTML(pair, ctx, h) {
   }
   if (p.phase === 'paired') return '<p data-tg-paired>' + esc(p.pairedLine || 'Paired.') + '</p>';
   const lead = p.phase === 'expired' ? TG_PAIR_EXPIRED : ctx.howto;
+  if (p.error === TG_PAIR_NOT_RUNNING && ctx.restart) {
+    const pairBtn = '<button class="btn btn-s sm" data-act="telegram:pairStart"' + (ctx.busy ? ' disabled' : '') + '>' + esc(ctx.label || 'Pair') + '</button>';
+    return '<p>' + esc(lead) + '</p>' + err + '<div class="sd-acts"><span class="sd-grow"></span>' + pairBtn + ctx.restart + '</div>';
+  }
   return '<p>' + esc(lead) + '</p>' + err
     + '<div class="sd-acts"><span class="sd-grow"></span>' + startBtn(ctx.label || 'Pair') + '</div>';
 }

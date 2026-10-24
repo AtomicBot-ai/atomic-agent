@@ -728,7 +728,15 @@ Honestly degraded, and labelled as such in the UI:
   the key through a port of `src/config/dotenv-writer.ts` (atomic rename,
   0600, quoting for whitespace/shell characters); `T`/`O`/`e` clear the
   token, unset the owner and flip `telegram.enabled`, each with the restart
-  note. Pairing (ATO-859, `renderer/telegram-pairing.js`,
+  note. Every line in the tab that asks for a restart (that note, the
+  "Waiting for a restart" status and the pairing card's "Telegram is not
+  running") has a primary Restart agent beside it and says the app stays
+  open; the Restart the bot row's own Restart does the same (ATO-900 item 6,
+  `renderer/telegram-restart.js`): it restarts the agent in place
+  (`agent_restarted` trigger `telegram`), shows Restarting…, then the
+  result in the same place (connected, what is still missing, or why the
+  agent did not start), and is refused in place while a reply is running.
+  Pairing (ATO-859, `renderer/telegram-pairing.js`,
   `main/telegram-pairing.ts`) goes through the agent's
   `/api/telegram/pairing`: Pair shows the 6-digit one-time code and the
   agent's instruction (`/start <code>` to the bot, 5 minutes), the tab polls
