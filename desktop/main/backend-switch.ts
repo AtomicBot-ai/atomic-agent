@@ -983,21 +983,22 @@ export async function restartAfterSwitch(
      the restart cost 3-8 s (and queued the next message behind it). Only for
      this switch's own move, never to pay a restart an earlier one owes. */
   if (live && mine && !drifted && !restartOwed && agent.liveSwap) {
-    // Held in `restarting` like a restart, so the next switch waits it out.
-    const swap = agent.liveSwap(res).catch(() => false);
-    const run: Promise<void> = swap.then(() => undefined)
-      .finally(() => { if (restarting === run) restarting = null; });
-    restarting = run;
-    const swapped = await swap;
-    await run;
-    if (swapped) return { restart: false, liveSwapped: true };
-    // Not taken: the restart as before, judged again after the wait.
-    while (restarting) await restarting;
-    if (turnsClosed) return { restart: false };
-    if (agent.turnsInFlight() > 0) {
-      restartOwed = true;
-      return { restart: false, restartHeld: true };
+    /* Held in `restarting` like a restart, so the next switch and a turn
+       asked for meanwhile (agent:chat) wait it out — and released only once
+       this decided: a swap not taken hands the slot straight to its restart. */
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    restarting = held;
+    const swapped = await agent.liveSwap(res).catch(() => false);
+    if (swapped || turnsClosed) {
+      if (restarting === held) restarting = null;
+      release();
+      return swapped ? { restart: false, liveSwapped: true } : { restart: false };
     }
+    const restarted = restartNow(agent);
+    release();
+    await restarted;
+    return { restart: true };
   }
   await restartNow(agent);
   return { restart: true };

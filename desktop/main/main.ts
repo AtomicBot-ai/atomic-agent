@@ -1932,14 +1932,18 @@ function wireIpc(client: AgentClient): void {
        so the next switch is judged against it. */
     liveSwap: async (res) => {
       if (quitting || client.status.state !== "connected" || !res.providerId) return false;
-      let next: BootRoute;
+      let cfg: UserConfigShape | undefined;
       try {
-        next = routeOf(((await client.config()) as { config?: UserConfigShape }).config);
+        cfg = ((await client.config()) as { config?: UserConfigShape }).config;
       } catch {
         return false;
       }
-      if (next.provider !== res.providerId || next.provider === "local-llama" || next.mode === "fusion") return false;
-      const swap = await client.setActiveLlm(next.provider, next.model);
+      const next = routeOf(cfg);
+      // Any llama-server entry, not only local-llama: a local route has a model profile serve sets up at boot.
+      const kind = (cfg?.llm?.providers ?? []).find((p) => p.id === next.provider)?.kind;
+      if (next.provider !== res.providerId || kind === "llama-server" || next.mode === "fusion") return false;
+      // No model: the file already names it, and a pin would rewrite the file under the window's next write.
+      const swap = await client.setActiveLlm(next.provider, null);
       if (!swap.ok) {
         console.warn(`[desktop] model switch: live swap not taken (${swap.error ?? "unknown"}), restarting the agent`);
         return false;

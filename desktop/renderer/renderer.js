@@ -20426,7 +20426,8 @@ async function wizActivate(k, id, model, unverified) {
   const added = wizService(k) + (model ? ' \u00b7 ' + model : '') + (unverified ? ' \u00b7 not verified: ' + unverified : '')
     + (WIZ.noFundsNote ? ' \u00b7 the account has no funds' : '');   // Backlog 40
   if (OB.open && OB.step === 'cloud') {
-    OB.restarted = !!(sel && sel.restart);
+    // ATO-1021: a pick the running agent took live is on its route already, like one it restarted for.
+    OB.restarted = !!(sel && (sel.restart || sel.liveSwapped));
     toast(unverified ? 'Provider added, key not checked' : 'Provider added', added);
     obDispatch({type:'providers_wizard_succeeded'});
     return;
