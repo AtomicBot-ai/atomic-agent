@@ -53,10 +53,10 @@ export interface OverflowCompactionPlan {
   /** Window (estimate units) to plan the compaction against; null keeps the step's own. */
   compactionWindow: number | null;
   /**
-   * A window worth remembering for later prompts (real tokens: the
-   * server's own or most of the estimate); null when nothing new was
-   * learned. Never the `server_count` scaled figure, which is in the
-   * agent's estimate units.
+   * A window worth remembering for later prompts: only one the server
+   * named, in real tokens; null otherwise. Never the `estimate` guess
+   * nor the `server_count` scaled figure (the agent's estimate units),
+   * which stay turn-local.
    */
   learnedWindow: number | null;
   source: OverflowWindowSource;
@@ -103,9 +103,48 @@ export function planOverflowCompaction(
   }
   const estimated = Math.floor(estimate * SIZE_REJECTION_SHRINK);
   if (estimated >= MIN_PLAUSIBLE_WINDOW && shrinks(estimated)) {
-    return { rejection, compactionWindow: estimated, learnedWindow: estimated, source: "estimate", serverWindow: null, serverPromptTokens };
+    // A guess, not evidence: it shapes this turn's compaction only and is
+    // never remembered for later prompts.
+    return { rejection, compactionWindow: estimated, learnedWindow: null, source: "estimate", serverWindow: null, serverPromptTokens };
   }
   return { rejection, compactionWindow: null, learnedWindow: null, source: "believed", serverWindow: null, serverPromptTokens };
+}
+
+/**
+ * Whether a context-size refusal is about the conversation itself, the
+ * one case "start a new session" fixes. A refusal that blames the reply
+ * reserve — vLLM / OpenAI "you requested 9134 tokens (1000 in the
+ * messages, 8134 in the completion)" with the messages well under the
+ * window, or a llama.cpp count under its `n_ctx` — is not: the
+ * conversation fits, the cap does not. Reads the whole `cause` chain,
+ * so a `TransportError` / `GrammarError` wrapper still matches.
+ */
+export function isConversationSizeRefusal(error: unknown): boolean {
+  const rejection = contextCompactionRejection(error);
+  if (rejection === null) return false;
+  const window = readContextLengthFromRejection(rejection);
+  if (window === null) return true;
+  const counted = readServerContextCounts(rejection).promptTokens;
+  if (counted !== undefined && counted < window) return false;
+  const messages = MESSAGES_TOKENS.exec(causeChainText(rejection));
+  if (messages !== null) {
+    const inMessages = Number.parseInt(messages[1]!.replace(/[,_]/g, ""), 10);
+    if (Number.isFinite(inMessages) && inMessages < window) return false;
+  }
+  return true;
+}
+
+/** "(1000 in the messages, …)" / "(130210 of text input, …)". */
+const MESSAGES_TOKENS = /\((\d[\d,_]*) (?:in the messages|of text input)/i;
+
+function causeChainText(error: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth += 1) {
+    parts.push(current.message);
+    current = (current as { cause?: unknown }).cause;
+  }
+  return parts.join(" | ");
 }
 
 /**

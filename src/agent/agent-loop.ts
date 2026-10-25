@@ -2,8 +2,7 @@ import { resolveModelMode } from "../llm/model-mode.js";
 import { prepareStepPrompt, refreshStepWorkspace } from "./step/step-inference.js";
 import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { contextCompactionRejection } from "./turn/compaction-recovery.js";
-import { contextWindowExhaustedError, planOverflowCompaction } from "./turn/overflow-compaction.js";
+import { contextWindowExhaustedError, isConversationSizeRefusal, planOverflowCompaction } from "./turn/overflow-compaction.js";
 import { createTurnLoopState } from "./turn/turn-state.js";
 import { recoverTurnStep, abortableSleep } from "./turn/turn-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
@@ -940,7 +939,11 @@ export class AgentLoop {
             overflowWindow = overflow.compactionWindow;
             // Learned only once the retry is certain: a learned window
             // would otherwise disarm the native-tools repack below.
-            if (overflow.learnedWindow !== null) this.deps.onContextWindowObserved?.(overflow.learnedWindow);
+            // Filed under the link that refused (a Fusion worker, a sticky
+            // fallback), never under the active provider's model.
+            if (overflow.learnedWindow !== null) {
+              this.deps.onContextWindowObserved?.(overflow.learnedWindow, options.providerId ?? this.deps.contextProviderId?.(state.id));
+            }
             const shownWindow = overflow.serverWindow ?? overflow.compactionWindow;
             if (shownWindow !== null) {
               this.deps.onEvent?.({ type: "prompt_repacked", stepIndex: i, contextWindow: shownWindow,
@@ -955,11 +958,20 @@ export class AgentLoop {
           }
           this.deps.logger?.warn("overflow compaction could not free room", logFields);
         }
+        // Still too large after the turn's one overflow compaction (or none
+        // could free room): if the step fails, it fails with plain words, in
+        // the one `loop_failed` recovery emits. Not when the turn was
+        // stopped or ran out of time mid-compaction, and not when the
+        // refusal blames the reply reserve rather than the conversation.
+        const contextExhausted = overflowCompactionAttempted && !requestDeadline.signal.aborted &&
+          !options.signal.aborted && isConversationSizeRefusal(err)
+          ? contextWindowExhaustedError({ cause: err, compacted: overflowCompacted }) : undefined;
         const decision = recoverTurnStep(err, {
           state, options, stepIndex: i, finalizationStep, noticeForThisStep,
           effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
           durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
           ...(stepModelMode !== undefined ? { modelMode: stepModelMode } : {}),
+          ...(contextExhausted !== undefined ? { contextExhausted } : {}),
         }, this.deps, turn);
         if (decision.kind === "wait") {
           const nextRetryMs = decision.nextRetryMs;
@@ -984,21 +996,14 @@ export class AgentLoop {
         if (decision.kind === "retry_same") { i -= 1; continue; }
         if (decision.kind === "retry_next") continue;
         if (decision.kind === "stop") break;
-        // Still too large after the turn's one overflow compaction (or none
-        // could free room): plain words instead of the server's sentence.
-        // A refused raised-cap truncation retry keeps its own message.
-        const exhausted = !decision.cancelled && overflowCompactionAttempted &&
-          !(turn.truncationRetry?.stepIndex === i && turn.truncationRetry.raised === true)
-          ? contextCompactionRejection(err) : null;
-        if (exhausted !== null) {
+        if (contextExhausted !== undefined && decision.runError === contextExhausted) {
           this.deps.logger?.warn("conversation does not fit the model's context window after overflow compaction; ending the turn", {
             sessionId: state.id, stepIndex: i, compacted: overflowCompacted, promptTokens: turn.lastPromptTokens,
           });
         }
         return finalizeFailedAgentTurn({
           state, options, cancelled: decision.cancelled, category: decision.category,
-          runError: exhausted !== null ? contextWindowExhaustedError({ cause: decision.runError, compacted: overflowCompacted }) : decision.runError,
-          creditRefused: decision.creditRefused,
+          runError: decision.runError, creditRefused: decision.creditRefused,
           stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
         }, this.deps, (sessionId) => this.flushSteering(sessionId));
 

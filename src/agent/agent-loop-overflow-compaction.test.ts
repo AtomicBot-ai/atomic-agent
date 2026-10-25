@@ -14,6 +14,7 @@ import { createEmptySessionState } from "../session/session-state.js";
 import type { SessionState } from "../session/session-state.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import type { CapabilitiesSummary, ToolDescriptor } from "../prompt/stable-prefix.js";
+import { StructuredLogger } from "../tracing/structured-logger.js";
 
 /**
  * ATO-1028: a local server refusing a step as too large for its context
@@ -52,10 +53,12 @@ function overflow(counts: { contextWindow?: number; promptTokens?: number } = {}
 function compactionStub(): {
   control: ContextCompactionControl;
   overflowCalls: Array<{ input: BuildPromptInput; options: CompactionStepOptions }>;
+  stepCalls: BuildPromptInput[];
 } {
   const overflowCalls: Array<{ input: BuildPromptInput; options: CompactionStepOptions }> = [];
+  const stepCalls: BuildPromptInput[] = [];
   const beforeStep = vi.fn((input: BuildPromptInput, options: CompactionStepOptions): Promise<SessionState> | undefined => {
-    if (options.requested !== "overflow") return undefined;
+    if (options.requested !== "overflow") { stepCalls.push(input); return undefined; }
     overflowCalls.push({ input, options });
     const next: SessionState = {
       ...input.session,
@@ -67,7 +70,7 @@ function compactionStub(): {
     };
     return Promise.resolve(next);
   });
-  return { control: { open() {}, close() {}, beforeStep }, overflowCalls };
+  return { control: { open() {}, close() {}, beforeStep }, overflowCalls, stepCalls };
 }
 
 describe("AgentLoop overflow compaction (ATO-1028)", () => {
@@ -78,7 +81,7 @@ describe("AgentLoop overflow compaction (ATO-1028)", () => {
   function loopWith(llmComplete: () => Promise<CompletionResult>, extra: {
     compaction: ContextCompactionControl;
     events: AgentLoopEvent[];
-    observed?: number[];
+    observed?: Array<[number, string | undefined]>;
     profileWindow?: number;
   }): AgentLoop {
     return new AgentLoop({
@@ -91,7 +94,7 @@ describe("AgentLoop overflow compaction (ATO-1028)", () => {
       capabilities: CAPS,
       skillCatalog: [],
       compaction: extra.compaction,
-      onContextWindowObserved: (window) => extra.observed?.push(window),
+      onContextWindowObserved: (window, providerId) => { extra.observed?.push([window, providerId]); },
       onEvent: (event) => extra.events.push(event),
     });
   }
@@ -101,9 +104,9 @@ describe("AgentLoop overflow compaction (ATO-1028)", () => {
   }
 
   it("compacts and retries the step once when the first send overflows", async () => {
-    const { control, overflowCalls } = compactionStub();
+    const { control, overflowCalls, stepCalls } = compactionStub();
     const events: AgentLoopEvent[] = [];
-    const observed: number[] = [];
+    const observed: Array<[number, string | undefined]> = [];
     let calls = 0;
     const loop = loopWith(async () => {
       calls += 1;
@@ -121,7 +124,13 @@ describe("AgentLoop overflow compaction (ATO-1028)", () => {
     // Planned against the window the server named, not the 32k probe.
     expect(overflowCalls[0]!.input.contextWindow).toBe(8_192);
     expect(overflowCalls[0]!.input.profileWindowApplies).toBe(false);
-    expect(observed).toEqual([8_192]);
+    expect(observed).toEqual([[8_192, undefined]]);
+    // Compact early for the rest of the turn: the retried step's own
+    // maintenance plans against the server's window, not the 32k probe.
+    expect(stepCalls).toHaveLength(2);
+    expect(stepCalls[0]!.contextWindow).not.toBe(8_192);
+    expect(stepCalls[1]!.contextWindow).toBe(8_192);
+    expect(stepCalls[1]!.profileWindowApplies).toBe(false);
     expect(events).toContainEqual(expect.objectContaining({ type: "prompt_repacked", contextWindow: 8_192, source: "provider", stepIndex: 0 }));
     expect(events.some((event) => event.type === "loop_failed")).toBe(false);
   });
@@ -142,7 +151,10 @@ describe("AgentLoop overflow compaction (ATO-1028)", () => {
     expect(result.reason).toBe("failed");
     expect(calls).toBe(2);
     expect(overflowCalls).toHaveLength(1);
-    const failed = events.find((event): event is Extract<AgentLoopEvent, { type: "loop_failed" }> => event.type === "loop_failed");
+    const allFailed = events.filter((event): event is Extract<AgentLoopEvent, { type: "loop_failed" }> => event.type === "loop_failed");
+    // The one `loop_failed` every surface reads carries the plain words.
+    expect(allFailed).toHaveLength(1);
+    const failed = allFailed[0];
     expect(failed?.error.message).toContain("no longer fits this model's context window (8,192 tokens)");
     expect(failed?.error.message).toContain("even after older history was compacted");
     expect(failed?.error.message).not.toContain("llama-server returned http 400");
@@ -170,7 +182,78 @@ describe("AgentLoop overflow compaction (ATO-1028)", () => {
     expect(failed?.error.message).toContain("larger context size");
   });
 
-  it("budgets against the server's /props n_ctx when it is smaller than the configured window", async () => {
+  it("compacts and retries on an overflow that names no window, without remembering the guess", async () => {
+    const { control, overflowCalls, stepCalls } = compactionStub();
+    const events: AgentLoopEvent[] = [];
+    const observed: Array<[number, string | undefined]> = [];
+    let calls = 0;
+    const loop = loopWith(async () => {
+      calls += 1;
+      if (calls === 1) throw overflow();
+      return reply("fits now");
+    }, { compaction: control, events, observed });
+    const result = await loop.runTurn(session("s-overflow-estimate"), {
+      userMessage: "keep going", maxSteps: 5, taskMaxSteps: 5, signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("reply");
+    expect(overflowCalls).toHaveLength(1);
+    const window = overflowCalls[0]!.input.contextWindow;
+    expect(window).toBeLessThan(32_768);
+    expect(stepCalls.at(-1)!.contextWindow).toBe(window);
+    expect(observed).toEqual([]);
+  });
+
+  it("treats a throwing compaction as no room, logs it and ends the turn plainly", async () => {
+    const events: AgentLoopEvent[] = [];
+    const warnings: string[] = [];
+    const beforeStep = vi.fn((_input: BuildPromptInput, options: CompactionStepOptions): Promise<SessionState> | undefined =>
+      options.requested === "overflow" ? Promise.reject(new Error("summary call failed")) : undefined);
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(), slotManager: new SlotManager(2), grammar: 'root ::= "ok"',
+      profile: { ...PLAIN_INSTRUCT_PROFILE, contextWindow: 32_768 },
+      llmComplete: async () => { calls += 1; throw overflow({ contextWindow: 8_192 }); },
+      toolDescriptors: TOOLS, capabilities: CAPS, skillCatalog: [],
+      compaction: { open() {}, close() {}, beforeStep },
+      logger: new StructuredLogger({ level: "debug", sinks: [(record) => { if (record.level === "warn") warnings.push(record.message); }] }),
+      onEvent: (event) => events.push(event),
+    });
+    const result = await loop.runTurn(session("s-overflow-throw"), {
+      userMessage: "keep going", maxSteps: 5, taskMaxSteps: 5, signal: new AbortController().signal,
+    });
+    expect(result.reason).toBe("failed");
+    expect(calls).toBe(1);
+    expect(warnings).toContain("overflow compaction failed");
+    const failed = events.filter((event): event is Extract<AgentLoopEvent, { type: "loop_failed" }> => event.type === "loop_failed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0]!.error.message).toContain("could not be compacted to make room");
+  });
+
+  it("files a pinned Fusion worker's window under its own provider, not the active one", async () => {
+    const { control } = compactionStub();
+    const events: AgentLoopEvent[] = [];
+    const observed: Array<[number, string | undefined]> = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(), slotManager: new SlotManager(2), grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        calls += 1;
+        if (calls === 1) throw overflow({ contextWindow: 8_192 });
+        return reply("done");
+      },
+      toolDescriptors: TOOLS, capabilities: CAPS, skillCatalog: [],
+      compaction: control,
+      onContextWindowObserved: (window, providerId) => { observed.push([window, providerId]); },
+      onEvent: (event) => events.push(event),
+    });
+    await loop.runTurn(session("s-overflow-worker"), {
+      userMessage: "task", maxSteps: 5, taskMaxSteps: 5, signal: new AbortController().signal,
+      providerId: "local-llama", ephemeral: true,
+    });
+    expect(observed).toEqual([[8_192, "local-llama"]]);
+  });
+
+  it("regression guard: budgets against the server's /props n_ctx when it is smaller than the configured window", async () => {
     const events: AgentLoopEvent[] = [];
     const loop = new AgentLoop({
       registry: buildDefaultToolRegistry(), slotManager: new SlotManager(2), grammar: 'root ::= "ok"',

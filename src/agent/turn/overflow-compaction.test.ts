@@ -5,6 +5,7 @@ import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
 import {
   ContextWindowExhaustedError,
   contextWindowExhaustedError,
+  isConversationSizeRefusal,
   planOverflowCompaction,
 } from "./overflow-compaction.js";
 
@@ -41,7 +42,8 @@ describe("planOverflowCompaction", () => {
 
   it("falls back to most of the estimate when nothing is named", () => {
     const plan = planOverflowCompaction({ ...base, error: llamaOverflow() });
-    expect(plan).toMatchObject({ compactionWindow: 4_800, learnedWindow: 4_800, source: "estimate", serverWindow: null });
+    // A guess shapes this turn's compaction only; it is never remembered.
+    expect(plan).toMatchObject({ compactionWindow: 4_800, learnedWindow: null, source: "estimate", serverWindow: null });
   });
 
   it("keeps the step's own window when the evidence is no smaller", () => {
@@ -68,6 +70,31 @@ describe("planOverflowCompaction", () => {
       cause: new OpenAiHttpError("openai provider 400: max_tokens is too large: 32768. This model supports at most 16384 completion tokens", 400, "u"),
     });
     expect(planOverflowCompaction({ ...base, error: capOnly })).toBeNull();
+  });
+});
+
+describe("isConversationSizeRefusal", () => {
+  const vllm = (body: string) => new TransportError('"vendor" rejected the request (400).', 400, "https://x/v1", {
+    cause: new OpenAiHttpError(`openai provider 400: ${body}`, 400, "u"),
+  });
+
+  it("is true when the conversation itself outgrew the window", () => {
+    expect(isConversationSizeRefusal(llamaOverflow({ contextWindow: 8_192, promptTokens: 9_134 }))).toBe(true);
+    expect(isConversationSizeRefusal(llamaOverflow())).toBe(true);
+    expect(isConversationSizeRefusal(vllm(
+      "This model's maximum context length is 8192 tokens. However, you requested 9134 tokens (9000 in the messages, 134 in the completion).",
+    ))).toBe(true);
+  });
+
+  it("is false when the reply reserve, not the conversation, is over", () => {
+    expect(isConversationSizeRefusal(vllm(
+      "This model's maximum context length is 8192 tokens. However, you requested 9134 tokens (1000 in the messages, 8134 in the completion).",
+    ))).toBe(false);
+    expect(isConversationSizeRefusal(llamaOverflow({ contextWindow: 8_192, promptTokens: 4_000 }))).toBe(false);
+  });
+
+  it("is false for anything but a context-size refusal", () => {
+    expect(isConversationSizeRefusal(new Error("boom"))).toBe(false);
   });
 });
 

@@ -836,7 +836,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: null,
-        line: `» the model rejected the request as too large — window learned as ~${event.contextWindow} tokens (${
+        line: `» the model rejected the request as too large — window ~${event.contextWindow} tokens (${
           event.source === "provider" ? "from its reply" : "estimated"
         }), trimming the conversation to fit and retrying step ${event.stepIndex + 1}`,
         color: "yellow",
