@@ -175,7 +175,7 @@ try {
   check('exactly one row is marked the best fit',
     big.picks.filter((p) => p.best).length === 1, big.picks.filter((p) => p.best).map((p) => p.name).join(', '));
   check('the best fit is the first row, and it is the best-ranked model that runs comfortably (ATO-817)',
-    big.picks[0].best && /Qwen 3\.8 27B/.test(big.picks[0].name), big.picks[0].name);
+    big.picks[0].best && /Qwen 3\.6 35B-A3B/.test(big.picks[0].name), big.picks[0].name);
   check('the one badge reads "Recommended", in words, with the human name',
     /Recommended/.test(big.picks[0].name) && !/★|Best fit|qwen-/.test(big.picks[0].name), big.picks[0].name);
   check('the recommendation is never a reduced-refusal model',

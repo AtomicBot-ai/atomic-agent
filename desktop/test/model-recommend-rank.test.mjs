@@ -29,10 +29,11 @@ for (const name of ["sizeStringGb", "fitFor", "orderModelsByFit", "bestModelFor"
 // Figures from the vendored catalogue (desktop/main/model-catalog.ts).
 const models = [
   { id: "nemotron-3.5-30b-a3b", minRamGb: 24, recommendedRamGb: 32, size: "19.7 GB" },
-  { id: "qwen-3.8-27b", minRamGb: 20, recommendedRamGb: 28, size: "17.9 GB", recommendRank: 1 },
-  { id: "gemma-4-31b", minRamGb: 20, recommendedRamGb: 24, size: "17.3 GB", recommendRank: 4 },
+  { id: "qwen-3.6-35b-a3b", minRamGb: 24, recommendedRamGb: 36, size: "22.4 GB", recommendRank: 1 },
+  { id: "gemma-4-26b-a4b", minRamGb: 16, recommendedRamGb: 20, size: "14.2 GB", recommendRank: 2 },
+  { id: "qwen-3.8-27b", minRamGb: 20, recommendedRamGb: 28, size: "17.9 GB", recommendRank: 4 },
   { id: "qwen-3.5-9b", minRamGb: 10, recommendedRamGb: 16, size: "5.3 GB", recommendRank: 7 },
-  { id: "qwen-3.5-4b", minRamGb: 6, recommendedRamGb: 8, size: "2.7 GB", recommendRank: 9 },
+  { id: "qwen-3.5-4b", minRamGb: 6, recommendedRamGb: 8, size: "2.7 GB", recommendRank: 8 },
   { id: "gemma-4-e4b", minRamGb: 6, recommendedRamGb: 8, size: "4.2 GB", recommendRank: 10 },
   { id: "qwen-3.8-27b-uncensored", minRamGb: 20, recommendedRamGb: 32, size: "16.5 GB", uncensored: true },
 ];
@@ -40,8 +41,8 @@ const models = [
 test("the best-ranked model that runs comfortably wins, not the biggest", () => {
   assert.equal(c.bestModelFor(models, 8).id, "qwen-3.5-4b");
   assert.equal(c.bestModelFor(models, 16).id, "qwen-3.5-9b");
-  assert.equal(c.bestModelFor(models, 32).id, "qwen-3.8-27b");
-  assert.equal(c.bestModelFor(models, 64).id, "qwen-3.8-27b");
+  assert.equal(c.bestModelFor(models, 32).id, "gemma-4-26b-a4b");
+  assert.equal(c.bestModelFor(models, 64).id, "qwen-3.6-35b-a3b");
 });
 
 test("the recommendation is the first row of the fit order, so the default pick agrees", () => {
