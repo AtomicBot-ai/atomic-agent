@@ -158,7 +158,11 @@
 
 /* files and links inside replies — the chip keeps `.filechip` + data-file, so
    the click (open) and right-click (native file menu) handlers are unchanged */
-.filechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:24px;padding:0 9px 0 7px;vertical-align:-6px;
+/* ATO-903: the chip sits on the line it is in. 24px tall at -6px it was
+   taller than the reply's line (14.5px × 1.62 ≈ 23.5px) and pushed it apart
+   and off its baseline; at 20px, centred on the lowercase letters
+   (vertical-align:middle), it fits inside the line box. */
+.filechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:20px;padding:0 8px 0 6px;vertical-align:middle;
   border-radius:var(--r-pill);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);
   font:600 12.5px/1 var(--font-ui);color:var(--ink);white-space:nowrap;
   transition:background var(--t-state) var(--ease)}
@@ -447,7 +451,9 @@
    (`.sysact` — failure-line.drive reads it). The glyph carries the tone:
    red for a failure, amber for a pause or a warning, muted otherwise. */
 .sysrow{display:grid;grid-template-columns:16px minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:0 4px;
-  font-size:13px;line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere}
+  font-size:13px;line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere;white-space:normal}
+/* ATO-903: a system row's sentence wraps whatever it sits in ("Allowed in this chat…" was cut at the edge). */
+.sysrow .sys-tx{min-width:0;white-space:normal}
 .sysrow .sys-ic{display:grid;place-items:center;height:20px;color:var(--ink-3)}
 .sysrow .sys-ic svg{width:14px;height:14px}
 .sysrow .sys-ic.err{color:var(--critical)}
