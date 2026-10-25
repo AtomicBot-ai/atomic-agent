@@ -2078,11 +2078,14 @@ export class LocalModelsOrchestrator {
       );
       opts?.signal?.throwIfAborted();
       // A fresh embedding start waits for memory (ATO-379); one adopted
-      // above is already running and stays.
+      // above is already running and stays. The chat model starts in this
+      // same launch and is not in the measured figure yet: count it.
       let embStart = embClear.options;
       let embLowMemory: EmbeddingMemoryCheck | null = null;
       if (embStart) {
-        const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(embStart.modelId).fileSizeGb);
+        const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(embStart.modelId).fileSizeGb, {
+          chatModelGb: def.fileSizeGb,
+        });
         if (!memory.ok) {
           embLowMemory = memory;
           embStart = undefined;
@@ -2558,12 +2561,17 @@ export class LocalModelsOrchestrator {
 
   /**
    * The embedding model was not started for lack of memory: memory search
-   * stays on keywords. Said once per TUI session, not at every start or
-   * pairing, and never persisted: the operator's hybrid-recall opt-in
-   * stays, so the model starts once memory allows.
+   * stays on keywords. Automatic starts and pairings say it once per TUI
+   * session; an action the operator took for the embedding model (enable
+   * it, pull or pick one: `always`) says it every time, or the key press
+   * would look ignored. Never persisted: the operator's hybrid-recall
+   * opt-in stays, so the model starts once memory allows.
    */
-  private noteLowMemoryEmbedding(check: Extract<EmbeddingMemoryCheck, { ok: false }>): void {
-    if (this.lowMemoryEmbeddingNoted) return;
+  private noteLowMemoryEmbedding(
+    check: Extract<EmbeddingMemoryCheck, { ok: false }>,
+    opts: { always?: boolean } = {},
+  ): void {
+    if (this.lowMemoryEmbeddingNoted && !opts.always) return;
     this.lowMemoryEmbeddingNoted = true;
     this.bus.emit({ type: "runtime_info", line: `local-llm: ${check.note}` });
   }
@@ -2636,12 +2644,15 @@ export class LocalModelsOrchestrator {
    */
   private async ensureEmbeddingPaired(opts?: {
     hotSwap?: boolean;
+    /** The operator asked for the embedding model now: a low-memory skip is always said. */
+    userAction?: boolean;
   }): Promise<void> {
     return this.operations.run(() => this.ensureEmbeddingPairedNow(opts), undefined, false);
   }
 
   private async ensureEmbeddingPairedNow(opts?: {
     hotSwap?: boolean;
+    userAction?: boolean;
   }): Promise<void> {
     if (this.closing) return;
     const cfg = getConfig();
@@ -2695,7 +2706,7 @@ export class LocalModelsOrchestrator {
     if (!embStatus.running) {
       const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(desired.modelId).fileSizeGb);
       if (!memory.ok) {
-        this.noteLowMemoryEmbedding(memory);
+        this.noteLowMemoryEmbedding(memory, { always: opts?.userAction === true });
         return;
       }
     }
@@ -2922,7 +2933,7 @@ export class LocalModelsOrchestrator {
       });
       return;
     }
-    await this.ensureEmbeddingPaired({ hotSwap: true });
+    await this.ensureEmbeddingPaired({ hotSwap: true, userAction: true });
     await this.refresh();
   }
 

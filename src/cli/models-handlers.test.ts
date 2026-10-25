@@ -69,7 +69,7 @@ import {
   runLocalModelsUpdate,
 } from "./models-handlers.js";
 
-const LOW_MEMORY_NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~100 MB).";
+const LOW_MEMORY_NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~1 GB free).";
 const lowMemory = () =>
   vi.mocked(checkEmbeddingModelMemory).mockResolvedValue({
     ok: false,
@@ -210,6 +210,30 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].embedding).toBeUndefined();
     const stdout = vi.mocked(process.stdout.write).mock.calls.map(([chunk]) => String(chunk)).join("");
     expect(stdout).toMatch(/^embedding: not started \(0\.4 GB available, needs 1\.0 GB\)\. Memory search uses keywords/m);
+  });
+
+  it("counts the chat model starting in the same call: 3 GB free, 2.7 GB chat model, embedding not started", async () => {
+    prepareManagedWindowsInstall({ embeddings: true });
+    vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReturnValue(true);
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockResolvedValue({
+      running: false, pid: null, port: 19092, healthy: false, loading: false,
+    });
+    const actual = await vi.importActual<typeof import("../memory/embeddings/embedding-memory-check.js")>(
+      "../memory/embeddings/embedding-memory-check.js",
+    );
+    vi.mocked(checkEmbeddingModelMemory).mockImplementation((size, opts) =>
+      actual.checkEmbeddingModelMemory(size, { ...opts, read: async () => ({ totalBytes: 16 * 1024 ** 3, availableBytes: 3e9 }) }));
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValue({
+      chat: { pid: 777 },
+      embedding: { skipped: true },
+    });
+
+    await expect(runLocalModelsStart()).resolves.toBe(0);
+
+    expect(checkEmbeddingModelMemory).toHaveBeenCalledWith(expect.any(Number), { chatModelGb: 2.7 });
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].embedding).toBeUndefined();
+    const stdout = vi.mocked(process.stdout.write).mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(stdout).toMatch(/^embedding: not started \(.*for the chat model now starting.*\)\. Memory search uses keywords/m);
   });
 
   it("starts both as before when there is enough memory", async () => {

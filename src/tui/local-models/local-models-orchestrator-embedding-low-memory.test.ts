@@ -50,7 +50,7 @@ import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
 const EMBED_MODEL_ID = "bge-m3";
 const CHAT_MODEL_ID = "qwen-3.5-4b";
-const NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~600 MB).";
+const NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~1.2 GB free).";
 
 type Emitted = { type: string; line?: string };
 
@@ -96,6 +96,15 @@ describe("LocalModelsOrchestrator embedding start on low memory", () => {
       note: NOTE,
       detail: "0.4 GB available, needs 1.3 GB",
     });
+  }
+
+  /** The real check, on a machine with `availableBytes` free of 16 GiB. */
+  async function realCheckWithAvailable(availableBytes: number): Promise<void> {
+    const actual = await vi.importActual<typeof import("../../memory/embeddings/embedding-memory-check.js")>(
+      "../../memory/embeddings/embedding-memory-check.js",
+    );
+    vi.mocked(checkEmbeddingModelMemory).mockImplementation((size, opts) =>
+      actual.checkEmbeddingModelMemory(size, { ...opts, read: async () => ({ totalBytes: 16 * 1024 ** 3, availableBytes }) }));
   }
 
   function makeOrchestrator(): { orchestrator: LocalModelsOrchestrator; lines: () => string[] } {
@@ -175,6 +184,46 @@ describe("LocalModelsOrchestrator embedding start on low memory", () => {
     expect(lines().filter((l) => l.includes("Memory search uses keywords"))).toEqual([`local-llm: ${NOTE}`]);
     expect(lines().some((l) => l.includes("not on disk"))).toBe(false);
     expect(readFlag()).toBe(true);
+  });
+
+  it("counts the chat model that starts in the same launch: 3 GB free, 2.7 GB chat model, embedding not started", async () => {
+    prepareInstall();
+    vi.mocked(localLlm.getDaemonStatus).mockResolvedValue({ running: false, healthy: false, loading: false, pid: null, port: 19091 });
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockResolvedValue({ running: false, healthy: false, loading: false, pid: null, port: 19092 });
+    await realCheckWithAvailable(3e9);
+    const { orchestrator, lines } = makeOrchestrator();
+
+    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true })).resolves.toBe(true);
+
+    expect(checkEmbeddingModelMemory).toHaveBeenCalledWith(
+      getEmbeddingModelDef(EMBED_MODEL_ID).fileSizeGb,
+      { chatModelGb: localLlm.getLocalModelDef(CHAT_MODEL_ID).fileSizeGb },
+    );
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].embedding).toBeUndefined();
+    expect(lines().some((l) => l.includes("beside the chat model"))).toBe(true);
+  });
+
+  it("the same 3 GB free is enough beside a chat model that already runs", async () => {
+    chatAlreadyRunning();
+    await realCheckWithAvailable(3e9);
+    const { orchestrator } = makeOrchestrator();
+
+    await orchestrator.autoStartIfReady();
+
+    expect(localLlm.startEmbeddingDaemon).toHaveBeenCalledTimes(1);
+  });
+
+  it("says it every time the operator asks for the embedding model, even after the automatic note", async () => {
+    chatAlreadyRunning();
+    lowMemory();
+    const { orchestrator, lines } = makeOrchestrator();
+
+    await orchestrator.autoStartIfReady(); // automatic: the session's one note
+    await orchestrator.startEmbeddingPairing(); // operator: enable / pick
+    await orchestrator.startEmbeddingPairing();
+
+    expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+    expect(lines().filter((l) => l.includes("Memory search uses keywords"))).toHaveLength(3);
   });
 
   it("starts both together as before when there is enough memory", async () => {

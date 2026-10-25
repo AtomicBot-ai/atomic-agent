@@ -15,13 +15,13 @@ import { freemem, totalmem } from "node:os";
 const GIB = 1024 * 1024 * 1024;
 
 /**
- * Smallest total RAM that starts the memory model. Below 8 GB the chat
- * model already competes with the system for every gigabyte. The floor
- * sits under 8 GiB because an 8 GB Linux or Windows machine reports a
- * little less than that (firmware and integrated GPU reserve some), and
- * such a machine should keep the model.
+ * Smallest total RAM that starts the memory model. Under it the chat
+ * model already competes with the system for every gigabyte. The floor is
+ * 6 GiB, not 8: an 8 GB laptop that reserves 1-2 GB for integrated
+ * graphics reports about 6-7 GiB and should keep the model. The available
+ * memory check below covers the machines in between.
  */
-export const EMBEDDING_MIN_TOTAL_RAM_BYTES = 7.5 * GIB;
+export const EMBEDDING_MIN_TOTAL_RAM_BYTES = 6 * GIB;
 
 /**
  * Smallest available memory that starts the memory model: the model
@@ -30,6 +30,13 @@ export const EMBEDDING_MIN_TOTAL_RAM_BYTES = 7.5 * GIB;
  * size when that is more.
  */
 export const EMBEDDING_MIN_AVAILABLE_RAM_BYTES = 1 * GIB;
+
+/**
+ * Memory a chat model takes beyond its file while it loads (KV cache,
+ * compute buffers), counted when the chat model starts in the same launch
+ * as the memory model and so is not in the measured figure yet.
+ */
+export const CHAT_MODEL_LOAD_HEADROOM_BYTES = 0.5 * GIB;
 
 /** How long `vm_stat` may take before the check falls back to `os.freemem()`. */
 const VM_STAT_TIMEOUT_MS = 1000;
@@ -120,49 +127,76 @@ export async function readSystemMemory(
   return { totalBytes, availableBytes };
 }
 
-/** `~300 MB` for a model file of `fileSizeGb`: rounded to 100 MB, at least 100. */
-function approxModelSize(fileSizeGb: number): string {
-  const mb = Math.max(100, Math.round((fileSizeGb * 1000) / 100) * 100);
-  return `~${mb} MB`;
-}
-
-/** The operator's note when the memory model is not started for lack of memory. */
-export function lowMemoryEmbeddingNote(fileSizeGb: number): string {
-  return `Memory search uses keywords: not enough free memory for the memory model (needs ${approxModelSize(fileSizeGb)}).`;
+/** Gigabytes (GiB, as the system reports them) to one decimal, without a trailing `.0`. */
+function gbFigure(bytes: number): string {
+  return String(Math.round((bytes / GIB) * 10) / 10);
 }
 
 function gb(bytes: number): string {
   return `${(bytes / GIB).toFixed(1)} GB`;
 }
 
+/** Available memory the memory model of `fileSizeGb` needs: the real threshold the check applies. */
+export function embeddingAvailableNeedBytes(fileSizeGb: number): number {
+  return Math.max(EMBEDDING_MIN_AVAILABLE_RAM_BYTES, fileSizeGb * 1e9 * 2);
+}
+
 /**
  * Whether `memory` leaves room for an embedding model of `fileSizeGb`.
- * Pure: the figures come from `readSystemMemory` (or a test).
+ * `reserveBytes` is memory about to be taken by a chat model that starts
+ * in the same launch and is not in the measured figure yet. The note
+ * names the threshold that decided. Pure: the figures come from
+ * `readSystemMemory` (or a test).
  */
-export function assessEmbeddingMemory(memory: SystemMemory, fileSizeGb: number): EmbeddingMemoryCheck {
-  const note = lowMemoryEmbeddingNote(fileSizeGb);
+export function assessEmbeddingMemory(
+  memory: SystemMemory,
+  fileSizeGb: number,
+  reserveBytes = 0,
+): EmbeddingMemoryCheck {
   if (memory.totalBytes > 0 && memory.totalBytes < EMBEDDING_MIN_TOTAL_RAM_BYTES) {
-    return { ok: false, reason: "total", note, detail: `${gb(memory.totalBytes)} RAM in total, the memory model starts from 8 GB` };
+    const floor = gbFigure(EMBEDDING_MIN_TOTAL_RAM_BYTES);
+    return {
+      ok: false,
+      reason: "total",
+      note: `Memory search uses keywords: this machine has ${gbFigure(memory.totalBytes)} GB of memory; the memory model needs at least ${floor} GB.`,
+      detail: `${gb(memory.totalBytes)} RAM in total, the memory model starts from ${floor} GB`,
+    };
   }
-  const needBytes = Math.max(EMBEDDING_MIN_AVAILABLE_RAM_BYTES, fileSizeGb * 1e9 * 2);
-  if (memory.availableBytes !== null && memory.availableBytes < needBytes) {
-    return { ok: false, reason: "available", note, detail: `${gb(memory.availableBytes)} available, needs ${gb(needBytes)}` };
+  const needBytes = embeddingAvailableNeedBytes(fileSizeGb);
+  if (memory.availableBytes !== null && memory.availableBytes - reserveBytes < needBytes) {
+    const beside = reserveBytes > 0 ? " beside the chat model" : "";
+    return {
+      ok: false,
+      reason: "available",
+      note: `Memory search uses keywords: not enough free memory for the memory model${beside} (needs ~${gbFigure(needBytes)} GB free).`,
+      detail: reserveBytes > 0
+        ? `${gb(memory.availableBytes)} available, ${gb(reserveBytes)} of it for the chat model now starting, needs ${gb(needBytes)}`
+        : `${gb(memory.availableBytes)} available, needs ${gb(needBytes)}`,
+    };
   }
   return { ok: true };
 }
 
+/** Memory a chat model with a file of `fileSizeGb` takes once loaded: the file plus load headroom. */
+export function chatModelReserveBytes(fileSizeGb: number): number {
+  return Math.max(0, fileSizeGb) * 1e9 + CHAT_MODEL_LOAD_HEADROOM_BYTES;
+}
+
 /**
  * Read this machine's memory and assess it for an embedding model of
- * `fileSizeGb`. Called right before a local embedding model would start.
- * Never throws: a probe that fails says `ok`, so a broken probe never
- * costs a user with enough memory their memory model.
+ * `fileSizeGb`. Called right before a local embedding model would start;
+ * when a chat model starts in the same launch, pass its file size as
+ * `chatModelGb` so the memory it is about to take is counted. Never
+ * throws: a probe that fails says `ok`, so a broken probe never costs a
+ * user with enough memory their memory model.
  */
 export async function checkEmbeddingModelMemory(
   fileSizeGb: number,
-  read: () => Promise<SystemMemory> = readSystemMemory,
+  opts: { chatModelGb?: number; read?: () => Promise<SystemMemory> } = {},
 ): Promise<EmbeddingMemoryCheck> {
   try {
-    return assessEmbeddingMemory(await read(), fileSizeGb);
+    const reserve = opts.chatModelGb !== undefined ? chatModelReserveBytes(opts.chatModelGb) : 0;
+    return assessEmbeddingMemory(await (opts.read ?? readSystemMemory)(), fileSizeGb, reserve);
   } catch {
     return { ok: true };
   }

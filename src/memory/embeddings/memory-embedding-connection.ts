@@ -19,8 +19,9 @@ export type MemoryEmbeddingConnection =
       modelId: string;
       why: string;
       /**
-       * The model is not running and this machine is short of memory, so
-       * it is not started (ATO-379). `why` is the operator's one-line note.
+       * The model is not running (or Core's module is idle) and this
+       * machine is short of memory, so it is not started (ATO-379). `why`
+       * is the operator's one-line note.
        */
       lowMemory?: true;
     }
@@ -45,8 +46,10 @@ export type MemoryEmbeddingConnection =
  * Atomic Core starts an idle embedding module on the first embed, so a
  * module that is on but not loaded is attached only when this machine has
  * the memory for it (`checkEmbeddingModelMemory`); otherwise memory stays
- * on keyword search and `why` carries the note. A loaded module is
- * attached as it is: its memory is already spent.
+ * on keyword search and `why` carries the note. A model that does not
+ * answer gets the same note (`lowMemory`) when memory is short, since
+ * starting it would be refused. A loaded module is attached as it is: its
+ * memory is already spent.
  */
 export async function connectMemoryEmbeddings(
   config: Pick<AtomicAgentConfig, "paths" | "memory" | "localModels">,
@@ -75,11 +78,16 @@ export async function connectMemoryEmbeddings(
         why: `Atomic Core status failed: ${err instanceof Error ? err.message : String(err)}`,
       }))
     : await checkLlamaServer({ url, retries: 0, backoffMs: 0, timeoutMs: 2000 }).catch(() => ({ reachable: false }));
+  const checkMemory = deps.checkMemory ?? checkEmbeddingModelMemory;
   if (!probe.reachable) {
+    // Not running, and short of memory a start would be refused too: say
+    // that rather than "start it" (`memory reindex`, the boot line).
+    const memory = await checkMemory(def.fileSizeGb);
+    if (!memory.ok) return { state: "unreachable", modelId: def.id, why: memory.note, lowMemory: true };
     return { state: "unreachable", modelId: def.id, why: probe.why ?? `embedding daemon at ${url} is unreachable` };
   }
   if (viaCore && probe.loaded === false) {
-    const memory = await (deps.checkMemory ?? checkEmbeddingModelMemory)(def.fileSizeGb);
+    const memory = await checkMemory(def.fileSizeGb);
     if (!memory.ok) return { state: "unreachable", modelId: def.id, why: memory.note, lowMemory: true };
   }
   return {

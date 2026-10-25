@@ -230,7 +230,7 @@ describe("embedding backfill wiring", () => {
 
 /** ATO-379: a machine short of memory does not start the memory model. */
 describe("embeddings on a machine short of memory", () => {
-  const NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~300 MB).";
+  const NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~1 GB free).";
   const idleModule: CoreEmbeddingStatus = {
     state: "idle", enabled: true, model_path: "/m.gguf", model_id: "embeddinggemma-2", engine: null, pid: null, port: null,
     dims: null, modalities: ["text"], restarts: 0, error: null, since: 0,

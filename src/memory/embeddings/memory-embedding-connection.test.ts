@@ -7,7 +7,7 @@ import { connectMemoryEmbeddings } from "./memory-embedding-connection.js";
 
 type Config = Pick<AtomicAgentConfig, "paths" | "memory" | "localModels">;
 
-const NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~300 MB).";
+const NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~1 GB free).";
 const low: EmbeddingMemoryCheck = { ok: false, reason: "available", note: NOTE, detail: "0.4 GB available, needs 1.0 GB" };
 
 function config(modelId: string, enabled = true): Config {
@@ -59,6 +59,25 @@ describe("connectMemoryEmbeddings on a machine short of memory", () => {
     const connection = await connectMemoryEmbeddings(config("nomic-embed-text-v1.5"), { checkMemory });
     expect(connection.state).toBe("reachable");
     expect(checkMemory).not.toHaveBeenCalled();
+  });
+
+  it("gives the note, not a start hint, for a llama-server model that is down while memory is short", async () => {
+    vi.spyOn(health, "checkLlamaServer").mockResolvedValue({ reachable: false, status: null, kind: "unknown", error: "ECONNREFUSED", latencyMs: 1 });
+    const checkMemory = vi.fn(async (_fileSizeGb: number) => low);
+    await expect(connectMemoryEmbeddings(config("nomic-embed-text-v1.5"), { checkMemory })).resolves.toEqual({
+      state: "unreachable", modelId: "nomic-embed-text-v1.5", why: NOTE, lowMemory: true,
+    });
+    // The same model down with enough memory keeps the plain reason.
+    await expect(connectMemoryEmbeddings(config("nomic-embed-text-v1.5"), { checkMemory: async () => ({ ok: true }) })).resolves.toEqual({
+      state: "unreachable", modelId: "nomic-embed-text-v1.5", why: "embedding daemon at http://127.0.0.1:1 is unreachable",
+    });
+  });
+
+  it("gives the note for a Core module that is not running while memory is short", async () => {
+    await expect(connectMemoryEmbeddings(config("embeddinggemma-2"), {
+      probeCore: async () => ({ reachable: false, why: "EmbeddingGemma 2 is not running in Atomic Core" }),
+      checkMemory: async () => low,
+    })).resolves.toMatchObject({ state: "unreachable", why: NOTE, lowMemory: true });
   });
 
   it("does not check when embeddings are off", async () => {

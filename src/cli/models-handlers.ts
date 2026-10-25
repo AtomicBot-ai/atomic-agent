@@ -658,10 +658,14 @@ export async function runLocalModelsStart(
     }
   }
   // A fresh embedding start waits for memory (ATO-379): short of it, the
-  // chat model starts alone and memory search stays on keywords.
+  // chat model starts alone and memory search stays on keywords. The chat
+  // model starts in this same call (startDaemon refuses one already
+  // running), so the memory it is about to take is counted.
   let embLowMemory: EmbeddingMemoryCheck | null = null;
   if (embRequested && embReady && embRunningPid === null) {
-    const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(embCfg.modelId as never).fileSizeGb);
+    const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(embCfg.modelId as never).fileSizeGb, {
+      chatModelGb: m.fileSizeGb,
+    });
     if (!memory.ok) embLowMemory = memory;
   }
 

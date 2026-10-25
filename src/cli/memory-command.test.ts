@@ -10,7 +10,9 @@ import {
   type EmbeddingClient,
 } from "../memory/embeddings/embedding-client.js";
 import { EmbeddingStore } from "../memory/embeddings/embedding-store.js";
-import type { MemoryEmbeddingConnection } from "../memory/embeddings/memory-embedding-connection.js";
+import { connectMemoryEmbeddings, type MemoryEmbeddingConnection } from "../memory/embeddings/memory-embedding-connection.js";
+import type { AtomicAgentConfig } from "../config/config-schema.js";
+import * as health from "../llm/llama-server-health.js";
 
 import { handleReindex, memoryCommand } from "./memory-command.js";
 
@@ -175,10 +177,29 @@ describe("memoryCommand", () => {
     });
 
     it("exits 1 with the low-memory note alone, no start hint, when the machine is short of memory (ATO-379)", async () => {
-      const note = "Memory search uses keywords: not enough free memory for the memory model (needs ~300 MB).";
+      const note = "Memory search uses keywords: not enough free memory for the memory model (needs ~1 GB free).";
       const code = await handleReindex([], {
         ...noSignal,
         connect: async () => ({ state: "unreachable", modelId: "m", why: note, lowMemory: true }),
+      });
+      expect(code).toBe(1);
+      expect(stderr()).toContain(note);
+      expect(stderr()).not.toMatch(/start-embedding/);
+    });
+
+    it("on the llama-server engine, a model that is down on a low-memory machine gets the note, not 'start it with' (ATO-379)", async () => {
+      const note = "Memory search uses keywords: not enough free memory for the memory model (needs ~1 GB free).";
+      vi.spyOn(health, "checkLlamaServer").mockResolvedValue({ reachable: false, status: null, kind: "unknown", error: "ECONNREFUSED", latencyMs: 1 });
+      const llamaServerConfig = {
+        paths: { localModelsDataDir: "/data" },
+        memory: { embeddings: { enabled: true } },
+        localModels: { managed: { engine: "llama-server" }, embeddings: { enabled: true, modelId: "nomic-embed-text-v1.5", url: "http://127.0.0.1:1" } },
+      } as unknown as Pick<AtomicAgentConfig, "paths" | "memory" | "localModels">;
+      const code = await handleReindex([], {
+        ...noSignal,
+        connect: () => connectMemoryEmbeddings(llamaServerConfig, {
+          checkMemory: async () => ({ ok: false, reason: "available", note, detail: "0.4 GB available, needs 1.0 GB" }),
+        }),
       });
       expect(code).toBe(1);
       expect(stderr()).toContain(note);
