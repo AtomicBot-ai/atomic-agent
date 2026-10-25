@@ -310,6 +310,10 @@ export async function createAgentRuntime(
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
+    // Only the terminal UI has an `/integrations` screen that saves an Exa
+    // key into this process; every other entry point keeps the desktop /
+    // `.env` advice (ATO-345).
+    ...(options.analyticsSurface === "tui" ? { webSearchKeyHelp: "integrations-hub" as const } : {}),
   });
 
   // Vision provider wiring is deferred until after `profileManager` is

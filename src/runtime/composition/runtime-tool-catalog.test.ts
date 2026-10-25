@@ -105,6 +105,25 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       config.git.remoteSync = true; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(true);
       expect(registry.list().slice(0, 2).map(tool => tool.name)).toEqual(["finish", "reply"]);
       expect(registry.has("tool.view")).toBe(true);
+      // No surface named: the web-search error keeps the desktop / .env advice.
+      expect(wired.webSearchKeyHelp).toBeUndefined();
+    } finally { shellJobs.endAll(); notesStore.close(); profileStore.close(); }
+  });
+
+  it("hands the terminal UI's Exa key advice to the OS tools (ATO-345)", () => {
+    const config = getConfig(); config.browser.enabled = false; config.web.search.persistCache = false;
+    const profileStore = new ProfileStore({ dbFile: join(directory, "profile.sqlite") });
+    const notesStore = new MemoryStore({ dbFile: join(directory, "notes.sqlite"), maxEntries: 20 });
+    const shellJobs = new osTools.ShellJobRegistry({ jobMaxMs: 1000, maxJobs: 2 });
+    try {
+      const dangerous = { approvals: new ApprovalGate({ emit: () => {}, level: 5 }), approvalRequired: true };
+      const registration = vi.spyOn(osTools, "registerOsTools");
+      registerRuntimeCoreTools({ config, toolRegistry: createRuntimeToolRegistry(config, backend, dangerous), dangerous, logger,
+        sessionStore: { listRecentWorkingDirs: () => [], listSummaryPage: () => [], listChatLines: () => [] },
+        resolveOriginalRequest: () => undefined, declaredInputs: new osTools.DeclaredInputsRegistry(), shellJobs,
+        skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore,
+        webSearchKeyHelp: "integrations-hub" });
+      expect(registration.mock.calls[0]?.[1].webSearchKeyHelp).toBe("integrations-hub");
     } finally { shellJobs.endAll(); notesStore.close(); profileStore.close(); }
   });
 
