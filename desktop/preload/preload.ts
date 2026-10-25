@@ -259,6 +259,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-859: Telegram pairing on the running agent; a start's answer carries the one-time code for the screen only. */
   telegramPairing: (op: "start" | "status" | "cancel", replaceOwner?: boolean) =>
     ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
+  // ATO-758: the live channel's state and another poller of the same bot.
+  telegramChannel: () => ipcRenderer.invoke("agent:telegramChannel"),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>
