@@ -14,7 +14,7 @@ import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
-import { homedir, tmpdir, totalmem } from "node:os";
+import { freemem, homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
@@ -2963,11 +2963,13 @@ function wireIpc(client: AgentClient): void {
     /* ATO-763: the report waits a moment for the agent's last stderr lines
        (the pipe can close after the exit), then sends only their category. */
     const exitedAt = Date.now();
+    // ATO-424: the machine's free memory at the exit itself, not 300 ms later.
+    const exitFreeMem = freemem();
     setTimeout(() => {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS));
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
