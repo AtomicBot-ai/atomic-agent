@@ -2696,7 +2696,7 @@ function wireIpc(client: AgentClient): void {
     if (r.via !== "launch") send("cli:daemon", r);
     // A Core that would not start at launch is told too: the window offers the way out, not a log line.
     noteEngine(r, { via: r.via });
-    if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
+    if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null, r);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
@@ -9622,7 +9622,7 @@ async function startLocalDaemonAtBoot(): Promise<void> {
        waiting out the load. It says how it went through onBackgroundBringUp. */
     const bringUpAt = Date.now();
     const up = await bringUpAtLaunch(target.modelId);
-    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt);
+    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt, up);
     backendUp = up.daemon === "started" || up.daemon === "untouched" || up.daemon === "restarted";
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);

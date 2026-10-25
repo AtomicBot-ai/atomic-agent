@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { backendInstalled, localDaemonRunning, managedEngineNow, modelsStop, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
 import type { AgentLogLevel } from "./agent-output.js";
+import { localBackendCrashed, readServerFaultWith } from "./analytics/index.js";
 import {
   bringUpAtLaunch,
   bringUpInFlight,
@@ -23,6 +24,7 @@ import {
 } from "./daemon-supervisor.js";
 import { isLoopbackOnPort, managedDataDir } from "./local-llama-key.js";
 import { resolveRunMode, type RunModeConfig, type RunModeProvider } from "./run-mode.js";
+import { describeFaultIn } from "./server-fault-line.js";
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
 
 /**
@@ -136,12 +138,8 @@ function describeFault(): string | null {
   try {
     const cfg = readConfig();
     const dir = managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null);
-    const raw = readFileSync(join(dir, "llama-server.log"), "utf8");
-    const lines = raw.slice(-16_384).split("\n").map((l) => l.trim()).filter(Boolean).slice(-80);
-    const hit = [...lines].reverse().find((l) =>
-      /out of memory|failed to (load|allocate|initiali[sz]e)|error loading model|couldn'?t bind|address already in use|abort|segmentation fault/i.test(l),
-    );
-    return hit ? (hit.length > 160 ? `${hit.slice(0, 157)}…` : hit) : null;
+    // ATO-278: this run's lines only (after the last launch marker), never an earlier run's fault.
+    return describeFaultIn(readFileSync(join(dir, "llama-server.log"), "utf8"));
   } catch {
     return null;
   }
@@ -275,7 +273,11 @@ const deps: DaemonSupervisorDeps = {
   notify: (n) => host.notify(n),
   say: (line) => host.say(line),
   describeFault,
+  // ATO-278: a mid-session death, to analytics as a code (analytics/setup localBackendCrashed); the log line stays here.
+  died: ({ fault, upMs }) => localBackendCrashed(readConfig()?.localModels?.managed?.modelId, fault, upMs),
 };
+// ATO-278: a failed start's `reason` reads the same log line (analytics/setup localBackendStarted).
+readServerFaultWith(describeFault);
 
 /** The one supervisor the app runs. */
 export const daemonWatch = new DaemonSupervisor(deps);

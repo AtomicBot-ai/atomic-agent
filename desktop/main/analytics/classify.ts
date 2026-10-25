@@ -4,6 +4,7 @@
  * pick an enum and never leaves this file.
  */
 
+import { faultLineIn } from "../server-fault-line.js";
 import { PROVIDER_PRESETS, SUPERVISOR_KINDS } from "./catalog.js";
 
 /** Provider preset id, or `custom` for anything a user named themselves. */
@@ -124,6 +125,30 @@ export function engineFault(line: unknown): "oom" | "port_in_use" | "load_failed
   if (/error loading model|failed to (load|initiali[sz]e)/i.test(line)) return "load_failed";
   if (/segmentation fault|abort|SIGSEGV|SIGABRT/i.test(line)) return "crash";
   return "unknown";
+}
+
+/**
+ * ATO-278: why the local model server did not start, or died, as a code
+ * (catalog-values BACKEND_FAIL_REASONS). `error` is the start's own error
+ * text, `stderr` the start's stderr tail, `faultLine` the line daemon-watch
+ * describeFault picked from this run's server log. All can hold paths and
+ * model names: they are read here to pick the code and never leave this file.
+ * Only the line that names a failure is classified (server-fault-line
+ * faultLineIn), never a whole stderr: a loaded `ggml-*.dll` note or a
+ * backend check's "timeout" is not why the start failed.
+ */
+export function backendFailReason(error: unknown, stderr: unknown, faultLine: unknown):
+  "oom" | "port_in_use" | "load_failed" | "missing_lib" | "crash" | "timeout" | "exited_after_ready" | "other" {
+  const text = typeof error === "string" ? error.trim() : "";
+  // agent-cli modelsStart: the server came up, then stopped answering while the start waited on it.
+  if (/stopped answering while it was starting/i.test(text)) return "exited_after_ready";
+  // agent-cli cli(): the app's own time limit on `models start` (execFile killed it) — its message, nothing else.
+  if (/^the agent did not answer\b/i.test(text)) return "timeout";
+  for (const line of [faultLineIn(text), faultLineIn(stderr), faultLine]) {
+    const fault = engineFault(line);
+    if (fault && fault !== "unknown") return fault;
+  }
+  return "other";
 }
 
 /**
