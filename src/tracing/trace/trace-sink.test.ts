@@ -1,6 +1,7 @@
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import {
   chmodSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
@@ -385,5 +386,53 @@ describe("createNdjsonTraceSink", () => {
     expect(
       readFileSync(traceFilePath(dir, "s-big"), "utf8").includes('"seq":100'),
     ).toBe(true);
+  });
+});
+
+// Traces carry prompts and tool output verbatim, so they are kept owner
+// only like `.env` (ATO-760). Windows has no POSIX modes to check.
+const posix = process.platform !== "win32";
+const modeOf = (path: string): number => statSync(path).mode & 0o777;
+
+describe.skipIf(!posix)("trace file permissions", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "atomic-trace-mode-"));
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("creates the trace directory 0700 and the trace file 0600", () => {
+    const dir = join(root, "traces");
+    const sink = createNdjsonTraceSink({ dir, maxBytesPerSession: 1024 });
+    sink(baseEvent("s-mode", 0, 1));
+    expect(modeOf(dir)).toBe(0o700);
+    expect(modeOf(traceFilePath(dir, "s-mode"))).toBe(0o600);
+  });
+
+  it("tightens a directory and a trace an older build left readable", () => {
+    const dir = join(root, "traces");
+    mkdirSync(dir, { mode: 0o755 });
+    chmodSync(dir, 0o755);
+    const path = traceFilePath(dir, "s-old");
+    writeFileSync(path, `${JSON.stringify(baseEvent("s-old", 0, 1))}\n`);
+    chmodSync(path, 0o644);
+    const sink = createNdjsonTraceSink({ dir, maxBytesPerSession: 1024 });
+    sink(baseEvent("s-old", 1, 2));
+    expect(modeOf(dir)).toBe(0o700);
+    expect(modeOf(path)).toBe(0o600);
+    expect(readLines(dir, "s-old")).toHaveLength(2);
+  });
+
+  it("keeps the file 0600 after a trim rewrites it", () => {
+    const dir = join(root, "traces");
+    const sink = createNdjsonTraceSink({ dir, maxBytesPerSession: 600 });
+    for (let i = 0; i < 20; i++) sink(paddedEvent("s-trim", i, 40));
+    const path = traceFilePath(dir, "s-trim");
+    expect(readLines(dir, "s-trim").some((l) => l.type === "trace_truncated")).toBe(true);
+    expect(modeOf(path)).toBe(0o600);
   });
 });
