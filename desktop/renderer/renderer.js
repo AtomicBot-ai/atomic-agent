@@ -3781,7 +3781,7 @@ function composer() {
 
        It hangs off `.composerwrap` now, which is the same anchor visually
        (the composer is its last child) and does not clip. */
-    + (S.slash ? slashPopover() : '')
+    + (slashShown() ? slashPopover() : '')
     // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
     + attMenuHTML()
     + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
@@ -4705,6 +4705,13 @@ function paletteHTML() {
 }
 
 /* ---------------- slash completion ---------------- */
+/** ATO-923: the command list only while nothing is over the composer. The
+    palette, a menu, the model pickers, Settings or a question (S.alert)
+    would otherwise have it hanging over them; it comes back with the
+    render that closes them, the typed `/` still there. */
+function slashShown() {
+  return !!S.slash && !S.overlay && !SEL.open && !S.settings && !S.alert;
+}
 function slashMatches() {
   // The command word only: with arguments typed (`/runmode status`) the list
   // keeps showing that command and its hint instead of "no matching command".
@@ -8422,6 +8429,7 @@ function refreshSlash() {
      immediately before the composer, inside the wrapper that does not clip. */
   const wrap = $('.composerwrap'); if (!wrap) return;
   const old = wrap.querySelector('.slash'); if (old) old.remove();
+  if (!slashShown()) { refreshSend(); return; }
   const composer = wrap.querySelector('#composer');
   if (composer) composer.insertAdjacentHTML('beforebegin', slashPopover());
   else wrap.insertAdjacentHTML('beforeend', slashPopover());
@@ -8653,7 +8661,7 @@ document.addEventListener('keydown', (e) => {
      could be sent with the keyboard at all. It falls through to submit(), as
      does a line that matches no command (submit says "unknown command"). */
   const slashArgs = /^\/\S+\s+\S/.test(S.draft);
-  if (S.slash && e.target.id === 'entry' && !(k === 'Enter' && !e.shiftKey && (slashArgs || !slashMatches().length))) {
+  if (slashShown() && e.target.id === 'entry' && !(k === 'Enter' && !e.shiftKey && (slashArgs || !slashMatches().length))) {
     const m = slashMatches();
     if (k === 'ArrowDown') { e.preventDefault(); S.slashCur = Math.min(S.slashCur + 1, m.length - 1); refreshSlash(); return; }
     if (k === 'ArrowUp')   { e.preventDefault(); S.slashCur = Math.max(S.slashCur - 1, 0); refreshSlash(); return; }
