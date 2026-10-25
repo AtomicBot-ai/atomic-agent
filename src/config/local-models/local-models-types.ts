@@ -313,8 +313,8 @@ export interface UserLocalModelsConfig {
    * `/completion` request to a llama.cpp-family engine (Atomic Core, the
    * managed llama-server, an External llama-server). It penalises a
    * token that would extend a sequence already in the last 256 tokens
-   * of prompt plus reply, which targets the verbatim loops small models
-   * fall into. Ollama, cloud providers and the vision describe call
+   * of prompt plus reply, which targets the verbatim prose loops small
+   * models fall into. Ollama, cloud providers and the vision describe call
    * never see it. Default `false`, unversioned and additive:
    * an older file has no field and reads as off.
    */

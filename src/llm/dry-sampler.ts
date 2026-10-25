@@ -4,9 +4,11 @@
  *
  * DRY penalises a token that would extend a sequence already present in
  * the last `DRY_PENALTY_LAST_N` tokens, growing the penalty with the
- * length of the repeat. That is the shape of the verbatim loops small
- * local models fall into (the same tool call or sentence over and over),
- * which `repeat_penalty` alone, a per-token penalty, does not stop.
+ * length of the repeat. That targets the verbatim prose loops small local
+ * models fall into (the same sentence over and over), which
+ * `repeat_penalty` alone, a per-token penalty, does not stop. llama.cpp's
+ * default sequence breakers (newline, `:`, `"`, `*`) reset the match, so
+ * a repeated JSON tool call is only lightly penalised.
  *
  * Only `LlamaServerClient` sends these fields, on every `/completion`
  * request, so they reach llama.cpp engines only: Atomic Core's
