@@ -21,6 +21,14 @@ vi.mock("../../local-llm/index.js", async () => {
   };
 });
 
+// The machine's real memory never decides whether the embedding model starts here (ATO-379).
+vi.mock("../../memory/embeddings/embedding-memory-check.js", async () => ({
+  ...(await vi.importActual<typeof import("../../memory/embeddings/embedding-memory-check.js")>(
+    "../../memory/embeddings/embedding-memory-check.js",
+  )),
+  checkEmbeddingModelMemory: vi.fn(async () => ({ ok: true })),
+}));
+
 import { getConfig, resetConfigCache } from "../../config/index.js";
 import {
   getUserConfigPath,

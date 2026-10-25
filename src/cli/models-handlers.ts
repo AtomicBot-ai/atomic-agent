@@ -74,6 +74,7 @@ import { activeCoreVersion, CORE_VERSION } from "../local-llm/core/core-state.js
 import { selectManagedEngine } from "../local-llm/engine-selection.js";
 import { persistManagedEngine } from "./models-engine.js";
 import { reportLocalEngineFailed } from "../analytics/index.js";
+import { checkEmbeddingModelMemory, type EmbeddingMemoryCheck } from "../memory/embeddings/embedding-memory-check.js";
 import { getAppVersion } from "../version.js";
 
 /**
@@ -656,6 +657,13 @@ export async function runLocalModelsStart(
       if (emb.running) embRunningPid = emb.pid;
     }
   }
+  // A fresh embedding start waits for memory (ATO-379): short of it, the
+  // chat model starts alone and memory search stays on keywords.
+  let embLowMemory: EmbeddingMemoryCheck | null = null;
+  if (embRequested && embReady && embRunningPid === null) {
+    const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(embCfg.modelId as never).fileSizeGb);
+    if (!memory.ok) embLowMemory = memory;
+  }
 
   // Resolve the GPU preference once so both daemons land on the same
   // device and we can name the chosen device in the start output. A
@@ -732,7 +740,7 @@ export async function runLocalModelsStart(
         // must not hand multi-GPU split args to the CPU backend.
         ...(multiGpu && dev !== "cpu" ? { tensorSplit } : {}),
       },
-      ...(embRequested && embReady && embRunningPid === null
+      ...(embRequested && embReady && embRunningPid === null && embLowMemory === null
         ? {
             embedding: {
               engine: cfg.localModels.managed.engine,
@@ -801,6 +809,8 @@ export async function runLocalModelsStart(
       process.stdout.write(
         `embedding: already running pid ${embRunningPid} on port ${embCfg.port} (${embCfg.modelId})\n`,
       );
+    } else if (embLowMemory && !embLowMemory.ok) {
+      process.stdout.write(`embedding: not started (${embLowMemory.detail}). ${embLowMemory.note}\n`);
     } else if ("pid" in result.embedding) {
       process.stdout.write(
         `embedding: started pid ${result.embedding.pid}, healthy on port ${result.embedding.port ?? embCfg.port} (${embCfg.modelId})\n`,
@@ -837,9 +847,10 @@ export async function runLocalModelsStart(
  * it in-process (LocalModelsOrchestrator.ensureEmbeddingPaired); this is
  * the same pairing for a host that drives the CLI.
  *
- * Exit 0 when the daemon is up after it (started now, or already running)
- * or the config does not ask for one (disabled, no model, not downloaded),
- * each said in one `embedding:` line on stdout; exit 1 when the start
+ * Exit 0 when the daemon is up after it (started now, or already running),
+ * the config does not ask for one (disabled, no model, not downloaded) or
+ * the machine is short of memory for it (ATO-379), each said in one
+ * `embedding:` line on stdout; exit 1 when the start
  * failed. Never touches the chat daemon or the config.
  */
 export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promise<number> {
@@ -871,6 +882,13 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     return 0;
   }
   const embDef = getEmbeddingModelDef(modelId);
+  // Short of memory the model is not started (ATO-379). Not a failure: the
+  // host keeps going and memory search stays on keywords.
+  const memory = await checkEmbeddingModelMemory(embDef.fileSizeGb);
+  if (!memory.ok) {
+    process.stdout.write(`embedding: not started (${memory.detail}). ${memory.note}\n`);
+    return 0;
+  }
   if (embDef.requiresCoreEmbeddingModule && cfg.localModels.managed.engine !== "atomic-core") {
     process.stderr.write(`embedding: failed to start (${coreEmbeddingEngineRequired(embDef.name)})\n`);
     return 1;

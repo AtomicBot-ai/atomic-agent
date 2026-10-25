@@ -2,6 +2,7 @@ import { selectManagedEngine } from "../../local-llm/engine-selection.js";
 import { retireIdleCore } from "../../local-llm/core/core-sessions.js";
 import { CORE_FALLBACK_LINE, CoreUnavailableError, shouldFallBackFromCore, type CoreFailureInfo } from "../../local-llm/core/core-errors.js";
 import { ModelOperationQueue } from "./model-operation-queue.js";
+import { checkEmbeddingModelMemory, type EmbeddingMemoryCheck } from "../../memory/embeddings/embedding-memory-check.js";
 import { totalmem } from "node:os";
 
 import { getConfig, resetConfigCache } from "../../config/index.js";
@@ -235,6 +236,8 @@ export class LocalModelsOrchestrator {
    * embedding daemon is still ours to tear down at exit.
    */
   private embeddingKeptForCloud = false;
+  /** The low-memory note was shown: once per TUI session (ATO-379). */
+  private lowMemoryEmbeddingNoted = false;
   /**
    * True while a daemon the TUI owns is running; used by `shutdown()`.
    * Taking ownership — a start, or adopting a running daemon, by any
@@ -2074,6 +2077,18 @@ export class LocalModelsOrchestrator {
         clearance,
       );
       opts?.signal?.throwIfAborted();
+      // A fresh embedding start waits for memory (ATO-379); one adopted
+      // above is already running and stays.
+      let embStart = embClear.options;
+      let embLowMemory: EmbeddingMemoryCheck | null = null;
+      if (embStart) {
+        const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(embStart.modelId).fileSizeGb);
+        if (!memory.ok) {
+          embLowMemory = memory;
+          embStart = undefined;
+        }
+      }
+      opts?.signal?.throwIfAborted();
       const result = await this.trackCoreStart(opts?.signal, signal => startChatAndEmbeddingDaemons({
         chat: {
           engine: cfg.localModels.managed.engine,
@@ -2092,8 +2107,8 @@ export class LocalModelsOrchestrator {
           ...(device ? { device } : {}),
           ...(multiGpu ? { tensorSplit } : {}),
         },
-        embedding: embClear.options
-          ? { ...embClear.options, signal, engine: cfg.localModels.managed.engine, ...(device ? { device } : {}) }
+        embedding: embStart
+          ? { ...embStart, signal, engine: cfg.localModels.managed.engine, ...(device ? { device } : {}) }
           : undefined,
       }));
       this.daemonSupervised = true;
@@ -2122,7 +2137,8 @@ export class LocalModelsOrchestrator {
         embClear.adoptedPid !== null
           ? { pid: embClear.adoptedPid }
           : result.embedding,
-        embClear.adoptedPid !== null ? embedding : embClear.options,
+        embClear.adoptedPid !== null ? embedding : embStart,
+        embLowMemory,
       );
       // Refresh the tray / prompt model label for EVERY start path
       // (pull auto-start, `s`, autoStart, setActive). The health poller
@@ -2541,6 +2557,18 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * The embedding model was not started for lack of memory: memory search
+   * stays on keywords. Said once per TUI session, not at every start or
+   * pairing, and never persisted: the operator's hybrid-recall opt-in
+   * stays, so the model starts once memory allows.
+   */
+  private noteLowMemoryEmbedding(check: Extract<EmbeddingMemoryCheck, { ok: false }>): void {
+    if (this.lowMemoryEmbeddingNoted) return;
+    this.lowMemoryEmbeddingNoted = true;
+    this.bus.emit({ type: "runtime_info", line: `local-llm: ${check.note}` });
+  }
+
+  /**
    * Surface the embedding-side outcome to the runtime feed without
    * promoting it to a `daemon_error_set` — the chat daemon already
    * succeeded, so the panel-level error slot stays clear. Memory-v2
@@ -2556,7 +2584,12 @@ export class LocalModelsOrchestrator {
   private reportEmbeddingStartOutcome(
     embedding: { pid: number } | { error: string } | { skipped: true },
     requested: EmbeddingDaemonStartOptions | undefined,
+    lowMemory: EmbeddingMemoryCheck | null = null,
   ): void {
+    if (lowMemory && !lowMemory.ok) {
+      this.noteLowMemoryEmbedding(lowMemory);
+      return;
+    }
     if ("pid" in embedding) {
       const id = requested?.modelId ?? "embedding";
       persistMemoryEmbeddingsEnabled(true);
@@ -2656,6 +2689,16 @@ export class LocalModelsOrchestrator {
     }
 
     if (embStatus.running && !opts?.hotSwap) return;
+
+    // A fresh start waits for memory (ATO-379). A hot swap replaces a
+    // model that already holds its memory, so it is not checked.
+    if (!embStatus.running) {
+      const memory = await checkEmbeddingModelMemory(getEmbeddingModelDef(desired.modelId).fileSizeGb);
+      if (!memory.ok) {
+        this.noteLowMemoryEmbedding(memory);
+        return;
+      }
+    }
 
     if (embStatus.running && opts?.hotSwap) {
       this.bus.emit({

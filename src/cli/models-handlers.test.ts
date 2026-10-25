@@ -22,6 +22,14 @@ vi.mock("../local-llm/index.js", async () => {
   };
 });
 
+// The machine's real memory never decides these tests (ATO-379).
+vi.mock("../memory/embeddings/embedding-memory-check.js", async () => ({
+  ...(await vi.importActual<typeof import("../memory/embeddings/embedding-memory-check.js")>(
+    "../memory/embeddings/embedding-memory-check.js",
+  )),
+  checkEmbeddingModelMemory: vi.fn(async () => ({ ok: true })),
+}));
+
 vi.mock("../analytics/index.js", async () => ({
   ...(await vi.importActual<typeof import("../analytics/index.js")>("../analytics/index.js")),
   reportLocalEngineFailed: vi.fn(async () => {}),
@@ -32,6 +40,7 @@ import {
   writeUserConfigFileSync,
 } from "../config/config-file.js";
 import { reportLocalEngineFailed } from "../analytics/index.js";
+import { checkEmbeddingModelMemory } from "../memory/embeddings/embedding-memory-check.js";
 import { CORE_FALLBACK_LINE } from "../local-llm/core/core-errors.js";
 import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 import {
@@ -59,6 +68,15 @@ import {
   runLocalModelsStop,
   runLocalModelsUpdate,
 } from "./models-handlers.js";
+
+const LOW_MEMORY_NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~100 MB).";
+const lowMemory = () =>
+  vi.mocked(checkEmbeddingModelMemory).mockResolvedValue({
+    ok: false,
+    reason: "available",
+    note: LOW_MEMORY_NOTE,
+    detail: "0.4 GB available, needs 1.0 GB",
+  });
 
 const healthError = () =>
   new DaemonHealthError(
@@ -101,6 +119,7 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     vi.mocked(localLlm.fallBackToCpuBackend)
       .mockReset()
       .mockResolvedValue({ tag: "turboquant-win" });
+    vi.mocked(checkEmbeddingModelMemory).mockReset().mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -174,6 +193,43 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     expect(stderrChunks.join("")).toContain("model qwen not downloaded");
   });
 
+  it("starts the chat model alone on a machine short of memory, with the note (ATO-379)", async () => {
+    prepareManagedWindowsInstall({ embeddings: true });
+    vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReturnValue(true);
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockResolvedValue({
+      running: false, pid: null, port: 19092, healthy: false, loading: false,
+    });
+    lowMemory();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValue({
+      chat: { pid: 777 },
+      embedding: { skipped: true },
+    });
+
+    await expect(runLocalModelsStart()).resolves.toBe(0);
+
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].embedding).toBeUndefined();
+    const stdout = vi.mocked(process.stdout.write).mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(stdout).toMatch(/^embedding: not started \(0\.4 GB available, needs 1\.0 GB\)\. Memory search uses keywords/m);
+  });
+
+  it("starts both as before when there is enough memory", async () => {
+    prepareManagedWindowsInstall({ embeddings: true });
+    vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReturnValue(true);
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockResolvedValue({
+      running: false, pid: null, port: 19092, healthy: false, loading: false,
+    });
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValue({
+      chat: { pid: 777 },
+      embedding: { pid: 778 },
+    });
+
+    await expect(runLocalModelsStart()).resolves.toBe(0);
+
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].embedding).toMatchObject({
+      modelId: "nomic-embed-text-v1.5",
+    });
+  });
+
   it("surfaces a failed CPU download and exits non-zero", async () => {
     prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(
@@ -194,7 +250,7 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
    * `shouldFallBackToCpuBackend` sees an eligible machine: win32,
    * variant `auto`, a GPU asset recorded in backend-version.json.
    */
-  function prepareManagedWindowsInstall(): string {
+  function prepareManagedWindowsInstall(opts: { embeddings?: boolean } = {}): string {
     writeUserConfigFileSync(getUserConfigPath(stateDir), {
       ...USER_CONFIG_DEFAULTS,
       localModels: {
@@ -206,6 +262,9 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
           engine: "llama-server",
           modelId: "qwen-3.5-4b",
         },
+        ...(opts.embeddings
+          ? { embeddings: { ...USER_CONFIG_DEFAULTS.localModels.embeddings, enabled: true, modelId: "nomic-embed-text-v1.5" } }
+          : {}),
       },
     });
     resetConfigCache();
@@ -373,6 +432,7 @@ describe("runLocalModelsStartEmbedding", () => {
       running: false, pid: null, port: 19092, healthy: false, loading: false,
     });
     vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReset().mockReturnValue(true);
+    vi.mocked(checkEmbeddingModelMemory).mockReset().mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -421,6 +481,27 @@ describe("runLocalModelsStartEmbedding", () => {
     await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
     expect(stdoutChunks.join("")).toMatch(/^embedding: disabled/m);
     expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+  });
+
+  it("starts nothing on a machine short of memory and says why, exit 0 (ATO-379)", async () => {
+    writeConfig(true);
+    lowMemory();
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+    expect(stdoutChunks.join("")).toBe(
+      `embedding: not started (0.4 GB available, needs 1.0 GB). ${LOW_MEMORY_NOTE}\n`,
+    );
+  });
+
+  it("does not check memory when the model already runs", async () => {
+    writeConfig(true);
+    lowMemory();
+    vi.mocked(localLlm.getEmbeddingDaemonStatus).mockResolvedValue({
+      running: true, pid: 99, port: 19092, healthy: true, loading: false,
+    });
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(checkEmbeddingModelMemory).not.toHaveBeenCalled();
+    expect(stdoutChunks.join("")).toMatch(/^embedding: already running pid 99/m);
   });
 
   it("exits 1 when the start fails", async () => {

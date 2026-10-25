@@ -84,6 +84,9 @@ export async function createRuntimeMemoryStores(args: {
     // Construction errors here are pure programmer error
     // (constructor validation): log + degrade, never throw.
     process.stderr.write(`memory-v2 phase 1B: failed to wire embedding client: ${attached.failure.message}\n`);
+  } else if (attached.failure?.lowMemory) {
+    // Not started for lack of memory (ATO-379): the note says it all, once per boot.
+    process.stderr.write(`${attached.failure.message}\n`);
   } else if (attached.failure?.kind === "unreachable") {
     process.stderr.write(
       `memory-v2 phase 1B: ${attached.failure.message}; ` +
@@ -148,8 +151,12 @@ export interface AttachedMemoryEmbeddings {
   modelId: string | null;
   client: EmbeddingClient | null;
   backfill: EmbeddingBackfillHandle | null;
-  /** `wire`: the client could not be built; `unreachable`: the model did not answer the probe. */
-  failure: { kind: "wire" | "unreachable"; message: string } | null;
+  /**
+   * `wire`: the client could not be built; `unreachable`: the model did
+   * not answer the probe, or (`lowMemory`) was not started because this
+   * machine is short of memory, with the operator's note as `message`.
+   */
+  failure: { kind: "wire" | "unreachable"; message: string; lowMemory?: true } | null;
 }
 
 /**
@@ -210,7 +217,7 @@ export async function attachConfiguredEmbeddings(args: {
     }
   } else if (connection.state === "unreachable") {
     health = "unreachable";
-    failure = { kind: "unreachable", message: connection.why };
+    failure = { kind: "unreachable", message: connection.why, ...(connection.lowMemory ? { lowMemory: true as const } : {}) };
   }
   const modelId = connection.state === "disabled" ? null : connection.modelId;
   metrics.recordMemoryEmbeddingsDaemonHealth({ outcome: health, model: modelId });

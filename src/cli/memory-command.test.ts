@@ -174,6 +174,17 @@ describe("memoryCommand", () => {
       expect(stderr()).toMatch(/is unreachable; start it with: atomic-agent models start-embedding/);
     });
 
+    it("exits 1 with the low-memory note alone, no start hint, when the machine is short of memory (ATO-379)", async () => {
+      const note = "Memory search uses keywords: not enough free memory for the memory model (needs ~300 MB).";
+      const code = await handleReindex([], {
+        ...noSignal,
+        connect: async () => ({ state: "unreachable", modelId: "m", why: note, lowMemory: true }),
+      });
+      expect(code).toBe(1);
+      expect(stderr()).toContain(note);
+      expect(stderr()).not.toMatch(/start-embedding/);
+    });
+
     it("uses one JSON shape for failures too", async () => {
       expect(await memoryCommand(["reindex", "--json"])).toBe(1);
       expect(JSON.parse(stdout())).toEqual({

@@ -15,6 +15,8 @@ import { EmbeddingWriter } from "../../memory/embeddings/embedding-writer.js";
 import { MemoryStore } from "../../memory/memory-store.js";
 import { createRuntimeMemoryStores, probeCoreEmbedding, startEmbeddingBackfill, type RuntimeMemoryStores } from "./runtime-memory-stores.js";
 import type { CoreEmbeddingStatus } from "../../local-llm/core/core-embedding.js";
+import * as coreEmbedding from "../../local-llm/core/core-embedding.js";
+import * as memoryCheck from "../../memory/embeddings/embedding-memory-check.js";
 
 let dir: string;
 let config: AtomicAgentConfig;
@@ -226,6 +228,36 @@ describe("embedding backfill wiring", () => {
   });
 });
 
+/** ATO-379: a machine short of memory does not start the memory model. */
+describe("embeddings on a machine short of memory", () => {
+  const NOTE = "Memory search uses keywords: not enough free memory for the memory model (needs ~300 MB).";
+  const idleModule: CoreEmbeddingStatus = {
+    state: "idle", enabled: true, model_path: "/m.gguf", model_id: "embeddinggemma-2", engine: null, pid: null, port: null,
+    dims: null, modalities: ["text"], restarts: 0, error: null, since: 0,
+  };
+
+  it("boots on keyword search with the note once, and never builds the client Core would start the model for", async () => {
+    config.memory.embeddings.enabled = true;
+    config.localModels.embeddings.enabled = true;
+    config.localModels.embeddings.modelId = "embeddinggemma-2";
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.spyOn(coreEmbedding, "coreEmbeddingStatus").mockResolvedValue(idleModule);
+    const check = vi.spyOn(memoryCheck, "checkEmbeddingModelMemory")
+      .mockResolvedValue({ ok: false, reason: "available", note: NOTE, detail: "0.4 GB available, needs 1.0 GB" });
+    const createClient = vi.spyOn(coreEmbedding, "createCoreEmbeddingClient");
+    stores = await createRuntimeMemoryStores({ config, metrics, onProfileEvicted: unexpected });
+    expect(check).toHaveBeenCalledTimes(1);
+    expect(createClient).not.toHaveBeenCalled();
+    expect(stores.embeddingHealth).toBe("unreachable"); expect(stores.embeddingClient).toBeNull();
+    const lines = stderr.mock.calls.map(([chunk]) => String(chunk));
+    expect(lines.filter((line) => line.includes("Memory search uses keywords"))).toEqual([`${NOTE}\n`]);
+    expect(lines.some((line) => line.includes("phase 1B"))).toBe(false);
+    // Keyword search works.
+    stores.notesStore.store({ content: "The deploy key lives in the vault", tags: [] });
+    expect(stores.notesStore.recall("vault")).toHaveLength(1);
+  });
+});
+
 describe("probeCoreEmbedding", () => {
   const def = { id: "embeddinggemma-2", name: "EmbeddingGemma 2", dim: 768 };
   const status = (change: Partial<CoreEmbeddingStatus>): CoreEmbeddingStatus => ({
@@ -235,8 +267,8 @@ describe("probeCoreEmbedding", () => {
   const probe = (st: CoreEmbeddingStatus | null) => probeCoreEmbedding("/data", def, async () => st);
 
   it("attaches a ready module of the catalog's dimension, and an idle one (the first request starts it)", async () => {
-    await expect(probe(status({}))).resolves.toEqual({ reachable: true });
-    await expect(probe(status({ state: "idle", dims: null }))).resolves.toEqual({ reachable: true });
+    await expect(probe(status({}))).resolves.toEqual({ reachable: true, loaded: true });
+    await expect(probe(status({ state: "idle", dims: null }))).resolves.toEqual({ reachable: true, loaded: false });
   });
   it("never attaches a module whose vectors have another length", async () => {
     await expect(probe(status({ dims: 1024 }))).resolves.toMatchObject({ reachable: false, why: expect.stringContaining("1024-dim") });

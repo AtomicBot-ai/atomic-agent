@@ -1,9 +1,10 @@
 import type { AtomicAgentConfig } from "../../config/config-schema.js";
 import { checkLlamaServer } from "../../llm/llama-server-health.js";
 import { getEmbeddingModelDef, isKnownEmbeddingModelId } from "../../local-llm/catalog/models-catalog.js";
-import { coreEmbeddingStatus, createCoreEmbeddingClient } from "../../local-llm/core/core-embedding.js";
+import { coreEmbeddingRunning, coreEmbeddingStatus, createCoreEmbeddingClient } from "../../local-llm/core/core-embedding.js";
 
 import type { EmbeddingClient } from "./embedding-client.js";
+import { checkEmbeddingModelMemory } from "./embedding-memory-check.js";
 import { createLocalEmbeddingClient } from "./local-embedding-client.js";
 
 /**
@@ -13,7 +14,16 @@ import { createLocalEmbeddingClient } from "./local-embedding-client.js";
  */
 export type MemoryEmbeddingConnection =
   | { state: "disabled" }
-  | { state: "unreachable"; modelId: string; why: string }
+  | {
+      state: "unreachable";
+      modelId: string;
+      why: string;
+      /**
+       * The model is not running and this machine is short of memory, so
+       * it is not started (ATO-379). `why` is the operator's one-line note.
+       */
+      lowMemory?: true;
+    }
   | {
       state: "reachable";
       modelId: string;
@@ -31,9 +41,19 @@ export type MemoryEmbeddingConnection =
  * and `localModels.embeddings.enabled`), a known catalog model, and the
  * model answering. The probe is short and never starts anything: a stuck
  * daemon cannot wedge a boot. Never throws.
+ *
+ * Atomic Core starts an idle embedding module on the first embed, so a
+ * module that is on but not loaded is attached only when this machine has
+ * the memory for it (`checkEmbeddingModelMemory`); otherwise memory stays
+ * on keyword search and `why` carries the note. A loaded module is
+ * attached as it is: its memory is already spent.
  */
 export async function connectMemoryEmbeddings(
   config: Pick<AtomicAgentConfig, "paths" | "memory" | "localModels">,
+  deps: {
+    probeCore?: typeof probeCoreEmbedding;
+    checkMemory?: typeof checkEmbeddingModelMemory;
+  } = {},
 ): Promise<MemoryEmbeddingConnection> {
   const modelId = config.localModels.embeddings.modelId;
   if (
@@ -49,14 +69,18 @@ export async function connectMemoryEmbeddings(
   // A model that runs in Atomic Core's embedding module has no URL of
   // its own: ask Core (never starting it) instead of probing `/health`.
   const viaCore = def.requiresCoreEmbeddingModule === true;
-  const probe: { reachable: boolean; why?: string } = viaCore
-    ? await probeCoreEmbedding(config.paths.localModelsDataDir, def).catch((err: unknown) => ({
+  const probe: { reachable: boolean; why?: string; loaded?: boolean } = viaCore
+    ? await (deps.probeCore ?? probeCoreEmbedding)(config.paths.localModelsDataDir, def).catch((err: unknown) => ({
         reachable: false,
         why: `Atomic Core status failed: ${err instanceof Error ? err.message : String(err)}`,
       }))
     : await checkLlamaServer({ url, retries: 0, backoffMs: 0, timeoutMs: 2000 }).catch(() => ({ reachable: false }));
   if (!probe.reachable) {
     return { state: "unreachable", modelId: def.id, why: probe.why ?? `embedding daemon at ${url} is unreachable` };
+  }
+  if (viaCore && probe.loaded === false) {
+    const memory = await (deps.checkMemory ?? checkEmbeddingModelMemory)(def.fileSizeGb);
+    if (!memory.ok) return { state: "unreachable", modelId: def.id, why: memory.note, lowMemory: true };
   }
   return {
     state: "reachable",
@@ -86,15 +110,16 @@ export async function connectMemoryEmbeddings(
 /**
  * Whether Atomic Core's embedding module can serve `def` now: Core runs,
  * the module is on for this model and has not failed. An idle module is
- * fine (the first request starts it). A running module whose vectors do
- * not have the catalog's length is never attached: one memory store must
- * not mix dimensions.
+ * fine (the first request starts it); `loaded` says whether the model is
+ * up or on its way up. A running module whose vectors do not have the
+ * catalog's length is never attached: one memory store must not mix
+ * dimensions.
  */
 export async function probeCoreEmbedding(
   dataDir: string,
   def: { id: string; name: string; dim: number },
   status: (dataDir: string) => ReturnType<typeof coreEmbeddingStatus> = coreEmbeddingStatus,
-): Promise<{ reachable: boolean; why?: string }> {
+): Promise<{ reachable: boolean; why?: string; loaded?: boolean }> {
   const st = await status(dataDir);
   if (!st) return { reachable: false, why: `${def.name} is not running in Atomic Core` };
   if (!st.enabled || st.model_id !== def.id) {
@@ -106,5 +131,5 @@ export async function probeCoreEmbedding(
   if (st.state === "ready" && st.dims !== def.dim) {
     return { reachable: false, why: `${def.name} answers ${st.dims}-dim vectors, expected ${def.dim}` };
   }
-  return { reachable: true };
+  return { reachable: true, loaded: coreEmbeddingRunning(st) };
 }

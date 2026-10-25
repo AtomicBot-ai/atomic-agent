@@ -197,7 +197,9 @@ export async function handleReindex(args: string[], deps: ReindexDeps = {}): Pro
       return report({
         model: connection.modelId, embedded: 0, skipped: 0,
         remaining: countPendingEmbeddings(db, connection.modelId),
-        stoppedReason: "unavailable", message: `${connection.why}; ${START_EMBEDDING_HINT}`,
+        stoppedReason: "unavailable",
+        // Short of memory, starting the model by hand would be refused the same way.
+        message: connection.lowMemory ? connection.why : `${connection.why}; ${START_EMBEDDING_HINT}`,
       }, 1);
     } finally {
       notes.close();
