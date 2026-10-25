@@ -145,14 +145,17 @@ function readyPort(raw: unknown): number | undefined {
 
 /**
  * Whether a page's optional `start` was really given. A default-filled
- * `{cmd: "", args: []}` is not a server to start, so a path-only page
- * that carries one stays a plain page.
+ * `{cmd: "", args: []}` (blank cmd, no args) is not a server to start,
+ * so a path-only page that carries one stays a plain page.
  */
 function startGiven(raw: unknown): boolean {
   if (raw === undefined || raw === null) return false;
   if (typeof raw !== "object" || Array.isArray(raw)) return true;
-  const cmd = (raw as Record<string, unknown>).cmd;
-  return !(cmd === undefined || cmd === null || (typeof cmd === "string" && cmd.trim() === ""));
+  const { cmd, args } = raw as Record<string, unknown>;
+  const blankCmd = cmd === undefined || cmd === null || (typeof cmd === "string" && cmd.trim() === "");
+  const noArgs = args === undefined || args === null || (Array.isArray(args) && args.length === 0);
+  // Args without a cmd is a real but broken start: let `start.cmd` refuse it.
+  return !(blankCmd && noArgs);
 }
 
 function record(raw: unknown, field: string): Record<string, unknown> {

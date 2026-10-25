@@ -185,5 +185,7 @@ describe("parseVerifyRunArgs, zero-filled ready.port and start", () => {
     expect(args.start).toBeUndefined();
     expect(parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "   " } }).start).toBeUndefined();
     expect(() => parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "python3" } })).toThrow("page with `start` needs `url`");
+    expect(() => parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { args: ["x"] } })).toThrow("start.cmd");
+    expect(() => parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "", args: ["-m", "http.server"] } })).toThrow("start.cmd");
   });
 });
