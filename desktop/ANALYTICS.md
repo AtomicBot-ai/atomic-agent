@@ -126,15 +126,18 @@ Notes on specific properties:
   sent.
 - `local_backend_started.reason` (ATO-278): why the start failed, on
   `result: start_failed` only (null otherwise), as a code: oom / port_in_use /
-  load_failed / missing_lib / crash (read from the start's error text, its
-  stderr tail, or the server log's failure line), timeout (the app's own time
-  limit on `models start`), exited_after_ready (the server came up, then
-  stopped answering while the start waited on it), or other. The error text,
-  the stderr and the log line are never sent.
+  load_failed / missing_lib / crash (read from the one line that names a
+  failure in the start's error text, its stderr tail, or the server log's
+  current run, after the last launch marker), timeout (the app's own time
+  limit on `models start`, nothing else), exited_after_ready (the server came
+  up, then stopped answering while the start waited on it), or other. The
+  error text, the stderr and the log line are never sent.
 - `local_backend_crashed` (ATO-278): the managed local server the app had
   brought up died mid-session, as the engine watchdog saw it. Sent once per
   death, as the watchdog's recovery begins, and not again while a restart of
-  it keeps failing (those are `local_backend_supervised`). `reason` is the
+  it keeps failing (those are `local_backend_supervised`); never for a server
+  that had not come up since its last start (a failed start after Studio
+  hands the memory back). `reason` is the
   same code list as above, from the server log's failure line (other when it
   names none); `model_id` as on `local_backend_started`; `up_ms` how long the
   server had been up; `engine` as above. Only seen while the watchdog runs:

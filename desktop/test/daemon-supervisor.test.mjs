@@ -11,7 +11,8 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { DaemonSupervisor, MAX_QUICK_DEATHS } = require("../out/main/daemon-supervisor.js");
-const { routeNeedsDaemon, routeWantsRestarts, isManagedServer } = require("../out/main/daemon-watch.js");
+const { routeNeedsDaemon, routeWantsRestarts, isManagedServer, daemonWatch } = require("../out/main/daemon-watch.js");
+const { describeFaultIn } = require("../out/main/server-fault-line.js");
 
 /** A supervisor on stand-ins: the test sets what the looks see and moves the clock. */
 function standIn() {
@@ -237,6 +238,36 @@ test("ATO-278: a stop on purpose, a Studio yield or a route that does not need i
   disarm();
   assert.equal(f.restarts, 0);
   assert.deepEqual(f.died, []);
+});
+
+test("ATO-278: a failed start after a Studio yield is no death of a server that never came up", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  sv.yieldTo("studio");
+  later(120_000);
+  sv.endYield();
+  later(5_000);
+  f.look = "down";
+  f.fault = "cudaMalloc failed: out of memory";
+  await sv.checkNow("refused");
+  disarm();
+  assert.equal(f.restarts, 1);
+  assert.deepEqual(f.died, []);
+});
+
+test("ATO-278: the app's supervisor reports deaths (daemon-watch wires `died`)", () => {
+  assert.equal(typeof daemonWatch.deps.died, "function");
+});
+
+test("ATO-278: the server log's fault line is this run's only", () => {
+  const earlier = "[atomic-agent] launch: model a\nggml_metal: failed to allocate buffer: out of memory\n";
+  const now = "[atomic-agent] launch: model b\nload_backend: loaded Metal backend\nserver is listening on 127.0.0.1:19091\n";
+  assert.equal(describeFaultIn(earlier + now), null);
+  assert.equal(describeFaultIn(`${earlier}${now}Segmentation fault: 11\n`), "Segmentation fault: 11");
+  assert.equal(describeFaultIn(earlier), "ggml_metal: failed to allocate buffer: out of memory");
+  // A tail with no marker is all one run's (a long run read from its end).
+  assert.equal(describeFaultIn("tokens 1200\nerror loading model: bad file\n"), "error loading model: bad file");
+  assert.equal(describeFaultIn("load_backend: loaded CUDA backend from ggml-cuda.dll\n"), null);
 });
 
 test("the route that needs the managed server: Local models, or Fusion with a local seat, with autoRestart on", () => {

@@ -24,6 +24,7 @@ import {
 } from "./daemon-supervisor.js";
 import { isLoopbackOnPort, managedDataDir } from "./local-llama-key.js";
 import { resolveRunMode, type RunModeConfig, type RunModeProvider } from "./run-mode.js";
+import { describeFaultIn } from "./server-fault-line.js";
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
 
 /**
@@ -137,12 +138,8 @@ function describeFault(): string | null {
   try {
     const cfg = readConfig();
     const dir = managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null);
-    const raw = readFileSync(join(dir, "llama-server.log"), "utf8");
-    const lines = raw.slice(-16_384).split("\n").map((l) => l.trim()).filter(Boolean).slice(-80);
-    const hit = [...lines].reverse().find((l) =>
-      /out of memory|failed to (load|allocate|initiali[sz]e)|error loading model|couldn'?t bind|address already in use|abort|segmentation fault/i.test(l),
-    );
-    return hit ? (hit.length > 160 ? `${hit.slice(0, 157)}…` : hit) : null;
+    // ATO-278: this run's lines only (after the last launch marker), never an earlier run's fault.
+    return describeFaultIn(readFileSync(join(dir, "llama-server.log"), "utf8"));
   } catch {
     return null;
   }

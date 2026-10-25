@@ -16,21 +16,25 @@ export function configureSetup(opts: { stateDir: string }): void {
 
 const modelIdProp = (id: unknown): string => (typeof id === "string" && curatedMeta(id) ? id : "hf_custom");
 
-/* ATO-278: the server log's failure line (daemon-watch describeFault), handed
-   in by daemon-watch so this module never reads the server's files itself. */
+/* ATO-278: the server log's failure line (daemon-watch describeFault). Set by
+   daemon-watch itself as it loads (main.ts imports it before any start), so
+   this module never reads the server's files; until then no line is read. */
 let serverFault: () => string | null = () => null;
 export function readServerFaultWith(read: () => string | null): void {
   serverFault = read;
 }
 
-/** ATO-278: `reason` for a start that failed, from its error text, its stderr tail and the server log; null for any other result. */
-function startFailReason(effect: string, failure: unknown): string | null {
+/**
+ * ATO-278: `reason` for a start that failed, from its error text, its stderr
+ * tail and this run's server log line (`readFault`, read only then); null for
+ * any other result. Exported for the unit tests.
+ */
+export function startFailReason(effect: string, failure: unknown, readFault: () => string | null = serverFault): string | null {
   if (effect !== "start_failed") return null;
   const f = (failure && typeof failure === "object" ? failure : {}) as { error?: unknown; daemonError?: unknown };
-  const text = [f.error, f.daemonError].filter((t): t is string => typeof t === "string").join("\n");
   let line: string | null = null;
-  try { line = serverFault(); } catch { /* no log line */ }
-  return backendFailReason(text, line);
+  try { line = readFault(); } catch { /* no log line */ }
+  return backendFailReason(f.error, f.daemonError, line);
 }
 
 /** Around `verifyProviderKey`: the result enum and the HTTP status only. */
@@ -174,7 +178,7 @@ export function localBackendCrashed(modelId: unknown, faultLine: unknown, upMs: 
   try {
     if (!analyticsEnabled()) return;
     track("local_backend_crashed", {
-      reason: backendFailReason(null, faultLine),
+      reason: backendFailReason(null, null, faultLine),
       model_id: modelIdProp(modelId),
       up_ms: upMs,
       engine: localEngineOf(readConfigFile(stateDir)),
