@@ -574,6 +574,47 @@ describe("ApprovalBridge grants against a real ApprovalGate", () => {
   });
 });
 
+describe("ApprovalBridge click after the turn was cancelled", () => {
+  it("records no grant, claims none, and removes the keyboard", async () => {
+    const emitted: ApprovalRequest[] = [];
+    const gate = new ApprovalGate({ emit: (r) => emitted.push(r) });
+    const h = makeHarness({ approvals: gate });
+    const controller = new AbortController();
+    const decision = gate.request(
+      {
+        sessionId: "s-1",
+        tool: "os.shell.run",
+        category: "shell",
+        reason: 'skill needs to run "git push"',
+        commandShape: "git",
+      },
+      { signal: controller.signal },
+    );
+    const request = emitted[0]!;
+    await h.bridge.dispatch(request, 7);
+
+    // `/cancel`: the gate drops the request, the bridge never hears.
+    controller.abort();
+    await expect(decision).rejects.toThrow();
+
+    await h.bridge.handleCallback(callback(request.approvalId, "a"));
+
+    expect(gate.sessionGrants("s-1")).toEqual({ categories: [], shapes: [] });
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Already resolved",
+    });
+    const toasts = h.api.answerCallbackQuery.mock.calls.map(
+      (c) => (c[1] as { text: string }).text,
+    );
+    expect(toasts.some((t) => t.includes("granted"))).toBe(false);
+    expect(h.api.editMessageText).toHaveBeenCalledTimes(1);
+    expect(h.api.editMessageText.mock.calls[0]![3]).toEqual({
+      reply_markup: { inline_keyboard: [] },
+    });
+    expect(h.bridge.pendingCount()).toBe(0);
+  });
+});
+
 describe("ApprovalBridge timeout", () => {
   it("auto-denies after timeoutMs and edits the message", async () => {
     const h = makeHarness();

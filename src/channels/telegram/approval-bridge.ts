@@ -161,8 +161,9 @@ interface PendingState {
  *   is a UX wart — *not* a leak (timer eventually fires, frees state),
  *   *not* a double-resolve (gate dedupes), *not* a state desync (bridge
  *   tears itself down on fire). If the operator clicks a stale button
- *   in that window, the spinner toast says "Approved" / "Denied" even
- *   though the action did not run — also a UX wart.
+ *   in that window, `resolve` returns `false`: the toast says "Already
+ *   resolved" (never "Approved" or a grant that was not recorded) and
+ *   the keyboard is removed.
  *
  *   Fixing it requires a back-channel from `ApprovalGate` to its
  *   per-session handlers (an "external resolve" subscriber list) or
@@ -310,17 +311,27 @@ export class ApprovalBridge {
       ...(approved ? { reason: "telegram" } : {}),
     });
 
+    if (!resolved) {
+      // The gate no longer waits for this one (the turn was cancelled
+      // or another surface answered first), so nothing ran and nothing
+      // was granted. Say so, and take the dead buttons away.
+      await this.acknowledge(update.id, "Already resolved");
+      await this.editFinal(
+        pending.chatId,
+        pending.messageId,
+        "⏹ no longer waiting for an answer",
+      );
+      return;
+    }
     await this.acknowledge(
       update.id,
       decisionToast(pending.request, approved, grant),
     );
-    if (resolved) {
-      await this.editFinal(
-        pending.chatId,
-        pending.messageId,
-        approved ? "✅ approved" : "❌ denied",
-      );
-    }
+    await this.editFinal(
+      pending.chatId,
+      pending.messageId,
+      approved ? "✅ approved" : "❌ denied",
+    );
   }
 
   /**
