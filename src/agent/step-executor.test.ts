@@ -40,7 +40,7 @@ import { replyTool } from "../tools/conversation/reply.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import { reviewStallToolSet } from "./review-stall.js";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { MAX_REASONING_BUDGET_TOKENS, effectiveReasoningBudgetTokens } from "../llm/reasoning-budget.js";
+import { effectiveReasoningBudgetTokens } from "../llm/reasoning-budget.js";
 import { ApprovalGate, requireApproval } from "../approval/index.js";
 import type { ApprovalRequest } from "../approval/index.js";
 import {
@@ -1120,8 +1120,9 @@ describe("executeStep batch handling", () => {
     "for thinking profiles strips and re-appends the <think> open tag, " +
       "and caps the repair completion at REPAIR_MAX_TOKENS plus the reasoning budget",
     async () => {
-      // An explicit budget above the llama.cpp cap, so the expected cap
-      // does not depend on the config default.
+      // An explicit budget past llama.cpp's 1,999-repeat quantifier limit
+      // (enforced in full since ATO-607), so the expected cap does not
+      // depend on the config default.
       const BUDGET = 1500;
       const previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
       const stateDir = mkdtempSync(join(tmpdir(), "repair-think-"));
@@ -1227,7 +1228,7 @@ describe("executeStep batch handling", () => {
         expect(maxTokensSeen[1]).toBe(
           REPAIR_MAX_TOKENS + effectiveReasoningBudgetTokens(BUDGET),
         );
-        expect(maxTokensSeen[1]).toBe(REPAIR_MAX_TOKENS + MAX_REASONING_BUDGET_TOKENS);
+        expect(maxTokensSeen[1]).toBe(REPAIR_MAX_TOKENS + BUDGET);
         expect(REPAIR_MAX_TOKENS).toBeLessThanOrEqual(1024);
       } finally {
         if (previousStateDir === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;

@@ -69,9 +69,9 @@ export type StepEvent =
        * How much of the completion was reasoning — the text before the
        * close sentinel (or the server's `reasoning_content`), in the
        * budget's units of four characters per token (F49). A step that
-       * hit the bound shows about the effective budget
-       * (`effectiveReasoningBudgetTokens`, at most 499), not the configured
-       * `localModels.reasoningBudgetTokens`.
+       * hit the bound shows about the configured
+       * `localModels.reasoningBudgetTokens` (an estimate from the text,
+       * not a hard floor).
        * Set by the step executor; absent from hand-built events.
        */
       reasoningTokens?: number;
