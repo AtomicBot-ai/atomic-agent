@@ -1,6 +1,6 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { DEFAULT_EXTRACT_LIMITS } from "../../tools/os/archive/archive-types.js";
 import { ZipBackend } from "../../tools/os/archive/zip-backend.js";
 import {
@@ -8,11 +8,10 @@ import {
   parseSkillFile,
   SkillManifestError,
 } from "../skill-manifest.js";
-import {
-  scanSkillFiles,
-  type ScannableFile,
-  type SkillScanFinding,
-  type SkillScanResult,
+import { scanSkillDir } from "../hub/scan-skill-dir.js";
+import type {
+  SkillScanFinding,
+  SkillScanResult,
 } from "../hub/skill-security-scanner.js";
 import {
   SkillHubInstallError,
@@ -74,8 +73,8 @@ export async function stageSkillFromClawHub(
       );
     }
 
-    const files = await collectScannableFiles(sourceDir);
-    const manifestFile = files.find((f) => f.path === "SKILL.md");
+    const dirScan = await scanSkillDir(sourceDir);
+    const manifestFile = dirScan.files.find((f) => f.path === "SKILL.md");
     if (!manifestFile) {
       throw new SkillHubInstallError(
         `SKILL.md not found in ${options.identifier}`,
@@ -96,16 +95,23 @@ export async function stageSkillFromClawHub(
       const kebab = isValidSkillName(ref.slug)
         ? ref.slug
         : deriveKebabName(ref.slug);
-      const rewritten = kebab
-        ? rewriteManifestName(manifestFile.content, kebab)
-        : null;
+      // Never write back a head+tail excerpt of an oversized SKILL.md.
+      const rewritten =
+        kebab && !manifestFile.truncated
+          ? rewriteManifestName(manifestFile.content, kebab)
+          : null;
       if (!rewritten) throw err;
       ({ manifest } = parseSkillFile(rewritten));
       await writeFile(join(sourceDir, "SKILL.md"), rewritten, "utf8");
       manifestFile.content = rewritten;
     }
 
-    const heuristic = scanSkillFiles(files);
+    // The rewrite only touches the `name:` line, which no rule matches,
+    // so the scan of the original bytes stays valid.
+    const heuristic: SkillScanResult = {
+      verdict: dirScan.verdict,
+      findings: dirScan.findings,
+    };
     const registry = await client.getScanStatus({
       slug: ref.slug,
       owner: ref.owner,
@@ -129,13 +135,15 @@ export async function stageSkillFromClawHub(
  * Fold the registry's ClawScan verdict into the heuristic scan result so
  * the existing confirm / block logic (which keys off `scan.verdict`)
  * accounts for both signals. A `malicious` registry verdict escalates to
- * `dangerous`; `suspicious` escalates to at least `caution`.
+ * `dangerous`; `suspicious` escalates to at least `caution`. `unknown`
+ * (no scan result yet, or the scan endpoint failed) also escalates to
+ * `caution`: an unscanned version must not look the same as a clean one.
  */
 export function mergeRegistryVerdict(
   heuristic: SkillScanResult,
   registry: ClawHubScanStatus,
 ): SkillScanResult {
-  if (registry === "clean" || registry === "unknown") return heuristic;
+  if (registry === "clean") return heuristic;
   const finding: SkillScanFinding =
     registry === "malicious"
       ? {
@@ -145,13 +153,21 @@ export function mergeRegistryVerdict(
           line: 0,
           excerpt: "ClawHub security scan flagged this version as malicious",
         }
-      : {
-          severity: "caution",
-          rule: "clawhub-suspicious",
-          file: "SKILL.md",
-          line: 0,
-          excerpt: "ClawHub security scan flagged this version as suspicious",
-        };
+      : registry === "suspicious"
+        ? {
+            severity: "caution",
+            rule: "clawhub-suspicious",
+            file: "SKILL.md",
+            line: 0,
+            excerpt: "ClawHub security scan flagged this version as suspicious",
+          }
+        : {
+            severity: "caution",
+            rule: "clawhub-unscanned",
+            file: "SKILL.md",
+            line: 0,
+            excerpt: "ClawHub has no security scan result for this version",
+          };
   const verdict =
     registry === "malicious"
       ? "dangerous"
@@ -206,31 +222,4 @@ export function rewriteManifestName(
   });
   if (!replaced) return null;
   return `---\n${lines.join("\n")}${rest}`;
-}
-
-async function collectScannableFiles(root: string): Promise<ScannableFile[]> {
-  const out: ScannableFile[] = [];
-  const MAX_SCAN_BYTES = 512 * 1024;
-  async function walk(dir: string): Promise<void> {
-    const entries = await readdir(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const abs = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        await walk(abs);
-        continue;
-      }
-      if (!entry.isFile()) continue;
-      let content: string;
-      try {
-        const buf = await readFile(abs);
-        if (buf.byteLength > MAX_SCAN_BYTES) continue;
-        content = buf.toString("utf8");
-      } catch {
-        continue;
-      }
-      out.push({ path: relative(root, abs).split("\\").join("/"), content });
-    }
-  }
-  await walk(root);
-  return out;
 }
