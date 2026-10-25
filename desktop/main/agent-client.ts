@@ -1099,6 +1099,25 @@ export class AgentClient extends EventEmitter {
     this.request<unknown>("POST", "/api/skills/uninstall", { name, source });
 
   /**
+   * ATO-1024: `POST /api/memory/embeddings/reconnect` — have the running agent
+   * attach the embedding server it did not find at boot. Null when the agent
+   * has no such route or did not answer; never throws.
+   */
+  async reconnectEmbeddings(): Promise<{ health: string; modelId: string | null; changed?: boolean } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/memory/embeddings/reconnect`, {
+        method: "POST",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as { health: string; modelId: string | null; changed?: boolean };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * The composer's coding mode, applied live on the runtime by
    * /api/coding-mode exactly as the TUI does — no config write, no
    * restart. Older agents have no such route; a 404 is reported as

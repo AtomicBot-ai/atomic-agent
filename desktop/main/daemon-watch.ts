@@ -326,28 +326,33 @@ export function onAgentFrame(ev: { kind?: unknown; payload?: unknown }): void {
  * (startLocalDaemonAtBoot, beside serve's own start) brought it up only after
  * the chat model had loaded — tens of seconds after serve had looked. So
  * semantic search was off for every session begun on the local route. It is
- * started first now, alone (it is small, and up in seconds), before serve
- * starts: only when the file wants embeddings (backend-switch
- * pairEmbeddingServer), in the daemon's turn, and never holding the agent back
- * past `limitMs`. ATO-378: on a cloud chat route too, since memory search uses
- * the local embedding model whatever the chat route; `models start-embedding`
- * starts nothing when the model is not downloaded.
+ * started first now, alone (it is small, and up in seconds): only when the
+ * file wants embeddings (backend-switch pairEmbeddingServer), in the daemon's
+ * turn. ATO-378: on a cloud chat route too, since memory search uses the local
+ * embedding model whatever the chat route; `models start-embedding` starts
+ * nothing when the model is not downloaded.
+ *
+ * ATO-1024: it no longer holds the agent back. main.ts starts `atag serve`
+ * beside it and, once this answers `up`, has the running
+ * agent attach the server live (POST /api/memory/embeddings/reconnect) instead
+ * of the start waiting up to 20 s for it. Queued in the daemon's turn at once,
+ * so it still comes ahead of the launch's chat model start. `up` is whether
+ * the embedding server answers now (paired just now, or already running).
  */
-export async function pairEmbeddingsBeforeServe(limitMs = 20_000): Promise<void> {
+export async function pairEmbeddingsAtLaunch(opts: { restarts?: boolean } = {}): Promise<{ up: boolean; paired: boolean; line?: string } | null> {
   /* Atomic Core with its backend not on disk yet: an embedding start would
      install it first, inside its 60 s cap, ahead of the launch's own install
      with its bar (main.ts startLocalDaemonAtBoot). Skipped; the embedding
      server is paired after the chat model's first start. */
-  if (managedEngineNow() === "atomic-core" && !backendInstalled()) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (managedEngineNow() === "atomic-core" && !backendInstalled()) return null;
   const mark = stopsMark();
-  const pair = inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), (): { paired: boolean; line?: string } => ({ paired: false }));
-  const r = await Promise.race([
-    pair.catch(() => null),
-    new Promise<null>((res) => { timer = setTimeout(() => res(null), limitMs); }),
-  ]);
-  if (timer) clearTimeout(timer);
-  if (r?.line) host.say(`[desktop] ${r.line}`);
+  const pair = inDaemonTurn(
+    () => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark, restarts: opts.restarts ?? true }),
+    (): { paired: boolean; line?: string; up?: boolean } => ({ paired: false }),
+  );
+  const r = await pair.catch(() => null);
+  if (!r) return null;
+  return { up: r.up === true, paired: r.paired, ...(r.line ? { line: r.line } : {}) };
 }
 
 /* ---------------------------------------------------------------
