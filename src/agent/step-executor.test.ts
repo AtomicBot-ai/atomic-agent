@@ -4385,15 +4385,20 @@ describe("truncated completions", () => {
     // ("explicit finish_reason: length: executions = 0"): a cut reply
     // dispatches nothing — the agent loop re-asks with a different
     // request instead. Kept here so the truncation detail travels too.
+    // The cut reply's one continuation (ATO-1031) fails here, so the
+    // step ends with the original truncation, as before it existed.
     const session = createEmptySessionState({
       id: "s-trunc-closed",
       workingDir: "/w",
     });
+    let calls = 0;
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
         slotManager: new SlotManager(2),
         async llmComplete() {
+          calls += 1;
+          if (calls > 1) throw new Error("continuation unavailable");
           return nativeCompletion({
             stop: false,
             truncated: true,
@@ -4426,6 +4431,7 @@ describe("truncated completions", () => {
       reason: "truncated",
       truncation: { cause: "reply_cap" },
     });
+    expect(calls).toBe(2);
   });
 
   it("native_tools: a cut short of the cap inside a known window is the provider's output limit", async () => {
@@ -4500,11 +4506,16 @@ describe("truncated completions", () => {
       id: "s-trunc-cut",
       workingDir: "/w",
     });
+    // The continuation of the cut reply (ATO-1031) fails, so the step
+    // still ends with the truncation and its cause.
+    let calls = 0;
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
         slotManager: new SlotManager(2),
         async llmComplete() {
+          calls += 1;
+          if (calls > 1) throw new Error("continuation unavailable");
           return nativeCompletion({
             stop: false,
             truncated: true,
@@ -4544,6 +4555,7 @@ describe("truncated completions", () => {
         requestedMaxTokens: 16_384,
       },
     });
+    expect(calls).toBe(2);
   });
 
   it("native_tools: a reply cut inside its reasoning is a truncation against the step's own cap", async () => {

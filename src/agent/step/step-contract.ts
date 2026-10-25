@@ -83,6 +83,12 @@ export interface LlmStreamParams {
    */
   maxTokens?: number;
   /**
+   * The reply cap for a grammar (local llama-server) link when the
+   * request carries no `maxTokens`: a thinking profile's lifted cap
+   * (`thinkingReplyCap`, ATO-1031). A native or cloud link never sees it.
+   */
+  localReplyCap?: number;
+  /**
    * The turn's output ceiling (`RunTurnOptions.maxOutputTokens`), below
    * the per-step `maxTokens` above and above the provider's own. A
    * fusion worker's `workerMaxOutputTokens` rides here.

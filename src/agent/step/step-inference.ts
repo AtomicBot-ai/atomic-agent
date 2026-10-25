@@ -12,6 +12,7 @@ import { checkProfilePromptAligned } from "../../llm/profile-invariants.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
 import type { CompletionResult, StreamChunk } from "../../llm/llama-server-client.js";
 import { estimateReasoningTokens } from "../../llm/reasoning-budget.js";
+import { localReplyCapEnvSet, thinkingReplyCap } from "./thinking-reply-cap.js";
 import { parseDepsFor } from "./step-parsing.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { refusedToolNames } from "../policies/fusion-orchestrator-mode.js";
@@ -220,10 +221,30 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
 
   // The cap every completion of this step runs under. Named here so the
   // failure detector can say which wall a cut-off reply hit.
+  //
+  // A local thinking model under the untouched default cap runs under a
+  // lifted one: its think block spends the same budget as its answer
+  // (ATO-1031, `thinkingReplyCap`). It rides as `localReplyCap`, which
+  // only a grammar link reads, so a cloud fallback never sees it.
+  const configuredReplyCap = getConfig().localModels.completionMaxTokens;
+  const localReplyCap = thinkingReplyCap({
+    profile: deps.profile,
+    thinkingDisabled:
+      thinkingOff || serverTemplate.enableThinking === false,
+    modelMode: deps.modelMode?.mode ?? "local",
+    toolTransport: deps.toolTransport ?? "grammar",
+    configuredCap: configuredReplyCap,
+    stepCapSet:
+      ctx.maxTokens !== undefined || ctx.maxOutputTokens !== undefined,
+    envCapSet: localReplyCapEnvSet(),
+    contextWindow: deps.contextWindow ?? null,
+    promptTokens: prompt.tokens.total,
+  });
   const replyCap =
     ctx.maxTokens ??
     ctx.maxOutputTokens ??
-    getConfig().localModels.completionMaxTokens;
+    localReplyCap ??
+    configuredReplyCap;
   // The grammar for THIS request. Narrowed below the base grammar only
   // when the step has fewer tools than the catalog (the final step, an
   // orchestrator turn, a filtered worker); otherwise the base grammar
@@ -268,6 +289,7 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
         }
       : {}),
     ...(ctx.maxTokens !== undefined ? { maxTokens: ctx.maxTokens } : {}),
+    ...(localReplyCap !== null ? { localReplyCap } : {}),
     // The turn's own settings ride on every completion of the step; the
     // repair retry spreads `llmParams`, so they inherit without a second
     // wiring point.

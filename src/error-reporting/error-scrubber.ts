@@ -9,6 +9,7 @@
 
 import { classifyTransportHost } from "./classify-transport-host.js";
 import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-tags.js";
+import { extractAnswerFailureTags } from "./answer-failure-tag.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -61,6 +62,15 @@ export interface ScrubbedErrorEvent {
    * off a frame basename, and the shipped build is one bundled file).
    */
   failureStage?: string;
+  /**
+   * Which "no answer" story a `ModelError` tells (ATO-1031):
+   * `cut_at_limit` / `context_full` / `empty_answer` / `no_stop`. A
+   * fixed enum derived from `reason` and the truncation cause — see
+   * `answer-failure-tag.ts`.
+   */
+  answerFailure?: string;
+  /** `TruncationDetail.cause` of a truncated `ModelError`, a fixed 5-value enum. */
+  truncationCause?: string;
   /**
    * `ToolExecutionError.tool` when present. Restricted to a bounded
    * identifier shape (registry tool names such as `os.fs.read`) — never
@@ -447,6 +457,13 @@ export function scrubError(
   if (reason !== undefined) event.reason = reason;
   if (toolTransport !== undefined) event.toolTransport = toolTransport;
   if (failureStage !== undefined) event.failureStage = failureStage;
+  const answerTags = extractAnswerFailureTags(err);
+  if (answerTags.answerFailure !== undefined) {
+    event.answerFailure = answerTags.answerFailure;
+  }
+  if (answerTags.truncationCause !== undefined) {
+    event.truncationCause = answerTags.truncationCause;
+  }
   if (tool !== undefined) event.tool = tool;
   if (transportHost !== undefined) event.transportHost = transportHost;
   if (upstreamErrorType !== undefined) {

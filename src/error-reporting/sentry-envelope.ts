@@ -71,6 +71,8 @@ export function buildEnvelope(
   if (ev.reason) tags.reason = ev.reason;
   if (ev.toolTransport) tags.tool_transport = ev.toolTransport;
   if (ev.failureStage) tags.failure_stage = ev.failureStage;
+  if (ev.answerFailure) tags.answer_failure = ev.answerFailure;
+  if (ev.truncationCause) tags.truncation_cause = ev.truncationCause;
   if (ev.tool) tags.tool = ev.tool;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
   if (ev.upstreamErrorType) {

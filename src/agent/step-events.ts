@@ -1,6 +1,6 @@
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
-import type { LlmFailureCategory } from "../llm/reliability/index.js";
+import type { LlmFailureCategory, TruncationCause } from "../llm/reliability/index.js";
 import type { BuiltPrompt } from "../prompt/build-prompt.js";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 
@@ -157,6 +157,22 @@ export type StepEvent =
    * postmortems can tell grammar truncation from malformed JSON.
    */
   | { type: "parse_retry"; stepIndex: number; attempt: number; reason: string }
+  /**
+   * The first completion of the step was an answer cut at its length
+   * limit, and the step asked the model once to write the rest
+   * (ATO-1031, `step-answer-continuation.ts`). `outcome`: `completed`
+   * (the joined answer is the step's reply), `cut_again` (the rest was
+   * cut too; the reply carries what arrived and says so) or `abandoned`
+   * (the continuation failed; the step ends with the original
+   * truncation). Counts only — never the text.
+   */
+  | {
+      type: "answer_continued";
+      stepIndex: number;
+      cause: TruncationCause;
+      partialChars: number;
+      outcome: "completed" | "cut_again" | "abandoned";
+    }
   /**
    * Emitted in place of `parse_retry` when a multi-call batch failed
    * validation purely because it contained approval-gated tools. The
