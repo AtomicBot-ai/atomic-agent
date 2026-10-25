@@ -160,3 +160,24 @@ describe("parseVerifyRunArgs, empty-string defaults (ATO-891)", () => {
     expect(() => parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 }, requests: [{ path: "/", url: "http://x/" }] })).toThrow("requests[0] needs exactly one of `path` or `url`");
   });
 });
+
+describe("parseVerifyRunArgs, zero-filled ready.port and start", () => {
+  it("treats ready.port 0 as absent on a page with start: readiness falls back to the page url", () => {
+    const args = parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "python3", args: ["-m", "http.server", "8766"] }, ready: { port: 0, url: "" } });
+    expect(args.ready).toMatchObject({ port: undefined, url: "http://127.0.0.1:8766/" });
+  });
+
+  it("treats ready.port 0 as absent on a service", () => {
+    expect(parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 0, url: "http://127.0.0.1:3000/health" } }).ready).toMatchObject({ port: undefined, url: "http://127.0.0.1:3000/health" });
+    expect(() => parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 0, url: "" } })).toThrow("service needs `ready.port` or `ready.url`");
+    expect(parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 } }).ready).toMatchObject({ port: 3000 });
+  });
+
+  it("treats a start with an empty cmd as absent on a path-only page", () => {
+    const args = parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "", args: [] }, ready: { port: 0, url: "" } });
+    expect(args).toMatchObject({ path: "index.html", url: undefined });
+    expect(args.start).toBeUndefined();
+    expect(parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "   " } }).start).toBeUndefined();
+    expect(() => parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "python3" } })).toThrow("page with `start` needs `url`");
+  });
+});

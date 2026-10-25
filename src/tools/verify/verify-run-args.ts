@@ -133,6 +133,28 @@ function optionalInteger(raw: unknown, field: string): number | undefined {
   return raw;
 }
 
+/**
+ * `ready.port`, where `0` means "not given": a default-filled
+ * `{port: 0, url: ""}` would otherwise poll port 0, which never answers,
+ * until the readiness timeout. Port 0 is never a real readiness port.
+ */
+function readyPort(raw: unknown): number | undefined {
+  const port = optionalInteger(raw, "ready.port");
+  return port === 0 ? undefined : port;
+}
+
+/**
+ * Whether a page's optional `start` was really given. A default-filled
+ * `{cmd: "", args: []}` is not a server to start, so a path-only page
+ * that carries one stays a plain page.
+ */
+function startGiven(raw: unknown): boolean {
+  if (raw === undefined || raw === null) return false;
+  if (typeof raw !== "object" || Array.isArray(raw)) return true;
+  const cmd = (raw as Record<string, unknown>).cmd;
+  return !(cmd === undefined || cmd === null || (typeof cmd === "string" && cmd.trim() === ""));
+}
+
 function record(raw: unknown, field: string): Record<string, unknown> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     fail(`\`${field}\` must be an object`);
@@ -231,7 +253,7 @@ export function parseVerifyRunArgs(raw: Record<string, unknown>): VerifyRunArgs 
   if (kind === "service") {
     const start = record(raw.start, "start");
     const ready = raw.ready === undefined || raw.ready === null ? {} : record(raw.ready, "ready");
-    const port = optionalInteger(ready.port, "ready.port");
+    const port = readyPort(ready.port);
     const url = optionalNonEmptyString(ready.url, "ready.url");
     if (port === undefined && url === undefined) fail("service needs `ready.port` or `ready.url`");
     return {
@@ -245,14 +267,14 @@ export function parseVerifyRunArgs(raw: Record<string, unknown>): VerifyRunArgs 
   const url = optionalNonEmptyString(raw.url, "url");
   if ((path === undefined) === (url === undefined)) fail("page needs exactly one of `path` or `url`");
   const page = { ...base, path, url, script: parseScript(raw.script) ?? [], probes: parseProbes(raw.probes) ?? [] };
-  if (raw.start === undefined || raw.start === null) return page;
+  if (!startGiven(raw.start)) return page;
   // A page served by its own server: start it, wait until it is ready,
   // then open `url`. Without a wait the browser races the server and
   // gets ERR_CONNECTION_REFUSED.
   if (url === undefined) fail("page with `start` needs `url` (the address the started server serves), not `path`");
   const start = record(raw.start, "start");
   const ready = raw.ready === undefined || raw.ready === null ? {} : record(raw.ready, "ready");
-  const port = optionalInteger(ready.port, "ready.port");
+  const port = readyPort(ready.port);
   const readyUrl = optionalNonEmptyString(ready.url, "ready.url");
   return {
     ...page,
