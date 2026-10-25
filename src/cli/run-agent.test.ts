@@ -16,7 +16,8 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { LocalEngineDownError } from "../llm/reliability/index.js";
+import { GrammarError, LocalEngineDownError } from "../llm/reliability/index.js";
+import { LlamaServerError, readLlamaErrorBody } from "../llm/llama-server-client.js";
 import {
   formatAgentEvent,
   formatCliApprovalPrompt,
@@ -216,6 +217,35 @@ describe("formatAgentEvent when llama-server answered 404/405 (ATO-870)", () => 
       { llamaHint: null, llamaUrl: null, hintShown: { value: false } },
     );
     expect(line).toBe("  ! [transport] llama-server returned http 404");
+  });
+});
+
+describe("formatAgentEvent for a local server's typed 400 (ATO-707, ATO-737)", () => {
+  it("says the context is full and what to do", () => {
+    const body = readLlamaErrorBody(
+      JSON.stringify({ error: { code: 400, message: "request exceeds the available context size", type: "exceed_context_size_error" } }),
+    );
+    const raw = new LlamaServerError(
+      "llama-server returned http 400: request exceeds the available context size",
+      400,
+      "http://127.0.0.1:9931/v1/chat/completions",
+      false,
+      undefined,
+      body !== undefined ? { body } : undefined,
+    );
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new GrammarError(raw.message, "", { cause: raw }),
+        category: "grammar" as never,
+      },
+      { llamaHint: HINT, hintShown: { value: false } },
+    );
+    expect(line).toBe(
+      "» loop failed [grammar]: llama-server returned http 400: request exceeds the available context size\n" +
+        "    The conversation no longer fits in the local model's context window. " +
+        "Compact this chat or start a new one, or give the model a larger context size.",
+    );
   });
 });
 

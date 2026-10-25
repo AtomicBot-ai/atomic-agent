@@ -22,6 +22,19 @@ export {
   LocalEngineDownError,
   isLocalEngineDown,
 } from "./local-engine-down.js";
+export {
+  LOCAL_CONTEXT_EXCEEDED_CODE,
+  LOCAL_REQUEST_INVALID_CODE,
+  LOCAL_SERVER_NOT_FOUND_ADVICE,
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  LOCAL_SERVER_NOT_FOUND_MESSAGE,
+  LOCAL_SERVER_RECHECK_COMMAND,
+  LOCAL_SERVER_RECHECK_HINT,
+  classifyLocalServerError,
+  localServerErrorLines,
+  type LocalServerError,
+  type LocalServerErrorCode,
+} from "./local-server-error.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
 export {
   readProviderErrorVerdict,

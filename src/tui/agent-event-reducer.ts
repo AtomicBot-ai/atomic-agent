@@ -1,7 +1,11 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { describeFailedAttempts } from "../llm/fallback/index.js";
-import { isLocalEngineDown } from "../llm/reliability/index.js";
+import {
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  classifyLocalServerError,
+  isLocalEngineDown,
+} from "../llm/reliability/index.js";
 import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
@@ -10,7 +14,11 @@ import {
   formatBackgroundApprovalNotice,
   formatBackgroundProviderWaitNotice,
 } from "./detached-turns.js";
-import { formatAgentErrorForChat, formatLocalEngineDownForChat } from "./chat/format-agent-error-for-chat.js";
+import {
+  formatAgentErrorForChat,
+  formatLocalEngineDownForChat,
+  formatLocalServerErrorForChat,
+} from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import {
   formatProviderGaveUpLine,
@@ -732,7 +740,17 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-772: the managed local model's process is gone and the turn
       // ended without the outage wait: say so, and the command that fixes it.
       const engineDown = isLocalEngineDown(event.error);
-      const chatError = engineDown ? formatLocalEngineDownForChat() : formatAgentErrorForChat(
+      // ATO-707 / ATO-737: a local server's typed 400 (context full, or a
+      // request it would not take) in plain words. Its 404/405 keeps the
+      // wrong-server hint below, which names the recheck command.
+      const localServer = engineDown ? null : classifyLocalServerError(event.error);
+      const badRequest =
+        localServer !== null && localServer.code !== LOCAL_SERVER_NOT_FOUND_CODE ? localServer : null;
+      const chatError = engineDown
+        ? formatLocalEngineDownForChat()
+        : badRequest !== null
+          ? formatLocalServerErrorForChat(badRequest, event.error.message)
+          : formatAgentErrorForChat(
         event.category,
         event.error.message,
         {

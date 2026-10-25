@@ -7,8 +7,9 @@ import {
 } from "../llm/provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { classifyFailure } from "../llm/reliability/index.js";
-import { TransportError } from "../llm/reliability/llm-failures.js";
+import { GrammarError, TransportError } from "../llm/reliability/llm-failures.js";
 import { LocalEngineDownError } from "../llm/reliability/local-engine-down.js";
+import { LlamaServerError, readLlamaErrorBody } from "../llm/llama-server-client.js";
 import { buildStreamEventHook } from "./openai-chat-completions.js";
 
 /**
@@ -111,6 +112,69 @@ describe("loop_failed over SSE", () => {
 
     expect(sse.written).toHaveLength(1);
     expect(sse.written[0]!.payload).toMatchObject({ code: "local_engine_down" });
+  });
+
+  it("marks a llama.cpp 404 with local_server_not_found and plain advice (ATO-708, ATO-873)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const raw = new LlamaServerError("llama-server returned http 404", 404, "http://127.0.0.1:8080/v1/chat/completions");
+    const wrapped = new TransportError(raw.message, 404, raw.url, { cause: raw });
+
+    hook({ type: "loop_failed", error: wrapped, category: classifyFailure(wrapped) } as never);
+
+    expect(sse.written).toHaveLength(1);
+    const payload = sse.written[0]!.payload as { error: string; code?: string; advice?: string };
+    // The raw words stay: the desktop already matches "returned http 404".
+    expect(payload.error).toBe("llama-server returned http 404");
+    expect(payload.code).toBe("local_server_not_found");
+    expect(payload.advice).toContain("This address isn't a model server, or the model isn't loaded there.");
+    expect(payload.advice).toContain("9931");
+  });
+
+  it("marks a llama.cpp context overflow with local_context_exceeded (ATO-737)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const body = readLlamaErrorBody(
+      JSON.stringify({ error: { code: 400, message: "request exceeds the available context size", type: "exceed_context_size_error" } }),
+    );
+    const raw = new LlamaServerError(
+      "llama-server returned http 400: request exceeds the available context size",
+      400,
+      "http://127.0.0.1:9931/v1/chat/completions",
+      false,
+      undefined,
+      body !== undefined ? { body } : undefined,
+    );
+    const wrapped = new GrammarError(raw.message, "", { cause: raw });
+
+    hook({ type: "loop_failed", error: wrapped, category: classifyFailure(wrapped) } as never);
+
+    const payload = sse.written[0]!.payload as { code?: string; advice?: string };
+    expect(payload.code).toBe("local_context_exceeded");
+    expect(payload.advice).toContain("context window");
+  });
+
+  it("puts local_server_not_found in the envelope's code for an OpenAI-compatible client", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(false));
+    const raw = new LlamaServerError("llama-server returned http 405", 405, "http://127.0.0.1:9931/completion");
+
+    hook({ type: "loop_failed", error: raw, category: classifyFailure(raw) } as never);
+
+    const payload = sse.written[0]!.payload as { error: { code: string | null } };
+    expect(payload.error.code).toBe("local_server_not_found");
+  });
+
+  it("adds no code to a cloud failure", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const err = new TransportError("openrouter answered 404", 404, "https://openrouter.ai/api/v1/chat/completions");
+
+    hook({ type: "loop_failed", error: err, category: classifyFailure(err) } as never);
+
+    const payload = sse.written[0]!.payload as { code?: string; advice?: string };
+    expect(payload.code).toBeUndefined();
+    expect(payload.advice).toBeUndefined();
   });
 
   it("puts local_engine_down in the envelope's code for an OpenAI-compatible client", () => {

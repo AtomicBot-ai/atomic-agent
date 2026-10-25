@@ -4,6 +4,7 @@ import type { RouteDefinition } from "./http-server.js";
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
+import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
 import { createModelsHandler } from "./route-models.js";
 import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
@@ -179,6 +180,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
     { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
+    // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
+    { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
     { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
     { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },

@@ -21,6 +21,11 @@ export {
   TRANSPORT_DEADLINE_MARGIN_MS,
 } from "./transport-deadlines.js";
 export { describeLlamaHealthFailure } from "./describe-llama-health-failure.js";
+export {
+  recheckLocalConnection,
+  type LocalConnectionCheck,
+  type LocalConnectionVerdict,
+} from "./recheck-local-connection.js";
 export type {
   HealthCheckOptions,
   HealthResult,
@@ -72,6 +77,11 @@ export {
   LOCAL_ENGINE_START_HINT,
   LocalEngineDownError,
   isLocalEngineDown,
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  LOCAL_CONTEXT_EXCEEDED_CODE,
+  LOCAL_REQUEST_INVALID_CODE,
+  LOCAL_SERVER_RECHECK_COMMAND,
+  classifyLocalServerError,
   classifyFailure,
   classifyTruncation,
   detectFabricatedToolTranscript,
