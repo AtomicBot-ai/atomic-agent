@@ -714,7 +714,8 @@ export class ApprovalGate {
  * Whether the approval prompt may offer `[s]` (grant the whole category
  * for the session) for this request. Everything is grantable except
  * `trust_config`. Shared by every surface (TUI modal, TUI keys, CLI
- * prompt) so the offer set never drifts between them.
+ * prompt, the Telegram approval keyboard) so the offer set never drifts
+ * between them.
  */
 export function canGrantCategory(request: ApprovalRequest): boolean {
   return isGrantableCategory(request.category);

@@ -149,7 +149,8 @@ describe("ApprovalBridge.dispatch", () => {
   it("omits grant buttons when not applicable (trust_config)", async () => {
     const h = makeHarness();
     const r = req("abc");
-    // trust_config is the only non-grantable category — no s or a buttons
+    // trust_config is never grantable (nor are email and fusion_fanout):
+    // no s or a buttons
     r.category = "trust_config";
     await h.bridge.dispatch(r, 7);
 
