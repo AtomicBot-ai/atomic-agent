@@ -57,8 +57,21 @@ export type ShellCallForm =
   | { kind: "kill"; id: number }
   | { kind: "invalid"; message: string };
 
+/**
+ * Whether a form field was really passed. Some models fill every
+ * optional field with its zero value (`{"cmd": "pwd", "wait": 0,
+ * "kill": 0, "jobs": false}`, seen from GPT-6 Astra), so `0`, `""` and
+ * a stringified `"0"` count as absent alongside `undefined`, `null` and
+ * `false`. No real job id is lost: ids are positive integers.
+ */
 function isPresent(value: unknown): boolean {
-  return value !== undefined && value !== null && value !== false;
+  if (value === undefined || value === null || value === false) return false;
+  if (value === 0) return false;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (trimmed === "" || trimmed === "0") return false;
+  }
+  return true;
 }
 
 function parseJobId(raw: unknown): number | null {
