@@ -6,6 +6,7 @@ import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { readErrnoCode } from "./errno-code.js";
 import { discardResponseBody } from "./discard-response-body.js";
 import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
+import { readContextOverflowCounts, type ContextOverflowCounts } from "./reliability/context-overflow-counts.js";
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
 import type {
   CompletionRequest,
@@ -398,20 +399,27 @@ export class LlamaServerError extends Error {
    * (`{"error":{"type":"exceed_context_size_error",...}}`). Only the
    * type is kept, never the server's message: the error reporter reads
    * `body.type` through its strict pattern for the `upstream_error_type`
-   * tag, the same field `OpenAiHttpError` carries.
+   * tag, the same field `OpenAiHttpError` carries. An overflow body's
+   * `n_ctx` / `n_prompt_tokens` counts ride along for the agent loop's
+   * overflow compaction (numbers only).
    */
   readonly body?: LlamaErrorBody;
 }
 
-/** What a llama-server error body says, reduced to its reason code. */
-export interface LlamaErrorBody {
+/**
+ * What a llama-server error body says, reduced to its reason code and,
+ * for `exceed_context_size_error`, the server's own counts (`n_ctx`,
+ * `n_prompt_tokens`) — numbers only, never the message.
+ */
+export interface LlamaErrorBody extends ContextOverflowCounts {
   readonly type: string;
 }
 
-/** `error.type` of a llama-server error body, or undefined. Pure; never throws. */
+/** `error.type` (+ overflow counts) of a llama-server error body, or undefined. Pure; never throws. */
 export function readLlamaErrorBody(rawBody: string): LlamaErrorBody | undefined {
   const type = parseProviderErrorBody(rawBody).type;
-  return type !== undefined ? { type } : undefined;
+  if (type === undefined) return undefined;
+  return { type, ...readContextOverflowCounts(rawBody) };
 }
 
 /** Cap on how much of a server error body we fold into the message. */
