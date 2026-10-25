@@ -12,7 +12,10 @@ import {
   reasoningBudgetChars,
 } from "../reasoning-budget.js";
 import { applyMcpToolNameRule } from "../../mcp/mcp-grammar-builder.js";
-import { buildReasoningPreludeRules, quoteGbnf } from "./reasoning-prelude.js";
+import { buildReasoningPreludeRules } from "./reasoning-prelude.js";
+import { GRAMMAR_EXIT_TOOL, narrowToolCallRules } from "./tool-call-branches.js";
+
+export { grammarToolNames } from "./tool-call-branches.js";
 
 function resolveDefaultGrammarsDir(): string {
   const nextToBinary = join(dirname(process.execPath), "grammars");
@@ -199,28 +202,6 @@ function hardenStringRule(grammar: string): string {
   return hardened;
 }
 
-/** The one rule a per-request grammar rewrites. */
-const TOOL_NAME_RULE_RE = /^tool-name ::= .*$/m;
-
-/** Terminal verb every restricted grammar keeps: a step must be able to exit. */
-const GRAMMAR_EXIT_TOOL = "reply";
-
-/**
- * The split `tool-call` rule of a grammar whose `reply` has its own branch
- * (#681): `reply-call` carries reply with the guarded text rule, and
- * `tool-name` (the generic branch) does not list it. An older grammar
- * without the split keeps `reply` in `tool-name`. `shell-call` is the same
- * idea for `os.shell.run`, whose `cmd` must be a non-empty string; it is
- * optional here so a grammar from before that branch still narrows.
- */
-const SPLIT_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call( \| shell-call)?( \| other-call)?$/m;
-
-/** Tools with a dedicated branch of the split rule, outside `tool-name`. */
-const SHELL_TOOL = "os.shell.run";
-
-/** `tool-call` when `reply` is the only name a request admits. */
-const REPLY_ONLY_TOOL_CALL_RULE_RE = /^tool-call ::= reply-call$/m;
-
 /**
  * Bound on cached per-request grammars per base grammar. The name sets a
  * session cycles through are few (a role, the same role minus the gate's
@@ -254,8 +235,10 @@ const perRequestGrammarCache = new Map<string, Map<string, string>>();
  *
  * `reply` is always present: a grammar with no exit would trap the step in
  * the only thing it can still emit. It lives on its own `reply-call`
- * branch (#681), so `tool-name` gets the other names; when there are none,
- * `tool-call` is cut down to that branch. The rewritten rule is sorted and
+ * branch (#681), and `os.shell.run`, `os.fs.read` and `os.fs.write` keep
+ * theirs when the request admits them (`tool-call-branches.ts`), so
+ * `tool-name` gets the other names; when there are none, `tool-call` is
+ * cut down to the dedicated branches. The rewritten rule is sorted and
  * deduplicated, and the result is cached by the sorted name list, so the
  * same set costs one string build per base grammar.
  */
@@ -276,76 +259,13 @@ export function buildGrammarForTools(
   }
   const cached = perBase.get(key);
   if (cached !== undefined) return cached;
-  const built = SPLIT_TOOL_CALL_RULE_RE.test(baseGrammar)
-    ? narrowSplitGrammar(baseGrammar, sorted)
-    : replaceToolNameRule(baseGrammar, sorted);
+  const built = narrowToolCallRules(baseGrammar, sorted);
   if (perBase.size >= GRAMMAR_CACHE_PER_BASE) {
     const oldest = perBase.keys().next();
     if (!oldest.done) perBase.delete(oldest.value);
   }
   perBase.set(key, built);
   return built;
-}
-
-function replaceToolNameRule(grammar: string, names: string[]): string {
-  const rule = `tool-name ::= ${names.map(quoteToolNameLiteral).join(" | ")}`;
-  return TOOL_NAME_RULE_RE.test(grammar)
-    ? grammar.replace(TOOL_NAME_RULE_RE, rule)
-    : // A base without the rule (an older grammar file): a later
-      // definition wins in GBNF, so appending still restricts.
-      `${grammar.trimEnd()}\n${rule}\n`;
-}
-
-/**
- * The per-request rewrite of a split grammar: `reply` stays on its own
- * branch, `os.shell.run` keeps its own branch when the request admits it
- * (and the base grammar has one), `tool-name` lists the other names. A
- * branch with nothing to carry is dropped from `tool-call` (an empty
- * alternation is not valid GBNF); `tool-name` is then left as it was, an
- * unreferenced rule llama.cpp still parses.
- */
-function narrowSplitGrammar(grammar: string, names: string[]): string {
-  const hasShellBranch = /^shell-call ::= /m.test(grammar);
-  const keepShell = hasShellBranch && names.includes(SHELL_TOOL);
-  const others = names.filter(
-    (name) => name !== GRAMMAR_EXIT_TOOL && !(hasShellBranch && name === SHELL_TOOL),
-  );
-  const branches = ["reply-call"];
-  if (keepShell) branches.push("shell-call");
-  if (others.length > 0) branches.push("other-call");
-  const narrowed = grammar.replace(SPLIT_TOOL_CALL_RULE_RE, `tool-call ::= ${branches.join(" | ")}`);
-  return others.length > 0 ? replaceToolNameRule(narrowed, others) : narrowed;
-}
-
-/**
- * The tool names a grammar admits when its `tool-name` rule is a flat
- * alternation of literals (the shape `buildGrammarForTools` writes),
- * sorted, with `reply` included when the grammar carries it on its own
- * `reply-call` branch. `null` for the static base grammar, whose rule is
- * composed of sub-rules. A test helper more than a runtime one.
- */
-export function grammarToolNames(grammar: string): string[] | null {
-  if (REPLY_ONLY_TOOL_CALL_RULE_RE.test(grammar)) return [GRAMMAR_EXIT_TOOL];
-  const split = grammar.match(SPLIT_TOOL_CALL_RULE_RE);
-  const names: string[] = [];
-  if (!split || split[2] !== undefined) {
-    const match = grammar.match(TOOL_NAME_RULE_RE);
-    if (!match) return null;
-    const body = match[0].slice("tool-name ::= ".length);
-    for (const alt of body.split("|")) {
-      const literal = alt.trim().match(/^"\\"(.*)\\""$/);
-      if (!literal) return null;
-      names.push(literal[1]!);
-    }
-  }
-  if (split) names.push(GRAMMAR_EXIT_TOOL);
-  if (split?.[1] !== undefined) names.push(SHELL_TOOL);
-  return Array.from(new Set(names)).sort();
-}
-
-/** `os.fs.read` → `"\"os.fs.read\""` — a JSON string literal inside a GBNF one. */
-function quoteToolNameLiteral(name: string): string {
-  return quoteGbnf(`"${name}"`);
 }
 
 /**

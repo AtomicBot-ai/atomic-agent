@@ -750,7 +750,7 @@ describe("buildGrammarForTools — the per-request grammar", () => {
       GEMMA4_THINK_PROFILE,
     ]) {
       const base = await buildGrammar(profile);
-      const narrowed = buildGrammarForTools(base, ["os.fs.read", "reply"]);
+      const narrowed = buildGrammarForTools(base, ["os.fs.list", "reply"]);
       const baseLines = base.split("\n");
       const narrowedLines = narrowed.split("\n");
       expect(narrowedLines.length, profile.id).toBe(baseLines.length);
@@ -758,17 +758,17 @@ describe("buildGrammarForTools — the per-request grammar", () => {
         if (baseLines[i]!.startsWith("tool-name ::=")) {
           // `reply` has its own branch (#681): `tool-name` lists the rest.
           expect(narrowedLines[i], profile.id).toBe(
-            'tool-name ::= "\\"os.fs.read\\""',
+            'tool-name ::= "\\"os.fs.list\\""',
           );
         } else if (baseLines[i]!.startsWith("tool-call ::=")) {
-          // os.shell.run is not in this set, so its branch is dropped.
+          // No tool with a dedicated branch is in this set, so those branches are dropped.
           expect(narrowedLines[i], profile.id).toBe("tool-call ::= reply-call | other-call");
         } else {
           expect(narrowedLines[i], profile.id).toBe(baseLines[i]);
         }
       }
       expect(grammarToolNames(narrowed), profile.id).toEqual([
-        "os.fs.read",
+        "os.fs.list",
         "reply",
       ]);
     }
@@ -887,17 +887,17 @@ describe("os.shell.run cannot be called with empty args", () => {
 
   it("a request that admits the shell keeps its branch and lists it", async () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
-    const g = buildGrammarForTools(base, ["os.fs.read", "os.shell.run"]);
+    const g = buildGrammarForTools(base, ["os.fs.list", "os.shell.run"]);
     expect(g).toMatch(/^tool-call ::= reply-call \| shell-call \| other-call$/m);
-    expect(g).toMatch(/^tool-name ::= "\\"os\.fs\.read\\""$/m);
-    expect(grammarToolNames(g)).toEqual(["os.fs.read", "os.shell.run", "reply"]);
+    expect(g).toMatch(/^tool-name ::= "\\"os\.fs\.list\\""$/m);
+    expect(grammarToolNames(g)).toEqual(["os.fs.list", "os.shell.run", "reply"]);
   });
 
   it("a request without the shell drops its branch, so no shell call can be emitted", async () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
-    const g = buildGrammarForTools(base, ["os.fs.read"]);
+    const g = buildGrammarForTools(base, ["os.fs.list"]);
     expect(g).toMatch(/^tool-call ::= reply-call \| other-call$/m);
-    expect(grammarToolNames(g)).toEqual(["os.fs.read", "reply"]);
+    expect(grammarToolNames(g)).toEqual(["os.fs.list", "reply"]);
     expect(gbnfAccepts(g, "root", CMD)).toBe(false);
   });
 
