@@ -2622,7 +2622,15 @@ function renderContent() {
     const pe = document.getElementById('entry');
     const hadFocus = !!(pe && document.activeElement === pe);
     const caret = hadFocus ? [pe.selectionStart, pe.selectionEnd] : null;
-    c.innerHTML = chatView(); afterChat(keep, hadFocus, caret); return;
+    /* ATO-1023: morphed, not replaced (dom-morph.js, as repaintTranscript
+       does for a stream frame). A click used to throw away the transcript and
+       the composer: the scroller, the textarea and every running animation
+       were new nodes on each render. Kept nodes keep their focus, caret,
+       scroll and animation; only markup that changed is swapped. */
+    const next = document.createElement('template');
+    next.innerHTML = chatView();
+    morphChildren(c, next.content);
+    afterChat(keep, hadFocus, caret); return;
   }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
   c.innerHTML = skillsView();
@@ -4202,6 +4210,7 @@ function voiceMenuHTML() {
     + '</div>';
 }
 
+const SCROLL_WIRED = new WeakSet();
 function afterChat(keep, hadFocus, caret) {
   const e = $('#entry');
   if (!e) return;
@@ -4236,11 +4245,25 @@ function afterChat(keep, hadFocus, caret) {
   }
   const sc = $('#scroller');
   if (sc) {
-    sc.addEventListener('scroll', () => {
-      S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
-      $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
-      apprJumpSync();
-    });
+    /* ATO-1023: the scroller now outlives a render (renderContent morphs), so
+       it is wired once. A WeakSet, not a data- attribute: the next morph would
+       strip an attribute the markup does not carry. S.stick is set in the
+       event itself: a stream frame's rAF runs before any rAF this handler
+       could ask for, and would snap a scroll-up back to the bottom. The
+       toolbar class and the approval jump wait for the frame. */
+    if (!SCROLL_WIRED.has(sc)) {
+      SCROLL_WIRED.add(sc);
+      let frame = 0;
+      sc.addEventListener('scroll', () => {
+        S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+        if (frame) return;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
+          apprJumpSync();
+        });
+      }, {passive: true});
+    }
     if (S.stick) sc.scrollTop = sc.scrollHeight;
     // Scroll-stable cards: a scrolled-up user is put back at the same pixel
     // after a whole-DOM render (streaming deltas, reconcileToolCards, expand
@@ -20836,7 +20859,34 @@ function renderMarkdown(escaped) {
   return { html: out.join('\n'), held };
 }
 
+/* ATO-1023: a finished message's markup is the same on every paint, so it is
+   made once. renderProse ran the markdown, link and chip passes over every
+   message of the chat on every render, and on every frame of a stream. A hit
+   needs the text and the same path answers from main (PROSE_CACHE.ver moves
+   when any lands, and again when a "not there" answer is due to be asked
+   again). Markup still waiting on main ([data-rpath]) is not
+   kept. A streaming reply's text only grows, so its previous frame's entry is
+   dropped when the next one is stored: the cache holds messages, not frames. */
+const PROSE_CACHE = {map: new Map(), ver: 0, last: '', max: 600};
 function renderProse(text) {
+  const key = typeof text === 'string' ? text : String(text == null ? '' : text);
+  const C = PROSE_CACHE;
+  const hit = C.map.get(key);
+  if (hit && hit.ver === C.ver) {
+    C.map.delete(key); C.map.set(key, hit);
+    return hit.html;
+  }
+  const html = renderProseFresh(key);
+  if (html.indexOf('data-rpath=') < 0) {
+    if (C.last && C.last !== key && key.startsWith(C.last)) C.map.delete(C.last);
+    C.map.delete(key);
+    C.map.set(key, {html, ver: C.ver});
+    C.last = key;
+    if (C.map.size > C.max) C.map.delete(C.map.keys().next().value);
+  }
+  return html;
+}
+function renderProseFresh(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
   // Chat review (Д23): letters of any script, so `~/Документы/отчёт.docx` reads as a path too,
   // and extensions up to ten characters (`run.command`): main decides what each one is.
@@ -20936,6 +20986,11 @@ async function replyPathsAsk() {
     REPLY_PATHS.set(p, v);
     if (v.ok) landed = true;
   });
+  /* ATO-1023: markup made before these answers may name them differently. A
+     "not there" answer is asked again after REPLY_PATH_RETRY_MS, so the markup
+     made from it goes stale then too. */
+  PROSE_CACHE.ver++;
+  if (batch.some((p) => !REPLY_PATHS.get(p).ok)) setTimeout(() => { PROSE_CACHE.ver++; }, REPLY_PATH_RETRY_MS);
   if (!landed) return;
   document.querySelectorAll('[data-rpath]').forEach((n) => {
     const v = REPLY_PATHS.get(n.dataset.rpath);
