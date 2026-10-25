@@ -121,6 +121,7 @@ import {
 } from "../../llm/run-mode/index.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
+import { planLocalContextGrowth } from "./local-context-growth.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -285,6 +286,12 @@ export class LocalModelsOrchestrator {
    * `llama-server` process nothing can stop afterwards.
    */
   private restartInFlight: Promise<boolean> | null = null;
+  /**
+   * The auto window this process grew the model to (`growContextForPrompt`):
+   * later starts of the same model begin there instead of back at the
+   * small start window. Another model starts small again.
+   */
+  private grownContext: { modelId: string; atLeast: number } | null = null;
   private readonly operations = new ModelOperationQueue();
   private selectionRevision = 0;
   private closing = false;
@@ -2074,6 +2081,7 @@ export class LocalModelsOrchestrator {
         clearance,
       );
       opts?.signal?.throwIfAborted();
+      const grown = this.grownContext;
       const result = await this.trackCoreStart(opts?.signal, signal => startChatAndEmbeddingDaemons({
         chat: {
           engine: cfg.localModels.managed.engine,
@@ -2086,6 +2094,7 @@ export class LocalModelsOrchestrator {
           chatTemplateFile: tpl,
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
+          ...(grown && grown.modelId === mid ? { autoContextAtLeast: grown.atLeast } : {}),
           parallel: cfg.localModels.managed.parallel,
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
@@ -2380,6 +2389,35 @@ export class LocalModelsOrchestrator {
     });
     this.restartInFlight = inFlight;
     return inFlight;
+  }
+
+  /**
+   * ATO-848: before a turn, grow the auto window of a daemon on a GPU
+   * with memory of its own when the conversation's last prompt
+   * (`session.contextUsage.tokens`) has filled three quarters of the
+   * prompt's room — one doubling, held to what fits the card
+   * (`decideContextGrowth`), through the ordinary restart. A no-op for a
+   * pinned context, unified memory, CPU, external mode and while a model
+   * change or restart is running. Never throws: a failed growth leaves
+   * the turn to run on the window it has.
+   */
+  async growContextForPrompt(promptTokens: number | null | undefined): Promise<boolean> {
+    if (typeof promptTokens !== "number" || !(promptTokens > 0)) return false;
+    if (this.closing || this.restartInFlight || this.isSwitching) return false;
+    try {
+      const step = planLocalContextGrowth(getConfig(), promptTokens);
+      if (!step) return false;
+      this.grownContext = { modelId: step.modelId, atLeast: step.to };
+      this.bus.emit({
+        type: "runtime_info",
+        line:
+          `local-llm: the conversation fills the ${step.from}-token window ` +
+          `(${step.promptTokens} tokens in the last prompt) — restarting the model with ${step.to}`,
+      });
+      return await this.restartDaemon();
+    } catch {
+      return false;
+    }
   }
 
   async restartDaemon(): Promise<boolean> {

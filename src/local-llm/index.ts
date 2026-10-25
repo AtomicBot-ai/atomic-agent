@@ -264,6 +264,18 @@ export {
   type SwaFullDecision,
   type SwaFullPreference,
 } from "./server/swa-full.js";
+export {
+  CONTEXT_GROWTH_TRIGGER_SHARE,
+  CONTEXT_SIZE_MODEL_MAX,
+  decideContextGrowth,
+  GPU_AUTO_MAX_SLOTS,
+  GPU_AUTO_START_CONTEXT,
+  MANAGED_CONTEXT_SIZE_PRESETS,
+  MANAGED_PARALLEL_PRESETS,
+  resolveGrowingAutoContext,
+  type ContextGrowthInput,
+  type GrowingAutoContext,
+} from "./server/context-growth.js";
 export { readLogTail, type LogTailResult } from "./server/log-tail.js";
 export { describeServerFault, type ServerFault } from "./server/server-fault.js";
 export {

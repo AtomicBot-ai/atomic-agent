@@ -1382,7 +1382,7 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
     }
   });
 
-  it("gives an 8 GB Mac 74,752 tokens and leaves a card with memory of its own at the fit", async () => {
+  it("gives an 8 GB Mac 74,752 tokens and starts a card with memory of its own small, the fit its ceiling", async () => {
     const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-mac8-`);
     try {
       stageQwen35(dataDir);
@@ -1398,9 +1398,16 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
       listDevicesAnswers("CUDA0: NVIDIA GeForce RTX 4090 (24564 MiB, 10922 MiB free)");
       spawnMock.mockReturnValue(fakeChild(6003));
       const card = await startDaemon({ dataDir, modelId: "qwen-3.5-4b", port: 19088, parallel: 1, throughputProbe: false });
-      expect(card.contextSize).toBe(262_144);
-      expect(readFileSync(resolveLogFilePath(dataDir), "utf-8")).not.toMatch(
-        /--ctx-size 262144 fitted from the model's KV layout, held to/,
+      // ATO-848: the card's fit (262,144) is where the window may grow
+      // to, not where it starts; the Mac above is not held to a start.
+      expect(mac.autoContextCeiling).toBeNull();
+      expect(card.contextSize).toBe(32_768);
+      expect(card.autoContextCeiling).toBe(262_144);
+      expect(readLaunchRecord(dataDir, 6003)).toMatchObject({ contextSize: 32_768, autoContextCeiling: 262_144 });
+      const log = readFileSync(resolveLogFilePath(dataDir), "utf-8");
+      expect(log).not.toMatch(/--ctx-size 32768 fitted from the model's KV layout, held to/);
+      expect(log).toContain(
+        "--ctx-size 32768 fitted from the model's KV layout, started small to grow with the conversation, up to 262144",
       );
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
@@ -1424,6 +1431,48 @@ describe("startDaemon on a 16 GB Mac (backlog 39, 42)", () => {
       });
       expect(result.contextSize).toBe(262_144);
       expect(spawnedArg("--ctx-size")).toBe("262144");
+    } finally {
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("grows a card's auto window when restarted with autoContextAtLeast, never past the fit, auto slots held to two", async () => {
+    const dataDir = mkdtempSync(`${tmpdir()}/atomic-daemon-card-grow-`);
+    try {
+      stageQwen35(dataDir);
+      listDevicesAnswers("CUDA0: NVIDIA GeForce RTX 4090 (24564 MiB, 23000 MiB free)");
+      healthyServer();
+      const start = async (pid: number, extra: { autoContextAtLeast?: number; contextSize?: number; parallel?: number | "auto" }) => {
+        stopped(dataDir);
+        spawnMock.mockReturnValue(fakeChild(pid));
+        return startDaemon({
+          dataDir,
+          modelId: "qwen-3.5-4b",
+          port: 19079,
+          parallel: "auto",
+          completionMaxTokens: 16_384,
+          throughputProbe: false,
+          ...extra,
+        });
+      };
+      const first = await start(6011, {});
+      expect(first.contextSize).toBe(32_768);
+      expect(spawnedArg("--parallel")).toBe("1");
+      const grown = await start(6012, { autoContextAtLeast: 131_072 });
+      expect(grown.contextSize).toBe(131_072);
+      expect(grown.autoContextCeiling).toBe(262_144);
+      // 131,072 holds four ~32k worker footprints; a growing launch keeps two.
+      expect(spawnedArg("--parallel")).toBe("2");
+      const capped = await start(6013, { autoContextAtLeast: 1_048_576 });
+      expect(capped.contextSize).toBe(262_144);
+      // A pinned context and a pinned parallel are the operator's, uncapped.
+      const pinned = await start(6014, { contextSize: 131_072, parallel: 4 });
+      expect(pinned.contextSize).toBe(131_072);
+      expect(pinned.autoContextCeiling).toBeNull();
+      expect(spawnedArg("--parallel")).toBe("4");
+      const pinnedAuto = await start(6015, { contextSize: 131_072 });
+      expect(pinnedAuto.autoContextCeiling).toBeNull();
+      expect(spawnedArg("--parallel")).toBe("4");
     } finally {
       rmSync(dataDir, { recursive: true, force: true });
     }

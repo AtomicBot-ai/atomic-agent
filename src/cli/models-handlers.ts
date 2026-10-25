@@ -43,6 +43,7 @@ import {
   probeManagedDevices,
   readBackendVersion,
   readDownloadJob,
+  readLaunchRecord,
   DEFAULT_HF_ENDPOINT,
   huggingFaceEndpointHost,
   readPartialDownload,
@@ -507,6 +508,19 @@ export async function runLocalModelsStatus(): Promise<number> {
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
   process.stdout.write(`health:         ${health}\n`);
+  // The window the live daemon runs with, and how far an auto one may
+  // still grow with the conversation (`context-growth.ts`).
+  const launch = st.running ? readLaunchRecord(dataDir, st.pid) : null;
+  if (launch && launch.contextSize > 0) {
+    const ceiling = launch.autoContextCeiling ?? null;
+    process.stdout.write(
+      `context:        ${launch.contextSize} tokens` +
+        (ceiling !== null && ceiling > launch.contextSize
+          ? ` (auto: grows up to ${ceiling} as the conversation does)`
+          : "") +
+        "\n",
+    );
+  }
   if (st.authMismatch) {
     process.stdout.write(
       "note:           a model server answers on this port but rejects the running model's key, so every request would fail. Run 'atomic-agent models stop', then 'models start'.\n",
@@ -537,7 +551,16 @@ export async function runLocalModelsStatus(): Promise<number> {
 }
 
 export async function runLocalModelsStart(
-  opts: { interactive?: boolean; signal?: AbortSignal } = {},
+  opts: {
+    interactive?: boolean;
+    signal?: AbortSignal;
+    /**
+     * `--context-at-least`: the growing auto window starts at least this
+     * large (`DaemonStartOptions.autoContextAtLeast`) — a client growing
+     * the window between turns restarts the daemon with it.
+     */
+    contextAtLeast?: number;
+  } = {},
 ): Promise<number> {
   const { signal } = opts;
   // Re-read after a fallback from Atomic Core switches the engine.
@@ -715,6 +738,7 @@ export async function runLocalModelsStart(
         modelId: mid,
         port: cfg.localModels.managed.port,
         contextSize: cfg.localModels.managed.contextSize,
+        ...(opts.contextAtLeast ? { autoContextAtLeast: opts.contextAtLeast } : {}),
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,

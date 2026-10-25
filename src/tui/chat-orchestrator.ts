@@ -1570,6 +1570,11 @@ export class ChatOrchestrator {
         if (readyGate.kind === "block") throw new Error(readyGate.text);
         if (readyGate.kind === "notice" && this.session?.id === turnSessionId) this.notify(readyGate.text);
       }
+      // ATO-848: a conversation that has filled the local auto window gets
+      // a bigger one before this turn is sent (one step per turn).
+      if (gateFacts.activeProviderIsLocal && gateFacts.managedMode) {
+        await this.localModels.growContextForPrompt?.(turnSession.contextUsage?.tokens);
+      }
       controller.signal.throwIfAborted();
       this.waitingModelMessages.delete(turnSessionId);
       dispatched = true;

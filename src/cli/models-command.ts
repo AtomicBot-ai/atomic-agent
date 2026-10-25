@@ -1,6 +1,7 @@
 import { modelsEngineCommand, modelsStopEmbedding } from "./models-engine.js";
 import { getConfig } from "../config/index.js";
 import {
+  readCliOption,
   runLocalModelsDevices,
   runLocalModelsList,
   runLocalModelsListEmbeddings,
@@ -39,6 +40,9 @@ const HELP =
     '  use <id>                      Set active model and switch mode to "managed"',
     "  status                        Show mode, backend version, active model, daemon/health",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
+    "                                --context-at-least <n>: an auto-sized window on a GPU",
+    "                                with its own memory starts at least this large (still",
+    "                                within what fits); how a client grows it between turns",
     "  stop [--chat-only]            Stop daemon (SIGTERM → SIGKILL after 3s); --chat-only",
     "                                keeps the embedding model running for memory search",
     "  engine [status|check|atomic-core|llama-server]  Inspect or choose the local engine",
@@ -79,6 +83,12 @@ const HELP =
     "  atomic-agent models status",
   ].join("\n") + "\n";
 
+/** `--context-at-least <n>`: a positive integer, or nothing (ignored otherwise). */
+function parseContextAtLeast(raw: string | undefined): { contextAtLeast?: number } {
+  const n = raw === undefined ? NaN : Number(raw);
+  return Number.isInteger(n) && n > 0 ? { contextAtLeast: n } : {};
+}
+
 export async function modelsCommand(args: string[]): Promise<number> {
   getConfig();
   const sub = args[0];
@@ -114,6 +124,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runLocalModelsStart({
           interactive: args.includes("--interactive"),
           signal: cancel.signal,
+          ...parseContextAtLeast(readCliOption(args, "--context-at-least")),
         });
       case "stop":
         return runLocalModelsStop({ chatOnly: args.includes("--chat-only") });
