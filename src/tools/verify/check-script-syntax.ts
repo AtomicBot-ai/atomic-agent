@@ -52,15 +52,25 @@ function isMissingBinary(err: unknown): boolean {
 export function runChecker(
   cmd: string,
   args: readonly string[],
-  options: { cwd?: string; timeoutMs?: number } = {},
+  options: {
+    cwd?: string;
+    timeoutMs?: number;
+    /** Merged over the inherited env; an `undefined` value unsets the variable. */
+    env?: Readonly<Record<string, string | undefined>>;
+  } = {},
 ): Promise<CheckerRun> {
   return new Promise((resolve) => {
+    // Belt and braces for any interpreter that caches bytecode.
+    const env: NodeJS.ProcessEnv = { ...process.env, PYTHONDONTWRITEBYTECODE: "1" };
+    for (const [key, value] of Object.entries(options.env ?? {})) {
+      if (value === undefined) delete env[key];
+      else env[key] = value;
+    }
     const child = spawn(cmd, [...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-      // Belt and braces for any interpreter that caches bytecode.
-      env: { ...process.env, PYTHONDONTWRITEBYTECODE: "1" },
+      env,
     });
     let stdout = "";
     let stderr = "";
@@ -257,9 +267,10 @@ const PYTHON_KIND: InterpreterKind = {
 
 const SHELL_KIND: InterpreterKind = {
   name: "shell",
-  // On Windows any `sh` on PATH is a native port (Git for Windows, MSYS2,
-  // Cygwin) that takes Windows paths; System32 `bash` is the WSL launcher,
-  // whose Linux bash cannot open `C:\...` even when a distribution exists.
+  // On Windows System32 `bash` is the WSL launcher, whose Linux bash cannot
+  // open `C:\...` even when a distribution exists. An `sh` on PATH there
+  // usually comes from Git for Windows, MSYS2 or Cygwin, which do take
+  // Windows paths, so it is tried first.
   candidates: (platform) =>
     (platform === "win32" ? ["sh", "bash"] : ["bash", "sh"]).map((cmd) => ({
       cmd,
@@ -271,39 +282,54 @@ const SHELL_KIND: InterpreterKind = {
 };
 
 /**
+ * Probes and checks run in the C locale: a translated bash prints
+ * "Syntaxfehler" or "erreur de syntaxe", which no English pattern matches.
+ * LANGUAGE is dropped as well, so no translation list is left behind.
+ */
+const C_LOCALE_ENV: Readonly<Record<string, string | undefined>> = {
+  LC_ALL: "C",
+  LANGUAGE: undefined,
+};
+
+/**
  * Resolved interpreters, per runner and kind. A found interpreter is kept
- * for the process; "none found" is not, so one installed mid-session is
- * picked up by the next check.
+ * until a check finds it gone; "none found" is not kept, so one installed
+ * mid-session is picked up by the next check.
  */
 const resolvedInterpreters = new WeakMap<
   CheckerRunner,
   Map<string, Promise<Interpreter | null>>
 >();
 
-function resolveInterpreter(
-  kind: InterpreterKind,
-  run: CheckerRunner,
-  platform: NodeJS.Platform,
-): Promise<Interpreter | null> {
+function interpreterCache(run: CheckerRunner): Map<string, Promise<Interpreter | null>> {
   let byKind = resolvedInterpreters.get(run);
   if (byKind === undefined) {
     byKind = new Map();
     resolvedInterpreters.set(run, byKind);
   }
+  return byKind;
+}
+
+function resolveInterpreter(
+  kind: InterpreterKind,
+  run: CheckerRunner,
+  platform: NodeJS.Platform,
+): Promise<Interpreter | null> {
+  const cache = interpreterCache(run);
   const key = `${kind.name}:${platform}`;
-  const cached = byKind.get(key);
+  const cached = cache.get(key);
   if (cached !== undefined) return cached;
   const pending = (async (): Promise<Interpreter | null> => {
     for (const candidate of kind.candidates(platform)) {
       const probe = await run(candidate.cmd, [...candidate.args, ...kind.probeArgs], {
         timeoutMs: PROBE_TIMEOUT_MS,
+        env: C_LOCALE_ENV,
       });
       if (probe.missing || probe.timedOut) continue;
       if (kind.probeOk(probe)) return candidate;
     }
     return null;
   })();
-  const cache = byKind;
   cache.set(key, pending);
   const forget = (): void => {
     if (cache.get(key) === pending) cache.delete(key);
@@ -314,6 +340,10 @@ function resolveInterpreter(
   return pending;
 }
 
+function forgetInterpreter(kind: InterpreterKind, run: CheckerRunner, platform: NodeJS.Platform): void {
+  interpreterCache(run).delete(`${kind.name}:${platform}`);
+}
+
 const PYTHON_COMPILE =
   "import sys; compile(open(sys.argv[1], 'rb').read(), sys.argv[1], 'exec')";
 
@@ -322,6 +352,61 @@ const PYTHON_SYNTAX_ERROR = /\b(?:SyntaxError|IndentationError|TabError)\b/;
 
 /** bash: "syntax error"; dash: "Syntax error"; zsh: "parse error". */
 const SHELL_SYNTAX_ERROR = /\b(?:syntax error|parse error)\b|\bunexpected\b/i;
+
+interface SyntaxCheck {
+  readonly kind: InterpreterKind;
+  /** Arguments after the interpreter's own that check `file`. */
+  args(file: string): readonly string[];
+  readonly suffix: string;
+  readonly syntaxError: RegExp;
+  readonly noneFound: string;
+}
+
+const PYTHON_CHECK: SyntaxCheck = {
+  kind: PYTHON_KIND,
+  args: (file) => ["-c", PYTHON_COMPILE, file],
+  suffix: "compile()",
+  syntaxError: PYTHON_SYNTAX_ERROR,
+  noneFound: "no working Python 3 found",
+};
+
+const SHELL_CHECK: SyntaxCheck = {
+  kind: SHELL_KIND,
+  args: (file) => ["-n", file],
+  suffix: "-n",
+  syntaxError: SHELL_SYNTAX_ERROR,
+  noneFound: "no working shell found",
+};
+
+async function checkWithInterpreter(
+  spec: SyntaxCheck,
+  file: string,
+  options: InterpreterOptions,
+): Promise<SyntaxFileResult> {
+  const run = options.run ?? runChecker;
+  const platform = options.platform ?? process.platform;
+  const interpreter = await resolveInterpreter(spec.kind, run, platform);
+  if (interpreter === null) {
+    return { file, ok: null, checker: "none", error: spec.noneFound };
+  }
+  const checker = `${interpreter.label} ${spec.suffix}`;
+  const out = await run(interpreter.cmd, [...interpreter.args, ...spec.args(file)], {
+    env: C_LOCALE_ENV,
+  });
+  if (out.missing) {
+    // Uninstalled since it was probed: resolve afresh next time.
+    forgetInterpreter(spec.kind, run, platform);
+    return didNotRun(file, checker, out);
+  }
+  if (out.timedOut) return { file, ok: null, checker, error: "timed out" };
+  if (out.exitCode === 0) return { file, ok: true, checker };
+  // The path is echoed in the output; a directory named "unexpected"
+  // must not turn a failed launch into a syntax verdict.
+  if (!spec.syntaxError.test(out.stderr.split(file).join("<file>"))) {
+    return didNotRun(file, checker, out);
+  }
+  return { file, ok: false, checker, error: tailOfOutput(out.stderr, 4) };
+}
 
 function didNotRun(file: string, checker: string, run: CheckerRun): SyntaxFileResult {
   return {
@@ -337,23 +422,11 @@ function didNotRun(file: string, checker: string, run: CheckerRun): SyntaxFileRe
  * SyntaxError (or a subclass) is a verdict on the file; any other
  * non-zero exit means the check did not run.
  */
-export async function checkPythonFile(
+export function checkPythonFile(
   file: string,
   options: InterpreterOptions = {},
 ): Promise<SyntaxFileResult> {
-  const run = options.run ?? runChecker;
-  const python = await resolveInterpreter(PYTHON_KIND, run, options.platform ?? process.platform);
-  if (python === null) {
-    return { file, ok: null, checker: "none", error: "python3 not found" };
-  }
-  const checker = `${python.label} compile()`;
-  const out = await run(python.cmd, [...python.args, "-c", PYTHON_COMPILE, file]);
-  if (out.timedOut) return { file, ok: null, checker, error: "timed out" };
-  if (out.exitCode === 0) return { file, ok: true, checker };
-  if (out.missing || !PYTHON_SYNTAX_ERROR.test(out.stderr)) {
-    return didNotRun(file, checker, out);
-  }
-  return { file, ok: false, checker, error: tailOfOutput(out.stderr, 4) };
+  return checkWithInterpreter(PYTHON_CHECK, file, options);
 }
 
 /**
@@ -361,21 +434,9 @@ export async function checkPythonFile(
  * first on Windows). A non-zero exit without a syntax-error message is
  * "the check did not run", not a verdict on the file.
  */
-export async function checkShellFile(
+export function checkShellFile(
   file: string,
   options: InterpreterOptions = {},
 ): Promise<SyntaxFileResult> {
-  const run = options.run ?? runChecker;
-  const shell = await resolveInterpreter(SHELL_KIND, run, options.platform ?? process.platform);
-  if (shell === null) {
-    return { file, ok: null, checker: "none", error: "bash not found" };
-  }
-  const checker = `${shell.label} -n`;
-  const out = await run(shell.cmd, [...shell.args, "-n", file]);
-  if (out.timedOut) return { file, ok: null, checker, error: "timed out" };
-  if (out.exitCode === 0) return { file, ok: true, checker };
-  if (out.missing || !SHELL_SYNTAX_ERROR.test(out.stderr)) {
-    return didNotRun(file, checker, out);
-  }
-  return { file, ok: false, checker, error: tailOfOutput(out.stderr, 4) };
+  return checkWithInterpreter(SHELL_CHECK, file, options);
 }
