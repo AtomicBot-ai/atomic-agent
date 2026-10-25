@@ -13,6 +13,7 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
+import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
@@ -40,6 +41,25 @@ import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { resolveComposioServerConfig } from "../../composio/index.js";
 
+/**
+ * The exact secrets masked in tool output (ATO-1077): the agent's `.env`
+ * (loaded into `process.env`) and every provider key stored in the
+ * config file. Read per call, so a key added through `/providers`
+ * mid-session is covered.
+ */
+export function runtimeKnownSecrets(
+  config: Pick<AtomicAgentConfig, "llm">,
+  env: NodeJS.ProcessEnv = process.env,
+): KnownSecret[] {
+  const out = knownSecretsFromEnv(env);
+  for (const entry of config.llm?.providers ?? []) {
+    if (typeof entry.apiKey === "string" && entry.apiKey.length > 0) {
+      out.push({ label: `${entry.id}-key`, value: entry.apiKey });
+    }
+  }
+  return out;
+}
+
 export function createRuntimeToolRegistry(
   config: AtomicAgentConfig,
   browserBackend: BrowserBackend,
@@ -48,7 +68,10 @@ export function createRuntimeToolRegistry(
 ) {
 
 
-  const toolRegistry = new ToolRegistry(outputSpill ? { outputSpill } : {});
+  const toolRegistry = new ToolRegistry({
+    ...(outputSpill ? { outputSpill } : {}),
+    knownSecrets: () => runtimeKnownSecrets(getConfig()),
+  });
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
   if (config.browser.enabled) {

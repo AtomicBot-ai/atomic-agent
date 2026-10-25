@@ -23,7 +23,7 @@ import * as mcp from "../../mcp/index.js";
 import type { McpToolMeta, McpSamplingHandler } from "../../mcp/index.js";
 import * as composio from "../../composio/index.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 
 const logger = new StructuredLogger({ level: "error", sinks: [] });
 const externalOperation = (): never => { throw new Error("Test must not perform external work"); };
@@ -212,5 +212,24 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     config.agent.readScope = "working-dir"; expect(protectedReads.readScope?.()).toBe("working-dir");
     expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate"]);
     expect(builder.mock.invocationCallOrder[0]).toBeLessThan(confinement.mock.invocationCallOrder[0] ?? 0);
+  });
+});
+
+describe("runtimeKnownSecrets (ATO-1077)", () => {
+  it("lists the env's secret variables and every provider key stored in config", () => {
+    const config = {
+      llm: {
+        activeTextProvider: "or",
+        activeEmbeddingProvider: "or",
+        providers: [
+          { id: "or", kind: "openrouter", apiKey: "Zq9xVv81LmNbTt42" },
+          { id: "local", kind: "llama" },
+        ],
+      },
+    } as unknown as Parameters<typeof runtimeKnownSecrets>[0];
+    expect(runtimeKnownSecrets(config, { GROQ_API_KEY: "gsk1234567890", PATH: "/bin" })).toEqual([
+      { label: "GROQ_API_KEY", value: "gsk1234567890" },
+      { label: "or-key", value: "Zq9xVv81LmNbTt42" },
+    ]);
   });
 });
