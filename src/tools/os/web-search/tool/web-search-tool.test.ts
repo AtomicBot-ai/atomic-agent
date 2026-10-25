@@ -534,6 +534,45 @@ describe("os.web.search with an Exa primary", () => {
     expect(result.summary).not.toContain("/integrations");
   });
 
+  it("adds one /integrations line, once per session, when a fallback answered for a spent Exa (ATO-345)", async () => {
+    vi.stubEnv("EXA_API_KEY", "");
+    const { run } = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": { body: RESULT_HTML, status: 200 },
+    });
+    const build = (keyHelp?: "integrations-hub") =>
+      buildOsWebSearchTool({
+        config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+        env: {},
+        warn: () => undefined,
+        runCommand: run,
+        lookup: publicLookup,
+        ...(keyHelp ? { keyHelp } : {}),
+      });
+    const hint =
+      "[search] Free Exa searches ran out. Tell the user: open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys).";
+
+    const tui = build("integrations-hub");
+    const first = await tui.run({ query: "first" }, makeCtx());
+    const second = await tui.run({ query: "second" }, makeCtx());
+    const otherSession = await tui.run(
+      { query: "third" },
+      { ...makeCtx(), sessionId: "s2" },
+    );
+
+    expect(first.status).toBe("ok");
+    expect(first.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+    expect(first.summary.split(hint)).toHaveLength(2);
+    expect(second.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+    expect(second.summary).not.toContain("/integrations");
+    expect(otherSession.summary).toContain(hint);
+
+    // Desktop and headless runs keep the result as it was.
+    const desktop = await build().run({ query: "first" }, makeCtx());
+    expect(desktop.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+    expect(desktop.summary).not.toContain("/integrations");
+  });
+
   it("uses a key set mid-session on the next search, without a restart (ATO-345)", async () => {
     // The Integrations hub writes the key into process.env; the provider
     // reads it per call, and the free-tier park must not hold it back.
