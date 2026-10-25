@@ -476,6 +476,92 @@ describe("os.web.search with an Exa primary", () => {
     expect(result.truncated).toBe(false);
   });
 
+  it("tells the terminal UI to open /integrations when all fail (ATO-345)", async () => {
+    vi.stubEnv("EXA_API_KEY", "");
+    const { run } = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": {
+        body: "",
+        status: 0,
+        exitCode: 28,
+        stderr: "curl: (28) Connection timed out after 15005 milliseconds",
+      },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: () => undefined,
+      runCommand: run,
+      lookup: publicLookup,
+      keyHelp: "integrations-hub",
+    });
+
+    const result = await tool.run({ query: "nothing answers" }, makeCtx());
+
+    expect(result.status).toBe("error");
+    expect(result.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+    expect(result.summary).toContain(
+      "Free Exa searches ran out. Open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys)",
+    );
+    expect(result.summary).not.toContain("key card");
+    expect(result.summary).not.toContain("~/.atomic-agent/.env");
+  });
+
+  it("keeps the desktop and .env advice when no key help is given", async () => {
+    vi.stubEnv("EXA_API_KEY", "");
+    const { run } = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": {
+        body: "",
+        status: 0,
+        exitCode: 28,
+        stderr: "curl: (28) Connection timed out after 15005 milliseconds",
+      },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: () => undefined,
+      runCommand: run,
+      lookup: publicLookup,
+    });
+
+    const result = await tool.run({ query: "nothing answers" }, makeCtx());
+
+    expect(result.summary).toContain(
+      "In the desktop app, paste it into the key card in the chat or in Settings.",
+    );
+    expect(result.summary).not.toContain("/integrations");
+  });
+
+  it("uses a key set mid-session on the next search, without a restart (ATO-345)", async () => {
+    // The Integrations hub writes the key into process.env; the provider
+    // reads it per call, and the free-tier park must not hold it back.
+    vi.stubEnv("EXA_API_KEY", "");
+    const { run, urls } = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": { body: RESULT_HTML, status: 200 },
+    });
+    const tool = buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      env: {},
+      warn: () => undefined,
+      runCommand: run,
+      lookup: publicLookup,
+      keyHelp: "integrations-hub",
+    });
+
+    const before = await tool.run({ query: "before the key" }, makeCtx());
+    expect(before.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+    expect(urls.some((url) => url.includes("api.exa.ai"))).toBe(false);
+
+    vi.stubEnv("EXA_API_KEY", "saved-in-the-hub");
+    const after = await tool.run({ query: "after the key" }, makeCtx());
+
+    expect(urls.some((url) => url.includes("api.exa.ai"))).toBe(true);
+    expect(after.details.keyRequired).toBeUndefined();
+  });
+
   it("answers ok when a keyed Exa fails and DuckDuckGo covers for it", async () => {
     // The desktop drew "Exa returned HTTP 403" as a failed tool row even
     // when the search went on to succeed. It is a note now, not the error.

@@ -14,7 +14,10 @@ import {
   createPersistentSearchCache,
   createSearchCache,
 } from "../transport/search-cache.js";
-import { WebSearchUnavailableError } from "../web-search-errors.js";
+import {
+  WebSearchUnavailableError,
+  type WebSearchKeyHelp,
+} from "../web-search-errors.js";
 import type { WebSearchResult } from "../web-search-provider.js";
 import { checkMissingSearchKey } from "./warn-missing-search-key.js";
 
@@ -40,6 +43,12 @@ export interface OsWebSearchOptions {
   env?: NodeJS.ProcessEnv;
   /** Warning sink; defaults to stderr. Injectable for tests. */
   warn?: (message: string) => void;
+  /**
+   * Where this process's user adds an Exa key, for the advice in the
+   * error (ATO-345). The terminal UI passes `integrations-hub`; omitted
+   * keeps the desktop / `.env` advice.
+   */
+  keyHelp?: WebSearchKeyHelp;
 }
 
 interface WebSearchArgs {
@@ -130,6 +139,7 @@ export function buildOsWebSearchTool(
           },
           cache,
           cooldown,
+          ...(options.keyHelp === undefined ? {} : { keyHelp: options.keyHelp }),
         });
         return compressToolResult(
           {

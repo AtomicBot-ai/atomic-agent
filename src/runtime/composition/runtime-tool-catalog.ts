@@ -18,7 +18,7 @@ import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
 import { buildBrowserTools } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
-import { registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry } from "../../tools/os/index.js";
+import { registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
 import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
@@ -69,9 +69,12 @@ export function registerRuntimeCoreTools(input: {
   declaredInputs: DeclaredInputsRegistry;
   shellJobs: ShellJobRegistry;
   skillRegistry: SkillRegistry;
+  /** Where the user adds an Exa key, for the web-search error (ATO-345). */
+  webSearchKeyHelp?: WebSearchKeyHelp;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, declaredInputs,
-    shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger } = input;
+    shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
+    webSearchKeyHelp } = input;
 
   registerOsTools(toolRegistry, {
     ...dangerous,
@@ -102,6 +105,7 @@ export function registerRuntimeCoreTools(input: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
     },
     shellJobs,
+    ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
   });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the
