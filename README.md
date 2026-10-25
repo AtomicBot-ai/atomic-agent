@@ -96,7 +96,7 @@ If something isn't working:
 
 1. Copy your error logs and system specs.
 2. Open an issue on [GitHub](https://github.com/AtomicBot-ai/atomic-agent/issues).
-3. Or ask for help in our [Discord](https://discord.gg/kXWDFSJpMW).
+3. Or ask for help in our [Discord](https://discord.gg/DCqtG8WZX8).
 
 ## Talk to Us
 
