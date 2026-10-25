@@ -559,7 +559,10 @@ export class TelegramChannel {
 
   /** Drop the session bindings and deny what the bridge still holds. */
   private retireApprovalBridge(reason: string): void {
-    for (const sub of this.approvalSubscriptions.values()) sub.unsubscribe();
+    for (const [sessionId, sub] of this.approvalSubscriptions) {
+      sub.unsubscribe();
+      this.clearSessionGrants(sessionId);
+    }
     this.approvalSubscriptions.clear();
     this.approvalBridge?.expireAll(reason);
     this.approvalBridge = null;
@@ -696,7 +699,10 @@ export class TelegramChannel {
       }
     }
     this.mediaGroups.clear();
-    for (const sub of this.approvalSubscriptions.values()) sub.unsubscribe();
+    for (const [sessionId, sub] of this.approvalSubscriptions) {
+      sub.unsubscribe();
+      this.clearSessionGrants(sessionId);
+    }
     this.approvalSubscriptions.clear();
     this.approvalBridge?.cancelAll();
     this.approvalBridge = null;
@@ -1089,6 +1095,7 @@ export class TelegramChannel {
       ) {
         sub.unsubscribe();
         this.approvalSubscriptions.delete(otherId);
+        this.clearSessionGrants(otherId);
       }
     }
     const bridge = this.approvalBridge;
@@ -1111,11 +1118,22 @@ export class TelegramChannel {
    * back with a later `/switch` to that session.
    */
   private releaseApprovalSession(sessionId: string): void {
-    this.deps.runtime.approvals.clearSessionGrants?.(sessionId);
+    this.clearSessionGrants(sessionId);
     const existing = this.approvalSubscriptions.get(sessionId);
     if (!existing) return;
     existing.unsubscribe();
     this.approvalSubscriptions.delete(sessionId);
+  }
+
+  /**
+   * End the session grants of a session this channel stops answering
+   * for (released, swept as stale, or the channel stopping / giving
+   * up). Every path that drops an approval binding calls it, so a grant
+   * made from the keyboard never outlives the chat's hold on the
+   * session.
+   */
+  private clearSessionGrants(sessionId: string): void {
+    this.deps.runtime.approvals.clearSessionGrants?.(sessionId);
   }
 
   private transition(next: ChannelStatus["state"], error: string | null): void {

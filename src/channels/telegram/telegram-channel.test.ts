@@ -1651,6 +1651,73 @@ describe("TelegramChannel per-chat approval bindings", () => {
     await channel.stop();
   });
 
+  it("clears the grants of every bound session on stop()", async () => {
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const clearSessionGrants = vi.fn();
+    const channel = new TelegramChannel({
+      runtime: turnRuntime(vi.fn(() => vi.fn()), clearSessionGrants),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    await state.textHandler!({
+      from: { id: 42 },
+      chat: { id: 42, type: "private" },
+      text: "hi",
+      message_id: 1,
+    });
+    await state.textHandler!({
+      from: { id: 42 },
+      chat: { id: -100, type: "supergroup", title: "Ops" },
+      text: "@test_bot hi",
+      message_id: 2,
+    });
+    expect(clearSessionGrants).not.toHaveBeenCalled();
+
+    await channel.stop();
+
+    expect(clearSessionGrants).toHaveBeenCalledWith("s-1");
+    expect(clearSessionGrants).toHaveBeenCalledWith("s-2");
+  });
+
+  it("clears the grants of a stale session swept off a chat", async () => {
+    // A second session bound to the same chat/topic replaces a stale
+    // binding (hand-edited pointer, pruned session) without a release.
+    const { factory } = makeBotFactory();
+    const { lock } = fakeLock();
+    const clearSessionGrants = vi.fn();
+    const channel = new TelegramChannel({
+      runtime: turnRuntime(vi.fn(() => vi.fn()), clearSessionGrants),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    const bind = (
+      channel as unknown as {
+        ensureApprovalSession(
+          sessionId: string,
+          target: { chatId: number; threadId?: number },
+        ): void;
+      }
+    ).ensureApprovalSession.bind(channel);
+
+    bind("s-old", { chatId: 42 });
+    expect(clearSessionGrants).not.toHaveBeenCalled();
+    bind("s-new", { chatId: 42 });
+
+    expect(clearSessionGrants.mock.calls).toEqual([["s-old"]]);
+    await channel.stop();
+  });
+
   /** An approval the agent asks for in session `sessionId`. */
   function approvalRequest(approvalId: string, sessionId = "s-1"): ApprovalRequest {
     return {
