@@ -1,5 +1,6 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { fullToolResult } from "../compressor/result-compressor.js";
+import { readArgumentAliases, withAliasNote } from "./argument-aliases.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
 import { markUntrustedResult } from "./untrusted-tool-output.js";
 import type { ToolRole } from "./tool-roles.js";
@@ -134,11 +135,25 @@ export class ToolRegistry {
     ctx: ToolContext,
   ): Promise<CompressedToolResult> {
     const tool = this.get(name);
-    // Models sometimes emit a JSON value one level over-encoded (a
-    // number as "200000", an array as "[\"a.png\"]"). Unwrap those
-    // before dispatch; anything that cannot be coerced is passed
-    // through untouched so the tool reports its own error.
-    const result = await tool.run(coerceToolArgs(name, args), ctx);
+    // An alias shape the tool reads (`argument-aliases.ts`: `os.fs.move`
+    // `{paths, destination}`) is rewritten here, before any wrapper
+    // (read scope) sees the call, and the result says how it was read.
+    const aliased = readArgumentAliases(name, args);
+    let result: CompressedToolResult;
+    try {
+      // Models sometimes emit a JSON value one level over-encoded (a
+      // number as "200000", an array as "[\"a.png\"]"). Unwrap those
+      // before dispatch; anything that cannot be coerced is passed
+      // through untouched so the tool reports its own error.
+      result = await tool.run(coerceToolArgs(name, aliased?.args ?? args), ctx);
+    } catch (err) {
+      // Same error object (its class matters to callers), one more line.
+      if (aliased !== null && err instanceof Error && !ctx.signal.aborted) {
+        err.message = `${err.message}\n${aliased.note}`;
+      }
+      throw err;
+    }
+    if (aliased !== null) result = withAliasNote(result, aliased.note);
     const shown =
       ctx.modelMode === "cloud"
         ? fullToolResult(result)
