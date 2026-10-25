@@ -13,7 +13,9 @@
  *     (including `\r`) ignored. Leading indentation still has to match,
  *     since it carries meaning in Python and YAML. Only whole lines
  *     match. The edit is applied only when exactly ONE span matches; an
- *     ambiguous match is never applied.
+ *     ambiguous match is never applied. This is the first and strictest
+ *     level of the chain in `fs-edit-tolerant.ts` (ATO-692), which tries
+ *     looser ones only when this one finds nothing.
  *  2. Otherwise, the nearest fragment of the file: the lines that share
  *     the most lines with `oldString`, quoted as a JSON string so the
  *     model sees the real line breaks it has to copy.
@@ -35,7 +37,7 @@ export type LooseEditLookup =
 /** Longest nearest-fragment quote the not-found error carries, in characters of JSON. */
 export const NEAREST_FRAGMENT_MAX_CHARS = 160;
 
-interface FileLine {
+export interface FileLine {
   /** Offset of the line's first character. */
   start: number;
   /** Offset just past the line's last character, before its `\n`. */
@@ -44,7 +46,7 @@ interface FileLine {
   text: string;
 }
 
-function splitLines(text: string): FileLine[] {
+export function splitLines(text: string): FileLine[] {
   const lines: FileLine[] = [];
   let start = 0;
   for (;;) {
@@ -69,30 +71,62 @@ export function findLooseEditMatch(
   source: string,
   oldString: string,
 ): LooseEditLookup {
-  const needle = contentLines(splitLines(oldString)).map((line) => line.text);
-  if (needle.length === 0) return { kind: "none" };
+  return findLineBlockMatch(source, oldString);
+}
+
+/**
+ * The line matcher behind `findLooseEditMatch`, shared with the more
+ * tolerant levels in `fs-edit-tolerant.ts`. Blank lines are skipped on
+ * both sides and trailing whitespace never counts; each remaining line
+ * is compared through `key` (identity by default), and a window whose
+ * keys all agree is kept only if `accept` (when given) agrees too.
+ */
+export function findLineBlockMatch(
+  source: string,
+  oldString: string,
+  key: (line: string) => string = (line) => line,
+  accept?: (hay: readonly string[], start: number, needle: readonly string[]) => boolean,
+): LooseEditLookup {
+  const needleText = contentLines(splitLines(oldString)).map((line) => line.text);
+  if (needleText.length === 0) return { kind: "none" };
+  const needle = needleText.map(key);
   const hay = contentLines(splitLines(source));
+  const hayText = hay.map((line) => line.text);
+  const hayKeys = hayText.map(key);
   const hits: number[] = [];
   for (let i = 0; i + needle.length <= hay.length; i += 1) {
     let same = true;
     for (let j = 0; j < needle.length; j += 1) {
-      if (hay[i + j]!.text !== needle[j]) {
+      if (hayKeys[i + j] !== needle[j]) {
         same = false;
         break;
       }
     }
-    if (same) hits.push(i);
+    if (same && (accept === undefined || accept(hayText, i, needleText))) {
+      hits.push(i);
+    }
   }
   if (hits.length === 0) return { kind: "none" };
   if (hits.length > 1) return { kind: "ambiguous", count: hits.length };
   const first = hay[hits[0]!]!;
   const last = hay[hits[0]! + needle.length - 1]!;
+  return { kind: "unique", match: lineSpan(source, oldString, first, last) };
+}
+
+/**
+ * The span from `first`'s start to `last`'s content. Its own trailing
+ * whitespace stays unless `oldString` ends a line: a leading or trailing
+ * newline in `oldString` takes the neighbouring newline with it, as the
+ * exact match would have.
+ */
+export function lineSpan(
+  source: string,
+  oldString: string,
+  first: FileLine,
+  last: FileLine,
+): LooseEditMatch {
   let start = first.start;
-  // The span stops at the last matched line's content: its own trailing
-  // whitespace stays unless `oldString` ends a line (below).
   let end = last.start + last.text.length;
-  // A leading or trailing newline in `oldString` takes the neighbouring
-  // newline with it, as the exact match would have.
   if (oldString.startsWith("\n") && start > 0) {
     start -= source.slice(start - 2, start) === "\r\n" ? 2 : 1;
   }
@@ -100,7 +134,28 @@ export function findLooseEditMatch(
     const lineEnd = last.end;
     end = source[lineEnd] === "\n" ? lineEnd + 1 : lineEnd;
   }
-  return { kind: "unique", match: { start, end } };
+  return { start, end };
+}
+
+/** A list of spans as a lookup: one is unique, more are ambiguous. */
+export function countSpans(spans: readonly LooseEditMatch[]): LooseEditLookup {
+  if (spans.length === 0) return { kind: "none" };
+  if (spans.length > 1) return { kind: "ambiguous", count: spans.length };
+  return { kind: "unique", match: spans[0]! };
+}
+
+/** Every non-overlapping occurrence of `needle`, kept when `keep` agrees. */
+export function occurrences(
+  haystack: string,
+  needle: string,
+  keep: (start: number, end: number) => boolean = () => true,
+): LooseEditMatch[] {
+  const spans: LooseEditMatch[] = [];
+  if (needle.length === 0) return spans;
+  for (let at = haystack.indexOf(needle); at !== -1; at = haystack.indexOf(needle, at + needle.length)) {
+    if (keep(at, at + needle.length)) spans.push({ start: at, end: at + needle.length });
+  }
+  return spans;
 }
 
 /**
