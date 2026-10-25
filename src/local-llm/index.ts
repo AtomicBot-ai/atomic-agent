@@ -237,6 +237,13 @@ export {
   type ThroughputSample,
 } from "./server/daemon-lifecycle.js";
 export {
+  checkEmbeddingMemory,
+  claimLowMemoryEmbeddingNote,
+  holdEmbeddingForLowMemory,
+  LOW_MEMORY_EMBEDDING_NOTE,
+  type EmbeddingMemoryVerdict,
+} from "./server/embedding-memory-gate.js";
+export {
   readManagedEngineLiveness,
   type ManagedEngineLiveness,
 } from "./server/engine-liveness.js";
