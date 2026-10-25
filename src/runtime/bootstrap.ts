@@ -375,7 +375,7 @@ export async function createAgentRuntime(
   });
 
   const promptPreviewDeps = {
-    prepareWorkspace: createWorkspaceLoader(config),
+    prepareWorkspace: createWorkspaceLoader(config, logger),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,

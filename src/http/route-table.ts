@@ -17,6 +17,10 @@ import {
   createUninstallSkillHandler,
 } from "./route-skills.js";
 import {
+  createProjectTrustAnswerHandler,
+  createProjectTrustStatusHandler,
+} from "./route-project-trust.js";
+import {
   createAckUndeliveredSteersHandler,
   createDeleteSessionHandler,
   createGetSessionHandler,
@@ -113,6 +117,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/skills/uninstall",
       handler: createUninstallSkillHandler(),
     },
+    { method: "GET", path: "/api/project-trust", handler: createProjectTrustStatusHandler() },
+    { method: "POST", path: "/api/project-trust", handler: createProjectTrustAnswerHandler() },
     {
       method: "POST",
       path: "/api/mcp/servers/{name}/restart",
