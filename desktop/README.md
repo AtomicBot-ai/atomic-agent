@@ -631,15 +631,16 @@ Honestly degraded, and labelled as such in the UI:
   the two surfaces cannot disagree. `atag models list` prints no description
   and no RAM figures and has no `--json`, so `desktop/main/model-catalog.ts`
   vendors `description` / `minRamGb` / `recommendedRamGb` / `fileSizeGb` /
-  `supportsVision` / `tag` / `uncensored` from `src/local-llm/models-catalog.ts`
+  `supportsVision` / `recommendRank` / `tag` / `uncensored` from `src/local-llm/models-catalog.ts`
   and `modelsList()` joins them on by id. `app:hostRam` (`os.totalmem()`) is
   the other input. A model whose `recommendedRamGb` the machine meets runs
   comfortably; between `minRamGb` and `recommendedRamGb` it is a tight fit and
   says so; under `minRamGb` it is shown as out of reach with the RAM it wants
   and is NOT offered as a choice in the wizard — no cursor position, no tab
-  stop, nothing to click. The best fit — the largest model that runs
-  comfortably, never a reduced-refusal one — carries `★ best fit for this
-  machine`. A reduced-refusal model stays in the list, last in its fit band,
+  stop, nothing to click. The best fit — the best-ranked model in the
+  catalogue's `recommendRank` order (the agent's `recommendedModelFor`,
+  ATO-817) that runs comfortably, never a reduced-refusal one — carries
+  `★ best fit for this machine`. A reduced-refusal model stays in the list, last in its fit band,
   with a "Fewer refusals" badge whose tooltip says in plain words that it
   gives fewer safety refusals (ATO-449). A model in the catalogue's 4B class (`recommendedRamGb ≤ 8`) says
   plainly that it is small and will get more wrong, which on a weak machine is
