@@ -20,10 +20,21 @@ const PATH_ARG_KEYS = ["path", "from"] as const;
  */
 const LOGGABLE_TOOL_PREFIX = "os.fs.";
 
+/** An errno-style code (`ENOENT`); any other `errorCode` value is not logged. */
+const ERRNO_CODE = /^[A-Z][A-Z0-9_]{0,31}$/;
+
+export interface ToolLogFields {
+  path?: string;
+  reason?: string;
+  errorName?: string;
+  /** An errno-style code such as `ENOENT`; never a message. */
+  errorCode?: string;
+}
+
 /**
  * Extra fields for the `tool executed` log line: for an os.fs call, the
  * path it named (never any file contents) and, when it failed, the first
- * line of its error; for any failed call, its error name. Without them a loop of failing calls (ATO-308: a planner
+ * line of its error; for any failed call, its error name and code. Without them a loop of failing calls (ATO-308: a planner
  * reading /dev/null step after step) shows in the log only as a tool
  * name and a status. Both are clipped so one long argument cannot bloat
  * the local log.
@@ -31,8 +42,8 @@ const LOGGABLE_TOOL_PREFIX = "os.fs.";
 export function toolLogFields(
   args: Readonly<Record<string, unknown>> | undefined,
   result: CompressedToolResult,
-): { path?: string; reason?: string; errorName?: string } {
-  const fields: { path?: string; reason?: string; errorName?: string } = {};
+): ToolLogFields {
+  const fields: ToolLogFields = {};
   const loggable = result.tool.startsWith(LOGGABLE_TOOL_PREFIX);
   const path = loggable ? pathOf(args) : undefined;
   if (path !== undefined) fields.path = path;
@@ -41,6 +52,10 @@ export function toolLogFields(
   if (reason !== undefined) fields.reason = reason;
   if (typeof result.details.errorName === "string") {
     fields.errorName = result.details.errorName;
+  }
+  const code = result.details.errorCode;
+  if (typeof code === "string" && ERRNO_CODE.test(code)) {
+    fields.errorCode = code;
   }
   return fields;
 }

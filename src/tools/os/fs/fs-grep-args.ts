@@ -135,7 +135,10 @@ export async function resolveSearchTarget(
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") {
-      throw new Error(`os.fs.grep: path does not exist: ${path}`);
+      // `code` lets the tool swap in the "found it here" hint (ATO-413).
+      throw Object.assign(new Error(`os.fs.grep: path does not exist: ${path}`), {
+        code: "ENOENT",
+      });
     }
     throw new Error(
       `os.fs.grep: cannot access path ${path}: ${(err as Error).message}`,

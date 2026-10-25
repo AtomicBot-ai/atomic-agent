@@ -15,6 +15,7 @@ import {
 import { formatGrepResult } from "./fs-grep-format.js";
 import { parseRipgrepJson } from "./fs-grep-ripgrep-json.js";
 import { withTimeoutNote } from "./fs-grep-timeout.js";
+import { isMissingPathError, missingPathResult } from "./fs-missing-path.js";
 
 export type { GrepOutputMode } from "./fs-grep-args.js";
 export { parseRipgrepJson } from "./fs-grep-ripgrep-json.js";
@@ -60,6 +61,9 @@ export function buildOsFsGrepTool(
       try {
         target = await resolveSearchTarget(args.path, ctx.workingDir);
       } catch (err) {
+        if (isMissingPathError(err)) {
+          return missingPathResult("os.fs.grep", args.path, ctx);
+        }
         const reason = (err as Error).message;
         return compressToolResult({
           tool: "os.fs.grep",

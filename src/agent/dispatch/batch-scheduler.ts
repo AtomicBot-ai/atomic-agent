@@ -271,6 +271,7 @@ export async function executeBatch(
         output: hint?.message ?? cause.message,
         details: {
           errorName: cause.name,
+          ...errorCodeOf(cause),
           ...(hint !== null
             ? {
                 receivedKeys: hint.receivedKeys,
@@ -465,4 +466,16 @@ export function toBatchInputs(
     call,
     resourceClass: resourceClassFor(call.tool),
   }));
+}
+
+/**
+ * A thrown error's errno-style code (`ENOENT`, `EACCES`), kept so the
+ * log names what failed without parsing the message. Anything that does
+ * not look like such a code is left out.
+ */
+function errorCodeOf(cause: Error): { errorCode?: string } {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/.test(code)
+    ? { errorCode: code }
+    : {};
 }

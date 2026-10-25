@@ -4,6 +4,7 @@ import { extname, join } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { orMissing } from "./fs-missing-path.js";
 const TOP_EXTENSIONS_IN_HEADER = 5;
 
 /**
@@ -57,7 +58,10 @@ export const osFsListTool: ToolDefinition = {
     const args = parseArgs(rawArgs);
     const absolute = resolveUserPath(args.path, ctx.workingDir);
 
-    const names = await readdir(absolute);
+    const names = await orMissing("os.fs.list", absolute, ctx, () =>
+      readdir(absolute),
+    );
+    if ("missing" in names) return names.missing;
     const entries = await statEntries(absolute, names);
 
     const matched = entries.filter((e) => entryMatches(e, args));
