@@ -11481,8 +11481,9 @@ const UNCENSORED_NOTE = 'Fewer safety refusals: it may answer requests other mod
 const UNCENSORED_WORD = 'Fewer refusals';
 
 /**
- * The catalogue ordered for THIS machine: best fit first, and within a
- * fit band the largest model first — the best thing that actually runs.
+ * The catalogue ordered for THIS machine: best fit first; within a fit
+ * band the catalogue's recommendation order (`recommendRank`, the agent's
+ * recommendedModelFor, ATO-817), then the largest unranked model.
  * Reduced-refusal weights sink to the bottom of their band, the way the
  * TUI's own picker pins them (models-catalog.ts `uncensored`).
  */
@@ -11500,6 +11501,8 @@ function orderModelsByFit(models, ram) {
     if (fa.rank !== fb.rank) return fa.rank - fb.rank;
     const ua = a.uncensored ? 1 : 0, ub = b.uncensored ? 1 : 0;
     if (ua !== ub) return ua - ub;
+    const ka = Number(a.recommendRank) || Infinity, kb = Number(b.recommendRank) || Infinity;
+    if (ka !== kb) return ka - kb;
     const ra = Number(a.recommendedRamGb) || 0, rb = Number(b.recommendedRamGb) || 0;
     if (ra !== rb) return rb - ra;
     return (Number(b.sizeGb) || sizeStringGb(b.size)) - (Number(a.sizeGb) || sizeStringGb(a.size));

@@ -419,6 +419,8 @@ export interface CatalogModel {
   /** The vision projector a pull fetches with the weights, in GB. */
   mmprojSizeGb?: number;
   vision?: boolean;
+  /** Recommendation order, 1 first (catalogue `recommendRank`). */
+  recommendRank?: number;
   tag?: string;
   uncensored?: boolean;
 }
@@ -458,6 +460,7 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
             sizeGb: meta.sizeGb,
             ...(meta.mmprojSizeGb ? { mmprojSizeGb: meta.mmprojSizeGb } : {}),
             vision: meta.vision,
+            ...(meta.recommendRank ? { recommendRank: meta.recommendRank } : {}),
             ...(meta.tag ? { tag: meta.tag } : {}),
             ...(meta.uncensored ? { uncensored: true } : {}),
           }
