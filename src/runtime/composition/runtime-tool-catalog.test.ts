@@ -12,6 +12,7 @@ import * as browserTools from "../../tools/browser/index.js";
 import * as osTools from "../../tools/os/index.js";
 import * as fusionTools from "../../tools/fusion/index.js";
 import * as readScope from "../../tools/read-scope/index.js";
+import * as skillTools from "../../tools/skill/index.js";
 import { ProfileStore } from "../../memory/profile-store.js";
 import { MemoryStore } from "../../memory/memory-store.js";
 import { SkillRegistry } from "../../skills/skill-registry.js";
@@ -93,12 +94,15 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const declaredInputs = new osTools.DeclaredInputsRegistry();
       const requests = new Map<string, string>(); const recent = vi.fn(() => []);
       const registration = vi.spyOn(osTools, "registerOsTools");
+      const skillRegistration = vi.spyOn(skillTools, "registerSkillTools");
       registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [] },
         resolveOriginalRequest: id => requests.get(id), declaredInputs, shellJobs, skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore });
       const wired = registration.mock.calls[0]?.[1]; if (!wired) throw new Error("OS tools not registered");
       expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
       expect(wired.declaredInputs).toBe(declaredInputs); expect(wired.shellJobs).toBe(shellJobs);
       expect(wired.trustConfigPaths).toEqual(getTrustConfigPaths(config.paths)); expect(wired.stateDir).toBe(config.paths.stateDir);
+      // Skill scripts share the shell's passthrough list (ATO-877).
+      expect(skillRegistration.mock.calls[0]?.[3]).toBe(config.tools.shell.envPassthrough);
       requests.set("session", "new request"); expect(wired.resolveOriginalRequest?.("session")).toBe("new request");
       wired.listRecentSessionDirs(7); expect(recent).toHaveBeenCalledWith(7);
       config.git.remoteSync = false; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(false);

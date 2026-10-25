@@ -117,7 +117,14 @@ export function registerRuntimeCoreTools(input: {
   // `rebuildToolDescriptorsFromMcp`) so the model never sees tools it
   // cannot exercise.
   registerGithubTools(toolRegistry, dangerous);
-  registerSkillTools(toolRegistry, skillRegistry, dangerous);
+  // Skill scripts inherit the shell's filtered environment and its
+  // passthrough list (ATO-877): one answer to "which keys reach a child".
+  registerSkillTools(
+    toolRegistry,
+    skillRegistry,
+    dangerous,
+    config.tools.shell.envPassthrough,
+  );
   toolRegistry.register(buildToolViewTool());
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.
