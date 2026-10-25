@@ -238,6 +238,9 @@ contextBridge.exposeInMainWorld("atomic", {
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
   prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>
     ipcRenderer.invoke("app:prefsSet", prefs),
+  // ATO-1034: chat folders (~/.atomic-agent/chat-folders.json, main/chat-folders.ts).
+  foldersGet: () => ipcRenderer.invoke("app:foldersGet"),
+  foldersSet: (value: unknown) => ipcRenderer.invoke("app:foldersSet", value),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */

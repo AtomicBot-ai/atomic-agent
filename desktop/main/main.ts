@@ -10,6 +10,7 @@ import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.j
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
+import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
@@ -1885,6 +1886,9 @@ function wireIpc(client: AgentClient): void {
   // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
   ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
+  // ATO-1034: chat folders, in the shared state dir so the terminal sees the same ones.
+  ipcMain.handle("app:foldersGet", () => ({ ok: true, data: readChatFolders(DESKTOP_STATE_DIR) }));
+  ipcMain.handle("app:foldersSet", (_event, value: unknown) => writeChatFolders(DESKTOP_STATE_DIR, value));
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
