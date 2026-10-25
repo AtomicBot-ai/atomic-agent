@@ -2999,14 +2999,17 @@ function wireIpc(client: AgentClient): void {
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
 /* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
    chat is on the list, then Chats, then Tasks when the agent holds any. */
-function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
+  // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
 const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
+  /** ATO-1034: how many chat folders the sidebar draws. */
+  folders?: number;
   navrows: number;
   skillsRow: boolean;
   /** ATO-457: the standing section rows under New chat, by label. */

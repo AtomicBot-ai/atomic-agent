@@ -99,3 +99,14 @@ test("main writes the file whole and reads back a checked value", { skip: !M && 
   writeFileSync(M.chatFoldersPath(dir), "not json");
   assert.deepEqual(M.readChatFolders(dir).folders, []);
 });
+
+test("review fixes: no Folders block without folders, Chats head offers New folder, filing unpins", () => {
+  const src = readFileSync(new URL("../renderer/chat-folders.js", import.meta.url), "utf8");
+  assert.match(src, /if \(!groups\.length\) return '';/);
+  const r = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
+  assert.match(r, /sb-fnew" data-act="fnew:"/);
+  assert.match(r, /ch\.rows\.length \|\| ch\.filed \? '' : '<div class="sb-empty">No chats yet<\/div>'/);
+  assert.match(r, /if \(fid && PREFS\.pinned\.includes\(sid\)\)/);
+  const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
+  assert.match(main, /\(sb\.folders \?\? 0\) > 0 \? \["Folders"\]/);
+});

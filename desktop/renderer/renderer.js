@@ -1223,7 +1223,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -2311,9 +2311,11 @@ function renderSidebar() {
       // ATO-1034: the folders (chat-folders.js), then the chats in none of them.
       + foldersSidebarHTML(ch.groups)
       + '<div class="sb-list" data-list="chats">'
-        + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span></div>'
+        + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span>'
+          + (FOLDERS.state.folders.length ? '' : '<button class="iconbtn sb-add sb-fnew" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('folder') + '</button>')
+        + '</div>'
         + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
-           : ch.rows.length ? '' : '<div class="sb-empty">No chats yet</div>')
+           : ch.rows.length || ch.filed ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
       + (showTasks
@@ -2411,10 +2413,11 @@ function sidebarChats() {
      folder is short), a pinned one stays in Pinned; Load more pages the rest.
      `visible` is every row on screen, for nameVisibleSessions. */
   const fg = folderGroups(FOLDERS.state, order.rest);
-  const loose = fg.loose.slice(0, SIDEBAR_PAGE * PAGE.chats);
-  const rows = order.pinned.concat(loose);
+  const all = order.pinned.concat(fg.loose);
+  const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
+  const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0);
   const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows));
-  return {rows, hidden: fg.loose.length - loose.length, pinned: order.pinned.length, groups: fg.groups, visible};
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, visible, filed};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -6720,7 +6723,11 @@ function act(a) {
                            return; }
   if (k === 'fput')      { const cut = v.indexOf(':'); const fid = v.slice(0, cut), sid = v.slice(cut + 1);
                            close();
-                           if (cut >= 0 && folderPut(FOLDERS.state, sid, fid || null)) saveFolders();
+                           if (cut >= 0 && folderPut(FOLDERS.state, sid, fid || null)) {
+                             saveFolders();
+                             // A pinned chat is drawn under Pinned only: filed, it leaves Pinned, or it would seem to go nowhere.
+                             if (fid && PREFS.pinned.includes(sid)) { PREFS.pinned = PREFS.pinned.filter((x) => x !== sid); savePrefs(); }
+                           }
                            render(); nameVisibleSessions(); return; }
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -8565,7 +8572,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   // ATO-165: the menu's rows move with the arrows, Home and End.
-  if (S.overlay === 'sesmenu' && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
+  // ATO-1034: and so do the folder menus (chat-folders.js), drawn with the same classes.
+  if ((S.overlay === 'sesmenu' || S.overlay === 'fmenu' || S.overlay === 'fpick') && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
     e.preventDefault();
     const items = Array.from(document.querySelectorAll('.sesmenu [role="menuitem"]'));
     const at = items.indexOf(document.activeElement);
@@ -28044,6 +28052,7 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   window.__sidebar = () => ({
     headers: [...document.querySelectorAll('.sb-list-head > span:first-child')].map((n) => n.textContent),
+    folders: FOLDERS.state.folders.length,   // ATO-1034
     pinnedRows: document.querySelectorAll('#sidebar [data-list="pinned"] .sesrow').length,   // ATO-165
     navrows: document.querySelectorAll('.navrow').length,
     skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),

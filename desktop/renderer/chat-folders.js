@@ -237,6 +237,8 @@ function folderMenuHTML() {
 
 /** The folders block of the sidebar: a header with New folder, then each folder and its chats. */
 function foldersSidebarHTML(groups) {
+  // No folders yet: nothing drawn here; New folder sits on the Chats heading then (renderSidebar).
+  if (!groups.length) return '';
   return '<div class="sb-list sb-folders" data-list="folders">'
     + '<div class="sb-list-head micro"><span>Folders</span>'
       + '<button class="iconbtn sb-add" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('plus') + '</button></div>'

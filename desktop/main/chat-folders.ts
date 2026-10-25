@@ -42,7 +42,8 @@ export function coerceChatFolders(raw: unknown): ChatFolders {
       if (!f || typeof f !== "object") continue;
       const { id, name, collapsed } = f as { id?: unknown; name?: unknown; collapsed?: unknown };
       if (typeof id !== "string" || !ID_RE.test(id) || ids.has(id)) continue;
-      const nm = typeof name === "string" ? name.replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ").trim().slice(0, MAX_NAME) : "";
+      // Cut by characters, not UTF-16 units, as the renderer counts them: an emoji is never split.
+      const nm = typeof name === "string" ? Array.from(name.replace(/\s*[\r\n\u2028\u2029]+\s*/g, " ").trim()).slice(0, MAX_NAME).join("") : "";
       if (!nm) continue;
       ids.add(id);
       out.folders.push({ id, name: nm, collapsed: collapsed === true });
@@ -63,9 +64,14 @@ export function coerceChatFolders(raw: unknown): ChatFolders {
 
 /** The folders on disk, or empty ones. Never throws. */
 export function readChatFolders(stateDir: string): ChatFolders {
+  const path = chatFoldersPath(stateDir);
+  let text: string;
+  try { text = readFileSync(path, "utf8"); } catch { return emptyChatFolders(); }
   try {
-    return coerceChatFolders(JSON.parse(readFileSync(chatFoldersPath(stateDir), "utf8")));
+    return coerceChatFolders(JSON.parse(text));
   } catch {
+    // A file that does not parse is set aside, not overwritten by the next save: the folders in it can be recovered.
+    try { renameSync(path, `${path}.bad-${Date.now()}`); } catch { /* left as it is */ }
     return emptyChatFolders();
   }
 }

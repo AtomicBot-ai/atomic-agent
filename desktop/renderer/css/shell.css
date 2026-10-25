@@ -154,7 +154,7 @@
 .sb-folder > .sesrow{padding-left:30px}
 .sb-fempty{padding-left:30px}
 .sb-fhead.fdrop-on,.sb-list-head.fdrop-on{background:var(--brand-wash);color:var(--blue)}
-#sidebar.rail .sb-fhead,#sidebar.rail .sb-folders > .sb-list-head{display:none}
+#sidebar.rail .sb-fhead,#sidebar.rail .sb-folders > .sb-list-head,#sidebar.rail [data-list="chats"] > .sb-list-head{display:none}
 #sidebar.rail .sb-folder > .sesrow{padding-left:0}
 
 /* Rows: 34px pills — dot · title · right meta (tasks) or the hover controls
@@ -281,7 +281,7 @@
   #sidebar:not(.drawer) .sb-list{gap:2px}
   #sidebar:not(.drawer) .sesrow{justify-content:center;align-self:center;width:32px;height:32px;padding:0}
   #sidebar:not(.drawer) .sesrow::after{display:none}
-  #sidebar:not(.drawer) .sb-fhead,#sidebar:not(.drawer) .sb-folders > .sb-list-head{display:none}
+  #sidebar:not(.drawer) .sb-fhead,#sidebar:not(.drawer) .sb-folders > .sb-list-head,#sidebar:not(.drawer) [data-list="chats"] > .sb-list-head{display:none}
   #sidebar:not(.drawer) .sb-folder > .sesrow{padding-left:0}
   #sidebar:not(.drawer) .sb-lists{scrollbar-width:none}
   #sidebar:not(.drawer) .sb-footwrap{display:flex;justify-content:center}
