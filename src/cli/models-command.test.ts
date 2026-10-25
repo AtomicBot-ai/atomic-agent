@@ -13,7 +13,7 @@ import { USER_CONFIG_DEFAULTS } from "../config/config-schema.js";
 
 import type { LocalModelDef } from "../local-llm/index.js";
 
-import { modelsCommand } from "./models-command.js";
+import { modelsCommand, readContextSizeFlag } from "./models-command.js";
 
 /**
  * A complete def (not the four-line hand-written shape) because
@@ -234,4 +234,21 @@ describe("modelsCommand", () => {
     expect(code).toBe(1);
     expect(stderrChunks.join("")).toMatch(/invalid device/);
   });
+});
+
+describe("models start --context-size (ATO-334)", () => {
+  it("reads the window for this start only", () => {
+    expect(readContextSizeFlag(["start", "--interactive", "--context-size", "65536"])).toBe(65536);
+  });
+
+  it("is absent without the flag", () => {
+    expect(readContextSizeFlag(["start", "--interactive"])).toBeNull();
+  });
+
+  it.each([[["start", "--context-size"]], [["start", "--context-size", "0"]], [["start", "--context-size", "-4"]], [["start", "--context-size", "32k"]]])(
+    "refuses %j",
+    (args) => {
+      expect(readContextSizeFlag(args)).toBe("invalid");
+    },
+  );
 });

@@ -9,7 +9,7 @@ import {
   type ProviderWaitCause,
   type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
-import { LOCAL_ENGINE_DOWN_CODE, classifyFailure, isLocalEngineDown } from "../llm/reliability/index.js";
+import { LOCAL_ENGINE_DOWN_CODE, LOCAL_OUT_OF_MEMORY_CODE, classifyFailure, isLocalEngineDown, isLocalOutOfMemory } from "../llm/reliability/index.js";
 import { readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
@@ -142,6 +142,10 @@ async function handleNonStream(
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
       origin: "http",
+      // An extensions client (the desktop) draws approval prompts, so a
+      // person can be asked before an out-of-memory restart (ATO-334); a
+      // plain OpenAI client cannot answer and gets the automatic one.
+      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -264,6 +268,9 @@ async function handleStream(
       signal: controller.signal,
       origin: "http",
       eventHook: hook,
+      // See the non-stream path: only a client that draws approval
+      // prompts is asked before an out-of-memory restart (ATO-334).
+      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
@@ -607,6 +614,28 @@ export function buildStreamEventHook(
       }
       return;
     }
+    /* ATO-334: the managed local model ran out of memory. `asking` comes
+       with the approval prompt the person answers (`question_id` is its
+       `approvalId`); `restarted` is the chat note; `stopped` precedes the
+       turn's error frame and names the window a restart would use, for a
+       host that owns the model (the desktop) to restart it. */
+    if (event.type === "local_model_out_of_memory") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("local_model_out_of_memory", {
+          object: "atomic.local_model_out_of_memory",
+          session_id: env.session.id,
+          phase: event.phase,
+          context_window: event.contextWindow,
+          next_context_window: event.nextContextWindow,
+          attempt: event.attempt,
+          max_attempts: event.maxAttempts,
+          message: event.message,
+          ...(event.questionId !== undefined ? { question_id: event.questionId } : {}),
+          ...(event.options !== undefined ? { options: [...event.options] } : {}),
+        });
+      }
+      return;
+    }
     /* One leg of a fusion fan-out. `fusion.delegate` emits these in the
        PARENT session's frame (emitAgentLoopEventFor → TurnController.emit),
        so they reach this hook for the whole minutes a fan-out holds the
@@ -708,6 +737,9 @@ export function buildStreamEventHook(
            ended without the outage wait. `code` lets a host offer to start
            it (the desktop's "Start model") instead of reading the words. */
         ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
+        /* ATO-334: out of memory and not brought back; a host can offer a
+           smaller model or restart with a smaller window. */
+        ...(isLocalOutOfMemory(event.error) ? { code: LOCAL_OUT_OF_MEMORY_CODE } : {}),
         ...(failedBefore.length > 0
           ? { fallback_failures: failedLinksFrame(failedBefore) }
           : {}),

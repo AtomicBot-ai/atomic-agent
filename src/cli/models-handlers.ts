@@ -537,7 +537,16 @@ export async function runLocalModelsStatus(): Promise<number> {
 }
 
 export async function runLocalModelsStart(
-  opts: { interactive?: boolean; signal?: AbortSignal } = {},
+  opts: {
+    interactive?: boolean;
+    signal?: AbortSignal;
+    /**
+     * `--ctx-size` for this start only, in place of
+     * `localModels.managed.contextSize`; the config is not written. The
+     * desktop's restart after the model ran out of memory (ATO-334).
+     */
+    contextSize?: number;
+  } = {},
 ): Promise<number> {
   const { signal } = opts;
   // Re-read after a fallback from Atomic Core switches the engine.
@@ -714,7 +723,7 @@ export async function runLocalModelsStart(
         dataDir,
         modelId: mid,
         port: cfg.localModels.managed.port,
-        contextSize: cfg.localModels.managed.contextSize,
+        contextSize: opts.contextSize ?? cfg.localModels.managed.contextSize,
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,

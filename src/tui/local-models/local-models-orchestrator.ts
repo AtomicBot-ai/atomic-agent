@@ -1913,7 +1913,16 @@ export class LocalModelsOrchestrator {
    * anonymous budget, and two passes racing on the same
    * `backend.next` staging dir.
    */
-  async startDaemon(opts?: { backendAlreadyChecked?: boolean; cpuFallbackAttempted?: boolean }): Promise<boolean> {
+  async startDaemon(opts?: {
+    backendAlreadyChecked?: boolean;
+    cpuFallbackAttempted?: boolean;
+    /**
+     * `--ctx-size` for this start only, in place of
+     * `localModels.managed.contextSize` (the out-of-memory restart,
+     * ATO-334). Never written to the config.
+     */
+    contextSize?: number;
+  }): Promise<boolean> {
     return this.operations.run(async signal => {
       this.chatReadyError = "The model did not start. Choose a ready model and retry the message.";
       const started = await this.startDaemonNow({ ...opts, signal });
@@ -1930,6 +1939,8 @@ export class LocalModelsOrchestrator {
      * start that fails even on the CPU build cannot recurse forever.
      */
     cpuFallbackAttempted?: boolean;
+    /** See `startDaemon`. */
+    contextSize?: number;
   }): Promise<boolean> {
     if (this.closing) return false;
     // Re-read after the backend step: a computer without an Atomic Core
@@ -2085,7 +2096,7 @@ export class LocalModelsOrchestrator {
           port: chatClear.port,
           chatTemplateFile: tpl,
           mmprojFile,
-          contextSize: cfg.localModels.managed.contextSize,
+          contextSize: opts?.contextSize ?? cfg.localModels.managed.contextSize,
           parallel: cfg.localModels.managed.parallel,
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
@@ -2375,6 +2386,27 @@ export class LocalModelsOrchestrator {
         stoppedLine: "local-llm: chat daemon stopped — bringing it back up…",
       });
       return stopped ? await this.startDaemon() : false;
+    }, false).finally(() => {
+      this.restartInFlight = null;
+    });
+    this.restartInFlight = inFlight;
+    return inFlight;
+  }
+
+  /**
+   * The model ran out of memory (ATO-334): bring it back with
+   * `contextSize` for this run only. The config keeps its value, so the
+   * next start sizes the window as before. Same single-flight slot and
+   * stop-first order as the other restarts; registered with the runtime
+   * as its `setLocalModelRestarter`.
+   */
+  restartWithContextSize(contextSize: number): Promise<boolean> {
+    if (this.restartInFlight) return this.restartInFlight;
+    const inFlight = this.operations.run(async () => {
+      const stopped = await this.stopChatDaemonOnly({
+        stoppedLine: `local-llm: the model ran out of memory — restarting it with a context window of ${contextSize} tokens…`,
+      });
+      return stopped ? await this.startDaemon({ contextSize }) : false;
     }, false).finally(() => {
       this.restartInFlight = null;
     });

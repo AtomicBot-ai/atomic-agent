@@ -22,6 +22,11 @@ export {
   LocalEngineDownError,
   isLocalEngineDown,
 } from "./local-engine-down.js";
+export {
+  LOCAL_OUT_OF_MEMORY_CODE,
+  LocalOutOfMemoryError,
+  isLocalOutOfMemory,
+} from "./local-out-of-memory.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
 export {
   readProviderErrorVerdict,

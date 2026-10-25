@@ -120,7 +120,11 @@ export function createRuntimeTurnService(
     toolRole?: ToolRole;
     reasoningEffort?: ReasoningEffort;
     maxOutputTokens?: number;
+    interactive?: boolean;
   }) => ({
+    // A person is watching this chat: a model that runs out of memory
+    // is restarted only after they say so (ATO-334).
+    ...(runOptions.interactive === true ? { localOutOfMemory: "ask" as const } : {}),
     ...(runOptions.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: runOptions.reasoningEffort }),
@@ -312,6 +316,7 @@ export function createRuntimeTurnService(
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
+      interactive?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -525,6 +530,7 @@ export function createRuntimeTurnService(
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
+      interactive?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after

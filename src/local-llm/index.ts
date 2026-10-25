@@ -265,7 +265,7 @@ export {
   type SwaFullPreference,
 } from "./server/swa-full.js";
 export { readLogTail, type LogTailResult } from "./server/log-tail.js";
-export { describeServerFault, type ServerFault } from "./server/server-fault.js";
+export { describeServerFault, type ServerFault, type ServerFaultKind } from "./server/server-fault.js";
 export {
   assertPortFree,
   fetchServedModelIds,

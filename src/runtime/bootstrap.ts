@@ -56,6 +56,7 @@ import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { readLocalEngineState } from "./local-engine-state.js";
+import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
@@ -441,6 +442,11 @@ export async function createAgentRuntime(
     },
   });
 
+  // Who can restart the managed model after it ran out of memory
+  // (ATO-334): the TUI registers itself; a headless `serve` leaves it
+  // empty, because the desktop owns the model there.
+  let localModelRestarter: LocalModelRestarter | null = null;
+
   // Plan mode. Session state, deliberately not config: it is a stance
   // for the next few turns, not a setting, and a "look but do not touch"
   // that survived a restart would be a mystery rather than a memory.
@@ -496,6 +502,15 @@ export async function createAgentRuntime(
       const config = getConfig();
       return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
     },
+    // A managed local model that ran out of memory is restarted with a
+    // smaller window instead of waited on (ATO-334). Read live, like the
+    // engine state above.
+    localOutOfMemory: createLocalOutOfMemoryPort({
+      readConfig: () => getConfig(),
+      activeTextProvider: () => resolveLlmConfig(getConfig()).activeTextProvider,
+      approvals,
+      restarter: () => localModelRestarter,
+    }),
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
@@ -758,6 +773,9 @@ export async function createAgentRuntime(
     reportOnboardingStep,
     reportModelConfigured,
     reportLocalEngineFailed,
+    setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {
+      localModelRestarter = restarter;
+    },
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
     getPlanMode: () => planMode,
