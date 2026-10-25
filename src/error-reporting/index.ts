@@ -16,6 +16,13 @@ export {
 } from "./error-scrubber.js";
 export type { ScrubbedErrorEvent, SentryStackFrame } from "./error-scrubber.js";
 export { sanitizeLlmFailureTags } from "./llm-failure-tags.js";
+export {
+  knownSecretsFromEnv,
+  maskSecrets,
+  redactedMarker,
+  MIN_KNOWN_SECRET_LENGTH,
+} from "./secret-detector.js";
+export type { KnownSecret } from "./secret-detector.js";
 export type { LlmFailureContext } from "./llm-failure-tags.js";
 export { buildEnvelope, buildSentryAuthHeader } from "./sentry-envelope.js";
 export type {
