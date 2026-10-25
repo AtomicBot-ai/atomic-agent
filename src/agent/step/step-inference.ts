@@ -22,6 +22,7 @@ import { openAiToolCallAdapter } from "../../llm/provider/openai/openai-tool-cal
 import { hasStrictFunctionTools } from "../../llm/provider/adapters/tool-call-adapter.js";
 import type { ModelProfile } from "../../llm/model-profile.js";
 import type { StepEvent } from "../step-events.js";
+import { turnProgressWanted } from "./turn-progress-opt-in.js";
 import type { StreamParser, StreamParseEvent } from "../../llm/grammar/stream-parser.js";
 import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
@@ -333,14 +334,17 @@ export async function runInitialCompletion(
 ): Promise<{ completion: CompletionResult }> {
   const { ctx, deps, prompt, slot, llmParams, thinkingOff } = args;
   const startedAt = Date.now();
+  // ATO-1027: only a session whose host asked (the desktop's stream).
+  const reportWait = deps.onEvent !== undefined && turnProgressWanted(ctx.session.id);
   const completion = deps.llmCompleteStream
     ? await consumeStream(
-        deps.llmCompleteStream(withPromptProgress(llmParams, ctx.stepIndex, deps.onEvent)),
+        deps.llmCompleteStream(reportWait ? withPromptProgress(llmParams, ctx.stepIndex, deps.onEvent) : llmParams),
         ctx.stepIndex,
         deps.profile,
         deps.toolTransport,
         thinkingOff,
         deps.onEvent,
+        reportWait,
       )
     : await deps.llmComplete(llmParams);
   const durationMs = Date.now() - startedAt;
@@ -602,6 +606,8 @@ export async function consumeStream(
   primaryTransport: ToolCallTransport,
   thinkingOff: boolean,
   onEvent?: (event: StepEvent) => void,
+  /** Tell `first_token` (ATO-1027); only for a session that asked. */
+  reportFirstToken = false,
 ): Promise<CompletionResult> {
   // The parser's pre-opened state depends on which link SERVES the
   // stream, not on the configured primary: a native-tools primary that
@@ -701,7 +707,7 @@ export async function consumeStream(
       }
       // After the chunk's own deltas, so a host already knows whether
       // the output began as reasoning or as the answer.
-      if (!firstToken && (chunk.delta.length > 0 || (chunk.reasoningDelta && chunk.reasoningDelta.length > 0))) {
+      if (reportFirstToken && !firstToken && (chunk.delta.length > 0 || (chunk.reasoningDelta && chunk.reasoningDelta.length > 0))) {
         firstToken = true;
         onEvent?.({ type: "first_token", stepIndex });
       }

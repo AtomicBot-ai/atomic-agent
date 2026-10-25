@@ -34,6 +34,7 @@ import {
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
+import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
@@ -277,6 +278,9 @@ async function handleStream(
       }
     : frames;
   phases?.start();
+  // Only this stream's turn asks the model server for prompt progress;
+  // the TUI, channels and workers stream as before.
+  const releaseProgress = phases ? claimTurnProgress(env.session.id) : null;
 
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
@@ -293,6 +297,7 @@ async function handleStream(
     error = err instanceof Error ? err : new Error(String(err));
   } finally {
     phases?.dispose();
+    releaseProgress?.();
     ctx.completionRegistry.unregister(env.completionId);
   }
 

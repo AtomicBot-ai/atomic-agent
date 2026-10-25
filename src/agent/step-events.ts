@@ -96,15 +96,17 @@ export type StepEvent =
    * kind — reasoning, reply text or tool-call JSON (ATO-1027). Before it
    * the provider was still reading the prompt; a host that shows how
    * long the wait has lasted stops that count here. Once per streamed
-   * completion; never on the unary path.
+   * completion; never on the unary path; only for a session whose host
+   * asked (`claimTurnProgress`).
    */
   | { type: "first_token"; stepIndex: number }
   /**
    * How far a local llama-server got through the step's prompt before
    * the first token (ATO-1027): `processed` of `total` prompt tokens
    * (the `cached` ones included), `elapsedMs` of evaluation so far.
-   * Emitted per evaluated batch, streamed initial completions only, and
-   * only by a server that reports progress (`return_progress`).
+   * Emitted per evaluated batch, streamed initial completions only, for
+   * a session whose host asked (`claimTurnProgress`), and only by a
+   * server that reports progress (`return_progress`).
    */
   | {
       type: "prompt_progress";

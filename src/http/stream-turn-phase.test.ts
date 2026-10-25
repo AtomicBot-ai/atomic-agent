@@ -147,6 +147,17 @@ describe("turn_phase frames", () => {
     ]);
   });
 
+  it("does not go back to reading the prompt after the final reply", () => {
+    const h = harness();
+    h.tracker.start();
+    h.tracker.onEvent({ type: "step_started", stepIndex: 0 });
+    h.tracker.onEvent(step({ type: "first_token", stepIndex: 0 }));
+    h.tracker.onEvent(step({ type: "tool_call_parsed", call: { tool: "reply", args: {} }, batchIndex: 0, batchSize: 1 } as never));
+    h.tracker.onEvent(step({ type: "tool_call_executed", result: { tool: "reply" }, batchIndex: 0, batchSize: 1 } as never));
+    expect(h.phases()).toEqual(["starting", "processing_prompt", "generating"]);
+    expect(h.phases().at(-1)).not.toBe("processing_prompt");
+  });
+
   it("writes nothing before start or after dispose", () => {
     const h = harness();
     h.tracker.onEvent({ type: "step_started", stepIndex: 0 });

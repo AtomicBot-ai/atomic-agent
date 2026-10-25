@@ -7,6 +7,7 @@ import { createEmptySessionState } from "../../session/session-state.js";
 import type { StepContext, StepDependencies, LlmStreamParams } from "./step-contract.js";
 import type { StepEvent } from "../step-events.js";
 import { consumeStream, prepareStepInference, runInitialCompletion } from "./step-inference.js";
+import { claimTurnProgress, turnProgressWanted } from "./turn-progress-opt-in.js";
 
 // ATO-1027: the wait before a step's first output, as step events a host
 // can show — `prompt_progress` while the prompt is read, `first_token`
@@ -63,7 +64,7 @@ describe("first_token", () => {
       yield { delta: "", reasoningDelta: " more", done: false };
       return completion();
     }
-    await consumeStream(stream(), 4, QWEN_THINK_PROFILE, "native_tools", false, (e) => events.push(e));
+    await consumeStream(stream(), 4, QWEN_THINK_PROFILE, "native_tools", false, (e) => events.push(e), true);
     const types = events.map((e) => e.type);
     expect(types.filter((t) => t === "first_token")).toHaveLength(1);
     expect(types.indexOf("reasoning_delta")).toBeLessThan(types.indexOf("first_token"));
@@ -76,8 +77,19 @@ describe("first_token", () => {
       yield { delta: "", reasoningDelta: "", done: true };
       return completion({ content: "" });
     }
-    await consumeStream(stream(), 0, PLAIN_INSTRUCT_PROFILE, "grammar", false, (e) => events.push(e));
+    await consumeStream(stream(), 0, PLAIN_INSTRUCT_PROFILE, "grammar", false, (e) => events.push(e), true);
     expect(events.some((e) => e.type === "first_token")).toBe(false);
+  });
+
+  it("is not told unless the session asked", async () => {
+    const events: StepEvent[] = [];
+    async function* stream(): AsyncGenerator<StreamChunk, CompletionResult, void> {
+      yield { delta: "", reasoningDelta: "plan", done: false };
+      return completion();
+    }
+    await consumeStream(stream(), 0, QWEN_THINK_PROFILE, "native_tools", false, (e) => events.push(e));
+    expect(events.some((e) => e.type === "first_token")).toBe(false);
+    expect(events.some((e) => e.type === "reasoning_delta")).toBe(true);
   });
 });
 
@@ -94,7 +106,12 @@ describe("prompt_progress", () => {
       return completion();
     };
     const prepared = prepareStepInference(ctx, deps);
-    await runInitialCompletion({ ctx, deps, ...prepared });
+    const release = claimTurnProgress(ctx.session.id);
+    try {
+      await runInitialCompletion({ ctx, deps, ...prepared });
+    } finally {
+      release();
+    }
     expect(sent?.onPromptProgress).toBeTypeOf("function");
     expect(events).toContainEqual({
       type: "prompt_progress",
@@ -106,6 +123,23 @@ describe("prompt_progress", () => {
     });
   });
 
+  it("asks for nothing when the session's host did not ask (TUI, channels, workers)", async () => {
+    const { ctx, deps } = fixture();
+    const events: StepEvent[] = [];
+    deps.onEvent = (event) => events.push(event);
+    let sent: LlmStreamParams | undefined;
+    deps.llmCompleteStream = async function* (params) {
+      sent = params;
+      yield { delta: '[{"tool":"reply","args":{"text":"ok"}}]', reasoningDelta: "", done: true };
+      return completion();
+    };
+    const prepared = prepareStepInference(ctx, deps);
+    await runInitialCompletion({ ctx, deps, ...prepared });
+    expect(sent).toBeDefined();
+    expect(sent).not.toHaveProperty("onPromptProgress");
+    expect(events.some((e) => e.type === "first_token")).toBe(false);
+  });
+
   it("asks for nothing when no one listens to step events", async () => {
     const { ctx, deps } = fixture();
     let sent: LlmStreamParams | undefined;
@@ -114,8 +148,27 @@ describe("prompt_progress", () => {
       return completion();
     };
     const prepared = prepareStepInference(ctx, deps);
-    await runInitialCompletion({ ctx, deps, ...prepared });
+    const release = claimTurnProgress(ctx.session.id);
+    try {
+      await runInitialCompletion({ ctx, deps, ...prepared });
+    } finally {
+      release();
+    }
     expect(sent).toBeDefined();
     expect(sent).not.toHaveProperty("onPromptProgress");
+  });
+});
+
+describe("claimTurnProgress", () => {
+  it("holds per session until every claim is released", () => {
+    const a = claimTurnProgress("s-a");
+    const b = claimTurnProgress("s-a");
+    expect(turnProgressWanted("s-a")).toBe(true);
+    expect(turnProgressWanted("s-b")).toBe(false);
+    a();
+    a();
+    expect(turnProgressWanted("s-a")).toBe(true);
+    b();
+    expect(turnProgressWanted("s-a")).toBe(false);
   });
 });

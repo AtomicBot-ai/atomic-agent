@@ -157,6 +157,46 @@ describe("LlamaServerClient prompt progress (ATO-1027)", () => {
     expect(result?.final.content).toBe("ok");
   });
 
+  it("keeps the first-token budget when a progress frame is split across reads", async () => {
+    // Half a frame completes no event. Read as the reply starting, it
+    // moved the stream to the idle budget and stopped the /slots watch,
+    // and the progress frames after it never put the first-token budget
+    // back: a long first prompt read died at the idle budget.
+    vi.useFakeTimers();
+    const { client, bodies, push, close } = streamingClient({
+      requestTimeoutMs: 1_000,
+      firstTokenTimeoutMs: 10_000,
+    });
+    const seen: PromptProgress[] = [];
+    let failed: unknown = null;
+    const done = drain(
+      client.completeStream({ prompt: "hi", onPromptProgress: (p) => seen.push(p) }),
+    ).catch((err: unknown) => {
+      failed = err;
+      return null;
+    });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(bodies).toHaveLength(1);
+    const frame = progressEvent(100, 1000);
+    push(frame.slice(0, 20));
+    await vi.advanceTimersByTimeAsync(500);
+    push(frame.slice(20));
+    await vi.advanceTimersByTimeAsync(500);
+    push(progressEvent(500, 1000));
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(failed).toBeNull();
+    push(progressEvent(1000, 1000));
+    await vi.advanceTimersByTimeAsync(3_000);
+    expect(failed).toBeNull();
+    push('data: {"content":"ok","stop":true}\n\n');
+    close();
+    await vi.advanceTimersByTimeAsync(0);
+    const result = await done;
+    expect(failed).toBeNull();
+    expect(seen.map((p) => p.processed)).toEqual([100, 500, 1000]);
+    expect(result?.final.content).toBe("ok");
+  });
+
   it("still ends a prompt evaluation at the first-token budget", async () => {
     vi.useFakeTimers();
     const { client, bodies, push } = streamingClient({

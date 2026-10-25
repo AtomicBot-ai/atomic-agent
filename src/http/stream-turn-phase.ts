@@ -160,6 +160,7 @@ export function createTurnPhaseTracker(deps: TurnPhaseTrackerDeps): TurnPhaseTra
               id: hint.lighterModel.id,
               name: hint.lighterModel.name,
               file_size_gb: hint.lighterModel.fileSizeGb,
+              downloaded: hint.lighterModel.downloaded,
             },
           }
         : {}),
@@ -211,8 +212,11 @@ export function createTurnPhaseTracker(deps: TurnPhaseTrackerDeps): TurnPhaseTra
       case "tool_call_executed": {
         // The batch is done: what follows is the next request.
         if (inner.batchIndex >= inner.batchSize - 1) {
+          // A batch with the final `reply` ends the turn (or leaves a
+          // progress note): no next request to read the prompt for yet.
+          const replied = batchTools.includes("reply");
           batchTools = [];
-          enter("processing_prompt");
+          if (!replied) enter("processing_prompt");
           return;
         }
         const next = batchTools[inner.batchIndex + 1];

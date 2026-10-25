@@ -1048,6 +1048,8 @@ export class LlamaServerClient {
       // is one block repeated; the step is retried at the same cap.
       const repetition = createStreamRepetitionWatcher();
       let looped: CompletionResult | null = null;
+      // A real (non-progress) event has arrived (ATO-1027).
+      let replyStarted = false;
       while (looped === null) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -1062,14 +1064,18 @@ export class LlamaServerClient {
         // before the first yield of this read, as the call always was.
         let alive = false;
         const markAlive = (): void => {
+          replyStarted = true;
           if (alive) return;
           alive = true;
           keepAlive("idle");
         };
         buffer += value;
         let eventEnd = buffer.indexOf("\n\n");
-        // Bytes that complete no event yet are still a live server.
-        if (eventEnd === -1) markAlive();
+        // Bytes that complete no event yet are still a live server —
+        // unless progress was asked for and no real event has come: then
+        // they may be half a progress frame, and only a real event may
+        // move the stream off its first-token budget.
+        if (eventEnd === -1 && (replyStarted || !request.onPromptProgress)) markAlive();
         while (eventEnd !== -1) {
           const rawEvent = buffer.slice(0, eventEnd);
           buffer = buffer.slice(eventEnd + 2);
