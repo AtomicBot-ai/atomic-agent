@@ -308,7 +308,10 @@ export class ModelProfileManager {
           });
         }
         this.profile = nextProfile;
-        this.grammar = nextGrammar;
+        // Re-applied, not trusted from the build: a `setMcpToolNameRule`
+        // that landed while `buildGrammar` was awaited would otherwise be
+        // overwritten by the rule read before it.
+        this.grammar = applyMcpToolNameRule(nextGrammar, this.mcpToolNameRule, this.mcpNativeTools);
         this.logger?.info("model profile hot-swapped", {
           from: this.profile.id === nextProfile.id ? null : this.profile.id,
           to: nextProfile.id,

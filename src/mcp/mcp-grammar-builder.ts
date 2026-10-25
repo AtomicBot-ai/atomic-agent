@@ -62,9 +62,10 @@ export function buildMcpToolNameRule(
  *
  * `nativeTools` says whether the four `mcp.resource.*` / `mcp.prompt.*`
  * tools are registered: they are only when MCP is on (a server is
- * configured or was added live), so with MCP off `mcp-native-tool` is
- * dropped from `tool-name` too and no `mcp.*` name at all can be
- * sampled. Every direction is idempotent, so a grammar already patched
+ * configured or was added live) and are never unregistered, so they
+ * stay after the last server is removed live (`registerMcpMetaToolsOnce`
+ * in the runtime catalog). With MCP off from the start `mcp-native-tool`
+ * is dropped from `tool-name` too and no `mcp.*` name can be sampled. Every direction is idempotent, so a grammar already patched
  * can be patched again.
  */
 export function applyMcpToolNameRule(

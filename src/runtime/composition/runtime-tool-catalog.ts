@@ -213,6 +213,23 @@ export function registerRuntimeVideoTools(input: {
   });
 }
 
+/** What `connectRuntimeMcpCatalog` tells about the MCP grammar it applies. */
+export interface McpGrammarHolder {
+  setMcpToolNameRule(rule: string | null, nativeTools: boolean): void;
+}
+
+/**
+ * The bootstrap seam between the MCP catalog and the hot-swap
+ * `ModelProfileManager`: the agent loop reads the manager's grammar
+ * before the catalog's, so without this hook the manager's grammar
+ * would admit no MCP tools at all (ATO-1029). No manager, no hook.
+ */
+export function mcpGrammarHookFor(holder: McpGrammarHolder | null | undefined): {
+  onMcpToolNameRule?: (rule: string | null, nativeTools: boolean) => void;
+} {
+  return holder ? { onMcpToolNameRule: (rule, nativeTools) => holder.setMcpToolNameRule(rule, nativeTools) } : {};
+}
+
 export async function connectRuntimeMcpCatalog(input: {
   config: AtomicAgentConfig;
   options: Pick<CreateAgentRuntimeOptions, "handlers">;

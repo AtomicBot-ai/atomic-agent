@@ -35,7 +35,10 @@ shell-args ::= "{" ws "\"cmd\"" ws ":" ws required-string ( ws "," ws pair )* ws
 # string whose first character is not `<` or `|`, so a reasoning
 # profile's marker guard (`chars`) still sees every `<|`; it may open on
 # an escape (a JSON-escaped UNC path does). `tool-name` lists neither
-# name.
+# name. Known limit, here and in `shell-args`: the free keys may repeat a
+# required one (`{"path":"a","content":"x","path":""}`), and JSON.parse
+# keeps the last, so the tool still sees an empty value and refuses it;
+# ruling that out would mean a key rule that excludes each required name.
 fs-read-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.read\"" ws "," ws "\"args\"" ws ":" ws fs-read-args ws "}"
 fs-read-args ::= "{" ws "\"path\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
 fs-write-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.write\"" ws "," ws "\"args\"" ws ":" ws fs-write-args ws "}"
@@ -75,8 +78,10 @@ fusion-tool ::= "\"fusion.delegate\""
 # run against a throwaway copy). A local orchestrator reviewing a fan-out
 # needs these in its vocabulary for the same reason it needs the fan-out.
 verify-tool ::= "\"verify." ( "syntax" | "run" ) "\""
-# Native MCP discovery / resource / prompt tools. Registered only while MCP
-# is on; with MCP off `applyMcpToolNameRule` drops this from `tool-name`.
+# Native MCP discovery / resource / prompt tools. Registered once MCP is on
+# (a server configured, or added live) and never unregistered, so they stay
+# after the last server is removed live; with MCP off from the start
+# `applyMcpToolNameRule` drops this from `tool-name`.
 mcp-native-tool ::= "\"mcp." ( "resource.list" | "resource.read" | "prompt.list" | "prompt.get" ) "\""
 # Per-server MCP tool names. Deliberately NOT referenced from `tool-name`
 # here: with no MCP tools the sampler can emit no `mcp.<server>.<tool>`
