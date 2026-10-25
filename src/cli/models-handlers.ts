@@ -59,6 +59,9 @@ import {
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
   coreEmbeddingEngineRequired,
+  CORE_CPU_FALLBACK_LINE,
+  coreCpuFallbackApplies,
+  fallBackToCoreCpuBuild,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -751,37 +754,60 @@ export async function runLocalModelsStart(
     try {
       result = await startWithDevice(device);
     } catch (e) {
-      // Windows iGPU-only rescue: the installed GPU build spawned but
-      // never became healthy (its compute backend cannot load a model
-      // on this machine — e.g. Vulkan on an AMD APU), so swap in the
-      // CPU build the nightly also publishes and retry once.
+      // The same rescue on the Atomic Core engine (ATO-344/372): Core's
+      // GPU build crashed while loading the model, so install Core's CPU
+      // build and retry once on device cpu.
       if (
-        !shouldFallBackToCpuBackend({
-          installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
-          configuredVariant: getConfiguredBackendVariant(),
-          error: e,
-        })
+        getConfig().localModels.managed.engine === "atomic-core" &&
+        coreCpuFallbackApplies(dataDir, getConfiguredBackendVariant(), e)
       ) {
-        throw e;
+        process.stderr.write(`${CORE_CPU_FALLBACK_LINE}\n`);
+        persistBackendVariantCpu(cfg.paths.userConfigFile);
+        await fallBackToCoreCpuBuild(dataDir, {
+          signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+          onProgress: (p: number, t: number, tot: number) => {
+            const line = renderPullProgress("Atomic Core CPU build", p, t, tot);
+            if (process.stderr.isTTY)
+              process.stderr.write(`\r${line.padEnd(79)}`);
+            else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+          },
+        });
+        if (process.stderr.isTTY) process.stderr.write("\n");
+        process.stderr.write("retrying start on the CPU build…\n");
+        result = await startWithDevice("cpu");
+      } else {
+        // Windows iGPU-only rescue: the installed GPU build spawned but
+        // never became healthy (its compute backend cannot load a model
+        // on this machine — e.g. Vulkan on an AMD APU), so swap in the
+        // CPU build the nightly also publishes and retry once.
+        if (
+          !shouldFallBackToCpuBackend({
+            installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
+            configuredVariant: getConfiguredBackendVariant(),
+            error: e,
+          })
+        ) {
+          throw e;
+        }
+        process.stderr.write(
+          "the GPU llama.cpp build failed to serve on this machine — falling back to the CPU build…\n",
+        );
+        persistBackendVariantCpu(cfg.paths.userConfigFile);
+        await fallBackToCpuBackend(dataDir, {
+          signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+          onProgress: (p: number, t: number, tot: number) => {
+            const line = renderPullProgress("cpu backend zip", p, t, tot);
+            if (process.stderr.isTTY)
+              process.stderr.write(`\r${line.padEnd(79)}`);
+            else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+          },
+        });
+        if (process.stderr.isTTY) process.stderr.write("\n");
+        // The GPU device picked against the old binary is meaningless to
+        // the CPU build (it would reject `--device Vulkan0`).
+        process.stderr.write("retrying start on the CPU build…\n");
+        result = await startWithDevice("cpu");
       }
-      process.stderr.write(
-        "the GPU llama.cpp build failed to serve on this machine — falling back to the CPU build…\n",
-      );
-      persistBackendVariantCpu(cfg.paths.userConfigFile);
-      await fallBackToCpuBackend(dataDir, {
-        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
-        onProgress: (p: number, t: number, tot: number) => {
-          const line = renderPullProgress("cpu backend zip", p, t, tot);
-          if (process.stderr.isTTY)
-            process.stderr.write(`\r${line.padEnd(79)}`);
-          else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
-        },
-      });
-      if (process.stderr.isTTY) process.stderr.write("\n");
-      // The GPU device picked against the old binary is meaningless to
-      // the CPU build (it would reject `--device Vulkan0`).
-      process.stderr.write("retrying start on the CPU build…\n");
-      result = await startWithDevice("cpu");
     }
     const visionLine = mmprojFile && result.chat.projectorDropped
       ? `, vision disabled (Atomic Chat could not load ${m.mmprojFilename}; the model runs text-only)`

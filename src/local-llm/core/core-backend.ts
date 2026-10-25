@@ -7,12 +7,8 @@ import { CoreUnavailableError, toCoreUnavailable } from "./core-errors.js";
 import { CORE_VERSION, activeCoreVersion, coreRoot, coreVersionDir, readCoreBackend, writeCoreJson, type CoreBackend } from "./core-state.js";
 import { connectCore, CoreRequestError, withCoreClient, type CoreControlClient } from "./core-client.js";
 import { installCore, isCoreInstalled, withCoreRetries } from "./core-install.js";
-
-interface Catalog {
-  recommended: string | null;
-  recommended_installed: string | null;
-  releases?: Array<{ tag: string; variants: Array<{ id: string; asset?: string }> }>;
-}
+import { chooseCoreBackend, type CoreBackendCatalog } from "./core-backend-choice.js";
+import { getConfiguredBackendVariant } from "../backend/windows-backend-variant.js";
 
 /** Core and its backend for `version` (default: the active one) are on disk. */
 export function isCoreBackendInstalled(dataDir: string, version = activeCoreVersion(dataDir)): boolean {
@@ -99,8 +95,9 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
   try {
   await installCore(dataDir, version, opts);
   return await withCoreClient(dataDir, version, async client => {
-    const catalog = await client.call<Catalog>("/backends/llamacpp/catalog", { force: true }, { signal: opts.signal, timeoutMs: 60_000 });
-    const selected = catalog.recommended ?? catalog.recommended_installed;
+    const catalog = await client.call<CoreBackendCatalog>("/backends/llamacpp/catalog", { force: true }, { signal: opts.signal, timeoutMs: 60_000 });
+    // Core's recommendation, or the CPU build a Windows x64 machine was moved to (`chooseCoreBackend`).
+    const selected = chooseCoreBackend(catalog, getConfiguredBackendVariant());
     if (!selected) throw new CoreUnavailableError({ stage: "backend", reasonCode: "no_backend", detail: "Atomic Core found no compatible inference backend for this computer" });
     const [tag, backend, extra] = selected.split("/");
     if (!tag || !backend || extra || /[\\]/.test(selected) || tag === ".." || backend === "..") throw new Error("Atomic Core returned an invalid backend selection.");

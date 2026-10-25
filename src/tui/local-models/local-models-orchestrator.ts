@@ -34,6 +34,9 @@ import {
   type SpawnDownloadWorkerResult,
   type StopDownloadWorkerResult,
   EMBEDDING_MODELS_CATALOG,
+  CORE_CPU_FALLBACK_LINE,
+  coreCpuFallbackApplies,
+  fallBackToCoreCpuBuild,
   fallBackToCpuBackend,
   getConfiguredBackendVariant,
   getDaemonStatus,
@@ -2022,11 +2025,15 @@ export class LocalModelsOrchestrator {
       const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
       // Under Atomic Core its llama-server needs the environment Core runs it with.
       const spawn = managedDeviceSource(dataDir, getConfig().localModels.managed.engine)?.spawn;
-      const device = await resolveManagedDevice(
-        binPath,
-        cfg.localModels.managed.device,
-        { multiGpu, ...(spawn ? { spawn } : {}) },
-      );
+      // The CPU-build retry runs on the CPU: a device picked for (or
+      // configured against) the crashing GPU build means nothing to it.
+      const device = opts?.cpuFallbackAttempted
+        ? "cpu"
+        : await resolveManagedDevice(
+            binPath,
+            cfg.localModels.managed.device,
+            { multiGpu, ...(spawn ? { spawn } : {}) },
+          );
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: device ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}`,
@@ -2090,7 +2097,8 @@ export class LocalModelsOrchestrator {
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
           ...(device ? { device } : {}),
-          ...(multiGpu ? { tensorSplit } : {}),
+          // No multi-GPU split on the CPU-build retry.
+          ...(multiGpu && device !== "cpu" ? { tensorSplit } : {}),
         },
         embedding: embClear.options
           ? { ...embClear.options, signal, engine: cfg.localModels.managed.engine, ...(device ? { device } : {}) }
@@ -2142,6 +2150,14 @@ export class LocalModelsOrchestrator {
         return false;
       }
       const msg = e instanceof Error ? e.message : String(e);
+      // ATO-344/372: Atomic Core's GPU build crashed loading the model.
+      if (
+        !opts?.cpuFallbackAttempted &&
+        getConfig().localModels.managed.engine === "atomic-core" &&
+        coreCpuFallbackApplies(dataDir, getConfiguredBackendVariant(), e)
+      ) {
+        return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal, "atomic-core");
+      }
       if (
         !opts?.cpuFallbackAttempted &&
         shouldFallBackToCpuBackend({
@@ -2173,18 +2189,22 @@ export class LocalModelsOrchestrator {
    * the nightly also publishes and retry the start once. The choice is
    * persisted as `localModels.managed.backendVariant = "cpu"` — without
    * that, the next auto-update's variant-staleness check would reinstall
-   * the GPU build and re-break the machine.
+   * the GPU build and re-break the machine. On the Atomic Core engine
+   * the CPU build comes from Core's catalog (`fallBackToCoreCpuBuild`).
    */
   private async fallBackToCpuBackendAndRetry(
     dataDir: string,
     failureMsg: string,
     signal?: AbortSignal,
+    engine: "atomic-core" | "llama-server" = "llama-server",
   ): Promise<boolean> {
     this.bus.emit({
       type: "runtime_info",
       line:
-        "local-llm: the GPU llama.cpp build failed to serve on this machine — " +
-        "falling back to the CPU build…",
+        engine === "atomic-core"
+          ? `local-llm: ${CORE_CPU_FALLBACK_LINE}`
+          : "local-llm: the GPU llama.cpp build failed to serve on this machine — " +
+            "falling back to the CPU build…",
     });
     try {
       persistUserLocalModelsConfig({ managed: { backendVariant: "cpu" } });
@@ -2215,7 +2235,7 @@ export class LocalModelsOrchestrator {
       },
     });
     try {
-      await fallBackToCpuBackend(dataDir, {
+      const swapOpts = {
         // Same hazard as the auto-update path above: without a deadline
         // a stalled-open connection would pin the start on "starting"
         // for the life of the process.
@@ -2229,7 +2249,10 @@ export class LocalModelsOrchestrator {
             totalBytes: total,
           });
         },
-      });
+      };
+      await (engine === "atomic-core"
+        ? fallBackToCoreCpuBuild(dataDir, swapOpts)
+        : fallBackToCpuBackend(dataDir, swapOpts));
       this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
     } catch (dlErr) {
       const msg = dlErr instanceof Error ? dlErr.message : String(dlErr);
