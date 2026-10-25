@@ -127,6 +127,27 @@ export function engineFault(line: unknown): "oom" | "port_in_use" | "load_failed
 }
 
 /**
+ * ATO-278: why the local model server did not start, or died, as a code
+ * (catalog-values BACKEND_FAIL_REASONS). `error` is the start's own error text
+ * (and its stderr tail), `faultLine` the line daemon-watch describeFault picked
+ * from the server's log. Both can hold paths and model names: they are read
+ * here to pick the code and never leave this file.
+ */
+export function backendFailReason(error: unknown, faultLine: unknown):
+  "oom" | "port_in_use" | "load_failed" | "missing_lib" | "crash" | "timeout" | "exited_after_ready" | "other" {
+  const text = typeof error === "string" ? error : "";
+  // agent-cli modelsStart: the server came up, then stopped answering while the start waited on it.
+  if (/stopped answering while it was starting/i.test(text)) return "exited_after_ready";
+  // agent-cli cli(): the app's own time limit on `models start` (execFile killed it).
+  if (/did not answer `[^`]*` within|timed? ?out|time limit|ETIMEDOUT/i.test(text)) return "timeout";
+  for (const line of [text, faultLine]) {
+    const fault = engineFault(line);
+    if (fault && fault !== "unknown") return fault;
+  }
+  return "other";
+}
+
+/**
  * ATO-773: `local_backend_supervised` props from a supervisor notice
  * (daemon-supervisor SupervisorNotice), or null for one that is not sent
  * (`clear`, ATO-244's CPU word on the same channel). `quickDeaths` is the

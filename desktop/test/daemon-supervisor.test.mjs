@@ -16,7 +16,7 @@ const { routeNeedsDaemon, routeWantsRestarts, isManagedServer } = require("../ou
 /** A supervisor on stand-ins: the test sets what the looks see and moves the clock. */
 function standIn() {
   let clock = 1_000_000;
-  const f = { wanted: true, look: "up", restarts: 0, answer: { ok: true }, during: null, notices: [] };
+  const f = { wanted: true, look: "up", restarts: 0, answer: { ok: true }, during: null, notices: [], fault: null, died: [] };
   const sv = new DaemonSupervisor({
     wanted: () => f.wanted,
     look: async () => f.look,
@@ -27,7 +27,8 @@ function standIn() {
     },
     notify: (n) => f.notices.push(n.kind),
     say: () => {},
-    describeFault: () => null,
+    describeFault: () => f.fault,
+    died: (d) => f.died.push(d),
     now: () => clock,
   });
   const disarm = sv.arm(3_600_000);
@@ -191,6 +192,51 @@ test("the person's own start counts quick deaths afresh", async () => {
   disarm();
   assert.equal(sv.state().gaveUp, false);
   assert.equal(f.restarts, MAX_QUICK_DEATHS);
+});
+
+test("ATO-278: a death is told once, with the log's line and how long it was up; a failed restart of it is not another", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  later(120_000);
+  f.look = "down";
+  f.fault = "ggml_metal_buffer: failed to allocate buffer: out of memory";
+  f.answer = { ok: false, error: "no" };
+  await sv.checkNow("refused");
+  assert.deepEqual(f.died, [{ fault: "ggml_metal_buffer: failed to allocate buffer: out of memory", upMs: 120_000 }]);
+  // The restart failed: the server it left down is the same incident, not a new death.
+  later(5_000);
+  await sv.checkNow("refused");
+  assert.equal(f.died.length, 1);
+  f.answer = { ok: true };
+  later(5_000);
+  await sv.checkNow("refused");
+  assert.equal(f.died.length, 1);
+  // Back up, then down again two minutes later: a new death.
+  later(120_000);
+  f.fault = null;
+  await sv.checkNow("refused");
+  disarm();
+  assert.equal(f.restarts, 4);
+  assert.deepEqual(f.died.at(-1), { fault: null, upMs: 120_000 });
+  assert.equal(f.died.length, 2);
+});
+
+test("ATO-278: a stop on purpose, a Studio yield or a route that does not need it is no death", async () => {
+  const { sv, f, later, disarm } = standIn();
+  sv.noteStarted();
+  sv.noteStopped();
+  later(120_000);
+  f.look = "down";
+  assert.equal(await sv.checkNow("refused"), false);
+  sv.noteStarted();
+  sv.yieldTo("studio");
+  for (let i = 0; i < 3; i++) await sv.tick();
+  sv.endYield();
+  f.wanted = false;
+  for (let i = 0; i < 3; i++) await sv.tick();
+  disarm();
+  assert.equal(f.restarts, 0);
+  assert.deepEqual(f.died, []);
 });
 
 test("the route that needs the managed server: Local models, or Fusion with a local seat, with autoRestart on", () => {

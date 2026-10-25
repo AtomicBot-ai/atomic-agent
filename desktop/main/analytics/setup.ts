@@ -1,11 +1,11 @@
 /**
  * Provider and backend events: `provider_key_checked`, `model_configured`
  * (once per desktop state dir), `backend_switched`, `fusion_configured`,
- * `local_backend_started`, `local_backend_supervised`.
+ * `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`.
  */
 
 import { curatedMeta } from "../model-catalog.js";
-import { daemonEffect, keyCheckResult, presetOf, supervisedProps, switchOutcome } from "./classify.js";
+import { backendFailReason, daemonEffect, keyCheckResult, presetOf, supervisedProps, switchOutcome } from "./classify.js";
 import { localEngineOf, readConfigFile } from "./environment.js";
 import { analyticsEnabled, currentRunMode, flagsStore, refreshRunMode, track } from "./core.js";
 
@@ -15,6 +15,23 @@ export function configureSetup(opts: { stateDir: string }): void {
 }
 
 const modelIdProp = (id: unknown): string => (typeof id === "string" && curatedMeta(id) ? id : "hf_custom");
+
+/* ATO-278: the server log's failure line (daemon-watch describeFault), handed
+   in by daemon-watch so this module never reads the server's files itself. */
+let serverFault: () => string | null = () => null;
+export function readServerFaultWith(read: () => string | null): void {
+  serverFault = read;
+}
+
+/** ATO-278: `reason` for a start that failed, from its error text, its stderr tail and the server log; null for any other result. */
+function startFailReason(effect: string, failure: unknown): string | null {
+  if (effect !== "start_failed") return null;
+  const f = (failure && typeof failure === "object" ? failure : {}) as { error?: unknown; daemonError?: unknown };
+  const text = [f.error, f.daemonError].filter((t): t is string => typeof t === "string").join("\n");
+  let line: string | null = null;
+  try { line = serverFault(); } catch { /* no log line */ }
+  return backendFailReason(text, line);
+}
 
 /** Around `verifyProviderKey`: the result enum and the HTTP status only. */
 export function providerKeyChecked(providerId: unknown, res: unknown): void {
@@ -100,7 +117,7 @@ export function switchEnd(begin: { from: string | null; at: number }, res: unkno
     }
     const effect = daemonEffect(r?.daemon);
     if (effect && effect !== "untouched" && effect !== "superseded" && effect !== "skipped") {
-      track("local_backend_started", { via: "swap", result: effect, model_id: modelIdProp(r?.modelId), ms, engine: localEngineOf(readConfigFile(stateDir)) });
+      track("local_backend_started", { via: "swap", result: effect, model_id: modelIdProp(r?.modelId), ms, engine: localEngineOf(readConfigFile(stateDir)), reason: startFailReason(effect, r) });
     }
     if (kind?.action && r?.ok) fusionConfigured(kind.action);
     if (r?.ok) maybeModelConfigured();
@@ -118,12 +135,15 @@ function fusionConfigured(action: "enter" | "swap_legs" | "set_workers" | "pick_
   track("fusion_configured", { action, workers, degraded: currentRunMode() !== "fusion" });
 }
 
-/** The launch start or a ⇄'s background bring-up said how it ended. */
-export function localBackendStarted(via: "launch" | "swap", daemon: unknown, modelId: unknown, ms: number | null): void {
+/** The launch start or a ⇄'s background bring-up said how it ended. `failure`: the bring-up's answer, read for `reason` only (ATO-278). */
+export function localBackendStarted(via: "launch" | "swap", daemon: unknown, modelId: unknown, ms: number | null, failure?: unknown): void {
   try {
     const effect = daemonEffect(daemon);
     if (!effect) return;
-    track("local_backend_started", { via, result: effect, model_id: modelIdProp(modelId), ms, engine: localEngineOf(readConfigFile(stateDir)) });
+    track("local_backend_started", {
+      via, result: effect, model_id: modelIdProp(modelId), ms, engine: localEngineOf(readConfigFile(stateDir)),
+      reason: startFailReason(effect, failure),
+    });
   } catch {
     /* never */
   }
@@ -140,6 +160,25 @@ export function localBackendSupervised(notice: unknown, quickDeaths: number | nu
     const props = supervisedProps(notice, quickDeaths);
     if (!props) return;
     track("local_backend_supervised", { ...props, engine: localEngineOf(readConfigFile(stateDir)) });
+  } catch {
+    /* never */
+  }
+}
+
+/**
+ * ATO-278: the managed server the app had brought up died mid-session (the
+ * watchdog's `died`, daemon-watch). `faultLine` is the server log's failure
+ * line: only its code is sent. `upMs`: how long it had been up.
+ */
+export function localBackendCrashed(modelId: unknown, faultLine: unknown, upMs: number | null): void {
+  try {
+    if (!analyticsEnabled()) return;
+    track("local_backend_crashed", {
+      reason: backendFailReason(null, faultLine),
+      model_id: modelIdProp(modelId),
+      up_ms: upMs,
+      engine: localEngineOf(readConfigFile(stateDir)),
+    });
   } catch {
     /* never */
   }

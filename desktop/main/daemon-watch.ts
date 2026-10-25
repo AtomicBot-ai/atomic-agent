@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { backendInstalled, localDaemonRunning, managedEngineNow, modelsStop, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
 import type { AgentLogLevel } from "./agent-output.js";
+import { localBackendCrashed, readServerFaultWith } from "./analytics/index.js";
 import {
   bringUpAtLaunch,
   bringUpInFlight,
@@ -275,7 +276,11 @@ const deps: DaemonSupervisorDeps = {
   notify: (n) => host.notify(n),
   say: (line) => host.say(line),
   describeFault,
+  // ATO-278: a mid-session death, to analytics as a code (analytics/setup localBackendCrashed); the log line stays here.
+  died: ({ fault, upMs }) => localBackendCrashed(readConfig()?.localModels?.managed?.modelId, fault, upMs),
 };
+// ATO-278: a failed start's `reason` reads the same log line (analytics/setup localBackendStarted).
+readServerFaultWith(describeFault);
 
 /** The one supervisor the app runs. */
 export const daemonWatch = new DaemonSupervisor(deps);

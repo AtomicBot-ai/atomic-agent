@@ -86,6 +86,12 @@ export interface DaemonSupervisorDeps {
   say(line: string): void;
   /** Why the server failed, from its log, or null. */
   describeFault(): string | null;
+  /**
+   * ATO-278: a server that was up has died — once per death, as recovery
+   * begins, not again while a restart of it keeps failing. `fault` is
+   * describeFault's line; `upMs` how long it had been up.
+   */
+  died?(info: { fault: string | null; upMs: number }): void;
   now?(): number;
 }
 
@@ -290,6 +296,8 @@ export class DaemonSupervisor {
 
   private async runRecovery(reason: string): Promise<boolean> {
     this.deadLooks = 0;
+    // ATO-278: an open incident means this is a failed restart seen down again, not a new death.
+    if (this.incidentSince === null) this.toldDied();
     // A server that stayed up past the window proved itself: its death starts the count over.
     if (this.now() - this.lastStartAt <= QUICK_DEATH_MS) this.quickDeaths += 1;
     else this.quickDeaths = 0;
@@ -354,6 +362,14 @@ export class DaemonSupervisor {
         + "or set localModels.managed.autoRestart to false to manage it by hand",
     );
     this.notify({ kind: "gave_up", deaths: MAX_QUICK_DEATHS, fault });
+  }
+
+  private toldDied(): void {
+    try {
+      this.deps.died?.({ fault: this.deps.describeFault(), upMs: Math.max(0, this.now() - this.lastStartAt) });
+    } catch {
+      /* a report never fails the supervisor */
+    }
   }
 
   private notify(notice: SupervisorNotice): void {

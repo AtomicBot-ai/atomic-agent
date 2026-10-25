@@ -221,6 +221,34 @@ test("ATO-773: local_backend_supervised carries kind, counts and a fault code on
   assert.equal(V.validateEvent("local_backend_supervised", { kind: "restarting" }, "ui"), null);
 });
 
+test("ATO-278: why a start failed, or a server died, becomes a code, never text", () => {
+  assert.equal(C.backendFailReason("the agent did not answer `atag models start` within 300s — it may be busy or starting up. Try again.", null), "timeout");
+  assert.equal(C.backendFailReason("the model server stopped answering while it was starting — it was not started; start it again", "Segmentation fault: 11"), "exited_after_ready");
+  assert.equal(C.backendFailReason("`atag models start` failed without saying why (exit 1)", "ggml_metal_buffer: failed to allocate buffer: out of memory"), "oom");
+  assert.equal(C.backendFailReason("llama_model_load: error loading model: /Users/someone/models/x/x.gguf", null), "load_failed");
+  assert.equal(C.backendFailReason("couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 19091", null), "port_in_use");
+  assert.equal(C.backendFailReason("dyld: Library not loaded: @rpath/libggml-metal.dylib", null), "missing_lib");
+  assert.equal(C.backendFailReason(null, "Segmentation fault: 11"), "crash");
+  assert.equal(C.backendFailReason("something nobody has seen before", "nor this line"), "other");
+  assert.equal(C.backendFailReason(null, null), "other");
+});
+
+test("ATO-278: local_backend_started carries a reason code; local_backend_crashed carries code, model, uptime and engine only", () => {
+  const base = { via: "swap", result: "start_failed", model_id: "hf_custom", ms: null, engine: "atomic-core" };
+  assert.equal(V.validateEvent("local_backend_started", { ...base, reason: "oom" }, "main").props.reason, "oom");
+  assert.equal(V.validateEvent("local_backend_started", { ...base, result: "started", reason: null }, "main").props.reason, null);
+  // Text that slipped through is never sent as text.
+  assert.equal(V.validateEvent("local_backend_started", { ...base, reason: "/Users/someone/models out of memory" }, "main").props.reason, "other");
+  const crashed = V.validateEvent("local_backend_crashed", {
+    reason: "crash", model_id: "someone/private-model", up_ms: 12_000, engine: "llama-server",
+    fault: "Segmentation fault at /Users/someone/llama-server", error: "spawn /Users/someone ENOENT",
+  }, "main");
+  assert.deepEqual(crashed.props, { reason: "crash", model_id: "hf_custom", up_ms: 12_000, engine: "llama-server" });
+  assert.ok(!JSON.stringify(crashed.props).includes("/Users"));
+  assert.equal(V.validateEvent("local_backend_crashed", { reason: "a raw log line" }, "main").props.reason, "other");
+  assert.equal(V.validateEvent("local_backend_crashed", { reason: "crash" }, "ui"), null);
+});
+
 /* ---- chat turns ---- */
 
 test("a turn's summary: first token, tools, steers, approvals, failure category", () => {
