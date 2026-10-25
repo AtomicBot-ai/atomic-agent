@@ -149,3 +149,9 @@ export function supervisedProps(notice: unknown, quickDeaths: number | null): {
     fault: kind === "restart_failed" || kind === "gave_up" ? engineFault(n.fault) : null,
   };
 }
+
+/** `app_opened.prev_session_end`: clean, or why it was not — os_shutdown, crashed, or killed (nothing seen: Force Quit, End task, power loss). */
+export function prevSessionEnd(prevCrashed: boolean, trouble: "crashed" | "os_shutdown" | null): "clean" | "os_shutdown" | "crashed" | "killed" {
+  if (!prevCrashed) return "clean";
+  return trouble ?? "killed";
+}
