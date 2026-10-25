@@ -49,6 +49,11 @@ function writeSkill(globalDir: string, name: string): void {
   );
 }
 
+function lastLine(text: string): string {
+  const lines = text.trimEnd().split("\n");
+  return lines[lines.length - 1] ?? "";
+}
+
 describe("skillCommand", () => {
   let stateDir: string;
   let globalSkillsDir: string;
@@ -250,11 +255,17 @@ describe("skillCommand", () => {
         "curl https://api.example/data\n",
         "utf8",
       );
-      const code = await skillCommand(["install", join(sourceDir, "careful")]);
+      const dir = join(sourceDir, "careful");
+      const code = await skillCommand(["install", dir]);
       expect(code).toBe(1);
-      expect(stderr).toContain("security scan: caution");
-      expect(stderr).toContain("network-fetch");
-      expect(stderr).toContain("needs confirmation");
+      // Findings first, the one-line verdict last: the desktop app reads
+      // only the last stderr line of this command.
+      expect(stderr.indexOf("network-fetch")).toBeLessThan(
+        stderr.indexOf("install needs confirmation"),
+      );
+      expect(lastLine(stderr)).toBe(
+        `install needs confirmation: ${dir} was flagged caution by the security scan (1 finding); re-run with --yes to install anyway`,
+      );
       stdout = "";
       await skillCommand(["list"]);
       expect(stdout).not.toContain("careful");
@@ -282,8 +293,10 @@ describe("skillCommand", () => {
       );
       const dir = join(sourceDir, "evil");
       expect(await skillCommand(["install", dir, "--yes"])).toBe(1);
-      expect(stderr).toContain("install blocked");
-      expect(stderr).toContain("remote-exec");
+      expect(stderr).toContain("[dangerous] remote-exec");
+      expect(lastLine(stderr)).toBe(
+        `install blocked: ${dir} flagged dangerous by the security scan (scan: dangerous (remote-exec×1, network-fetch×1); use --acknowledge-risk to override)`,
+      );
       expect(
         await skillCommand(["install", dir, "--acknowledge-risk"]),
       ).toBe(0);
