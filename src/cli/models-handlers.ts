@@ -878,7 +878,10 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     return 0;
   }
   // ATO-379: the desktop reaches this on its own, so it is an automatic start too.
-  if (!(await holdEmbeddingForLowMemory(dataDir)).ok) {
+  // With no local chat model up (a cloud chat route) only the lower floor applies.
+  const localChatRunning = await getDaemonStatus(dataDir, cfg.localModels.managed.port)
+    .then(st => st.running, () => true);
+  if (!(await holdEmbeddingForLowMemory(dataDir, { localChatRunning })).ok) {
     process.stdout.write(LOW_MEMORY_EMBEDDING_LINE);
     return 0;
   }

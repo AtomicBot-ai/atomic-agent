@@ -1788,6 +1788,7 @@ export interface StartBothDeps {
   startChat?: (opts: DaemonStartOptions) => Promise<DaemonStartResult>;
   startEmbedding?: (opts: EmbeddingDaemonStartOptions) => Promise<{ pid: number; port?: number }>;
   holdForLowMemory?: (dataDir: string) => Promise<EmbeddingMemoryVerdict>;
+  embeddingRunning?: (opts: EmbeddingDaemonStartOptions) => Promise<boolean>;
 }
 
 export async function startChatAndEmbeddingDaemons(opts: {
@@ -1802,10 +1803,18 @@ export async function startChatAndEmbeddingDaemons(opts: {
       embedding: { skipped: true },
     };
   }
-  // Decided after the chat model loaded, so free memory is read as it now stands.
-  const memory = await (deps.holdForLowMemory ?? holdEmbeddingForLowMemory)(opts.embedding.dataDir);
-  if (!memory.ok) {
-    return { chat: chatResult, embedding: { skipped: true, lowMemory: true } };
+  // Decided after the chat model loaded, so free memory is read as it now
+  // stands. Not asked when the memory model already runs (Core's module
+  // reaches here running): its own memory would count against it. A status
+  // that cannot be read leaves the start as it was before the gate.
+  const embOpts = opts.embedding;
+  const running = await (deps.embeddingRunning ?? ((o: EmbeddingDaemonStartOptions) =>
+    getEmbeddingDaemonStatus(o.dataDir, o.port, o.modelId).then(s => s.running, () => true)))(embOpts);
+  if (!running) {
+    const memory = await (deps.holdForLowMemory ?? holdEmbeddingForLowMemory)(embOpts.dataDir);
+    if (!memory.ok) {
+      return { chat: chatResult, embedding: { skipped: true, lowMemory: true } };
+    }
   }
   try {
     const embResult = await (deps.startEmbedding ?? startEmbeddingDaemon)({ ...opts.embedding, signal: opts.chat.signal ?? opts.embedding.signal });

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   checkEmbeddingMemory,
   claimLowMemoryEmbeddingNote,
+  EMBEDDING_ALONE_MIN_TOTAL_RAM_BYTES,
   EMBEDDING_MIN_FREE_RAM_BYTES,
   EMBEDDING_MIN_TOTAL_RAM_BYTES,
   holdEmbeddingForLowMemory,
@@ -33,6 +34,14 @@ describe("checkEmbeddingMemory (ATO-379)", () => {
     expect(checkEmbeddingMemory({ platform: "darwin", totalBytes: 16 * GIB, freeBytes: 0.3 * GIB })).toEqual({ ok: true });
   });
 
+  it("with no local chat model running, applies only the 4 GiB floor and no free-RAM rule", () => {
+    const alone = { localChatRunning: false };
+    expect(checkEmbeddingMemory({ platform: "linux", totalBytes: 6 * GIB, freeBytes: 0.5 * GIB }, alone)).toEqual({ ok: true });
+    expect(checkEmbeddingMemory({ platform: "win32", totalBytes: 3.5 * GIB, freeBytes: 2 * GIB }, alone)).toMatchObject({ ok: false, reason: "total-ram" });
+    // The same 6 GiB machine with a chat model beside it is held back.
+    expect(checkEmbeddingMemory({ platform: "linux", totalBytes: 6 * GIB, freeBytes: 0.5 * GIB })).toMatchObject({ ok: false, reason: "total-ram" });
+  });
+
   it("never blocks on an unreadable figure", () => {
     expect(checkEmbeddingMemory({ platform: "linux", totalBytes: 0, freeBytes: 0 })).toEqual({ ok: true });
   });
@@ -40,6 +49,7 @@ describe("checkEmbeddingMemory (ATO-379)", () => {
   it("keeps its lines where the comment puts them", () => {
     expect(EMBEDDING_MIN_TOTAL_RAM_BYTES).toBe(7 * GIB);
     expect(EMBEDDING_MIN_FREE_RAM_BYTES).toBe(1.5 * GIB);
+    expect(EMBEDDING_ALONE_MIN_TOTAL_RAM_BYTES).toBe(4 * GIB);
   });
 });
 

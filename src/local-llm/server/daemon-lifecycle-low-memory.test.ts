@@ -23,7 +23,9 @@ describe("startChatAndEmbeddingDaemons on a machine with little memory", () => {
       return { ok: false as const, reason: "total-ram" as const, totalBytes: 4 * 1024 ** 3, freeBytes: 1024 ** 3 };
     });
 
-    const result = await startChatAndEmbeddingDaemons(opts, { startChat, startEmbedding, holdForLowMemory });
+    const result = await startChatAndEmbeddingDaemons(opts, {
+      startChat, startEmbedding, holdForLowMemory, embeddingRunning: async () => false,
+    });
 
     expect(result).toEqual({ chat, embedding: { skipped: true, lowMemory: true } });
     expect(startEmbedding).not.toHaveBeenCalled();
@@ -38,10 +40,29 @@ describe("startChatAndEmbeddingDaemons on a machine with little memory", () => {
       startChat: async () => chat,
       startEmbedding,
       holdForLowMemory: async () => ({ ok: true as const }),
+      embeddingRunning: async () => false,
     });
 
     expect(result).toEqual({ chat, embedding: { pid: 202 } });
     expect(startEmbedding).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves a memory model that already runs alone: the gate is not asked, nothing is turned off", async () => {
+    // Core's EmbeddingGemma module reaches the paired start while it runs
+    // (a restart of the chat model); its own memory must not count against it.
+    const holdForLowMemory = vi.fn(async () => ({
+      ok: false as const, reason: "free-ram" as const, totalBytes: 16 * 1024 ** 3, freeBytes: 1024 ** 3,
+    }));
+    const startEmbedding = vi.fn(async () => ({ pid: 303 }));
+    const embeddingRunning = vi.fn(async () => true);
+
+    const result = await startChatAndEmbeddingDaemons(opts, {
+      startChat: async () => chat, startEmbedding, holdForLowMemory, embeddingRunning,
+    });
+
+    expect(embeddingRunning).toHaveBeenCalledWith(opts.embedding);
+    expect(holdForLowMemory).not.toHaveBeenCalled();
+    expect(result.embedding).toEqual({ pid: 303 });
   });
 
   it("does not ask the gate when no embedding model was requested", async () => {

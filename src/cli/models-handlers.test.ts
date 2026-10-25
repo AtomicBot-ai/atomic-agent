@@ -445,6 +445,8 @@ describe("runLocalModelsStartEmbedding", () => {
     });
     await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
     expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+    // No chat daemon in this state dir: the cloud-route floor is asked for.
+    expect(localLlm.holdEmbeddingForLowMemory).toHaveBeenCalledWith(expect.any(String), { localChatRunning: false });
     expect(stdoutChunks.join("")).toMatch(/^embedding: skipped \(low memory\) — Low memory: memory search uses keywords only\.$/m);
   });
 
