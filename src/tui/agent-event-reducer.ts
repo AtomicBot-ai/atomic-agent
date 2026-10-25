@@ -474,6 +474,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       };
     case "update_dismissed":
       return { ...state, updatePrompt: null };
+    case "project_trust_asked":
+      return { ...state, projectTrustPrompt: action.prompt };
+    case "project_trust_closed":
+      return { ...state, projectTrustPrompt: null };
     case "update_started":
       return appendFeed(
         { ...state, updatePrompt: null, updateStatus: "running" },

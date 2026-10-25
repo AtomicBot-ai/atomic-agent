@@ -14,6 +14,10 @@ A cloned repository can ship skills (`.atomic-agent/skills`, `.agents/skills`, `
 
 Known trade-off of the soft rule: trust is by name, not content. Replacing a trusted skill's body, or renaming another skill to a trusted name, is treated as an edit and loads without a new question. The same holds for a trusted instruction file that starts importing a file nobody listed.
 
+## Asking
+
+The TUI asks at startup about the folder it was opened in ([prompt](../../tui/project-trust/README.md)): `y` trusts, `n` declines and is remembered, `Esc` puts it off until the next start. The desktop asks through the HTTP routes below.
+
 ## Commands
 
 ```sh

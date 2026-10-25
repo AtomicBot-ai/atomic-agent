@@ -51,6 +51,7 @@ import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
 import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrator.js";
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
+import { ProjectTrustOrchestrator } from "./project-trust/project-trust-orchestrator.js";
 import { MemoryOrchestrator } from "./memory/memory-orchestrator.js";
 import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
@@ -274,6 +275,7 @@ export class ChatOrchestrator {
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
+  public readonly projectTrust: ProjectTrustOrchestrator;
   public readonly memory: MemoryOrchestrator;
   public readonly mcp: McpOrchestrator;
   public readonly import: ImportOrchestrator;
@@ -300,6 +302,11 @@ export class ChatOrchestrator {
       switchSession: (id) => this.switchSession(id),
     });
     this.skills = new SkillsOrchestrator(runtime, bus, { currentSession: () => this.session });
+    this.projectTrust = new ProjectTrustOrchestrator({
+      config: () => runtime.config, workingDir: () => runtime.capabilities.workingDir,
+      emit: (action) => bus.emit(action),
+      refresh: async () => { await runtime.refreshSkills(); this.skills.refresh(); },
+    });
     this.memory = new MemoryOrchestrator(runtime, bus);
     this.mcp = new McpOrchestrator(runtime, bus);
     this.import = new ImportOrchestrator(runtime, bus, {
