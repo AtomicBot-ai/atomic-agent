@@ -27,8 +27,20 @@ describe("describeFailure", () => {
       "could not connect, the site's name could not be looked up (DNS)",
     ],
     [
-      "curl: (7) Failed to connect to html.duckduckgo.com port 443 after 12 ms: Couldn't connect to server",
+      "curl: (7) Failed to connect to html.duckduckgo.com port 443 after 12 ms: Connection refused",
       "could not connect, the connection was refused",
+    ],
+    [
+      "curl: (7) Failed to connect to html.duckduckgo.com port 443 after 3 ms: Network is unreachable",
+      "could not connect, the network could not reach the site",
+    ],
+    [
+      "curl: (7) Failed to connect to html.duckduckgo.com port 443 after 3 ms: No route to host",
+      "could not connect, the network could not reach the site",
+    ],
+    [
+      "curl: (7) Failed to connect to html.duckduckgo.com port 443 after 12 ms: Couldn't connect to server",
+      "could not connect, the connection failed",
     ],
     [
       "curl: (28) Connection timed out after 5002 milliseconds",
@@ -105,7 +117,7 @@ describe("buildUnavailableMessage", () => {
     expect(lines.at(-1)).toContain("Do not repeat this search");
   });
 
-  it("offers the free Exa key first, and another provider as the alternative", () => {
+  it("gives the free Exa key as the one fix when a key would help", () => {
     const message = buildUnavailableMessage({
       failures,
       keyRequired: {
@@ -122,6 +134,8 @@ describe("buildUnavailableMessage", () => {
     expect(fix).toHaveLength(1);
     expect(fix[0]).toContain("https://dashboard.exa.ai/api-keys");
     expect(fix[0]).toContain("EXA_API_KEY=...");
-    expect(fix[0]).toContain("Or set `web.search.provider` to `brave`");
+    // One action: no second remedy competing with the key.
+    expect(message).not.toContain("`brave`");
+    expect(message).not.toContain("`searxng`");
   });
 });

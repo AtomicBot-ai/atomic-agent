@@ -1,7 +1,9 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-
 import type { WebSearchProviderName } from "../web-search-provider.js";
+import {
+  loadCooldownFile,
+  saveCooldownFile,
+  type CooldownEntry,
+} from "./provider-cooldown-file.js";
 
 /**
  * Which tier of a provider a park was earned on. Exa has two with separate
@@ -15,8 +17,7 @@ export type CooldownTag = "keyless" | "keyed";
 
 /**
  * Why a provider is parked: out of quota (a 429), or not reachable from
- * this network at all (DNS, refused, connect timeout; ATO-315). Records
- * without one (files written before it existed) are rate limits.
+ * this network at all (DNS, refused, connect timeout; ATO-315).
  */
 export type CooldownReason = "rate_limited" | "unreachable";
 
@@ -69,9 +70,12 @@ export interface ProviderCooldown {
   ): number;
   /**
    * Park a provider whose host could not be reached (ATO-315). A fixed,
-   * short park that does not escalate: a blocked host costs every search
-   * the connect timeout, so the next few searches skip it, but a VPN that
-   * comes back up is noticed within minutes. Returns the park length.
+   * short park that does not escalate and is never written to disk: a
+   * blocked host costs every search the connect timeout, so searches that
+   * start after the failure skip it for a while, but one network blip
+   * must not outlive the process that saw it. Kept apart from the 429
+   * record, whose strikes it neither raises nor resets. Returns the
+   * park length.
    */
   parkUnreachable(
     name: WebSearchProviderName,
@@ -80,8 +84,14 @@ export interface ProviderCooldown {
   ): number;
   /** The tier the current record was parked on, if it was tagged. */
   tagOf(name: WebSearchProviderName): CooldownTag | undefined;
-  /** Why the current record was parked; `undefined` when there is none. */
-  reasonOf(name: WebSearchProviderName): CooldownReason | undefined;
+  /**
+   * Why `name` is parked at `now`: a live 429 park wins over an
+   * unreachable one; `undefined` when neither is live.
+   */
+  reasonOf(
+    name: WebSearchProviderName,
+    now: number,
+  ): CooldownReason | undefined;
   /** A provider answered. Forget its history so the next park starts small. */
   clear(name: WebSearchProviderName): void;
 }
@@ -130,21 +140,17 @@ const DEFAULT_MAX_MS = 15 * 60_000;
 const MAX_HONOURED_RETRY_AFTER_MS = DEFAULT_MAX_MS;
 
 /**
- * Two minutes. Long enough that a burst of searches (the model often
- * fires three at once, then three more) pays the connect timeout once
- * instead of six times; short enough that a network that comes back is
- * used again within the same task (ATO-315).
+ * Two minutes. Searches that start after a connect failure skip the host
+ * for this long instead of each waiting out the connect timeout; short
+ * enough that a network that comes back is used again within the same
+ * task (ATO-315).
  */
 const DEFAULT_UNREACHABLE_MS = 2 * 60_000;
 
-interface CooldownEntry {
+/** An unreachable park: in memory only, no strikes. */
+interface UnreachableEntry {
   until: number;
-  /** Consecutive parks, for the doubling. */
-  strikes: number;
-  /** Tier the park was earned on; absent for an untagged park. */
   tag?: CooldownTag;
-  /** Absent for a rate limit, the only reason before ATO-315. */
-  reason?: "unreachable";
 }
 
 export function createProviderCooldown(
@@ -186,11 +192,18 @@ function buildCooldown(
   const baseMs = options.baseMs ?? DEFAULT_BASE_MS;
   const maxMs = options.maxMs ?? DEFAULT_MAX_MS;
   const unreachableMs = options.unreachableMs ?? DEFAULT_UNREACHABLE_MS;
+  // Never persisted: a blip one process saw is not the next one's fact.
+  const unreachable = new Map<WebSearchProviderName, UnreachableEntry>();
+
+  function left(entry: { until: number } | undefined, now: number): number {
+    return entry ? Math.max(0, entry.until - now) : 0;
+  }
 
   function remainingMs(name: WebSearchProviderName, now: number): number {
-    const entry = entries.get(name);
-    if (!entry) return 0;
-    return Math.max(0, entry.until - now);
+    return Math.max(
+      left(entries.get(name), now),
+      left(unreachable.get(name), now),
+    );
   }
 
   return {
@@ -199,29 +212,18 @@ function buildCooldown(
       return remainingMs(name, now) > 0;
     },
     tagOf(name) {
-      return entries.get(name)?.tag;
+      return entries.get(name)?.tag ?? unreachable.get(name)?.tag;
     },
-    reasonOf(name) {
-      const entry = entries.get(name);
-      if (!entry) return undefined;
-      return entry.reason ?? "rate_limited";
+    reasonOf(name, now) {
+      if (left(entries.get(name), now) > 0) return "rate_limited";
+      if (left(unreachable.get(name), now) > 0) return "unreachable";
+      return undefined;
     },
     parkUnreachable(name, now, tag) {
-      // Strikes are the 429 ladder's history. A host that could not be
-      // reached says nothing about its quota, so they are carried over
-      // unchanged: neither escalated nor reset (only `clear` resets).
-      const recorded = entries.get(name);
-      const strikes =
-        recorded?.tag !== undefined && tag !== undefined && recorded.tag !== tag
-          ? 0
-          : (recorded?.strikes ?? 0);
-      entries.set(name, {
+      unreachable.set(name, {
         until: now + unreachableMs,
-        strikes,
         ...(tag !== undefined ? { tag } : {}),
-        reason: "unreachable",
       });
-      persist?.();
       return unreachableMs;
     },
     park(name, now, retryAfterMs, tag) {
@@ -259,70 +261,10 @@ function buildCooldown(
       return parkMs;
     },
     clear(name) {
+      unreachable.delete(name);
       if (entries.delete(name)) persist?.();
     },
   };
-}
-
-function loadCooldownFile(
-  filePath: string,
-  now: number,
-  maxMs: number,
-): Map<WebSearchProviderName, CooldownEntry> {
-  const entries = new Map<WebSearchProviderName, CooldownEntry>();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(filePath, "utf8"));
-  } catch {
-    // Missing on the very first run, or corrupt. A cold cooldown is the
-    // pre-#256 behaviour, so it is always a safe recovery.
-    return entries;
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return entries;
-  }
-  for (const [name, raw] of Object.entries(parsed)) {
-    const entry = raw as Partial<CooldownEntry> | null;
-    if (
-      typeof entry?.until !== "number" ||
-      !Number.isFinite(entry.until) ||
-      typeof entry.strikes !== "number" ||
-      !Number.isFinite(entry.strikes)
-    ) {
-      continue;
-    }
-    // Strikes outlive an expired park in-process (see `park`), and they
-    // survive a restart the same way — but not forever. A record whose
-    // park ended more than two ceilings ago is yesterday's evidence, and
-    // restoring it would restart the ladder near the top against a quota
-    // that has long since reset.
-    if (entry.until + 2 * maxMs <= now) continue;
-    entries.set(name as WebSearchProviderName, {
-      until: entry.until,
-      strikes: entry.strikes,
-      // Files from before tags existed have none: untagged, as before.
-      ...(entry.tag === "keyless" || entry.tag === "keyed"
-        ? { tag: entry.tag }
-        : {}),
-      ...(entry.reason === "unreachable" ? { reason: entry.reason } : {}),
-    });
-  }
-  return entries;
-}
-
-function saveCooldownFile(
-  filePath: string,
-  entries: Map<WebSearchProviderName, CooldownEntry>,
-): void {
-  try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp-${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(Object.fromEntries(entries)), "utf8");
-    renameSync(tmp, filePath);
-  } catch {
-    // Persistence is best-effort: a read-only stateDir or a full disk
-    // costs the next process its warm start, never this search.
-  }
 }
 
 /** `90000` -> `1m 30s`, for the line the model reads. */

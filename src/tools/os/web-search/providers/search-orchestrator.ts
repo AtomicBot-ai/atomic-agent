@@ -4,12 +4,10 @@ import {
   type SearchCache,
 } from "../transport/search-cache.js";
 import {
-  formatCooldown,
   type CooldownTag,
   type ProviderCooldown,
 } from "../transport/provider-cooldown.js";
 import {
-  EXA_GET_KEY_URL,
   WebSearchBlockedError,
   WebSearchRateLimitedError,
   WebSearchUnavailableError,
@@ -25,7 +23,14 @@ import { resolveProviderByName } from "./provider-registry.js";
 import {
   buildUnavailableMessage,
   describeFailure,
+  describeUnusable,
+  errorMessage,
+  exaKeyRequired,
   isConnectFailure,
+  keyReasonOf,
+  parkedSkipLines,
+  rateLimitedNote,
+  unreachableNote,
 } from "./search-failure-report.js";
 
 export interface WebSearchOrchestratorInput {
@@ -89,9 +94,7 @@ export async function runWebSearchWithFallback(
   // Plain-words line per provider that did not answer, for the error the
   // tool returns when none did (ATO-325).
   const failures: string[] = [];
-  // Providers in the chain that could not be asked at all (no key, no
-  // instance URL). Listed in that error too: "brave" sitting in the
-  // fallback without its key is a chain the user thinks they have.
+  // Chain providers that could not be asked (no key, no instance URL).
   const skipped: string[] = [];
   let connectFailures = 0;
   // Exa without a key goes through its free tier, which runs out fast.
@@ -99,14 +102,8 @@ export async function runWebSearchWithFallback(
   const keylessExa =
     chain.includes("exa") && !hasEnvKey(env, search.exa.apiKeyEnv);
   let exaOutcome: WebSearchKeyRequired["reason"] | undefined;
-  const keyRequired = (
-    reason: WebSearchKeyRequired["reason"],
-  ): WebSearchKeyRequired => ({
-    provider: "exa",
-    reason,
-    getKeyUrl: EXA_GET_KEY_URL,
-    envVar: search.exa.apiKeyEnv,
-  });
+  const keyRequired = (reason: WebSearchKeyRequired["reason"]) =>
+    exaKeyRequired(reason, search.exa.apiKeyEnv);
   // A result can be built before Exa's outcome is known (an empty answer
   // kept while the chain goes on), so the signal is attached on return.
   const finish = (
@@ -115,6 +112,12 @@ export async function runWebSearchWithFallback(
     keylessExa && exaOutcome === "rate_limited"
       ? { ...result, keyRequired: keyRequired("rate_limited") }
       : result;
+
+  // Every usable provider was unreachable a moment ago: ask the first one
+  // anyway, or a network that came back stays unused (ATO-315).
+  let probeUnreachable = chain
+    .filter((n) => isProviderUsable(n, input.config, env))
+    .every((n) => cooldown?.reasonOf(n, now()) === "unreachable");
 
   for (const name of chain) {
     if (!isProviderUsable(name, input.config, env)) {
@@ -165,33 +168,16 @@ export async function runWebSearchWithFallback(
       continue;
     }
 
-    if (parkedFor > 0 && cooldown?.reasonOf(name) === "unreachable") {
-      // It could not be reached a moment ago. Asking again would spend
-      // the connect timeout on every search in the burst (ATO-315).
-      degraded.push(
-        `${name} skipped: could not connect a moment ago, retrying in ${formatCooldown(parkedFor)}`,
-      );
-      failures.push(
-        `${name}: could not connect a moment ago (site unreachable from this network), next try in ${formatCooldown(parkedFor)}`,
-      );
-      connectFailures++;
-      if (keylessExa && name === "exa") exaOutcome = "unreachable";
-      continue;
-    }
-
-    if (parkedFor > 0) {
+    const parked = parkedFor > 0 ? cooldown?.reasonOf(name, now()) : undefined;
+    if (parked === "unreachable" && probeUnreachable) {
+      probeUnreachable = false;
+    } else if (parked !== undefined) {
       const freeTier = keylessExa && name === "exa";
-      degraded.push(
-        freeTier
-          ? `${name} skipped: free limit reached, retrying in ${formatCooldown(parkedFor)}`
-          : `${name} skipped: rate limited, retrying in ${formatCooldown(parkedFor)}`,
-      );
-      failures.push(
-        freeTier
-          ? `${name}: free limit reached, next try in ${formatCooldown(parkedFor)}`
-          : `${name}: rate limited, next try in ${formatCooldown(parkedFor)}`,
-      );
-      if (freeTier) exaOutcome = "rate_limited";
+      const lines = parkedSkipLines(name, parked, parkedFor, freeTier);
+      degraded.push(lines.note);
+      failures.push(lines.failure);
+      if (parked === "unreachable") connectFailures++;
+      if (freeTier) exaOutcome = parked;
       continue;
     }
 
@@ -214,33 +200,22 @@ export async function runWebSearchWithFallback(
       const freeTier = keylessExa && name === "exa";
       failures.push(describeFailure(name, err, freeTier));
       if (isConnectFailure(err)) connectFailures++;
-      if (freeTier) {
-        exaOutcome =
-          err instanceof WebSearchRateLimitedError
-            ? "rate_limited"
-            : isConnectFailure(err)
-              ? "unreachable"
-              : "missing";
-      }
+      if (freeTier) exaOutcome = keyReasonOf(err);
       if (err instanceof WebSearchRateLimitedError && cooldown) {
-        const parked = cooldown.park(name, now(), err.retryAfterMs, tier);
+        const parkedMs = cooldown.park(name, now(), err.retryAfterMs, tier);
         degraded.push(
-          freeTier
-            ? `${name} free limit reached (HTTP 429, no ${search.exa.apiKeyEnv}), parked for ${formatCooldown(parked)}`
-            : `${name} rate limited (HTTP 429), parked for ${formatCooldown(parked)}`,
+          rateLimitedNote(name, parkedMs, freeTier, search.exa.apiKeyEnv),
         );
       } else if (isConnectFailure(err) && cooldown) {
-        // Never reached the host. Parked briefly so the rest of the burst
-        // does not pay the same connect timeout again (ATO-315).
-        const parked = cooldown.parkUnreachable(name, now(), tier);
-        degraded.push(
-          `${name} could not connect, skipped for ${formatCooldown(parked)}: ${describeError(err)}`,
-        );
+        // Never reached the host. Searches that start after this skip it
+        // for a while instead of each paying the connect timeout (ATO-315).
+        const parkedMs = cooldown.parkUnreachable(name, now(), tier);
+        degraded.push(unreachableNote(name, parkedMs, errorMessage(err)));
       } else {
         // Recorded, not raised: if a later provider answers, this search
         // succeeded and the tool reports ok. The failure stays readable
         // in the notes instead of becoming the tool's error (ATO-120).
-        degraded.push(`${name} failed: ${describeError(err)}`);
+        degraded.push(`${name} failed: ${errorMessage(err)}`);
       }
       // WebSearchBlockedError and transport throws both advance the chain.
     }
@@ -333,26 +308,8 @@ function isProviderUsable(
   }
 }
 
-/**
- * Why `isProviderUsable` said no, for the all-failed report. Not a switch
- * over every name on purpose: a provider added later without a case here
- * still gets a sane line.
- */
-function describeUnusable(
-  name: WebSearchProviderName,
-  search: AtomicAgentConfig["web"]["search"],
-): string {
-  if (name === "brave") return `no ${search.brave.apiKeyEnv} set`;
-  if (name === "searxng") return "no `web.search.searxng.instanceUrl` set";
-  return "not configured";
-}
-
 /** Same reading the Exa provider applies: a whitespace-only key is no key. */
 function hasEnvKey(env: NodeJS.ProcessEnv, name: string): boolean {
   const key = env[name]?.trim();
   return typeof key === "string" && key.length > 0;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

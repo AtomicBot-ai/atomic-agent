@@ -1,3 +1,8 @@
+import type { AtomicAgentConfig } from "../../../../config/index.js";
+import {
+  formatCooldown,
+  type CooldownReason,
+} from "../transport/provider-cooldown.js";
 import {
   EXA_GET_KEY_URL,
   WebSearchRateLimitedError,
@@ -52,7 +57,11 @@ function connectReason(raw: string): string {
       ? "the connection timed out"
       : `the connection timed out after ${seconds} s`;
   }
-  return "the connection was refused";
+  if (/refused/i.test(raw)) return "the connection was refused";
+  if (/network is unreachable|no route to host/i.test(raw)) {
+    return "the network could not reach the site";
+  }
+  return "the connection failed";
 }
 
 /** `after 5002 milliseconds` (or `ms`) -> `5`; undefined when not said. */
@@ -91,9 +100,81 @@ export function describeFailure(
   return `${name}: ${raw}`;
 }
 
+/** The key card for keyless Exa (ATO-327). */
+export function exaKeyRequired(
+  reason: WebSearchKeyRequired["reason"],
+  envVar: string,
+): WebSearchKeyRequired {
+  return { provider: "exa", reason, getKeyUrl: EXA_GET_KEY_URL, envVar };
+}
+
+/** What a keyless Exa failure says about asking for a key. */
+export function keyReasonOf(err: unknown): WebSearchKeyRequired["reason"] {
+  if (err instanceof WebSearchRateLimitedError) return "rate_limited";
+  return isConnectFailure(err) ? "unreachable" : "missing";
+}
+
 /**
- * The tool's error text: what failed, one action, and what the model
- * should do now. The last line is there because a model that only sees
+ * Why a chain provider could not be asked, for the all-failed report. Not
+ * a switch over every name on purpose: a provider added later without a
+ * case here still gets a sane line.
+ */
+export function describeUnusable(
+  name: string,
+  search: AtomicAgentConfig["web"]["search"],
+): string {
+  if (name === "brave") return `no ${search.brave.apiKeyEnv} set`;
+  if (name === "searxng") return "no `web.search.searxng.instanceUrl` set";
+  return "not configured";
+}
+
+/** Note and report line for a provider skipped because it is parked. */
+export function parkedSkipLines(
+  name: string,
+  reason: CooldownReason,
+  parkedMs: number,
+  freeTier: boolean,
+): { note: string; failure: string } {
+  const wait = formatCooldown(parkedMs);
+  if (reason === "unreachable") {
+    return {
+      note: `${name} skipped: could not connect a moment ago, retrying in ${wait}`,
+      failure: `${name}: could not connect a moment ago (site unreachable from this network), next try in ${wait}`,
+    };
+  }
+  const what = freeTier ? "free limit reached" : "rate limited";
+  return {
+    note: `${name} skipped: ${what}, retrying in ${wait}`,
+    failure: `${name}: ${what}, next try in ${wait}`,
+  };
+}
+
+/** Note for a provider just parked on a 429. */
+export function rateLimitedNote(
+  name: string,
+  parkedMs: number,
+  freeTier: boolean,
+  envVar: string,
+): string {
+  const wait = formatCooldown(parkedMs);
+  return freeTier
+    ? `${name} free limit reached (HTTP 429, no ${envVar}), parked for ${wait}`
+    : `${name} rate limited (HTTP 429), parked for ${wait}`;
+}
+
+/** Note for a provider just parked because its host was never reached. */
+export function unreachableNote(
+  name: string,
+  parkedMs: number,
+  raw: string,
+): string {
+  return `${name} could not connect, skipped for ${formatCooldown(parkedMs)}: ${raw}`;
+}
+
+/**
+ * The tool's error text: what failed, a single "To fix it" line (the
+ * free Exa key when one would help, otherwise the network or another
+ * provider), and what the model should do now. The last line is there because a model that only sees
  * "search failed" tends to rephrase the query and pay the same timeouts
  * again; told that search is out, it answers without it.
  */
@@ -117,8 +198,7 @@ export function buildUnavailableMessage(input: {
       `To fix it: get a free Exa API key at ${EXA_GET_KEY_URL} and add it. ` +
         "In the desktop app, paste it into the key card in the chat or in Settings. " +
         `In the terminal, add \`${envVar}=...\` to the agent's .env file ` +
-        "(~/.atomic-agent/.env, or $ATOMIC_AGENT_STATE_DIR/.env) and restart the agent. " +
-        "Or set `web.search.provider` to `brave` (with its API key) or `searxng` (with your own instance).",
+        "(~/.atomic-agent/.env, or $ATOMIC_AGENT_STATE_DIR/.env) and restart the agent.",
     );
   } else {
     lines.push(
@@ -132,6 +212,6 @@ export function buildUnavailableMessage(input: {
   return lines.join("\n");
 }
 
-function errorMessage(err: unknown): string {
+export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }

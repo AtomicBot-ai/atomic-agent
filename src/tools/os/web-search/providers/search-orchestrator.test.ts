@@ -455,7 +455,7 @@ describe("an Exa primary without a key", () => {
   };
 
   const CONNECT_TIMEOUT =
-    "curl: (28) Connection timed out after 15005 milliseconds";
+    "curl: (28) Connection timed out after 5002 milliseconds";
 
   it("answers from keyless Exa when its free tier works", async () => {
     const { exa, ddg } = exaAndDdg();
@@ -620,11 +620,11 @@ describe("an Exa primary without a key", () => {
     const unavailable = err as WebSearchUnavailableError;
     expect(unavailable.failures).toEqual([
       "exa: free limit reached (HTTP 429)",
-      `duckduckgo: could not connect, the connection timed out after 15 s (site unreachable from this network); ${CONNECT_TIMEOUT}`,
+      `duckduckgo: could not connect, the connection timed out after 5 s (site unreachable from this network); ${CONNECT_TIMEOUT}`,
     ]);
     expect(unavailable.message).toContain("exa: free limit reached");
     expect(unavailable.message).toContain(
-      "duckduckgo: could not connect, the connection timed out after 15 s",
+      "duckduckgo: could not connect, the connection timed out after 5 s",
     );
     expect(unavailable.message).toContain("https://dashboard.exa.ai/api-keys");
     expect(unavailable.message).toContain("EXA_API_KEY=...");
@@ -781,7 +781,7 @@ describe("an Exa primary with a key", () => {
     expect(out.keyRequired).toBeUndefined();
 
     ddg.search.mockImplementation(async () => {
-      throw new Error("curl: (28) Connection timed out after 15005 milliseconds");
+      throw new Error("curl: (28) Connection timed out after 5002 milliseconds");
     });
     const err = (await runWebSearchWithFallback({
       config,
@@ -799,6 +799,7 @@ describe("an Exa primary with a key", () => {
 describe("a provider that cannot be reached (ATO-315)", () => {
   const CONNECT_TIMEOUT =
     "curl: (28) Connection timed out after 5002 milliseconds";
+  const DDG_TIMED_OUT = `duckduckgo: could not connect, the connection timed out after 5 s (site unreachable from this network); ${CONNECT_TIMEOUT}`;
   const T0 = 7_000_000;
 
   function exaUpDdgDown() {
@@ -812,16 +813,19 @@ describe("a provider that cannot be reached (ATO-315)", () => {
     return { exa, ddg };
   }
 
-  it("parks it, so the next searches do not pay the connect timeout again", async () => {
-    const { ddg } = exaUpDdgDown();
+  it("skips it in the searches that start after the failure, until the park ends", async () => {
+    const { exa, ddg } = exaUpDdgDown();
+    exa.search.mockImplementation(async () => {
+      throw new Error("Exa API returned HTTP 403");
+    });
     const cooldown = createProviderCooldown();
-    const config = makeConfig({ provider: "duckduckgo", fallback: [] });
+    const config = makeConfig({ provider: "duckduckgo", fallback: ["exa"] });
     const search = (query: string, at: number) =>
       runWebSearchWithFallback({
         config,
         deps: {},
         options: { ...makeOptions(), query },
-        env: {},
+        env: EXA_KEYED,
         cooldown,
         now: () => at,
       }).catch((e: unknown) => e as WebSearchUnavailableError);
@@ -829,16 +833,17 @@ describe("a provider that cannot be reached (ATO-315)", () => {
     const first = await search("one", T0);
     expect(first).toBeInstanceOf(WebSearchUnavailableError);
     expect(first.failures).toEqual([
-      `duckduckgo: could not connect, the connection timed out after 5 s (site unreachable from this network); ${CONNECT_TIMEOUT}`,
+      DDG_TIMED_OUT,
+      "exa: Exa API returned HTTP 403",
     ]);
-    expect(cooldown.reasonOf("duckduckgo")).toBe("unreachable");
+    expect(cooldown.reasonOf("duckduckgo", T0)).toBe("unreachable");
 
     const second = await search("two", T0 + 30_000);
     expect(ddg.search).toHaveBeenCalledOnce();
     expect(second.failures).toEqual([
       "duckduckgo: could not connect a moment ago (site unreachable from this network), next try in 1m 30s",
+      "exa: Exa API returned HTTP 403",
     ]);
-    expect(second.message).toContain("None of the search sites could be reached");
 
     // The park is over: the provider is asked again.
     await search("three", T0 + 121_000);
@@ -879,6 +884,76 @@ describe("a provider that cannot be reached (ATO-315)", () => {
     expect(exa.search).toHaveBeenCalledTimes(2);
   });
 
+  it("asks again when every provider was unreachable: a blip must not keep search off", async () => {
+    const ddg = stubProvider("duckduckgo", async () => {
+      throw new Error("curl: (6) Could not resolve host: html.duckduckgo.com");
+    });
+    vi.mocked(resolveProviderByName).mockReturnValue(ddg);
+    const cooldown = createProviderCooldown();
+    const config = makeConfig({ provider: "duckduckgo", fallback: [] });
+
+    await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      cooldown,
+      now: () => T0,
+    }).catch(() => undefined);
+    expect(cooldown.reasonOf("duckduckgo", T0)).toBe("unreachable");
+
+    // The network is back ten seconds later.
+    ddg.search.mockImplementation(async () => [RESULT]);
+    const out = await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: { ...makeOptions(), query: "back" },
+      env: {},
+      cooldown,
+      now: () => T0 + 10_000,
+    });
+
+    expect(out.provider).toBe("duckduckgo");
+    expect(out.results).toEqual([RESULT]);
+    expect(ddg.search).toHaveBeenCalledTimes(2);
+    expect(cooldown.isParked("duckduckgo", T0 + 10_000)).toBe(false);
+  });
+
+  it("tries keyless Exa again when it and DuckDuckGo were both unreachable", async () => {
+    const exa = stubProvider("exa", async () => {
+      throw new Error("curl: (7) Failed to connect to mcp.exa.ai port 443 after 4 ms: Connection refused");
+    });
+    const ddg = stubProvider("duckduckgo", async () => [RESULT]);
+    vi.mocked(resolveProviderByName).mockImplementation((name) =>
+      name === "exa" ? exa : ddg,
+    );
+    const cooldown = createProviderCooldown();
+    cooldown.parkUnreachable("exa", T0, "keyless");
+    cooldown.parkUnreachable("duckduckgo", T0);
+
+    const err = (await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      cooldown,
+      now: () => T0 + 1_000,
+    }).catch((e: unknown) => e)) as WebSearchUnavailableError;
+
+    // Only the first one is asked; the rest stay parked.
+    expect(exa.search).toHaveBeenCalledOnce();
+    expect(ddg.search).not.toHaveBeenCalled();
+    expect(err).toBeInstanceOf(WebSearchUnavailableError);
+    expect(err.failures).toEqual([
+      "exa: could not connect, the connection was refused (site unreachable from this network); curl: (7) Failed to connect to mcp.exa.ai port 443 after 4 ms: Connection refused",
+      "duckduckgo: could not connect a moment ago (site unreachable from this network), next try in 1m 59s",
+    ]);
+    expect(err.keyRequired?.reason).toBe("unreachable");
+    expect(err.message).toContain(
+      "None of the search sites could be reached: check the internet connection, VPN or proxy.",
+    );
+  });
+
   it("forgets the park once the provider answers again", async () => {
     const { ddg } = exaUpDdgDown();
     const cooldown = createProviderCooldown();
@@ -903,7 +978,8 @@ describe("a provider that cannot be reached (ATO-315)", () => {
     });
 
     expect(out.provider).toBe("duckduckgo");
-    expect(cooldown.reasonOf("duckduckgo")).toBeUndefined();
+    expect(cooldown.reasonOf("duckduckgo", T0 + 121_000)).toBeUndefined();
+    expect(cooldown.tagOf("duckduckgo")).toBeUndefined();
   });
 
   it("does not park a host that answered slowly", async () => {
@@ -942,7 +1018,7 @@ describe("a provider that cannot be reached (ATO-315)", () => {
 
     expect(err).toBeInstanceOf(WebSearchUnavailableError);
     expect(err.failures).toEqual([
-      `duckduckgo: could not connect, the connection timed out after 5 s (site unreachable from this network); ${CONNECT_TIMEOUT}`,
+      DDG_TIMED_OUT,
       "brave: skipped (no BRAVE_SEARCH_API_KEY set)",
       "searxng: skipped (no `web.search.searxng.instanceUrl` set)",
     ]);
