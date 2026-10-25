@@ -9,7 +9,8 @@ import {
   type ProviderWaitCause,
   type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
-import { LOCAL_ENGINE_DOWN_CODE, classifyFailure, isLocalEngineDown } from "../llm/reliability/index.js";
+import { classifyFailure } from "../llm/reliability/index.js";
+import { currentLlamaUrl, failureReasonFields } from "./failure-reason-frame.js";
 import { readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
@@ -387,6 +388,8 @@ async function handleStream(
 export function buildStreamEventHook(
   sse: SseWriter,
   env: TurnEnv,
+  /** `localModels.url`, for the local-server failure codes. Test seam. */
+  llamaUrl: () => string | null = currentLlamaUrl,
 ): (event: AgentLoopEvent) => void {
   /* Reply text already streamed as deltas: `turnStreamed` for the whole
      turn, `stepStreamed` since the current step began. A terminal
@@ -540,6 +543,9 @@ export function buildStreamEventHook(
         const failedBefore = describeFailedLinks(inner.error);
         emitStreamError(sse, env, inner.error.message, inner.category, {
           ...billingCauseFrame(inner.error),
+          /* ATO-708 / ATO-737: the held first frame needs the local-server
+             code too, or the host never offers Reconnect. */
+          ...failureReasonFields(inner.error, inner.error, llamaUrl()),
           ...(failedBefore.length > 0
             ? { fallback_failures: failedLinksFrame(failedBefore) }
             : {}),
@@ -696,7 +702,8 @@ export function buildStreamEventHook(
           ...billingCauseFrame(primary),
           // The chain fell over to the managed local link and its model
           // process is gone: the host still needs the code to offer a start.
-          ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
+          // A local server that answered 404/405/400 gets its own code.
+          ...failureReasonFields(primary, event.error, llamaUrl()),
           fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
         });
         return;
@@ -706,8 +713,11 @@ export function buildStreamEventHook(
         ...ended,
         /* ATO-772: the managed local model's process is gone, so the turn
            ended without the outage wait. `code` lets a host offer to start
-           it (the desktop's "Start model") instead of reading the words. */
-        ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
+           it (the desktop's "Start model") instead of reading the words.
+           ATO-708 / ATO-873 / ATO-737: a local server that answered
+           404/405 or a typed 400 gets a code and plain `advice`, so a host
+           can offer "Reconnect" (POST /api/local-model/recheck). */
+        ...failureReasonFields(event.error, event.error, llamaUrl()),
         ...(failedBefore.length > 0
           ? { fallback_failures: failedLinksFrame(failedBefore) }
           : {}),
