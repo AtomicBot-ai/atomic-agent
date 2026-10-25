@@ -46,6 +46,7 @@ import {
   createSetMcpServerEnabledHandler,
 } from "./route-mcp.js";
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
+import { createSetActiveLlmHandler } from "./route-llm-active.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -182,6 +183,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
+    // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.
+    { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
     { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
     { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },
