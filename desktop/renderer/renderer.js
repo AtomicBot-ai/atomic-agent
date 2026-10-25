@@ -1436,7 +1436,7 @@ const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
    server's log shown there — open or not, its last read, the poll's timer. */
 /* ATO-720..722: `check` is the provider row's last live check ({id, busy, res, at}); `provErr` the last
    error a turn met on each provider ({text, at}), dropped once a turn on it completes or a check passes. */
-const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{} };
+const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{}, gpu:null, gpuAsked:false };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
@@ -5752,7 +5752,13 @@ function diagnosticsPane() {
     // Chat review (Д29): written as the chat and Settings › General write it.
     ['Working folder', workingDirLabel(wd), wd, wd],
     ['Local model server', llama],
+    // ATO-1030: hardware acceleration, off after repeated GPU crashes or by hand; a change applies at the next launch.
+    ...(DIAG.gpu ? [['Graphics acceleration', diagGpuValue(DIAG.gpu), '', '', {gpu:true}]] : []),
   ];
+  if (!DIAG.gpuAsked && BR && BR.gpuGet) {
+    DIAG.gpuAsked = true;
+    BR.gpuGet().then((r) => { if (r && r.ok) { DIAG.gpu = r; diagRepaint(); } }).catch(() => {});
+  }
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
   // ATO-723: `open` is the folder its Show in Finder button hands to BR.openPath.
   DIAG.copy = rows.map(([k, v, , open, x]) => ({label:k, value:(x && x.copy) || v || '', open:open || ''}));
@@ -5766,6 +5772,7 @@ function diagnosticsPane() {
       + rows.map(([k, v, full, , x], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
         + '<div class="set-diagv' + (x && x.tone ? ' set-diagv--' + x.tone : ' mono') + '" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
         + (x && x.restart ? '<button class="btn btn-s xs set-diagrestart" data-act="agent:restart">' + ic('refresh') + 'Restart</button>' : '')
+        + (x && x.gpu ? '<button class="btn btn-s xs set-diagrestart" data-act="diag:gpu">' + (DIAG.gpu && DIAG.gpu.next === null ? 'Turn off' : 'Turn on') + '</button>' : '')
         + (rows[i][3] && BR && BR.openPath ? '<button class="iconbtn sm set-copybtn set-openbtn" data-act="diag:open:' + i + '" title="' + esc(reveal) + '" aria-label="' + esc(reveal + ': ' + k) + '">' + ic('folder') + '</button>' : '')
         + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
@@ -6041,6 +6048,13 @@ function diagAgentLogPath(sd) {
   const sep = PLATFORM === 'win32' ? '\\' : '/';
   return sd.replace(/[\\/]+$/, '') + sep + 'agent.log';
 }
+/** ATO-1030: the Graphics acceleration row: this run's state, and the next launch's when it differs. */
+function diagGpuValue(g) {
+  const now = g.activeNow ? 'On' : 'Off';
+  const next = g.next === null ? 'on' : 'off';
+  if ((g.next === null) === g.activeNow) return g.activeNow ? now : now + (g.next === 'auto' ? ' (the graphics process kept crashing)' : '');
+  return now + ', ' + next + ' from the next start';
+}
 /* ATO-723: a folder or log opened from Diagnostics, with main's own words
    when it cannot (a log not written yet, a folder that is gone). */
 async function diagOpen(path, what) {
@@ -6056,6 +6070,16 @@ function diagAct(what) {
     return;
   }
   if (what === 'agentlog') { diagOpen(DIAG.agentLog, 'the agent log'); return; }
+  if (what === 'gpu') {
+    if (!DIAG.gpu || !BR || !BR.gpuSet) return;
+    BR.gpuSet(DIAG.gpu.next !== null).then((r) => {
+      if (!r || !r.ok) { toast('Could not change graphics acceleration', (r && r.error) || '', 'bad'); return; }
+      DIAG.gpu = r;
+      toast('Graphics acceleration ' + (r.next === null ? 'on' : 'off'), 'Takes effect the next time the app starts');
+      diagRepaint();
+    }).catch(() => {});
+    return;
+  }
   if (what === 'check') { diagCheckProvider(); return; }
   if (what === 'startModel') { diagStartModel(); return; }
   if (what === 'openlog') { if (DIAG.log && DIAG.log.path && !DIAG.log.external) diagOpen(DIAG.log.path, 'the model server log'); return; }

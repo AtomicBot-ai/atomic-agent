@@ -14,7 +14,7 @@
 
 import { app, type BrowserWindow } from "electron";
 
-import { windowCrashed } from "../analytics/index.js";
+import { noteSessionTrouble, windowCrashed } from "../analytics/index.js";
 import { reportError } from "./client.js";
 import { lastErrorCategory, uptimeBucket } from "./exit-reason.js";
 
@@ -22,10 +22,12 @@ import { lastErrorCategory, uptimeBucket } from "./exit-reason.js";
 export function wireProcessErrorReporting(): void {
   process.on("uncaughtExceptionMonitor", (err, origin) => {
     const e = err as Partial<Error> | undefined;
+    noteSessionTrouble("crashed");
     reportError({ source: origin === "unhandledRejection" ? "unhandledRejection" : "uncaughtException", name: e?.name, message: e?.message, stack: e?.stack });
   });
   app.on("child-process-gone", (_event, details) => {
     if (details.reason === "clean-exit") return;
+    noteSessionTrouble("crashed");
     reportError({
       source: "child-process-gone",
       name: "ChildProcessGone",
@@ -44,6 +46,7 @@ export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => bo
   const wc = win.webContents;
   wc.on("render-process-gone", (_e, details) => {
     if (details.reason === "clean-exit") return;
+    noteSessionTrouble("crashed");
     windowCrashed("gone", details.reason, typeof details.exitCode === "number" ? details.exitCode : null);
     const r = recovered();
     reportError({
@@ -53,6 +56,8 @@ export function wireWindowErrorReporting(win: BrowserWindow, recovered: () => bo
       tags: { kind: "gone", reason: details.reason, exit_code: details.exitCode, ...(r === null ? {} : { recovered: r ? "yes" : "no" }) },
     });
   });
+  // ATO-1030: Windows logging off or shutting down ends the session without a quit.
+  win.on("session-end", () => noteSessionTrouble("os_shutdown"));
   win.on("unresponsive", () => {
     windowCrashed("unresponsive", null, null);
     reportError({ source: "unresponsive", name: "WindowUnresponsive", level: "warning", tags: { kind: "unresponsive" } });

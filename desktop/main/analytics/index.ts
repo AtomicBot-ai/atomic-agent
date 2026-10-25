@@ -29,6 +29,7 @@ export {
   beginSession,
   launchBackendSettled,
   noteOrphanReaped,
+  noteSessionTrouble,
   turnEnded,
   windowCrashed,
   windowShown,

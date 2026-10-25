@@ -79,7 +79,7 @@ const downloadProps: Record<string, PropSpec> = {
 
 export const EVENTS: Record<string, EventSpec> = {
   /* ---- lifecycle and health ---- */
-  app_opened: { owner: "main", props: { launch_kind: en(["cold", "reopen"]), fresh_state: bool, prev_session_crashed: bool, in_applications: bool } },
+  app_opened: { owner: "main", props: { launch_kind: en(["cold", "reopen"]), fresh_state: bool, prev_session_crashed: bool, prev_session_end: en(["clean", "os_shutdown", "crashed", "killed"]), in_applications: bool } },
   app_ready: { owner: "main", props: { ms_to_window: int({ nullable: true }), ms_to_agent: int({ nullable: true }), backend_up_at_launch: bool } },
   agent_start_failed: {
     owner: "main",

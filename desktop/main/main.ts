@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, powerMonitor, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
@@ -97,7 +97,8 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
-import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";   // #680: the chosen folder survives a relaunch
+import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
+import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import {
   activateProvider,
   agentStarting,
@@ -1884,6 +1885,15 @@ function wireIpc(client: AgentClient): void {
   // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
   // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
+  // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
+  ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
+  ipcMain.handle("app:gpuSet", (_event, on: unknown) => {
+    if (typeof on !== "boolean") return { ok: false, error: "on must be a boolean" };
+    const userData = app.getPath("userData");
+    const state = setHardwareAcceleration(readGpuState(userData), on);
+    writeGpuState(userData, state);
+    return { ok: true, activeNow: !GPU_OFF_THIS_RUN, next: state.off };
+  });
   ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
 
   // --- Lane B — backend switch ---
@@ -9864,6 +9874,22 @@ A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
 wireProcessErrorReporting();
 
+/* ATO-1030: a GPU process that crashed twice in a short while turned hardware
+   acceleration off for the launches after it (gpu-fallback.ts). Electron only
+   honours this before the app is ready. A smoke run keeps the default. */
+const GPU_OFF_THIS_RUN = !SMOKE && readGpuState(app.getPath("userData")).off !== null;
+if (GPU_OFF_THIS_RUN) {
+  app.disableHardwareAcceleration();
+  console.error("[desktop] hardware acceleration is off for this run (Settings › Diagnostics turns it back on)");
+}
+app.on("child-process-gone", (_event, details) => {
+  if (details.type !== "GPU" || details.reason === "clean-exit" || SMOKE) return;
+  const userData = app.getPath("userData");
+  const { state, turnedOff } = noteGpuCrash(readGpuState(userData), Date.now());
+  writeGpuState(userData, state);
+  if (turnedOff) console.error("[desktop] the graphics process crashed again: hardware acceleration is off from the next launch");
+});
+
 
 /** Core checks follow the app update cadence; they never install or stop a model. */
 function watchCoreUpdates(): void {
@@ -9900,6 +9926,8 @@ function watchCoreUpdates(): void {
 }
 
 void app.whenReady().then(async () => {
+  // ATO-1030: macOS and Linux say so before the OS shuts down (Windows: the window's `session-end`).
+  powerMonitor.on("shutdown", () => A.noteSessionTrouble("os_shutdown"));
   /* ATO-370: a mac app run from the DMG or Downloads cannot update itself.
      Ask before anything starts: Move relaunches the app from /Applications,
      so nothing of this launch should be running by then. Not now asks again

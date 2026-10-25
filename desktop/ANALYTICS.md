@@ -96,6 +96,11 @@ Notes on specific properties:
   `userData/updates.json` just before it quit to install.
 - `quant`: an upper-cased GGUF tag (`Q4_K_M`, `IQ3_XXS`, `F16`, `BF16`,
   `MXFP4`), else `unknown`. `locale`: `en` or `en-US` shaped, else dropped.
+- `app_opened.prev_session_end` (ATO-1030, cold launches): `clean`, or why the last
+  session did not quit cleanly: `os_shutdown` (Windows `session-end`, macOS/Linux
+  `powerMonitor` shutdown), `crashed` (a crashed process or an uncaught error was
+  seen first), `killed` (nothing seen: Force Quit, End task, power loss, a frozen
+  window closed by force).
 - `backend_switched`: only for an explicit switch (`cli:switchBackend`,
   `cli:enterFusion`) or when the effective run mode actually changed.
 - `model_configured` and `analytics_disabled` are runtime events in the
