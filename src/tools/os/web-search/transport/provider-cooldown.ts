@@ -92,6 +92,13 @@ export interface ProviderCooldown {
     name: WebSearchProviderName,
     now: number,
   ): CooldownReason | undefined;
+  /**
+   * May an unreachable-parked `name` be asked anyway, now? True at most
+   * once per `UNREACHABLE_PROBE_INTERVAL_MS` since it last failed or was
+   * last probed, and records the probe. The orchestrator asks only when
+   * every provider is parked unreachable (ATO-315).
+   */
+  takeProbe(name: WebSearchProviderName, now: number): boolean;
   /** A provider answered. Forget its history so the next park starts small. */
   clear(name: WebSearchProviderName): void;
 }
@@ -147,10 +154,20 @@ const MAX_HONOURED_RETRY_AFTER_MS = DEFAULT_MAX_MS;
  */
 const DEFAULT_UNREACHABLE_MS = 2 * 60_000;
 
+/**
+ * How often a chain whose every provider is parked unreachable gets one
+ * request anyway. A firewall that drops packets costs the full connect
+ * timeout per try, so not on every search; a network that came back is
+ * still found within half a minute (ATO-315).
+ */
+export const UNREACHABLE_PROBE_INTERVAL_MS = 30_000;
+
 /** An unreachable park: in memory only, no strikes. */
 interface UnreachableEntry {
   until: number;
   tag?: CooldownTag;
+  /** When it last failed or was probed. */
+  triedAt: number;
 }
 
 export function createProviderCooldown(
@@ -223,8 +240,17 @@ function buildCooldown(
       unreachable.set(name, {
         until: now + unreachableMs,
         ...(tag !== undefined ? { tag } : {}),
+        triedAt: now,
       });
       return unreachableMs;
+    },
+    takeProbe(name, now) {
+      const entry = unreachable.get(name);
+      if (!entry || now - entry.triedAt < UNREACHABLE_PROBE_INTERVAL_MS) {
+        return false;
+      }
+      entry.triedAt = now;
+      return true;
     },
     park(name, now, retryAfterMs, tag) {
       // Strikes earned on another tier are another quota's history: a

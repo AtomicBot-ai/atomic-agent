@@ -133,6 +133,26 @@ describe("createProviderCooldown", () => {
     expect(cooldown.isParked("exa", T0 + 61_000)).toBe(false);
   });
 
+  it("tags an unreachable park with its tier (ATO-327)", () => {
+    const cooldown = createProviderCooldown();
+    cooldown.parkUnreachable("exa", T0, "keyless");
+    expect(cooldown.tagOf("exa")).toBe("keyless");
+  });
+
+  it("allows one probe of an unreachable park per 30 s, counted from the failure", () => {
+    const cooldown = createProviderCooldown();
+    expect(cooldown.takeProbe("duckduckgo", T0)).toBe(false);
+    cooldown.parkUnreachable("duckduckgo", T0);
+    expect(cooldown.takeProbe("duckduckgo", T0 + 29_999)).toBe(false);
+    expect(cooldown.takeProbe("duckduckgo", T0 + 30_000)).toBe(true);
+    // The probe itself restarts the interval.
+    expect(cooldown.takeProbe("duckduckgo", T0 + 30_001)).toBe(false);
+    expect(cooldown.takeProbe("duckduckgo", T0 + 60_000)).toBe(true);
+    // A 429 park is never probed.
+    cooldown.park("exa", T0, null);
+    expect(cooldown.takeProbe("exa", T0 + 30_000)).toBe(false);
+  });
+
   it("takes the unreachable park length from the options", () => {
     const cooldown = createProviderCooldown({ unreachableMs: 30_000 });
     expect(cooldown.parkUnreachable("duckduckgo", T0)).toBe(30_000);

@@ -113,8 +113,14 @@ export async function runWebSearchWithFallback(
       ? { ...result, keyRequired: keyRequired("rate_limited") }
       : result;
 
-  // Every usable provider was unreachable a moment ago: ask the first one
-  // anyway, or a network that came back stays unused (ATO-315).
+  // Exa's keyless and keyed tiers have separate quotas: a park from the
+  // other tier (persisted across the restart a new key needs) is dropped
+  // first, before anything below reads the cooldown (ATO-327).
+  const exaTier: CooldownTag = keylessExa ? "keyless" : "keyed";
+  const parkedTier = chain.includes("exa") ? cooldown?.tagOf("exa") : null;
+  if (parkedTier && parkedTier !== exaTier) cooldown?.clear("exa");
+  // All usable providers unreachable: the first is tried again at most
+  // every 30 s, or a network that came back stays unused (ATO-315).
   let probeUnreachable = chain
     .filter((n) => isProviderUsable(n, input.config, env))
     .every((n) => cooldown?.reasonOf(n, now()) === "unreachable");
@@ -133,15 +139,7 @@ export async function runWebSearchWithFallback(
     //
     // The cache is still consulted first — a parked provider's earlier
     // answers are not stale just because its quota ran out.
-    //
-    // Exa's keyless and keyed tiers have separate quotas. A park from the
-    // free tier must not hold back a key the user has just added (and was
-    // told to restart for, which the persisted cooldown survives), so a
-    // park tagged with the other tier is dropped here (ATO-327).
-    const tier: CooldownTag | undefined =
-      name === "exa" ? (keylessExa ? "keyless" : "keyed") : undefined;
-    const parkedTier = tier !== undefined ? cooldown?.tagOf(name) : undefined;
-    if (parkedTier !== undefined && parkedTier !== tier) cooldown?.clear(name);
+    const tier = name === "exa" ? exaTier : undefined;
     const parkedFor = cooldown?.remainingMs(name, now()) ?? 0;
 
     const cacheKey = buildSearchCacheKey(
@@ -168,10 +166,12 @@ export async function runWebSearchWithFallback(
       continue;
     }
 
-    const parked = parkedFor > 0 ? cooldown?.reasonOf(name, now()) : undefined;
+    let parked = parkedFor > 0 ? cooldown?.reasonOf(name, now()) : undefined;
     if (parked === "unreachable" && probeUnreachable) {
       probeUnreachable = false;
-    } else if (parked !== undefined) {
+      if (cooldown?.takeProbe(name, now())) parked = undefined;
+    }
+    if (parked !== undefined) {
       const freeTier = keylessExa && name === "exa";
       const lines = parkedSkipLines(name, parked, parkedFor, freeTier);
       degraded.push(lines.note);
