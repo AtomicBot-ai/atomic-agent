@@ -320,7 +320,7 @@ describe("checker verdicts", () => {
   it("fails a dash-style capital `Syntax error:`", async () => {
     const { run } = fakeRunner({
       "sh -c exit 0": {},
-      sh: { exitCode: 2, stderr: "/w/a.sh: 3: Syntax error: end of file unexpected (expecting \"fi\")" },
+      sh: { exitCode: 2, stderr: "q.sh: 2: Syntax error: Unterminated quoted string" },
     });
     const out = await checkShellFile("/w/a.sh", { run, platform: "win32" });
     expect(out).toMatchObject({ ok: false, checker: "sh -n" });
@@ -342,7 +342,26 @@ describe("checker verdicts", () => {
       expect(env).toMatchObject({ LC_ALL: "C" });
       expect(env !== undefined && "LANGUAGE" in env && env.LANGUAGE === undefined).toBe(true);
     }
+    // Shell probe + check, then Python probe + check.
+    expect(envs.map((env) => env?.PYTHONUTF8)).toEqual([undefined, undefined, "1", "1"]);
   });
+
+  it.skipIf(process.platform === "win32")(
+    "runChecker sets LC_ALL and unsets LANGUAGE in the real child env",
+    async () => {
+      const saved = process.env.LANGUAGE;
+      process.env.LANGUAGE = "de_DE:de";
+      try {
+        const out = await runChecker("sh", ["-c", 'printf %s "${LANGUAGE-unset}:$LC_ALL"'], {
+          env: { LC_ALL: "C", LANGUAGE: undefined },
+        });
+        expect(out.stdout).toBe("unset:C");
+      } finally {
+        if (saved === undefined) delete process.env.LANGUAGE;
+        else process.env.LANGUAGE = saved;
+      }
+    },
+  );
 
   it("does not take a keyword in the file path for a syntax error", async () => {
     const shellPath = "/w/unexpected/syntax error/a.sh";

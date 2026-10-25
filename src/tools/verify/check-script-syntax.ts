@@ -240,9 +240,26 @@ interface InterpreterKind {
   /** Arguments of a trivial run that only a working interpreter passes. */
   readonly probeArgs: readonly string[];
   probeOk(run: CheckerRun): boolean;
+  /** Env overrides for the probe and the check. */
+  readonly env: Readonly<Record<string, string | undefined>>;
 }
 
 const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * Probes and checks run in the C locale: a translated bash prints
+ * "Syntaxfehler" or "erreur de syntaxe", which no English pattern matches.
+ * LANGUAGE is dropped as well, so no translation list is left behind.
+ */
+const C_LOCALE_ENV: Readonly<Record<string, string | undefined>> = {
+  LC_ALL: "C",
+  LANGUAGE: undefined,
+};
+
+const PYTHON_ENV: Readonly<Record<string, string | undefined>> = {
+  ...C_LOCALE_ENV,
+  PYTHONUTF8: "1",
+};
 
 /**
  * A binary on PATH is not a working interpreter. On Windows `python3` is
@@ -263,6 +280,8 @@ const PYTHON_KIND: InterpreterKind = {
   // Prints the major version: rejects stubs and Python 2 alike.
   probeArgs: ["-c", "import sys; sys.stdout.write(str(sys.version_info[0]))"],
   probeOk: (run) => run.exitCode === 0 && run.stdout.trim() === "3",
+  // UTF-8 stderr on Windows too, where the console code page would garble it.
+  env: PYTHON_ENV,
 };
 
 const SHELL_KIND: InterpreterKind = {
@@ -279,16 +298,7 @@ const SHELL_KIND: InterpreterKind = {
     })),
   probeArgs: ["-c", "exit 0"],
   probeOk: (run) => run.exitCode === 0,
-};
-
-/**
- * Probes and checks run in the C locale: a translated bash prints
- * "Syntaxfehler" or "erreur de syntaxe", which no English pattern matches.
- * LANGUAGE is dropped as well, so no translation list is left behind.
- */
-const C_LOCALE_ENV: Readonly<Record<string, string | undefined>> = {
-  LC_ALL: "C",
-  LANGUAGE: undefined,
+  env: C_LOCALE_ENV,
 };
 
 /**
@@ -323,7 +333,7 @@ function resolveInterpreter(
     for (const candidate of kind.candidates(platform)) {
       const probe = await run(candidate.cmd, [...candidate.args, ...kind.probeArgs], {
         timeoutMs: PROBE_TIMEOUT_MS,
-        env: C_LOCALE_ENV,
+        env: kind.env,
       });
       if (probe.missing || probe.timedOut) continue;
       if (kind.probeOk(probe)) return candidate;
@@ -391,7 +401,7 @@ async function checkWithInterpreter(
   }
   const checker = `${interpreter.label} ${spec.suffix}`;
   const out = await run(interpreter.cmd, [...interpreter.args, ...spec.args(file)], {
-    env: C_LOCALE_ENV,
+    env: spec.kind.env,
   });
   if (out.missing) {
     // Uninstalled since it was probed: resolve afresh next time.
@@ -400,9 +410,12 @@ async function checkWithInterpreter(
   }
   if (out.timedOut) return { file, ok: null, checker, error: "timed out" };
   if (out.exitCode === 0) return { file, ok: true, checker };
-  // The path is echoed in the output; a directory named "unexpected"
-  // must not turn a failed launch into a syntax verdict.
-  if (!spec.syntaxError.test(out.stderr.split(file).join("<file>"))) {
+  // The path is echoed in the output, raw or escaped (Python's repr); a
+  // directory named "unexpected" must not turn a failed launch into a
+  // syntax verdict.
+  const escaped = JSON.stringify(file).slice(1, -1);
+  const stderr = out.stderr.split(file).join("<file>").split(escaped).join("<file>");
+  if (!spec.syntaxError.test(stderr)) {
     return didNotRun(file, checker, out);
   }
   return { file, ok: false, checker, error: tailOfOutput(out.stderr, 4) };
