@@ -209,31 +209,173 @@ export async function checkJavaScriptSource(
   }
 }
 
+/** The process runner the Python and shell checkers use (swapped in tests). */
+export type CheckerRunner = typeof runChecker;
+
+export interface InterpreterOptions {
+  readonly run?: CheckerRunner;
+  readonly platform?: NodeJS.Platform;
+}
+
+interface Interpreter {
+  readonly cmd: string;
+  /** Arguments that come before the checker's own (`py -3`). */
+  readonly args: readonly string[];
+  readonly label: string;
+}
+
+interface InterpreterKind {
+  readonly name: string;
+  candidates(platform: NodeJS.Platform): readonly Interpreter[];
+  /** Arguments of a trivial run that only a working interpreter passes. */
+  readonly probeArgs: readonly string[];
+  probeOk(run: CheckerRun): boolean;
+}
+
+const PROBE_TIMEOUT_MS = 10_000;
+
+/**
+ * A binary on PATH is not a working interpreter. On Windows `python3` is
+ * often the Microsoft Store alias (prints a Store notice, exits 9009) and
+ * `bash` is the WSL launcher in System32 (exits 1 when no distribution has
+ * /bin/bash). Neither raises ENOENT, so each candidate is probed with a
+ * trivial run first; one that fails the probe is skipped, not trusted.
+ * The probe matches no message or exit code, both of which are localized
+ * or generic.
+ */
+const PYTHON_KIND: InterpreterKind = {
+  name: "python",
+  candidates: (platform) => [
+    { cmd: "python3", args: [], label: "python3" },
+    { cmd: "python", args: [], label: "python" },
+    ...(platform === "win32" ? [{ cmd: "py", args: ["-3"], label: "py -3" }] : []),
+  ],
+  // Prints the major version: rejects stubs and Python 2 alike.
+  probeArgs: ["-c", "import sys; sys.stdout.write(str(sys.version_info[0]))"],
+  probeOk: (run) => run.exitCode === 0 && run.stdout.trim() === "3",
+};
+
+const SHELL_KIND: InterpreterKind = {
+  name: "shell",
+  // On Windows any `sh` on PATH is a native port (Git for Windows, MSYS2,
+  // Cygwin) that takes Windows paths; System32 `bash` is the WSL launcher,
+  // whose Linux bash cannot open `C:\...` even when a distribution exists.
+  candidates: (platform) =>
+    (platform === "win32" ? ["sh", "bash"] : ["bash", "sh"]).map((cmd) => ({
+      cmd,
+      args: [],
+      label: cmd,
+    })),
+  probeArgs: ["-c", "exit 0"],
+  probeOk: (run) => run.exitCode === 0,
+};
+
+/**
+ * Resolved interpreters, per runner and kind. A found interpreter is kept
+ * for the process; "none found" is not, so one installed mid-session is
+ * picked up by the next check.
+ */
+const resolvedInterpreters = new WeakMap<
+  CheckerRunner,
+  Map<string, Promise<Interpreter | null>>
+>();
+
+function resolveInterpreter(
+  kind: InterpreterKind,
+  run: CheckerRunner,
+  platform: NodeJS.Platform,
+): Promise<Interpreter | null> {
+  let byKind = resolvedInterpreters.get(run);
+  if (byKind === undefined) {
+    byKind = new Map();
+    resolvedInterpreters.set(run, byKind);
+  }
+  const key = `${kind.name}:${platform}`;
+  const cached = byKind.get(key);
+  if (cached !== undefined) return cached;
+  const pending = (async (): Promise<Interpreter | null> => {
+    for (const candidate of kind.candidates(platform)) {
+      const probe = await run(candidate.cmd, [...candidate.args, ...kind.probeArgs], {
+        timeoutMs: PROBE_TIMEOUT_MS,
+      });
+      if (probe.missing || probe.timedOut) continue;
+      if (kind.probeOk(probe)) return candidate;
+    }
+    return null;
+  })();
+  const cache = byKind;
+  cache.set(key, pending);
+  const forget = (): void => {
+    if (cache.get(key) === pending) cache.delete(key);
+  };
+  pending.then((found) => {
+    if (found === null) forget();
+  }, forget);
+  return pending;
+}
+
 const PYTHON_COMPILE =
   "import sys; compile(open(sys.argv[1], 'rb').read(), sys.argv[1], 'exec')";
 
-/** Python: `compile()` parses without writing bytecode. */
-export async function checkPythonFile(file: string): Promise<SyntaxFileResult> {
-  for (const python of ["python3", "python"]) {
-    const run = await runChecker(python, ["-c", PYTHON_COMPILE, file]);
-    if (run.missing) continue;
-    const checker = `${python} compile()`;
-    if (run.timedOut) return { file, ok: null, checker, error: "timed out" };
-    if (run.exitCode === 0) return { file, ok: true, checker };
-    return { file, ok: false, checker, error: tailOfOutput(run.stderr, 4) };
-  }
-  return { file, ok: null, checker: "none", error: "python3 not found" };
+/** Exception class names are not localized. */
+const PYTHON_SYNTAX_ERROR = /\b(?:SyntaxError|IndentationError|TabError)\b/;
+
+/** bash: "syntax error"; dash: "Syntax error"; zsh: "parse error". */
+const SHELL_SYNTAX_ERROR = /\b(?:syntax error|parse error)\b|\bunexpected\b/i;
+
+function didNotRun(file: string, checker: string, run: CheckerRun): SyntaxFileResult {
+  return {
+    file,
+    ok: null,
+    checker,
+    error: `${checker} did not run: ${tailOfOutput(`${run.stderr}\n${run.stdout}`, 2) || `exit ${run.exitCode}`}`,
+  };
 }
 
-/** Shell: `bash -n`, or `sh -n` where bash is absent. */
-export async function checkShellFile(file: string): Promise<SyntaxFileResult> {
-  for (const shell of ["bash", "sh"]) {
-    const run = await runChecker(shell, ["-n", file]);
-    if (run.missing) continue;
-    const checker = `${shell} -n`;
-    if (run.timedOut) return { file, ok: null, checker, error: "timed out" };
-    if (run.exitCode === 0) return { file, ok: true, checker };
-    return { file, ok: false, checker, error: tailOfOutput(run.stderr, 4) };
+/**
+ * Python: `compile()` parses without writing bytecode. Only a
+ * SyntaxError (or a subclass) is a verdict on the file; any other
+ * non-zero exit means the check did not run.
+ */
+export async function checkPythonFile(
+  file: string,
+  options: InterpreterOptions = {},
+): Promise<SyntaxFileResult> {
+  const run = options.run ?? runChecker;
+  const python = await resolveInterpreter(PYTHON_KIND, run, options.platform ?? process.platform);
+  if (python === null) {
+    return { file, ok: null, checker: "none", error: "python3 not found" };
   }
-  return { file, ok: null, checker: "none", error: "bash not found" };
+  const checker = `${python.label} compile()`;
+  const out = await run(python.cmd, [...python.args, "-c", PYTHON_COMPILE, file]);
+  if (out.timedOut) return { file, ok: null, checker, error: "timed out" };
+  if (out.exitCode === 0) return { file, ok: true, checker };
+  if (out.missing || !PYTHON_SYNTAX_ERROR.test(out.stderr)) {
+    return didNotRun(file, checker, out);
+  }
+  return { file, ok: false, checker, error: tailOfOutput(out.stderr, 4) };
+}
+
+/**
+ * Shell: `bash -n`, or `sh -n` where bash is absent or broken (`sh`
+ * first on Windows). A non-zero exit without a syntax-error message is
+ * "the check did not run", not a verdict on the file.
+ */
+export async function checkShellFile(
+  file: string,
+  options: InterpreterOptions = {},
+): Promise<SyntaxFileResult> {
+  const run = options.run ?? runChecker;
+  const shell = await resolveInterpreter(SHELL_KIND, run, options.platform ?? process.platform);
+  if (shell === null) {
+    return { file, ok: null, checker: "none", error: "bash not found" };
+  }
+  const checker = `${shell.label} -n`;
+  const out = await run(shell.cmd, [...shell.args, "-n", file]);
+  if (out.timedOut) return { file, ok: null, checker, error: "timed out" };
+  if (out.exitCode === 0) return { file, ok: true, checker };
+  if (out.missing || !SHELL_SYNTAX_ERROR.test(out.stderr)) {
+    return didNotRun(file, checker, out);
+  }
+  return { file, ok: false, checker, error: tailOfOutput(out.stderr, 4) };
 }
