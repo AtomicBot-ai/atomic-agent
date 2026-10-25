@@ -298,6 +298,31 @@ export function configBytesSha256(raw: string | Buffer | null): string {
   return createHash("sha256").update(raw ?? "").digest("hex");
 }
 
+/* ---------------------------------------------------------------
+   ATO-1022 — the config through the running agent.
+
+   Every read and whole-file write above was an `atag` process (a cold Node
+   start, 150-400 ms each), and a model pick made five to nine of them in a
+   row. While `atag serve` is up, main hands this module its two config
+   routes (main.ts, on connect): `GET /api/config` answers the same
+   `{sha256, config}` pair `config get --with-sha256` prints, and
+   `PUT /api/config` is `config set - [--expect-sha256]` with the same
+   validation and the same refusal when the file moved. Either answering
+   null (an older agent, an agent going down) sends that call through the
+   CLI as before. A stand-in (the smoke) is always the CLI's.
+   --------------------------------------------------------------- */
+export interface ConfigRoute {
+  read(): Promise<{ sha256: string; config: unknown } | null>;
+  write(json: string, expectSha256: string | null): Promise<
+    { ok: true } | { ok: false; conflicted: boolean; error: string } | null
+  >;
+}
+let configRoute: ConfigRoute | null = null;
+/** main.ts: the running agent's config routes, or null while there is none. */
+export function useConfigRoute(route: ConfigRoute | null): void {
+  configRoute = route;
+}
+
 /**
  * The read with its hash, in ONE agent process, so the two describe the
  * same file. The agent's spelling lives here and nowhere else: today
@@ -310,6 +335,10 @@ let shaReadUnsupported = false;
 export async function readConfigWithSha(): Promise<{ ok: boolean; config?: unknown; sha256: string | null; error?: string }> {
   // A stand-in (the suite) is always asked the new way, and what it answers never teaches the real agent's flag.
   const standIn = inCliStandIn();
+  if (!standIn && configRoute) {
+    const viaAgent = await configRoute.read();
+    if (viaAgent) return { ok: true, config: viaAgent.config, sha256: viaAgent.sha256 };
+  }
   if (standIn || !shaReadUnsupported) {
     const res = await cli(["config", "get", "--with-sha256"]);
     if (res.ok) {
@@ -696,6 +725,19 @@ async function writeWholeConfig(config: unknown): Promise<CliResult> {
      has a hash nobody has read. */
   const cas = casHolds.getStore();
   const expect = cas?.sha;
+  if (!inCliStandIn() && configRoute) {
+    const viaAgent = await configRoute.write(json, expect ?? null);
+    if (viaAgent) {
+      // As cli() does for a write: the file this changed has a hash nobody has read.
+      if (cas) cas.sha = undefined;
+      if (viaAgent.ok) return { ok: true, stdout: "", stderr: "" };
+      if (expect && viaAgent.conflicted) {
+        if (cas) cas.conflicted = true;
+        return { ok: false, stdout: "", stderr: viaAgent.error, exitCode: 3, error: CONFIG_CHANGED_ELSEWHERE };
+      }
+      return { ok: false, stdout: "", stderr: viaAgent.error, error: explainConfigWriteFailure(viaAgent.error) };
+    }
+  }
   /* ATO-132: the file goes in on stdin (`config set -`), never as an
      argument. It carries the providers' API keys, and any process on the
      machine can read another's command line for as long as it runs. */
@@ -814,6 +856,8 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
     return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
   }
   const config = current.config as { llm?: { providers?: ProviderEntry[] } };
+  // ATO-1022: what the file holds, to skip a write that would change nothing (a re-pick of the same model).
+  const before = JSON.stringify(config);
   const llm = (config.llm ??= {});
   const providers = (llm.providers ??= []);
   const at = providers.findIndex((p) => p.id === entry.id);
@@ -829,6 +873,9 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
     clean.modelMode ??= defaultProviderModelMode(clean);
     providers.push(clean);
   }
+  // The coherence repair writeWholeConfig makes counts as a change too.
+  normaliseLlmBlock(config);
+  if (JSON.stringify(config) === before) return { ok: true, stdout: "", stderr: "" };
   return writeWholeConfig(config);
 }
 

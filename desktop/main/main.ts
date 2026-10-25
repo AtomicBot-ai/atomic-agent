@@ -208,6 +208,7 @@ import {
   detectImportAgents,
   importAgentDir,
   IMPORT_DOMAINS,
+  useConfigRoute,
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -3005,6 +3006,13 @@ function wireIpc(client: AgentClient): void {
   client.on("status", (status: { state?: string }) => {
     if (status.state === "connected") bootRoute = snapshotBootRoute(client);
     else if (status.state === "stopped" || status.state === "error") bootRoute = Promise.resolve(null);
+    /* ATO-1022: while `atag serve` is up, config reads and whole-file writes
+       go through it instead of an `atag config` process each; down, the CLI. */
+    if (status.state === "connected") {
+      useConfigRoute({ read: () => client.configWithSha(), write: (json, expect) => client.putConfig(json, expect) });
+    } else {
+      useConfigRoute(null);
+    }
   });
 }
 
