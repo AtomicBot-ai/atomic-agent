@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { tmpdir } from "node:os";
+import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { CORE_VERSION, coreSessionPath, coreVersionDir, writeCoreJson } from "./core-state.js";
 import { loadCoreSession, recoverOrphanedCoreSessions, refreshCoreKeyForUrl, retireIdleCore, stopCoreSession, stopIdleCore } from "./core-sessions.js";
@@ -217,5 +218,61 @@ describe("re-reading a session key after a 401 (ATO-837)", () => {
     vi.mocked(connectCore).mockResolvedValue(null);
     await expect(refreshCoreKeyForUrl(dir, "http://127.0.0.1:19091/completion")).resolves.toBeNull();
     expect(JSON.parse(readFileSync(coreSessionPath(dir, "chat"), "utf8")).api_key).toBe("stale-key");
+  });
+});
+
+describe("stopping a Core session on Windows (ATO-304)", () => {
+  let child: ChildProcess | null = null;
+  afterEach(() => { child?.kill("SIGKILL"); child = null; vi.restoreAllMocks(); });
+
+  async function freePort(): Promise<number> {
+    const server = createServer();
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    await new Promise((r) => server.close(() => r(null)));
+    return port;
+  }
+
+  /** A live session whose model server (the child) exits `exitAfterMs` after Core answers the unload. */
+  async function liveSession(exitAfterMs: number | null): Promise<number> {
+    child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { stdio: "ignore" });
+    const pid = child.pid!;
+    const live = { ...session, pid, port: await freePort() };
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...live, coreVersion: CORE_VERSION, instanceId: "owned" });
+    vi.mocked(connectCore).mockResolvedValue(fake as never);
+    fake.snapshot.mockResolvedValue({ instance_id: "owned", sessions: [live] });
+    fake.call.mockImplementation(async (path: string) => {
+      if (!path.endsWith("/unload")) throw new Error("unexpected route");
+      if (exitAfterMs !== null) setTimeout(() => child?.kill("SIGKILL"), exitAfterMs);
+      return { success: true };
+    });
+    return pid;
+  }
+
+  it("returns only once Core's llama-server has exited, so the next load can take its port", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const pid = await liveSession(300);
+    const started = Date.now();
+    await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 5_000 })).resolves.toBe(true);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(250);
+    expect(() => process.kill(pid, 0)).toThrow();
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
+  });
+
+  it("gives up after its bound and notes it in the server log", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+    const pid = await liveSession(null);
+    await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 300 })).resolves.toBe(true);
+    expect(readFileSync(join(dir, "llama-server.log"), "utf8")).toContain(`pid ${pid} was still running`);
+    expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
+  });
+
+  it("does not wait on macOS or Linux, where it never did", async () => {
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
+    await liveSession(null);
+    const started = Date.now();
+    await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 5_000 })).resolves.toBe(true);
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(existsSync(join(dir, "llama-server.log"))).toBe(false);
   });
 });

@@ -73,6 +73,7 @@ import {
 } from "../catalog/models-catalog.js";
 import { resolvePlatformAsset } from "../backend/platform-assets.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
+import { noteReleaseTimeout, waitForProcessRelease } from "./process-release.js";
 import {
   buildDaemonEnv,
   resolveManagedServerApiKey,
@@ -1285,6 +1286,23 @@ export async function startDaemon(
   }
 }
 
+export interface StopDaemonOptions {
+  /** POSIX: SIGTERM grace before SIGKILL. Windows: bound on the wait after `taskkill`. */
+  timeoutMs?: number;
+  /** The port the daemon listens on; the configured one when omitted. */
+  port?: number;
+}
+
+/** The configured port of a managed daemon, `null` when config cannot be read. */
+function configuredPort(role: "chat" | "embedding"): number | null {
+  try {
+    const lm = getConfig().localModels;
+    return role === "chat" ? lm.managed.port : lm.embeddings.port;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * `localModels.apiKey` — the key the agent's clients send. A config that
  * cannot be read yields none, and the launch falls back to the key
@@ -1300,7 +1318,7 @@ function readConfiguredApiKey(): string | null {
 
 export async function stopDaemon(
   dataDir: string,
-  opts?: { timeoutMs?: number },
+  opts?: StopDaemonOptions,
 ): Promise<void> {
   if (await stopCoreSession(dataDir, "chat")) return;
   const pidPath = resolvePidFilePath(dataDir);
@@ -1343,6 +1361,15 @@ export async function stopDaemon(
     } catch {
       /* ignore */
     }
+    // taskkill returns before the process has exited and freed its port:
+    // a model switch started the next server into "address in use" (ATO-304).
+    const port = opts?.port ?? configuredPort("chat");
+    noteReleaseTimeout(
+      resolveLogFilePath(dataDir),
+      pid,
+      port,
+      await waitForProcessRelease(pid, port, { timeoutMs }),
+    );
   } else {
     try {
       process.kill(pid, "SIGTERM");
@@ -1625,7 +1652,7 @@ function abandonChild(pid: number, pidPath: string): void {
 
 export async function stopEmbeddingDaemon(
   dataDir: string,
-  opts?: { timeoutMs?: number },
+  opts?: StopDaemonOptions,
 ): Promise<void> {
   // Core's embedding module first: a model switch may leave either kind.
   await stopCoreEmbedding(dataDir, opts?.timeoutMs === undefined ? {} : { waitMs: opts.timeoutMs });
@@ -1670,6 +1697,14 @@ export async function stopEmbeddingDaemon(
     } catch {
       /* ignore */
     }
+    // As in `stopDaemon`: wait for the process and its port (ATO-304).
+    const port = opts?.port ?? configuredPort("embedding");
+    noteReleaseTimeout(
+      resolveEmbeddingLogFilePath(dataDir),
+      pid,
+      port,
+      await waitForProcessRelease(pid, port, { timeoutMs }),
+    );
   } else {
     try {
       process.kill(pid, "SIGTERM");
