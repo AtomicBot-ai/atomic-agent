@@ -37,6 +37,10 @@ import {
 } from "./shell-job-calls.js";
 import { ShellJobRegistry } from "./shell-jobs.js";
 import {
+  missingCmdNotice,
+  recoverMissingShellCmd,
+} from "./recover-missing-cmd.js";
+import {
   GOG_MAX_OUTPUT_BYTES,
   renderShellExit,
   renderShellTimedOut,
@@ -115,11 +119,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       }
       if (form.kind === "kill") return runShellKill(jobCtx, form.id);
 
-      const cmd = rawArgs.cmd;
+      // A call that put the whole command in `args` and named no `cmd`
+      // is read back from its argv when that is unambiguous (#901); the
+      // recovered call still goes through the guard below.
+      const recovered = recoverMissingShellCmd(rawArgs);
+      const cmd = recovered?.cmd ?? rawArgs.cmd;
       if (typeof cmd !== "string" || cmd.length === 0) {
-        throw new Error("os.shell.run: `cmd` must be a non-empty string");
+        throw new Error(
+          'os.shell.run: `cmd` must be a non-empty string: it names the program, its arguments go in `args`, e.g. {"cmd":"git","args":["status"]}',
+        );
       }
-      const rawArgList = coerceShellArgs(rawArgs.args);
+      const rawArgList = recovered?.args ?? coerceShellArgs(rawArgs.args);
       if (rawArgList === null) {
         // Some models (notably cloud `native_tools` providers under
         // tool_choice="auto") double-serialise array arguments into a
@@ -295,7 +305,10 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // because nothing in node's own output says it — and a reply built
       // on that exit code claims a check that never ran.
       const checkNotice = nodeCheckMultiFileNotice(commandLine, cwd);
-      const notices = checkNotice === null ? [] : [checkNotice];
+      const notices = [
+        ...(recovered === null ? [] : [missingCmdNotice(cmd, rawArgList)]),
+        ...(checkNotice === null ? [] : [checkNotice]),
+      ];
       if (outcome === "elapsed" && timeout.source === "default") {
         const { record, evicted } = jobs.register(
           ctx.sessionId,
