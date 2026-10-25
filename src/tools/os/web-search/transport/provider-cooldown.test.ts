@@ -99,6 +99,38 @@ describe("createProviderCooldown", () => {
     const cooldown = createProviderCooldown();
     expect(cooldown.park("exa", T0, -5000)).toBe(60_000);
   });
+
+  it("parks an unreachable provider for two minutes, then lets it go (ATO-315)", () => {
+    const cooldown = createProviderCooldown();
+    expect(cooldown.parkUnreachable("duckduckgo", T0)).toBe(120_000);
+    expect(cooldown.reasonOf("duckduckgo")).toBe("unreachable");
+    expect(cooldown.remainingMs("duckduckgo", T0 + 119_000)).toBe(1000);
+    expect(cooldown.isParked("duckduckgo", T0 + 120_001)).toBe(false);
+  });
+
+  it("does not escalate unreachable parks, nor touch the 429 ladder", () => {
+    const cooldown = createProviderCooldown();
+    cooldown.park("exa", T0, null);
+    expect(cooldown.parkUnreachable("exa", T0)).toBe(120_000);
+    expect(cooldown.parkUnreachable("exa", T0)).toBe(120_000);
+    // The ladder continues from its one strike, it did not gain two more.
+    expect(cooldown.park("exa", T0, null)).toBe(120_000);
+    expect(cooldown.reasonOf("exa")).toBe("rate_limited");
+  });
+
+  it("reads a park with no reason as a rate limit, and none as none", () => {
+    const cooldown = createProviderCooldown();
+    expect(cooldown.reasonOf("exa")).toBeUndefined();
+    cooldown.park("exa", T0, null);
+    expect(cooldown.reasonOf("exa")).toBe("rate_limited");
+    cooldown.clear("exa");
+    expect(cooldown.reasonOf("exa")).toBeUndefined();
+  });
+
+  it("takes the unreachable park length from the options", () => {
+    const cooldown = createProviderCooldown({ unreachableMs: 30_000 });
+    expect(cooldown.parkUnreachable("duckduckgo", T0)).toBe(30_000);
+  });
 });
 
 describe("createPersistentProviderCooldown (#256)", () => {
@@ -115,6 +147,18 @@ describe("createPersistentProviderCooldown (#256)", () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a second process inherits an unreachable park as unreachable", () => {
+    const first = createPersistentProviderCooldown({ filePath, now: () => T0 });
+    first.parkUnreachable("duckduckgo", T0);
+
+    const second = createPersistentProviderCooldown({
+      filePath,
+      now: () => T0 + 30_000,
+    });
+    expect(second.remainingMs("duckduckgo", T0 + 30_000)).toBe(90_000);
+    expect(second.reasonOf("duckduckgo")).toBe("unreachable");
   });
 
   it("a second process inherits a live park", () => {

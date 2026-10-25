@@ -89,6 +89,10 @@ export async function runWebSearchWithFallback(
   // Plain-words line per provider that did not answer, for the error the
   // tool returns when none did (ATO-325).
   const failures: string[] = [];
+  // Providers in the chain that could not be asked at all (no key, no
+  // instance URL). Listed in that error too: "brave" sitting in the
+  // fallback without its key is a chain the user thinks they have.
+  const skipped: string[] = [];
   let connectFailures = 0;
   // Exa without a key goes through its free tier, which runs out fast.
   // What happened to it decides whether a key is worth asking for.
@@ -113,7 +117,10 @@ export async function runWebSearchWithFallback(
       : result;
 
   for (const name of chain) {
-    if (!isProviderUsable(name, input.config, env)) continue;
+    if (!isProviderUsable(name, input.config, env)) {
+      skipped.push(`${name}: skipped (${describeUnusable(name, search)})`);
+      continue;
+    }
 
     // Parked for a rate limit it hit earlier. Skipping it here is the
     // whole point: against a standing quota the alternative is three
@@ -155,6 +162,20 @@ export async function runWebSearchWithFallback(
         fromCache: true,
         degraded,
       };
+      continue;
+    }
+
+    if (parkedFor > 0 && cooldown?.reasonOf(name) === "unreachable") {
+      // It could not be reached a moment ago. Asking again would spend
+      // the connect timeout on every search in the burst (ATO-315).
+      degraded.push(
+        `${name} skipped: could not connect a moment ago, retrying in ${formatCooldown(parkedFor)}`,
+      );
+      failures.push(
+        `${name}: could not connect a moment ago (site unreachable from this network), next try in ${formatCooldown(parkedFor)}`,
+      );
+      connectFailures++;
+      if (keylessExa && name === "exa") exaOutcome = "unreachable";
       continue;
     }
 
@@ -208,6 +229,13 @@ export async function runWebSearchWithFallback(
             ? `${name} free limit reached (HTTP 429, no ${search.exa.apiKeyEnv}), parked for ${formatCooldown(parked)}`
             : `${name} rate limited (HTTP 429), parked for ${formatCooldown(parked)}`,
         );
+      } else if (isConnectFailure(err) && cooldown) {
+        // Never reached the host. Parked briefly so the rest of the burst
+        // does not pay the same connect timeout again (ATO-315).
+        const parked = cooldown.parkUnreachable(name, now(), tier);
+        degraded.push(
+          `${name} could not connect, skipped for ${formatCooldown(parked)}: ${describeError(err)}`,
+        );
       } else {
         // Recorded, not raised: if a later provider answers, this search
         // succeeded and the tool reports ok. The failure stays readable
@@ -224,14 +252,15 @@ export async function runWebSearchWithFallback(
     // gives the chain a provider with its own quota, whatever Exa's
     // failure was (`missing` when it was not a 429 or a connect failure).
     const signal = keylessExa ? keyRequired(exaOutcome ?? "missing") : undefined;
+    const report = [...failures, ...skipped];
     throw new WebSearchUnavailableError(
       search.provider,
       buildUnavailableMessage({
-        failures,
+        failures: report,
         keyRequired: signal,
         allUnreachable: connectFailures > 0 && connectFailures === failures.length,
       }),
-      failures,
+      report,
       signal,
     );
   }
@@ -302,6 +331,20 @@ function isProviderUsable(
     case "duckduckgo":
       return true;
   }
+}
+
+/**
+ * Why `isProviderUsable` said no, for the all-failed report. Not a switch
+ * over every name on purpose: a provider added later without a case here
+ * still gets a sane line.
+ */
+function describeUnusable(
+  name: WebSearchProviderName,
+  search: AtomicAgentConfig["web"]["search"],
+): string {
+  if (name === "brave") return `no ${search.brave.apiKeyEnv} set`;
+  if (name === "searxng") return "no `web.search.searxng.instanceUrl` set";
+  return "not configured";
 }
 
 /** Same reading the Exa provider applies: a whitespace-only key is no key. */

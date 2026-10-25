@@ -14,17 +14,52 @@ import {
 
 /**
  * curl and DNS failures that mean the host was never reached: no DNS
- * answer, a refused or timed out TCP/TLS handshake. Matched on the message
- * because that is all a transport throw carries.
+ * answer (exit 6), a refused connection (7), a TCP connect or name lookup
+ * that ran out the connect timeout (28), a TLS handshake that failed (35).
+ * Matched on the message because that is all a transport throw carries.
+ * A total-time timeout (exit 28 `Operation timed out`) is not one: the
+ * host answered the handshake and then was slow.
  */
 const CONNECT_FAILURE =
-  /curl: \((?:6|7)\)|could not resolve host|failed to connect|connection timed out|connection refused|resolving timed out|DNS resolution failed/i;
+  /curl: \((?:6|7|35)\)|could not resolve host|failed to connect|connection timed out|connection refused|resolving timed out|DNS resolution failed/i;
 
 /** Any other curl timeout (exit 28): the host took too long to answer. */
 const TIMEOUT_FAILURE = /curl: \(28\)|timed out/i;
 
 export function isConnectFailure(err: unknown): boolean {
   return CONNECT_FAILURE.test(errorMessage(err));
+}
+
+const DNS_FAILURE =
+  /curl: \(6\)|could not resolve host|DNS resolution failed|resolving timed out/i;
+
+/**
+ * What a connect failure was, in words (ATO-315): `curl: (28) Connection
+ * timed out after 5002 milliseconds` reads to a user as nothing at all.
+ * Order matters: a lookup that timed out is a DNS problem, not exit 28's
+ * generic "timed out".
+ */
+function connectReason(raw: string): string {
+  if (DNS_FAILURE.test(raw)) {
+    return "the site's name could not be looked up (DNS)";
+  }
+  if (/curl: \(35\)/i.test(raw)) {
+    return "the secure connection (TLS) failed";
+  }
+  if (/connection timed out|curl: \(28\)/i.test(raw)) {
+    const seconds = timeoutSeconds(raw);
+    return seconds === undefined
+      ? "the connection timed out"
+      : `the connection timed out after ${seconds} s`;
+  }
+  return "the connection was refused";
+}
+
+/** `after 5002 milliseconds` (or `ms`) -> `5`; undefined when not said. */
+function timeoutSeconds(raw: string): number | undefined {
+  const match = /after (\d+) (?:milliseconds|ms)\b/i.exec(raw);
+  if (!match) return undefined;
+  return Math.round(Number(match[1]) / 1000);
 }
 
 /**
@@ -43,10 +78,15 @@ export function describeFailure(
       : `${name}: rate limited (HTTP 429)`;
   }
   if (isConnectFailure(err)) {
-    return `${name}: could not connect (site unreachable from this network); ${raw}`;
+    return (
+      `${name}: could not connect, ${connectReason(raw)} ` +
+      `(site unreachable from this network); ${raw}`
+    );
   }
   if (TIMEOUT_FAILURE.test(raw)) {
-    return `${name}: timed out (no answer in time); ${raw}`;
+    const seconds = timeoutSeconds(raw);
+    const inTime = seconds === undefined ? "in time" : `in ${seconds} s`;
+    return `${name}: timed out (connected, but no answer ${inTime}); ${raw}`;
   }
   return `${name}: ${raw}`;
 }
@@ -77,11 +117,13 @@ export function buildUnavailableMessage(input: {
       `To fix it: get a free Exa API key at ${EXA_GET_KEY_URL} and add it. ` +
         "In the desktop app, paste it into the key card in the chat or in Settings. " +
         `In the terminal, add \`${envVar}=...\` to the agent's .env file ` +
-        "(~/.atomic-agent/.env, or $ATOMIC_AGENT_STATE_DIR/.env) and restart the agent.",
+        "(~/.atomic-agent/.env, or $ATOMIC_AGENT_STATE_DIR/.env) and restart the agent. " +
+        "Or set `web.search.provider` to `brave` (with its API key) or `searxng` (with your own instance).",
     );
   } else {
     lines.push(
-      "To fix it: check the network, or choose another provider in `web.search.provider`.",
+      "To fix it: check the network, or choose another provider in `web.search.provider`: " +
+        "`brave` (with its API key in the env) or `searxng` (with `web.search.searxng.instanceUrl`).",
     );
   }
   lines.push(

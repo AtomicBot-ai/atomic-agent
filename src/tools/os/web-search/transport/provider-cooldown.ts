@@ -14,6 +14,13 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
 export type CooldownTag = "keyless" | "keyed";
 
 /**
+ * Why a provider is parked: out of quota (a 429), or not reachable from
+ * this network at all (DNS, refused, connect timeout; ATO-315). Records
+ * without one (files written before it existed) are rate limits.
+ */
+export type CooldownReason = "rate_limited" | "unreachable";
+
+/**
  * Which providers are parked, and until when.
  *
  * The transport already retries a 429 twice against the same provider
@@ -60,8 +67,21 @@ export interface ProviderCooldown {
     retryAfterMs: number | null,
     tag?: CooldownTag,
   ): number;
+  /**
+   * Park a provider whose host could not be reached (ATO-315). A fixed,
+   * short park that does not escalate: a blocked host costs every search
+   * the connect timeout, so the next few searches skip it, but a VPN that
+   * comes back up is noticed within minutes. Returns the park length.
+   */
+  parkUnreachable(
+    name: WebSearchProviderName,
+    now: number,
+    tag?: CooldownTag,
+  ): number;
   /** The tier the current record was parked on, if it was tagged. */
   tagOf(name: WebSearchProviderName): CooldownTag | undefined;
+  /** Why the current record was parked; `undefined` when there is none. */
+  reasonOf(name: WebSearchProviderName): CooldownReason | undefined;
   /** A provider answered. Forget its history so the next park starts small. */
   clear(name: WebSearchProviderName): void;
 }
@@ -71,6 +91,8 @@ export interface ProviderCooldownOptions {
   baseMs?: number;
   /** Ceiling on the doubling. */
   maxMs?: number;
+  /** Park after a connect failure; fixed, no doubling. */
+  unreachableMs?: number;
 }
 
 export interface PersistentProviderCooldownOptions extends ProviderCooldownOptions {
@@ -107,12 +129,22 @@ const DEFAULT_MAX_MS = 15 * 60_000;
  */
 const MAX_HONOURED_RETRY_AFTER_MS = DEFAULT_MAX_MS;
 
+/**
+ * Two minutes. Long enough that a burst of searches (the model often
+ * fires three at once, then three more) pays the connect timeout once
+ * instead of six times; short enough that a network that comes back is
+ * used again within the same task (ATO-315).
+ */
+const DEFAULT_UNREACHABLE_MS = 2 * 60_000;
+
 interface CooldownEntry {
   until: number;
   /** Consecutive parks, for the doubling. */
   strikes: number;
   /** Tier the park was earned on; absent for an untagged park. */
   tag?: CooldownTag;
+  /** Absent for a rate limit, the only reason before ATO-315. */
+  reason?: "unreachable";
 }
 
 export function createProviderCooldown(
@@ -153,6 +185,7 @@ function buildCooldown(
 ): ProviderCooldown {
   const baseMs = options.baseMs ?? DEFAULT_BASE_MS;
   const maxMs = options.maxMs ?? DEFAULT_MAX_MS;
+  const unreachableMs = options.unreachableMs ?? DEFAULT_UNREACHABLE_MS;
 
   function remainingMs(name: WebSearchProviderName, now: number): number {
     const entry = entries.get(name);
@@ -167,6 +200,29 @@ function buildCooldown(
     },
     tagOf(name) {
       return entries.get(name)?.tag;
+    },
+    reasonOf(name) {
+      const entry = entries.get(name);
+      if (!entry) return undefined;
+      return entry.reason ?? "rate_limited";
+    },
+    parkUnreachable(name, now, tag) {
+      // Strikes are the 429 ladder's history. A host that could not be
+      // reached says nothing about its quota, so they are carried over
+      // unchanged: neither escalated nor reset (only `clear` resets).
+      const recorded = entries.get(name);
+      const strikes =
+        recorded?.tag !== undefined && tag !== undefined && recorded.tag !== tag
+          ? 0
+          : (recorded?.strikes ?? 0);
+      entries.set(name, {
+        until: now + unreachableMs,
+        strikes,
+        ...(tag !== undefined ? { tag } : {}),
+        reason: "unreachable",
+      });
+      persist?.();
+      return unreachableMs;
     },
     park(name, now, retryAfterMs, tag) {
       // Strikes earned on another tier are another quota's history: a
@@ -248,6 +304,7 @@ function loadCooldownFile(
       ...(entry.tag === "keyless" || entry.tag === "keyed"
         ? { tag: entry.tag }
         : {}),
+      ...(entry.reason === "unreachable" ? { reason: entry.reason } : {}),
     });
   }
   return entries;
