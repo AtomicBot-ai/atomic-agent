@@ -16,7 +16,7 @@ import { app, type BrowserWindow } from "electron";
 
 import { windowCrashed } from "../analytics/index.js";
 import { reportError } from "./client.js";
-import { lastErrorCategory, uptimeBucket } from "./exit-reason.js";
+import { freeMemoryBucket, lastErrorCategory, uptimeBucket, windowsExitStatus } from "./exit-reason.js";
 
 /** Main process and app-wide events. Call once, early. */
 export function wireProcessErrorReporting(): void {
@@ -90,13 +90,22 @@ export function reportRendererError(payload: unknown): void {
 export function reportAgentExit(
   detail: { exitCode?: number | null; signal?: string | null; phase?: string; uptimeMs?: number | null; sentinelAlive?: boolean | null },
   lastLines: readonly string[] = [],
+  /** ATO-424: the machine at the exit — free memory in bytes, and whether the app was already quitting. */
+  machine: { freeMemBytes?: number | null; quitting?: boolean } = {},
 ): void {
   const sentinel = typeof detail.sentinelAlive === "boolean" ? (detail.sentinelAlive ? "yes" : "no") : undefined;
+  const status = windowsExitStatus(detail.exitCode);
+  const freeMem = freeMemoryBucket(machine.freeMemBytes);
+  // An exit 0 with no signal is the agent ending on its own terms (a stop it was sent), not a crash: kept, as info.
+  const clean = detail.exitCode === 0 && !detail.signal;
   reportError({
     source: "agent-exit",
     name: "AgentExited",
-    level: "warning",
+    level: clean ? "info" : "warning",
     tags: {
+      ...(status ? { exit_status: status } : {}),
+      ...(freeMem ? { free_mem: freeMem } : {}),
+      ...(typeof machine.quitting === "boolean" ? { app_quitting: machine.quitting ? "yes" : "no" } : {}),
       kind: detail.phase ?? "running",
       exit_code: detail.exitCode ?? undefined,
       reason: detail.signal ?? undefined,

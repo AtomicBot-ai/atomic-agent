@@ -54,3 +54,31 @@ export function uptimeBucket(ms: number | null | undefined): "lt_10s" | "lt_1m" 
   if (ms < 3_600_000) return "lt_1h";
   return "gte_1h";
 }
+
+/**
+ * ATO-424 / ATO-761: the machine's free memory when the agent exited, as a
+ * bucket. Sentry showed Windows exits with 0xC000009A (out of system
+ * resources) beside Electron's own processes crashing; this says whether
+ * the machine was short of memory at that moment. Null when unknown.
+ */
+export function freeMemoryBucket(freeBytes: number | null | undefined): "lt_512m" | "lt_1g" | "lt_2g" | "lt_4g" | "gte_4g" | null {
+  if (typeof freeBytes !== "number" || !Number.isFinite(freeBytes) || freeBytes < 0) return null;
+  const mb = freeBytes / 1_048_576;
+  if (mb < 512) return "lt_512m";
+  if (mb < 1024) return "lt_1g";
+  if (mb < 2048) return "lt_2g";
+  if (mb < 4096) return "lt_4g";
+  return "gte_4g";
+}
+
+/** Windows NTSTATUS codes an exit code may carry, as a word (0xC000009A is 3221225626). Null for any other code. */
+export function windowsExitStatus(code: number | null | undefined): "insufficient_resources" | "no_memory" | "stack_overflow" | "killed_from_outside" | "access_violation" | null {
+  switch (code) {
+    case 0xc000009a: return "insufficient_resources";
+    case 0xc0000017: return "no_memory";
+    case 0xc00000fd: return "stack_overflow";
+    case 0x40010004: return "killed_from_outside";
+    case 0xc0000005: return "access_violation";
+    default: return null;
+  }
+}
