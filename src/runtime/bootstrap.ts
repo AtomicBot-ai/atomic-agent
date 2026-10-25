@@ -352,7 +352,7 @@ export async function createAgentRuntime(
   const mcpCatalog = await connectRuntimeMcpCatalog({
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode,
-    ...(profileManager ? { onMcpToolNameRule: (rule: string | null) => profileManager.setMcpToolNameRule(rule) } : {}),
+    ...(profileManager ? { onMcpToolNameRule: (rule: string | null, nativeTools: boolean) => profileManager.setMcpToolNameRule(rule, nativeTools) } : {}),
   });
   const { mcpManager, getGrammar, effectiveToolDescriptors } = mcpCatalog;
 

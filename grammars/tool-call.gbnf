@@ -75,7 +75,8 @@ fusion-tool ::= "\"fusion.delegate\""
 # run against a throwaway copy). A local orchestrator reviewing a fan-out
 # needs these in its vocabulary for the same reason it needs the fan-out.
 verify-tool ::= "\"verify." ( "syntax" | "run" ) "\""
-# Native MCP discovery / resource / prompt tools — always available.
+# Native MCP discovery / resource / prompt tools. Registered only while MCP
+# is on; with MCP off `applyMcpToolNameRule` drops this from `tool-name`.
 mcp-native-tool ::= "\"mcp." ( "resource.list" | "resource.read" | "prompt.list" | "prompt.get" ) "\""
 # Per-server MCP tool names. Deliberately NOT referenced from `tool-name`
 # here: with no MCP tools the sampler can emit no `mcp.<server>.<tool>`

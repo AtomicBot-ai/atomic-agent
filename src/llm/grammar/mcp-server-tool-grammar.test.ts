@@ -57,6 +57,19 @@ describe("mcp.* tool names follow the MCP catalog (ATO-1029)", () => {
     }
   });
 
+  it("admits no mcp.* name at all when MCP is off in config", async () => {
+    const off = await buildGrammar(PLAIN_INSTRUCT_PROFILE, undefined, { mcpToolNameRule: null, mcpNativeTools: false });
+    for (const tool of ["mcp.resource.list", "mcp.resource.read", "mcp.prompt.list", "mcp.prompt.get", "mcp.example.toolkit"]) {
+      expect(gbnfAccepts(off, "root", call(tool)), tool).toBe(false);
+    }
+    expect(off).not.toMatch(/^tool-name ::= .*mcp-native-tool/m);
+    expect(gbnfAccepts(off, "root", call("finish"))).toBe(true);
+    // Turned back on (a server added live): the file's rule exactly.
+    const file = await readFile(GRAMMAR_FILE, "utf8");
+    const on = buildGrammar(PLAIN_INSTRUCT_PROFILE, undefined, { mcpNativeTools: true });
+    expect(await on).toBe(file);
+  });
+
   it("the browser switch and the MCP rule compose", async () => {
     const rule = buildMcpToolNameRule([meta("docs", "search")]);
     const g = await buildGrammar(PLAIN_INSTRUCT_PROFILE, undefined, { mcpToolNameRule: rule, browserEnabled: false });

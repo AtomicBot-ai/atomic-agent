@@ -226,9 +226,10 @@ export async function connectRuntimeMcpCatalog(input: {
   /**
    * Told every MCP tool-name rule this catalog applies, so a grammar held
    * elsewhere (the hot-swap `ModelProfileManager`, which the agent loop
-   * reads first) admits the same `mcp.*` names (ATO-1029).
+   * reads first) admits the same `mcp.*` names (ATO-1029); `nativeTools`
+   * is whether the `mcp.resource.*` / `mcp.prompt.*` tools are registered.
    */
-  onMcpToolNameRule?: (rule: string | null) => void;
+  onMcpToolNameRule?: (rule: string | null, nativeTools: boolean) => void;
 }) {
   const { config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule } = input;
@@ -316,14 +317,19 @@ export async function connectRuntimeMcpCatalog(input: {
     registerMcpMetaToolsOnce();
     const mcpToolMetas = mcpManager.listAllToolMeta();
     const rule = buildMcpToolNameRule(mcpToolMetas);
-    grammar = applyMcpToolNameRule(baseGrammar, rule);
-    onMcpToolNameRule?.(rule);
+    grammar = applyMcpToolNameRule(baseGrammar, rule, mcpMetaToolsRegistered);
+    onMcpToolNameRule?.(rule, mcpMetaToolsRegistered);
     logger.info("mcp: manager started", {
       configured: mcpServerConfigs.length,
       connected: mcpManager.listStatuses().filter((s) => s.state === "up")
         .length,
       tools: mcpToolMetas.length,
     });
+  } else {
+    // MCP off: neither the native `mcp.resource.*` / `mcp.prompt.*` tools
+    // nor any per-server tool is registered, so the grammar names none.
+    grammar = applyMcpToolNameRule(baseGrammar, null, false);
+    onMcpToolNameRule?.(null, false);
   }
 
   // The descriptor stays in the prompt while the live route can see
@@ -449,8 +455,8 @@ export async function connectRuntimeMcpCatalog(input: {
       }
       const metas = mcpManager.listAllToolMeta();
       const rule = buildMcpToolNameRule(metas);
-      grammar = applyMcpToolNameRule(baseGrammar, rule);
-      onMcpToolNameRule?.(rule);
+      grammar = applyMcpToolNameRule(baseGrammar, rule, mcpMetaToolsRegistered);
+      onMcpToolNameRule?.(rule, mcpMetaToolsRegistered);
       rebuildToolDescriptors();
       logger.info("mcp: catalog refreshed", {
         servers: serverCount,

@@ -110,6 +110,8 @@ export class ModelProfileManager {
   private grammar: string;
   /** The live MCP tool-name rule (`null`: no MCP tools), carried across a hot-swap. */
   private mcpToolNameRule: string | null = null;
+  /** Whether the `mcp.resource.*` / `mcp.prompt.*` tools are registered. */
+  private mcpNativeTools = true;
   private modelId: string | null;
   private stale = false;
   /** A refresh failed and none has succeeded since — the warning was said. */
@@ -186,11 +188,13 @@ export class ModelProfileManager {
    * The MCP catalog changed (bootstrap, server added or removed): patch
    * the held grammar so the sampler admits exactly the registered
    * `mcp.<server>.<tool>` names, none when `rule` is `null` (ATO-1029),
-   * and keep the rule for the next profile rebuild.
+   * and the native `mcp.resource.*` / `mcp.prompt.*` ones only when
+   * `nativeTools`; keep both for the next profile rebuild.
    */
-  setMcpToolNameRule(rule: string | null): void {
+  setMcpToolNameRule(rule: string | null, nativeTools = true): void {
     this.mcpToolNameRule = rule;
-    this.grammar = applyMcpToolNameRule(this.grammar, rule);
+    this.mcpNativeTools = nativeTools;
+    this.grammar = applyMcpToolNameRule(this.grammar, rule, nativeTools);
   }
 
   getModelId(): string | null {
@@ -291,6 +295,7 @@ export class ModelProfileManager {
         const nextGrammar = await buildGrammar(nextProfile, this.grammarsDir, {
           browserEnabled: this.browserEnabled,
           mcpToolNameRule: this.mcpToolNameRule,
+          mcpNativeTools: this.mcpNativeTools,
           ...(this.reasoningBudgetTokens !== undefined
             ? { reasoningBudgetTokens: this.reasoningBudgetTokens }
             : {}),

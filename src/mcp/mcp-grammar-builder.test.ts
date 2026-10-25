@@ -89,6 +89,18 @@ describe("applyMcpToolNameRule", () => {
     expect(applyMcpToolNameRule(out, null)).toBe(applyMcpToolNameRule(unreferenced, null).replace(/^mcp-server-tool ::= .*$/m, dyn));
   });
 
+  it("drops and restores mcp-native-tool with nativeTools, in place", () => {
+    const g = 'tool-name ::= verify-tool | mcp-native-tool | "\\"finish\\""';
+    const off = applyMcpToolNameRule(g, null, false);
+    expect(off).toBe('tool-name ::= verify-tool | "\\"finish\\""');
+    expect(applyMcpToolNameRule(off, null, false)).toBe(off);
+    expect(applyMcpToolNameRule(off, null, true)).toBe(g);
+    const dyn = 'mcp-server-tool ::= "\\"mcp.docs.search\\""';
+    expect(applyMcpToolNameRule(off, dyn, true)).toBe(
+      'tool-name ::= verify-tool | mcp-native-tool | mcp-server-tool | "\\"finish\\""\n' + dyn + "\n",
+    );
+  });
+
   it("replaces the static placeholder with the dynamic rule", () => {
     const dyn = 'mcp-server-tool ::= "\\"mcp.github.create_issue\\""';
     const out = applyMcpToolNameRule(baseGrammar, dyn);

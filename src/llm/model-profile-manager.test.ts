@@ -455,4 +455,19 @@ describe("ModelProfileManager MCP tool names (ATO-1029)", () => {
     mgr.setMcpToolNameRule(null);
     expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-server-tool/m);
   });
+
+  it("keeps the native MCP tools out across a rebuild when MCP is off", async () => {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+    });
+    mgr.setMcpToolNameRule(null, false);
+    expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-native-tool/m);
+    await mgr.refresh();
+    expect(mgr.getProfile().id).toBe("qwen-think");
+    expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-native-tool/m);
+  });
 });

@@ -37,6 +37,12 @@ export interface BuildGrammarOptions {
    */
   mcpToolNameRule?: string | null;
   /**
+   * Whether the `mcp.resource.*` / `mcp.prompt.*` tools are registered
+   * (MCP on). `false` drops `mcp-native-tool` from `tool-name`; omitted
+   * keeps the static grammar's default (referenced).
+   */
+  mcpNativeTools?: boolean;
+  /**
    * Master switch for the interactive `browser.*` tool surface. When
    * `false`, the `browser-tool` alternative is structurally removed from
    * the `tool-name` rule so the constrained sampler can never emit a
@@ -73,6 +79,7 @@ export async function buildGrammar(
   const withMcp = applyMcpToolNameRule(
     withBrowser,
     options.mcpToolNameRule ?? null,
+    options.mcpNativeTools ?? true,
   );
   if (!profile.allowThinkPrelude || profile.reasoningStyle === "none")
     return withMcp;
