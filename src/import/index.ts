@@ -166,6 +166,20 @@ export type {
   ResolveOhMyPiOptionsInput,
 } from "./oh-my-pi/index.js";
 
+// Atomic Agent desktop state dir (ATO-416: merged once into the shared one).
+export {
+  ATOMIC_DESKTOP_DB_FILES,
+  ATOMIC_DESKTOP_NOT_IMPORTED,
+  checkAtomicDesktopSource,
+  importAtomicDesktop,
+} from "./atomic-desktop/index.js";
+export type {
+  AtomicDesktopImportCounts,
+  AtomicDesktopImportResult,
+  AtomicDesktopImportTargets,
+  ImportAtomicDesktopOptions,
+} from "./atomic-desktop/index.js";
+
 // Source detection (shared by the first-run flow and anything that
 // wants to name the sources without hard-coding their layouts).
 export {

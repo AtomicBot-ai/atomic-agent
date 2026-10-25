@@ -27,8 +27,12 @@ import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type { HubSkillRow } from "./skills-panel-state.js";
 import { toSkillSummaryRows } from "./skills-summary.js";
+import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
+import { setSkillDisabled as setWorkspaceSkillDisabled, setProjectSkillsEnabled } from "../../config/skill-policy-commands.js";
+import { readUserConfigFileSync } from "../../config/config-file.js";
 
 export interface SkillsOrchestratorOptions {
+  currentSession?: () => SessionState | null;
   /** Refresh cadence for the skills list. Defaults to 5_000 ms. */
   refreshIntervalMs?: number;
 }
@@ -56,6 +60,7 @@ const DEFAULT_REFRESH_INTERVAL_MS = 5_000;
  *    catalog/stable-prefix subscribers update.
  */
 export class SkillsOrchestrator {
+  private readonly currentSession: () => SessionState | null;
   private refreshTimer: NodeJS.Timeout | null = null;
   private readonly refreshIntervalMs: number;
   /** Staged hub installs awaiting confirmation, keyed by identifier. */
@@ -82,6 +87,44 @@ export class SkillsOrchestrator {
   ) {
     this.refreshIntervalMs =
       options.refreshIntervalMs ?? DEFAULT_REFRESH_INTERVAL_MS;
+    this.currentSession = options.currentSession ?? (() => null);
+  }
+
+  workspace() {
+    // Before the first message there is deliberately no persisted session.
+    // Preview the same launch workspace without creating a chat as a side effect.
+    const session = this.currentSession() ?? createEmptySessionState({
+      id: "skills-preview", workingDir: this.runtime.capabilities.workingDir,
+    });
+    return this.runtime.getSessionWorkspace(session);
+  }
+
+  /** Validate live policy; the model still loads the body through skill.view. */
+  prepareInvocation(name: string, input: string): string {
+    const workspace = this.workspace();
+    if (!workspace) throw new Error("Skill slash commands require cloud mode");
+    workspace.skills.assertAvailable(name);
+    return `Use the ${JSON.stringify(name)} skill. Load its instructions with skill.view(${JSON.stringify({ name })}) before proceeding.`
+      + (input ? `\n\n${input}` : "");
+  }
+
+  toggleWorkspaceSkill(name: string): void {
+    try {
+      const workspace = this.workspace();
+      if (!workspace) return;
+      const policy = readUserConfigFileSync(this.runtime.config.paths.userConfigFile)?.skills.cloudWorkspaces.find(p => p.workingDir === workspace.workingDir);
+      setWorkspaceSkillDisabled(name, !policy?.disabled.includes(name), workspace.workingDir);
+      this.refresh();
+    } catch (error) { this.bus.emit({ type: "skills_error_set", error: String(error) }); }
+  }
+
+  toggleProjectSkills(): void {
+    try {
+      const workspace = this.workspace();
+      if (!workspace) return;
+      setProjectSkillsEnabled(workspace.workingDir, !workspace.skills.projectSkillsEnabled);
+      this.refresh();
+    } catch (error) { this.bus.emit({ type: "skills_error_set", error: String(error) }); }
   }
 
   /** Start the periodic refresh loop. Idempotent. */
@@ -112,11 +155,22 @@ export class SkillsOrchestrator {
   refresh(): void {
     try {
       this.bus.emit({ type: "skills_refresh_started" });
+      const workspace = this.workspace();
+      if (workspace) {
+        const rows = workspace.skills.entries.map(e => ({ name: e.record.manifest.name, description: e.record.manifest.description,
+          version: e.record.manifest.version, source: e.record.source, disabled: e.disabledReasons.length > 0,
+          disabledReasons: e.disabledReasons, sourcePath: e.record.manifestPath, sources: e.sources }));
+        this.bus.emit({ type: "skills_refreshed", rows, at: Date.now(), workspace: workspace.workingDir, projectSkillsEnabled: workspace.skills.projectSkillsEnabled });
+        this.bus.emit({ type: "skill_count_changed", count: rows.filter(row => !row.disabled).length, dropped: 0 });
+        return;
+      }
       const rows = toSkillSummaryRows(this.runtime.skillRegistry.listAll());
       this.bus.emit({ type: "skills_refreshed", rows, at: Date.now() });
+      this.bus.emit({ type: "skill_count_changed", count: this.runtime.skillCatalog.length, dropped: this.runtime.skillCatalogDropped });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       this.bus.emit({ type: "skills_refresh_failed", error: msg });
+      this.bus.emit({ type: "skill_count_changed", count: 0, dropped: 0 });
       this.bus.emit({
         type: "runtime_info",
         line: `skills refresh failed: ${msg}`,
@@ -130,7 +184,15 @@ export class SkillsOrchestrator {
    * through `listAll()` and `readFile` directly.
    */
   async openDetail(name: string): Promise<void> {
+    const owner = this.currentSession()?.id;
     try {
+      const workspace = this.workspace();
+      if (workspace) {
+        const entry = workspace.skills.entries.find(e => e.record.manifest.name === name);
+        if (!entry) throw new Error(`skill ${name} not found`);
+        this.bus.emit({ type: "skills_detail_opened", name, body: entry.body });
+        return;
+      }
       const all = this.runtime.skillRegistry.listAll();
       const entry = all.find((e) => e.record.manifest.name === name);
       if (!entry) {
@@ -141,6 +203,7 @@ export class SkillsOrchestrator {
         return;
       }
       const body = await readManifestBody(entry.record.manifestPath);
+      if (this.currentSession()?.id !== owner) return;
       this.bus.emit({ type: "skills_detail_opened", name, body });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -153,7 +216,7 @@ export class SkillsOrchestrator {
 
   /** Disable `name` if currently enabled, enable it otherwise. */
   async toggleSkill(name: string): Promise<void> {
-    const isDisabled = this.runtime.skillRegistry.isDisabled(name);
+    const isDisabled = readUserConfigFileSync(this.runtime.config.paths.userConfigFile)?.skills.disabled.includes(name) ?? this.runtime.skillRegistry.isDisabled(name);
     await this.setSkillDisabled(name, !isDisabled);
   }
 
@@ -207,7 +270,8 @@ export class SkillsOrchestrator {
    * on the next boot.
    */
   async requestRemove(name: string): Promise<void> {
-    const entry = this.runtime.skillRegistry
+    const owner = this.currentSession()?.id;
+    const entry = this.workspace()?.skills.entries.find(e => e.record.manifest.name === name) ?? this.runtime.skillRegistry
       .listAll()
       .find((e) => e.record.manifest.name === name);
     if (!entry) {
@@ -217,7 +281,7 @@ export class SkillsOrchestrator {
     if (entry.record.source !== "global") {
       this.bus.emit({
         type: "runtime_info",
-        line: `${name} is a project-local skill — remove it from .atomic-agent/skills instead`,
+        line: `${name} is a project-local skill — disable it here or remove ${entry.record.rootDir}`,
       });
       return;
     }
@@ -228,6 +292,7 @@ export class SkillsOrchestrator {
       // Treat an unresolved starter tree as "not a starter" — the warning
       // is advisory, never load-bearing.
     }
+    if (this.currentSession()?.id !== owner) return;
     this.bus.emit({
       type: "skills_remove_confirm_opened",
       confirm: {

@@ -90,4 +90,11 @@ describe("clearEmbeddingPort", () => {
     const h = harness({ kind: "adopted", pid: 7 });
     expect(await clearEmbeddingPort(cfg, requested, 19091, h.deps)).toEqual({ options: undefined, adoptedPid: 7 });
   });
+
+  it("leaves the port alone for a model Atomic Core's embedding module runs", async () => {
+    const h = harness({ kind: "moved", port: 19094, why: "held" });
+    const gemma = { ...requested, modelId: "embeddinggemma-2" } as const;
+    expect(await clearEmbeddingPort(cfg, gemma, 19091, h.deps)).toEqual({ options: gemma, adoptedPid: null });
+    expect(h.requests).toEqual([]);
+  });
 });

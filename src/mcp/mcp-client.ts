@@ -30,6 +30,7 @@ import {
   type StderrTail,
 } from "./mcp-stderr-tail.js";
 import { qualifyMcpToolName, splitMcpToolName } from "./mcp-resource-class.js";
+import { buildMcpStdioEnv } from "./mcp-stdio-env.js";
 import {
   MCP_TOOL_NAME_RE,
   type McpPromptMeta,
@@ -38,6 +39,7 @@ import {
   type McpServerConfig,
   type McpToolMeta,
 } from "./mcp-types.js";
+import { isMcpToolEnabled } from "./mcp-tool-filter.js";
 
 /**
  * Callback signature for sampling requests forwarded from the server.
@@ -225,6 +227,8 @@ export class McpClient {
       annotations?: Record<string, unknown>;
     }>) {
       if (!MCP_TOOL_NAME_RE.test(t.name)) continue;
+      // Turned off by the operator (`enabledTools` / `disabledTools`).
+      if (!isMcpToolEnabled(this.config, t.name)) continue;
       const qualifiedName = qualifyMcpToolName(this.config.name, t.name);
       // Sanity: the qualified name must round-trip through
       // splitMcpToolName cleanly. If not, drop — this is the same
@@ -425,16 +429,11 @@ export class McpClient {
     StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport {
     const t = this.config.transport;
     if (t.kind === "stdio") {
-      // Inherit the agent's `process.env` (already augmented from
-      // `<stateDir>/.env` at bootstrap) and overlay per-server keys.
-      // See docs/client.md for the environment contract — there is
-      // no env filtering today, MCP subprocesses see every var the
-      // agent has.
-      const env: Record<string, string> = {};
-      for (const [k, v] of Object.entries(process.env)) {
-        if (typeof v === "string") env[k] = v;
-      }
-      if (this.config.env) Object.assign(env, this.config.env);
+      // Only service variables (PATH, HOME, SystemRoot, ...) from the
+      // agent's environment, plus the server's own configured `env`.
+      // Provider keys loaded from `<stateDir>/.env` stay with the agent.
+      // See `buildMcpStdioEnv` and docs/client.md.
+      const env = buildMcpStdioEnv(this.config.env);
       // On Windows a bare shim name like `npx` / `npm` is `npx.cmd`, which a
       // no-shell `spawn` cannot resolve (ENOENT). Route bare commands through
       // `cmd.exe /c` so PATHEXT resolution kicks in; absolute paths and

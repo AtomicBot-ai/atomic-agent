@@ -1,9 +1,10 @@
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
+import { getConfig } from "../config/index.js";
 
 function stageSkill(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), "atomic-skill-src-"));
@@ -116,5 +117,23 @@ describe("/api/skills", () => {
   it("returns 404 for unknown skills", async () => {
     const response = await fetch(`${harness.baseUrl}/api/skills/missing-skill`);
     expect(response.status).toBe(404);
+  });
+
+  it("selects a cloud session's workspace for list, detail and capabilities without changing legacy calls", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "http-session-workspace-"))); stagedDirs.push(root);
+    const skillDir = join(root, ".agents/skills/session-guide"); mkdirSync(skillDir, { recursive: true });
+    writeFileSync(join(skillDir, "SKILL.md"), "---\nname: session-guide\ndescription: Session guide\n---\nSELECTED BODY");
+    const config = getConfig();
+    config.llm = { activeTextProvider: "local-llama", activeEmbeddingProvider: "local-llama", toolTransport: "auto",
+      providers: [{ id: "local-llama", kind: "llama-server", url: config.localModels.url, modelMode: "cloud" }] };
+    const session = { ...harness.runtime.createSession({ persist: false }), workingDir: root }; harness.runtime.sessionStore.save(session);
+    const query = `?sessionId=${session.id}`;
+    const list = await (await fetch(`${harness.baseUrl}/api/skills${query}`)).json() as { workingDir: string; skills: Array<{ name: string }> };
+    expect(list.workingDir).toBe(root); expect(list.skills.some((s: { name: string }) => s.name === "session-guide")).toBe(true);
+    const detail = await (await fetch(`${harness.baseUrl}/api/skills/session-guide${query}`)).json() as { body: string }; expect(detail.body).toBe("SELECTED BODY");
+    const caps = await (await fetch(`${harness.baseUrl}/api/capabilities${query}`)).json() as { capabilities: { workingDir: string } }; expect(caps.capabilities.workingDir).toBe(root);
+    const legacy = await (await fetch(`${harness.baseUrl}/api/skills`)).json() as { skills: Array<{ name: string }> }; expect(legacy.skills.some((s: { name: string }) => s.name === "session-guide")).toBe(false);
+    expect((await fetch(`${harness.baseUrl}/api/skills?sessionId=missing`)).status).toBe(404);
+    expect(harness.runtime.capabilities.workingDir).toBe(harness.workingDir);
   });
 });

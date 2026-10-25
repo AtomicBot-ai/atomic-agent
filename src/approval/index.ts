@@ -24,6 +24,17 @@ export {
   resolveBootApprovalLevel,
 } from "./approval-level.js";
 export type { ApprovalCategory, ApprovalLevel } from "./approval-level.js";
+export {
+  excerptPreview,
+  hiddenLinesNote,
+  isPreviewCut,
+  pagePreview,
+  previewLines,
+} from "./approval-preview.js";
+export type {
+  PreviewExcerpt,
+  PreviewExcerptLimits,
+} from "./approval-preview.js";
 export { ReadScopeGrants } from "./read-scope-grants.js";
 export { ApprovalRouter } from "./approval-router.js";
 export type { ApprovalHandler } from "./approval-router.js";

@@ -33,6 +33,7 @@ import {
 import {
   STOP_POLLING_TIMEOUT_MS,
   TASK_REPORT_QUEUE_LIMIT,
+  OwnerAlreadyPairedError,
   TelegramChannel,
   scrubErrorMessage,
   type BotFactory,
@@ -845,7 +846,8 @@ describe("TelegramChannel live-control surface", () => {
       emitStatus: () => undefined,
     });
     await channel.start();
-    const pending = channel.startPairing(60_000);
+    // The default config has an owner, so replacing them is confirmed.
+    const pending = channel.startPairing(60_000, { replaceOwner: true });
     expect(channel.pairingState().active).toBe(true);
     channel.cancelPairing();
     await expect(pending).resolves.toBeNull();
@@ -876,22 +878,27 @@ describe("TelegramChannel live-control surface", () => {
       emitStatus: () => undefined,
     });
     await channel.start();
-    const pending = channel.startPairing(60_000);
+    let code = "";
+    const pending = channel.startPairing(60_000, {
+      onOpened: (opened) => {
+        code = opened.code;
+      },
+    });
     expect(channel.pairingState().active).toBe(true);
 
-    // Drive the registered text handler with a DM from a stranger.
+    // Drive the registered text handler with the code from the window.
     const handler = state.textHandler;
     expect(handler).not.toBeNull();
     await handler!({
       from: { id: 777 },
       chat: { id: 555, type: "private" },
-      text: "/pair",
+      text: `/start ${code}`,
       message_id: 1,
     });
 
     const outcome = await pending;
     expect(outcome).not.toBeNull();
-    expect(outcome!.claim).toEqual({ userId: 777, chatId: 555 });
+    expect(outcome!.claim).toEqual({ userId: 777, chatId: 555, username: null });
     expect(outcome!.welcomeDelivered).toBe(true);
     expect(channel.getOwnerUserId()).toBe(777);
     expect(readPersistedTelegramConfig().ownerUserId).toBe(777);
@@ -924,11 +931,16 @@ describe("TelegramChannel live-control surface", () => {
       emitStatus: () => undefined,
     });
     await channel.start();
-    const pending = channel.startPairing(60_000);
+    let code = "";
+    const pending = channel.startPairing(60_000, {
+      onOpened: (opened) => {
+        code = opened.code;
+      },
+    });
     await state.textHandler!({
       from: { id: 777 },
       chat: { id: 555, type: "private" },
-      text: "/pair",
+      text: `/start ${code}`,
       message_id: 1,
     });
     const outcome = await pending;
@@ -986,24 +998,137 @@ describe("TelegramChannel live-control surface", () => {
       return result;
     };
 
-    const pending = channel.startPairing(60_000);
+    let code = "";
+    const pending = channel.startPairing(60_000, {
+      onOpened: (opened) => {
+        code = opened.code;
+      },
+    });
     await state.textHandler!({
       from: { id: 777 },
       chat: { id: 555, type: "private" },
-      text: "/pair",
+      text: `/start ${code}`,
       message_id: 1,
     });
     const outcome = await pending;
     // Pairing claim must still resolve with the captured user — a
     // best-effort welcome cannot revert the persisted owner.
     expect(outcome).not.toBeNull();
-    expect(outcome!.claim).toEqual({ userId: 777, chatId: 555 });
+    expect(outcome!.claim).toEqual({ userId: 777, chatId: 555, username: null });
     // Locks: failed welcome reports `welcomeDelivered: false` so the
     // TUI's success card branches into the "DM the bot to verify"
     // copy instead of falsely claiming delivery.
     expect(outcome!.welcomeDelivered).toBe(false);
     expect(channel.getOwnerUserId()).toBe(777);
     expect(channel.state()).toBe("up");
+  });
+
+  describe("one-time pairing code (ATO-718)", () => {
+    function pairingChannel(
+      ownerUserId: number | null,
+      records: LogRecord[] = [],
+    ): { channel: TelegramChannel; state: FakeBotState } {
+      const { factory, state } = makeBotFactory();
+      const cfg = {
+        ...USER_CONFIG_DEFAULTS,
+        telegram: { enabled: true, ownerUserId },
+      };
+      writeFileSync(userConfigPath, JSON.stringify(cfg, null, 2), "utf8");
+      const channel = new TelegramChannel({
+        runtime: fakeRuntime(),
+        config: makeConfig(dir, ownerUserId),
+        token: "1234:abcdef",
+        logger: new StructuredLogger({
+          level: "debug",
+          sinks: [(record) => void records.push(record)],
+        }),
+        botFactory: factory,
+        lock: fakeLock().lock,
+        userConfigPath,
+        emitStatus: () => undefined,
+      });
+      return { channel, state };
+    }
+
+    it("hands a fresh 6-digit code to onOpened and claims nothing without it", async () => {
+      const records: LogRecord[] = [];
+      const { channel, state } = pairingChannel(null, records);
+      await channel.start();
+      let code = "";
+      let expiresAt = 0;
+      const pending = channel.startPairing(undefined, {
+        onOpened: (opened) => {
+          code = opened.code;
+          expiresAt = opened.expiresAt;
+        },
+      });
+      expect(code).toMatch(/^\d{6}$/);
+      // Five minutes by default.
+      expect(expiresAt - Date.now()).toBeGreaterThan(4 * 60_000);
+
+      const wrong = code === "000000" ? "111111" : "000000";
+      for (const text of ["hello", "/start", `/start ${wrong}`, code]) {
+        await state.textHandler!({
+          from: { id: 666, username: "stranger" },
+          chat: { id: 666, type: "private" },
+          text,
+          message_id: 1,
+        });
+      }
+      expect(channel.pairingState().active).toBe(true);
+      expect(channel.getOwnerUserId()).toBeNull();
+
+      await state.textHandler!({
+        from: { id: 777, username: "new_owner" },
+        chat: { id: 555, type: "private" },
+        text: `/start ${code}`,
+        message_id: 2,
+      });
+      const outcome = await pending;
+      expect(outcome!.claim).toEqual({ userId: 777, chatId: 555, username: "new_owner" });
+      expect(channel.getOwnerUserId()).toBe(777);
+      expect(records.map((r) => r.message)).toContain(
+        "telegram: pairing attempt with a wrong code ignored",
+      );
+      // The code is never logged, not even on the claim.
+      const logged = JSON.stringify(
+        records.map((record) => [record.message, record.context ?? null]),
+      );
+      expect(logged).not.toContain(code);
+    });
+
+    it("refuses to replace a paired owner without the operator's confirmation", async () => {
+      const { channel } = pairingChannel(42);
+      await channel.start();
+      const onOpened = vi.fn();
+      await expect(channel.startPairing(60_000, { onOpened })).rejects.toBeInstanceOf(
+        OwnerAlreadyPairedError,
+      );
+      expect(onOpened).not.toHaveBeenCalled();
+      expect(channel.pairingState().active).toBe(false);
+      expect(channel.getOwnerUserId()).toBe(42);
+    });
+
+    it("replaces a paired owner once confirmed, and only with the code", async () => {
+      const { channel, state } = pairingChannel(42);
+      await channel.start();
+      let code = "";
+      const pending = channel.startPairing(60_000, {
+        replaceOwner: true,
+        onOpened: (opened) => {
+          code = opened.code;
+        },
+      });
+      await state.textHandler!({
+        from: { id: 777 },
+        chat: { id: 777, type: "private" },
+        text: `/start@test_bot ${code}`,
+        message_id: 1,
+      });
+      const outcome = await pending;
+      expect(outcome!.claim).toEqual({ userId: 777, chatId: 777, username: null });
+      expect(channel.getOwnerUserId()).toBe(777);
+    });
   });
 
   it("getParseMode reflects the value seeded from config at construction", () => {

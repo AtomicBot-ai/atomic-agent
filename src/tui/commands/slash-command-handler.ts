@@ -9,7 +9,7 @@ import { normalizeLocalLlmBaseUrl } from "../persist-user-local-models-config.js
 import { isThemeName, THEME_NAMES } from "../theme/theme.js";
 import { parseRunModeCommand } from "./dispatch-run-mode.js";
 import { parseSlashCommand } from "./slash-command-parser.js";
-import { resolveSlashCommand, SLASH_COMMANDS } from "./slash-commands.js";
+import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 
@@ -19,6 +19,7 @@ export interface SlashDispatchCallbacks {
 }
 
 export interface SlashDispatchResult {
+  readonly skillInvocation?: { name: string; input: string };
   readonly modelModeCommand?: ModelModeCommand;
   /**
    * Reducer actions the caller should dispatch in order. Empty when the
@@ -28,6 +29,17 @@ export interface SlashDispatchResult {
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
   readonly compactionVerb?: "run" | "show";
+  /**
+   * `/enhance <text>`: the draft to rewrite. The buffer is left holding
+   * the draft itself, and the caller hands the rewrite back to it.
+   */
+  readonly enhancePromptText?: string;
+  /**
+   * Bare `/enhance` (typed, from the palette or from the menu): enhance
+   * whatever draft the composer holds, if it holds one. Only the caller
+   * can see the composer, so it decides; the buffer is never cleared.
+   */
+  readonly enhanceCurrentDraft?: boolean;
   /** When true the editor buffer should be cleared after dispatch. */
   readonly clearBuffer: boolean;
   /** When true the caller should invoke `onAbort`. */
@@ -68,6 +80,7 @@ export interface SlashDispatchResult {
   readonly skillHubInstallId?: string;
   readonly localModelsPullModelId?: string;
   readonly localModelsUseModelId?: string;
+  readonly localModelsEngine?: "atomic-core" | "llama-server";
   readonly triggerLocalModelsStatus?: boolean;
   /**
    * Theme name the caller should activate via `setActiveTheme` before
@@ -153,7 +166,7 @@ export interface SlashDispatchResult {
  * the caller makes the handler unit-testable and lets the reducer stay
  * pure.
  */
-export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
+export function dispatchSlashCommand(buffer: string, skills: readonly SlashCommandDef[] = []): SlashDispatchResult {
   const parsed = parseSlashCommand(buffer);
   if (parsed === null) {
     return {
@@ -172,7 +185,7 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       persistLlamaUrl: undefined,
     };
   }
-  const resolved = resolveSlashCommand(parsed.name);
+  const resolved = resolveSlashCommand(parsed.name, skills);
   if (resolved === null) {
     return {
       actions: [],
@@ -190,6 +203,9 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       forwardAsMessage: false,
       persistLlamaUrl: undefined,
     };
+  }
+  if (resolved.skillName) {
+    return pureActions([], { skillInvocation: { name: resolved.skillName, input: parsed.args } });
   }
   switch (resolved.name) {
     case "report":
@@ -247,6 +263,15 @@ export function dispatchSlashCommand(buffer: string): SlashDispatchResult {
       return parsed.args === "" || parsed.args === "show"
         ? pureActions([], { compactionVerb: parsed.args === "show" ? "show" : "run" })
         : pureActions([], { systemMessage: "Usage: /compact [show]" });
+    case "enhance":
+      // Opt-in and never sends: the draft goes back into the composer
+      // right away, and the rewrite replaces it there for review.
+      return parsed.args === ""
+        ? pureActions([], { enhanceCurrentDraft: true, clearBuffer: false })
+        : pureActions([{ type: "input_changed", value: parsed.args }], {
+            enhancePromptText: parsed.args,
+            clearBuffer: false,
+          });
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
     case "chat":
@@ -470,6 +495,9 @@ function dispatchModeSub(args: string): SlashDispatchResult {
   return pureActions([{ type: "coding_mode_cycled", mode: match }]);
 }
 
+export const ENHANCE_USAGE =
+  "Usage: /enhance <your prompt>, or type a prompt and pick Enhance prompt from the menu. Rewrites it in the composer for you to review; nothing is sent.";
+
 function pureActions(
   actions: readonly TuiAction[],
   overrides: Partial<
@@ -622,6 +650,12 @@ function dispatchModelsSub(
       ]),
       localModelsUseModelId: bits[1],
     };
+  }
+  if (bits[0] === "engine") {
+    if (bits[1] !== "atomic-core" && bits[1] !== "llama-server") {
+      return pureActions([], { systemMessage: "usage: /model engine <engine> (stop models first)" });
+    }
+    return { ...pureActions([]), localModelsEngine: bits[1] };
   }
   if (bits[0] === "status") {
     return pureActions([], { triggerLocalModelsStatus: true });

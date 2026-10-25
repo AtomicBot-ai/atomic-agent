@@ -32,9 +32,35 @@ export class EmbeddingUnavailableError extends Error {
   }
 }
 
+/**
+ * What a text is embedded for. Models trained with task prompts
+ * (EmbeddingGemma 2) need a different prefix for a stored document, a
+ * search query and a symmetric similarity check; models without
+ * prompts ignore it.
+ */
+export type EmbeddingPurpose = "query" | "document" | "similarity";
+
+/** Per-purpose prefixes a model card prescribes, prepended to the text. */
+export type EmbeddingPrompts = Readonly<Record<EmbeddingPurpose, string>>;
+
 export interface EmbedRequest {
   text: string;
   signal?: AbortSignal;
+  /** Unset: the text is sent as is, whatever the model's prompts. */
+  purpose?: EmbeddingPurpose;
+}
+
+/**
+ * The input a client sends for `req`: the purpose's prefix plus the
+ * text when the model has prompts and the caller named a purpose,
+ * otherwise the text unchanged.
+ */
+export function promptedEmbeddingText(
+  req: Pick<EmbedRequest, "text" | "purpose">,
+  prompts: EmbeddingPrompts | undefined,
+): string {
+  if (!prompts || !req.purpose) return req.text;
+  return `${prompts[req.purpose]}${req.text}`;
 }
 
 export interface EmbedResult {
@@ -96,6 +122,14 @@ export interface LlamaEmbeddingClientOptions {
    * `authorization` header.
    */
   getApiKey?: () => string | null | undefined;
+  /**
+   * Asked once when the daemon answers 401: its current key, or `null`.
+   * A different key replays the request once (a managed Core session
+   * whose key changed under the record, ATO-837).
+   */
+  refreshApiKey?: () => Promise<string | null>;
+  /** The model's task prompts (`EmbeddingModelDef.prompts`), applied per request purpose. */
+  prompts?: EmbeddingPrompts;
 }
 
 /**
@@ -109,6 +143,8 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
   private readonly timeoutMs: number;
   private readonly fetchFn: typeof fetch;
   private readonly getApiKey: () => string | null | undefined;
+  private readonly refreshApiKey: (() => Promise<string | null>) | undefined;
+  private readonly prompts: EmbeddingPrompts | undefined;
 
   constructor(opts: LlamaEmbeddingClientOptions) {
     if (!Number.isInteger(opts.dim) || opts.dim <= 0) {
@@ -122,6 +158,8 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.fetchFn = opts.fetch ?? globalThis.fetch;
     this.getApiKey = opts.getApiKey ?? (() => null);
+    this.refreshApiKey = opts.refreshApiKey;
+    this.prompts = opts.prompts;
   }
 
   async embed(req: EmbedRequest): Promise<EmbedResult> {
@@ -134,20 +172,25 @@ export class LlamaEmbeddingClient implements EmbeddingClient {
       };
       const apiKey = this.getApiKey();
       if (apiKey) headers.authorization = `Bearer ${apiKey}`;
-      const res = await this.fetchFn(`${this.url}/embedding`, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ content: req.text }),
-        signal,
-      });
+      const body = JSON.stringify({ content: promptedEmbeddingText(req, this.prompts) });
+      const send = () => this.fetchFn(`${this.url}/embedding`, { method: "POST", headers, body, signal });
+      let res = await send();
+      if (res.status === 401 && this.refreshApiKey) {
+        const fresh = await this.refreshApiKey().catch(() => null);
+        if (fresh && headers.authorization !== `Bearer ${fresh}`) {
+          // The refused reply is not read; let its connection go.
+          void res.body?.cancel().catch(() => undefined);
+          headers.authorization = `Bearer ${fresh}`;
+          res = await send();
+        }
+      }
       if (!res.ok) {
         const txt = await res.text().catch(() => "(no body)");
         throw new EmbeddingUnavailableError(
           `embedding daemon returned HTTP ${res.status}: ${txt.slice(0, 200)}`,
         );
       }
-      const body = (await res.json()) as unknown;
-      const raw = extractEmbeddingArray(body);
+      const raw = extractEmbeddingArray((await res.json()) as unknown);
       if (!raw) {
         throw new EmbeddingUnavailableError(
           "embedding daemon response shape unrecognised",

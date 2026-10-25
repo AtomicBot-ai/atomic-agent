@@ -412,6 +412,42 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records llama-server's stop_type on llm_completion (ATO-329)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-stop", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "llm_raw_completion",
+        stepIndex: 0,
+        attempt: 1,
+        completion: {
+          content: "{",
+          reasoningContent: "",
+          stop: true,
+          truncated: true,
+          stopType: "limit",
+          finishReason: "length",
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "demo",
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 10,
+            predictedTokens: 512,
+          },
+        },
+      },
+    });
+    expect(events.find((e) => e.type === "llm_completion")).toMatchObject({
+      truncated: true,
+      stopType: "limit",
+    });
+  });
+
   it("records a batch trim with the calls that never ran", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-trim", emit, now });
@@ -874,6 +910,25 @@ describe("createTraceRecorder", () => {
     expect(recorded[0]).not.toHaveProperty("requestedMaxTokens");
   });
 
+  it("records that a cut reply was a loop (ATO-331)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trunc-loop", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 2,
+      cause: "unknown",
+      completionTokens: 0,
+      promptTokens: 0,
+      requestedMaxTokens: 16_384,
+      repetitive: true,
+      retry: { kind: "same_cap", maxTokens: 16_384 },
+    });
+    expect(
+      events.find((e) => e.type === "completion_truncated"),
+    ).toMatchObject({ repetitive: true, retry: "same_cap" });
+  });
+
   it("records a truncation retry with its cause, counts and the retry taken", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-trunc", emit, now });
@@ -896,6 +951,15 @@ describe("createTraceRecorder", () => {
       requestedMaxTokens: 8_192,
       retry: { kind: "fit_window", contextWindow: 32_768 },
     });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 7,
+      cause: "reply_cap",
+      completionTokens: 64_000,
+      promptTokens: 40_000,
+      requestedMaxTokens: 64_000,
+      retry: { kind: "same_cap", maxTokens: 64_000 },
+    });
     const recorded = events.filter((e) => e.type === "completion_truncated");
     expect(recorded).toEqual([
       expect.objectContaining({
@@ -914,6 +978,11 @@ describe("createTraceRecorder", () => {
         cause: "context_window",
         retry: "fit_window",
         retryValue: 32_768,
+      }),
+      expect.objectContaining({
+        stepIndex: 7,
+        retry: "same_cap",
+        retryValue: 64_000,
       }),
     ]);
   });

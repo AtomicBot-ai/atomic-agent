@@ -4,6 +4,7 @@ import {
   etaCorrection,
   fanoutExpectation,
   formatFusionLiveWorker,
+  isFusionWorkerStuck,
   reduceFusionLiveWorkers,
   type FusionLiveWorker,
 } from "./fusion-live-workers.js";
@@ -292,5 +293,143 @@ describe("a leg the orchestrator never estimated", () => {
   it("says nothing until a sibling has finished", () => {
     const out = formatFusionLiveWorker(running, 60_000, fanoutExpectation([]));
     expect(out).toBe("worker 2 · qwen — working · 1m00s");
+  });
+});
+
+describe("a leg that needs interrupting", () => {
+  const running = (over: Record<string, unknown> = {}) =>
+    ({
+      taskId: "t1",
+      title: "worker 1",
+      model: "qwen-3.5-4b",
+      tool: "os.fs.write",
+      done: false,
+      startedAt: 0,
+      finishedAt: null,
+      etaSeconds: 120,
+      contextTokens: null,
+      ...over,
+    }) as FusionLiveWorker;
+
+  it("is late one expectation in and not stuck yet", () => {
+    expect(isFusionWorkerStuck(running(), 3 * 60_000)).toBe(false);
+    expect(formatFusionLiveWorker(running(), 3 * 60_000)).toContain(
+      "(past the ~2m00s expected)",
+    );
+    expect(formatFusionLiveWorker(running(), 3 * 60_000)).not.toContain(
+      "stuck",
+    );
+  });
+
+  it("is flagged once it passes twice its expectation", () => {
+    // The field case from #542: a 2m estimate at nineteen minutes. The
+    // reader should not have to do the comparison.
+    expect(isFusionWorkerStuck(running(), 19 * 60_000)).toBe(true);
+    const row = formatFusionLiveWorker(running(), 19 * 60_000);
+    expect(row).toContain("stuck");
+    // Still shows what it was expected to take, so the flag can be
+    // judged rather than just obeyed.
+    expect(row).toContain("past the ~2m00s expected");
+  });
+
+  it("judges against the corrected expectation, not the raw estimate", () => {
+    // Correction 5 puts the expectation at ten minutes, so nineteen is
+    // late but not stuck: the estimate was wrong, the leg is not.
+    expect(isFusionWorkerStuck(running(), 19 * 60_000, 5)).toBe(false);
+    expect(isFusionWorkerStuck(running(), 21 * 60_000, 5)).toBe(true);
+  });
+
+  it("uses the wave's median when the orchestrator estimated nothing", () => {
+    const unestimated = running({ etaSeconds: null });
+    const measured = fanoutExpectation([
+      {
+        ...unestimated,
+        taskId: "t2",
+        title: "worker 2",
+        tool: null,
+        done: true,
+        finishedAt: 840_000,
+      },
+      {
+        ...unestimated,
+        taskId: "t3",
+        title: "worker 3",
+        tool: null,
+        done: true,
+        finishedAt: 900_000,
+      },
+    ]);
+    expect(isFusionWorkerStuck(unestimated, 60_000, measured)).toBe(false);
+    expect(isFusionWorkerStuck(unestimated, 29 * 60_000, measured)).toBe(true);
+  });
+
+  it("does not flag off a single finished sibling", () => {
+    // The fan-out the flag would have got wrong: the orchestrator
+    // estimated nothing, and the first leg out was a thirty-second
+    // lookup. Twice thirty seconds is a minute, so without this floor
+    // every remaining leg of the wave would have been told to cancel
+    // itself.
+    const unestimated = running({ etaSeconds: null });
+    const fast = {
+      ...unestimated,
+      taskId: "t2",
+      title: "worker 2",
+      tool: null,
+      done: true,
+      finishedAt: 30_000,
+    };
+    const measured = fanoutExpectation([fast]);
+    expect(isFusionWorkerStuck(unestimated, 29 * 60_000, measured)).toBe(false);
+    expect(
+      formatFusionLiveWorker(unestimated, 29 * 60_000, measured),
+    ).not.toContain("stuck");
+    // The row still shows what it is being compared against, so the
+    // absence of the flag can be judged rather than just obeyed.
+    expect(
+      formatFusionLiveWorker(unestimated, 29 * 60_000, measured),
+    ).toContain("past the ~30s expected");
+    // A second sibling ends the doubt: the median is a median again.
+    const twoSiblings = fanoutExpectation([
+      fast,
+      { ...fast, taskId: "t3", finishedAt: 14 * 60_000 },
+    ]);
+    expect(isFusionWorkerStuck(unestimated, 29 * 60_000, twoSiblings)).toBe(
+      true,
+    );
+  });
+
+  it("waits out the floor when a good estimate says sooner", () => {
+    // A 1m estimate blown to 2m30s clears the multiple twice over, and
+    // is still half a minute short of "go and cancel this".
+    const quick = running({ etaSeconds: 60 });
+    expect(isFusionWorkerStuck(quick, 150_000)).toBe(false);
+    expect(formatFusionLiveWorker(quick, 150_000)).not.toContain("stuck");
+    expect(formatFusionLiveWorker(quick, 150_000)).toContain(
+      "past the ~1m00s expected",
+    );
+    expect(isFusionWorkerStuck(quick, 3 * 60_000)).toBe(true);
+  });
+
+  it("has no opinion with no expectation at all", () => {
+    const unestimated = running({ etaSeconds: null });
+    expect(isFusionWorkerStuck(unestimated, 60 * 60_000)).toBe(false);
+    expect(
+      isFusionWorkerStuck(unestimated, 60 * 60_000, fanoutExpectation([])),
+    ).toBe(false);
+  });
+
+  it("is never stuck once the leg is done", () => {
+    // Nineteen minutes well spent is a slow leg, not a stuck one.
+    const finished = running({ done: true, finishedAt: 19 * 60_000 });
+    expect(isFusionWorkerStuck(finished, 19 * 60_000)).toBe(false);
+    expect(formatFusionLiveWorker(finished, 19 * 60_000)).not.toContain("stuck");
+  });
+
+  it("keeps the flag before the context count, which truncates first", () => {
+    const row = formatFusionLiveWorker(
+      running({ contextTokens: 123_456 }),
+      19 * 60_000,
+    );
+    expect(row.indexOf("stuck")).toBeLessThan(row.indexOf("ctx"));
   });
 });

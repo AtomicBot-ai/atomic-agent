@@ -32,6 +32,16 @@ function apply(state: TuiState, actions: TuiAction[]): TuiState {
   return actions.reduce(reduceTuiState, state);
 }
 
+describe("reduceTuiState tool progress", () => {
+  it("puts a long tool's progress line in the feed", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [{
+      type: "agent_event",
+      event: { type: "tool_progress", tool: "video.generate", fraction: 0.4, elapsedMs: 50_000, label: "making the video with google/veo-3.1-fast · about 40% · 0:50 elapsed" },
+    }]);
+    expect(state.feed.map((f) => f.line)).toEqual(["» video.generate: making the video with google/veo-3.1-fast · about 40% · 0:50 elapsed"]);
+  });
+});
+
 describe("reduceTuiState fusion worker progress", () => {
   const feedLines = (
     events: Parameters<typeof reduceTuiState>[1][],
@@ -301,6 +311,68 @@ describe("reduceTuiState", () => {
     expect(next.status).toBe("running");
   });
 
+  describe("full command view (ATO-876)", () => {
+    const script = Array.from({ length: 30 }, (_, i) => `echo line-${i + 1}`);
+    const request = {
+      approvalId: "a-1",
+      sessionId: "s-1",
+      tool: "os.shell.exec",
+      category: "shell" as const,
+      reason: "dangerous shell command",
+      preview: script.join("\n"),
+    };
+    const raised = (): TuiState =>
+      apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: "s-1" },
+        { type: "approval_requested", request },
+      ]);
+
+    it("pages through the whole command and back to the excerpt", () => {
+      let state = raised();
+      expect(state.approvalPreviewPage).toBeNull();
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toEqual({ approvalId: "a-1", page: 0 });
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toEqual({ approvalId: "a-1", page: 1 });
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toBeNull();
+    });
+
+    it("has nothing to page when the preview fits", () => {
+      const state = apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: "s-1" },
+        {
+          type: "approval_requested",
+          request: { ...request, preview: "echo hi\nrm -rf out" },
+        },
+        { type: "approval_preview_paged" },
+      ]);
+      expect(state.approvalPreviewPage).toBeNull();
+    });
+
+    it("starts a new prompt on its excerpt and forgets the page on resolve", () => {
+      const paged = reduceTuiState(raised(), { type: "approval_preview_paged" });
+      const resolved = reduceTuiState(paged, {
+        type: "approval_resolved",
+        approvalId: "a-1",
+        approved: false,
+      });
+      expect(resolved.approvalPreviewPage).toBeNull();
+      const next = reduceTuiState(paged, {
+        type: "approval_requested",
+        request: { ...request, approvalId: "a-2" },
+      });
+      expect(next.approvalPreviewPage).toBeNull();
+    });
+
+    it("does nothing with no prompt up", () => {
+      const initial = createInitialTuiState(fakeSession());
+      expect(reduceTuiState(initial, { type: "approval_preview_paged" })).toBe(
+        initial,
+      );
+    });
+  });
+
   it("should ignore resolve for unknown approvalId", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = reduceTuiState(initial, {
@@ -550,7 +622,9 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text).toBe(withReportHint("Turn failed [tool]: boom"));
+    expect(errMsg?.text).toBe(
+      withReportHint("Turn failed: a tool call failed.\nDetails: boom"),
+    );
   });
 
   it("names the primary's failure in the chat line when the fallback chain fell over first", () => {
@@ -576,9 +650,10 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text.split("\n")[0]).toBe(
-      'Turn failed [transport]: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
-    );
+    expect(errMsg?.text.split("\n").slice(0, 2)).toEqual([
+      "Turn failed: couldn't get a reply from the provider.",
+      'Details: fetch failed (after "openrouter" failed: openai provider 404: No endpoints found for z-ai/glm-5.3-flash.)',
+    ]);
   });
 
   it("renders a calm stopped-by-user notice with a retry prompt on a cancelled loop_failed", () => {
@@ -659,7 +734,9 @@ describe("reduceTuiState", () => {
       (m) => m.role === "system" && m.variant === "warn",
     );
     expect(warn?.text).toBe(
-      withReportHint("Turn failed [model]: model returned empty content"),
+      withReportHint(
+        "Turn failed: the model didn't give a usable answer.\nDetails: model returned empty content",
+      ),
     );
   });
 
@@ -810,6 +887,49 @@ describe("reduceTuiState", () => {
     expect(notice?.retryText).toBeUndefined();
   });
 
+  it("carries the failed turn's request as retryText on the Turn failed notice", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      {
+        type: "agent_event",
+        event: { type: "user_message", text: "count the stars" },
+      },
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    expect(next.runHistory[0]?.outcome).toBe("failed");
+    const notice = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(notice?.text).toContain("Turn failed");
+    expect(notice?.retryText).toBe("count the stars");
+  });
+
+  it("leaves retryText off the Turn failed notice when no user message exists to re-run", () => {
+    const next = apply(createInitialTuiState(fakeSession()), [
+      { type: "message_submitted" },
+      {
+        type: "agent_event",
+        event: {
+          type: "loop_failed",
+          error: new Error("fetch failed"),
+          category: "transport",
+        },
+      },
+    ]);
+    const notice = next.messages.find(
+      (m) => m.role === "system" && m.variant === "warn",
+    );
+    expect(notice).toBeDefined();
+    expect(notice?.retryText).toBeUndefined();
+  });
+
   it("appends the llama hint on transport failure for a custom-id llama-server route", () => {
     const initial = createInitialTuiState(fakeSession());
     const next = apply(initial, [
@@ -880,7 +1000,9 @@ describe("reduceTuiState", () => {
     // would assert a reply was cut off on a turn that may have completed
     // zero steps.
     expect(errMsg?.text).toBe(
-      withReportHint("Turn failed [transport]: fetch failed"),
+      withReportHint(
+        "Turn failed: couldn't get a reply from the provider.\nDetails: fetch failed",
+      ),
     );
   });
 
@@ -913,7 +1035,9 @@ describe("reduceTuiState", () => {
     const errMsg = next.messages.find(
       (m) => m.role === "system" && m.variant === "warn",
     );
-    expect(errMsg?.text).toContain("Turn failed [transport]: terminated");
+    expect(errMsg?.text).toContain(
+      "Turn failed: couldn't get a reply from the provider.\nDetails: terminated",
+    );
     expect(errMsg?.text).toContain(
       "the connection to the model dropped before the reply finished",
     );
@@ -1435,6 +1559,26 @@ describe("truncated completion", () => {
     expect(next.feed.at(-1)?.color).toBe("yellow");
   });
 
+  it("says the model looped when a repetitive reply is retried (ATO-414)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 1,
+        cause: "unknown",
+        completionTokens: 0,
+        promptTokens: 0,
+        requestedMaxTokens: 16_384,
+        repetitive: true,
+        retry: { kind: "same_cap", maxTokens: 16_384 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("kept repeating the same text");
+    expect(line).toContain("step 2");
+    expect(line).not.toContain("\u2014");
+  });
+
   it("says no cap was sent when the provider stopped at its own limit", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), {
       type: "agent_event",
@@ -1451,6 +1595,25 @@ describe("truncated completion", () => {
     expect(line).toContain("reply cut off at 33678 tokens (no cap sent)");
     expect(line).toContain("32768-token cap");
     expect(line).not.toContain("undefined");
+  });
+
+  it("says the cap is held and a shorter reply asked for on a same-cap retry", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 2,
+        cause: "reply_cap",
+        completionTokens: 64_000,
+        promptTokens: 40_000,
+        requestedMaxTokens: 64_000,
+        retry: { kind: "same_cap", maxTokens: 64_000 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("reply cut off at 64000 tokens (cap 64000)");
+    expect(line).toContain("step 3 with a 64000-token cap");
+    expect(line).toContain("shorter reply");
   });
 
   it("explains a size-rejection repack in the operator's terms (F30)", () => {
@@ -1570,6 +1733,32 @@ describe("profile clip", () => {
     expect(row?.line).toBe(
       "» profile: 67 facts left out of the prompt (48 pinned) — memory.profile.maxTokens 512 is too small",
     );
+  });
+});
+
+describe("history trimmed (ATO-295)", () => {
+  it("tells the chat that older messages were left out and how to summarize them", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s1",
+      event: { type: "history_trimmed", stepIndex: 2, droppedMessages: 14, droppedTurns: 3, boundBy: "tokens" },
+    });
+    const last = next.messages.at(-1);
+    expect(last?.role).toBe("system");
+    expect(last?.text).toBe(
+      "Older messages were left out to fit the model's context. Use /compact to summarize them instead.",
+    );
+  });
+
+  it("does not paint a background session's trim into the chat on screen", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const next = reduceTuiState(initial, {
+      type: "agent_event",
+      sessionId: "s2",
+      event: { type: "history_trimmed", stepIndex: 2, droppedMessages: 14, droppedTurns: 3, boundBy: "pairs" },
+    });
+    expect(next.messages).toEqual(initial.messages);
   });
 });
 
@@ -2299,7 +2488,9 @@ describe("a parked turn in the chat", () => {
     ]);
     const failure = systemTexts(next).at(-1) ?? "";
     expect(failure.startsWith("Stopped waiting for the model (wait budget 5 min")).toBe(true);
-    expect(failure).toContain("Turn failed [transport]: fetch failed");
+    expect(failure).toContain(
+      "Turn failed: couldn't get a reply from the provider.\nDetails: fetch failed",
+    );
   });
 
   it("a background thread's park lands in its own thread; the visible one gets a pointer", () => {
@@ -2406,4 +2597,43 @@ it("shows a waiting message immediately and consumes the runtime echo only once"
   expect(state.messages.filter(m=>m.role==="user")).toHaveLength(2);
   const unchanged = reduceTuiState(state,{type:"message_waiting_for_model",sessionId:"other",text:"not here"});
   expect(unchanged).toBe(state);
+});
+
+describe("reduceTuiState composer_draft_replaced", () => {
+  it("puts the rewrite in the composer while it still holds the draft", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("Fix the login bug.");
+    expect(state.composerNotice).toContain("Review it");
+  });
+
+  it("says so when the rewrite matches the draft", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "Fix the login bug." },
+      { type: "composer_draft_replaced", expected: "Fix the login bug.", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("Fix the login bug.");
+    expect(state.composerNotice).toContain("already reads clearly");
+  });
+
+  it("says the draft was sent when the composer is empty", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login" },
+      { type: "input_changed", value: "" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("");
+    expect(state.composerNotice).toContain("sent or cleared");
+  });
+
+  it("keeps an edit made while the rewrite ran", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login, and the logout" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("fix login, and the logout");
+    expect(state.composerNotice).toContain("not applied");
+  });
 });

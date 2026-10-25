@@ -8,6 +8,11 @@ import {
 } from "../render/tool-args-preview.js";
 import { theme } from "../theme/theme.js";
 import type { StreamingToolCall, ToolCardEntry } from "../tui-state.js";
+import { ToolCardPathChip, toolCardFilePath } from "./tool-card-path-chip.js";
+import {
+  annotationTail,
+  toolCardsAnnotationParts,
+} from "./tool-cards-annotation.js";
 
 interface ToolCardProps {
   card: ToolCardEntry | StreamingToolCall;
@@ -36,7 +41,8 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
     isFinalised && card.finishedAt
       ? `${card.finishedAt - card.startedAt}ms`
       : "…";
-  const header = (
+  const filePath = isFinalised ? toolCardFilePath(card) : null;
+  const toggle = (
     <ExpandToggle cardId={card.id}>
       <Text>
         <Text color={color}>
@@ -62,6 +68,20 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
       </Text>
     </ExpandToggle>
   );
+  // A finished read / write / edit card carries `[copy path]` on the
+  // header row, as a sibling of the expand toggle rather than inside its
+  // `Text` (a nested target gets no hit box of its own).
+  const header =
+    filePath === null ? (
+      toggle
+    ) : (
+      <Box flexDirection="row">
+        <Box flexShrink={1} minWidth={0}>
+          {toggle}
+        </Box>
+        <ToolCardPathChip path={filePath} />
+      </Box>
+    );
   if (!expanded) {
     return (
       <Box flexDirection="column" marginBottom={1}>
@@ -94,6 +114,45 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
           <Text color={theme.colors.muted}>(pending)</Text>
         )}
       </Box>
+    </Box>
+  );
+}
+
+/**
+ * The one-line gist under a finished turn's tool cards — "read 3 files,
+ * ran 2 commands · 1 failed". Exactly one row or nothing: the work list
+ * is `wrap="truncate-end"` and the only part that shrinks, so Yoga cuts
+ * it to whatever the chat column has (83 cells in a 120-column terminal,
+ * less beside a wide rail) while the failure / unfinished count beside
+ * it never shrinks and survives a narrow terminal. `estimateMessageHeight`
+ * charges the same row off the same `toolCardsAnnotationParts` answer.
+ */
+export function ToolCardsAnnotationLine({
+  cards,
+}: {
+  cards: readonly ToolCardEntry[];
+}): ReactElement | null {
+  const parts = toolCardsAnnotationParts(cards);
+  if (parts === null) return null;
+  const tail = annotationTail(parts);
+  const lead = theme.glyphs.dotSeparator;
+  return (
+    <Box flexDirection="row" height={1} overflow="hidden">
+      {parts.done.length > 0 ? (
+        <Box flexShrink={1} minWidth={0}>
+          <Text color={theme.colors.muted} dimColor wrap="truncate-end">
+            {lead} {parts.done}
+          </Text>
+        </Box>
+      ) : null}
+      {tail.length > 0 ? (
+        <Box flexShrink={0}>
+          <Text color={theme.colors.muted} dimColor wrap="truncate-end">
+            {parts.done.length > 0 ? ` ${lead} ` : `${lead} `}
+            {tail}
+          </Text>
+        </Box>
+      ) : null}
     </Box>
   );
 }

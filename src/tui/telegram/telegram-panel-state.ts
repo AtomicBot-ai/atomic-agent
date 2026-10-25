@@ -9,7 +9,7 @@ import type { ChannelState } from "../../runtime/channel-status.js";
  * Modes:
  *  - `list`         — default surface: status rows + action hints.
  *  - `tokenPrompt`  — modal for entering a new bot token (no echo).
- *  - `pairingActive`— modal showing the 60s pairing countdown.
+ *  - `pairingActive`— modal showing the pairing countdown (5 minutes).
  *  - `pairingResult`— modal showing the claimed owner before auto-close.
  */
 export type TelegramPanelMode =
@@ -47,6 +47,8 @@ export interface TelegramPairingClaimedState {
   userId: number;
   /** DM chat id used to persist the new owner. */
   chatId: number;
+  /** The new owner's @username (without `@`), or `null` when none. */
+  username: string | null;
   /**
    * Whether the post-persistence welcome DM actually reached
    * Telegram. `false` when the channel restart between persistence

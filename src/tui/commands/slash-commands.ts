@@ -1,6 +1,7 @@
 import fuzzysort from "fuzzysort";
 
 import { toSlashCommands } from "../menu/menu-registry.js";
+import type { SkillsPanelState } from "../skills/skills-panel-state.js";
 
 export interface SlashCommandDef {
   /** Canonical command name (without leading `/`). */
@@ -9,6 +10,8 @@ export interface SlashCommandDef {
   readonly description: string;
   /** Optional aliases matched in parsing but not shown in palette. */
   readonly aliases?: readonly string[];
+  /** Present only for workspace catalog commands; never a built-in alias. */
+  readonly skillName?: string;
 }
 
 /**
@@ -29,16 +32,25 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = toSlashCommands().map(
     aliases ? { name, description, aliases } : { name, description },
 );
 
+/** Cloud-only projection. Built-in names and aliases always keep their meaning. */
+export function skillSlashCommands(panel: SkillsPanelState): readonly SlashCommandDef[] {
+  if (!panel.workspace) return [];
+  return panel.rows
+    .filter(row => !row.disabled && resolveSlashCommand(row.name) === null)
+    .map(row => ({ name: row.name, description: row.description, skillName: row.name }));
+}
+
 /**
  * Filter the registry by a slash query (the characters typed after `/`).
  * Empty queries return the full list. Non-empty queries are scored via
  * fuzzysort against the name and aliases, preserving registry order on
  * ties.
  */
-export function filterSlashCommands(query: string): readonly SlashCommandDef[] {
+export function filterSlashCommands(query: string, skills: readonly SlashCommandDef[] = []): readonly SlashCommandDef[] {
+  const commands = skills.length ? [...SLASH_COMMANDS, ...skills] : SLASH_COMMANDS;
   const q = query.trim().toLowerCase();
-  if (q.length === 0) return SLASH_COMMANDS;
-  const scored = SLASH_COMMANDS.map((cmd, idx) => {
+  if (q.length === 0) return commands;
+  const scored = commands.map((cmd, idx) => {
     const candidates = [cmd.name, ...(cmd.aliases ?? [])];
     const scores = candidates.map(
       (candidate) => fuzzysort.single(q, candidate)?.score ?? -Infinity,
@@ -53,11 +65,11 @@ export function filterSlashCommands(query: string): readonly SlashCommandDef[] {
 }
 
 /** Resolve an alias or canonical name to the registry entry. */
-export function resolveSlashCommand(name: string): SlashCommandDef | null {
+export function resolveSlashCommand(name: string, skills: readonly SlashCommandDef[] = []): SlashCommandDef | null {
   const needle = name.trim().toLowerCase();
   for (const cmd of SLASH_COMMANDS) {
     if (cmd.name === needle) return cmd;
     if (cmd.aliases?.includes(needle)) return cmd;
   }
-  return null;
+  return skills.find(cmd => cmd.name === needle) ?? null;
 }

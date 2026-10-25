@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { LinkifiedText } from "../render/linkify-text.js";
+import { closeStreamingMarkdown } from "../render/close-streaming-markdown.js";
 import { MarkdownRenderer } from "../render/markdown-renderer.js";
 import { fusionInk } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";
@@ -36,12 +36,13 @@ interface AssistantBubbleProps {
  * distinguishable by hue from the message that prompted it is a
  * transcript nobody can skim.
  *
- * Markdown rendering is gated on `!streaming`: partial markdown
- * (half-opened `**`, fenced block missing its closing ```, dangling
- * list marker) lexes into ugly literals that flicker as the stream
- * arrives. Plain text while streaming, markdown once finalised — but
- * the plain-text phase still routes through `LinkifiedText`, so a URL
- * is clickable the moment it appears, not only after the turn ends.
+ * Markdown renders while streaming too, through
+ * `closeStreamingMarkdown`: the unfinished end of the text gets its open
+ * `**`, `*`, `~~` and code spans closed and a half-written link shown as
+ * its label, so the reply never shows literal markers that switch to
+ * styling when the turn ends, and the layout does not jump. An open
+ * ``` fence needs no help: the lexer renders the rest as code. Bare URLs
+ * stay clickable while streaming through the renderer's own linkifier.
  */
 export function AssistantBubble({
   text,
@@ -70,13 +71,9 @@ export function AssistantBubble({
         paddingRight={1}
         flexDirection="column"
       >
-        {streaming ? (
-          <Text>
-            <LinkifiedText text={text} />
-          </Text>
-        ) : (
-          <MarkdownRenderer text={text} />
-        )}
+        <MarkdownRenderer
+          text={streaming ? closeStreamingMarkdown(text) : text}
+        />
         {files.length > 0 ? (
           <Box flexDirection="column" marginTop={1}>
             {files.map((path) => (

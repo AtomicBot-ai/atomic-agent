@@ -194,6 +194,37 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // Frequent tier, like vision.describe: "draw me a ..." must reach a
+    // valid call first time, and the summary carries the one step a
+    // model would otherwise skip (attaching the file to the reply).
+    // Offered only while an OpenRouter key is configured
+    // (`GATED_TOOLS.image`).
+    name: "image.generate",
+    summary:
+      "Generate pictures from a text prompt (cloud image model on OpenRouter via Atomic Chat Core; paid, so it may ask the user first). Saves image files in the working folder and returns their paths; to show them, pass the paths in reply.attachments. Write the prompt in English with subject, style, lighting and composition.",
+    argsSchema:
+      '{ prompt: string, size?: string /* square|landscape|portrait or 1:1|16:9|9:16|4:3|3:4|3:2|2:3; default square */, count?: number /* 1..4, default 1 */, seed?: number, model?: string /* OpenRouter image model id; omit for the default */ }',
+    examples: [
+      '{"prompt":"A red fox in a snowy birch forest at dawn, soft golden light, photorealistic"}',
+      '{"prompt":"Flat vector logo of a paper rocket, two colours","size":"square","count":2}',
+    ],
+  },
+  {
+    // Frequent tier beside image.generate, for the same reason: "make a
+    // video of ..." must reach a valid call first time and the summary
+    // carries the reply.attachments step. Offered only while an
+    // OpenRouter key is configured (`GATED_TOOLS.video`).
+    name: "video.generate",
+    summary:
+      "Generate a short video clip from a text prompt, optionally starting from an image file (cloud video model on OpenRouter via Atomic Chat Core; paid per second, so it asks the user first and takes one to a few minutes). Saves an .mp4 in the working folder and returns its path; to show it, pass the path in reply.attachments. If it answers that the model is busy, tell the user and ask which listed model to use; pass `model` only when the user names one. Write the prompt in English: subject, action, camera movement, style, sound.",
+    argsSchema:
+      '{ prompt: string, image?: string /* path of a png|jpg|webp first frame */, duration?: number /* seconds; default 4; the default model takes 4|6|8 */, aspect?: string /* 16:9|9:16 or landscape|portrait; default 16:9 */, resolution?: string /* 720p|1080p|4K; omit for the model default */, audio?: boolean, seed?: number, model?: string /* OpenRouter video model id; omit for the default */ }',
+    examples: [
+      '{"prompt":"A red fox trotting through a snowy birch forest at dawn, slow tracking shot, soft golden light"}',
+      '{"prompt":"The rocket lifts off and flies out of frame","image":"rocket.png","duration":6,"aspect":"9:16"}',
+    ],
+  },
+  {
     // MCP discovery / resource / prompt tools. The actual MCP tool
     // calls themselves come from the dynamic descriptor builder
     // (see `mcp-descriptor-builder.ts`) and ship at tier `rare`.
@@ -241,7 +272,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // the fusion orchestrator gate lets it through (decision D1).
     name: "verify.syntax",
     summary:
-      "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces). Read-only. Reports a file with no checker as unchecked — never as passing.",
+      "Syntax-check files, one checker per file by extension (.js/.json in-process then node --check, .ts via the project's tsc, .py, .sh, .html inline scripts + a warning for content after </html>, .css braces, .go/.rb/.php/.lua/.zsh via their own parse-only tool when installed). Read-only. Reports a file with no checker as unchecked, never as passing.",
     argsSchema: "{ files: string[] }",
   },
   {
@@ -252,7 +283,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     // from a one-line manifest.
     name: "verify.run",
     summary:
-      "Run what was built against a throwaway copy of the working directory (nothing it writes reaches the workspace; may require approval). kind 'command': a test runner, compiler or script. kind 'service': start a server, wait for a port/url, send requests. kind 'page': a local HTML file or url in a headless browser — scripted input, then `seconds` of runtime with `probes` sampled; collects uncaught errors, console errors and failed getElementById/querySelector lookups. `checks` are assertions on the result. Default `network: false` (a soft proxy block, not a sandbox).",
+      "Run what was built against a throwaway copy of the working directory (nothing it writes reaches the workspace; may require approval). kind 'command': a test runner, compiler or script. kind 'service': start a server, wait for a port/url, send requests. kind 'page': a local HTML file or url in a headless browser (add `start` to serve the url first; the page opens once `ready` passes, by default when the url answers 2xx) — scripted input, then `seconds` of runtime with `probes` sampled; collects uncaught errors, console errors and failed getElementById/querySelector lookups. `checks` are assertions on the result. Default `network: false` (a soft proxy block, not a sandbox).",
     argsSchema:
       "{ kind: 'command' | 'service' | 'page', cmd?: string, args?: string[], start?: { cmd: string, args?: string[] }, ready?: { port?: number, url?: string, timeoutMs?: number }, requests?: [{ method?: string, path?: string, url?: string, body?: string, expectStatus?: number, expectBody?: string }], path?: string, url?: string, script?: [{ action: 'click' | 'key' | 'type' | 'wait', selector?: string, key?: string, text?: string, ms?: number }], seconds?: number /* page runtime, default 5 */, probes?: [{ name: string, expr: string /* JS expression */ }], checks?: string[] /* 'exit 0' | 'exit != 0' | 'stdout contains \"x\"' | 'stderr not contains \"x\"' | 'status 200' | 'no errors' | 'missing selectors 0' | 'probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>' */, cwd?: string, env?: Record<string,string>, timeoutMs?: number, network?: boolean }",
     examples: [

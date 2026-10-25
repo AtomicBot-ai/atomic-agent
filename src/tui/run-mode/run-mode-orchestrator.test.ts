@@ -83,6 +83,18 @@ describe("RunModeOrchestrator.setMode", () => {
     };
   }
 
+  it("Stop during a provider switch prevents Fusion from starting a local model afterward", async () => {
+    seed(BOTH_LEGS);
+    const app = harness();
+    let wanted = true;
+    let finish!: () => void;
+    app.setActive.mockImplementationOnce(() => new Promise(resolve => { finish = () => resolve({} as never); }));
+    const pending = app.orchestrator.setMode("fusion", { stillWanted: () => wanted });
+    wanted = false; finish(); await pending;
+    expect(app.deps.localModels.startDaemon).not.toHaveBeenCalled();
+    expect(app.deps.localModels.adoptDaemonForRoute).not.toHaveBeenCalled();
+  });
+
   it("fusion over a daemon that is already up adopts it instead of starting a second one", async () => {
     seed(BOTH_LEGS);
     const app = harness();
@@ -260,6 +272,7 @@ describe("RunModeOrchestrator.setMode", () => {
           id: "keyless",
           kind: "openai-compatible",
           baseUrl: "https://a.invalid",
+          apiKeyEnvVar: "ATOMIC_TEST_MISSING_KEY",
         },
         {
           id: "openrouter",
@@ -275,6 +288,51 @@ describe("RunModeOrchestrator.setMode", () => {
       "openrouter",
     );
     expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
+  });
+
+  it("skips an embedding-only entry when it picks the cloud leg (ATO-386)", async () => {
+    seed({
+      ...BOTH_LEGS,
+      providers: [
+        BOTH_LEGS!.providers[0]!,
+        {
+          id: "embed-only",
+          kind: "openai-compatible",
+          baseUrl: "https://a.invalid",
+          apiKey: "sk-test",
+          defaultEmbeddingModel: "nomic-embed-text",
+        },
+        BOTH_LEGS!.providers[1]!,
+      ],
+    });
+    const app = harness();
+    await app.orchestrator.setMode("fusion");
+    expect(getConfig().llm?.activeTextProvider).toBe("openrouter");
+    expect(app.setActive).toHaveBeenCalledWith("openrouter");
+  });
+
+  it("refuses a mode whose leg has no chat model before writing anything (ATO-386)", async () => {
+    seed({
+      ...BOTH_LEGS,
+      providers: [
+        BOTH_LEGS!.providers[0]!,
+        {
+          id: "embed-only",
+          kind: "openai-compatible",
+          baseUrl: "https://a.invalid",
+          defaultEmbeddingModel: "nomic-embed-text",
+        },
+      ],
+    });
+    const app = harness();
+    await app.orchestrator.setMode("cloud");
+    expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+    expect(app.setActive).not.toHaveBeenCalled();
+    expect(
+      app.actions.some(
+        (a) => a.type === "composer_notice" && /has no chat model/.test(a.text ?? ""),
+      ),
+    ).toBe(true);
   });
 
   it("introduces the mode in chat on the way in, once", async () => {

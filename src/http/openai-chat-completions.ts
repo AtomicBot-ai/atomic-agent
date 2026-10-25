@@ -9,7 +9,7 @@ import {
   type ProviderWaitCause,
   type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
-import { classifyFailure } from "../llm/reliability/index.js";
+import { LOCAL_ENGINE_DOWN_CODE, classifyFailure, isLocalEngineDown } from "../llm/reliability/index.js";
 import { readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
@@ -31,10 +31,12 @@ import {
   type SseWriter,
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
+import { maintenanceFrame } from "./stream-maintenance-frames.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
   buildStreamChunk,
+  buildUsageChunk,
   buildUsagePayload,
 } from "./openai-chunks.js";
 
@@ -61,12 +63,15 @@ interface ChatCompletionRequest {
   model?: string;
   messages?: Array<{ role?: string; content?: string }>;
   stream?: boolean;
+  stream_options?: { include_usage?: boolean };
   session_id?: string;
 }
 
 interface ParsedRequest {
   model: string;
   stream: boolean;
+  /** `stream_options.include_usage`: end the stream with a usage chunk. */
+  includeUsage: boolean;
   systemPrompt: string | null;
   userMessage: string;
   firstUserMessage: string;
@@ -101,6 +106,14 @@ export function createChatCompletionsHandler(): HttpHandler {
       session,
     });
   };
+}
+
+/**
+ * With `stream_options.include_usage`, OpenAI puts `usage: null` on every
+ * chunk before the final usage chunk; without it, chunks carry no field.
+ */
+function nullUsage(env: TurnEnv): { usage?: null } {
+  return env.request.includeUsage ? { usage: null } : {};
 }
 
 interface TurnEnv {
@@ -229,6 +242,7 @@ async function handleStream(
       created: env.created,
       model: env.request.model,
       delta: { role: "assistant" },
+      ...nullUsage(env),
     }),
   );
   if (env.request.extensionsEnabled) {
@@ -280,6 +294,7 @@ async function handleStream(
         created: env.created,
         model: env.request.model,
         finishReason: "stop",
+        ...nullUsage(env),
       }),
     );
     sse.writeRaw("data: [DONE]\n\n");
@@ -320,8 +335,20 @@ async function handleStream(
       created: env.created,
       model: env.request.model,
       finishReason: final.finish_reason === "length" ? "length" : "stop",
+      ...nullUsage(env),
     }),
   );
+  if (env.request.includeUsage) {
+    sse.writeEvent(
+      null,
+      buildUsageChunk({
+        completionId: env.completionId,
+        created: env.created,
+        model: env.request.model,
+        usage,
+      }),
+    );
+  }
   sse.writeRaw("data: [DONE]\n\n");
   sse.close();
 }
@@ -333,6 +360,8 @@ async function handleStream(
  *  - `tool_call_executed` → `event: tool_result` (extensions opt-in only),
  *    the call's outcome the moment it lands, matched to its
  *    `tool_progress` by `call_id`
+ *  - the agent-level `tool_progress` (a long call's how-far-it-got) →
+ *    `event: tool_update` (extensions opt-in only)
  *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
  *    A terminal `assistant_reply` whose text the same step already streamed
  *    as deltas is skipped (no duplicate body); one that was never streamed
@@ -344,6 +373,8 @@ async function handleStream(
  *    else.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
+ *  - compaction lifecycle and `history_trimmed` → named frames of the
+ *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
  *    whether extensions are opted in)
  *
@@ -376,8 +407,26 @@ export function buildStreamEventHook(
         created: env.created,
         model: env.request.model,
         delta: { content },
+        ...nullUsage(env),
       }),
     );
+  };
+  const writeReplyText = (text: string): void => {
+    const streamed = stepStreamed;
+    stepStreamed = "";
+    if (text.length === 0) return;
+    // Already on the wire in this step, whole: nothing to add.
+    if (streamed.length > 0 && (streamed.endsWith(text) || streamed.trimEnd() === text.trimEnd())) return;
+    // The step streamed the start of it (a retry finished what the
+    // stream began): send the rest, joined without a break.
+    if (streamed.length > 0 && text.startsWith(streamed)) {
+      writeContent(text.slice(streamed.length));
+      return;
+    }
+    // Never streamed: send it whole, set apart from any text this turn
+    // already showed so it does not run on from a preamble.
+    writeContent((turnStreamed ? "\n\n" : "") + text);
+    turnStreamed = true;
   };
   return (event) => {
     if (sse.closed) return;
@@ -426,6 +475,7 @@ export function buildStreamEventHook(
             ? { duration_ms: Math.max(0, Math.round(inner.durationMs)) }
             : {}),
           summary: clipToolSummary(inner.result.summary),
+          ...keyRequiredFrame(inner.result),
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
@@ -461,22 +511,28 @@ export function buildStreamEventHook(
           stepStreamed = "";
           return;
         }
-        const streamed = stepStreamed;
-        stepStreamed = "";
-        const text = inner.text;
-        if (text.length === 0) return;
-        // Already on the wire in this step, whole: nothing to add.
-        if (streamed.length > 0 && (streamed.endsWith(text) || streamed.trimEnd() === text.trimEnd())) return;
-        // The step streamed the start of it (a retry finished what the
-        // stream began): send the rest, joined without a break.
-        if (streamed.length > 0 && text.startsWith(streamed)) {
-          writeContent(text.slice(streamed.length));
-          return;
+        writeReplyText(inner.text);
+        /* ATO-408: the files the reply delivers (`reply.attachments`,
+           absolute paths the tool already checked). Channels post them
+           after the text; this is the same promise for an HTTP host,
+           which had the text and no word of the files until it reloaded
+           the session. After the text so the host has the bubble to put
+           them under. Extensions-only: not part of OpenAI's protocol. */
+        if (
+          env.request.extensionsEnabled &&
+          inner.attachments !== undefined &&
+          inner.attachments.length > 0
+        ) {
+          sse.writeEvent("reply_attachments", {
+            id: env.completionId,
+            object: "chat.completion.reply_attachments",
+            created: env.created,
+            model: env.request.model,
+            session_id: env.session.id,
+            step_index: stepIndex,
+            attachments: [...inner.attachments],
+          });
         }
-        // Never streamed: send it whole, set apart from any text this turn
-        // already showed so it does not run on from a preamble.
-        writeContent((turnStreamed ? "\n\n" : "") + text);
-        turnStreamed = true;
       } else if (inner.type === "step_error") {
         /* A host that holds the first error frame of a turn (the desktop)
            has only this one: so it says a billing refusal (item 40) and
@@ -587,6 +643,30 @@ export function buildStreamEventHook(
       }
       return;
     }
+    /* A long tool call (`video.generate`) saying how far it got. Named
+       `tool_update`, not `tool_progress`: hosts already read that name as
+       "a call was parsed" and would draw a new card for every update.
+       Extensions-only, like the rest. */
+    if (event.type === "tool_progress") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("tool_update", {
+          object: "atomic.tool_update",
+          session_id: env.session.id,
+          tool: event.tool,
+          fraction: Number.isFinite(event.fraction) ? Math.min(Math.max(event.fraction, 0), 1) : 0,
+          elapsed_ms: Number.isFinite(event.elapsedMs) ? Math.max(0, Math.round(event.elapsedMs)) : 0,
+          label: event.label,
+        });
+      }
+      return;
+    }
+    /* ATO-259 / ATO-295: compaction status and the packer's cut, so a
+       host can say why the turn is quiet and what the model lost. */
+    const maintenance = maintenanceFrame(event, env.session.id);
+    if (maintenance) {
+      if (env.request.extensionsEnabled) sse.writeEvent(maintenance.name, maintenance.payload);
+      return;
+    }
     if (event.type === "loop_failed") {
       /* The thrown error is the chain's LAST link, kept untouched for
          classification and the outage wait (runWithFallback). A host that
@@ -614,6 +694,9 @@ export function buildStreamEventHook(
           : event.error.message;
         emitStreamError(sse, env, message, classifyFailure(primary), {
           ...billingCauseFrame(primary),
+          // The chain fell over to the managed local link and its model
+          // process is gone: the host still needs the code to offer a start.
+          ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
           fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
         });
         return;
@@ -621,6 +704,10 @@ export function buildStreamEventHook(
       const failedBefore = event.category === "cancelled" ? [] : describeFailedLinks(event.error);
       emitStreamError(sse, env, event.error.message, event.category, {
         ...ended,
+        /* ATO-772: the managed local model's process is gone, so the turn
+           ended without the outage wait. `code` lets a host offer to start
+           it (the desktop's "Start model") instead of reading the words. */
+        ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
         ...(failedBefore.length > 0
           ? { fallback_failures: failedLinksFrame(failedBefore) }
           : {}),
@@ -660,6 +747,30 @@ function toolResultStatus(
     return "denied";
   }
   return "error";
+}
+
+/**
+ * `key_required` on a `tool_result` frame: the tool's `details.keyRequired`
+ * as it is, when the call says an API key would fix it (ATO-327, today
+ * only `os.web.search` on keyless Exa: `{provider: "exa", reason,
+ * getKeyUrl, envVar}`, see `WebSearchKeyRequired`). The frame is the only
+ * live path a host has to it: `summary` is clipped and the session store
+ * does not keep `details`. Left out unless every field is a string, so a
+ * host can trust the shape it renders a key card from.
+ */
+function keyRequiredFrame(
+  result: CompressedToolResult,
+): { key_required?: Record<string, string> } {
+  const raw = (result.details ?? {}).keyRequired;
+  if (typeof raw !== "object" || raw === null) return {};
+  const value = raw as Record<string, unknown>;
+  const fields = ["provider", "reason", "getKeyUrl", "envVar"] as const;
+  if (!fields.every((field) => typeof value[field] === "string")) return {};
+  return {
+    key_required: Object.fromEntries(
+      fields.map((field) => [field, value[field] as string]),
+    ),
+  };
 }
 
 /** Longest `summary` a `tool_result` carries; the store keeps the whole one. */
@@ -747,9 +858,13 @@ function emitStreamError(
   // `type` field in their error envelope is already a loose string —
   // surface the category there so structured clients can still branch on
   // it without breaking schema-strict ones.
+  // A string `code` the frame carries (`local_engine_down`) is the
+  // envelope's own `code` field for these clients.
+  const rawCode = extra?.["code"];
+  const code = typeof rawCode === "string" ? rawCode : null;
   sse.writeEvent(
     null,
-    openaiError(message, category ? `agent.${category}` : "server_error"),
+    openaiError(message, category ? `agent.${category}` : "server_error", null, code),
   );
 }
 
@@ -856,6 +971,7 @@ async function parseRequestBody(
         ? body.model
         : MODEL_DEFAULT,
     stream: Boolean(body.stream),
+    includeUsage: body.stream_options?.include_usage === true,
     systemPrompt,
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,

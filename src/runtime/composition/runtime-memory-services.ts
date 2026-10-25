@@ -21,7 +21,7 @@ import { createVoteTraceSink, observeVoteRunnerHealth, type MemoryHealthAnnounce
 import { abortableSubcall, type SubcallComplete } from "../abortable-subcall.js";
 import type { RuntimeMemoryStores } from "./runtime-memory-stores.js";
 
-interface MemoryServiceDependencies extends Omit<RuntimeMemoryStores, "embeddingHealth"> {
+interface MemoryServiceDependencies extends Omit<RuntimeMemoryStores, "embeddingHealth" | "embeddingBackfill"> {
   config: Pick<AtomicAgentConfig, "memory">;
   slotManager: Pick<SlotManager, "sideCallSlotId">;
   llmComplete: SubcallComplete;

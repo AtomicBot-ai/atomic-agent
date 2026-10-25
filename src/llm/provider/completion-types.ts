@@ -122,11 +122,28 @@ export interface CompletionRequest {
    * fan-out for its workers.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Ask the server to skip the reasoning channel for this request
+   * (`chat_template_kwargs: { enable_thinking: false }`). Sent only to an
+   * OpenAI-compatible server on a local or private-network address, where
+   * the field is the chat template's own; strict cloud APIs reject
+   * unknown fields, so every other provider ignores it. Never serialized
+   * under this name. Context compaction sets it.
+   */
+  disableThinking?: boolean;
   seed?: number;
   repeatPenalty?: number;
   repeatLastN?: number;
   sessionId?: string;
   signal?: AbortSignal;
+  /**
+   * This request's own transport deadline, in place of the provider's
+   * configured `requestTimeoutMs`, for a caller that owns a longer
+   * deadline through `signal` (context compaction's per-part limit).
+   * Honoured by llama-server unary completions and OpenAI-compatible
+   * requests; never serialized.
+   */
+  requestTimeoutMs?: number;
   imageData?: ReadonlyArray<{ id: number; data: string }>;
   /** OpenAI tools path — ignored by grammar-only providers. */
   tools?: ReadonlyArray<Record<string, unknown>>;
@@ -185,12 +202,25 @@ export interface CompletionTiming {
  * transcript lines seen when it was cut. Not a truncation and not a
  * provider failure: the completion is judged like one whose text was
  * detected as fabricated after it finished.
+ *
+ * `repetition`: a local model's reply fell into a loop, one block of
+ * `periodChars` characters repeated back to back
+ * (`createStreamRepetitionWatcher`), so the llama-server stream was
+ * aborted. The completion is marked `truncated`, and
+ * `detectModelFailure` reports it as a repetitive truncation: the step
+ * is retried without raising the cap.
  */
-export interface CompletionEarlyStop {
-  reason: "fabricated_transcript";
-  calls: number;
-  results: number;
-}
+export type CompletionEarlyStop =
+  | {
+      reason: "fabricated_transcript";
+      calls: number;
+      results: number;
+    }
+  | {
+      reason: "repetition";
+      channel: "content" | "reasoning";
+      periodChars: number;
+    };
 
 export interface CompletionResult {
   servedModelMode?: import("../model-mode.js").ResolvedModelMode;
@@ -207,6 +237,13 @@ export interface CompletionResult {
   /** Raw OpenAI tool_calls when transport is native_tools. */
   toolCalls?: ReadonlyArray<OpenAiToolCall>;
   finishReason?: string | null;
+  /**
+   * llama-server's own `stop_type` (`eos`, `word`, `limit`, `none`), as
+   * it sent it. Only the llama-server client sets it. `limit` with
+   * `finishReason: "length"` is a reply cut at `n_predict`; `limit` on a
+   * context overflow keeps `finishReason` unset.
+   */
+  stopType?: string;
   /** Set when the runtime cut the completion short. See `CompletionEarlyStop`. */
   earlyStop?: CompletionEarlyStop;
   /**

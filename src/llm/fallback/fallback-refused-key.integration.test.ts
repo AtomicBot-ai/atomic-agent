@@ -315,7 +315,8 @@ describe("item 29: every link fails and the primary's key is the problem", () =>
     expect(error.message).toMatch(/character/);
     expect(error.message).not.toMatch(/fetch failed/);
 
-    // The TUI line is the key's sentence alone: nothing failed before it.
+    // The TUI notice is the transport headline over a Details line that
+    // carries the key's sentence alone: nothing failed before it.
     expect(
       formatAgentErrorForChat(
         category,
@@ -323,7 +324,7 @@ describe("item 29: every link fails and the primary's key is the problem", () =>
         undefined,
         describeFailedAttempts(error),
       ),
-    ).toBe(`Turn failed [transport]: ${error.message}`);
+    ).toBe(`Turn failed: couldn't get a reply from the provider.\nDetails: ${error.message}`);
     const errorRows = rig.trace.filter((e) => e.type === "error");
     expect(errorRows.at(-1)).toMatchObject({ message: error.message });
     expect(errorRows.at(-1)).not.toHaveProperty("fallbackFailures");

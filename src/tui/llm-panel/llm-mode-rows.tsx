@@ -428,7 +428,7 @@ function renderRowText(row: LlmPanelRow, state: TuiState): string {
     case "localDaemon":
       return `llama.cpp daemon [${formatDaemon(state)}]`;
     case "localBackend":
-      return `llama.cpp backend [${state.localModelsPanel.backend.currentTag ?? "not installed"}]`;
+      return `Local engine [${state.localModelsPanel.backend.currentTag ?? "not installed"}]`;
     case "cloudProvider":
       return `${row.provider.id} [${row.provider.kind}] ${
         row.provider.kind === SUBSCRIPTION_CLI_KIND
@@ -474,6 +474,9 @@ function formatDaemon(state: TuiState): string {
   if (panel.daemon.loading) return `loading pid ${panel.daemon.pid}`;
   if (panel.daemon.healthy) {
     return `running pid ${panel.daemon.pid} on 127.0.0.1:${panel.daemon.port}`;
+  }
+  if (panel.daemon.authMismatch) {
+    return `pid ${panel.daemon.pid} key rejected: restart the model`;
   }
   return `pid ${panel.daemon.pid} health unreachable`;
 }

@@ -1,8 +1,20 @@
+import { loadCoreSession, recoverOrphanedCoreSessions, stopCoreSession, coreSessionStatus } from "../core/core-sessions.js";
+import { coreSessionPath, orphanedCoreSession, type ManagedEngine } from "../core/core-state.js";
+import {
+  coreEmbeddingRunning,
+  coreEmbeddingStatus,
+  readCoreEmbeddingRecord,
+  startCoreEmbedding,
+  stopCoreEmbedding,
+} from "../core/core-embedding.js";
+import type { DownloadFileOptions } from "../downloads/download-file.js";
+import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
+  appendFileSync,
   closeSync,
   existsSync,
   openSync,
@@ -15,6 +27,7 @@ import { totalmem } from "node:os";
 
 import { readBackendVersion } from "../backend/backend-version.js";
 import {
+  resolveChatModelWeightsPath,
   resolveEmbeddingLogFilePath,
   resolveEmbeddingPidFilePath,
   resolveLogFilePath,
@@ -42,11 +55,11 @@ import {
   type GgufMetadata,
 } from "../catalog/gguf-metadata.js";
 import {
-  deviceTableOnce,
   resolveManagedDevice,
   sharesSystemMemory,
   type ListDevices,
 } from "../backend/gpu-devices.js";
+import { managedDeviceTable } from "../backend/managed-devices.js";
 import {
   resolveSwaFullDecision,
   type SwaFullDecision,
@@ -66,6 +79,7 @@ import {
 } from "./managed-api-key.js";
 
 export interface DaemonStartOptions {
+  engine?: ManagedEngine;
   /** Interactive callers allow cold GPU compilation while keeping selection available. */
   healthTimeoutMs?: number;
   /** Cancel an owned launch while its model is loading. */
@@ -236,8 +250,12 @@ export function throughputBasis(
   modelId: string,
   device: string | undefined,
   launch: { contextSize: number; fitsDevice: boolean | null },
+  engine?: ManagedEngine,
 ): string {
-  const backend = readBackendVersion(dataDir);
+  // Under Atomic Core the build is the backend Core installed (its tag and
+  // install time), not the agent's own llama.cpp: a speed measured on one
+  // is never carried over to the other.
+  const backend = readBackendVersion(dataDir, engine);
   return JSON.stringify([
     modelId,
     backend?.tag ?? null,
@@ -750,6 +768,18 @@ export interface DaemonStatus {
   port: number;
   healthy: boolean;
   loading: boolean;
+  /**
+   * Atomic Core stopped unexpectedly and this model server outlived it.
+   * It still serves; the next start or stop restarts Core to reap it.
+   */
+  coreOrphaned?: boolean;
+  /**
+   * A server answers `/health` on the session's port but rejects the
+   * session's key (401/403 on the key-guarded `/props`): a stale or
+   * another llama-server holds the port. Never `healthy`; real requests
+   * would fail with 401. Only checked for Atomic Core sessions.
+   */
+  authMismatch?: boolean;
 }
 
 export async function probeLlamaHealth(
@@ -769,6 +799,31 @@ export async function probeLlamaHealth(
   } catch {
     return "down";
   }
+}
+
+/**
+ * `/health` answers without a key, so a stale or foreign llama-server on
+ * an Atomic Core session's port used to read healthy while every real
+ * request failed with 401. After a passing `/health`, ask the key-guarded
+ * `/props` with the session's own key (llama.cpp exempts `/v1/models`
+ * from `--api-key`, so that would prove nothing). Only an explicit
+ * 401/403 turns the verdict; any other answer keeps `/health`'s.
+ */
+async function probeCoreSessionHealth(
+  port: number,
+  apiKey: string,
+): Promise<Pick<DaemonStatus, "healthy" | "loading" | "authMismatch">> {
+  const health = await probeLlamaHealth(port);
+  if (health !== "ok") return { healthy: false, loading: health === "loading" };
+  const verdict = await verifyGuardedEndpoint(
+    { reachable: true, status: 200, kind: "llama-server", error: null, latencyMs: 0 },
+    `http://127.0.0.1:${port}`,
+    2000,
+    apiKey,
+  );
+  return verdict.kind === "llama-auth"
+    ? { healthy: false, loading: false, authMismatch: true }
+    : { healthy: true, loading: false };
 }
 
 /**
@@ -846,6 +901,37 @@ export function readRunningPid(
   return pid;
 }
 
+/** Liveness of the managed chat engine's recorded process. */
+export type ChatDaemonPidState = "alive" | "dead" | "no_pid";
+
+/**
+ * Whether the managed chat engine's recorded process is alive, for
+ * diagnostics: the Core session record's pid when there is one, else the
+ * pid file. A live process owned by another user counts as `alive`. Unlike
+ * `readRunningPid` this never deletes a stale record, so a failure report
+ * reading it cannot change engine state.
+ */
+export function readChatDaemonPidState(dataDir: string): ChatDaemonPidState {
+  const pid = readRecordedChatPid(dataDir);
+  if (pid === null) return "no_pid";
+  return classifyPidLiveness(pid) === "dead" ? "dead" : "alive";
+}
+
+function readRecordedChatPid(dataDir: string): number | null {
+  try {
+    const record = JSON.parse(readFileSync(coreSessionPath(dataDir, "chat"), "utf-8")) as { pid?: unknown };
+    if (Number.isInteger(record.pid) && (record.pid as number) > 0) return record.pid as number;
+  } catch {
+    /* no Core session record: fall back to the pid file */
+  }
+  try {
+    const pid = Number(readFileSync(resolvePidFilePath(dataDir), "utf-8").trim());
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Thrown when a spawned llama-server never reached a healthy `/health`
  * within the deadline — the process crashed on startup or could not
@@ -875,11 +961,79 @@ export interface DaemonStartResult {
   swaFull: SwaFullDecision;
   /** Whether the model's prompt cache is reusable partially or only whole. */
   prefixReuse: "partial" | "none" | null;
+  /**
+   * Atomic Core only: a projector was requested but Core had to load the
+   * model without it (its session reports no mmproj), so vision is off.
+   */
+  projectorDropped?: boolean;
+}
+
+/**
+ * The throughput half of a start, once the server answers: the speed an
+ * earlier start measured on the same launch (`knownSpeed`) is stamped for
+ * this daemon, otherwise one probe measures it (`probe`), and its record
+ * is written next to the pid file. Shared by both engines: an Atomic Core
+ * session is a llama-server on the managed port behind the session's key.
+ * Returns the speed, or `null` when it stays unknown.
+ */
+async function recordStartThroughput(opts: {
+  dataDir: string;
+  port: number;
+  apiKey: string | null;
+  pid: number;
+  modelId: string;
+  args: readonly string[];
+  knownSpeed: ThroughputRecord | null;
+  speedBasis: string;
+  probe: boolean;
+}): Promise<number | null> {
+  // A stale record must never outlive the daemon it described: drop
+  // it before the probe so a skipped or failed probe leaves nothing
+  // behind that `readThroughputRecord` could mistake (it also checks
+  // the pid, but the file is cheap to clear). A speed carried over was
+  // read above, and is stamped for this daemon instead of measured.
+  try {
+    unlinkSync(resolveThroughputFilePath(opts.dataDir));
+  } catch {
+    /* none recorded */
+  }
+  if (opts.knownSpeed) {
+    writeThroughputRecord(opts.dataDir, { ...opts.knownSpeed, pid: opts.pid });
+    return opts.knownSpeed.tokensPerSecond;
+  }
+  if (!opts.probe) return null;
+  // On the only slot nothing can decode beside the probe. With more, a
+  // turn already running when it starts, or still running when it
+  // ends, shared the GPU with it: such a figure is not carried over.
+  const apiKey = opts.apiKey;
+  const oneSlot = opts.args[opts.args.indexOf("--parallel") + 1] === "1";
+  const idleBefore =
+    oneSlot || (await slotsAllIdle({ port: opts.port, apiKey }));
+  const sample = await probeThroughput({
+    port: opts.port,
+    apiKey,
+  });
+  if (!sample) return null;
+  const alone =
+    oneSlot ||
+    (idleBefore && (await slotsAllIdle({ port: opts.port, apiKey })));
+  writeThroughputRecord(opts.dataDir, {
+    ...sample,
+    pid: opts.pid,
+    modelId: opts.modelId,
+    measuredAt: Date.now(),
+    measuredOn: opts.speedBasis,
+    alone,
+  });
+  return sample.tokensPerSecond;
 }
 
 export async function startDaemon(
   opts: DaemonStartOptions,
 ): Promise<DaemonStartResult> {
+  // A crashed Core may have left its model running on our pid mirror and
+  // port: a new Core reaps it before this start reads either.
+  await recoverOrphanedCoreSessions(opts.dataDir);
   const pidPath = resolvePidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir);
   if (existing !== null) {
@@ -888,20 +1042,20 @@ export async function startDaemon(
   await assertPortFree(opts.port);
 
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(opts.dataDir, binaryName);
+  const binPath = resolveServerBinPath(opts.dataDir, binaryName, opts.engine);
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
 
   const model = getLocalModelDef(opts.modelId);
-  const modelPath = resolveModelFilePath(
-    opts.dataDir,
-    model.id,
-    model.filename,
-  );
+  // A model registered from disk launches straight from the operator's
+  // own file; everything else from the managed per-model directory.
+  const modelPath = resolveChatModelWeightsPath(opts.dataDir, model);
   if (!existsSync(modelPath)) {
     throw new Error(
-      `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
+      model.localPath
+        ? `model ${opts.modelId} file not found: ${model.localPath}`
+        : `model ${opts.modelId} not downloaded; run 'atomic-agent models pull ${opts.modelId}'`,
     );
   }
 
@@ -911,8 +1065,9 @@ export async function startDaemon(
   // figure to probe and degrades to its conservative no-VRAM default;
   // operators splitting across GPUs can pin `contextSize` explicitly.
   // One `--list-devices` for the whole launch: the device pick and the
-  // context fit below read the same table (`deviceTableOnce`).
-  const listDevices = opts.listDevices ?? deviceTableOnce(binPath);
+  // context fit below read the same table (`deviceTableOnce`). Under
+  // Atomic Core it is Core's own llama-server, run as Core runs it.
+  const listDevices = opts.listDevices ?? managedDeviceTable(opts.dataDir, opts.engine);
   const device = await resolveManagedDevice(binPath, opts.device, {
     multiGpu: (opts.tensorSplit?.length ?? 0) > 0,
     listDevices,
@@ -972,10 +1127,13 @@ export async function startDaemon(
   // The speed an earlier start measured on this same launch, read before
   // this one clears the record: carried over, it spares the probe
   // (`readReusableThroughput`).
-  const speedBasis = throughputBasis(opts.dataDir, model.id, device, {
-    contextSize,
-    fitsDevice,
-  });
+  const speedBasis = throughputBasis(
+    opts.dataDir,
+    model.id,
+    device,
+    { contextSize, fitsDevice },
+    opts.engine,
+  );
   const knownSpeed =
     opts.throughputProbe === false
       ? null
@@ -997,32 +1155,73 @@ export async function startDaemon(
     contextSize,
   );
 
+  // The launch decisions, in the daemon's own log where a reader looking
+  // at the flags will look for them. Their first line is also the marker
+  // `currentRunLog` scopes faults by, so an error of an earlier run is not
+  // reported against this one.
+  const reuseWhy =
+    prefixReuse && prefixReuse.reasons.length > 0
+      ? ` — ${prefixReuse.reasons.join("; ")}` +
+        (effectivePrefixReuse === "partial" && prefixReuse.prefixReuse === "none"
+          ? " (--swa-full restores partial reuse)"
+          : "")
+      : "";
+  const launchNotes = [
+    `[atomic-agent] launch: model ${model.id}` +
+      (header
+        ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
+        : " (header unreadable)"),
+    `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
+      (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
+      (contextNote ? `, ${contextNote}` : ""),
+    `[atomic-agent] launch: ${swaFull.reason}`,
+    `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
+    "",
+  ].join("\n");
+
+  if (opts.engine === "atomic-core") {
+    // Core appends its llama-server's output to the `logPath` the load
+    // names, which is this same log (`loadCoreSession`), so `models status`
+    // and the supervisor read Core's out-of-memory errors where they read
+    // the managed server's. Without this marker they would scope by the
+    // last llama-server-engine launch and report its stale faults. Best
+    // effort: a log that cannot be written must not fail the start.
+    try {
+      appendFileSync(resolveLogFilePath(opts.dataDir), launchNotes);
+    } catch {
+      /* no marker: faults stay unscoped, as before */
+    }
+    const session = await loadCoreSession(opts.dataDir, {
+      role: "chat", modelId: model.id, modelPath, port: opts.port, args,
+      ...(opts.mmprojFile ? { mmprojPath: opts.mmprojFile } : {}),
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    writeFileSync(pidPath, String(session.pid), "utf8");
+    // Core's session is a llama-server on this port that takes the
+    // session's key: its speed is measured, or carried over, as ours is.
+    const tokensPerSecond = await recordStartThroughput({
+      dataDir: opts.dataDir,
+      port: opts.port,
+      apiKey: session.api_key,
+      pid: session.pid,
+      modelId: model.id,
+      args,
+      knownSpeed,
+      speedBasis,
+      probe: opts.throughputProbe !== false,
+    });
+    writeLaunchRecord(opts.dataDir, { pid: session.pid, modelId: model.id, contextSize,
+      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now() });
+    // Core retries a load that fails with the projector once without it and
+    // reports `mmproj_path: null`; an older Core omits the field.
+    const projectorDropped = Boolean(opts.mmprojFile) && (session.mmproj_path === null || session.mmproj_path === "");
+    return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond,
+      ...(projectorDropped ? { projectorDropped } : {}) };
+  }
+
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
   try {
-    // The launch decisions, in the daemon's own log where a reader
-    // looking at the flags will look for them.
-    const reuseWhy =
-      prefixReuse && prefixReuse.reasons.length > 0
-        ? ` — ${prefixReuse.reasons.join("; ")}` +
-          (effectivePrefixReuse === "partial" && prefixReuse.prefixReuse === "none"
-            ? " (--swa-full restores partial reuse)"
-            : "")
-        : "";
-    writeSync(
-      logFd,
-      [
-        `[atomic-agent] launch: model ${model.id}` +
-          (header
-            ? ` (${header.architecture}, ${header.blockCount ?? "?"} layers, trained context ${header.contextLength ?? "?"})`
-            : " (header unreadable)"),
-        `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
-          (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
-          (contextNote ? `, ${contextNote}` : ""),
-        `[atomic-agent] launch: ${swaFull.reason}`,
-        `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
-        "",
-      ].join("\n"),
-    );
+    writeSync(logFd, launchNotes);
     opts.signal?.throwIfAborted();
     const child = spawn(binPath, args, {
       stdio: ["ignore", logFd, logFd],
@@ -1055,46 +1254,17 @@ export async function startDaemon(
       abandonChild(child.pid, pidPath);
       throw err;
     }
-    // A stale record must never outlive the daemon it described: drop
-    // it before the probe so a skipped or failed probe leaves nothing
-    // behind that `readThroughputRecord` could mistake (it also checks
-    // the pid, but the file is cheap to clear). A speed carried over was
-    // read above, and is stamped for this daemon instead of measured.
-    try {
-      unlinkSync(resolveThroughputFilePath(opts.dataDir));
-    } catch {
-      /* none recorded */
-    }
-    let tokensPerSecond: number | null = null;
-    if (knownSpeed) {
-      tokensPerSecond = knownSpeed.tokensPerSecond;
-      writeThroughputRecord(opts.dataDir, { ...knownSpeed, pid: child.pid });
-    } else if (opts.throughputProbe !== false) {
-      // On the only slot nothing can decode beside the probe. With more, a
-      // turn already running when it starts, or still running when it
-      // ends, shared the GPU with it: such a figure is not carried over.
-      const oneSlot = args[args.indexOf("--parallel") + 1] === "1";
-      const idleBefore =
-        oneSlot || (await slotsAllIdle({ port: opts.port, apiKey }));
-      const sample = await probeThroughput({
-        port: opts.port,
-        apiKey,
-      });
-      if (sample) {
-        tokensPerSecond = sample.tokensPerSecond;
-        const alone =
-          oneSlot ||
-          (idleBefore && (await slotsAllIdle({ port: opts.port, apiKey })));
-        writeThroughputRecord(opts.dataDir, {
-          ...sample,
-          pid: child.pid,
-          modelId: model.id,
-          measuredAt: Date.now(),
-          measuredOn: speedBasis,
-          alone,
-        });
-      }
-    }
+    const tokensPerSecond = await recordStartThroughput({
+      dataDir: opts.dataDir,
+      port: opts.port,
+      apiKey,
+      pid: child.pid,
+      modelId: model.id,
+      args,
+      knownSpeed,
+      speedBasis,
+      probe: opts.throughputProbe !== false,
+    });
     writeLaunchRecord(opts.dataDir, {
       pid: child.pid,
       modelId: model.id,
@@ -1132,6 +1302,7 @@ export async function stopDaemon(
   dataDir: string,
   opts?: { timeoutMs?: number },
 ): Promise<void> {
+  if (await stopCoreSession(dataDir, "chat")) return;
   const pidPath = resolvePidFilePath(dataDir);
   let raw: string;
   try {
@@ -1206,6 +1377,15 @@ export async function getDaemonStatus(
   dataDir: string,
   port: number,
 ): Promise<DaemonStatus> {
+  if (existsSync(coreSessionPath(dataDir, "chat"))) {
+    const orphan = orphanedCoreSession(dataDir, "chat");
+    if (orphan) {
+      return { running: true, pid: orphan.pid, port: orphan.port, ...(await probeCoreSessionHealth(orphan.port, orphan.api_key)), coreOrphaned: true };
+    }
+    const session = await coreSessionStatus(dataDir, "chat");
+    if (!session) return { running: false, pid: null, port, healthy: false, loading: false };
+    return { running: true, pid: session.pid, port: session.port, ...(await probeCoreSessionHealth(session.port, session.api_key)) };
+  }
   const pid = readRunningPid(dataDir);
   const h = await probeLlamaHealth(port);
   return {
@@ -1231,6 +1411,7 @@ export async function getDaemonStatus(
 // ---------------------------------------------------------------------
 
 export interface EmbeddingDaemonStartOptions {
+  engine?: ManagedEngine;
   signal?: AbortSignal;
   dataDir: string;
   modelId: EmbeddingModelId;
@@ -1245,6 +1426,18 @@ export interface EmbeddingDaemonStartOptions {
   device?: string;
   /** Same as `DaemonStartOptions.apiKey`; both daemons share one key. */
   apiKey?: string;
+  /**
+   * A model that runs in Atomic Core's embedding module may need a stock
+   * llama.cpp build installed first: called when that download starts,
+   * then with its progress.
+   */
+  onEngineInstall?: () => void;
+  onEngineProgress?: DownloadFileOptions["onProgress"];
+}
+
+/** Why a Core-module embedding model cannot start on the llama-server engine. */
+export function coreEmbeddingEngineRequired(modelName: string): string {
+  return `${modelName} runs on the Atomic Core engine; switch with \`atomic-agent models engine atomic-core\``;
 }
 
 /**
@@ -1286,7 +1479,14 @@ export function buildEmbeddingServerArgs(
 
 export async function startEmbeddingDaemon(
   opts: EmbeddingDaemonStartOptions,
-): Promise<{ pid: number }> {
+): Promise<{ pid: number; port?: number }> {
+  if (getEmbeddingModelDef(opts.modelId).requiresCoreEmbeddingModule) {
+    return startCoreModuleEmbedding(opts);
+  }
+  // A module model left on in Core (a switch away from it) would keep
+  // running beside this one: turn it off first, keeping Core up for the load.
+  await stopCoreEmbedding(opts.dataDir, { retire: false });
+  await recoverOrphanedCoreSessions(opts.dataDir);
   const pidPath = resolveEmbeddingPidFilePath(opts.dataDir);
   const existing = readRunningPid(opts.dataDir, "embedding");
   if (existing !== null) {
@@ -1295,7 +1495,7 @@ export async function startEmbeddingDaemon(
   await assertPortFree(opts.port);
 
   const { binaryName } = resolvePlatformAsset();
-  const binPath = resolveServerBinPath(opts.dataDir, binaryName);
+  const binPath = resolveServerBinPath(opts.dataDir, binaryName, opts.engine);
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
@@ -1312,11 +1512,22 @@ export async function startEmbeddingDaemon(
     );
   }
 
-  const device = await resolveManagedDevice(binPath, opts.device);
+  const device = await resolveManagedDevice(binPath, opts.device, {
+    listDevices: managedDeviceTable(opts.dataDir, opts.engine),
+  });
   const apiKey =
     opts.apiKey ??
     resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());
   const args = buildEmbeddingServerArgs({ ...opts, device }, modelPath);
+
+  if (opts.engine === "atomic-core") {
+    const session = await loadCoreSession(opts.dataDir, {
+      role: "embedding", modelId: model.id, modelPath, port: opts.port, args,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+    writeFileSync(pidPath, String(session.pid), "utf8");
+    return { pid: session.pid };
+  }
 
   const logFd = openSync(resolveEmbeddingLogFilePath(opts.dataDir), "a");
   try {
@@ -1360,6 +1571,41 @@ export async function startEmbeddingDaemon(
 }
 
 /**
+ * A model that only Atomic Core's embedding module runs: Core spawns and
+ * owns its llama-server on a port of its choosing, so no pid file, port
+ * or device applies. Fails at once on the llama-server engine.
+ */
+async function startCoreModuleEmbedding(
+  opts: EmbeddingDaemonStartOptions,
+): Promise<{ pid: number; port?: number }> {
+  const model = getEmbeddingModelDef(opts.modelId);
+  if (opts.engine !== "atomic-core") {
+    throw new Error(coreEmbeddingEngineRequired(model.name));
+  }
+  const modelPath = resolveModelFilePath(opts.dataDir, model.id, model.filename);
+  if (!existsSync(modelPath)) {
+    throw new Error(
+      `embedding model ${opts.modelId} not downloaded; run 'atomic-agent models pull-embedding ${opts.modelId}'`,
+    );
+  }
+  const status = await startCoreEmbedding(opts.dataDir, {
+    modelId: model.id,
+    modelPath,
+    ...(opts.signal ? { signal: opts.signal } : {}),
+    ...(opts.onEngineInstall ? { onEngineInstall: opts.onEngineInstall } : {}),
+    ...(opts.onEngineProgress ? { onEngineProgress: opts.onEngineProgress } : {}),
+  });
+  if (status.dims !== model.dim) {
+    // Never mix dimensions in one memory store: refuse rather than serve.
+    await stopCoreEmbedding(opts.dataDir).catch(() => {});
+    throw new Error(
+      `${model.name} answered ${status.dims}-dim vectors, expected ${model.dim}; embedding stays off`,
+    );
+  }
+  return { pid: status.pid ?? 0, ...(status.port !== null ? { port: status.port } : {}) };
+}
+
+/**
  * A launch that failed after the spawn must not leave its child behind
  * or a pid file naming it: kill it if it is still up (a child that
  * loaded but serves the wrong thing) and forget it either way.
@@ -1381,6 +1627,9 @@ export async function stopEmbeddingDaemon(
   dataDir: string,
   opts?: { timeoutMs?: number },
 ): Promise<void> {
+  // Core's embedding module first: a model switch may leave either kind.
+  await stopCoreEmbedding(dataDir, opts?.timeoutMs === undefined ? {} : { waitMs: opts.timeoutMs });
+  if (await stopCoreSession(dataDir, "embedding")) return;
   const pidPath = resolveEmbeddingPidFilePath(dataDir);
   let raw: string;
   try {
@@ -1454,7 +1703,43 @@ export async function stopEmbeddingDaemon(
 export async function getEmbeddingDaemonStatus(
   dataDir: string,
   port: number,
+  /** The configured embedding model; default: read from the config. */
+  configuredModelId?: string | null,
 ): Promise<DaemonStatus> {
+  const moduleRecord = readCoreEmbeddingRecord(dataDir);
+  // Core's module answers only for the model it was started for; a leftover
+  // record of another model (or a stop still pending) must not hide or
+  // stand in for the configured model's own daemon.
+  if (
+    moduleRecord &&
+    !moduleRecord.disablePending &&
+    moduleRecord.modelId ===
+      (configuredModelId === undefined
+        ? getConfig().localModels.embeddings.modelId
+        : configuredModelId)
+  ) {
+    // Core's module: no pid file or configured port, Core owns both.
+    const st = await coreEmbeddingStatus(dataDir);
+    if (!st || !st.enabled || !coreEmbeddingRunning(st)) {
+      return { running: false, pid: null, port, healthy: false, loading: false };
+    }
+    return {
+      running: true,
+      pid: st.pid,
+      port: st.port ?? port,
+      healthy: st.state === "ready",
+      loading: st.state !== "ready",
+    };
+  }
+  if (existsSync(coreSessionPath(dataDir, "embedding"))) {
+    const orphan = orphanedCoreSession(dataDir, "embedding");
+    if (orphan) {
+      return { running: true, pid: orphan.pid, port: orphan.port, ...(await probeCoreSessionHealth(orphan.port, orphan.api_key)), coreOrphaned: true };
+    }
+    const session = await coreSessionStatus(dataDir, "embedding");
+    if (!session) return { running: false, pid: null, port, healthy: false, loading: false };
+    return { running: true, pid: session.pid, port: session.port, ...(await probeCoreSessionHealth(session.port, session.api_key)) };
+  }
   const pid = readRunningPid(dataDir, "embedding");
   const h = await probeLlamaHealth(port);
   return {
@@ -1490,7 +1775,7 @@ export async function getEmbeddingDaemonStatus(
  */
 export interface StartBothResult {
   chat: DaemonStartResult;
-  embedding: { pid: number } | { error: string } | { skipped: true };
+  embedding: { pid: number; port?: number } | { error: string } | { skipped: true };
 }
 
 export async function startChatAndEmbeddingDaemons(opts: {

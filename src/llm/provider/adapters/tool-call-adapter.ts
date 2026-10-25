@@ -29,6 +29,11 @@ export interface ToolDefinitionOptions {
  */
 export interface ToolBatchOptions {
   strictWidenedArgs?: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Try `repairJsonText` on an argument string that does not parse and
+   * report it on `ToolCallBatch.jsonRepair` (ATO-637). Off by default.
+   */
+  repairJson?: boolean;
 }
 
 /**

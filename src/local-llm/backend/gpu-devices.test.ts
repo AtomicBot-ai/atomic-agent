@@ -7,6 +7,8 @@ import { describe, expect, it } from "vitest";
 import {
   deviceTableOnce,
   parseListDevices,
+  probeDevices,
+  unavailableDeviceTable,
   pickBestDevice,
   resolveManagedDevice,
   sharesSystemMemory,
@@ -441,4 +443,78 @@ describe("deviceTableOnce (backlog 39)", () => {
       }
     },
   );
+});
+
+describe("probeDevices: how the binary is run, and why it said nothing", () => {
+  it.skipIf(process.platform === "win32")(
+    "runs the binary with the environment and directory it is given",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "gpu-devices-spawn-"));
+      const cwd = mkdtempSync(join(tmpdir(), "gpu-devices-cwd-"));
+      const bin = join(dir, "llama-server");
+      writeFileSync(
+        bin,
+        ["#!/bin/sh", 'echo "Available devices:"', 'echo "  CUDA0: $PROBE_MARK $(basename "$(pwd)") (24564 MiB, 23000 MiB free)"'].join("\n"),
+        { mode: 0o755 },
+      );
+      try {
+        const probe = await probeDevices(bin, { env: { ...process.env, PROBE_MARK: "seen" }, cwd });
+        expect(probe.error).toBeNull();
+        expect(probe.devices[0]?.description).toBe(`seen ${cwd.split("/").pop()}`);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+        rmSync(cwd, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("says why when the binary cannot be run, instead of reporting no GPU", async () => {
+    const probe = await probeDevices(join(tmpdir(), "no-such-dir-gpu-devices", "llama-server"));
+    expect(probe.devices).toEqual([]);
+    expect(probe.error).toMatch(/ENOENT/);
+  });
+
+  it.skipIf(process.platform === "win32")(
+    "takes a failed run's own words (a library it could not load) as the reason",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "gpu-devices-fail-"));
+      const bin = join(dir, "llama-server");
+      writeFileSync(bin, ["#!/bin/sh", 'echo "error while loading shared libraries: libggml.so" >&2', "exit 127"].join("\n"), {
+        mode: 0o755,
+      });
+      try {
+        const probe = await probeDevices(bin);
+        expect(probe.devices).toEqual([]);
+        expect(probe.error).toBe("error while loading shared libraries: libggml.so");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "a binary that ran and reported no GPU is not a failure",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "gpu-devices-nogpu-"));
+      const bin = join(dir, "llama-server");
+      writeFileSync(bin, ["#!/bin/sh", 'echo "Available devices:"'].join("\n"), { mode: 0o755 });
+      try {
+        const table = deviceTableOnce(bin);
+        expect(await table()).toEqual([]);
+        expect(table.failure()).toBeNull();
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("a launch table keeps why the binary could not be asked", async () => {
+    const table = deviceTableOnce(join(tmpdir(), "no-such-dir-gpu-devices", "llama-server"));
+    expect(table.failure()).toBeNull();
+    expect(await resolveManagedDevice("unused", "auto", { listDevices: table })).toBeUndefined();
+    expect(table.failure()).toMatch(/ENOENT/);
+    const none = unavailableDeviceTable("not installed");
+    expect(await none()).toEqual([]);
+    expect(none.failure()).toBe("not installed");
+  });
 });

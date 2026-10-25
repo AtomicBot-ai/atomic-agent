@@ -1,9 +1,13 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { fullToolResult } from "../compressor/result-compressor.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
+import { markUntrustedResult } from "./untrusted-tool-output.js";
 import type { ToolRole } from "./tool-roles.js";
+import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
+import type { ToolOutputSpill } from "./tool-output-spill.js";
 
 export interface ToolContext {
+  workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
   modelMode?: "local" | "cloud";
   /** Working directory for OS tools and relative path resolution. */
   workingDir: string;
@@ -42,12 +46,25 @@ export interface ToolContext {
    * to the provider serving the step, not the one active at boot.
    */
   providerId?: string;
+  /**
+   * What `os.fs.read` last saw of each file this turn, so `os.fs.write`,
+   * `os.fs.edit` and `os.fs.patch` can say when their target changed
+   * since (`fs-read-freshness.ts`, ATO-659). Absent ⇒ no notice.
+   */
+  fileVersions?: FileReadVersions;
 }
 
 export interface ToolDefinition {
   name: string;
   description: string;
   readonly: boolean;
+  /**
+   * Set when the result carries text from outside (a web page, an MCP
+   * server): a short label naming the source. The registry then
+   * neutralises chat-template markers in the summary and frames it as
+   * data, not instructions (`untrusted-tool-output.ts`).
+   */
+  untrustedOutput?: string;
   run: (
     args: Record<string, unknown>,
     ctx: ToolContext,
@@ -66,8 +83,22 @@ export class ToolNotFoundError extends Error {
  * care of dispatch. Individual tools live in their own files and are
  * registered explicitly (no dynamic discovery).
  */
+export interface ToolRegistryOptions {
+  /**
+   * Saves the complete output of a clipped local result to a file and
+   * puts the path in the summary (`tool-output-spill.ts`, ATO-663).
+   * Absent ⇒ local results stay as the tool returned them.
+   */
+  outputSpill?: Pick<ToolOutputSpill, "spill">;
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  private readonly outputSpill: Pick<ToolOutputSpill, "spill"> | undefined;
+
+  constructor(options: ToolRegistryOptions = {}) {
+    this.outputSpill = options.outputSpill;
+  }
 
   register(definition: ToolDefinition): void {
     this.tools.set(definition.name, definition);
@@ -108,6 +139,14 @@ export class ToolRegistry {
     // before dispatch; anything that cannot be coerced is passed
     // through untouched so the tool reports its own error.
     const result = await tool.run(coerceToolArgs(name, args), ctx);
-    return ctx.modelMode === "cloud" ? fullToolResult(result) : result;
+    const shown =
+      ctx.modelMode === "cloud"
+        ? fullToolResult(result)
+        : this.outputSpill
+          ? await this.outputSpill.spill(name, ctx.sessionId, result)
+          : result;
+    return tool.untrustedOutput === undefined
+      ? shown
+      : markUntrustedResult(shown, tool.untrustedOutput);
   }
 }

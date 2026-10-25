@@ -1,14 +1,23 @@
-import type { ContextCompactionControl, CompactionStepOptions } from "../agent/compaction-control.js";
+import type { CompactionEvent, ContextCompactionControl, CompactionStepOptions } from "../agent/compaction-control.js";
 import type { CompactionConfig } from "../config/agent/compaction-config.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { planCompaction } from "../prompt/plan-compaction.js";
+import { decideCompaction, type CompactionSkip } from "../prompt/plan-compaction.js";
 import { validSessionCompaction, type CompactionResult } from "../session/session-compaction.js";
 import type { SessionState } from "../session/session-state.js";
 import type { SessionStore } from "../session/session-store.js";
 import type { TurnController } from "./turn-controller.js";
 import { SessionNotFoundError } from "./session-not-found-error.js";
+import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { runContextCompaction, type CompactionRunnerDependencies } from "./context-compaction-runner.js";
+import type { BackgroundCompaction } from "./compaction-background.js";
+
+/**
+ * After an automatic compaction times out, history must grow by this factor
+ * (or the model/window change) before another automatic attempt: the same
+ * input on the same model would time out again and spend the turn's time.
+ */
+export const AUTO_RETRY_AFTER_TIMEOUT_GROWTH = 1.25;
 
 interface ManualRequest {
   controller: AbortController;
@@ -24,7 +33,38 @@ export interface ContextCompactionDependencies extends CompactionRunnerDependenc
   sessionStore: Pick<SessionStore, "load">;
   turnController: Pick<TurnController, "enqueue">;
   promptInput(state: SessionState): BuildPromptInput;
+  /** Rolling summaries between turns; absent, compaction works as before. */
+  background?: BackgroundCompaction;
 }
+
+/**
+ * The log line for a compaction that ended without a checkpoint. A failure
+ * is a warning. A cancellation is an info line: it is not an error (the
+ * caller went away, the turn was stopped or the runtime is shutting down),
+ * but without a line a manual compaction whose HTTP request was dropped
+ * left nothing in the log while the client reported that it could not
+ * compact. Only a compaction that had started emits an event; one cancelled
+ * while still queued settles without one.
+ */
+export function logCompactionOutcome(logger: Pick<StructuredLogger, "info" | "warn">, event: CompactionEvent): void {
+  if (event.type !== "compaction_failed") return;
+  const { result } = event;
+  if (result.status === "failed") {
+    logger.warn("context compaction failed", { sessionId: event.sessionId, reason: result.message });
+  } else if (result.status === "cancelled") {
+    logger.info("context compaction cancelled", {
+      sessionId: event.sessionId, reason: result.reason, calls: event.calls,
+      ...(result.tokensBefore !== undefined ? { tokensBefore: result.tokensBefore } : {}),
+    });
+  }
+}
+
+/** What a `noop` result says, without a model call, when no checkpoint is planned. */
+export const SKIP_MESSAGES: Record<CompactionSkip, string> = {
+  window_too_small: "The model's context window is too small to compact this conversation.",
+  already_compact: "Nothing to compact: the conversation is already compacted and little has been added since.",
+  no_reduction: "No safe, useful reduction is available.",
+};
 
 /** A control inbox, separate from user messages and from the FIFO's occupied lock. */
 export function createContextCompaction(deps: ContextCompactionDependencies) {
@@ -32,6 +72,10 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
   const requests = new Map<string, ManualRequest>();
   const active = new Map<string, AbortController>();
   const autoFailed = new Set<string>();
+  // Outlives the turn, unlike autoFailed: a timeout is not a transient failure.
+  const autoTimedOut = new Map<string, { tokens: number; route: string }>();
+  // Routes whose model summary ran out of time: `auto` extracts there directly.
+  const slowRoutes = new Set<string>();
   let stopped = false;
   const warned = new Set<string>();
   function diagnose(state: SessionState) {
@@ -54,17 +98,35 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     const config = deps.config();
     if (!request && !options.requested && (autoFailed.has(input.session.id) || !config.auto)) return undefined;
     const prompt = buildPrompt(input);
+    const id = input.session.id;
+    // Which model and window an attempt ran against; a change earns a new attempt.
+    const routeKey = () => {
+      let providerId: string | null = null;
+      try { providerId = deps.route(id, options.providerId).providerId; } catch { /* The attempt reports it. */ }
+      return JSON.stringify([providerId, input.modelMode?.modelId ?? null, input.profile?.id ?? null, prompt.contextWindow ?? null,
+        config.timeoutMs, config.mode]);
+    };
+    const stalled = autoTimedOut.get(id);
+    if (stalled && !request && !options.requested && stalled.route === routeKey() &&
+        (prompt.compactionBudget?.activeTokens ?? 0) < stalled.tokens * AUTO_RETRY_AFTER_TIMEOUT_GROWTH) return undefined;
     if (prompt.cloudContext) input = { ...input, session: { ...input.session, cloudContext: prompt.cloudContext } };
-    const plan = planCompaction(input.session, prompt, config, request ? "manual" : options.requested);
-    if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: "No safe, useful reduction is available." }); return undefined; }
+    // The same profile the step's own prompt budget follows (`buildPrompt`'s low water).
+    const prefixReuse = input.profileWindowApplies === false ? undefined : input.profile?.prefixReuse;
+    const { plan, skip } = decideCompaction(input.session, prompt, config, request ? "manual" : options.requested,
+      prefixReuse ? { prefixReuse } : {});
+    if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: SKIP_MESSAGES[skip ?? "no_reduction"] }); return undefined; }
     const controller = request?.controller ?? new AbortController();
     active.set(input.session.id, controller);
     if (request) request.running = true;
     const signal = AbortSignal.any([options.signal, request?.signal ?? controller.signal]);
     const release = () => { if (active.get(input.session.id) === controller) active.delete(input.session.id); };
-    return runContextCompaction(input, plan, config, { ...options, signal, inTurn }, deps)
-      .then(({ state, result }) => {
-        if (result.status === "failed" && plan.reason !== "manual") autoFailed.add(input.session.id);
+    const preferExtractive = slowRoutes.size > 0 && slowRoutes.has(routeKey());
+    return runContextCompaction(input, plan, config, { ...options, signal, inTurn, preferExtractive }, deps)
+      .then(({ state, result, timedOut }) => {
+        if (result.status === "failed" && plan.reason !== "manual") autoFailed.add(id);
+        if (timedOut) slowRoutes.add(routeKey());
+        if (timedOut && result.status === "failed" && plan.reason !== "manual") autoTimedOut.set(id, { tokens: plan.tokensBefore, route: routeKey() });
+        if (result.status === "compacted") autoTimedOut.delete(id);
         release();
         request?.settle(result);
         return state;
@@ -93,15 +155,17 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
   }
 
   const control: ContextCompactionControl = {
-    open(id, signal) { accepting.set(id, signal); autoFailed.delete(id); },
+    open(id, signal) { deps.background?.cancel(id); accepting.set(id, signal); autoFailed.delete(id); },
     close(id) {
       accepting.delete(id);
       autoFailed.delete(id);
       const request = requests.get(id);
       // Enqueue without awaiting: the caller still owns the turn lock here.
       if (request && !request.running && !request.queued) enqueue(id, request);
+      deps.background?.schedule(id);
     },
     beforeStep(input, options) {
+      deps.background?.cancel(input.session.id);
       const request = requests.get(input.session.id);
       return perform(input, options, request?.queued ? undefined : request);
     },
@@ -112,6 +176,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     compactSession(id: string, options: { signal?: AbortSignal } = {}): Promise<CompactionResult> {
       if (stopped || options.signal?.aborted) return Promise.resolve(cancelled());
       if (requests.has(id) || active.has(id)) return Promise.resolve({ status: "busy", reason: "manual" });
+      deps.background?.cancel(id);
       const turnSignal = accepting.get(id);
       if (!turnSignal) load(id);
       const controller = new AbortController();
@@ -140,10 +205,13 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     },
     shutdown() {
       stopped = true;
+      deps.background?.shutdown();
       for (const request of requests.values()) request.controller.abort();
       for (const controller of active.values()) controller.abort();
       accepting.clear();
       autoFailed.clear();
+      autoTimedOut.clear();
+      slowRoutes.clear();
       warned.clear();
     },
   };

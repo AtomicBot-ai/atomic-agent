@@ -5,6 +5,7 @@ import { SessionStore, createEmptySessionState, createFusionWorkerSession, prune
 import { WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
+import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import type { createRuntimeTraces } from "./runtime-traces.js";
 
 export function prepareRuntimeSessionStore(
@@ -91,6 +92,7 @@ export function installRuntimeSessionDelete(
   sessionStore: Pick<SessionStore, "delete">,
   dropRecorder: ReturnType<typeof createRuntimeTraces>["dropRecorder"],
   shellJobs: Pick<ShellJobRegistry, "endSession">,
+  outputSpill?: Pick<ToolOutputSpill, "removeSession">,
 ) {
   // Drop a session's trace recorder — and stop its detached shell jobs,
   // kept ones included — when the session itself is deleted, so the map
@@ -101,6 +103,9 @@ export function installRuntimeSessionDelete(
   sessionStore.delete = (id: string): void => {
     dropRecorder(id);
     shellJobs.endSession(id);
+    // The full outputs its clipped results were saved to (ATO-663).
+    // Best effort and never throws.
+    outputSpill?.removeSession(id);
     deleteSession(id);
   };
 
@@ -131,8 +136,10 @@ export function createRuntimeSessionFactories(
 
   // In memory only: no `sessionStore.save`, no `ensureRecorder`. The
   // worker stamp is what `executeTurn` keys its skips on.
-  const createEphemeralSession = (meta: FusionWorkerMeta): SessionState =>
-    createFusionWorkerSession({ workingDir, meta });
+  const createEphemeralSession = (meta: FusionWorkerMeta, inheritedDir?: string): SessionState => ({
+    ...createFusionWorkerSession({ workingDir: inheritedDir ?? workingDir, meta }),
+    ...(inheritedDir !== undefined ? { inheritedWorkspace: true } : {}),
+  });
 
   return { createSession, createEphemeralSession };
 }

@@ -98,6 +98,9 @@ export type SkillsFilterStatus = "all" | "enabled" | "disabled";
  * disabled rows greyed out without re-reading the config file.
  */
 export interface SkillSummaryRow {
+  disabledReasons?: readonly string[];
+  sourcePath?: string;
+  sources?: readonly string[];
   name: string;
   description: string;
   version: string;
@@ -107,6 +110,8 @@ export interface SkillSummaryRow {
 
 /** Root state slice for the Skills tab. */
 export interface SkillsPanelState {
+  workspace?: string;
+  projectSkillsEnabled?: boolean;
   mode: SkillsPanelMode;
   rows: readonly SkillSummaryRow[];
   cursor: number;

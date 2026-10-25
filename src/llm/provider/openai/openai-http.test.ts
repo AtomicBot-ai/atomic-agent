@@ -719,6 +719,51 @@ describe("humanizeOpenAiHttpError", () => {
     );
   });
 
+  describe("404/405 from a server on this machine (ATO-871)", () => {
+    const local = (status: number, url: string, label = "atomic-chat") =>
+      new OpenAiHttpError("raw", status, url, false, null, label);
+
+    it("names Atomic Chat on 1337 and keeps the answered status", () => {
+      for (const status of [404, 405]) {
+        expect(
+          humanizeOpenAiHttpError(local(status, "http://127.0.0.1:1337/v1/chat/completions")),
+        ).toBe(
+          `The local Atomic Chat server at 127.0.0.1:1337 answered ${status}: the model is not loaded there, ` +
+            "or this address is not its API. Load the model in Atomic Chat, or check the base URL.",
+        );
+      }
+    });
+
+    it("names Ollama on 11434", () => {
+      for (const status of [404, 405]) {
+        expect(
+          humanizeOpenAiHttpError(local(status, "http://localhost:11434/v1/chat/completions", "ollama")),
+        ).toBe(
+          `The local Ollama server at localhost:11434 answered ${status}: the model is not loaded there, ` +
+            "or this address is not its API. Load the model in Ollama, or check the base URL.",
+        );
+      }
+    });
+
+    it("says the local server for any other local port", () => {
+      const text = humanizeOpenAiHttpError(local(404, "http://127.0.0.1:1234/v1/chat/completions", "lmstudio"));
+      expect(text).toBe(
+        "The local server at 127.0.0.1:1234 answered 404: the model is not loaded there, " +
+          "or this address is not its API. Load the model in that server, or check the base URL.",
+      );
+      expect(text).not.toContain("\u2014");
+    });
+
+    it("leaves a cloud 404 and 405 as they were", () => {
+      const cloud = (status: number) =>
+        new OpenAiHttpError(`openai provider ${status}: `, status, "https://openrouter.ai/api/v1/chat/completions", false, null, "openrouter");
+      expect(humanizeOpenAiHttpError(cloud(404))).toBe(
+        '"openrouter" answered 404 (not found). The model id or the base URL is likely wrong.',
+      );
+      expect(humanizeOpenAiHttpError(cloud(405))).toBe('"openrouter" rejected the request (405).');
+    });
+  });
+
   it("claims a retry count only for classes the client retries", () => {
     expect(humanizeOpenAiHttpError(mk(401))).not.toContain("Tried");
     expect(humanizeOpenAiHttpError(mk(404))).not.toContain("Tried");
@@ -946,6 +991,65 @@ describe("humanizeOpenAiHttpError", () => {
       );
       expect(said).not.toContain("rate-limiting");
       expect(said).not.toContain("Tried");
+    });
+
+    it("says a moderation 403 is the provider's filter, not the key", () => {
+      const body = JSON.stringify({
+        error: {
+          code: 403,
+          message:
+            'openai/gpt-4o requires moderation on OpenRouter. Your input was flagged for "harassment"',
+          metadata: {
+            reasons: ["harassment"],
+            flagged_input: "...",
+            provider_name: "OpenAI",
+            model_slug: "openai/gpt-4o",
+          },
+        },
+      });
+      const said = humanizeOpenAiHttpError(
+        new OpenAiHttpError(`openai provider 403: ${body}`, 403, "https://openrouter.ai/api/v1/chat/completions", false, null, "openrouter", undefined, {
+          body: parseProviderErrorBody(body),
+        }),
+      );
+      expect(said).toContain('"openrouter" refused the request (403): its moderation flagged the input');
+      expect(said).toContain('Your input was flagged for "harassment"');
+      expect(said).not.toContain("API key");
+      // A 403 with no body is still the key's.
+      expect(humanizeOpenAiHttpError(mk(403))).toContain("rejected the API key (403)");
+    });
+
+    it("does not call an account flagged for abuse a moderation refusal", () => {
+      const body = JSON.stringify({
+        error: { message: "Your account has been flagged for suspicious activity and suspended." },
+      });
+      const said = humanizeOpenAiHttpError(
+        new OpenAiHttpError(`openai provider 403: ${body}`, 403, "https://openrouter.ai/api/v1/chat/completions", false, null, "openrouter", undefined, {
+          body: parseProviderErrorBody(body),
+        }),
+      );
+      expect(said).toContain("rejected the API key (403)");
+      expect(said).not.toContain("moderation");
+    });
+
+    it("keeps Gemini's per-minute 429 a rate limit, billing words and all", () => {
+      const body = JSON.stringify([
+        {
+          error: {
+            code: 429,
+            message:
+              "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits.\n* Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 10, model: gemini-2.5-flash\nPlease retry in 41.6s.",
+            status: "RESOURCE_EXHAUSTED",
+          },
+        },
+      ]);
+      const said = humanizeOpenAiHttpError(
+        new OpenAiHttpError(`openai provider 429: ${body}`, 429, "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", false, 41_600, "gemini", undefined, {
+          body: parseProviderErrorBody(body),
+        }),
+      );
+      expect(said).toContain("rate-limiting this key (429)");
+      expect(said).not.toMatch(/top up|refused the request/i);
     });
 
     it("leaves a 403 about the key and a plain 429 as they were", () => {

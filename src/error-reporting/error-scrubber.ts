@@ -8,6 +8,7 @@
  */
 
 import { classifyTransportHost } from "./classify-transport-host.js";
+import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-tags.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -86,6 +87,13 @@ export interface ScrubbedErrorEvent {
    * of the user's own prompt in that field, and none of that may travel.
    */
   upstreamErrorType?: string;
+  /**
+   * `llm_failure` turn context as ready-made tags (`provider_id`,
+   * `local_engine`, `outage_waited_ms`, `outage_attempts`,
+   * `daemon_state`), already reduced to fixed words and numbers by
+   * `sanitizeLlmFailureTags`.
+   */
+  llmFailureTags?: Record<string, string>;
   /** Path-stripped stack frames (basenames only — no home dir / username). */
   frames: SentryStackFrame[];
 }
@@ -332,9 +340,10 @@ export function extractSafeTransportHost(err: unknown): string | undefined {
  *
  * The walk takes the outermost link that has a `.body` at all rather than
  * looking for an `OpenAiHttpError` specifically — `extractSafeTransportHost`
- * reads `.url` the same duck-typed way. `OpenAiHttpError` is the only
- * class in this project that carries a `.body`, so there is nothing else
- * to shadow it today; a second one would have to be checked here.
+ * reads `.url` the same duck-typed way. `OpenAiHttpError` and
+ * `LlamaServerError` (which keeps only `{ type }` of a llama-server error
+ * body) are the classes in this project that carry a `.body`; a third one
+ * would have to be checked here.
  */
 export function extractSafeUpstreamErrorType(
   err: unknown,
@@ -405,7 +414,7 @@ function readCauseError(err: Error): Error | undefined {
  */
 export function scrubError(
   err: Error,
-  opts: { source: string; category?: string },
+  opts: { source: string; category?: string; llmFailure?: LlmFailureContext },
 ): ScrubbedErrorEvent {
   const errorType = err.name || err.constructor?.name || "Error";
   const category =
@@ -443,5 +452,7 @@ export function scrubError(
   if (upstreamErrorType !== undefined) {
     event.upstreamErrorType = upstreamErrorType;
   }
+  const llmFailureTags = sanitizeLlmFailureTags(opts.llmFailure);
+  if (llmFailureTags !== undefined) event.llmFailureTags = llmFailureTags;
   return event;
 }

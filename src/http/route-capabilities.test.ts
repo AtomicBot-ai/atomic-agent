@@ -49,6 +49,20 @@ describe("GET /api/capabilities", () => {
     ).toBe(true);
   });
 
+  it("advertises the approval decisions the resolve route accepts", async () => {
+    // ATO-473: the desktop draws "Allow in this chat" only when listed.
+    harness = await startTestHarness();
+    const res = await fetch(`${harness.baseUrl}/api/capabilities`);
+    const body = (await res.json()) as {
+      agent: { approvalDecisions: string[] };
+    };
+    expect(body.agent.approvalDecisions).toEqual([
+      "allow-once",
+      "allow-in-chat",
+      "deny",
+    ]);
+  });
+
   it("lists only the tools the agent is offered under the current config", async () => {
     // `github.*` and `fusion.delegate` are registered unconditionally and
     // hidden from the agent by config gates (no token, not in fusion).

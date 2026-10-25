@@ -50,6 +50,13 @@ const ctx: ToolContext = {
   signal: new AbortController().signal,
 };
 
+describe("createMcpToolDefinition untrusted output", () => {
+  it("declares its results as outside text from the server", () => {
+    const tool = createMcpToolDefinition(metaOf("docs", "search"), fakeClient(async () => ({ content: [] })));
+    expect(tool.untrustedOutput).toBe("MCP server docs");
+  });
+});
+
 describe("projectMcpResponseToText", () => {
   it("keeps full cloud text, structured data and embedded resource bodies without an exact mirror", () => {
     const structuredContent = { hits: 3 };

@@ -1,6 +1,6 @@
 import { readContextLengthFromRejection } from "../llm/reliability/request-size-rejection.js";
 import { resolveModelMode } from "../llm/model-mode.js";
-import { prepareStepPrompt } from "./step/step-inference.js";
+import { prepareStepPrompt, refreshStepWorkspace } from "./step/step-inference.js";
 import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { contextCompactionRejection } from "./turn/compaction-recovery.js";
@@ -43,6 +43,7 @@ import { composeSteerNotice } from "./steer-notice.js";
 import { getConfig } from "../config/index.js";
 
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
+import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
 
 /**
  * What the user reads when the step loop ran out before the model
@@ -59,6 +60,8 @@ import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.j
 export class AgentLoop {
   /** Once-per-session dedupe for the `### profile` clip warning. */
   private readonly profileClipWarnings = new ProfileClipWarnings();
+  /** Once-per-cut notice that the packer left older history out (ATO-295). */
+  private readonly historyTrimWarnings = new HistoryTrimWarnings();
 
   constructor(private readonly deps: AgentLoopDependencies) {}
 
@@ -338,6 +341,9 @@ export class AgentLoop {
           : durationCeilingMs - elapsedMs,
       );
       let compactionInput: BuildPromptInput | undefined;
+      // Read by the truncation retry in the catch below: a cloud cap
+      // is held, a local one raised (`planTruncationRetry`).
+      let stepModelMode: "local" | "cloud" | undefined;
       try {
         // `profileFactsProvider` is a raw `profileStore.listForPrompt()`.
         // Dropping the facts is a real loss — `profile-renderer` emits
@@ -413,11 +419,13 @@ export class AgentLoop {
         const contextProviderId = options.providerId ?? this.deps.contextProviderId?.(state.id);
         const initialMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, options.providerId) : undefined;
         const modelMode = options.modelModePolicy ? resolveModelMode(options.modelModePolicy, contextProviderId) : undefined;
+        stepModelMode = modelMode?.mode;
         // Cloud transitions must use the sticky link before planning maintenance,
         // not only at send time. All-local preparation retains its existing path.
         const contextSlice = contextProviderId && (initialMode?.mode === "cloud" || modelMode?.mode === "cloud")
           ? this.deps.resolveLlmSlice?.(contextProviderId) ?? pinnedSlice : pinnedSlice;
         const stepDeps: StepDependencies = {
+            prepareWorkspace: this.deps.prepareWorkspace,
             registry: this.deps.registry,
             commitSession: (next) => {
               state = next;
@@ -518,12 +526,23 @@ export class AgentLoop {
                   ...(this.deps.logger ? { logger: this.deps.logger } : {}),
                   emit: (clipped) => this.deps.onEvent?.(clipped),
                 });
+                // ATO-295: the packer cut older history (compaction off,
+                // failed or not possible). Said once per cut, not per step.
+                reportHistoryTrim({
+                  warnings: this.historyTrimWarnings,
+                  sessionId: state.id,
+                  stepIndex: i,
+                  prompt: event.prompt,
+                  ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+                  emit: (trimmed) => this.deps.onEvent?.(trimmed),
+                });
               }
             },
             ...(this.deps.metrics ? { metrics: this.deps.metrics } : {}),
             ...(this.deps.logger ? { logger: this.deps.logger } : {}),
             tracker: loopTracker,
           };
+        refreshStepWorkspace(stepContext, stepDeps);
         if (this.deps.compaction) {
           compactionInput = prepareStepPrompt(stepContext, stepDeps).promptInput;
           let maintenance = this.deps.compaction.beforeStep(compactionInput, {
@@ -574,6 +593,10 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         turn.stepsTaken += 1;
+        // A step that came back whole ends a run of cut steps: the turn's
+        // truncation budget bounds a model cut on every step, not a long
+        // task with a cut here and there.
+        if (turn.truncationRetry?.stepIndex !== i) turn.truncationRetries = 0;
         // A completed step is what the review-stall count observes: a
         // fan-out resets it, a step of reading (or of refusals) adds
         // one. The mutation predicate is the orchestrator gate's own.
@@ -898,6 +921,7 @@ export class AgentLoop {
           state, options, stepIndex: i, finalizationStep, noticeForThisStep,
           effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
           durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
+          ...(stepModelMode !== undefined ? { modelMode: stepModelMode } : {}),
         }, this.deps, turn);
         if (decision.kind === "wait") {
           const nextRetryMs = decision.nextRetryMs;

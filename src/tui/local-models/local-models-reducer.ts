@@ -44,6 +44,8 @@ export function reduceLocalModelsAction(
         lastRefreshedAt: action.at,
         loading: false,
         errorLine: null,
+        // The Core notice belongs to the Core engine: switching to llama.cpp clears it.
+        coreFailure: action.backend.engine === "llama-server" ? null : p.coreFailure,
         // Reconcile the UI-level phase with the snapshot: once the
         // daemon is healthy we are no longer "starting"; once it is
         // fully gone we are no longer "stopping".
@@ -343,6 +345,11 @@ export function reduceLocalModelsAction(
           daemonPhase: action.phase,
           daemonError: action.phase === "idle" ? p.daemonError : null,
         },
+      };
+    case "local_models_core_failure_set":
+      return {
+        ...state,
+        localModelsPanel: { ...p, coreFailure: action.failure },
       };
     case "local_models_daemon_error_set":
       return {

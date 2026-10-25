@@ -101,6 +101,10 @@ function turnRequestFields(params: LlmStreamParams) {
     ...(params.reasoningEffort !== undefined
       ? { reasoningEffort: params.reasoningEffort }
       : {}),
+    ...(params.requestTimeoutMs !== undefined
+      ? { requestTimeoutMs: params.requestTimeoutMs }
+      : {}),
+    ...(params.disableThinking ? { disableThinking: true } : {}),
   };
 }
 

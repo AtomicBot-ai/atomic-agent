@@ -119,11 +119,11 @@ ALTER TABLE memories ADD COLUMN consolidating_at INTEGER;
 //
 // Storage: `embedding BLOB` holds Float32 little-endian (`dim * 4`
 // bytes). No `sqlite-vec` virtual table yet — JS-side brute-force
-// cosine handles up to ~`memory.embeddings.bruteForceCeiling` rows
-// (default 200, see `memory-store-v2.embeddings.test.ts`). Above that
-// the recall layer emits `agent.memory.embeddings.brute_force_overflow`
-// and falls back to FTS5-only until either (a) the corpus is trimmed
-// or (b) `sqlite-vec` is wired in (deferred phase 1B follow-up).
+// cosine scans up to `memory.embeddings.bruteForceCeiling` rows per
+// recall (default 2000). Above that the recall layer scans the newest
+// that many plus the keyword hits' vectors and emits
+// `agent.memory.embeddings.brute_force_overflow` (see `hybrid-recall.ts`);
+// `sqlite-vec` remains a deferred follow-up.
 //
 // Cascade: `ON DELETE CASCADE` so memory removal in `MemoryStore`
 // cleans embeddings without a separate transaction. The composite PK

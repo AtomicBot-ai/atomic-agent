@@ -206,6 +206,7 @@ export function buildMcpResourceListTool(manager: McpManager): ToolDefinition {
 export function buildMcpResourceReadTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.resource.read",
+    untrustedOutput: "an MCP resource",
     description:
       "Read a resource exposed by an MCP server. Args: `server` (string, required), `uri` (string, required — exact URI as returned by `mcp.resource.list`). Returns the concatenated text contents (binary blobs are skipped).",
     readonly: true,

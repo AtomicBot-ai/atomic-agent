@@ -10,7 +10,17 @@ export const ANALYTICS_EVENTS = {
   messageSent: "message_sent",
   firstMessageSent: "first_message_sent",
   analyticsDisabled: "analytics_disabled",
+  localEngineFailed: "local_engine_failed",
+  imageGenerated: "image_generated",
+  videoGenerated: "video_generated",
 } as const;
+
+/**
+ * Which engine served a local turn: Atomic Core, our own managed
+ * llama-server, or a server the operator runs (external mode or a custom
+ * llama-server provider). A fixed word, never a URL or a path.
+ */
+export type LocalEngine = "atomic-core" | "llama-server" | "external";
 
 /** Where an analytics opt-out was made. */
 export type AnalyticsDisabledVia = "settings" | "slash" | "config";
@@ -42,12 +52,25 @@ export interface AppInstalledContext {
  *  - `promptTokens` / `completionTokens`
  *                  — tokens the turn consumed, summed across every LLM
  *                    call it made. Reported by the provider's `usage`
- *                    block; omitted when the provider reports none.
+ *                    block; a local llama-server, which sends none,
+ *                    counts by its timings (never priced). Omitted when
+ *                    no call reported any.
+ *  - `cachedTokens` — of those prompt tokens, how many the services
+ *                    served from a prompt cache. Omitted when no call
+ *                    reported the figure.
  *  - `costUsd`     — estimated spend for the turn, from the same token
  *                    counts times per-model pricing. Omitted when the
  *                    model carries no pricing, which is the normal case
  *                    for local runners — a free turn reports no cost
  *                    rather than a zero one.
+ *  - `localEngine` — for a local turn only, which engine served it
+ *                    (`LocalEngine`). Omitted for cloud turns.
+ *  - `fallbackCalls` — how many of the turn's completions were served
+ *                    by a fallback link rather than the provider the
+ *                    turn was meant for. Omitted when unknown.
+ *
+ * `provider` and `model` name the link that actually served the turn
+ * (its last completion), so after a fallover they are the fallback's.
  */
 export interface MessageEventContext {
   provider: string;
@@ -57,22 +80,33 @@ export interface MessageEventContext {
   outcome?: string;
   promptTokens?: number;
   completionTokens?: number;
+  cachedTokens?: number;
   costUsd?: number;
+  localEngine?: LocalEngine;
+  fallbackCalls?: number;
 }
 
 /**
  * Emit the one-time `app_installed` event. No-ops when analytics is
  * disabled (`client` is null) or the event was already sent for this
  * install.
+ *
+ * The "sent" flag is set only after PostHog confirmed delivery
+ * (`captureConfirmed`). Setting it right after queueing lost the install
+ * for good on a first launch without network: posthog-node keeps its
+ * queue in memory only, so the event died with the process while the
+ * flag said it had gone (ATO-717). An undelivered event is now simply
+ * tried again on the next launch. Never rejects; callers need not await
+ * it.
  */
-export function captureAppInstalled(
+export async function captureAppInstalled(
   client: AnalyticsClient | null,
   store: AnalyticsStateStore,
   context: AppInstalledContext = {},
-): void {
+): Promise<void> {
   if (!client) return;
   if (store.isAppInstalledSent()) return;
-  client.capture(ANALYTICS_EVENTS.appInstalled, {
+  const delivered = await client.captureConfirmed(ANALYTICS_EVENTS.appInstalled, {
     ...(context.installChannel !== undefined
       ? { install_channel: context.installChannel }
       : {}),
@@ -80,7 +114,7 @@ export function captureAppInstalled(
       ? { other_surface_installed: context.otherSurfaceInstalled }
       : {}),
   });
-  store.markAppInstalledSent();
+  if (delivered) store.markAppInstalledSent();
 }
 
 /**
@@ -209,6 +243,117 @@ export function captureMessageSent(
     ...(context.completionTokens !== undefined
       ? { completion_tokens: context.completionTokens }
       : {}),
+    ...(context.cachedTokens !== undefined
+      ? { cached_tokens: context.cachedTokens }
+      : {}),
     ...(context.costUsd !== undefined ? { cost_usd: context.costUsd } : {}),
+    ...(context.localEngine !== undefined
+      ? { local_engine: context.localEngine }
+      : {}),
+    ...(context.fallbackCalls !== undefined
+      ? { fallback_calls: context.fallbackCalls }
+      : {}),
+  });
+}
+
+/**
+ * Context of `local_engine_failed`. `stage` and `reasonCode` come from
+ * the engine's closed vocabulary (`download` / `verify` / `backend` /
+ * `start`; `network`, `checksum`, …). Anything outside a short lowercase
+ * word is sent as `unknown`, so a path, a URL or an error message can
+ * never leave the machine through this event.
+ */
+export interface LocalEngineFailedContext {
+  engine: "atomic-core" | "llama-server";
+  stage: string;
+  reasonCode: string;
+}
+
+const FIXED_WORD = /^[a-z][a-z_]{0,23}$/;
+function fixedWord(value: string): string {
+  return FIXED_WORD.test(value) ? value : "unknown";
+}
+
+/**
+ * Emit `local_engine_failed` when the local engine could not be installed
+ * or started and the operator was shown the way forward (retry, or
+ * llama.cpp). Carries `{ engine, stage, reason_code }` only. No-ops when
+ * analytics is disabled.
+ */
+export function captureLocalEngineFailed(
+  client: AnalyticsClient | null,
+  context: LocalEngineFailedContext,
+): void {
+  if (!client) return;
+  client.capture(ANALYTICS_EVENTS.localEngineFailed, {
+    engine: context.engine === "llama-server" ? "llama-server" : "atomic-core",
+    stage: fixedWord(context.stage),
+    reason_code: fixedWord(context.reasonCode),
+  });
+}
+
+/**
+ * Context of `image_generated`, one per `image.generate` call. Shape
+ * only: where it ran, which model, how long, how many pictures and
+ * whether it worked. Never the prompt, a path or Core's error message;
+ * `errorCode` is Core's closed code (`REMOTE_QUOTA`, `GPU_BUSY`, ...),
+ * lowercased, or `unknown`.
+ */
+export interface ImageGeneratedContext {
+  kind: "cloud" | "local";
+  /** The catalog id (`google/gemini-nano-banana-2.1`) or `local`. */
+  model: string;
+  durationMs: number;
+  success: boolean;
+  count: number;
+  errorCode?: string;
+}
+
+/** A model id as catalogs spell it: `vendor/name-1.2`. Anything else is `unknown`. */
+const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,95}$/;
+
+/** Emit `image_generated`. No-ops when analytics is disabled. */
+export function captureImageGenerated(
+  client: AnalyticsClient | null,
+  context: ImageGeneratedContext,
+): void {
+  if (!client) return;
+  client.capture(ANALYTICS_EVENTS.imageGenerated, {
+    kind: context.kind === "local" ? "local" : "cloud",
+    model: MODEL_ID.test(context.model) ? context.model : "unknown",
+    duration_ms: Math.max(0, Math.round(context.durationMs)),
+    success: context.success,
+    count: Math.max(0, Math.trunc(context.count)),
+    ...(context.errorCode !== undefined ? { error_code: fixedWord(context.errorCode.toLowerCase()) } : {}),
+  });
+}
+
+/**
+ * Context of `video_generated`, one per `video.generate` call that got
+ * past approval. Shape only: which model, how long a clip was asked
+ * for, and how it ended. Never the prompt, a path or a message;
+ * `errorCode` is Core's closed code, lowercased, or `unknown`.
+ */
+export interface VideoGeneratedContext {
+  /** The catalog id (`google/veo-3.1-fast`), `custom` or `default`. */
+  model: string;
+  /** Clip length asked for, in seconds. */
+  durationSecs: number;
+  outcome: "success" | "failed" | "cancelled";
+  errorCode?: string;
+}
+
+/** Emit `video_generated`. No-ops when analytics is disabled. */
+export function captureVideoGenerated(
+  client: AnalyticsClient | null,
+  context: VideoGeneratedContext,
+): void {
+  if (!client) return;
+  const outcome = context.outcome === "success" || context.outcome === "cancelled" ? context.outcome : "failed";
+  client.capture(ANALYTICS_EVENTS.videoGenerated, {
+    model: MODEL_ID.test(context.model) ? context.model : "unknown",
+    duration_secs: Math.max(0, Math.trunc(context.durationSecs)),
+    outcome,
+    ...(context.errorCode !== undefined ? { error_code: fixedWord(context.errorCode.toLowerCase()) } : {}),
   });
 }

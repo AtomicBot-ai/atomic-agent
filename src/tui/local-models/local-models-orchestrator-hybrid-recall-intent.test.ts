@@ -83,7 +83,8 @@ describe("LocalModelsOrchestrator hybrid-recall intent", () => {
   function optIn(): void {
     persistUserLocalModelsConfig({
       mode: "managed",
-      managed: { modelId: CHAT_MODEL_ID },
+      // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+      managed: { engine: "llama-server", modelId: CHAT_MODEL_ID },
       embeddings: { enabled: true, modelId: EMBED_MODEL_ID },
     });
     persistEmbeddingHybridRecall({

@@ -82,6 +82,8 @@ import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
 import { SessionDeleteModal } from "./session-rail/session-delete-modal.js";
 import { UninstallModal } from "./uninstall/uninstall-modal.js";
+import { answerDesktopQuestion } from "./uninstall/uninstall-key-bindings.js";
+import type { UninstallChoice } from "./uninstall/uninstall-state.js";
 import { SessionPicker } from "./session-rail/session-picker.js";
 import { ThemePicker } from "./theme-picker/theme-picker.js";
 import {
@@ -123,7 +125,7 @@ import {
   selectMetaBarRows,
   selectRailVisible,
 } from "./select-chrome-rows.js";
-import { filterSlashCommands } from "./commands/slash-commands.js";
+import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { slashPrefix } from "./commands/slash-command-parser.js";
 import { handleEditorSubmit, runSlashCommand } from "./submit-handler.js";
 import type { TaskCreateKind } from "./tasks/tasks-panel-state.js";
@@ -237,8 +239,11 @@ export interface TuiAppCallbacks {
    * first-run stamps and open the flow. Only called on an idle session.
    */
   onOnboardingRerunRequested?(): void;
-  /** The word was typed and Enter pressed. */
-  onUninstallConfirmed?(): void;
+  /**
+   * The word was typed and Enter pressed (and the desktop question
+   * answered, when the desktop app shares the state folder).
+   */
+  onUninstallConfirmed?(choice: UninstallChoice): void;
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
@@ -287,6 +292,10 @@ export interface TuiAppCallbacks {
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
   onCompactionRequested?(verb: "run" | "show"): void;
+  /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */
+  onPromptEnhanceRequested?(draft: string): void;
+  /** Idle Esc: stop a running `/enhance` (no-op when none is running). */
+  onPromptEnhanceCancel?(): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
@@ -357,6 +366,9 @@ export interface TuiAppCallbacks {
    * worker keeps its partial file, so Enter on the row resumes it.
    */
   onLocalModelsPullCancelRequested?(kind: "chat" | "embedding"): void;
+  onComposerEngineRequested?(engine: "atomic-core" | "llama-server", leg?: "orchestrator" | "worker"): void;
+  onComposerFusionModelRequested?(leg: "orchestrator" | "worker", model: string): void;
+  onLocalModelsEngineRequested?(engine: "atomic-core" | "llama-server"): void;
   onLocalModelsSetActiveRequested?(
     modelId: import("../local-llm/index.js").LocalModelId,
   ): void;
@@ -368,6 +380,8 @@ export interface TuiAppCallbacks {
    */
   onLocalModelsUseManagedRequested?(): void | Promise<void>;
   onLocalModelsBackendPullRequested?(): void;
+  /** `R` on the Atomic Core notice: download the engine again, then start the configured model. */
+  onLocalModelsCoreRetryRequested?(): void;
   onLocalModelsRefreshRequested?(): void;
   /** Ask Hugging Face what GGUFs the typed reference names. */
   onLocalModelsHfResolveRequested?(reference: string): void;
@@ -394,6 +408,11 @@ export interface TuiAppCallbacks {
   onLocalModelsDaemonStartRequested?(): void | Promise<void>;
   /** Ask the orchestrator to stop the llama-server daemon. */
   onLocalModelsDaemonStopRequested?(): void | Promise<void>;
+  /**
+   * The chat route moved to a cloud model: stop only the chat daemon and
+   * keep the embedding one, so memory search keeps working (ATO-376).
+   */
+  onLocalModelsChatStopForCloudRequested?(): void | Promise<void>;
   /**
    * Bounce a wedged llama-server: stop the chat daemon and start it
    * again. Distinct from stop-then-start by hand, which also tears down
@@ -457,12 +476,16 @@ export interface TuiAppCallbacks {
   }): void;
   /** Skills tab: start the 5s registry-listing refresh loop on first entry. */
   onSkillsAutoRefreshStart?(): void;
-  /** Skills tab: one-shot refresh dispatched on `r` keypress. */
+  /** Revalidate a cloud skill and format its explicit request before normal submission. */
+  prepareSkillInvocation?(name: string, input: string): string;
+  /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
   /** Skills tab: load the SKILL.md body and open the detail view. */
   onSkillDetailRequested?(name: string): void;
   /** Skills tab: flip the disabled bit and persist to `config.json`. */
   onSkillToggleRequested?(name: string): void;
+  onWorkspaceSkillToggleRequested?(name: string): void;
+  onProjectSkillsToggleRequested?(): void;
   /** Skills tab: open the uninstall confirmation for a global skill. */
   onSkillRemoveRequested?(name: string): void;
   /** Skills tab: delete the skill directory after confirmation. */
@@ -661,7 +684,7 @@ export interface TuiAppCallbacks {
   onTelegramTokenSubmitted?(buffer: string): void | Promise<void>;
   /** Telegram tab: clear the persisted token (back to `down`). */
   onTelegramClearTokenRequested?(): void | Promise<void>;
-  /** Telegram tab: arm a 60s pairing window that captures the next DM. */
+  /** Telegram tab: open a 5-minute pairing window claimed by a DM `/start <code>`. */
   onTelegramStartPairingRequested?(): void | Promise<void>;
   /** Telegram tab: cancel an active pairing window. */
   onTelegramCancelPairingRequested?(): void;
@@ -974,6 +997,10 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    callbacks.onSkillsRefreshRequested?.();
+  }, [state.session.sessionId, state.slashPaletteOpen, callbacks.onSkillsRefreshRequested]);
+
+  useEffect(() => {
     if (state.uiMode === "debug" && state.activeTab === "skills") {
       callbacks.onSkillsAutoRefreshStart?.();
     }
@@ -1037,6 +1064,13 @@ export function TuiApp({
   useEffect(() => {
     if (composerSwitchOpen) callbacks.onLocalModelsRefreshRequested?.();
   }, [composerSwitchOpen, callbacks]);
+
+  const composerCatalogProvider = state.composerSwitch?.kind === "workers"
+    ? state.providersPanel.runMode?.workerProviderId
+    : state.composerSwitch?.kind === "model" ? state.providersPanel.runMode?.orchestratorProviderId : null;
+  useEffect(() => {
+    if (composerCatalogProvider) callbacks.onProvidersInlineModelsEnsureRequested?.(composerCatalogProvider);
+  }, [composerCatalogProvider, callbacks]);
 
   // Same problem one screen earlier. The composer's model control has
   // to be able to say `download model` on a local route without the
@@ -1677,6 +1711,10 @@ export function TuiApp({
     // and the half-typed message with it — was a trap: no hint strip ever
     // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
     // on Ctrl+C twice and `/quit`; Esc clears the draft first.
+    // Idle Esc is also the cancel for a running `/enhance`: it never
+    // reaches `onAbort`, so without this the rewrite kept running after
+    // the draft it was for had been cleared.
+    callbacks.onPromptEnhanceCancel?.();
     if (state.inputValue.length > 0) {
       dispatch({ type: "input_changed", value: "" });
       return;
@@ -1738,12 +1776,12 @@ export function TuiApp({
   // inserting a literal tab character — see `multi-line-editor.tsx`.
   const onTab = useCallback(() => {
     if (!state.slashPaletteOpen) return;
-    const completions = filterSlashCommands(state.slashQuery);
+    const completions = filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel));
     const chosen = completions[state.slashPaletteCursor];
     if (!chosen) return;
     dispatch({ type: "input_changed", value: `/${chosen.name} ` });
     dispatch({ type: "slash_palette_closed" });
-  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor]);
+  }, [state.slashPaletteOpen, state.slashQuery, state.slashPaletteCursor, state.skillsPanel]);
 
   // Live-preview: swap the active palette to the theme at `cursor` (clamped)
   // so the whole UI repaints as the operator moves through the list. The
@@ -2237,6 +2275,19 @@ export function TuiApp({
                       onFocus={(cursor) =>
                         dispatch({ type: "uninstall_cursor_set", cursor })
                       }
+                      onDesktopFocus={(cursor) =>
+                        dispatch({
+                          type: "uninstall_desktop_cursor_set",
+                          cursor,
+                        })
+                      }
+                      onDesktopAnswer={(answer) =>
+                        answerDesktopQuestion(answer, {
+                          state,
+                          dispatch,
+                          callbacks,
+                        })
+                      }
                     />
                   ) : null}
                   {state.sessionDelete ? (
@@ -2340,6 +2391,15 @@ export function TuiApp({
                       onPathCancel={() =>
                         dispatch({ type: "approval_path_edit_closed" })
                       }
+                      previewPage={
+                        state.approvalPreviewPage?.approvalId ===
+                        state.pendingApproval.approvalId
+                          ? state.approvalPreviewPage.page
+                          : null
+                      }
+                      onPreviewPage={() =>
+                        dispatch({ type: "approval_preview_paged" })
+                      }
                     />
                   </Box>
                 ) : null}
@@ -2365,6 +2425,7 @@ export function TuiApp({
                   <SlashPalette
                     query={state.slashQuery}
                     cursor={state.slashPaletteCursor}
+                    commands={filterSlashCommands(state.slashQuery, skillSlashCommands(state.skillsPanel))}
                   />
                 ) : null}
                 {state.tasksPanel.cancelConfirm ? (

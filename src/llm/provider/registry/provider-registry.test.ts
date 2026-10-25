@@ -87,6 +87,165 @@ describe("ProviderRegistry", () => {
       }),
     ).rejects.toThrow(/unknown llm provider kind/);
   });
+
+  it("allows embedding-only openai-compatible provider without defaultChatModel", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "chat-provider",
+        activeEmbeddingProvider: "embed-only",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "embed-only",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultEmbeddingModel: "nomic-embed-text",
+            userModels: [
+              {
+                id: "nomic-embed-text",
+                kind: "embedding" as const,
+                dim: 768,
+              },
+            ],
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
+    });
+    expect(registry.listIds()).toContain("embed-only");
+    await expect(registry.swapActive("embed-only")).rejects.toThrow(
+      /has no chat model and cannot be the active text provider/,
+    );
+    expect(registry.activeTextProviderId).toBe("chat-provider");
+  });
+
+  it("lets a chatless entry become active once a rebuild pins a chat model (ATO-386)", async () => {
+    registerBuiltInProviderKinds();
+    const logger = { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never;
+    const llm = (embedOnly: { defaultChatModel?: string }) => ({
+      activeTextProvider: "chat-provider",
+      activeEmbeddingProvider: "embed-only",
+      toolTransport: "auto" as const,
+      providers: [
+        {
+          id: "chat-provider",
+          kind: "openai-compatible",
+          baseUrl: "https://example.invalid",
+          defaultChatModel: "gpt-4",
+        },
+        {
+          id: "embed-only",
+          kind: "openai-compatible",
+          baseUrl: "https://example.invalid",
+          defaultEmbeddingModel: "nomic-embed-text",
+          ...embedOnly,
+        },
+      ],
+    });
+    const before = { ...getConfig(), llm: llm({}) } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(before, {
+      config: before,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger,
+    });
+    await expect(registry.swapActive("embed-only")).rejects.toThrow(
+      /no chat model/,
+    );
+    // What `/model embed-only <model-id>` and the TUI model picker do:
+    // write the pin, rebuild that one provider, then switch. The guard
+    // must read the rebuilt entry, not the one captured at boot.
+    const after = {
+      ...getConfig(),
+      llm: llm({ defaultChatModel: "qwen3-8b" }),
+    } as AtomicAgentConfig;
+    await registry.replaceProviderFromConfig("embed-only", after, {
+      config: after,
+      logger,
+    });
+    await registry.swapActive("embed-only");
+    expect(registry.activeTextProviderId).toBe("embed-only");
+  });
+
+  it("allows a defaultEmbeddingModel-only provider with no userModels (#410)", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "chat-provider",
+        activeEmbeddingProvider: "embed-pin",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "embed-pin",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultEmbeddingModel: "nomic-embed-text",
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    const registry = await ProviderRegistry.fromConfig(fakeConfig, {
+      config: fakeConfig,
+      llamaClient: {} as never,
+      getProfile: () => ({}) as never,
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
+    });
+    expect(registry.listIds()).toContain("embed-pin");
+  });
+
+  it("rejects non-embedding openai-compatible provider without defaultChatModel", async () => {
+    registerBuiltInProviderKinds();
+    const fakeConfig = {
+      ...getConfig(),
+      llm: {
+        activeTextProvider: "bad-provider",
+        activeEmbeddingProvider: "embed-only",
+        toolTransport: "auto" as const,
+        providers: [
+          {
+            id: "chat-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            defaultChatModel: "gpt-4",
+          },
+          {
+            id: "bad-provider",
+            kind: "openai-compatible",
+            baseUrl: "https://example.invalid",
+            userModels: [{ id: "gpt-4", kind: "chat" as const }],
+          },
+        ],
+      },
+    } as AtomicAgentConfig;
+    await expect(
+      ProviderRegistry.fromConfig(fakeConfig, {
+        config: fakeConfig,
+        llamaClient: {} as never,
+        getProfile: () => ({}) as never,
+        logger: { debug: () => {}, info: () => {}, warn: () => {}, error: () => {} } as never,
+      }),
+    ).rejects.toThrow(/requires defaultChatModel/);
+  });
 });
 
 describe("ProviderRegistry with an incomplete provider entry", () => {
@@ -152,7 +311,7 @@ describe("ProviderRegistry with an incomplete provider entry", () => {
         getProfile: () => ({}) as never,
         logger,
       }),
-    ).rejects.toThrow(/requires baseUrl and defaultChatModel/);
+    ).rejects.toThrow(/requires defaultChatModel/);
   });
 
   it("skips the broken entry on a hot merge too", async () => {

@@ -408,7 +408,7 @@ export function buildFusionDelegateTool(
             ...waveWarnings,
             ...completedWaveNotes(finished),
           ]);
-          const waveResults = await runWorkerTasks(deps, {
+          const waveResults = await runWorkerTasks(ctx.modelMode === "cloud" ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true } : deps, {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
             parentSessionId: ctx.sessionId,

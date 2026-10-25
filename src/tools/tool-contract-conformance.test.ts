@@ -42,6 +42,8 @@ import { buildToolViewTool } from "./tool-view/index.js";
 import { registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerVisionTools } from "./vision/index.js";
+import { registerImageTools } from "./image/index.js";
+import { registerVideoTools } from "./video/index.js";
 import { buildFusionDelegateTool } from "./fusion/fusion-delegate.js";
 import { TOOL_ROLES, descriptorsForRole, partitionByRole, roleAdmits } from "./tool-roles.js";
 import { confineReads } from "./read-scope/confine-reads.js";
@@ -59,6 +61,7 @@ import { OS_FS_EDIT_CONTRACT } from "./os/fs/fs-edit-contract.js";
 import { OS_FS_PATCH_CONTRACT } from "./os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "./os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "./os/fs/fs-restore-contract.js";
+import { OS_FS_MOVE_CONTRACT } from "./os/fs/fs-move-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "./os/fs/fs-locate-project-contract.js";
 
 const CORE_CONTRACTS = [
@@ -75,6 +78,7 @@ const CORE_CONTRACTS = [
   OS_FS_TRASH_CONTRACT,
   OS_FS_RESTORE_CONTRACT,
   OS_FS_LOCATE_PROJECT_CONTRACT,
+  OS_FS_MOVE_CONTRACT,
 ];
 
 const unexpected = (): never => { throw new Error("Catalog assembly must not execute an external operation"); };
@@ -101,7 +105,7 @@ const TERMINALS = {
 };
 const CONDITIONAL = {
   registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks and vision builders follow their enabled gates" },
-  availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub and fusion definitions stay registered while unavailable descriptors are hidden" },
+  availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, image and video definitions stay registered while unavailable descriptors are hidden" },
   mcp: { owner: "mcp/McpManager + runtime/bootstrap", reason: "Meta tools are registered once; server-qualified tools and external schemas belong to the live catalog" },
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
 };
@@ -220,7 +224,7 @@ function conformanceErrors(catalog: Catalog): string[] {
   for (const definition of catalog.registrations) {
     if (definition.description.length === 0) errors.push(`empty description: ${definition.name}`);
   }
-  // Canonical semantic oracle is deliberately bounded to the 13 filesystem contracts.
+  // Canonical semantic oracle is deliberately bounded to the 14 filesystem contracts.
   // Other built-ins have no canonical owner yet: presence/formats do not prove their semantics.
   for (const contract of CORE_CONTRACTS) {
     const definition = catalog.registrations.find((item) => item.name === contract.name);
@@ -250,6 +254,8 @@ const gates: ToolGateConfig = {
   vision: { enabled: true, providerAvailable: true },
   memory: { profile: { enabled: true }, notes: { enabled: true }, lessons: { enabled: true }, procedures: { enabled: true } },
   tasks: { agentToolsEnabled: true }, email: { available: true }, mcp: { enabled: true }, github: { connected: true }, fusion: { enabled: true },
+  image: { available: true },
+  video: { available: true },
 };
 
 let directory: string;
@@ -288,6 +294,8 @@ beforeAll(() => {
   registerMemoryTools(registry, memoryOptions(true));
   registerTaskTools(registry, taskOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+  registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
+  registerVideoTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
   registry.register(buildFusionDelegateTool({ ...dangerous, slotManager: { poolSize: () => 1 }, resolveRunMode: unexpected, workerSupportsSlotAffinity: () => false, warmWorkerBackend: async () => unexpected(), outputCharCap: 1000, logger: new StructuredLogger({ level: "error", sinks: [] }), runTurn: async () => unexpected(), createEphemeralSession: unexpected, emitEvent: unexpected, workingDir: directory }));
   manager = new McpManager([], { toolRegistry: registry });
   for (const definition of [buildMcpResourceListTool(manager), buildMcpResourceReadTool(manager), buildMcpPromptListTool(manager), buildMcpPromptGetTool(manager)]) registry.register(definition);
@@ -319,8 +327,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(88);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(85);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(91);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(88);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
@@ -416,6 +424,8 @@ describe("whole built-in tool catalog conformance", () => {
       { group: GATED_TOOL_NAMES.mcp, next: { ...gates, mcp: { enabled: false } } },
       { group: GATED_TOOL_NAMES.github, next: { ...gates, github: { connected: false } } },
       { group: GATED_TOOL_NAMES.fusion, next: { ...gates, fusion: { enabled: false } } },
+      { group: GATED_TOOL_NAMES.image, next: { ...gates, image: { available: false } } },
+      { group: GATED_TOOL_NAMES.video, next: { ...gates, video: { available: false } } },
     ];
     for (const family of families) {
       expect(names(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, family.next))).toEqual(names(DEFAULT_TOOL_DESCRIPTORS).filter((name) => !new Set<string>(family.group).has(name)));
@@ -456,6 +466,7 @@ describe("whole built-in tool catalog conformance", () => {
     }
     expect(roleAdmits("builder", "os.fs.locate_project")).toBe(false);
     expect(roleAdmits("builder", "os.fs.trash")).toBe(false);
+    expect(roleAdmits("builder", "os.fs.move")).toBe(false);
     for (const name of ["os.fs.write", "os.fs.edit", "os.fs.patch", "os.fs.restore"]) expect(roleAdmits("builder", name)).toBe(true);
     for (const name of ["os.fs.read", "os.fs.hash", "os.fs.diff", "os.fs.watch", "os.fs.locate_project"]) expect(roleAdmits("orchestrator", name)).toBe(true);
   });

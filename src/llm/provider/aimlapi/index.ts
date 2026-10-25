@@ -11,6 +11,7 @@ export {
 } from "./aimlapi-models-catalog.js";
 export {
   listAimlapiChatPicks,
+  refreshAimlapiChatCatalog,
   refreshAimlapiChatCatalogFromApi,
   type AimlapiChatPick,
 } from "./fetch-aimlapi-chat-catalog.js";

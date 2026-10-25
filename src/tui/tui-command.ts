@@ -10,7 +10,10 @@ import {
   type WhileBusySubmitMode,
 } from "../config/index.js";
 import { checkLlamaServer } from "../llm/llama-server-health.js";
-import { describeLlamaHealthFailure } from "../llm/describe-llama-health-failure.js";
+import {
+  describeLlamaHealthFailure,
+  managedPortsOf,
+} from "../llm/describe-llama-health-failure.js";
 import { createAgentRuntime, type AgentRuntime } from "../runtime/bootstrap.js";
 import { getAppVersion } from "../version.js";
 import type { TuiAction } from "./tui-action.js";
@@ -205,6 +208,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // llama-server, in the same post-exit slot the self-update restart
   // uses (see the end of this function).
   let uninstallRequested = false;
+  // The answer to the ladder's desktop question, when it was asked.
+  let uninstallKeepDesktopData = false;
 
   const logSink: LogSink = (record: LogRecord) => bus.emitLog(record);
   const metricSink: MetricSink = (sample: MetricSample) =>
@@ -228,12 +233,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
     handlers: {
       onAgentEvent: (event, sessionId) => bus.emitAgentEvent(event, sessionId),
       onApprovalRequest: (request) => bus.emitApproval(request),
-      onSkillRegistryChange: (entries, dropped) =>
-        bus.emit({
-          type: "skill_count_changed",
-          count: entries.length,
-          dropped,
-        }),
+      onSkillRegistryChange: (entries, dropped) => {
+        if (orchestratorForChannelStatus) orchestratorForChannelStatus.skills.refresh();
+        else bus.emit({ type: "skill_count_changed", count: entries.length, dropped });
+      },
       onChannelStatus: (status) => {
         // Telegram status flows through the panel orchestrator, which
         // both updates the panel slice and emits a runtime_info line
@@ -503,14 +506,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionsEndReached: () => orchestrator.loadMoreSessions(),
         onSessionNewRequested: () => orchestrator.newSession(),
         onCompactionRequested: (verb) => { void orchestrator.compactContext(verb); },
+        onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
+        onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
           void loadUninstallPreview(bus, config.paths.stateDir),
         onOnboardingRerunRequested: () =>
           reopenOnboarding((action) => bus.emit(action)),
-        onUninstallConfirmed: () => {
+        onUninstallConfirmed: (choice) => {
           uninstallRequested = true;
+          uninstallKeepDesktopData = choice.keepDesktopData;
           orchestrator.quit();
         },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
@@ -552,11 +558,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTaskRunNowRequested: (taskId) => orchestrator.tasks.runNow(taskId),
         onTaskCreateSubmitted: (input) => orchestrator.tasks.createTask(input),
         onSkillsAutoRefreshStart: () => orchestrator.skills.startAutoRefresh(),
+        prepareSkillInvocation: (name, input) => orchestrator.skills.prepareInvocation(name, input),
         onSkillsRefreshRequested: () => orchestrator.skills.refresh(),
         onSkillDetailRequested: (name) =>
           void orchestrator.skills.openDetail(name),
         onSkillToggleRequested: (name) =>
           void orchestrator.skills.toggleSkill(name),
+        onWorkspaceSkillToggleRequested: (name) => orchestrator.skills.toggleWorkspaceSkill(name),
+        onProjectSkillsToggleRequested: () => orchestrator.skills.toggleProjectSkills(),
         onSkillRemoveRequested: (name) =>
           void orchestrator.skills.requestRemove(name),
         onSkillRemoveConfirmed: (name) =>
@@ -677,12 +686,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.pullModel(id, mode),
         onLocalModelsPullCancelRequested: (kind) =>
           void orchestrator.localModels.cancelPull(kind),
+        onComposerEngineRequested: (engine, leg) => { void orchestrator.chooseComposerEngine(engine, leg); },
+        onComposerFusionModelRequested: (leg, model) => { void orchestrator.chooseComposerFusionModel(leg, model); },
+        onLocalModelsEngineRequested: (engine) => { void orchestrator.localModels.chooseEngine(engine); },
         onLocalModelsSetActiveRequested: (id) =>
           void orchestrator.localModels.setActive(id),
         onLocalModelsUseManagedRequested: () =>
           void orchestrator.localModels.useManagedMode(),
         onLocalModelsBackendPullRequested: () =>
           void orchestrator.localModels.pullBackend(),
+        onLocalModelsCoreRetryRequested: () =>
+          void orchestrator.localModels.retryCoreEngine(),
         onLocalModelsRefreshRequested: () =>
           void orchestrator.localModels.refresh(),
         onLocalModelsHfResolveRequested: (reference) =>
@@ -703,6 +717,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.startDaemon(),
         onLocalModelsDaemonStopRequested: () =>
           void orchestrator.localModels.stopDaemon(),
+        onLocalModelsChatStopForCloudRequested: () =>
+          void orchestrator.localModels.stopChatForCloudSelection(),
         onLocalModelsDaemonRestartRequested: () =>
           void orchestrator.localModels.restartDaemon(),
         onLocalModelsEmbeddingPullRequested: (id) =>
@@ -848,8 +864,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   // The frozen Win10 conhost scrolls under full-height frames — the
   // layout already reserves its bottom row (see `legacy-conhost.ts`);
-  // this is where the operator learns why, and that Windows Terminal
-  // does not need the workaround. Once per session, in the transcript,
+  // this is a plain tip that Windows Terminal renders the UI better,
+  // not an error. Once per session, in the transcript,
   // because anything printed before the alt screen is never seen.
   const conhostHint = legacyConhostStartupHint();
   if (conhostHint) {
@@ -916,7 +932,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // mutually exclusive and this one has to win: re-exec'ing a binary we
   // just deleted would be the last thing the operator saw.
   if (uninstallRequested) {
-    return performUninstall({ stateDir: config.paths.stateDir });
+    return performUninstall({
+      stateDir: config.paths.stateDir,
+      keepDesktopData: uninstallKeepDesktopData,
+    });
   }
 
   // Self-update restart handoff. The runtime is fully shut down and the
@@ -1100,7 +1119,13 @@ function persistLlamaUrl(
         verifyAuth: true,
       });
       if (!health.reachable) {
-        report(describeLlamaHealthFailure(health, nextUrl));
+        report(
+          describeLlamaHealthFailure(
+            health,
+            nextUrl,
+            managedPortsOf(getConfig().localModels),
+          ),
+        );
         // An openai-compat verdict has a real path forward — the same
         // server saved as a cloud provider — so beyond naming it, open
         // the steer prompt: `y` there deep-links into the provider

@@ -4,7 +4,9 @@
 // See src/cli/node-env-bootstrap.ts.
 import "./node-env-bootstrap.js";
 import { isSea } from "node:sea";
-import { argv, exit } from "node:process";
+import { argv } from "node:process";
+import { exitAfterFlush } from "./exit-after-flush.js";
+import { ensureUtf8Console } from "./windows-console-utf8.js";
 import { runAgentCommand } from "./run-agent.js";
 import { debugReplCommand } from "./debug-repl.js";
 import { skillCommand } from "./skill.js";
@@ -105,7 +107,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "memory",
-    summary: "Inspect + export the cross-session memory store (export)",
+    summary: "Inspect, export + reindex the cross-session memory store (export|reindex)",
     run: memoryCommand,
   },
   {
@@ -155,7 +157,8 @@ function printHelp(): void {
     "",
     "Bootstrap env:",
     "  ATOMIC_AGENT_STATE_DIR         Directory for persistent state + config.json (default ~/.atomic-agent)",
-    "  ATOMIC_AGENT_LLAMA_API_KEY     Bearer token for the llama-server (managed mode: the daemon runs with it; unset = a generated key in <models dir>/llama-server.key)",
+    "  ATOMIC_AGENT_LLAMA_API_KEY     Bearer token for a llama-server you run yourself (external mode) or the legacy managed llama-server engine (unset = a generated key in <models dir>/llama-server.key).",
+    "                                 Not needed with Atomic Core: Core issues and rotates its own key.",
     "  ATOMIC_AGENT_SERVE_NO_PARENT_EXIT  1 to keep `serve` running after its parent exits (same as --no-parent-exit)",
     `  ATOMIC_AGENT_LLAMA_MAX_TOKENS  Max new tokens per completion (n_predict / max_tokens), default ${USER_CONFIG_DEFAULTS.localModels.completionMaxTokens}, clamped 64..131072`,
     "  ATOMIC_AGENT_BROWSER_CHANNEL           Preferred browser family: chrome | msedge | chromium (default chrome)",
@@ -195,6 +198,8 @@ function userArgsFromArgv(): string[] {
 installTransportDeadlines();
 
 async function main(): Promise<number> {
+  // Windows only: UTF-8 console code page for this run, restored on exit.
+  ensureUtf8Console();
   const [command, ...rest] = userArgsFromArgv();
   if (command === "-h" || command === "--help") {
     printHelp();
@@ -232,10 +237,10 @@ async function main(): Promise<number> {
 }
 
 main()
-  .then((code) => exit(code))
+  .then((code) => exitAfterFlush(code))
   .catch((err) => {
     const message =
       err instanceof Error ? (err.stack ?? err.message) : String(err);
     process.stderr.write(`${message}\n`);
-    exit(1);
+    exitAfterFlush(1);
   });

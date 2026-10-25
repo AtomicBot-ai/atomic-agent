@@ -24,6 +24,7 @@ import {
   createListSessionsHandler,
   createSteerSessionHandler,
 } from "./route-sessions.js";
+import { createRenameSessionHandler } from "./route-session-title.js";
 import {
   createApprovalEventsHandler,
   createResolveApprovalHandler,
@@ -43,6 +44,7 @@ import {
   createRestartMcpServerHandler,
   createSetMcpServerEnabledHandler,
 } from "./route-mcp.js";
+import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -56,6 +58,9 @@ export function buildRouteTable(): RouteDefinition[] {
   // state, and the live switches cannot be read back as the mode that
   // set them (see route-coding-mode.ts `inferMode`).
   const codingMode = createCodingModeHandlers();
+  // Same reason: the last pairing window's outcome is per-process state
+  // the GET reads back after the POST opened it.
+  const telegramPairing = createTelegramPairingHandlers();
   return [
     {
       method: "GET",
@@ -139,6 +144,11 @@ export function buildRouteTable(): RouteDefinition[] {
       handler: createDeleteSessionHandler(),
     },
     {
+      method: "PATCH",
+      path: "/api/sessions/{id}",
+      handler: createRenameSessionHandler(),
+    },
+    {
       method: "POST",
       path: "/api/sessions/{id}/steer",
       handler: createSteerSessionHandler(),
@@ -169,6 +179,10 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
     { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
+    // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
+    { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
+    { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },
+    { method: "DELETE", path: "/api/telegram/pairing", handler: telegramPairing.cancel },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },

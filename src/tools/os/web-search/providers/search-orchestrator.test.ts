@@ -7,6 +7,7 @@ import { createSearchCache } from "../transport/search-cache.js";
 import {
   WebSearchBlockedError,
   WebSearchRateLimitedError,
+  WebSearchUnavailableError,
 } from "../web-search-errors.js";
 import type {
   WebSearchProviderName,
@@ -157,7 +158,7 @@ describe("runWebSearchWithFallback", () => {
     expect(exa.search).toHaveBeenCalledOnce();
   });
 
-  it("rethrows the first error when every provider throws", async () => {
+  it("reports every provider in one error when all of them throw (ATO-325)", async () => {
     const ddg = stubProvider("duckduckgo", async () => {
       throw new WebSearchBlockedError("duckduckgo", "ddg blocked");
     });
@@ -168,14 +169,21 @@ describe("runWebSearchWithFallback", () => {
       name === "duckduckgo" ? ddg : exa,
     );
 
-    await expect(
-      runWebSearchWithFallback({
-        config: makeConfig({ provider: "duckduckgo", fallback: ["exa"] }),
-        deps: {},
-        options: makeOptions(),
-        env: EXA_KEYED,
-      }),
-    ).rejects.toThrow("ddg blocked");
+    const err = (await runWebSearchWithFallback({
+      config: makeConfig({ provider: "duckduckgo", fallback: ["exa"] }),
+      deps: {},
+      options: makeOptions(),
+      env: EXA_KEYED,
+    }).catch((e: unknown) => e)) as WebSearchUnavailableError;
+
+    expect(err).toBeInstanceOf(WebSearchUnavailableError);
+    expect(err.provider).toBe("duckduckgo");
+    expect(err.failures).toEqual([
+      "duckduckgo: ddg blocked",
+      "exa: exa transport",
+    ]);
+    expect(err.message).toContain("- duckduckgo: ddg blocked");
+    expect(err.message).toContain("- exa: exa transport");
   });
 
   it("caches successful results and serves a hit without calling the provider again", async () => {
@@ -417,11 +425,11 @@ describe("a provider under a standing rate limit", () => {
 });
 
 /**
- * ATO-120. Exa's keyless tier answered 429 under load and then 403
- * outright, and the shipped default (`provider: "exa"`, no key) sent it
- * a request before every search. Without a key Exa is skipped, so the
- * keyless chain serves the search and Exa's error can no longer become
- * the tool's.
+ * ATO-327. ATO-120 skipped Exa without a key, which left DuckDuckGo as
+ * the only keyless provider; where DuckDuckGo is blocked, search did not
+ * work at all (ATO-315). Keyless Exa is back in the chain, first when it
+ * is the primary, with DuckDuckGo behind it; its free tier runs out fast,
+ * so a 429 parks it and the result asks for a key.
  */
 describe("an Exa primary without a key", () => {
   function exaAndDdg() {
@@ -439,7 +447,35 @@ describe("an Exa primary without a key", () => {
     return { exa, ddg, searxng };
   }
 
-  it("is never asked: the shipped default goes straight to DuckDuckGo", async () => {
+  const KEY_REQUIRED_RATE_LIMITED = {
+    provider: "exa",
+    reason: "rate_limited",
+    getKeyUrl: "https://dashboard.exa.ai/api-keys",
+    envVar: "EXA_API_KEY",
+  };
+
+  const CONNECT_TIMEOUT =
+    "curl: (28) Connection timed out after 15005 milliseconds";
+
+  it("answers from keyless Exa when its free tier works", async () => {
+    const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => [RESULT]);
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+    });
+
+    expect(out.provider).toBe("exa");
+    expect(out.degraded).toEqual([]);
+    expect(out.keyRequired).toBeUndefined();
+    expect(exa.search).toHaveBeenCalledOnce();
+    expect(ddg.search).not.toHaveBeenCalled();
+  });
+
+  it("asks keyless Exa first, then DuckDuckGo", async () => {
     const { exa, ddg } = exaAndDdg();
 
     const out = await runWebSearchWithFallback({
@@ -451,14 +487,20 @@ describe("an Exa primary without a key", () => {
 
     expect(out.provider).toBe("duckduckgo");
     expect(out.results).toEqual([RESULT]);
-    // A supported setup, not a degradation: nothing to report.
-    expect(out.degraded).toEqual([]);
-    expect(exa.search).not.toHaveBeenCalled();
-    expect(ddg.search).toHaveBeenCalledOnce();
+    expect(exa.search).toHaveBeenCalledOnce();
+    expect(exa.search.mock.invocationCallOrder[0]!).toBeLessThan(
+      ddg.search.mock.invocationCallOrder[0]!,
+    );
+    expect(out.degraded).toEqual(["exa failed: Exa returned HTTP 403"]);
+    // Only a free-limit hit asks for a key while the search succeeded.
+    expect(out.keyRequired).toBeUndefined();
   });
 
-  it("treats a whitespace-only key as no key", async () => {
+  it("treats a whitespace-only key as no key: Exa runs keyless", async () => {
     const { exa } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new WebSearchRateLimitedError("exa", null);
+    });
 
     const out = await runWebSearchWithFallback({
       config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
@@ -468,12 +510,10 @@ describe("an Exa primary without a key", () => {
     });
 
     expect(out.provider).toBe("duckduckgo");
-    expect(exa.search).not.toHaveBeenCalled();
+    expect(out.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
   });
 
-  it("still searches when no fallback is configured, through DuckDuckGo", async () => {
-    // `fallback: []` used to mean "keyless Exa only". Skipping Exa must
-    // not turn that config into one that cannot search at all.
+  it("still has DuckDuckGo behind keyless Exa when no fallback is configured", async () => {
     const { exa, ddg } = exaAndDdg();
 
     const out = await runWebSearchWithFallback({
@@ -484,12 +524,12 @@ describe("an Exa primary without a key", () => {
     });
 
     expect(out.provider).toBe("duckduckgo");
-    expect(exa.search).not.toHaveBeenCalled();
+    expect(exa.search).toHaveBeenCalledOnce();
     expect(ddg.search).toHaveBeenCalledOnce();
   });
 
   it("keeps the configured fallback order, with DuckDuckGo appended last", async () => {
-    const { exa, searxng } = exaAndDdg();
+    const { exa, searxng, ddg } = exaAndDdg();
     searxng.search.mockImplementation(async () => {
       throw new WebSearchBlockedError("searxng", "searxng blocked");
     });
@@ -505,32 +545,181 @@ describe("an Exa primary without a key", () => {
       env: {},
     });
 
-    expect(exa.search).not.toHaveBeenCalled();
-    expect(searxng.search).toHaveBeenCalledOnce();
+    const order = [exa, searxng, ddg].map(
+      (stub) => stub.search.mock.invocationCallOrder[0]!,
+    );
+    expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(out.provider).toBe("duckduckgo");
-    expect(out.degraded).toEqual(["searxng failed: searxng blocked"]);
+    expect(out.degraded).toEqual([
+      "exa failed: Exa returned HTTP 403",
+      "searxng failed: searxng blocked",
+    ]);
   });
 
-  it("surfaces the keyless chain's own error, not Exa's, when everything fails", async () => {
+  it("parks keyless Exa on its free limit and asks for a key", async () => {
     const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new WebSearchRateLimitedError("exa", null);
+    });
+    const cooldown = createProviderCooldown();
+    const config = makeConfig({ provider: "exa", fallback: ["duckduckgo"] });
+    const T0 = 5_000_000;
+
+    const first = await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      cooldown,
+      now: () => T0,
+    });
+    expect(first.provider).toBe("duckduckgo");
+    expect(first.degraded).toEqual([
+      "exa free limit reached (HTTP 429, no EXA_API_KEY), parked for 1m",
+    ]);
+    expect(first.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+
+    // Inside the park Exa is not asked again, and the ask for a key stays.
+    const second = await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: { ...makeOptions(), query: "next" },
+      env: {},
+      cooldown,
+      now: () => T0 + 20_000,
+    });
+    expect(exa.search).toHaveBeenCalledOnce();
+    expect(ddg.search).toHaveBeenCalledTimes(2);
+    expect(second.degraded).toEqual([
+      "exa skipped: free limit reached, retrying in 40s",
+    ]);
+    expect(second.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+  });
+
+  it("reports every provider and the key link in one error when all fail", async () => {
+    const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new WebSearchRateLimitedError("exa", null);
+    });
     ddg.search.mockImplementation(async () => {
-      throw new WebSearchBlockedError("duckduckgo", "ddg blocked");
+      throw new Error(CONNECT_TIMEOUT);
     });
 
-    await expect(
-      runWebSearchWithFallback({
-        config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
-        deps: {},
-        options: makeOptions(),
-        env: {},
-      }),
-    ).rejects.toThrow("ddg blocked");
-    expect(exa.search).not.toHaveBeenCalled();
+    const err = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      cooldown: createProviderCooldown(),
+      now: () => 5_000_000,
+    }).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(WebSearchUnavailableError);
+    // Still a blocked error to anything that matches on that.
+    expect(err).toBeInstanceOf(WebSearchBlockedError);
+    const unavailable = err as WebSearchUnavailableError;
+    expect(unavailable.failures).toEqual([
+      "exa: free limit reached (HTTP 429)",
+      `duckduckgo: could not connect (site unreachable from this network); ${CONNECT_TIMEOUT}`,
+    ]);
+    expect(unavailable.message).toContain("exa: free limit reached");
+    expect(unavailable.message).toContain(
+      "duckduckgo: could not connect (site unreachable from this network)",
+    );
+    expect(unavailable.message).toContain("https://dashboard.exa.ai/api-keys");
+    expect(unavailable.message).toContain("EXA_API_KEY=...");
+    expect(unavailable.message).toContain("Do not repeat this search");
+    expect(unavailable.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
   });
 
-  it("stays first in the chain once the key is set", async () => {
+  it("says Exa was unreachable when it could not be reached either", async () => {
     const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new Error("curl: (7) Failed to connect to mcp.exa.ai port 443");
+    });
+    ddg.search.mockImplementation(async () => {
+      throw new Error(CONNECT_TIMEOUT);
+    });
+
+    const err = (await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+    }).catch((e: unknown) => e)) as WebSearchUnavailableError;
+
+    expect(err).toBeInstanceOf(WebSearchUnavailableError);
+    expect(err.keyRequired?.reason).toBe("unreachable");
+    expect(err.message).toContain("None of the search sites could be reached");
+  });
+
+  it("does not let a free-tier park hold back a key added afterwards", async () => {
+    // The user hit the free limit, added EXA_API_KEY and restarted, as the
+    // error told them to. The persisted park from the free tier must not
+    // keep the keyed API from being asked.
+    const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new WebSearchRateLimitedError("exa", null);
+    });
+    const cooldown = createProviderCooldown();
+    const config = makeConfig({ provider: "exa", fallback: ["duckduckgo"] });
+    const T0 = 5_000_000;
+
+    await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      cooldown,
+      now: () => T0,
+    });
+    expect(cooldown.tagOf("exa")).toBe("keyless");
+
     exa.search.mockImplementation(async () => [RESULT]);
+    const keyed = await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: { ...makeOptions(), query: "with a key" },
+      env: EXA_KEYED,
+      cooldown,
+      now: () => T0 + 10_000,
+    });
+
+    expect(exa.search).toHaveBeenCalledTimes(2);
+    expect(keyed.provider).toBe("exa");
+    expect(keyed.degraded.some((note) => note.includes("skipped"))).toBe(false);
+    expect(keyed.keyRequired).toBeUndefined();
+    expect(ddg.search).toHaveBeenCalledOnce();
+  });
+
+  it("passes a Stop through as it is: no report, no key card", async () => {
+    const { exa, ddg } = exaAndDdg();
+    const controller = new AbortController();
+    exa.search.mockImplementation(async () => {
+      controller.abort();
+      throw new Error("The operation was aborted");
+    });
+
+    const err = await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: { ...makeOptions(), signal: controller.signal },
+      env: {},
+    }).catch((e: unknown) => e);
+
+    expect(err).not.toBeInstanceOf(WebSearchUnavailableError);
+    expect((err as Error).message).toBe("The operation was aborted");
+    expect(ddg.search).not.toHaveBeenCalled();
+  });
+});
+
+describe("an Exa primary with a key", () => {
+  it("stays first in the chain", async () => {
+    const exa = stubProvider("exa", async () => [RESULT]);
+    const ddg = stubProvider("duckduckgo", async () => [RESULT]);
+    vi.mocked(resolveProviderByName).mockImplementation((name) =>
+      name === "exa" ? exa : ddg,
+    );
 
     const out = await runWebSearchWithFallback({
       config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
@@ -547,7 +736,13 @@ describe("an Exa primary without a key", () => {
   it("reports a keyed Exa failure as a note when DuckDuckGo answers", async () => {
     // The desktop drew this as a red failed row even though the search
     // went on to succeed. A covered failure is a note; the call is ok.
-    const { exa } = exaAndDdg();
+    const exa = stubProvider("exa", async () => {
+      throw new Error("Exa returned HTTP 403");
+    });
+    const ddg = stubProvider("duckduckgo", async () => [RESULT]);
+    vi.mocked(resolveProviderByName).mockImplementation((name) =>
+      name === "exa" ? exa : ddg,
+    );
 
     const out = await runWebSearchWithFallback({
       config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
@@ -560,5 +755,43 @@ describe("an Exa primary without a key", () => {
     expect(out.provider).toBe("duckduckgo");
     expect(out.results).toEqual([RESULT]);
     expect(out.degraded).toEqual(["exa failed: Exa returned HTTP 403"]);
+  });
+
+  it("never asks for a key: not on a 429, not when everything fails", async () => {
+    const exa = stubProvider("exa", async () => {
+      throw new WebSearchRateLimitedError("exa", null);
+    });
+    const ddg = stubProvider("duckduckgo", async () => [RESULT]);
+    vi.mocked(resolveProviderByName).mockImplementation((name) =>
+      name === "exa" ? exa : ddg,
+    );
+    const config = makeConfig({ provider: "exa", fallback: ["duckduckgo"] });
+
+    const out = await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: makeOptions(),
+      env: EXA_KEYED,
+      cooldown: createProviderCooldown(),
+      now: () => 5_000_000,
+    });
+    expect(out.degraded).toEqual([
+      "exa rate limited (HTTP 429), parked for 1m",
+    ]);
+    expect(out.keyRequired).toBeUndefined();
+
+    ddg.search.mockImplementation(async () => {
+      throw new Error("curl: (28) Connection timed out after 15005 milliseconds");
+    });
+    const err = (await runWebSearchWithFallback({
+      config,
+      deps: {},
+      options: { ...makeOptions(), query: "next" },
+      env: EXA_KEYED,
+    }).catch((e: unknown) => e)) as WebSearchUnavailableError;
+    expect(err).toBeInstanceOf(WebSearchUnavailableError);
+    expect(err.keyRequired).toBeUndefined();
+    expect(err.message).not.toContain("dashboard.exa.ai");
+    expect(err.message).toContain("web.search.provider");
   });
 });

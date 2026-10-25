@@ -9,6 +9,7 @@ import { OS_FS_EDIT_CONTRACT } from "../tools/os/fs/fs-edit-contract.js";
 import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Resource class taxonomy for parallel batched tool calls.
@@ -105,6 +106,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   [OS_FS_TRASH_CONTRACT.name]: OS_FS_TRASH_CONTRACT.resourceClass,
   [OS_FS_PATCH_CONTRACT.name]: OS_FS_PATCH_CONTRACT.resourceClass,
   [OS_FS_RESTORE_CONTRACT.name]: OS_FS_RESTORE_CONTRACT.resourceClass,
+  [OS_FS_MOVE_CONTRACT.name]: OS_FS_MOVE_CONTRACT.resourceClass,
   "os.fs.archive.extract": "approval_gated",
 
   // os.git.* — read-only shell-outs
@@ -185,6 +187,13 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
 
   // vision
   "vision.describe": "vision",
+
+  // image — a cloud generation asks before it bills the account, and a
+  // local one holds the GPU for minutes: solo either way.
+  "image.generate": "approval_gated",
+
+  // video — always a paid cloud clip that runs for minutes: solo.
+  "video.generate": "approval_gated",
 
   // fusion — `approval_gated` is the "must be solo" class, and that is
   // what this needs: one call runs several worker turns concurrently
@@ -337,6 +346,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.fs.patch": FS_WRITE_CATEGORIES,
     // Puts a saved copy back: a write in every sense.
     "os.fs.restore": FS_WRITE_CATEGORIES,
+    // Both ends ride the write funnel (`fs-move.ts`).
+    "os.fs.move": FS_WRITE_CATEGORIES,
     "os.fs.trash": ["fs_trash", "trust_config", "other"],
     "os.fs.archive.extract": ["fs_write_home", "other"],
     // Local git writes ride the fs funnel against the repository root.
@@ -356,6 +367,10 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.http.request": ["http"],
     "os.email.send": ["email"],
     "skill.run_script": ["script"],
+    // A local generation asks nothing; the cloud one is `paid_generation`.
+    "image.generate": ["paid_generation"],
+    // Always cloud, always billed per second.
+    "video.generate": ["paid_generation"],
   };
 
 /**

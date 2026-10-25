@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { SessionState } from "./session-state.js";
-import { findCurrentMacroTurnStart, macroTurnBoundaries, type ConversationTurn } from "./conversation-turn.js";
+import { findCurrentMacroTurnStart, isFinalReplyTurn, macroTurnBoundaries, type ConversationTurn } from "./conversation-turn.js";
 
 export type CompactionReason = "manual" | "threshold" | "pairs" | "overflow";
 export interface SessionCompaction {
@@ -12,11 +12,40 @@ export interface SessionCompaction {
   createdAt: number;
   reason: CompactionReason;
   model: string | null;
+  /**
+   * `extractive`: built from the records without a model (`model` is null).
+   * `rolling`: a background model summary made between turns, plus an
+   * extractive summary of the records after it. Absent: a model summary.
+   */
+  kind?: "extractive" | "rolling";
   costUsd?: number;
   tokensBefore: number;
   tokensAfter: number;
   usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
   calls?: number;
+}
+
+/**
+ * A summary kept ahead of compaction, extended in the background between
+ * turns. It is never shown to the model: only the next compaction consumes
+ * it, and a successful compaction removes it. Valid only while it still
+ * extends the current checkpoint (`from`, `baseHash`) and its boundary
+ * record is unchanged.
+ */
+export interface RollingCompactionSummary {
+  version: 1;
+  summary: string;
+  /** The checkpoint offset it extends (0 without a checkpoint). */
+  from: number;
+  /** {@link summaryTextHash} of that checkpoint's summary, or of "" without one. */
+  baseHash: string;
+  /** Exclusive end of the covered records: the watermark. */
+  coveredThrough: number;
+  /** {@link compactionBoundaryHash} of the last covered record. */
+  boundaryHash: string;
+  createdAt: number;
+  /** The model that wrote the latest extension. */
+  model: string | null;
 }
 
 export interface CompactionResult {
@@ -30,6 +59,23 @@ export interface CompactionResult {
 
 export function compactionBoundaryHash(turn: ConversationTurn): string {
   return createHash("sha256").update(JSON.stringify(turn)).digest("hex");
+}
+
+export function summaryTextHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+/** The rolling summary when it still extends the current checkpoint up to an unchanged, safe boundary. */
+export function validRollingSummary(state: Pick<SessionState, "turns" | "compaction" | "rollingSummary">): RollingCompactionSummary | null {
+  const r = state.rollingSummary;
+  if (!r || r.version !== 1 || typeof r.summary !== "string" || !r.summary.trim() || !Number.isFinite(r.createdAt) ||
+      !Number.isInteger(r.from) || !Number.isInteger(r.coveredThrough) || r.coveredThrough <= r.from ||
+      r.coveredThrough > state.turns.length || (r.model !== null && typeof r.model !== "string")) return null;
+  const base = validSessionCompaction(state);
+  if (r.from !== (base?.coveredThrough ?? 0) || r.baseHash !== summaryTextHash(base?.summary ?? "")) return null;
+  const last = state.turns[r.coveredThrough - 1];
+  if (!last || compactionBoundaryHash(last) !== r.boundaryHash || !safeCompactionCuts(state.turns).includes(r.coveredThrough)) return null;
+  return r;
 }
 
 export function validSessionCompaction(state: Pick<SessionState, "turns" | "compaction">): SessionCompaction | null {
@@ -56,6 +102,28 @@ export function safeCompactionCuts(turns: readonly ConversationTurn[]): number[]
     if (pending === 0 && turns[i + 1]?.kind !== "tool_result") cuts.push(i + 1);
   }
   return cuts;
+}
+
+/**
+ * The safe cuts that close a finished turn: the last covered record is the
+ * agent's final reply and the next record is a new user message (or there is
+ * none). A checkpoint there keeps a request together with its answer, so the
+ * summary does not list finished work as unfinished. Planners try these first
+ * and fall back to {@link safeCompactionCuts} (a cut inside one long turn);
+ * loading still accepts any safe cut, so older checkpoints stay valid.
+ */
+export function finishedTurnCompactionCuts(turns: readonly ConversationTurn[]): number[] {
+  return safeCompactionCuts(turns).filter((cut) => closesFinishedTurn(turns, cut));
+}
+
+/** Safe cuts in ascending order: finished-turn cuts first, then the rest. */
+export function preferredCompactionCuts(turns: readonly ConversationTurn[]): number[] {
+  const safe = safeCompactionCuts(turns);
+  return [...safe.filter((cut) => closesFinishedTurn(turns, cut)), ...safe.filter((cut) => !closesFinishedTurn(turns, cut))];
+}
+
+function closesFinishedTurn(turns: readonly ConversationTurn[], cut: number): boolean {
+  return isFinalReplyTurn(turns[cut - 1]) && (cut >= turns.length || turns[cut]?.kind === "user");
 }
 
 export function compactionPins(state: Pick<SessionState, "turns">, offset: number): string {

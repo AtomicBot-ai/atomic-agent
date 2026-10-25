@@ -182,3 +182,86 @@ describe("clipProfileSection", () => {
     expect(a).toEqual(b);
   });
 });
+
+/**
+ * ATO-320. A bare `- hobby_builder: true` read like a skill name to a
+ * small model; the caption says the lines are facts about the user.
+ */
+describe("clipProfileSection caption", () => {
+  const caption = "Facts about the user.";
+
+  it("goes on the first line when the section fits", () => {
+    const out = clipProfileSection([pinned("hobby_builder", "true")], {
+      maxTokens: 512,
+      caption,
+    });
+    expect(out.text).toBe(`${caption}\n- hobby_builder: true`);
+    expect(out.clip).toBeUndefined();
+  });
+
+  it("is paid for out of maxTokens and is not counted as a rendered fact", () => {
+    const note = "y".repeat(70);
+    const lines = ["- a_name: Alex", `- b_note: ${note}`];
+    // Both facts fit without the caption; with it, one has to go.
+    const maxTokens = estimateTokens([caption, lines[0]!, marker(2)].join("\n"));
+    expect(estimateTokens(lines.join("\n"))).toBeLessThanOrEqual(maxTokens);
+    expect(estimateTokens([caption, ...lines].join("\n"))).toBeGreaterThan(
+      maxTokens,
+    );
+
+    const out = clipProfileSection(
+      [pinned("a_name", "Alex"), pinned("b_note", note)],
+      { maxTokens, caption },
+    );
+
+    expect(out.text).toBe([caption, lines[0]!, marker(1)].join("\n"));
+    expect(out.clip).toEqual({
+      rendered: 1,
+      dropped: 1,
+      pinnedDropped: 1,
+      maxTokens,
+    });
+    expect(estimateTokens(out.text)).toBeLessThanOrEqual(maxTokens);
+  });
+
+  it("is left out with the facts: a marker-only section and the sentinel carry no caption", () => {
+    const none = clipProfileSection(
+      [contextual("deploy_cmd", "pnpm run deploy", ["deploy"])],
+      { userMessage: "hello", maxTokens: 512, caption },
+    );
+    expect(none).toEqual({ text: "(no profile)" });
+
+    const markerOnly = clipProfileSection([pinned("blob", "x".repeat(2_000))], {
+      maxTokens: 40,
+      caption,
+    });
+    expect(markerOnly.text).toBe(marker(1));
+    expect(markerOnly.clip?.rendered).toBe(0);
+  });
+
+  it("stays within the budget for any input", () => {
+    let seed = 11;
+    const rand = (): number => {
+      seed = (seed * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return seed / 2_147_483_648;
+    };
+    for (let round = 0; round < 300; round += 1) {
+      const n = 1 + Math.floor(rand() * 30);
+      const facts = Array.from({ length: n }, (_, i) =>
+        fact(`k${i}`, "w ".repeat(1 + Math.floor(rand() * 40)), rand() < 0.6),
+      );
+      const maxTokens = 1 + Math.floor(rand() * 300);
+      const out = clipProfileSection(facts, {
+        contextualKeywordGate: false,
+        maxTokens,
+        caption,
+      });
+      expect(estimateTokens(out.text)).toBeLessThanOrEqual(maxTokens);
+      if (out.clip !== undefined) {
+        expect(out.clip.rendered + out.clip.dropped).toBe(n);
+        const shown = out.text.split("\n").filter((l) => l.startsWith("- "));
+        expect(shown).toHaveLength(out.clip.rendered);
+      }
+    }
+  });
+});

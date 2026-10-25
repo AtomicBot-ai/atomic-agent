@@ -15,7 +15,7 @@ This area resolves and installs the external llama-server backend, chooses platf
 
 ## Device information
 
-[gpu-devices.ts](gpu-devices.ts) parses device tables, selects devices and shares a launch-local table lookup. [gpu-memory-budget.ts](gpu-memory-budget.ts) derives its budget from the established platform/total-memory policy. [nvidia-smi-vram.ts](nvidia-smi-vram.ts) parses and probes NVIDIA memory. Unknown observations and unified-memory handling stay explicit; do not invent capacity or alter configured tensor-split/device semantics while reorganizing code.
+[gpu-devices.ts](gpu-devices.ts) parses device tables, selects devices and shares a launch-local table lookup. [managed-devices.ts](managed-devices.ts) says which llama-server a managed launch asks for that table: the agent's own build, or under Atomic Core the build Core recorded, run with Core's environment ([core-backend-env.ts](../core/core-backend-env.ts)); a run that could not happen is reported with its reason, not as no GPU. [gpu-memory-budget.ts](gpu-memory-budget.ts) derives its budget from the established platform/total-memory policy. [nvidia-smi-vram.ts](nvidia-smi-vram.ts) parses and probes NVIDIA memory. Unknown observations and unified-memory handling stay explicit; do not invent capacity or alter configured tensor-split/device semantics while reorganizing code.
 
 These helpers own observations and caches, not the runtime launch itself. [Server](../server/README.md) owns process records and context/slot decisions, config owns stored defaults, and TUI/CLI own requests and presentation.
 

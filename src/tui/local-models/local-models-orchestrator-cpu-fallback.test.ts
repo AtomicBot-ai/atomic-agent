@@ -270,7 +270,8 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
     writeFileSync(resolveModelFilePath(dataDir, def.id, def.filename), "stub");
     persistUserLocalModelsConfig({
       mode: "managed",
-      managed: { modelId: "qwen-3.5-4b" },
+      // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+      managed: { engine: "llama-server", modelId: "qwen-3.5-4b" },
     });
     resetConfigCache();
     return dataDir;

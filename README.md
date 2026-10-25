@@ -6,7 +6,7 @@
 
 ### A local-first AI agent that runs on your machine, with local or cloud models.
 
-Drives your browser, edits files, runs approved commands, and remembers context across sessions. Open source, running on our TurboQuant `llama.cpp` for +30-50% throughput on small local models.
+Drives your browser, edits files, runs approved commands, and remembers context across sessions. Open source, running on our TurboQuant `llama.cpp` so long sessions with small local models fit in less memory.
 
 [![GAIA L1 · 69.8%](https://img.shields.io/badge/GAIA%20L1-69.8%25-0b63f6)](#benchmarks)
 [![Release](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml/badge.svg)](https://github.com/AtomicBot-ai/atomic-agent/actions/workflows/release.yml)
@@ -88,7 +88,7 @@ One command removes everything: the state directory (config, memory, sessions, t
 atomic-agent uninstall
 ```
 
-It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept; this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, keep the binary with `--keep-binary`, leave your shell rc file alone with `--keep-path`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`).
+It prints exactly what it will delete, with sizes, and then asks you to type the word `uninstall`. Nothing is uploaded and nothing is kept; this cannot be undone. Preview it with `atomic-agent uninstall --dry-run`, keep your data with `--keep-data`, keep the binary with `--keep-binary`, leave your shell rc file alone with `--keep-path`, or skip the prompt in a script with `--yes`. The same flow is the last entry in the TUI's own menu (**Esc → Danger zone**, or `/uninstall`). The desktop app (0.0.3 and later) shares the same `~/.atomic-agent` folder. When uninstall finds it, an interactive run asks a separate question before deleting that folder (answer no to remove only the terminal program), and a `--yes` run keeps the folder and says why; add `--include-desktop-data` to delete it in a script.
 
 ### Troubleshooting
 
@@ -96,7 +96,7 @@ If something isn't working:
 
 1. Copy your error logs and system specs.
 2. Open an issue on [GitHub](https://github.com/AtomicBot-ai/atomic-agent/issues).
-3. Or ask for help in our [Discord](https://discord.gg/kXWDFSJpMW).
+3. Or ask for help in our [Discord](https://discord.gg/DCqtG8WZX8).
 
 ## Talk to Us
 
@@ -191,7 +191,6 @@ We run local models on our own TurboQuant `llama.cpp` ([`AtomicBot-ai/atomic-lla
 
 - **TurboQuant KV-cache:** WHT-rotated low-bit quantization compresses the KV-cache up to ~6.4× versus F16, with a fused Metal decode kernel, so long-context sessions fit in far less memory.
 - **TurboQuant weights:** Lloyd-Max weight quantization with WHT rotation and fused Metal/Vulkan kernels keeps quality usable while small models fit on consumer hardware.
-- **Custom speculative decoding:** purpose-built Gemma 4 MTP and Qwen 3.6 NextN heads reuse the loaded model (no second context, tokenizer, or model load) for +30-50% throughput.
 - **Curated quantized models:** hand-picked GGUF quants that keep quality usable while fitting real VRAM budgets.
 - **Managed mode:** the CLI downloads, keeps up to date, and runs the backend and models for you, no manual `llama.cpp` setup. Set `localModels.managed.autoUpdate: false` to pin the backend.
 
@@ -246,6 +245,7 @@ Atomic Agent's memory is not a giant chat log pasted back into the prompt. It's 
 - **Dedup and eviction** merge near-duplicate memories and evict by usefulness, not age, on by default.
 - **Reflection** runs after turns, off the main agent slot, and writes memory without blocking the reply.
 - **Obsidian export:** `atomic-agent memory export --vault <dir>` writes notes, lessons and procedures into a vault as linked Markdown files.
+- **Re-embedding:** with local embeddings on, switching the embedding model (or turning embeddings on over existing notes) gives older notes vectors for the new model in the background; `atomic-agent memory reindex` does it right away.
 
 New to this? [MEMORY_GUIDE.md](docs/user/memory.md) walks the whole loop end to end: what gets stored when, where the SQLite file lives, how recall shows up in prompts, worked example transcripts, and how to inspect or wipe it all.
 
@@ -273,7 +273,7 @@ atomic-agent trace list --limit 10
 | `auto` | File writes inside the workspace stop asking. |
 | `bypass permissions` | Nothing asks this session; hardline shell-guard rules still block. |
 
-Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prompt, `ctrl+y` approves, `ctrl+d` denies, `ctrl+f` grants the category, `ctrl+b` retargets a write or grants a shell command's shape, `esc` aborts, and typing answers the agent in words. `/theme` switches between six palettes: `classic-dark`, `classic-light`, `toxic-green`, `khorne-red`, `darky-dark`, `moon-yellow`. The TUI is clickable; to select text, drag over plain text, or turn the mouse off with `/mouse off` or `--no-mouse`. Handy slash commands: `/help`, `/tools`, `/model`, `/privacy`. A failed or long turn raises a desktop notification, sessions are named from their first prompt, and inside a [herdr](https://github.com/herdrdev/herdr) pane the TUI labels the pane with its state.
+Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prompt, `ctrl+y` approves, `ctrl+d` denies, `ctrl+f` grants the category, `ctrl+b` retargets a write or grants a shell command's shape, `ctrl+z` pages through the full command when the preview is cut, `esc` aborts, and typing answers the agent in words. `/theme` switches between six palettes: `classic-dark`, `classic-light`, `toxic-green`, `khorne-red`, `darky-dark`, `moon-yellow`. The TUI is clickable; to select text, drag over plain text, or turn the mouse off with `/mouse off` or `--no-mouse`. Handy slash commands: `/help`, `/tools`, `/model`, `/privacy`. A failed or long turn raises a desktop notification, sessions are named from their first prompt, and inside a [herdr](https://github.com/herdrdev/herdr) pane the TUI labels the pane with its state.
 
 Full TUI guide: [TUI.md](docs/user/tui.md).
 
@@ -326,6 +326,10 @@ atomic-agent tui --cwd /path/to/work
 
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
 
+The default engine is Atomic Chat Core, which installs and runs our TurboQuant `llama.cpp` build for your computer. The first start installs it with progress. If that fails, the error says what happened and how to retry: `atomic-agent models update` (TUI: `R` in Models). The standalone `llama.cpp` server remains a support-only fallback that the app does not show: `atomic-agent models engine llama-server` selects it and `atomic-agent models engine atomic-core` switches back; both engines use the same model files.
+
+`embeddinggemma-2` (Google's EmbeddingGemma 2, multilingual, 768-dim) runs only on the Atomic Core engine: Core serves it from its embedding module and the first `models start-embedding` installs the newer stock `llama.cpp` build it needs.
+
 Big models can download in the background, detached from the terminal that started them:
 
 ```bash
@@ -356,14 +360,14 @@ atomic-agent models search "1m cache" --provider openrouter --limit 10
 atomic-agent models search kimi --refresh   # pull live /models lists first
 ```
 
-Every term has to match (`claude vision` is not a substring of any id), a size term names a whole-unit bucket whatever the row displays (`1m` finds windows from 1M up to 2M, including the 1,048,576-token ones that render as `1.0M`; a 2M window answers to `2m`; `128k` finds 131,072), results are ranked best-first, and the same query works in the TUI Cloud pane (press `f`).
+Every term has to match (`claude vision` is not a substring of any id), a size term names a whole-unit bucket whatever the row displays (`1m` finds windows from 1M up to 2M, including the 1,048,576-token ones that render as `1.0M`; a 2M window answers to `2m`; `128k` finds 131,072), results are ranked best-first, and the same query works in the TUI Cloud pane (press `f`). If `--refresh` cannot load a live OpenRouter or AI/ML API list, the search answers from the bundled list and prints one `warning:` line on stderr with the provider, the reason (network error, timeout, HTTP status, a body that is not JSON) and how long the attempt took.
 
 </details>
 
 <details>
 <summary><b>External <code>llama-server</code></b></summary>
 
-Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:8080`), or save the URL in the TUI's LLM tab, External pane:
+Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:9931`, llama-server's own default port since llama.cpp v0.7.0), or save the URL in the TUI's LLM tab, External pane:
 
 ```jsonc
 // <stateDir>/config.json
@@ -486,7 +490,7 @@ Both can be set up from the Integrations tab in the TUI. Each bot answers only i
 
 Channels belong to the runtime, not to the TUI: `atomic-agent serve` boots them the same way, so the bots keep answering with no terminal UI open. Each bot is guarded by its own lockfile in the state dir; a second process that tries to start the same bot leaves it down with `already running in another atomic-agent (pid N)` and does not retry, so start bots from `serve` or from the TUI, not from both.
 
-**Telegram.** Pair from the TUI: pairing mode makes the first DM the owner. In groups, turn off the bot's privacy mode in @BotFather, or plain @mentions are not delivered to it. While a turn runs, the bot keeps one silent progress bubble updated with step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`. Files you send in the DM are saved under `<stateDir>/inbox/telegram/`, one folder per day, and the agent gets the path with your caption (albums arrive as one message; Telegram lets bots fetch up to 20 MB). Files the agent attaches to a reply follow the text, images inline and the rest as documents, up to Telegram's 50 MB bot limit. Scheduled tasks can report back: `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or `notify: "telegram"` when the agent schedules it) posts each run's result to your paired DM. Reporting is per task, Telegram only; if the channel is down the report is skipped with a logged warning.
+**Telegram.** Pair from the TUI (**p** in Integrations, or `/telegram pair`): it shows a one-time 6-digit code, and the account that sends the bot `/start <code>` within 5 minutes becomes the owner; any other message is ignored. Replacing an existing owner asks you to confirm first, and after pairing the TUI names the new owner's @username. In groups, turn off the bot's privacy mode in @BotFather, or plain @mentions are not delivered to it. While a turn runs, the bot keeps one silent progress bubble updated with step labels only, never tool output; turn it off with `"telegram": { "progressIndicator": false }`. Files you send in the DM are saved under `<stateDir>/inbox/telegram/`, one folder per day, and the agent gets the path with your caption (albums arrive as one message; Telegram lets bots fetch up to 20 MB). Files the agent attaches to a reply follow the text, images inline and the rest as documents, up to Telegram's 50 MB bot limit. Scheduled tasks can report back: `atomic-agent task create --cron "0 9 * * *" --message "morning digest" --notify telegram` (or `notify: "telegram"` when the agent schedules it) posts each run's result to your paired DM. Reporting is per task, Telegram only; if the channel is down the report is skipped with a logged warning.
 
 **Discord.** There is no pairing: put your user id (as a string) in `ownerUserIds`; an empty list refuses every message. The bot needs no privileged intents, because Discord delivers DMs and @mentions without them. Inbound files up to 50 MB go to `<stateDir>/inbox/discord/`; reply attachments are uploaded one message each, within your server's upload limit. There is no progress bubble.
 
@@ -550,6 +554,8 @@ Configure MCP servers in `config.json`, and their tools join the same registry a
 }
 ```
 
+To offer only some of a server's tools, list their raw names: `"enabledTools": ["get_issue", "list_issues"]` keeps just those, and `"disabledTools": ["delete_repository"]` drops tools on top of that (or on its own, from the full list). Turned-off tools never reach the prompt and cannot be called; a change applies when the server reconnects.
+
 The TUI MCP panel supports live add / remove without restarting the process. When a stdio server fails to connect, the tail of its stderr is surfaced in the error instead of a bare disconnect message.
 
 </details>
@@ -558,7 +564,7 @@ The TUI MCP panel supports live add / remove without restarting the process. Whe
 
 Everything Atomic Agent does is inspectable and interruptible:
 
-- **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, untrusted MCP tools (except ones the server marks read-only), git writes and remote sync, trash and restore, GitHub and e-mail sends, reads outside the working scope, Fusion fan-out, and non-web browser navigation are gated by policy.
+- **Approval gates:** shell, filesystem writes, patches, archive extraction, process kill, HTTP requests, skill scripts, untrusted MCP tools (except ones the server marks read-only), git writes and remote sync, move, trash and restore, GitHub and e-mail sends, reads outside the working scope, Fusion fan-out, and non-web browser navigation are gated by policy.
 - **Append-only traces:** prompts, completions, tool invocations, outcomes, failure categories, votes, and lifecycle events recorded as local NDJSON.
 - **Prompt drift replay:** `atomic-agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces.
 - **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures classified across events, traces, metrics, TUI, sidecar, and HTTP.
@@ -567,6 +573,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 - **Explicit state:** sessions, memory, tasks, skills, browser profile, MCP config, and traces are ordinary local files or SQLite databases.
 - **Replaced files come back:** before a write replaces a file the agent did not create this session, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per working directory, files up to 5 MB), and `os.fs.restore` puts it back.
 - **Deletes go to the Trash:** `os.fs.trash` moves files to the system Trash or Recycle Bin instead of deleting them, behind approval.
+- **Moves without the shell:** `os.fs.move` moves or renames files and folders, creating missing folders, as one approval for a whole batch; it never replaces an existing file unless asked, and its result lists the moves to undo it.
 - **Long commands detach:** a shell command still running after 10 minutes becomes a background job the agent can wait on or kill; it stops when the turn ends unless kept (1-hour cap from start, 3 jobs per session).
 - **Reads stay in the workspace:** with `agent.readScope` at its default, `working-dir`, a read outside the working directory asks first; `unrestricted` turns this off.
 
@@ -579,7 +586,7 @@ By default, Atomic Agent does not require a hosted agent provider. Model calls g
 
 Anonymous usage analytics is on by default. Every event carries a random install id shared by the terminal and desktop apps on the same machine (stored in `~/.atomic-agent-install-id`; the desktop app reuses the terminal's existing id unless analytics is off in the terminal's config), your OS platform and CPU architecture, the app version, the desktop app version when it comes from the desktop app, which surface sent it (terminal UI, command line, or desktop), and the install channel (the install script, or the desktop `dmg`, `exe`, `AppImage`, or `deb` package). It sends the provider and model names exactly as configured, including a custom provider's name and, for a model added from Hugging Face, its repository id, plus turn-shape numbers (latency, step count, outcome, token counts, estimated cost). It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up: the provider name and whether it is local or cloud, never the key, the URL, or the host. The desktop app adds these event groups: launch and health (startup timings, agent start failures and restarts, window crashes, app close), onboarding screens, model downloads and backend start, chat turn timing, approval answers, button and menu usage by action id only, and feature usage counts (settings panes, sessions, voice, tasks, skills, MCP servers, Telegram setup, import). If you turn analytics off, one last event records that it was switched off and how many days after install. Message content, file paths, tool arguments, full URLs, keys, and your IP address are never sent.
 
-Crash reports go to Sentry on the same switch. They carry path-stripped stack frames, the error type and category, safe scalar codes, a bounded tool name, the surface, install channel and app versions as tags, and, for a failed connection, only the class of the endpoint host (`localhost`, `private`, `known_cloud`, or `other`), never the host itself. No native memory dumps are sent. Turn both off with `/privacy analytics off` in the TUI, the Privacy switch in the desktop app, or `"analytics": { "enabled": false }` in `config.json`. The TUI toggle applies live; an edit to `config.json` applies to processes started after it. In the desktop app the switch stops the app's own reporting at once, and the bundled agent stops after its runtime restarts. Setting `ATOMIC_AGENT_ANALYTICS=off` in the environment turns both off for that process whatever the config says.
+Crash reports go to Sentry on the same switch. They carry path-stripped stack frames, the error type and category, safe scalar codes, a bounded tool name, the surface, install channel and app versions as tags, and, for a failed connection, only the class of the endpoint host (`localhost`, `private`, `known_cloud`, or `other`), never the host itself. A failed model turn also reports the provider id when it is a built-in one, which local engine served it (`atomic-core`, `llama-server`, or `external`), how long and how many times the turn waited for the provider, and, for the engine the agent manages, whether its process was alive (`alive`, `dead`, `no_pid`, or `unknown`). No native memory dumps are sent. Turn both off with `/privacy analytics off` in the TUI, the Privacy switch in the desktop app, or `"analytics": { "enabled": false }` in `config.json`. The TUI toggle applies live; an edit to `config.json` applies to processes started after it. In the desktop app the switch stops the app's own reporting at once, and the bundled agent stops after its runtime restarts. Setting `ATOMIC_AGENT_ANALYTICS=off` in the environment turns both off for that process whatever the config says.
 
 Local-first bounds where control lives, not where packets go. Network egress happens when:
 
@@ -678,7 +685,7 @@ User-facing configuration lives in `<stateDir>/config.json`.
 
 Useful environment variables:
 - `ATOMIC_AGENT_STATE_DIR`: state, config, skills, browser profile, memory, tasks, traces. Default: `~/.atomic-agent`.
-- `ATOMIC_AGENT_LLAMA_API_KEY`: optional bearer token for `llama-server`. In managed mode the daemon is launched with this key; when it is unset, a key is generated once and kept in `<models dir>/llama-server.key` (mode 0600), so a web page in a local browser cannot call the daemon. The same key is used in external mode when `localModels.url` points at the managed port. Anything else that calls the managed daemon directly (scripts, other apps) must send `Authorization: Bearer <key>` with that key.
+- `ATOMIC_AGENT_LLAMA_API_KEY`: optional bearer token for `llama-server`. It does not apply to Atomic Core: Core issues and rotates its own key, and the agent reads it from Core, so there is nothing to set. With the legacy managed `llama-server` engine the daemon is launched with this key; when it is unset, a key is generated once and kept in `<models dir>/llama-server.key` (mode 0600), so a web page in a local browser cannot call the daemon. The same key is used in external mode when `localModels.url` points at the managed port. Anything else that calls the managed daemon directly (scripts, other apps) must send `Authorization: Bearer <key>` with that key.
 - `ATOMIC_AGENT_LLAMA_MAX_TOKENS`: completion cap, clamped to 64-131072.
 - `ATOMIC_AGENT_BROWSER_CHANNEL`: `chrome`, `msedge`, or `chromium`.
 - `ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH`: explicit Chromium-family executable path.
@@ -700,6 +707,10 @@ OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 ```
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
+
+Commands the agent runs (`os.shell.run`, `os.git.*`) do not inherit these secrets: every variable named like a key, token, secret or password, and every known provider key, is removed from the command's environment, so a command slipped in through a web page or a file cannot read `OPENAI_API_KEY` or `TELEGRAM_BOT_TOKEN`. The agent itself still uses them. The names in `tools.shell.envPassthrough` in `config.json` are passed to shell commands anyway; the default is `["GITHUB_TOKEN", "NOTION_API_KEY"]`, which the bundled `github` and `notion` skills read through the shell. Add a name there when a command of yours needs one, or set `[]` to keep those two out as well.
+
+`EXA_API_KEY` is optional. Without it, web search uses Exa's free keyless tier, which runs out quickly, and then DuckDuckGo. When the free limit is reached, or no search provider answers, the search result says so and asks for a free key from <https://dashboard.exa.ai/api-keys>. Apps get the same request as `details.keyRequired` on the `os.web.search` result (`{ provider: "exa", reason: "rate_limited" | "unreachable" | "missing", getKeyUrl, envVar }`); the HTTP stream forwards it as `key_required` on the `tool_result` event.
 
 The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine (`git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike), so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder. The dedicated tools (`os.git.remote`, `fetch`, `pull`, `push`, `clone`) honour the same switch and hand the token to git only for `github.com`, only through the child process's environment (never in a URL, in argv, or in `.git/config`) and scrub it from every line of output.
 
@@ -757,11 +768,13 @@ Two things worth knowing before you switch a long-running agent onto either: eac
 </details>
 
 <details>
-<summary><b>Qwen / Tinker tagged tool calls</b> (opt-in compatibility provider)</summary>
+<summary><b>Tagged tool calls in text</b> (Qwen, Hermes, vLLM and similar backends)</summary>
 
-Some Qwen-serving OpenAI-compatible backends (Tinker, certain vLLM/llama.cpp front-ends) emit tool calls as inline `<tool_call><function=…>…</function></tool_call>` text instead of the native `tool_calls` field; they show up as assistant prose and never execute (#105).
+Some OpenAI-compatible backends (Tinker, certain vLLM/llama.cpp front-ends serving Qwen or Hermes-style models) emit tool calls as inline `<tool_call>…</tool_call>` text instead of the native `tool_calls` field. Atomic decodes these automatically on every OpenAI-compatible kind (`openai-compatible`, `openrouter`, `aimlapi`, `gemini`, `qwen-openai-compatible`); there is nothing to enable. Both block forms are accepted: Qwen's `<function=…><parameter=…>…</parameter></function>` and the Hermes JSON `{"name": …, "arguments": {…}}`.
 
-To enable the adapter, set the provider `kind` to **`qwen-openai-compatible`** in `config.json` (with `baseUrl` + `defaultChatModel`). Plain `openai-compatible` does **not** enable it; the generic kind is left untouched on purpose. There is no TUI wizard row for this kind yet; it is config-only for now.
+A reply counts as tool calls only when the request offered tools, the response has no native `tool_calls`, and the whole trimmed `content` is `<tool_call>` blocks. Prose around a block keeps it a normal reply.
+
+Qwen thinking models sometimes put the call in `reasoning_content` instead of `content` (#105). Reading that channel is the one Qwen-only part: set the provider `kind` to **`qwen-openai-compatible`** in `config.json` (with `baseUrl` + `defaultChatModel`) to enable it. Other kinds ignore calls quoted in the reasoning channel on purpose. There is no TUI wizard row for this kind yet; it is config-only for now.
 
 ```json
 {
@@ -779,11 +792,11 @@ To enable the adapter, set the provider `kind` to **`qwen-openai-compatible`** i
 ```
 
 Behavior:
-- The tagged call is read from `content`, or from `reasoning_content` when content is empty or holds unparseable tag noise.
+- The tagged call is read from `content`. With `qwen-openai-compatible` it is also read from `reasoning_content` when content is empty or holds unparseable tag noise.
 - Argument values are coerced against the offered tool's JSON schema; a call that does not match is dropped (fail-closed) rather than executed with guessed args.
 - Streaming stays live: text/reasoning deltas stream as usual and the buffered final message is adapted once the stream closes.
 
-**Limitation for MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP + tagged Qwen is therefore unsupported for now.
+**Limitation for MCP tools:** the schema coercion supports a fixed JSON-Schema subset and rejects unknown keywords such as `$ref`. Atomic's built-in tools are fine, but MCP tools that ship a draft-07 `inputSchema` with `$ref` (or other unsupported keywords) will fail coercion and remain prose. MCP tools called through tagged text are therefore unsupported for now.
 </details>
 
 ## Development

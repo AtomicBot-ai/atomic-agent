@@ -28,8 +28,8 @@ export const PROGRESS_TEMPLATE_LINE = `${" ".repeat(
  * "almost there" screen that a mid-download cloud setup returns to — so
  * they share one component rather than each inventing its own summary.
  *
- * Two phases share one progress slot in state (the llama.cpp runtime
- * zip, then the weights), so the checklist is derived from which one is
+ * Two phases share one progress slot in state (the local engine, then
+ * the weights), so the checklist is derived from which one is
  * currently reporting. Rate and ETA come from the same events: a
  * percentage cannot answer "how long", which is the question a
  * multi-gigabyte pull actually raises.
@@ -64,7 +64,7 @@ export function OnboardingDownloadProgress(props: {
   return (
     <Box flexDirection="column" flexShrink={0}>
       <PhaseLine
-        label="llama.cpp runtime"
+        label="Local engine"
         state={phase === "runtime" ? "active" : "done"}
         pull={phase === "runtime" ? pull : null}
       />

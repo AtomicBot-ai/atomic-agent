@@ -363,7 +363,7 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
   // handles paths.
   const sendFile = async (
     chatId: number,
-    file: { path: string; kind: "photo" | "document"; threadId?: number },
+    file: { path: string; kind: "photo" | "video" | "document"; threadId?: number },
   ): Promise<unknown> => {
     const input = new grammy.InputFile(file.path);
     // A file answering a question asked in a forum topic belongs in
@@ -372,12 +372,28 @@ export const defaultGrammyBotFactory: BotFactory = async (token, hooks) => {
       file.threadId === undefined
         ? undefined
         : { message_thread_id: file.threadId };
-    return file.kind === "photo"
-      ? bot.api.sendPhoto(chatId, input, other)
-      : bot.api.sendDocument(chatId, input, other);
+    if (file.kind === "photo") return bot.api.sendPhoto(chatId, input, other);
+    // `supports_streaming` lets the clip play before it is fully downloaded.
+    if (file.kind === "video") return bot.api.sendVideo(chatId, input, { ...other, supports_streaming: true });
+    return bot.api.sendDocument(chatId, input, other);
+  };
+  // Text that only exists in memory (the full command behind a cut
+  // approval preview) goes up as a document without touching disk.
+  const sendTextDocument = async (
+    chatId: number,
+    doc: { filename: string; content: string; caption?: string; threadId?: number },
+  ): Promise<unknown> => {
+    const input = new grammy.InputFile(
+      new TextEncoder().encode(doc.content),
+      doc.filename,
+    );
+    return bot.api.sendDocument(chatId, input, {
+      ...(doc.caption === undefined ? {} : { caption: doc.caption }),
+      ...(doc.threadId === undefined ? {} : { message_thread_id: doc.threadId }),
+    });
   };
   const api = bot.api as unknown as BotInstance["api"];
-  Object.assign(api, { downloadFile, sendFile });
+  Object.assign(api, { downloadFile, sendFile, sendTextDocument });
   const instance: BotInstance = {
     api,
     setTextHandler(handler) {

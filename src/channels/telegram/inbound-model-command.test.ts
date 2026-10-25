@@ -365,6 +365,39 @@ describe("/model over Telegram", () => {
     expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
   });
 
+  describe("an embedding-only openai-compatible provider (ATO-386)", () => {
+    const embedOnly = {
+      id: "embed-only",
+      kind: "openai-compatible",
+      baseUrl: "http://127.0.0.1:11434/v1",
+      defaultEmbeddingModel: "nomic-embed-text",
+    };
+
+    it("refuses a bare /model <id> before writing anything", async () => {
+      writeLlmConfig(stateDir, { extraProviders: [embedOnly] });
+      await say("/model embed-only");
+      expect(sent[0]).toContain("cannot be the active text provider");
+      expect(sent[0]).toContain("/model embed-only <model-id>");
+      expect(getConfig().llm?.activeTextProvider).toBe("local-llama");
+      expect(fake.reloaded).toEqual([]);
+      expect(fake.activated).toEqual([]);
+    });
+
+    it("switches once the same command pins a chat model", async () => {
+      writeLlmConfig(stateDir, { extraProviders: [embedOnly] });
+      await say("/model embed-only qwen3-8b");
+      expect(sent[0]).toBe(
+        "Now on embed-only · qwen3-8b. Takes effect on the next message.",
+      );
+      const llm = getConfig().llm;
+      expect(llm?.activeTextProvider).toBe("embed-only");
+      expect(
+        llm?.providers.find((p) => p.id === "embed-only")?.defaultChatModel,
+      ).toBe("qwen3-8b");
+      expect(fake.activated).toEqual(["embed-only"]);
+    });
+  });
+
   it("switches provider without touching its pinned model", async () => {
     await say("/model openai-compat");
     expect(sent[0]).toBe(

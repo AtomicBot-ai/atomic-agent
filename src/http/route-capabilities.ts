@@ -1,4 +1,6 @@
-import { sendJson, type HttpHandler } from "./request-context.js";
+import { sendJson, sendError, type HttpHandler } from "./request-context.js";
+import { openaiError } from "./openai-errors.js";
+import { APPROVAL_DECISIONS } from "./route-approval.js";
 
 /**
  * `GET /api/capabilities` — summary of the host environment and
@@ -7,8 +9,11 @@ import { sendJson, type HttpHandler } from "./request-context.js";
  * loop directly.
  */
 export function createCapabilitiesHandler(): HttpHandler {
-  return async (_req, res, ctx) => {
+  return async (req, res, ctx) => {
     const { runtime } = ctx;
+    const sessionId = new URL(req.url ?? "/", "http://localhost").searchParams.get("sessionId");
+    if (sessionId && !runtime.sessionStore.load(sessionId)) { sendError(res, 404, openaiError("session not found")); return; }
+    const workspace = sessionId ? runtime.getSessionWorkspace(sessionId) : null;
     // The registry holds every tool bootstrap wired, including the ones
     // the config gates hide: `github.*` stays registered without a token,
     // `fusion.delegate` outside fusion (`filter-disabled-tools.ts`). What
@@ -19,7 +24,7 @@ export function createCapabilitiesHandler(): HttpHandler {
     const offered = new Set(runtime.toolDescriptors.map((d) => d.name));
     sendJson(res, 200, {
       runtime: "atomic-agent",
-      capabilities: runtime.capabilities,
+      capabilities: workspace ? { ...runtime.capabilities, workingDir: workspace.workingDir } : runtime.capabilities,
       paths: {
         stateDir: runtime.config.paths.stateDir,
         globalSkillsDir: runtime.config.paths.globalSkillsDir,
@@ -63,6 +68,10 @@ export function createCapabilitiesHandler(): HttpHandler {
         // "on for some categories, off for others"; only `approvalLevel`
         // carries that, which is why this field is deprecated.
         approvalRequired: runtime.getApprovalLevel() < 5,
+        // What `POST /api/approval/resolve` accepts. A client draws the
+        // "allow in this chat" answer only when `allow-in-chat` is listed:
+        // an older agent answers it with a 400.
+        approvalDecisions: [...APPROVAL_DECISIONS],
       },
       tools: runtime.toolRegistry
         .list()
@@ -72,7 +81,7 @@ export function createCapabilitiesHandler(): HttpHandler {
           description: t.description,
           readonly: t.readonly,
         })),
-      skills: runtime.skillCatalog.map((s) => ({
+      skills: (workspace ? workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => ({ ...e.record.manifest, source: e.record.source })) : runtime.skillCatalog).map((s) => ({
         name: s.name,
         description: s.description,
         source: s.source,
@@ -90,7 +99,7 @@ export function createCapabilitiesHandler(): HttpHandler {
       // dropped" and "server too old to know", which is exactly the
       // guess this field exists to remove. The `skills` array itself is
       // untouched at zero.
-      skillsOmitted: runtime.skillCatalogDropped,
+      skillsOmitted: workspace ? 0 : runtime.skillCatalogDropped,
     });
   };
 }

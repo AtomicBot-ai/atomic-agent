@@ -27,6 +27,15 @@ const USER_AGENT =
 
 const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
 
+/**
+ * TCP/TLS handshake budget, as `os.web.fetch` has (`connectTimeoutMs`). A
+ * search host that has not answered the handshake in 5s is blocked or
+ * down, not slow: without it a provider blocked in the user's network held
+ * the whole `timeoutMs` (15s) before the chain could move on (ATO-326).
+ * Capped by the request's own `timeoutMs`.
+ */
+const CONNECT_TIMEOUT_MS = 5_000;
+
 export type SearchHttpMethod = "GET" | "POST";
 
 export interface SearchHttpRequest {
@@ -212,6 +221,8 @@ function buildCurlArgs(input: {
     "--globoff",
     "--max-time",
     String(Math.ceil(input.timeoutMs / 1000)),
+    "--connect-timeout",
+    String(Math.ceil(Math.min(CONNECT_TIMEOUT_MS, input.timeoutMs) / 1000)),
     "--max-redirs",
     "0",
     "--resolve",

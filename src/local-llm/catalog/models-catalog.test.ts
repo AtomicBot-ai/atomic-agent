@@ -98,6 +98,11 @@ describe("models-catalog", () => {
     expect(last?.id).toBe("qwen-3.8-27b-uncensored");
     expect(last?.uncensored).toBe(true);
     expect(last?.tag).toBe("Use at your own risk");
+    // U-12: one spelling across the catalog and the desktop picker, and a
+    // plain note on what "uncensored" means.
+    expect(last?.name).toBe("Qwen 3.8 27B Uncensored GGUF");
+    expect(last?.description).toBe("Reduced-refusal Qwen 3.8 27B (abliterated)");
+    expect(last?.note).toBe("Fewer safety refusals: it may answer requests other models decline.");
     // noMTP on purpose: the fused quants carry an inline MTP head the
     // daemon has no --model-draft wiring for; noMTP is plain GGUF.
     expect(last?.filename).toBe("Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf");
@@ -111,10 +116,18 @@ describe("models-catalog", () => {
   // Every uncensored entry must carry a warning tag — the onboarding row
   // surfaces exactly that string, and a tagless uncensored entry would
   // reach the first-run screen with no caution at all.
-  it("ships a warning tag on every uncensored entry", () => {
+  it("ships a warning tag and a plain note on every uncensored entry", () => {
     for (const def of LOCAL_MODELS_CATALOG) {
       if (def.uncensored !== true) continue;
       expect(def.tag, `${def.id} must warn the operator`).toBeTruthy();
+      expect(def.note, `${def.id} must say what uncensored means`).toBeTruthy();
+    }
+  });
+
+  it("spells every Qwen entry name the same way", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (def.family !== "qwen") continue;
+      expect(def.name, def.id).toMatch(/^Qwen \d/);
     }
   });
 
@@ -161,6 +174,23 @@ describe("models-catalog (embedding)", () => {
       expect(def.fileSizeGb).toBeGreaterThan(0);
       expect(def.minRamGb).toBeGreaterThan(0);
       expect(def.recommendedRamGb).toBeGreaterThanOrEqual(def.minRamGb);
+    }
+  });
+
+  it("keeps the default and marks EmbeddingGemma 2 as a Core-module model with task prompts", () => {
+    expect(DEFAULT_EMBEDDING_MODEL_ID).toBe("nomic-embed-text-v1.5");
+    const gemma = getEmbeddingModelDef("embeddinggemma-2");
+    expect(gemma).toMatchObject({ dim: 768, requiresCoreEmbeddingModule: true });
+    expect(gemma.prompts).toEqual({
+      query: "task: search result | query: ",
+      document: "title: none | text: ",
+      similarity: "task: sentence similarity | query: ",
+    });
+    // Every other model runs on llama-server / a Core session as before.
+    for (const def of EMBEDDING_MODELS_CATALOG) {
+      if (def.id === "embeddinggemma-2") continue;
+      expect(def.requiresCoreEmbeddingModule).toBeUndefined();
+      expect(def.prompts).toBeUndefined();
     }
   });
 

@@ -67,6 +67,17 @@ describe("runtime lifecycle ownership", () => {
     expect(events).toEqual(order);
   });
 
+  it("aborts an in-flight prompt enhance on shutdown", async () => {
+    const events: string[] = [];
+    const { resources } = fixture(events);
+    const enhance = new AbortController();
+    const pendingPromptEnhances = new Set([enhance]);
+    const lifecycle = createRuntimeLifecycle({ ...resources, pendingPromptEnhances });
+    await lifecycle.shutdown();
+    expect(enhance.signal.aborted).toBe(true);
+    expect(pendingPromptEnhances.size).toBe(0);
+  });
+
   it("keeps the existing scheduler drain position and immediate second-shutdown return", async () => {
     const events: string[] = [];
     let release: () => void = () => {};
@@ -135,6 +146,25 @@ describe("runtime lifecycle ownership", () => {
     expect(events.filter((event) => event.startsWith("warn:"))).toEqual([
       "warn:stopping task runs failed", "warn:scheduler stop failed",
     ]);
+  });
+
+  it("aborts the embedding backfill with the other memory work and waits for it before closing the notes store", async () => {
+    const events: string[] = [];
+    const { resources } = fixture(events);
+    let settle: () => void = () => {};
+    const settled = new Promise<void>((resolve) => { settle = resolve; });
+    const lifecycle = createRuntimeLifecycle({
+      ...resources,
+      embeddingBackfill: { stop: async () => { events.push("backfill.stop"); await settled; events.push("backfill.settled"); } },
+    });
+    const shutdown = lifecycle.shutdown();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(events.indexOf("backfill.stop")).toBe(events.indexOf("naming.abort") + 1);
+    expect(events).not.toContain("notes.close");
+    settle();
+    await shutdown;
+    expect(events.indexOf("backfill.settled")).toBeLessThan(events.indexOf("notes.close"));
+    expect(events.filter((event) => !event.startsWith("backfill."))).toEqual(order);
   });
 
 });

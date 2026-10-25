@@ -39,6 +39,12 @@ describe("local model configuration domain seams", () => {
       .toMatchObject({ field: "synthetic.cap", reason: "expected integer in [64, 131072], got 63" });
   });
 
+  it("looks for an External llama.cpp on llama-server's own default port 9931 when no url is stored", () => {
+    expect(createLocalModelsDefaults().url).toBe("http://127.0.0.1:9931");
+    expect(parseLocal({}).url).toBe("http://127.0.0.1:9931");
+    expect(parseLocal({ url: "http://127.0.0.1:8080" }).url).toBe("http://127.0.0.1:8080");
+  });
+
   it("creates fresh mutable nested defaults and output arrays in the original key order", () => {
     const defaults = createLocalModelsDefaults();
     const other = createLocalModelsDefaults();
@@ -47,7 +53,7 @@ describe("local model configuration domain seams", () => {
     expect(parsed).toStrictEqual(defaults);
     expect(root).toStrictEqual(defaults);
     expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "useServerTemplate", "thinking", "reasoningBudgetTokens", "managed", "embeddings", "download", "customModels"]);
-    expect(Object.keys(defaults.managed)).toEqual(["modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
+    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
     expect(defaults.managed).not.toBe(other.managed);
     expect(defaults.embeddings).not.toBe(other.embeddings);
     expect(defaults.download).not.toBe(other.download);
@@ -264,5 +270,68 @@ describe("local model configuration domain seams", () => {
     const error = thrownError(() => schema.parseUserConfigFile(raw));
     expect(error).toBeInstanceOf(OwnedValidationError);
     expect(error).toMatchObject({ field });
+  });
+  it.each([
+    { version: 76, raw: undefined, expected: "atomic-core" },
+    { version: 76, raw: "llama-server", expected: "atomic-core" },
+    { version: 74, raw: "atomic-core", expected: "atomic-core" },
+    { version: 77, raw: "llama-server", expected: "llama-server" },
+    { version: 77, raw: undefined, expected: "atomic-core" },
+    { version: 78, raw: "llama-server", expected: "llama-server" },
+  ])("makes Atomic Core the default engine at v77 (v$version / $raw)", ({ version, raw, expected }) => {
+    const input = { mode: "external", url: "http://127.0.0.1:9999", managed: { engine: raw, port: 19555 } };
+    const parsed = schema.parseUserConfigFile({ version, localModels: input }).localModels;
+    expect(parsed.managed.engine).toBe(expected);
+    // The migration touches the engine only: external mode and every other field stay as written.
+    expect(parsed.mode).toBe("external");
+    expect(parsed.url).toBe("http://127.0.0.1:9999");
+    expect(parsed.managed.port).toBe(19555);
+  });
+
+  it.each([
+    { version: 77, raw: 1500, expected: 0 },
+    { version: 68, raw: 1500, expected: 0 },
+    { version: 77, raw: "1500", expected: 0 },
+    { version: 77, raw: 499, expected: 499 },
+    { version: 77, raw: 2000, expected: 2000 },
+    { version: 77, raw: 0, expected: 0 },
+    { version: 77, raw: undefined, expected: 0 },
+    { version: 78, raw: 1500, expected: 1500 },
+    { version: 78, raw: undefined, expected: 0 },
+  ])("moves the old 1500 reasoning budget default to 0 at v78 (v$version / $raw)", ({ version, raw, expected }) => {
+    const input = { thinking: "on", reasoningBudgetTokens: raw, managed: { port: 19555 } };
+    const parsed = schema.parseUserConfigFile({ version, localModels: input }).localModels;
+    expect(parsed.reasoningBudgetTokens).toBe(expected);
+    expect(parseLocal(input, version).reasoningBudgetTokens).toBe(expected);
+    // The migration touches the budget only.
+    expect(parsed.thinking).toBe("on");
+    expect(parsed.managed.port).toBe(19555);
+  });
+
+  it("writes the current version so a later 1500 choice survives reloads", () => {
+    const migrated = schema.parseUserConfigFile({ version: 77, localModels: { reasoningBudgetTokens: 1500 } });
+    expect(migrated.localModels.reasoningBudgetTokens).toBe(0);
+    expect(migrated.version).toBe(schema.USER_CONFIG_VERSION);
+    migrated.localModels.reasoningBudgetTokens = 1500;
+    expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.reasoningBudgetTokens).toBe(1500);
+  });
+
+  it("still validates the reasoning budget before applying the migration", () => {
+    expect(thrownError(() => schema.parseUserConfigFile({ version: 77, localModels: { reasoningBudgetTokens: 12 } })))
+      .toMatchObject({ field: "localModels.reasoningBudgetTokens" });
+  });
+
+  it("still rejects an unknown engine, before and after the migration", () => {
+    for (const version of [76, 77]) {
+      expect(thrownError(() => schema.parseUserConfigFile({ version, localModels: { managed: { engine: "ollama" } } })))
+        .toMatchObject({ field: "localModels.managed.engine" });
+    }
+  });
+
+  it("writes the current version so a later llama-server choice survives reloads", () => {
+    const migrated = schema.parseUserConfigFile({ version: 76, localModels: { managed: { engine: "llama-server" } } });
+    expect(migrated.version).toBe(schema.USER_CONFIG_VERSION);
+    migrated.localModels.managed.engine = "llama-server";
+    expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.managed.engine).toBe("llama-server");
   });
 });

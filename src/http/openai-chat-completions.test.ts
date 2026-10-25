@@ -1,4 +1,8 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CompletionResult } from "../llm/llama-server-client.js";
 
@@ -390,6 +394,63 @@ describe("POST /v1/chat/completions (streaming)", () => {
       expect(response.headers.get(SESSION_ID_HEADER.toLowerCase())).toMatch(
         /^api-/,
       );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("ends with OpenAI's usage chunk carrying the turn's real tokens when stream_options.include_usage is set (ATO-276)", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedToolThenReply(),
+    });
+    // The injected `llamaComplete` replaces the runtime's fallback completer,
+    // which is where each completion is metered, so this harness never fills
+    // the turn usage meter. Hand the endpoint a turn result that carries usage,
+    // as `runtime.runTurn` does in a real run (the metering itself is covered
+    // in runtime-inference.test.ts and runtime-turn-service.test.ts).
+    const runTurn = harness.runtime.runTurn.bind(harness.runtime);
+    vi.spyOn(harness.runtime, "runTurn").mockImplementation(async (...args: Parameters<typeof runTurn>) => ({
+      ...(await runTurn(...args)),
+      usage: { promptTokens: 150, completionTokens: 10 },
+    }));
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        stream: true,
+        stream_options: { include_usage: true },
+        messages: [{ role: "user", content: "inspect the page" }],
+      });
+      expect(response.status).toBe(200);
+      const text = await readAllText(response);
+      const frames = text.split("\n").filter((line) => line.startsWith("data: ")).map((line) => line.slice(6));
+      expect(frames.at(-1)).toBe("[DONE]");
+      const last = JSON.parse(frames.at(-2)!) as { object: string; choices: unknown[]; usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } };
+      expect(last.object).toBe("chat.completion.chunk");
+      expect(last.choices).toEqual([]);
+      expect(last.usage).toEqual({ prompt_tokens: 150, completion_tokens: 10, total_tokens: 160 });
+      // As OpenAI does: every chunk before the usage chunk carries `usage: null`.
+      const earlier = frames.slice(0, -2).map((frame) => JSON.parse(frame) as { object?: string; usage?: unknown })
+        .filter((frame) => frame.object === "chat.completion.chunk");
+      expect(earlier.length).toBeGreaterThan(0);
+      for (const frame of earlier) expect(frame.usage).toBeNull();
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("sends no usage chunk unless the request asks for it", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: scriptedToolThenReply(),
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        stream: true,
+        messages: [{ role: "user", content: "inspect the page" }],
+      });
+      const text = await readAllText(response);
+      expect(text).not.toMatch(/"choices":\[\]/);
+      expect(text).not.toMatch(/"prompt_tokens"/);
     } finally {
       await harness.cleanup();
     }
@@ -842,3 +903,116 @@ async function readAllText(response: Response): Promise<string> {
   out += decoder.decode();
   return out;
 }
+
+/**
+ * ATO-408: the files a `reply` delivers reach an HTTP host as
+ * `event: reply_attachments`, after the reply text, for hosts that opted
+ * into extensions. The vanilla stream stays OpenAI-clean.
+ */
+describe("POST /v1/chat/completions with reply attachments", () => {
+  let dir: string;
+  let shot: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "atomic-sse-attachments-"));
+    shot = join(dir, "chart.png");
+    writeFileSync(shot, "png");
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function replyWithAttachment(path: string) {
+    return async (): Promise<CompletionResult> => ({
+      content: JSON.stringify({
+        tool: "reply",
+        args: { text: "here is the chart", attachments: [path] },
+      }),
+      reasoningContent: "",
+      stop: true,
+      truncated: false,
+      timing: { promptMs: 0, predictedMs: 0, promptTokens: 4, predictedTokens: 2 },
+      cacheHitTokens: 0,
+      slotId: 0,
+      modelId: null,
+    });
+  }
+
+  it("streams the attachment paths after the reply text", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: replyWithAttachment(shot),
+    });
+    try {
+      const response = await postChat(
+        harness.baseUrl,
+        {
+          model: "atomic-agent",
+          stream: true,
+          messages: [{ role: "user", content: "draw it" }],
+        },
+        { [EXTENSIONS_HEADER]: "1" },
+      );
+      expect(response.status).toBe(200);
+      const text = await readAllText(response);
+      const frames = text.match(/event: reply_attachments\ndata: (.*)\n/g) ?? [];
+      expect(frames).toHaveLength(1);
+      const payload = JSON.parse(
+        frames[0]!.replace(/^event: reply_attachments\ndata: /, ""),
+      ) as { object: string; attachments: string[]; session_id: string };
+      expect(payload.object).toBe("chat.completion.reply_attachments");
+      expect(payload.attachments).toEqual([shot]);
+      expect(typeof payload.session_id).toBe("string");
+      expect(text.indexOf("here is the chart")).toBeLessThan(
+        text.indexOf("event: reply_attachments"),
+      );
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps the OpenAI-clean stream free of the frame when extensions are off", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: replyWithAttachment(shot),
+    });
+    try {
+      const response = await postChat(harness.baseUrl, {
+        model: "atomic-agent",
+        stream: true,
+        messages: [{ role: "user", content: "draw it" }],
+      });
+      const text = await readAllText(response);
+      expect(text).not.toMatch(/reply_attachments/);
+      expect(text).toMatch(/here is the chart/);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+
+  it("keeps the attachments on the stored turn for GET /api/sessions/{id}", async () => {
+    const harness = await startTestHarness({
+      llamaComplete: replyWithAttachment(shot),
+    });
+    try {
+      const session = harness.runtime.createSession();
+      const response = await postChat(
+        harness.baseUrl,
+        {
+          stream: true,
+          session_id: session.id,
+          messages: [{ role: "user", content: "draw it" }],
+        },
+        { [EXTENSIONS_HEADER]: "1" },
+      );
+      await readAllText(response);
+      const stored = await fetch(`${harness.baseUrl}/api/sessions/${session.id}`);
+      const body = (await stored.json()) as {
+        turns: Array<{ kind: string; attachments?: string[] }>;
+      };
+      const reply = body.turns.find((t) => t.kind === "assistant_reply");
+      expect(reply?.attachments).toEqual([shot]);
+    } finally {
+      await harness.cleanup();
+    }
+  });
+});

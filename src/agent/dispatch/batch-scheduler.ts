@@ -229,6 +229,7 @@ export async function executeBatch(
   ): Promise<CompressedToolResult> => {
     try {
       return await registry.invoke(input.call.tool, input.call.args, {
+        ...(ctx.workspaceSkills ? { workspaceSkills: ctx.workspaceSkills } : {}),
         ...(ctx.modelMode ? { modelMode: ctx.modelMode } : {}),
         workingDir: ctx.workingDir,
         sessionId: ctx.sessionId,
@@ -240,6 +241,7 @@ export async function executeBatch(
           ? { userGroundingTexts: ctx.userGroundingTexts }
           : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
+        ...(ctx.tracker ? { fileVersions: ctx.tracker.fileVersions } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {

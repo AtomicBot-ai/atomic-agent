@@ -12,6 +12,8 @@ export type LocalLlmMode = "external" | "managed";
 export type LocalTemplateSetting = "auto" | "on" | "off";
 
 export interface UserManagedLocalLlmConfig {
+  /** Managed process owner. Default `"atomic-core"`; files before v77 migrate to it (llama.cpp stays selectable). */
+  engine?: "llama-server" | "atomic-core";
   modelId: string | null;
   port: number;
   dataDirOverride: string | null;
@@ -295,7 +297,10 @@ export interface UserLocalModelsConfig {
    * the sampler admits only the close sentinel, so the model is forced
    * to close the block and emit the call. `0` leaves the prelude
    * unbounded. The forced final step (`reply` / `finish`) is never
-   * cut. Range `0` or [64, 32768]. Added in config v68.
+   * cut. Range `0` or [64, 32768], but llama.cpp caps a grammar
+   * repetition at 1,999 characters, so the bound a model really gets
+   * is at most 499 tokens (`MAX_REASONING_BUDGET_TOKENS`, #600).
+   * Added in config v68; default `0` since v78 (was 1500).
    */
   reasoningBudgetTokens: number;
   managed: UserManagedLocalLlmConfig;

@@ -49,6 +49,11 @@ describe("describeFusionIntro", () => {
     expect(FUSION_MARK).toMatch(/^[\s\u25cf\u25cb\u2502\u250c\u2510\u253c\u2500a-z]+$/);
   });
 
+  it("uses plain punctuation, no em dash (ATO-305)", () => {
+    expect(describeFusionIntro(rm)).not.toContain("\u2014");
+    expect(describeFusionIntro(rm)).toContain("Right now, anthropic/claude-sonnet-4.5 plans.");
+  });
+
   it("names both legs it actually resolved, not the abstraction", () => {
     const text = describeFusionIntro(rm);
     expect(text).toContain("anthropic/claude-sonnet-4.5");
@@ -70,7 +75,7 @@ describe("describeFusionIntro", () => {
     const text = describeFusionIntro(rm);
     expect(text).toMatch(/Either seat takes either kind/);
     expect(text).toMatch(/local model plans while cloud workers execute/);
-    expect(text).toMatch(/Two cloud models/);
+    expect(text).toMatch(/Two cloud providers/);
   });
 
   it("says what a worker is and what it cannot do", () => {

@@ -348,6 +348,11 @@ export function parseMemoryConfig(
           readDefaults().embeddings.bruteForceCeiling,
         "memory.embeddings.bruteForceCeiling",
       ),
+      backfill: parseBool(
+        memoryEmbeddings.backfill ??
+          readDefaults().embeddings.backfill,
+        "memory.embeddings.backfill",
+      ),
     },
     links: {
       enabled: parseMemoryV2FeatureEnabled(

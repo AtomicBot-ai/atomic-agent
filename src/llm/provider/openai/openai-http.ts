@@ -2,6 +2,7 @@ import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
 import { providerServiceName } from "../provider-service-name.js";
+import { isLocalProviderUrl } from "../presets/is-local-provider-url.js";
 import {
   creditLimitRetryContext,
   creditLimitRetryMessage,
@@ -10,6 +11,8 @@ import {
   type CreditLimitRetryPlan,
 } from "./plan-credit-limit-retry.js";
 import {
+  CREDENTIAL_WORDING,
+  MODERATION_WORDING,
   parseProviderErrorBody,
   readProviderErrorReason,
   type ProviderErrorBody,
@@ -200,8 +203,18 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if ((err.status === 403 || err.status === 429) && isCreditExhausted(err)) {
     return billingRefusalSentence(err);
   }
+  if (err.status === 403 && isModerationRefusal(err)) {
+    // OpenRouter's 403 for input its moderation flagged read "rejected
+    // the API key", and sent the operator to a key that was fine. Say
+    // what it is, in the provider's own words.
+    const own = providerReason(err);
+    return `${who} refused the request (403): its moderation flagged the input, the key is fine.${own ? ` ${own}` : ""}`;
+  }
   if (err.status === 401 || err.status === 403) {
     return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
+  }
+  if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
+    return localServerNotFoundSentence(err.url, err.status);
   }
   if (err.status === 404) {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
@@ -243,6 +256,53 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   return reason
     ? `${who} rejected the request (${err.status}). ${reason}`
     : `${who} rejected the request (${err.status}).`;
+}
+
+/**
+ * Which program a local OpenAI-compatible server usually is, by its
+ * default port: Atomic Chat's Local API Server on 1337, Ollama on 11434
+ * (the same port rule as `looksLikeAtomicChatUrl` / `looksLikeOllamaUrl`
+ * in `describe-llama-health-failure.ts`, kept inline so the provider
+ * path does not load the local-engine modules). Null for any other port.
+ */
+function localServerProgram(url: string): string | null {
+  let port: string;
+  try {
+    port = new URL(url).port;
+  } catch {
+    return null;
+  }
+  if (port === "1337") return "Atomic Chat";
+  if (port === "11434") return "Ollama";
+  return null;
+}
+
+/**
+ * A 404 or 405 from a server on this machine (ATO-871). A local server
+ * has no account and no model catalogue to get wrong the way a cloud one
+ * does: the reply means the model is not loaded there, or the base URL
+ * points past its API. Keeps "answered 404" / "answered 405" so the
+ * desktop still reads it as the provider having replied.
+ */
+function localServerNotFoundSentence(url: string, status: 404 | 405): string {
+  const program = localServerProgram(url);
+  const server = program === null ? "The local server" : `The local ${program} server`;
+  const remedy = program === null ? "Load the model in that server" : `Load the model in ${program}`;
+  return (
+    `${server} at ${hostOf(url)} answered ${status}: the model is not loaded there, ` +
+    `or this address is not its API. ${remedy}, or check the base URL.`
+  );
+}
+
+/**
+ * A 403 whose provider says its moderation refused the input, and says
+ * nothing about the key: a plain 403 is still read as the key's, and a
+ * 401 is never a moderation refusal.
+ */
+export function isModerationRefusal(err: OpenAiHttpError): boolean {
+  if (err.status !== 403) return false;
+  const text = `${err.body?.text ?? ""}\n${err.message}`;
+  return MODERATION_WORDING.test(text) && !CREDENTIAL_WORDING.test(text);
 }
 
 /**
@@ -493,7 +553,7 @@ export async function openAiPostJson(
   deps: OpenAiHttpDeps,
   path: string,
   body: Record<string, unknown>,
-  request: { signal?: AbortSignal },
+  request: { signal?: AbortSignal; requestTimeoutMs?: number },
   onSend?: OnOpenAiRequestBody,
 ): Promise<Record<string, unknown>> {
   return withCreditLimitRetry(deps, body, onSend, (attemptBody) =>
@@ -690,7 +750,7 @@ export async function openAiFetch(
   deps: OpenAiHttpDeps,
   path: string,
   body: Record<string, unknown> | null,
-  request: { signal?: AbortSignal },
+  request: { signal?: AbortSignal; requestTimeoutMs?: number },
   stream: boolean,
   method: "GET" | "POST" = "POST",
 ): Promise<Response> {
@@ -718,10 +778,12 @@ export async function openAiFetch(
   }
   const controller = new AbortController();
   let timedOut = false;
+  // A caller that owns a longer deadline (context compaction) replaces ours.
+  const timeoutMs = request.requestTimeoutMs ?? deps.requestTimeoutMs;
   const timer = setTimeout(() => {
     timedOut = true;
     controller.abort();
-  }, deps.requestTimeoutMs);
+  }, timeoutMs);
   const externalSignal = request.signal;
   const onAbort = (): void => controller.abort();
   if (externalSignal) {
@@ -745,7 +807,7 @@ export async function openAiFetch(
     if (externalSignal?.aborted) throw err;
     if (timedOut) {
       throw new OpenAiHttpError(
-        `openai provider timed out after ${deps.requestTimeoutMs}ms: ${deps.baseUrl}${path}`,
+        `openai provider timed out after ${timeoutMs}ms: ${deps.baseUrl}${path}`,
         null,
         `${deps.baseUrl}${path}`,
         true,

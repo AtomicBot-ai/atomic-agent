@@ -1,5 +1,16 @@
-import type { ApprovalGate, ApprovalGrantScope, ApprovalRequest } from "../../approval/index.js";
-import { canGrantCategory, canGrantShape, formatApprovalCategory } from "../../approval/index.js";
+import type {
+  ApprovalGate,
+  ApprovalGrantScope,
+  ApprovalRequest,
+} from "../../approval/index.js";
+import {
+  canGrantCategory,
+  canGrantShape,
+  excerptPreview,
+  formatApprovalCategory,
+  hiddenLinesNote,
+  previewLines,
+} from "../../approval/index.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 
 import { withThread, type TelegramApi } from "./outbound-sender.js";
@@ -76,7 +87,7 @@ interface PendingState {
   /**
    * The request the keyboard was built from. Retained so a decision is
    * checked and described against the real request instead of the
-   * operator-supplied `callback_data` — see invariant 6.
+   * operator-supplied `callback_data` — see invariant 7.
    */
   request: ApprovalRequest;
   cancelTimer: () => void;
@@ -116,7 +127,13 @@ interface PendingState {
  *    the chat, and their clicks now arrive through the new poller. When
  *    the channel gives up for good, `expireAll()` denies what is
  *    pending at once instead of leaving each turn to its timer.
- * 6. **A grant is re-checked, and the toast never overstates it.** The
+ * 6. **A cut preview comes with the full command (ATO-876).** When the
+ *    preview does not fit one message, every line of the preview is
+ *    sent first, to the same chat and topic, as a `.txt` document, with
+ *    the same control and bidi escaping as the prompt, and the prompt
+ *    says so. If that upload fails the prompt says the full
+ *    command could not be attached instead of dropping it silently.
+ * 7. **A grant is re-checked, and the toast never overstates it.** The
  *    `s`/`a` rows only appear when `canGrantCategory` / `canGrantShape`
  *    allow them, but `callback_data` arrives from the operator's client
  *    and a keyboard can outlive the state it was built from — so the
@@ -184,11 +201,24 @@ export class ApprovalBridge {
       });
       return;
     }
+    // A cut preview: the full command goes first, as a file, so it sits
+    // right above the prompt it belongs to and the prompt can say
+    // whether it arrived.
+    const attached = formatApprovalText(request, null).cut
+      ? await this.attachFullCommand(request, chatId, threadId)
+      : null;
     let messageId: number | null = null;
     try {
       const sent = await this.deps.api.sendMessage(
         chatId,
-        formatApprovalText(request),
+        formatApprovalText(
+          request,
+          attached === null
+            ? null
+            : attached
+              ? FULL_COMMAND_ATTACHED_NOTE
+              : FULL_COMMAND_MISSING_NOTE,
+        ).text,
         withThread(
           { reply_markup: buildKeyboard(request) },
           threadId,
@@ -268,7 +298,7 @@ export class ApprovalBridge {
     this.pending.delete(approvalId);
 
     // Both grant buttons approve; only the scope differs, and only if
-    // the retained request still supports it (invariant 6).
+    // the retained request still supports it (invariant 7).
     const approved = kind !== "n";
     const grant = grantScope(kind, pending.request);
 
@@ -334,6 +364,49 @@ export class ApprovalBridge {
 
   pendingCount(): number {
     return this.pending.size;
+  }
+
+  /**
+   * Send the whole preview as a `.txt` document to the approval's own
+   * chat and topic. The content is every line of `request.preview`, the
+   * text the tool put up for approval, with the characters that could
+   * rewrite the display (terminal controls, bidi overrides) escaped the
+   * same way as in the prompt: a text viewer honours a right-to-left
+   * override, so a raw copy could show the hidden lines in a different
+   * order than they run. Returns whether it was delivered; a failure is
+   * logged and reported in the prompt, never fatal.
+   */
+  private async attachFullCommand(
+    request: ApprovalRequest,
+    chatId: number,
+    threadId?: number,
+  ): Promise<boolean> {
+    const preview = request.preview ?? "";
+    const send = this.deps.api.sendTextDocument;
+    if (!send) {
+      this.deps.logger.warn("telegram: cannot attach full approval command", {
+        approvalId: request.approvalId,
+        error: "this bot cannot upload documents",
+      });
+      return false;
+    }
+    const visible = previewLines(preview);
+    const lines = visible.length;
+    try {
+      await send.call(this.deps.api, chatId, {
+        filename: FULL_COMMAND_FILENAME,
+        content: visible.join("\n"),
+        caption: `Full command (${lines} ${lines === 1 ? "line" : "lines"}), for the approval below`,
+        ...(threadId === undefined ? {} : { threadId }),
+      });
+      return true;
+    } catch (err) {
+      this.deps.logger.warn("telegram: failed to attach full approval command", {
+        approvalId: request.approvalId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
   }
 
   private scheduleTimeout(
@@ -471,28 +544,103 @@ function buildKeyboard(request: ApprovalRequest): {
 }
 
 /**
+ * Telegram caps one `sendMessage` at 4096 UTF-16 units, and a failed
+ * send auto-denies the request. The approval text stays under this,
+ * with headroom, by cutting the preview (ATO-434).
+ */
+const APPROVAL_MESSAGE_MAX_CHARS = 4000;
+
+/** Indent of each preview line. */
+const PREVIEW_INDENT = "  ";
+
+/** Name of the document that carries a cut preview in full (ATO-876). */
+const FULL_COMMAND_FILENAME = "full-command.txt";
+
+/** Under a cut preview whose full text was delivered as a file. */
+const FULL_COMMAND_ATTACHED_NOTE = "full command: sent as a file above";
+
+/**
+ * Under a cut preview whose file failed to send: the person must know
+ * the rest exists and that they have not seen it.
+ */
+const FULL_COMMAND_MISSING_NOTE =
+  "full command: could not be attached, deny if you cannot check it";
+
+/**
  * Render an `ApprovalRequest` as plain text. We deliberately do not
  * use Telegram's MarkdownV2 — escaping rules around backticks /
  * underscores in tool names and previews are easy to get wrong, and
  * a corrupted Markdown payload breaks the prompt. Plain text is
  * unambiguous; it just renders without a fixed-width preview block.
+ *
+ * Every preview line is shown while the message fits. A preview too
+ * long for one message keeps whole lines from the top and ends with
+ * "+N more lines", so the person approving knows the command goes on;
+ * before, an oversized message simply failed and the request was denied.
+ *
+ * `cut` says whether any of the preview was left out. `attachNote`, when
+ * given, goes under the cut preview and says whether the full command
+ * was sent as a file (ATO-876).
  */
-function formatApprovalText(req: ApprovalRequest): string {
-  const lines: string[] = [
+function formatApprovalText(
+  req: ApprovalRequest,
+  attachNote: string | null,
+): { text: string; cut: boolean } {
+  const head: string[] = [
     "Approval requested",
     `tool: ${req.tool}`,
     `kind: ${formatApprovalCategory(req.category)}`,
   ];
-  if (req.reason) lines.push(`reason: ${req.reason}`);
+  if (req.reason) head.push(`reason: ${req.reason}`);
+  const tail: string[] = [];
+  if (req.affectedResources && req.affectedResources.length > 0) {
+    tail.push("resources:");
+    for (const r of req.affectedResources) tail.push(`- ${r}`);
+  }
+  const lines = [...head];
+  let cut = false;
   if (req.preview) {
     lines.push("preview:");
-    for (const previewLine of req.preview.split("\n")) {
-      lines.push(`  ${previewLine}`);
+    // What is left for the preview once everything else is counted,
+    // including a newline before each line and its indent, and room
+    // for the note. Never below a few lines' worth, so a very long
+    // reason cannot squeeze the command out entirely.
+    const fixed = [...lines, ...tail].join("\n").length;
+    const roomForNote =
+      40 +
+      (attachNote === null ? 0 : PREVIEW_INDENT.length + attachNote.length + 1);
+    const budget = Math.max(
+      400,
+      APPROVAL_MESSAGE_MAX_CHARS - fixed - roomForNote,
+    );
+    const indented = req.preview
+      .replace(/\r\n?/g, "\n")
+      .split("\n")
+      .map((line) => `${PREVIEW_INDENT}${line}`)
+      .join("\n");
+    const excerpt = excerptPreview(indented, {
+      maxLines: Number.POSITIVE_INFINITY,
+      // `+1` for the newline that joins the preview to `preview:`.
+      maxChars: budget - 1,
+    });
+    lines.push(...excerpt.lines);
+    const note = hiddenLinesNote(excerpt.hiddenLines, excerpt.cutChars);
+    if (note !== null) {
+      cut = true;
+      lines.push(`${PREVIEW_INDENT}${note}`);
+      if (attachNote !== null) lines.push(`${PREVIEW_INDENT}${attachNote}`);
     }
   }
-  if (req.affectedResources && req.affectedResources.length > 0) {
-    lines.push("resources:");
-    for (const r of req.affectedResources) lines.push(`- ${r}`);
-  }
-  return lines.join("\n");
+  lines.push(...tail);
+  const text = lines.join("\n");
+  // Last guard for what the preview budget cannot cover (a reason or a
+  // resource list that alone is past the limit): a cut message is
+  // still a prompt the person can answer; an oversized one is a denial.
+  return {
+    text:
+      text.length <= APPROVAL_MESSAGE_MAX_CHARS
+        ? text
+        : `${text.slice(0, APPROVAL_MESSAGE_MAX_CHARS - 1)}…`,
+    cut,
+  };
 }

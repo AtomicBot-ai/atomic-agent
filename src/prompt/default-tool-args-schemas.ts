@@ -9,6 +9,7 @@ import { OS_FS_EDIT_CONTRACT } from "../tools/os/fs/fs-edit-contract.js";
 import { OS_FS_PATCH_CONTRACT } from "../tools/os/fs/fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT } from "../tools/os/fs/fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT } from "../tools/os/fs/fs-restore-contract.js";
+import { OS_FS_MOVE_CONTRACT } from "../tools/os/fs/fs-move-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-contract.js";
 /**
  * Per-tool JSON Schemas for the cloud `native_tools` transport.
@@ -151,6 +152,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   [OS_FS_READ_CONTRACT.name, OS_FS_READ_CONTRACT.argsJsonSchema],
   [OS_FS_WRITE_CONTRACT.name, OS_FS_WRITE_CONTRACT.argsJsonSchema],
   [OS_FS_RESTORE_CONTRACT.name, OS_FS_RESTORE_CONTRACT.argsJsonSchema],
+  [OS_FS_MOVE_CONTRACT.name, OS_FS_MOVE_CONTRACT.argsJsonSchema],
   [OS_FS_TRASH_CONTRACT.name, OS_FS_TRASH_CONTRACT.argsJsonSchema],
   [OS_FS_LIST_CONTRACT.name, OS_FS_LIST_CONTRACT.argsJsonSchema],
   [OS_FS_GLOB_CONTRACT.name, OS_FS_GLOB_CONTRACT.argsJsonSchema],
@@ -531,6 +533,43 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
         // providers and grammar-constrained decoding stop the model from
         // emitting a 20-image call it can only discover is invalid by failing.
         paths: { ...stringArraySchema, maxItems: 4 },
+      },
+      ["prompt"],
+    ),
+  ],
+
+  // ── image ────────────────────────────────────────────────────────────────
+  // Plain types only, so the schema stays strict-convertible: the tool's
+  // parser owns the 1..4 count bound and the size vocabulary.
+  [
+    "image.generate",
+    obj(
+      {
+        prompt: stringSchema,
+        size: stringSchema,
+        count: integerSchema,
+        seed: integerSchema,
+        model: stringSchema,
+      },
+      ["prompt"],
+    ),
+  ],
+
+  // ── video ────────────────────────────────────────────────────────────────
+  // Plain types only, like image: the tool's parser owns the duration
+  // bound and the aspect/resolution vocabularies.
+  [
+    "video.generate",
+    obj(
+      {
+        prompt: stringSchema,
+        image: stringSchema,
+        duration: integerSchema,
+        aspect: stringSchema,
+        resolution: stringSchema,
+        audio: booleanSchema,
+        seed: integerSchema,
+        model: stringSchema,
       },
       ["prompt"],
     ),

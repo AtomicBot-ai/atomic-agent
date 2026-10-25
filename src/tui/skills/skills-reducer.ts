@@ -34,7 +34,8 @@ function reducePanel(
     case "skills_refresh_started":
       return { ...panel, loading: true, lastError: null };
     case "skills_refreshed": {
-      const nextPanel: SkillsPanelState = { ...panel, rows: action.rows };
+      const nextPanel: SkillsPanelState = { ...panel, rows: action.rows, workspace: action.workspace, projectSkillsEnabled: action.projectSkillsEnabled,
+        ...(panel.workspace !== action.workspace ? { detailName: null, detailBody: null, mode: "list" } : {}) };
       return {
         ...nextPanel,
         cursor: clampCursor(panel.cursor, visibleLength(nextPanel)),
@@ -43,7 +44,9 @@ function reducePanel(
       };
     }
     case "skills_refresh_failed":
-      return { ...panel, loading: false, lastError: action.error };
+      // A failed scan after switching workspaces must not expose the previous catalog.
+      return { ...panel, rows: [], workspace: undefined, detailName: null, detailBody: null,
+        mode: "list", loading: false, lastError: action.error };
     case "skills_cursor_moved": {
       const total = visibleLength(panel);
       const nextCursor = Math.max(

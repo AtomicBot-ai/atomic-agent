@@ -935,7 +935,7 @@ export interface UserConfigFile {
 // named in the conversation (`src/tools/read-scope/`). A DEFAULT-BEHAVIOUR
 // CHANGE: an older file has no field and takes `"working-dir"`; the
 // pre-v67 behaviour is one line away (`agent.readScope: "unrestricted"`).
-// v68: `localModels.reasoningBudgetTokens` (default 1500, `0` =
+// v68: `localModels.reasoningBudgetTokens` (default 1500 until v78, `0` =
 // unbounded) — the GBNF prelude of a local reasoning model is bounded at
 // `budget × 4` characters, after which only the close sentinel is
 // admitted; the forced final step keeps an unbounded prelude. Additive:
@@ -976,7 +976,33 @@ export interface UserConfigFile {
 // v75: known cloud providers without a saved modelMode adopt cloud context.
 // Explicit provider/model policies and local/unknown endpoints stay unchanged.
 // This one-time migration shares the classification used for new connections.
-export const USER_CONFIG_VERSION = 75;
+// v76: `localModels.customModels[]` entries accept `localPath` — the
+// absolute path of a GGUF the operator already had on disk (issue #631),
+// launched where it lies and never downloaded or deleted. Additive: an
+// older file has no such entries. An older build that rewrites the list
+// drops `localPath` but keeps the entry's `file://` `huggingFaceUrl`; the
+// parser recovers the path from that URL, so the round trip loses nothing.
+// v77: Atomic Core is the default local engine (`localModels.managed.engine`
+// default `atomic-core`). The choice used to sit behind an opt-in variable,
+// so an older file's `llama-server` or missing engine is a default, not a
+// choice: it migrates to `atomic-core`. llama.cpp stays selectable, and an
+// explicit `llama-server` in a v77+ file is honoured. Other fields, external
+// mode included, are untouched.
+// v78: `localModels.reasoningBudgetTokens` defaults to `0` (no bound, as
+// before v68). llama.cpp clamps the grammar bound to 499 tokens, so the
+// old 1500 default cut thinking models off mid-thought. An older file
+// holding exactly 1500 (written by the schema, not the operator) migrates
+// to `0`; any other value is a deliberate choice and is kept.
+// Unversioned, additive: `tools.shell.envPassthrough` (default
+// `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
+// `os.git.*` no longer inherit the agent's provider keys, bot tokens or
+// any variable named like a KEY, TOKEN, SECRET or PASSWORD
+// (`src/sandbox/command-env.ts`); the names listed here are passed to
+// shell commands anyway. The default keeps the bundled `github` and
+// `notion` skills working. An older file has no field and takes the
+// default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
+// other inherited key; the fix is one line in config.
+export const USER_CONFIG_VERSION = 78;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1127,6 +1153,9 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   72,
   73,
   74,
+  75,
+  76,
+  77,
   USER_CONFIG_VERSION,
 ];
 
@@ -1334,7 +1363,10 @@ function unknownTopLevelKeys(
  * Missing sub-keys are filled with defaults — this lets us add new
  * fields without breaking existing installations. Unknown top-level
  * keys are carried through verbatim (forward compat); unknown keys
- * *inside* a known block are still dropped.
+ * *inside* a known block are dropped from the result, and
+ * `writeUserConfigFileSync` puts them back from the file on disk when it
+ * writes (see `carryUnknownConfigKeys`), so a write from an older build
+ * keeps them.
  */
 
 

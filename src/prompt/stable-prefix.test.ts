@@ -23,14 +23,17 @@ const CAPS: CapabilitiesSummary = {
  * F51. The persona line that tells the model what the input refusal
  * enforces (`fs-input-guard.ts`): a file that existed before the turn is
  * the user's — edit it in place, put new files beside it, never
- * regenerate it from memory; a rewrite the user asked for is said and
- * passed as `overwrite: true`.
+ * regenerate it from memory; replacing one the request did not ask to
+ * replace is asked of the user first. It never names `overwrite: true`
+ * (ATO-851): the flag no longer lifts the refusal, and teaching it in
+ * every prompt was the bypass.
  */
 describe("the inputs line of the persona (F51)", () => {
   it("is the same sentence in both personas, right after the bias-toward-action line", () => {
     expect(SYSTEM_PERSONA_INPUTS_LINE).toBe(
-      "Files that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. If the user asked for a rewrite, say so and pass overwrite: true.",
+      "Files that existed before this turn are the user's: edit them in place and write new files beside them; do not regenerate a provided file from memory. To replace one the request did not ask to replace, ask the user first.",
     );
+    expect(SYSTEM_PERSONA_INPUTS_LINE).not.toContain("overwrite");
     for (const persona of [DEFAULT_SYSTEM_PERSONA, NATIVE_TOOLS_SYSTEM_PERSONA]) {
       const lines = persona.split("\n");
       expect(lines[1]?.startsWith("Bias toward action:")).toBe(true);

@@ -59,7 +59,9 @@ describe("ModelProfileManager reasoning budget (F49)", () => {
       initialModelId: null,
     });
     await mgr.refresh();
-    expect(mgr.getGrammar()).toContain("think-body ::= think-char{0,6000}");
+    // The default is 0 since config v78: no bound on the prelude.
+    expect(mgr.getGrammar()).toContain("think-body ::= think-fragment*");
+    expect(mgr.getGrammar()).not.toMatch(/think-char\{0,\d+\}/);
   });
 });
 

@@ -42,6 +42,8 @@ export type TelegramAction =
       result: {
         userId: number;
         chatId: number;
+        /** The new owner's @username (without `@`), or `null` when none. */
+        username: string | null;
         /**
          * Whether the post-persistence welcome DM actually reached
          * Telegram. The reducer stores this on `pairingResult` so the

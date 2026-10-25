@@ -7,7 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetConfigCache } from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TelegramChannel } from "../../channels/telegram/telegram-channel.js";
-import type { PairingOutcome } from "../../channels/telegram/telegram-channel.js";
+import type {
+  PairingOutcome,
+  StartPairingOptions,
+} from "../../channels/telegram/telegram-channel.js";
+import type { TuiAction } from "../tui-action.js";
 
 import { TuiTelegramOrchestrator } from "./tui-telegram-orchestrator.js";
 
@@ -24,6 +28,16 @@ interface FakeChannel {
   cancelPairing: ReturnType<typeof vi.fn>;
 }
 
+/** A fake `startPairing` that opens a window (code 123456) and settles with `result`. */
+function opensWindow(
+  result: () => Promise<PairingOutcome | null>,
+): (timeoutMs?: number, options?: StartPairingOptions) => Promise<PairingOutcome | null> {
+  return (timeoutMs = 300_000, options = {}) => {
+    options.onOpened?.({ code: "123456", expiresAt: Date.now() + timeoutMs });
+    return result();
+  };
+}
+
 function makeFakeChannel(overrides: Partial<FakeChannel> = {}): FakeChannel {
   return {
     state: vi.fn(() => "disabled" as const),
@@ -34,7 +48,7 @@ function makeFakeChannel(overrides: Partial<FakeChannel> = {}): FakeChannel {
     setOwnerUserId: vi.fn(async () => {}),
     setToken: vi.fn(async () => {}),
     restart: vi.fn(async () => {}),
-    startPairing: vi.fn(async () => null),
+    startPairing: vi.fn(opensWindow(async () => null)),
     cancelPairing: vi.fn(),
     ...overrides,
   };
@@ -42,7 +56,7 @@ function makeFakeChannel(overrides: Partial<FakeChannel> = {}): FakeChannel {
 
 function makeBus(): {
   emit: (action: unknown) => void;
-  subscribe: (l: (action: unknown) => void) => () => void;
+  subscribe: (l: (action: TuiAction) => void) => () => void;
   actions: Array<{ type: string } & Record<string, unknown>>;
 } {
   const actions: Array<{ type: string } & Record<string, unknown>> = [];
@@ -279,10 +293,12 @@ describe("TuiTelegramOrchestrator", () => {
     const channel = makeFakeChannel({
       state: vi.fn(() => "up" as const),
       startPairing: vi.fn(
-        () =>
-          new Promise<PairingOutcome | null>((res) => {
-            resolveClaim = res;
-          }),
+        opensWindow(
+          () =>
+            new Promise<PairingOutcome | null>((res) => {
+              resolveClaim = res;
+            }),
+        ),
       ),
     });
     const bus = makeBus();
@@ -301,7 +317,7 @@ describe("TuiTelegramOrchestrator", () => {
     ).toBeDefined();
 
     resolveClaim?.({
-      claim: { userId: 7, chatId: 99 },
+      claim: { userId: 7, chatId: 99, username: "owner_7" },
       welcomeDelivered: true,
     });
     await pending;
@@ -310,17 +326,19 @@ describe("TuiTelegramOrchestrator", () => {
       (a) => a.type === "telegram_pairing_resolved",
     );
     expect(resolved).toMatchObject({
-      result: { userId: 7, chatId: 99, welcomeDelivered: true },
+      result: { userId: 7, chatId: 99, username: "owner_7", welcomeDelivered: true },
     });
   });
 
   it("startPairing forwards welcomeDelivered=false when the welcome was skipped or rejected", async () => {
     const channel = makeFakeChannel({
       state: vi.fn(() => "up" as const),
-      startPairing: vi.fn(async () => ({
-        claim: { userId: 11, chatId: 22 },
-        welcomeDelivered: false,
-      })),
+      startPairing: vi.fn(
+        opensWindow(async () => ({
+          claim: { userId: 11, chatId: 22, username: null },
+          welcomeDelivered: false,
+        })),
+      ),
     });
     const bus = makeBus();
     const orch = new TuiTelegramOrchestrator(makeRuntime(channel), bus);
@@ -339,7 +357,7 @@ describe("TuiTelegramOrchestrator", () => {
     vi.useFakeTimers();
     const channel = makeFakeChannel({
       state: vi.fn(() => "up" as const),
-      startPairing: vi.fn(() => new Promise(() => {})),
+      startPairing: vi.fn(opensWindow(() => new Promise(() => {}))),
     });
     const bus = makeBus();
     const orch = new TuiTelegramOrchestrator(makeRuntime(channel), bus);
@@ -354,6 +372,129 @@ describe("TuiTelegramOrchestrator", () => {
     expect(
       bus.actions.find((a) => a.type === "telegram_pairing_tick"),
     ).toBeUndefined();
+  });
+
+  describe("one-time code and owner replacement (ATO-718)", () => {
+    const infoLines = (bus: ReturnType<typeof makeBus>): string[] =>
+      bus.actions
+        .filter((a) => a.type === "runtime_info")
+        .map((a) => String(a.line));
+
+    it("requestPairing hands back the window's code, opened with the 5-minute default", () => {
+      const channel = makeFakeChannel({
+        state: vi.fn(() => "up" as const),
+        getBotIdentity: vi.fn(() => ({ id: 1, username: "my_bot" })),
+        startPairing: vi.fn(opensWindow(() => new Promise(() => {}))),
+      });
+      const orch = new TuiTelegramOrchestrator(makeRuntime(channel), makeBus());
+      const request = orch.requestPairing();
+      expect(request).toMatchObject({
+        kind: "opened",
+        code: "123456",
+        botUsername: "my_bot",
+        timeoutMs: 5 * 60_000,
+      });
+      expect(channel.startPairing).toHaveBeenCalledWith(
+        5 * 60_000,
+        expect.objectContaining({ replaceOwner: false }),
+      );
+      orch.shutdown();
+    });
+
+    it("keeps the code out of panel actions", () => {
+      const channel = makeFakeChannel({
+        state: vi.fn(() => "up" as const),
+        startPairing: vi.fn(opensWindow(() => new Promise(() => {}))),
+      });
+      const bus = makeBus();
+      const orch = new TuiTelegramOrchestrator(makeRuntime(channel), bus);
+      orch.requestPairing();
+      const panelActions = bus.actions.filter((a) => a.type.startsWith("telegram_"));
+      expect(panelActions.length).toBeGreaterThan(0);
+      expect(JSON.stringify(panelActions)).not.toContain("123456");
+      orch.shutdown();
+    });
+
+    it("/telegram pair narrates the code, then the new owner's @username", async () => {
+      const channel = makeFakeChannel({
+        state: vi.fn(() => "up" as const),
+        getBotIdentity: vi.fn(() => ({ id: 1, username: "my_bot" })),
+        startPairing: vi.fn(
+          opensWindow(async () => ({
+            claim: { userId: 7, chatId: 7, username: "new_owner" },
+            welcomeDelivered: true,
+          })),
+        ),
+      });
+      const bus = makeBus();
+      const orch = new TuiTelegramOrchestrator(makeRuntime(channel), bus);
+      await orch.startPairing();
+      // The code is shown on the Integrations status line, the tab the
+      // command switches to, and kept out of the runtime feed, which
+      // issue reports include.
+      const status = bus.actions
+        .filter((a) => a.type === "integrations_action_settled")
+        .map((a) => String(a.message));
+      expect(status[0]).toContain("/start 123456");
+      expect(status[0]).toContain("@my_bot");
+      expect(status[0]).toContain("5 minutes");
+      expect(status[1]).toBe("Paired: @new_owner is now the owner.");
+      const lines = infoLines(bus);
+      expect(lines.join("\n")).not.toContain("123456");
+      expect(lines[lines.length - 1]).toBe("Paired: @new_owner is now the owner.");
+      expect([...status, ...lines].join("\n")).not.toContain("—");
+      orch.shutdown();
+    });
+
+    it("asks before replacing a paired owner, and opens on the second ask", async () => {
+      const channel = makeFakeChannel({
+        state: vi.fn(() => "up" as const),
+        getOwnerUserId: vi.fn(() => 42),
+        startPairing: vi.fn(opensWindow(async () => null)),
+      });
+      const bus = makeBus();
+      const orch = new TuiTelegramOrchestrator(makeRuntime(channel), bus);
+
+      expect(orch.requestPairing()).toEqual({
+        kind: "confirm_replace",
+        ownerUserId: 42,
+      });
+      expect(channel.startPairing).not.toHaveBeenCalled();
+
+      const second = orch.requestPairing();
+      expect(second.kind).toBe("opened");
+      expect(channel.startPairing).toHaveBeenCalledWith(
+        expect.any(Number),
+        expect.objectContaining({ replaceOwner: true }),
+      );
+      orch.shutdown();
+    });
+
+    it("lets the replace confirmation lapse after the confirm window", () => {
+      vi.useFakeTimers();
+      const channel = makeFakeChannel({
+        state: vi.fn(() => "up" as const),
+        getOwnerUserId: vi.fn(() => 42),
+      });
+      const orch = new TuiTelegramOrchestrator(makeRuntime(channel), makeBus());
+      expect(orch.requestPairing().kind).toBe("confirm_replace");
+      vi.advanceTimersByTime(16_000);
+      expect(orch.requestPairing().kind).toBe("confirm_replace");
+      expect(channel.startPairing).not.toHaveBeenCalled();
+      orch.shutdown();
+    });
+
+    it("/telegram pair with a paired owner only says how to confirm", async () => {
+      const channel = makeFakeChannel({
+        state: vi.fn(() => "up" as const),
+        getOwnerUserId: vi.fn(() => 42),
+      });
+      const bus = makeBus();
+      const orch = new TuiTelegramOrchestrator(makeRuntime(channel), bus);
+      await orch.startPairing();
+      expect(channel.startPairing).not.toHaveBeenCalled();
+      expect(infoLines(bus)[0]).toContain("Run /telegram pair again within 15 seconds");
+    });
   });
 
   it("shutdown clears active timers without throwing", () => {

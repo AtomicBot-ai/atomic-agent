@@ -1630,8 +1630,38 @@ describe("parseUserConfigFile", () => {
     const parsed = parseUserConfigFile({ version: 66 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
     expect(parsed.tools).toEqual({
-      shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3 },
+      shell: {
+        defaultTimeoutMs: 600_000,
+        jobMaxMs: 3_600_000,
+        maxJobs: 3,
+        envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
+      },
     });
+  });
+
+  it("parses tools.shell.envPassthrough, defaulting to the skills' tokens only (ATO-347)", () => {
+    expect(USER_CONFIG_DEFAULTS.tools.shell.envPassthrough).toEqual([
+      "GITHUB_TOKEN",
+      "NOTION_API_KEY",
+    ]);
+    const none = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { envPassthrough: [] } },
+    });
+    expect(none.tools.shell.envPassthrough).toEqual([]);
+    const listed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { envPassthrough: ["NPM_TOKEN"] } },
+    });
+    expect(listed.tools.shell.envPassthrough).toEqual(["NPM_TOKEN"]);
+    for (const value of ["GITHUB_TOKEN", [""], [1], true]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          tools: { shell: { envPassthrough: value } },
+        }),
+      ).toThrow(/tools\.shell\.envPassthrough/);
+    }
   });
 
   it("preserves explicit tools.shell.jobMaxMs and maxJobs, and rejects non-positive ones", () => {
@@ -2313,11 +2343,11 @@ describe("localModels.useServerTemplate / thinking (F31)", () => {
   });
 });
 
-describe("localModels.reasoningBudgetTokens (F49, config v68)", () => {
-  it("defaults to 1500 tokens", () => {
+describe("localModels.reasoningBudgetTokens (F49, config v68; default 0 since v78)", () => {
+  it("defaults to 0, no bound", () => {
     const parsed = parseUserConfigFile({ version: USER_CONFIG_VERSION });
-    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
-    expect(USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(0);
+    expect(USER_CONFIG_DEFAULTS.localModels.reasoningBudgetTokens).toBe(0);
   });
 
   it("accepts 0 (unbounded) and an integer in [64, 32768], naming the field otherwise", () => {
@@ -2342,7 +2372,7 @@ describe("localModels.reasoningBudgetTokens (F49, config v68)", () => {
       version: 67,
       localModels: { thinking: "off" },
     });
-    expect(parsed.localModels.reasoningBudgetTokens).toBe(1500);
+    expect(parsed.localModels.reasoningBudgetTokens).toBe(0);
     expect(parsed.localModels.thinking).toBe("off");
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
   });

@@ -469,8 +469,13 @@ export function applyStateEffects(
       typeof (loaded as { version?: unknown }).version === "string" &&
       typeof (loaded as { body?: unknown }).body === "string"
     ) {
-      const entry = loaded as { name: string; version: string; body: string };
-      next = recordLoadedSkill(next, {
+      const entry = loaded as { name: string; version: string; body: string; workspace?: string; sourcePath?: string; fingerprint?: string };
+      if (modelMode === "cloud" && typeof entry.workspace === "string" && typeof entry.sourcePath === "string" && typeof entry.fingerprint === "string") {
+        next = { ...next, cloudLoadedSkills: [...(next.cloudLoadedSkills ?? []).filter(s => s.name !== entry.name), {
+          name: entry.name, version: entry.version, body: entry.body, workspace: entry.workspace,
+          sourcePath: entry.sourcePath, fingerprint: entry.fingerprint, loadedAt: Date.now(),
+        }] };
+      } else next = recordLoadedSkill(next, {
         name: entry.name,
         version: entry.version,
         body: entry.body,

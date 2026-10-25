@@ -15,7 +15,8 @@ import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
-import { captureMessageSent, type AnalyticsStateStore, type TurnUsageMeter } from "../../analytics/index.js";
+import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
+import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
@@ -570,29 +571,65 @@ export function createRuntimeTurnService(
       return turnController.enqueue(submission);
     }
     const startedAt = Date.now();
-    turnUsageMeter.begin(session.id);
+    // The provider the turn is meant for: its pin, else the active one.
+    // Completions served by another link (a fallover) are counted.
+    const intendedProviderId = runOptions.providerId ?? providerRegistry.activeText.id;
+    turnUsageMeter.begin(session.id, intendedProviderId);
+    // ATO-277: provider, model and engine name the link that actually
+    // served the turn, read from the meter at settlement. Read at the end
+    // rather than the start, because a fallback only shows up once a
+    // completion has landed; a turn that served nothing reports the
+    // provider it was meant for.
+    const servedContext = () => {
+      const { servedProviderId, ...usage } = turnUsageMeter.snapshot(session.id);
+      const providerId = servedProviderId ?? intendedProviderId;
+      const provider = providerRegistry.getProvider(providerId) ?? providerRegistry.activeText;
+      const localEngine = resolveTurnLocalEngine(getConfig(), provider.id);
+      return {
+        provider: provider.name,
+        model: resolveActiveModelName(provider.id),
+        ...(localEngine ? { localEngine } : {}),
+        ...usage,
+      };
+    };
     try {
       const result = await turnController.enqueue(submission);
+      // One snapshot only: snapshot() empties the turn's bucket, so the
+      // analytics event and the caller's usage both read from `context`.
+      const context = servedContext();
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
-        provider: providerRegistry.activeText.name,
-        model: resolveActiveModelName(),
+        ...context,
         latencyMs: Date.now() - startedAt,
         stepCount: result.stepCount,
         outcome: result.reason,
-        ...turnUsageMeter.snapshot(session.id),
       });
-      return result;
+      // The same totals reach the caller, e.g. the OpenAI-compatible
+      // endpoint's `usage` (ATO-276).
+      return context.promptTokens !== undefined && context.completionTokens !== undefined
+        ? { ...result, usage: { promptTokens: context.promptTokens, completionTokens: context.completionTokens } }
+        : result;
     } catch (error) {
       captureMessageSent(observability.getAnalytics(), analyticsStateStore, {
-        provider: providerRegistry.activeText.name,
-        model: resolveActiveModelName(),
+        ...servedContext(),
         latencyMs: Date.now() - startedAt,
         outcome: "failed",
-        ...turnUsageMeter.snapshot(session.id),
       });
       throw error;
     }
   };
 
   return { executeTurn, steer, runTurn };
+}
+
+/**
+ * Which engine serves a turn on `providerId`, for `message_sent`'s
+ * `local_engine`; undefined for a cloud provider. The managed engine only
+ * answers for the synthesized `local-llama` entry in managed mode; any
+ * other llama-server entry, or external mode, is a server the operator
+ * runs. A fixed word, never a URL.
+ */
+export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: string): LocalEngine | undefined {
+  if (!providerIdIsLlamaServer(resolveLlmConfig(config), providerId)) return undefined;
+  if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";
+  return config.localModels.managed.engine === "llama-server" ? "llama-server" : "atomic-core";
 }

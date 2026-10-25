@@ -6,6 +6,7 @@ import { nameGroundingMarker } from "../memory/profile-name-keys.js";
 import type { SkillCatalogEntry } from "../prompt/stable-prefix.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
+import { describeMemoryEmbeddingReconnect } from "./local-models/describe-memory-embedding-reconnect.js";
 import {
   isFailedSessionStatus,
   type SessionState,
@@ -218,6 +219,11 @@ export class ChatOrchestrator {
   private readonly queue: string[] = [];
   private readonly pendingCompactions = new Set<string>();
   /**
+   * The running `/enhance`, if any. One at a time (a second would race
+   * the first for the buffer); aborted on send, Esc, switch, new and quit.
+   */
+  private promptEnhance: AbortController | null = null;
+  /**
    * Messages refused since the queue last had room, so a burst reads as
    * one escalating counter instead of N identical lines. Reset by the
    * first push that fits again.
@@ -293,7 +299,7 @@ export class ChatOrchestrator {
       getCurrentSessionId: () => this.session?.id ?? null,
       switchSession: (id) => this.switchSession(id),
     });
-    this.skills = new SkillsOrchestrator(runtime, bus);
+    this.skills = new SkillsOrchestrator(runtime, bus, { currentSession: () => this.session });
     this.memory = new MemoryOrchestrator(runtime, bus);
     this.mcp = new McpOrchestrator(runtime, bus);
     this.import = new ImportOrchestrator(runtime, bus, {
@@ -316,6 +322,18 @@ export class ChatOrchestrator {
         void this.llmHealth.refreshModelLabel();
         void runtime.refreshLocalModelProfile?.();
         void this.resumeModelQueue();
+        // The embedding daemon starts with chat: a memory that booted
+        // before it, or lost it, attaches now. A no-op when memory
+        // already uses the configured model, so it stays silent.
+        void runtime.reconnectMemoryEmbeddings?.();
+      },
+      // The operator picked, pulled, removed or toggled an embedding
+      // model: memory follows now instead of after a restart (ATO-351).
+      onEmbeddingModelChanged: () => {
+        void runtime.reconnectMemoryEmbeddings?.().then((result) => {
+          const line = describeMemoryEmbeddingReconnect(result);
+          if (line) bus.emit({ type: "runtime_info", line });
+        });
       },
       onManagedPortMoved: async (url) => {
         // Same three steps as saving a URL by hand: the provider's base
@@ -333,6 +351,11 @@ export class ChatOrchestrator {
         // never the model id — a local model name is an arbitrary
         // operator string.
         runtime.reportModelConfigured("llama.cpp", "local");
+      },
+      // Atomic Core could not be installed or started: fixed words only
+      // (stage, reason code), never the message, which may hold a path.
+      onLocalEngineFailed: (failure) => {
+        runtime.reportLocalEngineFailed?.({ engine: "atomic-core", stage: failure.stage, reasonCode: failure.reasonCode });
       },
       // "Set up Telegram to get pinged": the hub is synced first so the
       // row exists to land on, then the tab is opened on that row.
@@ -352,6 +375,7 @@ export class ChatOrchestrator {
     this.stopWatchingRoute =
       runtime.providerRegistry?.onActiveTextChanged?.((id) => {
         this.localModels.adoptDaemonForRoute(id);
+        this.skills.refresh();
       }) ?? null;
     this.runMode = new RunModeOrchestrator({
       runtime,
@@ -488,6 +512,7 @@ export class ChatOrchestrator {
     if (this.session) return this.session;
     this.session = this.runtime.createSession({ persist: false });
     this.bus.emit({ type: "session_created", sessionId: this.session.id });
+    this.skills.refresh();
     this.refreshRecentSessions();
     return this.session;
   }
@@ -530,6 +555,61 @@ export class ChatOrchestrator {
    * running process is not restarted — the reducer's success message asks
    * the user to relaunch.
    */
+  private composerRoutePending = false;
+
+  async chooseComposerEngine(engine: "atomic-core" | "llama-server", leg?: "orchestrator" | "worker"): Promise<void> {
+    if (this.currentController || this.detachedTurns.size > 0 || this.runtime.turnController?.busySessionIds?.().length || this.composerRoutePending) {
+      this.bus.emit({ type: "composer_notice", text: "Wait for the current work or model change to finish." });
+      return;
+    }
+    const stillWanted = this.localModels.captureStopGuard();
+    this.composerRoutePending = true;
+    try {
+      const rm = this.runMode.current();
+      if (leg && (rm.effective !== "fusion" || (leg === "worker" ? rm.orchestratorProviderId : rm.workerProviderId) === "local-llama")) {
+        this.bus.emit({ type: "composer_notice", text: "The other role uses the local engine. Swap the roles to move it." });
+        return;
+      }
+      // The composer's local row carries the selected engine, so picking it is quiet when nothing changes.
+      if (!await this.localModels.chooseEngine(engine, { quietIfSelected: true }) || !stillWanted()) return;
+      if (leg) await this.runMode.setMode("fusion", { stillWanted, fusion: {
+        orchestratorProvider: leg === "orchestrator" ? "local-llama" : rm.orchestratorProviderId!,
+        workerProvider: leg === "worker" ? "local-llama" : rm.workerProviderId!,
+      }});
+      if (!stillWanted()) return;
+      this.bus.emit({ type: "composer_switch_opened", kind: leg === "worker" ? "workers" : "model" });
+    } catch (err) {
+      this.bus.emit({ type: "composer_notice", text: err instanceof Error ? err.message : String(err) });
+    } finally { this.composerRoutePending = false; void this.resumeModelQueue(); }
+  }
+
+  async chooseComposerFusionModel(leg: "orchestrator" | "worker", modelId: string): Promise<void> {
+    if (this.currentController || this.detachedTurns.size > 0 || this.runtime.turnController?.busySessionIds?.().length || this.composerRoutePending) {
+      this.bus.emit({ type: "composer_notice", text: "Wait for the current work or model change to finish." });
+      return;
+    }
+    const stillWanted = this.localModels.captureStopGuard();
+    this.composerRoutePending = true;
+    try {
+      const rm = this.runMode.current();
+      if (rm.effective !== "fusion") return;
+      const id = leg === "worker" ? rm.workerProviderId : rm.orchestratorProviderId;
+      if (id === "local-llama") {
+        if (getConfig().localModels.managed.modelId === modelId) {
+          if (!await this.localModels.startDaemon()) return;
+        }
+        else await this.localModels.setActive(modelId as import("../local-llm/index.js").LocalModelId);
+        if (!stillWanted() || getConfig().localModels.managed.modelId !== modelId) return;
+      }
+      await this.runMode.setMode("fusion", { stillWanted, fusion: {
+        orchestratorProvider: rm.orchestratorProviderId!, workerProvider: rm.workerProviderId!,
+        ...(leg === "worker" ? { workerModel: modelId } : { orchestratorModel: modelId }),
+      }});
+    } catch (err) {
+      this.bus.emit({ type: "composer_notice", text: err instanceof Error ? err.message : String(err) });
+    } finally { this.composerRoutePending = false; void this.resumeModelQueue(); }
+  }
+
   runUpdate(): void {
     // Replacing the binary under a running turn is the one mid-run slash
     // command with no safe outcome — now reachable because the editor
@@ -859,6 +939,7 @@ export class ChatOrchestrator {
 
   switchSession(sessionId: string): void {
     if (this.quitting) return;
+    this.cancelPromptEnhance();
     if (this.currentController && this.session?.id === sessionId) {
       // Enter on the picker row that is already open, mid-run.
       // Re-loading would replace the live transcript with the stale
@@ -888,6 +969,7 @@ export class ChatOrchestrator {
     }
     const notices = this.leaveCurrentSession();
     this.session = loaded;
+    this.skills.refresh();
     // Switching back into a thread whose turn we backgrounded earlier
     // re-attaches the abort handle: Esc aborts, Enter steers, exactly
     // as if the operator had never left.
@@ -1139,8 +1221,9 @@ export class ChatOrchestrator {
   /** Emit the installed skill catalog into chat + event feed (`/skills dump`). */
   dumpSkillCatalog(): void {
     try {
-      const catalog = this.runtime.skillCatalog;
-      const dropped = this.runtime.skillCatalogDropped;
+      const workspace = this.skills.workspace();
+      const catalog = workspace ? workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => ({ name: e.record.manifest.name, description: e.record.manifest.description, source: e.record.source })) : this.runtime.skillCatalog;
+      const dropped = workspace ? 0 : this.runtime.skillCatalogDropped;
       this.bus.emit({
         type: "system_message",
         text: formatSkillCatalogSystemMessage(catalog, dropped),
@@ -1178,6 +1261,7 @@ export class ChatOrchestrator {
 
   newSession(): void {
     if (this.quitting) return;
+    this.cancelPromptEnhance();
     // A running turn keeps running in its old thread — see
     // `leaveCurrentSession`. A fresh session starts with no point
     // exceptions of its own; the previous thread's grants are cleared
@@ -1187,6 +1271,7 @@ export class ChatOrchestrator {
     // the operator never types into leaves no row behind. The one left
     // here is dropped as soon as the next `+ new` or switch replaces it.
     this.session = this.runtime.createSession({ persist: false });
+    this.skills.refresh();
     this.clearQueue();
     clearTtyScreen(process.stdout);
     this.bus.emit({
@@ -1203,7 +1288,19 @@ export class ChatOrchestrator {
     for (const notice of notices) this.notify(notice);
   }
 
+  private holdComposerSubmission(text: string): boolean {
+    if (!this.composerRoutePending) return false;
+    this.emitQueue();
+    this.bus.emit({ type: "input_changed", value: text });
+    this.bus.emit({ type: "composer_notice", text: "The model is changing. Your message is kept here; send it when the change finishes." });
+    return true;
+  }
+
   sendMessage(text: string): void {
+    // Sending is the person's answer to the draft; a rewrite landing in
+    // the composer after it would be noise.
+    this.cancelPromptEnhance();
+    if (this.holdComposerSubmission(text)) return;
     if (this.quitting) return;
     this.ensureSession();
     if (this.currentController) {
@@ -1247,6 +1344,7 @@ export class ChatOrchestrator {
    * consulted — see ../runtime/docs/lifecycle.md.
    */
   steerMessage(text: string): void {
+    if (this.holdComposerSubmission(text)) return;
     if (this.quitting) return;
     const session = this.ensureSession();
     // Offered to the inbox unconditionally: `steer`'s return value is
@@ -1396,6 +1494,14 @@ export class ChatOrchestrator {
   private readonly waitingModelMessages = new Map<string, string>();
 
   private async runOneTurn(text: string, fromQueue = false): Promise<void> {
+    // A queued message drained mid route change (a model start resumes the
+    // queue) goes back to the head of the queue; the editor may hold a draft.
+    if (fromQueue && this.composerRoutePending) {
+      this.queue.unshift(text);
+      this.emitQueue();
+      return;
+    }
+    if (this.holdComposerSubmission(text)) return;
     if (!this.session) return;
     this.announceHeapPressure();
     // Pre-turn gate: a managed local model that is not on disk cannot
@@ -1664,6 +1770,54 @@ export class ChatOrchestrator {
     return ids.slice(0, DEBUG_BUNDLE_TRACE_LIMIT);
   }
 
+  /**
+   * `/enhance <draft>`: one refinement pass through the runtime's
+   * sub-call, its result handed back to the composer for review. Never
+   * sends anything. The slash handler already put the draft back in the
+   * buffer, so on any failure the person simply keeps what they wrote,
+   * and the rewrite only lands if they have not edited it meanwhile
+   * (`composer_draft_replaced`).
+   */
+  async enhancePrompt(draft: string): Promise<void> {
+    if (!this.runtime.enhancePrompt) {
+      this.bus.emit({ type: "composer_notice", text: "Prompt enhancement is not available here." });
+      return;
+    }
+    if (this.promptEnhance) {
+      this.bus.emit({ type: "composer_notice", text: "Already enhancing a prompt; wait for it to finish." });
+      return;
+    }
+    const controller = new AbortController();
+    this.promptEnhance = controller;
+    this.bus.emit({ type: "composer_notice", text: "Enhancing your prompt…" });
+    try {
+      const sessionId = this.session?.id;
+      const result = await this.runtime.enhancePrompt(draft, {
+        ...(sessionId ? { sessionId } : {}),
+        signal: controller.signal,
+      });
+      // Cancelled by the person (send, Esc, switch): say nothing.
+      if (controller.signal.aborted) return;
+      if (result.ok) {
+        this.bus.emit({ type: "composer_draft_replaced", expected: draft, value: result.text });
+      } else {
+        this.bus.emit({ type: "composer_notice", text: `Could not enhance the prompt (${result.reason}). Your text is unchanged.` });
+      }
+    } catch (error) {
+      if (controller.signal.aborted) return;
+      const reason = error instanceof Error ? error.message : String(error);
+      this.bus.emit({ type: "composer_notice", text: `Could not enhance the prompt (${reason}). Your text is unchanged.` });
+    } finally {
+      if (this.promptEnhance === controller) this.promptEnhance = null;
+    }
+  }
+
+  /** Stop a running `/enhance` quietly; idle Esc and every exit path call it. */
+  cancelPromptEnhance(): void {
+    this.promptEnhance?.abort();
+    this.promptEnhance = null;
+  }
+
   async compactContext(verb: "run" | "show"): Promise<void> {
     const id = this.session?.id;
     if (!id) { this.notify("No conversation to compact yet."); return; }
@@ -1707,6 +1861,7 @@ export class ChatOrchestrator {
    * N of them silently is worse than one line in the transcript.
    */
   abortCurrentTurn(): void {
+    this.cancelPromptEnhance();
     if (this.session) this.runtime.cancelSessionCompaction?.(this.session.id);
     const dropped = [...this.queue];
     if (dropped.length > 0) {
@@ -1729,6 +1884,7 @@ export class ChatOrchestrator {
   quit(): void {
     if (this.quitting) return;
     this.quitting = true;
+    this.cancelPromptEnhance();
     this.clearQueue();
     this.currentController?.abort();
     this.detachedTurns.abortAll();

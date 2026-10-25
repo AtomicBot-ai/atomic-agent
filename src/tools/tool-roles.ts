@@ -108,11 +108,20 @@ const BUILDER: RoleSpec = {
  * `fusion-orchestrator-mode.ts`). D1: read-only verification is its
  * to run. No MCP tools: the gate treats them as mutating, so listing
  * them would only advertise refusals.
+ *
+ * The web reads are its too: planning a job about a site starts with
+ * looking at the site. Without them a local orchestrator that wants to
+ * fetch a page cannot even spell the call (the grammar admits only the
+ * role's names), and the wish collapsed into the nearest admitted pair
+ * — `os.fs.read` of `/dev/null` beside an `os.fs.list` — step after
+ * step. Both are `readonly`, so the fusion gate already admitted them.
  */
 const ORCHESTRATOR: RoleSpec = {
   names: new Set([
     ...FS_READ_TOOLS,
     ...MEMORY_READ_TOOLS,
+    "os.web.fetch",
+    "os.web.search",
     "fusion.delegate",
     "tool.view",
     REPLY,

@@ -55,6 +55,8 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     stateDir = mkdtempSync(join(tmpdir(), "local-models-pair-"));
     process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
     resetConfigCache();
+    // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+    persistUserLocalModelsConfig({ managed: { engine: "llama-server" } });
     vi.mocked(localLlm.getDaemonStatus).mockReset();
     vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset();
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset();
@@ -137,6 +139,46 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
 
     expect(vi.mocked(localLlm.stopEmbeddingDaemon)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(localLlm.startEmbeddingDaemon)).toHaveBeenCalledTimes(1);
+  });
+
+  // ATO-351: the runtime's memory client is told to follow the new model,
+  // and only after the hot swap, so it probes the daemon that serves it.
+  it("tells the runtime the embedding model changed after the hot swap, not before", async () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    stubBackendInstalled(dataDir);
+    stubEmbeddingModelDownloaded(dataDir, "bge-m3");
+    stubChatStatus(true);
+    stubEmbeddingStatus(true);
+    const order: string[] = [];
+    vi.mocked(localLlm.stopEmbeddingDaemon).mockResolvedValue();
+    vi.mocked(localLlm.startEmbeddingDaemon).mockImplementation(async () => {
+      order.push("start");
+      return { pid: 9090 };
+    });
+
+    const orchestrator = new LocalModelsOrchestrator(
+      { emit() {}, subscribe: () => () => {} },
+      { onEmbeddingModelChanged: () => order.push("changed") },
+    );
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    await orchestrator.setActiveEmbedding("bge-m3");
+
+    expect(order).toEqual(["start", "changed"]);
+  });
+
+  it("tells the runtime when a picked embedding model is not on disk yet (embeddings go off)", async () => {
+    const changed = vi.fn();
+    const orchestrator = new LocalModelsOrchestrator(
+      { emit() {}, subscribe: () => () => {} },
+      { onEmbeddingModelChanged: changed },
+    );
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    await orchestrator.setActiveEmbedding("bge-m3");
+
+    expect(changed).toHaveBeenCalledTimes(1);
+    expect(getConfig().memory.embeddings.enabled).toBe(false);
   });
 
   it("stops the embedding daemon when the master switch is flipped off while it is running", async () => {

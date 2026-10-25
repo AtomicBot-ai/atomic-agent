@@ -5,6 +5,7 @@ import {
   applyNavSlot,
   decideApproval,
 } from "../app-key-bindings.js";
+import { approvalPreviewTruncated } from "../approval-preview-pages.js";
 import type { MouseContextValue } from "../mouse/mouse-context.js";
 import { cycleNavSlot } from "../section.js";
 import { hasShiftEnterNewline } from "../shift-enter-support.js";
@@ -88,6 +89,17 @@ export function resolveChips(
         label: "deny",
         onClick: (mouse) => decideApproval(approval, false, mouse),
       },
+      // Only while the preview is cut (ATO-876), and the first chip to
+      // go on a narrow row: the button under the preview says it too.
+      ...(approvalPreviewTruncated(approval)
+        ? [
+            {
+              key: `ctrl+${APPROVAL_CHORDS.viewFull}`,
+              label: "full command",
+              shed: 1,
+            },
+          ]
+        : []),
       { key: "esc 1", label: "abort run" },
     ];
   }

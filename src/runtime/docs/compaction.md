@@ -22,15 +22,18 @@ Other arguments are rejected. HTTP exposes authenticated
 absent). POST consumes the body through the normal size limiter. Disconnecting
 that HTTP request cancels its compaction, not the main turn. NDJSON exposes
 `compact_session` and `get_compaction`, both with `{sessionId}` and ordinary
-request/response correlation. Desktop UI and channel-specific commands are not
-part of these surfaces.
+request/response correlation. The desktop calls the HTTP POST from its `/compact`
+command and the context popover's "Compact now". Channel-specific commands are
+not part of these surfaces.
 
 The runtime control inbox accepts manual requests during inference, tool work
 and approval waits. The loop consumes a request before its next inference, after
 the previous batch has been committed. A request left at turn exit is enqueued
 without awaiting it while holding the lock. Idle operations load the session
 inside FIFO. Duplicate pending/running compactions return `busy`. Turn abort and
-runtime shutdown cancel owned operations. Steers arriving during a subcall are
+runtime shutdown cancel owned operations. A started compaction that ends
+`failed` logs a warning and one that ends `cancelled` an info line
+(`logCompactionOutcome`); a request cancelled while still queued logs nothing. Steers arriving during a subcall are
 drained and budgeted before the next inference.
 
 ## State and prompt
@@ -38,9 +41,13 @@ drained and budgeted before the next inference.
 The optional version-1 `SessionState.compaction` lives in the existing SQLite JSON
 payload. It contains summary text, an exclusive `coveredThrough` transcript index,
 a boundary-record hash, timestamp, reason, model, before/after token estimates,
-usage/call count, and estimated cost when pricing is available. Loading rejects
+usage/call count, and estimated cost when pricing is available. An extractive
+checkpoint has `model: null` and the optional `kind: "extractive"`; one made from a
+rolling summary has `kind: "rolling"`. Loading rejects
 unsupported versions, invalid boundaries and cuts through tool/result pairs;
 `compactionWarning` carries the diagnostic. Transcript records are never rewritten.
+The optional `SessionState.rollingSummary` (see Rolling summary) is never part of
+the prompt; loading drops it silently when stale.
 
 `projectSessionConversation` supplies checkpoint plus original suffix to both flat
 and native prompts, token estimates and pure preview. The summary is historical
@@ -50,6 +57,9 @@ when covered. Earlier complete steps of that task can therefore be compacted.
 The checkpoint text/boundary stay fixed until the next successful compaction.
 `conversationPackStart` remains a distinct mechanical cut, reset on successful
 compaction. In `local`, disabling auto or failing to summarize retains the packer fallback.
+When that cut leaves rows out, the loop emits `history_trimmed` (dropped messages,
+dropped user turns, bound) once per cut: again only when the dropped count changes,
+re-armed by a build that drops nothing. Fusion workers do not emit it.
 
 In `cloud`, both prompts project the saved message journal through that checkpoint.
 Active loaded instructions and state are carried in full; older state updates also
@@ -67,10 +77,10 @@ completion of a manual operation never replaces the running loop's live state.
 ## Budget and model calls
 
 Defaults are owned by [compaction-config.ts](../../config/agent/compaction-config.ts):
-`auto=true`, `triggerRatio=0.9`, `targetRatio=0.65`, `summaryMaxTokens=2048`,
-`timeoutMs=600000`, `maxTotalTimeoutMs=600000`.
-Validation requires `0 < targetRatio < triggerRatio < 1`.
-Older configs receive these defaults.
+`auto=true`, `mode="auto"`, `triggerRatio=0.9`, `targetRatio=0.65`, `summaryMaxTokens=2048`,
+`reasoningReserveTokens=4096`, `timeoutMs=600000`, `maxTotalTimeoutMs=600000`, `background=true` (optional; absent means on).
+Validation requires `0 < targetRatio < triggerRatio < 1`, a known mode and a non-negative reserve.
+Older configs receive these defaults; adding `mode`, `background` and `reasoningReserveTokens` did not change the config version.
 
 The pure planner checks projected history **before** mechanical trimming against
 the prompt builder's remaining history budget, including non-history sections
@@ -79,9 +89,20 @@ and reply reserve. Token pressure at the trigger ratio or impending
 window pressure after schemas, message overhead, reply reserve and safety margin;
 the local pair/section caps do not trigger it. The target is the
 target ratio of that allowance; manual requests use the smaller of allowance and
-current volume. Summary reserve is bounded by the configured maximum, 20% of the
+current volume. When the step's model profile has prefix reuse `none` (and
+applies to that step's route), the ratio is at most 0.35: every later step
+re-reads the whole prompt there, so a smaller kept tail is cheaper per step and
+postpones the next compaction. Summary reserve is bounded by the configured maximum, 20% of the
 history allowance, and half the target so small manual operations remain useful.
+The planner tries cuts at the end of a finished turn first (the agent's final
+reply, followed by a new user message), so a request and its answer stay on the
+same side of the checkpoint; a cut inside a turn is used only when none of those
+fits. Loading still accepts any safe cut, so older checkpoints stay valid.
 When no safe reduction with a fresh complete tail exists, the result is `noop`.
+It is also `noop`, without a model call, for a manual request when the history
+allowance leaves under 128 tokens for a summary ("the model's context window is too small"), and for a
+manual request whose summary reserve is bound by the already small history while
+the saved checkpoint summary takes 75% of it or more ("nothing to compact").
 
 The runtime summarizes the prior checkpoint plus newly covered **original**
 records, including rows previously hidden by the packer. If the complete request
@@ -96,6 +117,28 @@ the owning call and recorded path/URL. This metadata is budgeted too, so a resul
 continued across requests keeps its source rather than borrowing a filename
 from the user request.
 
+Each call's reply allowance is the summary target plus a reasoning reserve.
+A thinking model writes its reasoning out of the same allowance, so a cap equal
+to the summary target let it think until it was cut off, and every model summary
+fell back to the extractive one. The prompt still asks for at most the summary
+target, and a longer summary is still rejected as oversized. The input budget
+gives up the reserve so the request fits the window; the reserve is at most a
+quarter of the room left after the summary target and a 1024-token margin, so a
+small window shrinks it rather than leaving too little input to compact. The
+4096-token default covers what reasoning models typically spend on a summary
+at low effort; it is a ceiling, not a cost, and `0` sends no reserve.
+When the provider entry sets `maxOutputTokens`, the reserve shrinks so the reply
+allowance stays under it (a model past its output limit answers with a 400); it
+never drops below the summary target, so a cap smaller than the target still
+sends the target, as before the reserve. Calls ask
+for low reasoning effort, and a local or private-network OpenAI-compatible
+server also receives `chat_template_kwargs: { enable_thinking: false }` (a
+server-templated llama-server route already sends the same switch). Strict cloud
+APIs reject unknown fields and never receive it; an entry's own `extraBody` or
+model parameters still win. A failed reply names its cause: tool calls, a cut at
+the reply allowance (including one spent entirely on thinking), an empty or
+thinking-only reply, or an oversized summary.
+
 Every piece also includes the original conversation request, current task opening
 request and latest user correction verbatim, with duplicates removed and counted
 against the same input budget. These are orientation, not evidence of completed
@@ -106,7 +149,10 @@ without replacing the checkpoint rather than silently truncating the requests.
 `timeoutMs` limits each call; old configs retain explicit values and gain the new
 defaults for missing fields. The overall deadline is the smaller of `maxTotalTimeoutMs` and
 `timeoutMs` times the planned call count. Small histories keep a single-call
-budget; by default the whole operation has a ten-minute ceiling. Timeouts
+budget; by default the whole operation has a ten-minute ceiling. Each call
+carries `timeoutMs` (plus a few seconds, so the part limit reports first) as its own request deadline, replacing the provider's
+`requestTimeoutMs` (five minutes for local llama-server by default) for that
+request only, and the process transport ceiling is raised to cover it. Timeouts
 report the failing part or total deadline and completed-call count. Cancellation
 aborts the current provider request; neither partial progress nor a late response
 can publish a checkpoint. No intermediate checkpoint is published. The current provider route or
@@ -118,17 +164,98 @@ inference. A smaller model/window is rebudgeted on the next build.
 The prompt asks for goal, constraints/preferences, decisions/reasons, completed
 work with evidence, unfinished work/blockers, next actions and essential paths,
 IDs/errors, in the conversation's language. Intentions must be distinguished from
-actions and verified results. Empty, truncated, oversized and non-reducing
-summaries are rejected, as are failed checkpoint writes. Automatic failures warn
+actions and verified results. Identifiers are copied exactly, never generalized into
+wildcard patterns, and no dates or years absent from the records are added. When the
+cut falls inside a turn, so the newest covered request is answered only after the
+covered records, the prompt says so and asks not to list that request as unfinished
+or not started; the extractive summary carries the same note. While that turn is
+still running (no reply yet after the cut), the note only says the request was
+started and asks to keep what remained to do. Empty, truncated, oversized and non-reducing
+summaries are rejected, as are failed checkpoint writes. Automatic failures that
+leave no checkpoint warn
 and suppress further automatic attempts until the next turn; manual requests
-remain available. Cancellation is reported distinctly. A provider context-size
+remain available. An automatic attempt that timed out is held longer, across
+turns: the next automatic attempt waits until projected history has grown by 25%
+over the timed-out attempt's size, or the provider, model, window, `timeoutMs` or
+`mode` changed.
+A success (manual included) or runtime restart clears the hold. Cancellation is reported distinctly. A provider context-size
 refusal allows one compaction retry of the inference; committed tools are not
 replayed, and repeat refusal follows ordinary error handling.
+
+## Summary method
+
+`mode` chooses how the summary is made. `model` asks the active model, as described
+below. `extractive` builds it in one pass without inference
+([builder](../compaction-extractive.ts), [tool step lines](../compaction-extractive-steps.ts)):
+every user request in the covered records verbatim (over 1200 characters, the
+middle is cut), one line per tool step with its target and outcome (`read X`,
+`edited Y`, ``ran `cmd` → exit N: first error line``), assistant replies trimmed
+to 600 characters, files changed and read, URLs, and the first line of each error.
+Tool output bodies, written content and reasoning are dropped. The previous
+checkpoint is carried as a bounded block. Sections have fixed shares of
+`summaryMaxTokens` and keep the newest entries when the share binds, so the text
+never exceeds the planned summary reserve and passes the same reduction check.
+It runs in milliseconds on a 150k-token history, makes no calls and reports no
+progress events. Cloud state updates are not part of it.
+
+`auto` ([choice](../compaction-mode.ts)) extracts when the serving link is a
+llama-server whose prefix reuse is `none`, or whose serialized source is at least
+32k estimated tokens: prompt evaluation speed is unknown in advance and that much
+input already takes minutes on a laptop model. Cloud and other routes keep the
+model summary. Under `auto`, a model summary that fails or times out (not a
+cancellation) is replaced by an extractive checkpoint instead of leaving the
+packer's mechanical cut, and the completed result says so. After a model summary
+times out on a provider/model/window, later `auto` compactions on it extract
+directly until the runtime restarts or `timeoutMs`/`mode` change. A fallback is
+logged as a warning. `model` keeps the original failure behavior.
+
+## Rolling summary
+
+Under `auto`, with `auto` and `background` on, the runtime extends a per-session
+rolling summary between turns ([scheduler](../compaction-background.ts),
+[records and checkpoint](../compaction-rolling.ts)) so that a later compaction
+needs no model call. A turn's end schedules a job after 2 s of quiet (not for
+Fusion worker sessions). It runs only
+while no turn runs on any session, one job at a time across the runtime; any turn
+or step start, compaction request or shutdown aborts it (timers cleared, request
+cancelled) and nothing is written. A job never blocks a turn.
+
+A job starts once projected history reaches half the automatic trigger (cloud
+routes, which bill per call: also half the history allowance). It never runs on a
+local llama-server route without a free side slot: a side call on the main slot
+would evict the conversation's cache. It reads the previous rolling summary (or the
+current checkpoint) plus only the records after its watermark, rendered as
+history (the prompt's capped renderer, each record at most 2000 characters), up to
+the cut a compaction would make now and at most 12k estimated tokens; the rest is
+left to the next job. The watermark stops at the end of a finished turn when one
+fits, and inside a turn only when no turn ends in range or the first one alone is
+over that size. Fewer than 256 tokens of new records do not start a call. The call uses the compaction route, provider framing, side
+slot and `compaction:<sessionId>` usage, with `timeoutMs` capped at five minutes
+per job; a job that times out stops jobs for that session until restart. The
+summary may use 60% of the planned summary size. It is saved only if no turn runs
+on that session and the checkpoint, boundary record and watermark are unchanged.
+
+`SessionState.rollingSummary` holds the text, the checkpoint it extends (`from` and
+a hash of its summary), the exclusive watermark `coveredThrough`, the boundary
+record hash and the model. It is valid only while all of these still match and the
+watermark is a safe cut, so edits, forks and compaction make it stale. At
+compaction under `auto`, a valid one is used without a call: its text plus an
+extractive summary of the records from its watermark to the cut (a watermark past
+the planned cut becomes the cut, keeping at least one record outside it; when the
+planned cut ends a finished turn and the watermark does not, the cut moves on to
+the next finished turn's end instead). When it
+is stale, too large, leaves under 96 tokens for those records, covers less than
+half of the checkpoint's records (by rendered size), or its checkpoint would not
+reach the target, compaction proceeds as described above. Every successful compaction removes it; an applied
+checkpoint is never replaced later by a rolling summary. Cloud state updates are
+not in it. Its background calls are counted as they run, not in the checkpoint's
+`calls`.
 
 ## Observability and validation
 
 Session-scoped `compaction_started`, `compaction_progress`, `compaction_completed` and
-`compaction_failed` events reach hosts and traces. TUI shows status and estimates,
+`compaction_failed` events reach hosts and traces; HTTP chat streams forward them
+and `history_trimmed` as extension-only named frames. TUI shows status and estimates,
 and refreshes the context readout after persistence. Progress reports the current
 part, exact planned part count, completed parts and estimated **raw source** size,
 which may exceed the rendered conversation estimate. TUI does not infer progress
@@ -138,9 +265,19 @@ ordinary provider cost accounting. Local token usage falls back to completion
 timing counts when no provider usage block is returned.
 
 Contract tests: [planner/service](../context-compaction.test.ts),
+[extractive/auto service](../context-compaction-extractive.test.ts),
+[extractive builder](../compaction-extractive.test.ts),
+[model summary prompt](../context-compaction-model.test.ts),
+[request after the cut](../compaction-open-request.test.ts),
+[rolling summary](../context-compaction-rolling.test.ts),
+[rolling records](../compaction-rolling.test.ts),
+[rolling state](../../session/session-compaction-rolling.test.ts),
+[finished-turn cuts](../../session/session-compaction.test.ts),
 [HTTP/runtime/persistence](../../http/route-compaction.test.ts),
 [NDJSON](../../sidecar/compaction.test.ts),
-[TUI commands](../../tui/commands/slash-command-handler.test.ts).
+[TUI commands](../../tui/commands/slash-command-handler.test.ts),
+[trim notice](../../agent/history-trim-warning.test.ts),
+[stream frames](../../http/stream-maintenance-frame.test.ts).
 These tests use scripted completions; they establish mechanics, not summary
 quality. Real local and cloud models require separate repeated-compaction
 evaluations for retention of constraints, done/planned distinctions and resumption.

@@ -12,10 +12,10 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  *
  * Exa used to be reported here as well, as "running on the keyless tier —
  * expect HTTP 429". That line went to stderr on every start, which the
- * desktop logs as an error, and it described a request the agent no longer
- * makes: without a key Exa is skipped and the keyless chain (DuckDuckGo)
- * serves the search (ATO-120). That is the shipped default, not a
- * misconfiguration, so it says nothing.
+ * desktop logs as an error, and it was removed (ATO-120). Exa without a key
+ * runs on its free tier again (ATO-327), which is the shipped default, not a
+ * misconfiguration: it still says nothing at startup. When the free limit
+ * runs out, the search result asks for a key (`details.keyRequired`).
  */
 
 /** Providers that are skipped entirely when their `apiKeyEnv` is unset. */
@@ -33,7 +33,7 @@ export interface MissingSearchKeyWarning {
  * Returns a warning when the configured primary provider needs an API key
  * from the environment and that variable resolves to nothing. Returns `null`
  * for a keyed primary, a primary that runs without a key (`duckduckgo`,
- * `searxng`) or is skipped in favour of one (`exa`), or when search is
+ * `searxng`, and `exa` on its free tier), or when search is
  * disabled outright.
  */
 export function checkMissingSearchKey(input: {

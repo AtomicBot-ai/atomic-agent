@@ -7,7 +7,7 @@ Scope: `src/mcp/`. Inherit the root instructions; read [README.md](README.md) to
 - Keep client lifecycle/catalog ownership in McpManager; detach dynamic tools on shutdown/restart. The SDK boundary is mcp-client and sampling type integration.
 - Preserve trust-based resource classification and approval policy. Dynamic MCP schemas must be validated without assuming built-in schema restrictions.
 - Sampling must use the documented isolated completion path and never take the user turn slot. Reject unsupported directions rather than silently implementing server behavior.
-- Stdio clients currently inherit the agent environment plus per-server overrides; do not claim credential isolation. Never expose credentials in logs or error output. Any change to environment forwarding requires reviewing existing server compatibility.
+- Stdio clients get only the allowlisted service variables (mcp-stdio-env.ts) plus their own configured `env`, never provider keys from `.env`. That is not a sandbox: a server can still read files the user can, so do not claim full credential isolation. Never expose credentials in logs or error output. Widening the allowlist needs a reason and must not admit credential-shaped names.
 
 ## Read when relevant
 

@@ -1,5 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
+import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { describeFailedAttempts } from "../llm/fallback/index.js";
+import { isLocalEngineDown } from "../llm/reliability/index.js";
 import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
@@ -8,7 +10,7 @@ import {
   formatBackgroundApprovalNotice,
   formatBackgroundProviderWaitNotice,
 } from "./detached-turns.js";
-import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
+import { formatAgentErrorForChat, formatLocalEngineDownForChat } from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import {
   formatProviderGaveUpLine,
@@ -22,6 +24,7 @@ import {
   fusionWorkerLineColor,
 } from "./format-fusion-worker-line.js";
 import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
+import { nextApprovalPreviewPage } from "./approval-preview-pages.js";
 import {
   appendChatMessage,
   appendFeed,
@@ -270,6 +273,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // A redirect re-prompts for the new target; the previous
         // prompt's draft must not leak into it.
         approvalPathDraft: null,
+        approvalPreviewPage: null,
       };
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
@@ -277,6 +281,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         pendingApproval: null,
         approvalPathDraft: null,
+        approvalPreviewPage: null,
         // Resolving the visible turn's request resumes that turn:
         // `running`. Resolving a background turn's request resumes a
         // turn this transcript is not showing — the visible status
@@ -294,6 +299,20 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, approvalPathDraft: action.value };
     case "approval_path_edit_closed":
       return { ...state, approvalPathDraft: null };
+    case "approval_preview_paged": {
+      const request = state.pendingApproval;
+      if (!request) return state;
+      const current =
+        state.approvalPreviewPage?.approvalId === request.approvalId
+          ? state.approvalPreviewPage.page
+          : null;
+      const next = nextApprovalPreviewPage(request, current);
+      return {
+        ...state,
+        approvalPreviewPage:
+          next === null ? null : { approvalId: request.approvalId, page: next },
+      };
+    }
       return { ...state, pendingApproval: null, status: "running" };
     case "composer_notice":
       if (state.composerNotice === action.text) return state;
@@ -347,6 +366,26 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         inputHistoryDraft: null,
       };
     }
+    case "composer_draft_replaced":
+      if (state.inputValue !== action.expected) {
+        return {
+          ...state,
+          composerNotice:
+            state.inputValue.trim().length === 0
+              ? "Enhanced prompt not applied: the draft was sent or cleared while it ran."
+              : "Enhanced prompt not applied: the draft changed while it ran.",
+        };
+      }
+      return {
+        ...state,
+        inputValue: action.value,
+        inputHistoryCursor: null,
+        inputHistoryDraft: null,
+        composerNotice:
+          action.value === action.expected
+            ? "The prompt already reads clearly; nothing changed."
+            : "Enhanced prompt is in the composer. Review it, then press Enter to send.",
+      };
     case "message_waiting_for_model":
       if (action.sessionId !== state.session.sessionId) return state;
       return { ...appendUserMessage(state, action.text), pendingModelMessage: { sessionId: action.sessionId, text: action.text } };
@@ -624,6 +663,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             from: event.from,
             to: event.to,
             reason: event.reason,
+            ...(event.cause !== undefined ? { cause: event.cause } : {}),
           },
         },
       };
@@ -637,6 +677,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
                 event.from,
                 event.to,
                 event.reason,
+                event.cause,
               ),
             })
           : withSwitch,
@@ -654,8 +695,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // A user-initiated abort is not a failure and must not dress like
       // one: the operator pressed stop (the chip, Esc, Ctrl+C or
       // `/abort`) and already knows the turn is dead. Instead of the
-      // warn-styled `Turn failed [cancelled]: This operation was
-      // aborted` wall, leave a calm system notice that says who stopped
+      // warn-styled "Turn failed" wall over `Details: This operation
+      // was aborted`, leave a calm system notice that says who stopped
       // it — and carry the aborted turn's user message as `retryText`,
       // so a mistaken click is one `[try again]` away from undone.
       //
@@ -688,7 +729,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         );
       }
       const lastRunStatus = `failed [${event.category}]: ${event.error.message}`;
-      const chatError = formatAgentErrorForChat(
+      // ATO-772: the managed local model's process is gone and the turn
+      // ended without the outage wait: say so, and the command that fixes it.
+      const engineDown = isLocalEngineDown(event.error);
+      const chatError = engineDown ? formatLocalEngineDownForChat() : formatAgentErrorForChat(
         event.category,
         event.error.message,
         {
@@ -709,6 +753,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // The turn died parked: the chat said it was waiting, so the
       // failure says the wait is over before it says why.
       const diedWaiting =
+        !engineDown &&
         event.category === "transport" &&
         state.providerOutage !== null &&
         !state.providerOutage.givenUp;
@@ -725,6 +770,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             providerOutage: { ...state.providerOutage, givenUp: true },
           }
         : state;
+      // Same `[try again]` the stopped notice carries: a turn that died
+      // on a dropped network or a provider hiccup is the case the button
+      // is for, and retyping the request is the only other way back.
+      const failedPrompt = lastTurnRequest(state);
       return finishRun(
         appendChatMessage(
           appendFeed(outageState, {
@@ -733,7 +782,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
             line: `» ${lastRunStatus}`,
             color: "red",
           }),
-          { role: "system", text: withReportHint(failureText), variant: "warn" },
+          {
+            role: "system",
+            text: withReportHint(failureText),
+            variant: "warn",
+            retryText: failedPrompt.length > 0 ? failedPrompt : undefined,
+          },
         ),
         { outcome: "failed", reason: event.error.message, lastRunStatus },
       );
@@ -821,8 +875,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     }
     case "completion_truncated": {
       // One line per retry, in the operator's terms: what was cut, and
-      // what the retry changes. The turn only fails on the second cut,
-      // and that message names the wall and the knob.
+      // what the retry changes. The turn fails once the retries are
+      // spent, and that message names the wall and the knob.
       const cut =
         event.completionTokens > 0
           ? `reply cut off at ${event.completionTokens} tokens`
@@ -831,10 +885,16 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.requestedMaxTokens !== undefined
           ? `cap ${event.requestedMaxTokens}`
           : "no cap sent";
+      // A loop the stream watcher cut has no meaningful token count or
+      // cap to report: say what happened instead.
       const line =
-        event.retry.kind === "raise_cap"
+        event.repetitive === true && event.retry.kind === "same_cap"
+          ? `» The model kept repeating the same text, so its reply was stopped. Retrying step ${event.stepIndex + 1} and asking it not to repeat`
+          : event.retry.kind === "raise_cap"
           ? `» ${cut} (${cap}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
-          : `» ${cut}: the model server ran out of context at ~${event.retry.contextWindow} tokens — trimming the conversation to fit and retrying step ${event.stepIndex + 1}`;
+          : event.retry.kind === "same_cap"
+            ? `» ${cut} (${cap}). Retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap and asking for a shorter reply`
+            : `» ${cut}: the model server ran out of context at ~${event.retry.contextWindow} tokens — trimming the conversation to fit and retrying step ${event.stepIndex + 1}`;
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: null,
@@ -854,6 +914,16 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "gray",
       });
     }
+    case "tool_progress":
+      // A clip takes minutes with no step of its own to show; the tool
+      // throttles these to one every 20 seconds, so a feed line each is
+      // the "still working" the operator would otherwise not get.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» ${event.tool}: ${event.label}`,
+        color: "gray",
+      });
     case "fusion_worker": {
       // A token count moves the live row and nothing else: one feed
       // line per completion per worker would bury the lines that say
@@ -933,6 +1003,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         ? "Context compaction cancelled."
         : `Context compaction failed: ${(event.result.message ?? "unknown error").replace(/[.!?]+$/, "")}. Existing context retained; history trimming remains available.`,
       });
+    case "history_trimmed":
+      // ATO-295: the packer left older history out of the prompt. The
+      // loop says so once per cut, so this cannot fill the transcript.
+      return appendChatMessage(state, { role: "system", text: HISTORY_TRIMMED_NOTICE });
     case "profile_clipped": {
       // Issue #407: the clip used to show only as a `[truncated]` inside
       // a prompt nobody reads. The loop fires this once per session, and

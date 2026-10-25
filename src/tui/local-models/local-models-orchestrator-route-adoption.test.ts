@@ -85,6 +85,8 @@ describe("LocalModelsOrchestrator adopts the daemon when the route moves onto it
         mode: "managed",
         managed: {
           ...USER_CONFIG_DEFAULTS.localModels.managed,
+          // These tests cover the llama.cpp engine; Atomic Core is the default since config v77.
+          engine: "llama-server",
           modelId: "qwen-3.5-4b" as never,
         },
       },

@@ -41,6 +41,8 @@ export function prepareCompactionSource(turns: readonly ConversationTurn[], from
   };
 }
 
+export type CompactionSource = ReturnType<typeof prepareCompactionSource>;
+
 /** Lossless source slices, independent of generation and previous-summary length. */
 export function planCompactionChunks(source: string, maxTokens: number): Array<{ start: number; end: number }> {
   if (maxTokens < 128) throw new Error("Context window or input budget is too small for a compaction request.");

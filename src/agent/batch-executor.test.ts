@@ -421,9 +421,10 @@ describe("executeBatch", () => {
     });
     // A misspelt key (`patth`) no longer reaches the tool at all — F40
     // refuses it before dispatch — so the thrown path is exercised with
-    // a known key the tool rejects.
+    // a required key left out. Correct keys with a bad value get no key
+    // report (ATO-323): see the next test.
     const inputs = toBatchInputs([
-      { tool: "os.fs.read", args: { path: "" } },
+      { tool: "os.fs.read", args: {} },
     ]);
     const out = await executeBatch(
       inputs,
@@ -433,9 +434,9 @@ describe("executeBatch", () => {
     const result = out.results[0]!.compressed!;
     expect(result.status).toBe("error");
     expect(result.summary).toBe(
-      "os.fs.read: `path` must be a non-empty string — received keys: path; expected: path, maxBytes, offset, limit, lineNumbers",
+      "os.fs.read: `path` must be a non-empty string — received keys: (none); expected: path, maxBytes, offset, limit, lineNumbers",
     );
-    expect(result.details.receivedKeys).toEqual(["path"]);
+    expect(result.details.receivedKeys).toEqual([]);
     expect(result.details.expectedKeys).toEqual([
       "path",
       "maxBytes",
@@ -443,6 +444,26 @@ describe("executeBatch", () => {
       "limit",
       "lineNumbers",
     ]);
+  });
+
+  it("adds no key report when every key is right and a value is rejected (ATO-323)", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "r",
+      readonly: true,
+      run: async () => {
+        throw new Error("os.fs.read: `path` must be a non-empty string");
+      },
+    });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    const result = out.results[0]!.compressed!;
+    expect(result.summary).toBe("os.fs.read: `path` must be a non-empty string");
+    expect(result.details.receivedKeys).toBeUndefined();
   });
 
   it("leaves a thrown runtime error without a key report", async () => {

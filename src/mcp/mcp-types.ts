@@ -43,13 +43,26 @@ export interface McpServerConfig {
    */
   trust?: McpTrustLevel;
   /**
-   * Optional environment variables overlaid on top of the inherited
-   * `process.env` when the transport is `stdio`. The default
-   * `process.env` (already loaded from `<stateDir>/.env`) is the
-   * baseline; per-server entries win on key collision. Ignored for
-   * HTTP / SSE transports.
+   * Optional environment variables for a `stdio` server, overlaid on
+   * the allowlisted service variables (PATH, HOME, ...) taken from the
+   * agent's environment; per-server entries win on key collision. This
+   * is the only way a server receives a key: provider keys loaded from
+   * `<stateDir>/.env` are not forwarded (see `buildMcpStdioEnv`).
+   * Ignored for HTTP / SSE transports.
    */
   env?: Record<string, string>;
+  /**
+   * Raw tool names to offer from this server. Absent: every tool the
+   * server lists. Present (even empty): only these. See
+   * `mcp-tool-filter.ts`.
+   */
+  enabledTools?: string[];
+  /**
+   * Raw tool names never offered from this server, applied on top of
+   * `enabledTools`. Lets an operator keep a server's read tools and
+   * drop the rest without listing every tool they keep.
+   */
+  disabledTools?: string[];
 }
 
 /**

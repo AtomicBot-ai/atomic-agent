@@ -39,6 +39,24 @@ const UNCHOSEN_PARALLEL = 2;
 
 /** First version where `parallel` means "let the machine decide" by default. */
 const AUTO_PARALLEL_VERSION = 63;
+/**
+ * v77 made Atomic Core the default local engine. Before it the choice was
+ * hidden behind an opt-in variable, so a stored `llama-server` (written by
+ * every engine-aware build as the default) is not a choice: older files
+ * move to `atomic-core`. From v77 an explicit `llama-server` is honoured.
+ */
+const ATOMIC_CORE_DEFAULT_VERSION = 77;
+/**
+ * v78 made `localModels.reasoningBudgetTokens` default to `0` (no bound).
+ * The old default, 1500, was written to every file by the schema, and
+ * llama.cpp clamped it to 499 tokens, which cut thinking models off
+ * mid-thought. So an older file holding exactly the old default moves to
+ * `0`; any other number is read as a deliberate choice and kept.
+ */
+const UNBOUNDED_REASONING_DEFAULT_VERSION = 78;
+
+/** The reasoning budget the schema wrote before v78, never an operator's choice. */
+const UNCHOSEN_REASONING_BUDGET_TOKENS = 1500;
 
 export function parseLocalTemplateSetting(
   raw: unknown,
@@ -102,9 +120,11 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
 /**
  * `localModels.reasoningBudgetTokens` — the think-block bound of a local
  * reasoning model, in tokens. `0` means unbounded; anything else is an
- * integer in [64, 32768]. The upper bound keeps the grammar llama.cpp
- * expands server-side (`{0,N}` becomes N nested optional rules, four
- * per token) at a size it parses in milliseconds.
+ * integer in [64, 32768]. Values above 499 parse, but the grammar
+ * clamps the bound to 1,999 characters (499 tokens): llama.cpp rejects or
+ * ignores a larger `{0,N}` repetition (#600). The 32768 ceiling predates
+ * that cap and is kept so existing config files stay valid. The default
+ * is `0` since v78 (see `resolveReasoningBudgetTokens` for the migration).
  */
 export function parseReasoningBudgetTokens(
   raw: unknown,
@@ -113,6 +133,27 @@ export function parseReasoningBudgetTokens(
   const value = coerceIntLike(raw);
   if (value === 0) return 0;
   return parseBoundedPositiveInt(raw, field, 64, 32_768);
+}
+
+function resolveReasoningBudgetTokens(
+  inputVersion: number,
+  raw: unknown,
+  readDefaults: () => UserLocalModelsConfig,
+): number {
+  const field = "localModels.reasoningBudgetTokens";
+  const value = parseReasoningBudgetTokens(
+    raw ?? readDefaults().reasoningBudgetTokens,
+    field,
+  );
+  if (
+    raw !== undefined &&
+    raw !== null &&
+    inputVersion < UNBOUNDED_REASONING_DEFAULT_VERSION &&
+    value === UNCHOSEN_REASONING_BUDGET_TOKENS
+  ) {
+    return 0;
+  }
+  return value;
 }
 
 /**
@@ -212,6 +253,18 @@ function resolveManagedParallel(
   return pinned;
 }
 
+function resolveManagedEngine(
+  inputVersion: number,
+  raw: unknown,
+  readDefaults: () => UserLocalModelsConfig,
+): "llama-server" | "atomic-core" {
+  if (raw !== undefined && raw !== "llama-server" && raw !== "atomic-core") {
+    throw new ConfigValidationError("localModels.managed.engine", "expected llama-server|atomic-core");
+  }
+  if (inputVersion < ATOMIC_CORE_DEFAULT_VERSION) return "atomic-core";
+  return raw ?? readDefaults().managed.engine ?? "atomic-core";
+}
+
 function resolveManagedAutoUpdate(
   inputVersion: number,
   raw: unknown,
@@ -251,6 +304,8 @@ function parseHfEndpoint(value: unknown, path: string): string {
 
 export interface PreparedLocalModelsInputs {
   raw: Record<string, unknown>;
+  /** The file's version, for the late fields that migrate (reasoning budget). */
+  inputVersion: number;
   customModels: LocalModelDef[];
   managed: UserManagedLocalLlmConfig;
   embeddings: UserManagedEmbeddingLlmConfig;
@@ -274,6 +329,7 @@ export function prepareLocalModelsInputs(
   const rawManaged =
     (localModels.managed as Record<string, unknown> | undefined) ?? {};
   const managed: UserManagedLocalLlmConfig = {
+    engine: resolveManagedEngine(inputVersion, rawManaged.engine, readDefaults),
     modelId: parseOptionalManagedModelId(
       rawManaged.modelId,
       "localModels.managed.modelId",
@@ -374,6 +430,7 @@ export function prepareLocalModelsInputs(
   );
   return {
     raw: localModels,
+    inputVersion,
     customModels,
     managed,
     embeddings: embeddingsDaemon,
@@ -389,6 +446,7 @@ export function parseUserLocalModelsConfig(
 ): UserLocalModelsConfig {
   const {
     raw: localModels,
+    inputVersion,
     customModels,
     managed,
     embeddings: embeddingsDaemon,
@@ -413,10 +471,10 @@ export function parseUserLocalModelsConfig(
       localModels.thinking ?? readDefaults().thinking,
       "localModels.thinking",
     ),
-    reasoningBudgetTokens: parseReasoningBudgetTokens(
-      localModels.reasoningBudgetTokens ??
-        readDefaults().reasoningBudgetTokens,
-      "localModels.reasoningBudgetTokens",
+    reasoningBudgetTokens: resolveReasoningBudgetTokens(
+      inputVersion,
+      localModels.reasoningBudgetTokens,
+      readDefaults,
     ),
     managed,
     embeddings: embeddingsDaemon,

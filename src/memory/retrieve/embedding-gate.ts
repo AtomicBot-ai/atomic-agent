@@ -60,6 +60,7 @@ export function createEmbeddingGate(opts: EmbeddingGateOptions): RewriterGate {
         const { vector } = await opts.embedder.embed({
           text: trimmed,
           signal,
+          purpose: "similarity",
         });
         const unit = unitVector(vector);
         let maxScore = -1;
@@ -133,7 +134,7 @@ export function createEmbeddingGate(opts: EmbeddingGateOptions): RewriterGate {
     try {
       const results = await Promise.all(
         exemplars.map((text) =>
-          gateOpts.embedder.embed({ text, signal: ac.signal }),
+          gateOpts.embedder.embed({ text, signal: ac.signal, purpose: "similarity" }),
         ),
       );
       return results.map((r) => unitVector(r.vector));

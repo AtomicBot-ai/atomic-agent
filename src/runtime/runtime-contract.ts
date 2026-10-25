@@ -174,6 +174,17 @@ export interface CreateAgentRuntimeOptions {
 }
 
 
+/** Where memory's embedding attachment stands after `reconnectMemoryEmbeddings`. */
+export interface MemoryEmbeddingReconnect {
+  health: "ok" | "unreachable" | "disabled";
+  /** The configured catalog model, `null` when embeddings are off. */
+  modelId: string | null;
+  /** Why the model is not attached, when `health` is `unreachable`. */
+  why?: string;
+  /** `false` when memory already used this model and nothing was reattached. */
+  changed?: boolean;
+}
+
 export interface AgentRuntime {
   readonly config: AtomicAgentConfig;
   readonly loop: AgentLoop;
@@ -447,11 +458,24 @@ export interface AgentRuntime {
    * list. The orchestrator reads the returned transcript and discards
    * it. See `src/session/fusion-worker-session.ts`.
    */
-  createEphemeralSession(meta: FusionWorkerMeta): SessionState;
+  createEphemeralSession(meta: FusionWorkerMeta, workingDir?: string): SessionState;
+  /** Session-scoped cloud skills/instructions; null retains the legacy local view. */
+  getSessionWorkspace(session: SessionState | string): import("../session/workspace-context.js").SessionWorkspace | null;
   /** Maintain context without creating a turn or a transcript message. */
   compactSession(sessionId: string, options?: { signal?: AbortSignal }): Promise<CompactionResult>;
   getSessionCompaction(sessionId: string): SessionCompaction | null;
   cancelSessionCompaction(sessionId: string): boolean;
+  /**
+   * One refinement pass over a composer draft (the TUI's `/enhance`).
+   * A sub-call under its own `enhance:` fallback partition, output bound
+   * and deadline: it creates no turn, writes nothing to the session, and
+   * the caller keeps the draft on any failure. Optional so hosts and test
+   * doubles that never offer it need not implement it.
+   */
+  enhancePrompt?(
+    draft: string,
+    options?: { sessionId?: string; signal?: AbortSignal },
+  ): Promise<import("./prompt-enhancer.js").PromptEnhanceResult>;
   /**
    * Build — never run, never persist — the prompt the next turn would
    * open with, for a composer's context readout before any message is
@@ -494,6 +518,17 @@ export interface AgentRuntime {
    */
   refreshLocalModelProfile(): Promise<void>;
   /**
+   * Reattach memory to the embedding model the config names now (ATO-351).
+   * The TUI calls it after the operator picks, pulls or toggles an
+   * embedding model, and after a managed daemon restart. A no-op when
+   * memory already embeds with that model. Otherwise it stops the
+   * backfill, detaches, probes the new model and attaches it (with a
+   * backfill for notes it has no vector for), or stays on keyword recall
+   * when it does not answer. Never throws. Optional so test doubles and
+   * older hosts need not implement it.
+   */
+  reconnectMemoryEmbeddings?(): Promise<MemoryEmbeddingReconnect>;
+  /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to
    * `handler` instead of the host's `onApprovalRequest` fallback.
@@ -533,6 +568,18 @@ export interface AgentRuntime {
    * guarded); a no-op while analytics is off.
    */
   reportModelConfigured(provider: string, kind: "local" | "cloud"): void;
+  /**
+   * Report that the local engine could not be installed or started and
+   * the operator was offered the way forward (`local_engine_failed`).
+   * `stage` and `reasonCode` are fixed words from the engine's error, never
+   * a message or a path. A no-op while analytics is off. Optional so test
+   * doubles and older hosts need not implement it.
+   */
+  reportLocalEngineFailed?(context: {
+    engine: "atomic-core" | "llama-server";
+    stage: string;
+    reasonCode: string;
+  }): void;
   /**
    * Live approval level (1 = every gated action asks … 5 = approve
    * everything). Reads the gate, not the boot-time config snapshot, so

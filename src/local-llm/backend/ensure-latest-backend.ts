@@ -1,3 +1,7 @@
+import type { ManagedEngine } from "../core/core-state.js";
+import { activateCoreVersion, isCoreBackendInstalled } from "../core/core-backend.js";
+import { activeCoreVersion, CORE_VERSION, readCoreBackend } from "../core/core-state.js";
+import { CoreUnavailableError, type CoreFailureInfo } from "../core/core-errors.js";
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
 import {
@@ -36,7 +40,13 @@ export type AutoUpdateBackendResult =
    * caller should start it. False means there is genuinely nothing to
    * run and the caller must fail.
    */
-  | { action: "update_failed"; error: string; backendUsable: boolean };
+  | {
+      action: "update_failed";
+      error: string;
+      backendUsable: boolean;
+      /** Set when Atomic Core could not be installed: what the UI offers next. */
+      coreFailure?: CoreFailureInfo;
+    };
 
 /**
  * How long a start trusts a release check that found nothing newer for
@@ -135,8 +145,9 @@ export function forgetBackendCheck(dataDir: string): void {
  */
 export async function checkForBackendUpdateForPanel(
   dataDir: string,
+  engine?: ManagedEngine,
 ): Promise<Awaited<ReturnType<typeof checkForBackendUpdate>>> {
-  const result = await checkForBackendUpdate(dataDir);
+  const result = await checkForBackendUpdate(dataDir, engine);
   if (result.updateAvailable) forgetBackendCheck(dataDir);
   return result;
 }
@@ -199,6 +210,7 @@ function standingCheck(
 export async function maybeAutoUpdateBackend(
   dataDir: string,
   opts: {
+    engine?: ManagedEngine;
     enabled: boolean;
     onProgress?: DownloadProgressFn;
     onWillDownload?: () => void;
@@ -228,6 +240,7 @@ export async function maybeAutoUpdateBackend(
     now?: () => number;
   },
 ): Promise<AutoUpdateBackendResult> {
+  if (opts.engine === "atomic-core") return ensureCoreEngine(dataDir, opts);
   if (!opts.enabled) return { action: "skipped" };
   const now = opts.now ?? Date.now;
   const remember = (opts.recheckAfterMs ?? 0) > 0;
@@ -296,6 +309,59 @@ export async function maybeAutoUpdateBackend(
       action: "update_failed",
       error: err instanceof Error ? err.message : String(err),
       backendUsable: isBackendDownloaded(dataDir),
+    };
+  }
+}
+
+/**
+ * The start-path check for Atomic Core. First run must just work: a missing
+ * Core or backend is installed now, with progress, whatever `enabled` says,
+ * because nothing else can serve the selected engine. An install of an older
+ * pinned Core moves to this build's pin when `enabled` (autoUpdate) allows
+ * it: the new pin is installed into its own version folder even while the
+ * older Core serves models, and the active version switches only when no
+ * model runs (`deferred` until then; a later idle start switches without
+ * downloading again). A failure is reported, not thrown, with the structured
+ * CoreUnavailableError fields, so the caller can offer "download again" or,
+ * for a computer without a Core build, fall back. Cancellation propagates as
+ * an `update_failed` like the legacy path; the caller checks its own signal.
+ */
+async function ensureCoreEngine(
+  dataDir: string,
+  opts: {
+    enabled: boolean;
+    onProgress?: DownloadProgressFn;
+    onWillDownload?: () => void;
+    signal?: AbortSignal;
+    keepDaemonRunning?: boolean;
+  },
+): Promise<AutoUpdateBackendResult> {
+  const installed = isCoreBackendInstalled(dataDir);
+  const active = activeCoreVersion(dataDir);
+  const currentTag = `Atomic Core ${active}`;
+  if (installed && (active === CORE_VERSION || !opts.enabled)) return { action: "current", tag: currentTag };
+  try {
+    if (installed && isCoreBackendInstalled(dataDir, CORE_VERSION)) {
+      // Installed earlier beside the older Core: switch now if nothing runs on it.
+      if (opts.keepDaemonRunning || !(await activateCoreVersion(dataDir, CORE_VERSION))) {
+        return { action: "deferred", reason: "daemon_live" };
+      }
+      return { action: "updated", from: currentTag, to: `Atomic Core ${CORE_VERSION} · ${readCoreBackend(dataDir, CORE_VERSION)?.version ?? "installed"}` };
+    }
+    opts.onWillDownload?.();
+    const done = await downloadBackend(dataDir, {
+      engine: "atomic-core",
+      onProgress: opts.onProgress,
+      signal: opts.signal,
+    });
+    if (done.activated === false) return { action: "deferred", reason: "daemon_live" };
+    return { action: "updated", from: installed ? currentTag : null, to: done.tag };
+  } catch (err) {
+    return {
+      action: "update_failed",
+      error: err instanceof Error ? err.message : String(err),
+      backendUsable: isCoreBackendInstalled(dataDir),
+      ...(err instanceof CoreUnavailableError ? { coreFailure: err.info } : {}),
     };
   }
 }

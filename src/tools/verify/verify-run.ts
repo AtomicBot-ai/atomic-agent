@@ -32,14 +32,16 @@ export function describeVerifyRun(args: VerifyRunArgs): string {
     const start = [args.start?.cmd, ...(args.start?.args ?? [])].join(" ");
     return `start \`${start}\`, then ${args.requests?.length ?? 0} request(s)`;
   }
-  return `open ${args.url ?? args.path} headless for ${args.seconds}s`;
+  const open = `open ${args.url ?? args.path} headless for ${args.seconds}s`;
+  if (args.start === undefined) return open;
+  return `start \`${[args.start.cmd, ...(args.start.args ?? [])].join(" ")}\`, then ${open}`;
 }
 
 export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinition {
   return {
     name: VERIFY_RUN_TOOL,
     description:
-      "Run a check against a throwaway copy of the working directory — nothing it writes reaches the workspace (may require approval). kind 'command': any test runner, compiler or script ({cmd, args}). kind 'service': {start:{cmd,args}, ready:{port|url}, requests:[{method,path|url,body,expectStatus,expectBody}]}. kind 'page': a local HTML file ({path}) or {url} in a headless browser: {script:[{action:click|key|type|wait,…}]}, then `seconds` of runtime with `probes:[{name, expr}]` sampled every 250 ms; collects uncaught errors, console errors, failed getElementById/querySelector lookups. `checks`: `exit 0`, `exit != 0`, `stdout contains \"x\"`, `stderr not contains \"x\"`, `status 200`, `no errors`, `missing selectors 0`, `probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>`. `network` defaults to false (a proxy-based soft block, not a sandbox). Results are capped: output tails of 8,000 chars, summary of 4,000.",
+      "Run a check against a throwaway copy of the working directory — nothing it writes reaches the workspace (may require approval). kind 'command': any test runner, compiler or script ({cmd, args}). kind 'service': {start:{cmd,args}, ready:{port|url}, requests:[{method,path|url,body,expectStatus,expectBody}]}. kind 'page': a local HTML file ({path}) or {url} in a headless browser (with {start, url} the server is started first and the page opens once `ready` passes, by default when the url answers 2xx): {script:[{action:click|key|type|wait,…}]}, then `seconds` of runtime with `probes:[{name, expr}]` sampled every 250 ms; collects uncaught errors, console errors, failed getElementById/querySelector lookups. `checks`: `exit 0`, `exit != 0`, `stdout contains \"x\"`, `stderr not contains \"x\"`, `status 200`, `no errors`, `missing selectors 0`, `probe <name> decreases|increases|equals <v>|reaches <v>|stays <v>`. `network` defaults to false (a proxy-based soft block, not a sandbox). Results are capped: output tails of 8,000 chars, summary of 4,000.",
     readonly: true,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       let args: VerifyRunArgs;

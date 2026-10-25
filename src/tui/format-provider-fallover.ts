@@ -1,3 +1,5 @@
+import type { FallbackLastSwitch } from "./llm-panel/fallback/fallback-panel-state.js";
+
 /**
  * The chat-surface announcement for a fallover away from the primary
  * provider.
@@ -13,13 +15,17 @@
  * Recovery stays a feed line: going back to the provider the operator
  * chose restores what they already expect, and a chat bubble for it
  * would be noise.
+ *
+ * `cause` is the runtime's reading of the error itself, when it had one:
+ * the reason text is cut to one short line and can read a rate limit as
+ * billing. Without it the text is classified as before.
  */
 export function formatProviderFalloverNotice(
   from: string,
   to: string,
   reason: string,
+  cause: FalloverCause = classifyFalloverReason(reason),
 ): string {
-  const cause = classifyFalloverReason(reason);
   return [
     `Switched from ${from} to ${to}: ${reason}`,
     cause === "billing"
@@ -40,12 +46,75 @@ export type FalloverCause = "billing" | "auth" | "other";
  * out of room; a 401/403 means the key is wrong. Everything else — a
  * timeout, a 5xx, a rate limit — is transient by nature and the chain's
  * own recovery probe is the right answer to it.
+ *
+ * Two readings the words alone got wrong. A quota per minute is a rate
+ * limit even when it says "check your plan and billing details"
+ * (Gemini's free tier): a rate window or a "retry in <n>" outweighs
+ * money words ("try again after topping up" is not a cooldown), unless
+ * an explicit billing code (OpenAI's `insufficient_quota`) says
+ * otherwise. And a 403 for input the provider's moderation flagged
+ * (OpenRouter) is a refusal of the request, not of the key; an account
+ * "flagged for suspicious activity" is not moderation. The text is
+ * cut short, so the runtime's reading of the error itself, when it has
+ * one, is passed in instead (`falloverCause`).
  */
 export function classifyFalloverReason(reason: string): FalloverCause {
   const text = reason.toLowerCase();
-  if (/\b402\b|credit|quota|insufficient|billing|payment/.test(text))
+  const rateWindow =
+    /per[ -]?(?:second|minute|hour)\b|\b(?:rpm|tpm)\b|rate[ _-]?limit|too many requests|\b(?:retry|try again) (?:in|after) \d/.test(
+      text,
+    ) && !/insufficient_quota|credit_balance_exhausted|insufficient_credits/.test(text);
+  if (!rateWindow && /\b402\b|credit|quota|insufficient|billing|payment/.test(text))
     return "billing";
+  if (
+    /\bmoderation\b|\b(?:input|content|prompt|request|message) (?:was |has been |is )?flagged|\bflagged (?:input|content|prompt)\b/.test(
+      text,
+    )
+  )
+    return "other";
   if (/\b401\b|\b403\b|unauthor|forbidden|invalid api key|api key/.test(text))
     return "auth";
   return "other";
+}
+
+/**
+ * The Fallback pane's one-line status for the last observed switch.
+ *
+ * The pane is where an operator goes to act on a fallover, so the line
+ * says which kind of failure happened and the one thing to do about it,
+ * not the provider's raw refusal text: that full reason is already in
+ * the chat notice and the Observe feed. The classifier reads free text
+ * and can misread it (a per-minute "quota" is a rate limit), so a
+ * credit or key line keeps the HTTP status as evidence. Only a failure
+ * that clears by itself (5xx, 408, 429, a timeout, a dropped
+ * connection) promises a retry; anything else — a 404 model, a context
+ * overflow — keeps its reason and promises nothing. The retry names the
+ * primary, not `from`: the chain can fall over from a non-primary link,
+ * and the recovery probe only ever checks the primary.
+ */
+export function formatFallbackStatusLine(
+  lastSwitch: FallbackLastSwitch,
+): string {
+  const { direction, from, to, reason } = lastSwitch;
+  if (direction === "back") return `status: recovered primary ${to}`;
+  const head = `status: failed over ${from} -> ${to}`;
+  const status = /\b[45]\d\d\b/.exec(reason)?.[0];
+  const evidence = status ? ` (${status})` : "";
+  switch (classifyFalloverReason(reason)) {
+    case "billing":
+      return `${head}${evidence} · ${from} is out of credit or quota: top it up or lower its maxOutputTokens`;
+    case "auth":
+      return `${head}${evidence} · ${from} refused the API key: check it in <stateDir>/.env or its apiKey in config.json`;
+    default:
+      return isSelfClearingFailure(reason)
+        ? `${head} (${reason}) · retrying the primary automatically`
+        : `${head} (${reason})`;
+  }
+}
+
+/** A failure the chain's recovery probe can be expected to outlast. */
+function isSelfClearingFailure(reason: string): boolean {
+  return /\b5\d\d\b|\b408\b|\b429\b|timeout|timed out|econnreset|econnrefused|fetch failed|network|unavailable|overloaded|rate limit/i.test(
+    reason,
+  );
 }

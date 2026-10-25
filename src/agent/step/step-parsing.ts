@@ -10,7 +10,7 @@ import { parseToolCalls, extractReasoning } from "../../llm/grammar/tool-call-gr
 import { BatchValidationError } from "./step-errors.js";
 import { getReasoningTurnFraming } from "../../llm/model-profile.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
-import { estimateReasoningTokens } from "../../llm/reasoning-budget.js";
+import { DEFAULT_REASONING_BUDGET_TOKENS, effectiveReasoningBudgetTokens, estimateReasoningTokens } from "../../llm/reasoning-budget.js";
 import { detectModelFailure, ModelError } from "../../llm/index.js";
 
 
@@ -59,9 +59,25 @@ export function isNativeToolsEmptyCompletionHandledByParser(
  * the tool call, and the cap turned every repair into a truncation.
  * The step's own cap bounds it instead, the same bound as the first
  * completion.
+ *
+ * A grammar link with a thinking profile (`qwen-think`, `gemma4-think`,
+ * thinking not off) re-opens the think block in the repair, and the
+ * grammar lets it run up to the reasoning budget before the call. Up to
+ * ~500 of the 1024 tokens went to thinking, and a long reply or tool call
+ * was cut. The cap grows by the budget the grammar really enforces
+ * (`effectiveReasoningBudgetTokens`); an unbounded budget (`0`) has no
+ * such bound, so the step's cap applies, as on `native_tools`. A model
+ * without thinking keeps the 1024 anti-loop guard.
  */
-export function repairReplyCap(transport: ToolCallTransport, stepCap: number): number {
-  return transport === "native_tools" ? stepCap : REPAIR_MAX_TOKENS;
+export function repairReplyCap(
+  transport: ToolCallTransport,
+  stepCap: number,
+  reasoning: { profile?: ModelProfile; thinkingOff?: boolean; budgetTokens?: number } = {},
+): number {
+  if (transport === "native_tools") return stepCap;
+  if (!reasoning.profile || reasoning.profile.reasoningStyle === "none" || reasoning.thinkingOff) return REPAIR_MAX_TOKENS;
+  const budget = effectiveReasoningBudgetTokens(reasoning.budgetTokens ?? DEFAULT_REASONING_BUDGET_TOKENS);
+  return budget === 0 ? Math.max(stepCap, REPAIR_MAX_TOKENS) : REPAIR_MAX_TOKENS + budget;
 }
 
 
@@ -131,6 +147,13 @@ export function parseDepsFor(
 
 
 /**
+ * Every step parse may repair broken call JSON mechanically (ATO-637);
+ * `parseStepBatch` then accepts the repaired batch only when it is a
+ * valid call of a known tool (`step-json-repair.ts`).
+ */
+const REPAIR_JSON = { repairJson: true } as const;
+
+/**
  * Non-throwing parser wrapper. The step executor uses it to distinguish
  * a malformed first attempt (retryable) from any other error shape.
  * Returns a `ToolCallBatch` that may carry a single call (legacy
@@ -174,6 +197,7 @@ export function tryParseToolCalls(
           reasoning,
           {
             ...(strictWidenedArgs ? { strictWidenedArgs } : {}),
+            repairJson: true,
           },
         );
         if (batch.calls.length === 0) {
@@ -205,6 +229,8 @@ export function tryParseToolCalls(
       const replyText = completion.content;
       if (typeof replyText === "string" && replyText.trim().length > 0) {
         try {
+          // No repair here: content that is not a clean call array is
+          // delivered as a reply below, as before.
           const grammarBatch = parseToolCalls(
             normalizeContent(completion, profile, assumeOpenReasoning),
             getReasoningTagOptions(profile),
@@ -264,6 +290,7 @@ export function tryParseToolCalls(
           const grammarBatch = parseToolCalls(
             reasoningText,
             getReasoningTagOptions(profile),
+            REPAIR_JSON,
           );
           if (grammarBatch.calls.length > 0) {
             const adapter = deps.toolCallAdapter ?? openAiToolCallAdapter;
@@ -293,6 +320,7 @@ export function tryParseToolCalls(
     const batch = parseToolCalls(
       normalizeContent(completion, profile, assumeOpenReasoning),
       getReasoningTagOptions(profile),
+      REPAIR_JSON,
     );
     return { ok: true, batch };
   } catch (err) {
@@ -400,7 +428,8 @@ export function rawPreview(content: string): string {
  * anti-runaway guard well under `completionMaxTokens` (8192).
  *
  * Applies to grammar links only — see `repairReplyCap` for why the chat
- * transport runs the repair under the step's cap instead.
+ * transport runs the repair under the step's cap instead, and why a
+ * thinking profile gets its reasoning budget on top.
  */
 export const REPAIR_MAX_TOKENS = 1024;
 
@@ -421,7 +450,7 @@ export function buildToolCallRepairPrompt(
   // and enters a "wait, let me reconsider" loop that burns the entire
   // `n_predict` budget. Below we re-append the OPEN reasoning prefill
   // at the very end so the model continues in its normal think → emit
-  // pattern (bounded by `REPAIR_MAX_TOKENS`).
+  // pattern (bounded by `repairReplyCap`).
   //
   // Earlier iterations of this function appended a CLOSED think-block
   // (`<think>\n</think>`) here, attempting a `/no_think` shortcut.
@@ -429,7 +458,7 @@ export function buildToolCallRepairPrompt(
   // the model ignored the close marker and produced markdown-fenced
   // JSON with interleaved prose ("Wait, I need to..."), tripping
   // `GrammarError: tool-call body is empty`. Letting the model think
-  // normally in repair — bounded by `REPAIR_MAX_TOKENS` so it cannot
+  // normally in repair — bounded by `repairReplyCap` so it cannot
   // run away — restores grammar-clean output.
   //
   // When the prompt never carried the prefill (native-tools chat
@@ -541,7 +570,7 @@ export function stripTrailingReasoningPrefill(
  * Re-append the reasoning open tag (e.g. `<think>`) at the end of the
  * repair prompt for thinking profiles, mirroring the shape of a normal
  * prompt. The model then continues in its standard think → `</think>`
- * → JSON flow, just bounded by `REPAIR_MAX_TOKENS`. For `none` profiles
+ * → JSON flow, just bounded by `repairReplyCap`. For `none` profiles
  * this is a no-op.
  */
 export function renderOpenReasoningBlock(
@@ -575,12 +604,23 @@ export interface StepRepairArgs {
   promptCarriesPrefill: boolean;
   thinkingOff: boolean;
   replyCap: number;
+  /** `localModels.reasoningBudgetTokens` for this step; `DEFAULT_REASONING_BUDGET_TOKENS` when absent. */
+  reasoningBudgetTokens?: number;
   parsed: Extract<ToolCallBatchParseResult, { ok: false }>;
   assumesOpenReasoning: (completion: CompletionResult) => boolean;
   onRetryReasoning: (reasoning: string) => void;
 }
+/** {@link repairReplyCap} for a step's repair arguments. */
+function repairCapFor(args: Pick<StepRepairArgs, "deps" | "replyCap" | "thinkingOff" | "reasoningBudgetTokens">): number {
+  return repairReplyCap(args.deps.toolTransport, args.replyCap, {
+    profile: args.deps.profile,
+    thinkingOff: args.thinkingOff,
+    ...(args.reasoningBudgetTokens !== undefined ? { budgetTokens: args.reasoningBudgetTokens } : {}),
+  });
+}
+
 export function prepareStepRepair(args: StepRepairArgs) {
-  const { ctx, deps, prompt, llmParams, grammarPrompt, promptCarriesPrefill, thinkingOff, replyCap, parsed } = args;
+  const { ctx, deps, prompt, llmParams, grammarPrompt, promptCarriesPrefill, thinkingOff, parsed } = args;
   // One-shot repair: grammar outputs can be truncated or malformed for
   // transient reasons (stop-sequence race, model hiccup), and a batch
   // can fail validation when the model puts an approval-gated or
@@ -670,8 +710,9 @@ export function prepareStepRepair(args: StepRepairArgs) {
     // Grammar links only. On the chat transport a reasoning model
     // thinks server-side, with no prefill to strip, and 1024 is a
     // guaranteed truncation — the repair would end every turn it was
-    // meant to save. See `repairReplyCap`.
-    maxTokens: repairReplyCap(deps.toolTransport, replyCap),
+    // meant to save. A thinking profile on a grammar link gets its
+    // reasoning budget on top. See `repairReplyCap`.
+    maxTokens: repairCapFor(args),
   }) };
 }
 
@@ -682,7 +723,7 @@ export function finishStepRepair(
   repair: PreparedStepRepair,
   completion: CompletionResult,
 ): ParseDeps {
-  const { ctx, deps, prompt, slot, replyCap, assumesOpenReasoning, onRetryReasoning } = args;
+  const { ctx, deps, prompt, slot, assumesOpenReasoning, onRetryReasoning } = args;
   const { retryStartedAt } = repair;
   const retryDurationMs = Date.now() - retryStartedAt;
   const retryReasoning = resolveReasoning(
@@ -721,11 +762,8 @@ export function finishStepRepair(
   // failure, not a grammar one — no point emitting `GrammarError` for
   // an empty body.
   const retryModelFailure = detectModelFailure(completion, {
-    requestedMaxTokens: replyCapSent(
-      completion,
-      repairReplyCap(deps.toolTransport, replyCap),
-    ),
-    defaultReplyCap: repairReplyCap(deps.toolTransport, replyCap),
+    requestedMaxTokens: replyCapSent(completion, repairCapFor(args)),
+    defaultReplyCap: repairCapFor(args),
     stage: "repair",
     contextWindow: deps.contextWindow ?? null,
   });

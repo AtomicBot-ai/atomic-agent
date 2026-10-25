@@ -1,5 +1,6 @@
 import {
   dispatchSlashCommand,
+  ENHANCE_USAGE,
   type SlashDispatchResult,
 } from "./commands/slash-command-handler.js";
 import { runRunModeVerb } from "./commands/run-mode-verb.js";
@@ -11,6 +12,7 @@ import {
 import {
   filterSlashCommands,
   resolveSlashCommand,
+  skillSlashCommands,
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
@@ -67,7 +69,7 @@ export function handleEditorSubmit(
   if (trimmed.startsWith("/")) {
     const parsed = parseSlashCommand(trimmed);
     if (parsed !== null) {
-      const resolved = resolveSlashCommand(parsed.name);
+      const resolved = resolveSlashCommand(parsed.name, skillSlashCommands(state.skillsPanel));
       if (resolved !== null) {
         runSlashCommand(trimmed, state, dispatch, callbacks);
         return;
@@ -81,7 +83,7 @@ export function handleEditorSubmit(
 
   if (state.slashPaletteOpen) {
     const query = slashPrefix(trimmed) ?? "";
-    const completions = filterSlashCommands(query);
+    const completions = filterSlashCommands(query, skillSlashCommands(state.skillsPanel));
     const maxRow = Math.max(0, completions.length - 1);
     const safeCursor = Math.min(state.slashPaletteCursor, maxRow);
     const chosen = completions[safeCursor];
@@ -176,13 +178,57 @@ function handleSessionPickerSubmit(
   dispatch({ type: "input_changed", value: "" });
 }
 
+/**
+ * Bare `/enhance`. From the menu the composer still holds the person's
+ * draft, so that is what gets enhanced; typed or picked in the palette
+ * the buffer is the command itself, and the answer is the usage line.
+ * Either way the buffer is left as it was.
+ */
+function runEnhanceCurrentDraft(
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const draft = state.inputValue.trim();
+  if (draft.length === 0 || draft.startsWith("/")) {
+    dispatch({ type: "runtime_info", line: ENHANCE_USAGE });
+    dispatch({ type: "system_message", text: ENHANCE_USAGE });
+    // A buffer holding the command itself (`/enhance`, or `/enh` from the
+    // palette) has done its job; an empty one has nothing to clear.
+    if (draft.length > 0) dispatch({ type: "input_changed", value: "" });
+    return;
+  }
+  dispatch({ type: "input_changed", value: draft });
+  callbacks.onPromptEnhanceRequested?.(draft);
+}
+
 export function runSlashCommand(
   raw: string,
   state: TuiState,
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
 ): void {
-  const result: SlashDispatchResult = dispatchSlashCommand(raw);
+  const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
+  if (result.skillInvocation) {
+    if (!canTypeMessage(state)) return;
+    try {
+      if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
+      const { name, input } = result.skillInvocation;
+      const text = callbacks.prepareSkillInvocation(name, input);
+      dispatch({ type: "slash_palette_closed" });
+      if (canAcceptMessage(state)) {
+        dispatch({ type: "message_submitted" });
+        callbacks.onMessageSubmitted(text);
+      } else {
+        submitWhileBusy(text, state.whileBusyMode, dispatch, callbacks);
+      }
+    } catch (error) {
+      const text = error instanceof Error ? error.message : String(error);
+      dispatch({ type: "system_message", text });
+      callbacks.onSkillsRefreshRequested?.();
+    }
+    return;
+  }
   if (result.triggerDebugBundleDump) {
     callbacks.onDebugBundleExportRequested?.(state);
   }
@@ -241,11 +287,18 @@ export function runSlashCommand(
     runQueueVerb(result.queueVerb, state, dispatch, callbacks);
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
-  if (result.modelModeCommand) runModelModeCommand(result.modelModeCommand, dispatch);
+  if (result.modelModeCommand) {
+    runModelModeCommand(result.modelModeCommand, dispatch);
+    callbacks.onSkillsRefreshRequested?.();
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
   if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb);
+  if (result.enhancePromptText !== undefined) {
+    callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);
+  }
+  if (result.enhanceCurrentDraft) runEnhanceCurrentDraft(state, dispatch, callbacks);
   if (result.triggerNewWindow) callbacks.onNewWindowRequested?.();
   if (result.triggerAbort) callbacks.onAbort();
   if (result.triggerQuit) {
@@ -279,6 +332,7 @@ export function runSlashCommand(
       reportUnknownLocalModel(result.localModelsPullModelId, dispatch);
     }
   }
+  if (result.localModelsEngine) callbacks.onLocalModelsEngineRequested?.(result.localModelsEngine);
   if (result.localModelsUseModelId) {
     if (isKnownLocalModelId(result.localModelsUseModelId)) {
       callbacks.onLocalModelsSetActiveRequested?.(result.localModelsUseModelId);

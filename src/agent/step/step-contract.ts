@@ -29,7 +29,8 @@ export interface LlmStreamParams {
     transport: ToolCallTransport;
     contextWindow: number | null;
     maxTokens?: number;
-  }) => Pick<LlmStreamParams, "prompt" | "messages" | "chat" | "contextBudget">;
+  }) => Pick<LlmStreamParams, "prompt" | "messages" | "chat" | "contextBudget"> &
+    Partial<Pick<LlmStreamParams, "tools" | "toolChoice" | "parallelToolCalls" | "grammar" | "maxTokens" | "slotId">>;
   /** Internal policy metadata; never serialized to the provider API. */
   modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
   prompt: string;
@@ -89,6 +90,8 @@ export interface LlmStreamParams {
   maxOutputTokens?: number;
   /** The turn's reasoning effort (`RunTurnOptions.reasoningEffort`). */
   reasoningEffort?: ReasoningEffort;
+  /** See `CompletionRequest.disableThinking`. */
+  disableThinking?: boolean;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;
@@ -110,6 +113,8 @@ export interface LlmStreamParams {
    * instead of waiting for the current step to finish on its own.
    */
   signal?: AbortSignal;
+  /** Per-request transport deadline; see `CompletionRequest.requestTimeoutMs`. */
+  requestTimeoutMs?: number;
   /**
    * Pins this completion to one configured provider id, bypassing the
    * provider fallback chain entirely. A fusion worker turn runs on the
@@ -128,6 +133,7 @@ export type LlmCompleteStream = (
 
 
 export interface StepDependencies {
+  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../../session/workspace-context.js").WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
   /** Publish completed cloud tool pairs even if the batch then cancels. */
   commitSession?: (state: SessionState) => void;
   modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
@@ -279,6 +285,7 @@ export interface StepApprovalPostureSource {
 
 
 export interface StepContext {
+  workspace?: import("../../session/workspace-context.js").SessionWorkspace;
   session: SessionState;
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;

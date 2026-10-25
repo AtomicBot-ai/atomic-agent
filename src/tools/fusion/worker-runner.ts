@@ -416,7 +416,8 @@ export interface WorkerRunnerDeps {
     },
   ) => Promise<RunTurnResult>;
   /** `runtime.createEphemeralSession` — in-memory, never persisted. */
-  createEphemeralSession: (meta: FusionWorkerMeta) => SessionState;
+  createEphemeralSession: (meta: FusionWorkerMeta, workingDir?: string) => SessionState;
+  inheritWorkspace?: boolean;
   approvals: Pick<ApprovalGate, "setSessionPolicy" | "clearSessionPolicy"> &
     Partial<
       Pick<
@@ -563,7 +564,7 @@ async function runOneTask(
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
-  });
+  }, deps.inheritWorkspace ? deps.workingDir : undefined);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
   // fan-out would deadlock rather than run. `createEphemeralSession`

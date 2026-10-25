@@ -2,6 +2,7 @@ import { Box, Text } from "ink";
 import type { ReactElement, ReactNode } from "react";
 
 import { fitToWidth } from "../components/fit-to-width.js";
+import { wrapText } from "../render/wrap-text.js";
 import {
   MouseTarget,
   useMouseCommands,
@@ -10,6 +11,7 @@ import {
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MOUSE_LAYER_MODAL } from "../mouse/mouse-registry.js";
 import { chromeTheme } from "../theme/theme.js";
+import { DESKTOP_DATA_QUESTION } from "../../uninstall/index.js";
 import {
   isUninstallConfirmed,
   UNINSTALL_CONFIRM_WORD,
@@ -27,6 +29,10 @@ interface UninstallModalProps {
   onCancel: () => void;
   onContinue: () => void;
   onFocus: (cursor: "continue" | "cancel") => void;
+  /** `desktop` step: a click focused one of its two buttons. */
+  onDesktopFocus?: (cursor: "keep" | "delete") => void;
+  /** `desktop` step: a click answered the question. */
+  onDesktopAnswer?: (answer: "keep" | "delete") => void;
 }
 
 /**
@@ -49,6 +55,8 @@ export function UninstallModal({
   onCancel,
   onContinue,
   onFocus,
+  onDesktopFocus,
+  onDesktopAnswer,
 }: UninstallModalProps): ReactElement {
   const width = Math.max(32, Math.min(PREFERRED_WIDTH, availableColumns - 2));
   const inner = width - 2;
@@ -101,6 +109,8 @@ export function UninstallModal({
         onCancel={onCancel}
         onContinue={onContinue}
         onFocus={onFocus}
+        onDesktopFocus={onDesktopFocus}
+        onDesktopAnswer={onDesktopAnswer}
       />
     </Box>
   );
@@ -119,6 +129,8 @@ function title(flow: UninstallFlowState): string {
       return "UNINSTALL ATOMIC-AGENT — THIS DELETES DATA";
     case "confirm":
       return "UNINSTALL ATOMIC-AGENT — LAST CHANCE";
+    case "desktop":
+      return "UNINSTALL ATOMIC-AGENT: DESKTOP APP DATA";
     case "closing":
       return "UNINSTALLING…";
     case "failed":
@@ -157,6 +169,8 @@ export function bodyLines(
       return reviewLines(flow, inner);
     case "confirm":
       return confirmLines(flow, inner);
+    case "desktop":
+      return desktopLines(flow, inner);
   }
 }
 
@@ -181,6 +195,7 @@ function reviewLines(
       Math.max(0, inner - size.length - 1),
     );
     lines.push({ text: `${path}${size}`, tone: "normal" });
+    if (row.warning) lines.push(...wrapped(row.warning, inner, "warn"));
   }
   const hidden = preview.rows.length - shown.length;
   if (hidden > 0) {
@@ -193,6 +208,9 @@ function reviewLines(
       text: " no installed binary here — data only.",
       tone: "muted",
     });
+  }
+  for (const notice of preview.leftInPlace ?? []) {
+    lines.push(...wrapped(notice, inner, "muted"));
   }
   lines.push({ text: "", tone: "muted" });
   lines.push({
@@ -207,17 +225,36 @@ function reviewLines(
   return lines;
 }
 
+/** A sentence soft-wrapped into the panel, one leading space per row. */
+function wrapped(
+  text: string,
+  inner: number,
+  tone: BodyLine["tone"],
+): BodyLine[] {
+  return wrapText(text, Math.max(1, inner - 2)).map((row) => ({
+    text: ` ${row}`,
+    tone,
+  }));
+}
+
 function confirmLines(
   flow: UninstallFlowState,
-  _inner: number,
+  inner: number,
 ): readonly BodyLine[] {
   const armed = isUninstallConfirmed(flow.typed);
+  // The desktop warning is repeated here: this is the screen the
+  // operator acts on, and the review screen may have scrolled past.
+  const desktopWarning = flow.preview?.rows.find((row) => row.warning)?.warning;
   return [
     { text: "", tone: "muted" },
     {
       text: ` Deleting ${flow.preview?.total ?? "everything"} permanently.`,
       tone: "warn",
     },
+    ...(desktopWarning ? wrapped(desktopWarning, inner, "warn") : []),
+    ...(flow.preview?.desktopSharedDir
+      ? wrapped(DESKTOP_QUESTION_NEXT, inner, "muted")
+      : []),
     { text: "", tone: "muted" },
     {
       text: ` Type ${UNINSTALL_CONFIRM_WORD} to enable the last key:`,
@@ -233,20 +270,80 @@ function confirmLines(
   ];
 }
 
-/** Legal moves for the current step, plus the two review buttons. */
+/** Said on the last-chance screen when the desktop question follows. */
+const DESKTOP_QUESTION_NEXT =
+  "Next you choose whether the desktop app's data in this folder goes too.";
+
+/**
+ * The separate question about a state folder the desktop app shares.
+ * Keep is the default and removes only the terminal program.
+ */
+function desktopLines(
+  flow: UninstallFlowState,
+  inner: number,
+): readonly BodyLine[] {
+  const dir = flow.preview?.desktopSharedDir ?? "";
+  return [
+    { text: "", tone: "muted" },
+    ...wrapped(DESKTOP_DATA_QUESTION, inner, "warn"),
+    { text: "", tone: "muted" },
+    { text: fitToWidth(` ${dir}`, inner), tone: "normal" },
+    { text: "", tone: "muted" },
+    ...wrapped(
+      "Keep data: remove only the terminal program. The desktop app keeps working.",
+      inner,
+      "normal",
+    ),
+    ...wrapped(
+      "Delete too: the folder goes, and the desktop app starts from scratch.",
+      inner,
+      "normal",
+    ),
+    { text: "", tone: "muted" },
+  ];
+}
+
+/** Legal moves for the current step, plus the two-button steps. */
 function Footer({
   flow,
   inner,
   onCancel,
   onContinue,
   onFocus,
+  onDesktopFocus,
+  onDesktopAnswer,
 }: {
   flow: UninstallFlowState;
   inner: number;
   onCancel: () => void;
   onContinue: () => void;
   onFocus: (cursor: "continue" | "cancel") => void;
+  onDesktopFocus?: (cursor: "keep" | "delete") => void;
+  onDesktopAnswer?: (answer: "keep" | "delete") => void;
 }): ReactElement {
+  if (flow.step === "desktop") {
+    return (
+      <Box width={inner}>
+        <Text> </Text>
+        {/* Same reversal as review: the raised chip is the safe answer. */}
+        <DialogButton
+          label="Keep data"
+          tone="primary"
+          focused={flow.desktopCursor === "keep"}
+          onPress={() => onDesktopAnswer?.("keep")}
+          onFocus={() => onDesktopFocus?.("keep")}
+        />
+        <Text>{"  "}</Text>
+        <DialogButton
+          label="Delete too"
+          tone="outline"
+          focused={flow.desktopCursor === "delete"}
+          onPress={() => onDesktopAnswer?.("delete")}
+          onFocus={() => onDesktopFocus?.("delete")}
+        />
+      </Box>
+    );
+  }
   if (flow.step === "review" && (flow.preview?.rows.length ?? 0) > 0) {
     return (
       <Box width={inner}>
@@ -288,6 +385,7 @@ function hint(flow: UninstallFlowState): string {
       return isUninstallConfirmed(flow.typed)
         ? "enter uninstall   esc cancel"
         : `type "${UNINSTALL_CONFIRM_WORD}"   esc cancel`;
+    case "desktop":
     case "closing":
       return "";
     case "loading":

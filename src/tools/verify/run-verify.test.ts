@@ -6,7 +6,9 @@ import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { defaultBrowserLauncher, type BrowserLauncher } from "./run-page-kind.js";
+import type { Browser } from "playwright-core";
+
+import { defaultBrowserLauncher, isLoopbackHost, type BrowserLauncher } from "./run-page-kind.js";
 import { runChecks, runVerify, type VerifyRunContext } from "./run-verify.js";
 import { createVerifyWorkspace } from "./verify-workspace-copy.js";
 
@@ -51,6 +53,30 @@ async function freePort(): Promise<number> {
 }
 
 describe("runVerify — command", () => {
+  it("explains a curses program that fails without a terminal (ATO-323)", async () => {
+    const out = await runVerify(
+      {
+        kind: "command",
+        cmd: NODE,
+        args: ["-e", "console.error('_curses.error: setupterm: could not find terminal'); process.exit(1)"],
+        checks: ["exit 0"],
+      },
+      ctx(),
+    );
+    expect(out.ok).toBe(false);
+    expect(out.hint).toContain("full-screen terminal (curses/TUI) program");
+    expect(out.summary).toContain("note: This looks like a full-screen terminal");
+  });
+
+  it("adds no terminal note to an ordinary failure", async () => {
+    const out = await runVerify(
+      { kind: "command", cmd: NODE, args: ["-e", "console.error('AssertionError: 1 != 2'); process.exit(1)"] },
+      ctx(),
+    );
+    expect(out.hint).toBeUndefined();
+    expect(out.summary).not.toContain("note:");
+  });
+
   it("runs in an isolated copy, reports the exit code and output tails, and evaluates checks", async () => {
     await writeFile(join(work, "data.txt"), "hello from the workspace");
     const copies: string[] = [];
@@ -99,6 +125,28 @@ describe("runVerify — command", () => {
     expect(out.ok).toBe(true);
     expect(out.exitCode).toBe(0);
     expect(out.summary.split("\n")[0]).toBe("verify.run command: ok");
+  });
+
+  it("does not hand the agent's keys to the command, but keeps the run's own env (ATO-347)", async () => {
+    process.env.ATO347_VERIFY_API_KEY = "leaked-key-value";
+    process.env.ATO347_VERIFY_PLAIN = "plain-value";
+    try {
+      const out = await runVerify(
+        {
+          kind: "command",
+          cmd: NODE,
+          args: ["-e", "console.log([process.env.ATO347_VERIFY_API_KEY, process.env.ATO347_VERIFY_PLAIN, process.env.ATO347_VERIFY_OWN_TOKEN].join(','))"],
+          env: { ATO347_VERIFY_OWN_TOKEN: "own-value" },
+          checks: ["exit 0"],
+        },
+        ctx(),
+      );
+      expect(out.ok).toBe(true);
+      expect(out.stdoutTail?.trim()).toBe(",plain-value,own-value");
+    } finally {
+      delete process.env.ATO347_VERIFY_API_KEY;
+      delete process.env.ATO347_VERIFY_PLAIN;
+    }
   });
 
   it("kills the process group on timeout and says so", async () => {
@@ -211,6 +259,82 @@ describe("runVerify — page", () => {
     );
     expect(launched).toBe(false);
     expect(out.error).toBe("no such file: nope.html");
+  });
+});
+
+/**
+ * A stand-in browser whose `goto` fetches the target for real: it proves
+ * the page server answered at the moment the page was opened.
+ */
+function fetchingLauncher(seen: string[]): BrowserLauncher {
+  return async () => {
+    const page = {
+      on: () => {},
+      addInitScript: async () => {},
+      goto: async (url: string) => {
+        const res = await fetch(url);
+        seen.push(`${res.status} ${await res.text()}`);
+      },
+      evaluate: async () => [],
+    };
+    const context = { route: async () => {}, newPage: async () => page };
+    return { newContext: async () => context, close: async () => {} } as unknown as Browser;
+  };
+}
+
+describe("runVerify — page with start", () => {
+  it("opens the page only after the started server is ready, then stops the server", async () => {
+    const port = await freePort();
+    // The server takes a moment to listen, like `python3 -m http.server`.
+    const server = `setTimeout(() => require('http').createServer((q, s) => s.end('hello page')).listen(${port}), 400)`;
+    const seen: string[] = [];
+    const out = await runVerify(
+      { kind: "page", url: `http://127.0.0.1:${port}/`, start: { cmd: NODE, args: ["-e", server] }, checks: ["no errors"] },
+      ctx({ launchBrowser: fetchingLauncher(seen) }),
+    );
+    expect(seen).toEqual(["200 hello page"]);
+    expect(out.ok).toBe(true);
+    expect(out.ready).toBe(true);
+    expect(out.error).toBeUndefined();
+    await expect(
+      new Promise<void>((resolve, reject) => {
+        const s = net.createServer();
+        s.once("error", reject);
+        s.listen(port, "127.0.0.1", () => s.close(() => resolve()));
+      }),
+    ).resolves.toBeUndefined();
+  }, 30_000);
+
+  it("never opens the page when the server exits first, and fails the checks", async () => {
+    const port = await freePort();
+    let launched = false;
+    const out = await runVerify(
+      {
+        kind: "page",
+        url: `http://127.0.0.1:${port}/`,
+        start: { cmd: NODE, args: ["-e", "console.error('port in use'); process.exit(1)"] },
+        ready: { timeoutMs: 5_000 },
+        checks: ["no errors"],
+      },
+      ctx({
+        launchBrowser: async () => {
+          launched = true;
+          throw new Error("unreachable");
+        },
+      }),
+    );
+    expect(launched).toBe(false);
+    expect(out.ok).toBe(false);
+    expect(out.error).toBe("page server: the process exited before it was ready");
+    expect(out.checks?.[0]?.ok).toBe(false);
+    expect(out.stderrTail).toContain("port in use");
+  }, 30_000);
+});
+
+describe("isLoopbackHost", () => {
+  it("treats only this machine as loopback", () => {
+    for (const host of ["127.0.0.1", "127.1.2.3", "localhost", "app.localhost", "[::1]", "::1"]) expect(isLoopbackHost(host)).toBe(true);
+    for (const host of ["example.com", "10.0.0.1", "127.0.0.1.example.com", "192.168.1.5"]) expect(isLoopbackHost(host)).toBe(false);
   });
 });
 

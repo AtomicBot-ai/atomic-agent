@@ -1,0 +1,252 @@
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, realpathSync, unlinkSync } from "node:fs";
+import { join } from "node:path";
+import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
+import { coreDaemonEnv } from "./core-env.js";
+import { shutdownIdleCoreClient } from "./core-idle.js";
+import { unloadRetiredCoreSessions } from "./core-retire-sessions.js";
+import { CoreUnavailableError, toCoreUnavailable } from "./core-errors.js";
+import { CORE_PROTOCOL, CORE_VERSION, CORE_VERSIONS, coreBinary, coreDataDir, coreEmbeddingRecordPath, coreVersionDir, readCoreEmbeddingRecord, readCoreJson, type CoreSession } from "./core-state.js";
+
+export interface CoreSnapshot {
+  instance_id: string;
+  version: string;
+  protocol: number;
+  owner_scope: string;
+  data_folder: string;
+  sessions: CoreSession[];
+  clients: Array<{ id: string; pid: number | null }>;
+}
+interface CoreLock {
+  state: string;
+  instance_id: string;
+  version: string;
+  protocol: number;
+  data_folder: string;
+  control_host: string;
+  control_port: number;
+}
+/** Core answered a control request with an error status. */
+export class CoreRequestError extends Error {
+  override readonly name = "CoreRequestError";
+  /** Core's error code (`EMBEDDING_ENGINE_UNSUPPORTED`, ...), when the answer carried one. */
+  constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
+}
+
+export class CoreControlClient {
+  constructor(readonly base: string, private readonly token: string, readonly version: string,
+    readonly instanceId: string, private readonly request: typeof fetch = fetch) {}
+
+  async call<T>(path: string, body?: unknown, opts: { method?: string; signal?: AbortSignal; timeoutMs?: number } = {}): Promise<T> {
+    const response = await this.request(`${this.base}/atomic/v1${path}`, {
+      method: opts.method ?? (body === undefined ? "GET" : "POST"),
+      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? 15_000)]) : AbortSignal.timeout(opts.timeoutMs ?? 15_000),
+      redirect: "error",
+    });
+    // A proxy or a crashed handler may answer a 5xx without JSON; the status still decides retries.
+    const value = await response.json().catch(() => null) as (T & { error?: { code?: string; message?: string } }) | null;
+    if (!response.ok) throw new CoreRequestError(response.status, value?.error?.message ?? `Atomic Core request failed (${response.status})`, value?.error?.code);
+    if (value === null) throw new Error("Atomic Core returned an unreadable answer.");
+    return value;
+  }
+
+  async downloadEvents(taskId: string, onProgress: (p: number, transferred: number, total: number) => void, signal?: AbortSignal): Promise<() => Promise<void>> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    let response: Response;
+    try { response = await this.request(`${this.base}/atomic/v1/events`, {
+      headers: { Authorization: `Bearer ${this.token}`, Accept: "text/event-stream" },
+      signal: signal ? AbortSignal.any([controller.signal, signal]) : controller.signal, redirect: "error",
+    }); } finally { clearTimeout(timer); }
+    if (!response.ok || !response.body) throw new Error("Atomic Core download events are unavailable.");
+    const reader = response.body.getReader();
+    const done = (async () => {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) return;
+        buffer += decoder.decode(chunk.value, { stream: true });
+        if (buffer.length > 1024 * 1024) throw new Error("Atomic Core event is too large.");
+        let split: number;
+        while ((split = buffer.indexOf("\n\n")) >= 0) {
+          const frame = buffer.slice(0, split);
+          buffer = buffer.slice(split + 2);
+          const lines = frame.split("\n");
+          const event = lines.find(line => line.startsWith("event:"))?.slice(6).trim();
+          if (event !== "download:progress") continue;
+          const data = JSON.parse(lines.filter(line => line.startsWith("data:")).map(line => line.slice(5)).join("\n")) as { payload?: { taskId: string; transferred: number; total: number; percent: number }; taskId?: string; transferred?: number; total?: number; percent?: number };
+          const progress = data.payload ?? data;
+          if (progress.taskId === taskId && typeof progress.transferred === "number" && typeof progress.total === "number" && progress.total > 0) {
+            onProgress(Math.min(100, Math.floor(progress.transferred / progress.total * 100)), progress.transferred, progress.total);
+          }
+        }
+      }
+    })().catch(() => { /* Progress is advisory; the install response owns success/failure. */ });
+    return async () => { controller.abort(); await reader.cancel().catch(() => {}); await done; reader.releaseLock(); };
+  }
+
+  async snapshot(dataFolder?: string, signal?: AbortSignal): Promise<CoreSnapshot> {
+    const snapshot = await this.call<CoreSnapshot>("/snapshot", undefined, signal ? { signal } : {});
+    if (snapshot.protocol !== CORE_PROTOCOL || snapshot.version !== this.version ||
+        snapshot.instance_id !== this.instanceId || snapshot.owner_scope !== "cli" ||
+        (dataFolder && !sameFolder(snapshot.data_folder, dataFolder))) {
+      throw new Error("Atomic Core version, protocol or ownership changed. Reconnect before continuing.");
+    }
+    return snapshot;
+  }
+}
+
+/** Core reports the folder as it was passed (`/tmp/...`), the agent compares a realpath (`/private/tmp/...`). */
+function sameFolder(a: string, b: string): boolean {
+  const canonical = (p: string) => { try { return realpathSync(p); } catch { return p; } };
+  return a === b || canonical(a) === canonical(b);
+}
+
+/** `signal` cuts the handshake short (its own bound is 15 s): a shutdown must not wait it out. */
+export async function connectCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient | null> {
+  const data = coreDataDir(dataDir, version);
+  const lock = readCoreJson<CoreLock>(join(data, "atomic-core", "instance.lock"));
+  if (!lock || lock.state !== "ready") return null;
+  if (lock.control_host !== "127.0.0.1" || !Number.isInteger(lock.control_port) || lock.control_port < 1 || lock.control_port > 65535) {
+    throw new Error("Atomic Core supplied an invalid control address.");
+  }
+  let token: string;
+  try { token = readFileSync(join(data, "atomic-core", "control-token"), "utf8").trim(); } catch { return null; }
+  if (!token || /\s/.test(token)) throw new Error("Atomic Core control credentials are invalid.");
+  const client = new CoreControlClient(`http://127.0.0.1:${lock.control_port}`, token, version, lock.instance_id);
+  try { await client.snapshot(realpathSync(data), signal); } catch (err) {
+    if (err instanceof TypeError && /fetch failed/.test(err.message)) return null;
+    throw err;
+  }
+  return client;
+}
+
+/**
+ * `retireSessions`: this call starts a chat or embedding model, so the
+ * agent's own sessions left on an older, inactive Core are unloaded first
+ * (`retireOlderCores`). Off for every other caller (image generation,
+ * backend install, orphan reaping): those never take a model away.
+ */
+export interface EnsureCoreOptions { retireSessions?: boolean }
+
+/** The CLI-scoped daemon survives one-shot model commands; Core owns its lock and child journal. */
+export async function ensureCore(dataDir: string, version: string, signal?: AbortSignal, opts: EnsureCoreOptions = {}): Promise<CoreControlClient> {
+  let client: CoreControlClient;
+  try { client = await startCore(dataDir, version, signal); }
+  catch (err) { throw toCoreUnavailable(err, "start", signal); }
+  if (version === CORE_VERSION) await retireOlderCores(dataDir, connectCore, { retireSessions: opts.retireSessions === true });
+  await applyPendingEmbeddingDisable(dataDir, version, client);
+  return client;
+}
+
+/**
+ * A stop of Core's embedding module that found Core down (or that Core
+ * refused) left its settings enabled, so Core started the module again at
+ * launch: turn it off now. Best effort; on failure it stays pending for
+ * the next start. The caller holds the engine operation lock.
+ */
+export async function applyPendingEmbeddingDisable(dataDir: string, version: string, client: CoreControlClient): Promise<void> {
+  if (!existsSync(coreEmbeddingRecordPath(dataDir))) return;
+  const record = readCoreEmbeddingRecord(dataDir);
+  if (!record?.disablePending || record.coreVersion !== version) return;
+  try {
+    await client.call("/embedding/config", { enabled: false }, { method: "PUT", timeoutMs: 30_000 });
+    unlinkSync(coreEmbeddingRecordPath(dataDir));
+  } catch { /* still pending */ }
+}
+
+const retiredDataDirs = new Set<string>();
+const sessionsRetiredDataDirs = new Set<string>();
+
+/**
+ * After this build's Core is up: ask an idle daemon of an older pinned
+ * version to shut down, so an upgrade does not leave the previous Core
+ * running beside it (once per process and data folder). With
+ * `retireSessions` (only a chat or embedding start passes it), first
+ * unload the model sessions the agent itself recorded on an older pinned
+ * version that is no longer active, since their llama-server would keep
+ * holding the port (also once per process; an earlier call without it
+ * does not use that up). Image generation and backend install never
+ * unload a model: an older desktop build may be chatting on that Core.
+ * Best effort; one that still serves another client's model or another
+ * client keeps running. Callers hold the engine operation lock (every
+ * ensureCore caller does).
+ */
+export async function retireOlderCores(dataDir: string, connect: typeof connectCore = connectCore, opts: { retireSessions?: boolean } = {}): Promise<void> {
+  const retireSessions = opts.retireSessions === true && !sessionsRetiredDataDirs.has(dataDir);
+  if (retiredDataDirs.has(dataDir) && !retireSessions) return;
+  retiredDataDirs.add(dataDir);
+  if (retireSessions) sessionsRetiredDataDirs.add(dataDir);
+  for (const version of CORE_VERSIONS) {
+    if (version === CORE_VERSION) continue;
+    try {
+      const client = await connect(dataDir, version);
+      if (!client) continue;
+      if (retireSessions) await unloadRetiredCoreSessions(dataDir, client).catch(() => {});
+      await shutdownIdleCoreClient(client);
+    } catch { /* best effort: an older Core that will not answer is left alone */ }
+  }
+}
+
+async function startCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient> {
+  const existing = await connectCore(dataDir, version);
+  if (existing) return existing;
+  const binary = coreBinary(dataDir, version);
+  if (!existsSync(binary)) throw new CoreUnavailableError({ stage: "start", reasonCode: "not_installed", detail: "it is not installed yet" });
+  mkdirSync(coreDataDir(dataDir, version), { recursive: true, mode: 0o700 });
+  const log = openSync(join(coreVersionDir(dataDir, version), "core.log"), "a", 0o600);
+  let spawnError: Error | undefined;
+  try {
+    // No public listener: Agent connects only to Core's authenticated control and model sessions.
+    const child = spawn(binary, ["daemon", "--data-folder", coreDataDir(dataDir, version), "--control-port", "0", "--telemetry", "off"], {
+      detached: true, windowsHide: true, stdio: ["ignore", log, log],
+      // Core outlives the agent and needs no cloud credentials: never hand it provider keys.
+      env: coreDaemonEnv(),
+    });
+    child.once("error", err => { spawnError = err; });
+    child.unref();
+  } finally { closeSync(log); }
+  // Concurrent launches converge through Core's own exclusive owner lock, never by killing a PID.
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    signal?.throwIfAborted();
+    if (spawnError) throw new CoreUnavailableError({ stage: "start", reasonCode: "spawn", detail: spawnError.message, cause: spawnError });
+    const client = await connectCore(dataDir, version);
+    if (client) return client;
+    await delay(150, undefined, signal ? { signal } : {});
+  }
+  throw new CoreUnavailableError({ stage: "start", reasonCode: "not_ready", detail: `it did not become ready in time (log: ${join(coreVersionDir(dataDir, version), "core.log")})` });
+}
+
+/** Every operation keeps a lease until it settles, including long downloads and model loads. */
+export async function withCoreClient<T>(dataDir: string, version: string, fn: (client: CoreControlClient, clientId: string) => Promise<T>, signal?: AbortSignal, opts: EnsureCoreOptions = {}): Promise<T> {
+  return withCoreLease(await ensureCore(dataDir, version, signal, opts), fn);
+}
+
+/** A client lease kept alive by heartbeats until `release`. */
+export interface CoreLease { id: string; release: () => Promise<void> }
+
+/** Take a client lease: Core neither shuts down idle nor counts itself unused while one is held. */
+export async function acquireCoreLease(client: CoreControlClient): Promise<CoreLease> {
+  const lease = await client.call<{ client: { id: string }; heartbeat_interval_ms: number }>("/clients", { name: "Atomic Agent", pid: process.pid });
+  const id = lease.client.id;
+  const timer = setInterval(() => { void client.call(`/clients/${encodeURIComponent(id)}/heartbeat`, {}).catch(() => {}); }, Math.max(1000, lease.heartbeat_interval_ms));
+  timer.unref();
+  return {
+    id,
+    release: async () => {
+      clearInterval(timer);
+      await client.call(`/clients/${encodeURIComponent(id)}`, undefined, { method: "DELETE" }).catch(() => {});
+    },
+  };
+}
+
+/** Hold a client lease on an already connected Core while `fn` runs. */
+export async function withCoreLease<T>(client: CoreControlClient, fn: (client: CoreControlClient, clientId: string) => Promise<T>): Promise<T> {
+  const lease = await acquireCoreLease(client);
+  try { return await fn(client, lease.id); }
+  finally { await lease.release(); }
+}

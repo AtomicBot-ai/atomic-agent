@@ -1,6 +1,8 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { carryUnknownConfigKeys } from "./carry-unknown-config-keys.js";
 import {
   ConfigValidationError,
   ENV_DEFAULTS,
@@ -68,13 +70,19 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
  * explicit `memory.*` opt-out, `version < 25` rewrites
  * `http.approvalMode`. Downgrading the label silently reverts choices
  * the user made.
+ *
+ * For the same reason, keys this build does not know inside fixed blocks
+ * of the file on disk (`memory.futureKey` from a newer build) are carried
+ * into the payload; known keys and dictionaries such as `mcp.servers`
+ * still come from `data` alone. See `carryUnknownConfigKeys` (ATO-417).
  */
 export function writeUserConfigFileSync(
   path: string,
   data: UserConfigFile,
 ): void {
   mkdirSync(dirname(path), { recursive: true });
-  const onDisk = readVersionFieldFromFileSync(path);
+  const diskTree = readJsonObjectFromFileSync(path);
+  const onDisk = readVersionField(diskTree);
   const raised = onDisk !== null && onDisk > data.version;
   const version = raised ? (onDisk as number) : data.version;
   if (raised) {
@@ -82,9 +90,10 @@ export function writeUserConfigFileSync(
       `[atomic-agent] kept config version ${onDisk} (this build writes v${data.version}) at ${path}\n`,
     );
   }
+  const carried = diskTree ? carryUnknownConfigKeys(data, diskTree) : data;
   const payload =
     JSON.stringify(
-      version === data.version ? data : { ...data, version },
+      version === carried.version ? carried : { ...carried, version },
       null,
       2,
     ) + "\n";
@@ -165,6 +174,73 @@ export function ensureUserConfigFileSync(path: string): UserConfigFile {
 }
 
 /**
+ * Compare-and-swap support for clients sharing one state dir (ATO-416).
+ * The desktop app and the terminal agent both write `config.json`; a
+ * client that edits a copy it read earlier would silently revert the
+ * other's change. It reads the file together with the sha256 of its raw
+ * bytes (`config get --with-sha256`) and hands that hash back on write
+ * (`config set - --expect-sha256 <hex>`), which refuses when the bytes
+ * on disk are no longer the ones it read.
+ *
+ * The hash is over the exact bytes on disk — no parse, no normalisation —
+ * so any change, even whitespace from a hand edit, counts as a change.
+ * A missing file hashes as the empty string.
+ */
+export function userConfigFileSha256Sync(path: string): string {
+  return sha256Hex(readUserConfigBytesSync(path) ?? Buffer.alloc(0));
+}
+
+export interface UserConfigSnapshot {
+  /** Lowercase hex sha256 of the bytes `config` was parsed from. */
+  sha256: string;
+  config: UserConfigFile;
+}
+
+/**
+ * The config and the hash of the bytes it came from, from ONE read: two
+ * reads (hash, then parse) could straddle another client's write and
+ * pair a new hash with old contents — and a later compare-and-swap would
+ * then accept a write built on the stale copy. A missing file yields the
+ * defaults and the empty-string hash. Pure read: no migration — callers
+ * that want the file migrated first run `ensureUserConfigFileSync`.
+ */
+export function readUserConfigSnapshotSync(path: string): UserConfigSnapshot {
+  const bytes = readUserConfigBytesSync(path);
+  if (!bytes) {
+    return { sha256: sha256Hex(Buffer.alloc(0)), config: USER_CONFIG_DEFAULTS };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes.toString("utf8"));
+  } catch (err) {
+    throw new ConfigValidationError(
+      "<file>",
+      `${path} is not valid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return {
+    sha256: sha256Hex(bytes),
+    config: withConfigPathInError(path, () => parseUserConfigFile(parsed)),
+  };
+}
+
+function readUserConfigBytesSync(path: string): Buffer | null {
+  try {
+    return readFileSync(path);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw new ConfigValidationError(
+      "<file>",
+      `failed to read ${path}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+function sha256Hex(bytes: Buffer): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+/**
  * Name the file and a way out when the config is unusable. `getConfig()`
  * runs ahead of every command, so a validation failure here is the first
  * thing a user sees, and the bare `invalid config: version: …` it used to
@@ -219,10 +295,26 @@ function readRawUserConfigFileSync(path: string): RawUserConfigFile | null {
  * total: this runs on the write path, where a malformed existing file
  * must not stop the caller from replacing it.
  */
+export function readUserConfigVersionOnDiskSync(path: string): number | null {
+  return readVersionFieldFromFileSync(path);
+}
+
 function readVersionFieldFromFileSync(path: string): number | null {
+  return readVersionField(readJsonObjectFromFileSync(path));
+}
+
+/**
+ * The file on disk as a JSON object, or `null` when it is absent,
+ * unreadable, not JSON, or not an object. Total for the same reason as
+ * the version read: a malformed file must not block replacing it.
+ */
+function readJsonObjectFromFileSync(path: string): Record<string, unknown> | null {
   if (!existsSync(path)) return null;
   try {
-    return readVersionField(JSON.parse(readFileSync(path, "utf8")));
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
   } catch {
     return null;
   }

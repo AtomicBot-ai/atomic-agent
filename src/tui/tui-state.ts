@@ -159,8 +159,9 @@ export interface ChatMessage {
   variant?: ChatMessageVariant;
   /**
    * A user prompt this notice offers to re-run. Set on the system
-   * notice a user-initiated abort leaves in the chat: the stop was one
-   * click, so undoing a mistaken one should be too. `chat-log.tsx`
+   * notice a user-initiated abort leaves in the chat (the stop was one
+   * click, so undoing a mistaken one should be too) and on the
+   * "Turn failed" notice (a dropped network should not cost a retype). `chat-log.tsx`
    * renders a `[try again]` beside `[copy]` that resubmits THIS text —
    * the aborted turn's user message — never the notice's own text.
    */
@@ -400,6 +401,12 @@ export interface TuiState {
    * down, so a path containing "y" cannot approve anything.
    */
   approvalPathDraft: string | null;
+  /**
+   * The page of the full command the approval prompt is showing, or
+   * `null` for the usual excerpt (ATO-876). Keyed by `approvalId` so a
+   * page left over from an earlier prompt can never apply to a new one.
+   */
+  approvalPreviewPage: { approvalId: string; page: number } | null;
   /**
    * Whether the composer currently holds a text selection. Lifted out of
    * the editor for exactly one reason: Ctrl+C means "copy" while text is
@@ -868,6 +875,7 @@ export function createInitialTuiState(
     reasoning: [],
     pendingApproval: null,
     approvalPathDraft: null,
+    approvalPreviewPage: null,
     composerHasSelection: false,
     composerNotice: null,
     providerOutage: null,

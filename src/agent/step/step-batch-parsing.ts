@@ -7,6 +7,7 @@ import type { ParseDeps, ToolCallBatchParseResult } from "./step-parsing.js";
 import { tryParseToolCalls, parseDepsFor, rawPreview, logTextPreview, replyFallbackBatch } from "./step-parsing.js";
 import { validateBatch } from "./step-batch-policy.js";
 import { GrammarError } from "../../llm/index.js";
+import { judgeRepairedBatch, repairRefusedError } from "./step-json-repair.js";
 
 export interface StepBatchParsingArgs {
   ctx: StepContext;
@@ -30,6 +31,7 @@ export function parseStepBatch(args: StepBatchParsingArgs): ToolCallBatchParseRe
     stepDescriptors,
     thinkingOff,
   );
+  parsed = admitRepairedJson(args, completion, parsed);
   if (parsed.ok) {
     const taken = policy.takeProgressNote(parsed.batch, completion);
     policy.setProgressNote(taken.note);
@@ -77,6 +79,7 @@ export function finishStepBatchRepair(
     stepToolDescriptors,
     thinkingOff,
   );
+  parsed = admitRepairedJson(args, completion, parsed);
   if (parsed.ok) {
     const taken = policy.takeProgressNote(parsed.batch, completion);
     policy.setProgressNote(taken.note);
@@ -134,5 +137,42 @@ export function finishStepBatchRepair(
     });
     parsed = { ok: true, batch: fallback };
   }
+  return parsed;
+}
+
+/**
+ * A batch the parser could only read after a mechanical JSON repair
+ * (ATO-637) runs only when `judgeRepairedBatch` vouches for every call;
+ * otherwise it is a parse failure like before, with the reason. Either
+ * way the log says a repair happened, so its rate can be read off.
+ */
+function admitRepairedJson(
+  args: Pick<StepBatchParsingArgs, "ctx" | "deps">,
+  completion: CompletionResult,
+  parsed: ToolCallBatchParseResult,
+): ToolCallBatchParseResult {
+  if (!parsed.ok || parsed.batch.jsonRepair === undefined) return parsed;
+  const { ctx, deps } = args;
+  const repair = parsed.batch.jsonRepair;
+  const fields = {
+    sessionId: ctx.session.id,
+    stepIndex: ctx.stepIndex,
+    fixes: repair.fixes.join(", "),
+    tools: parsed.batch.calls.map((call) => call.tool).join(", "),
+  };
+  const verdict = judgeRepairedBatch(
+    parsed.batch,
+    completion,
+    deps.registry,
+    ctx.toolDescriptors,
+  );
+  if (!verdict.accept) {
+    deps.logger?.info("tool-call JSON repair not used", {
+      ...fields,
+      reason: verdict.reason,
+    });
+    return { ok: false, error: repairRefusedError(verdict.reason) };
+  }
+  deps.logger?.info("tool-call JSON repaired", fields);
   return parsed;
 }

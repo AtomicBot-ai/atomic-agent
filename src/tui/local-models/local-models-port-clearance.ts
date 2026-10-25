@@ -1,6 +1,7 @@
 import type { getConfig } from "../../config/index.js";
 import {
   describeReclaim,
+  EMBEDDING_MODELS_CATALOG,
   reclaimManagedPort,
   type EmbeddingDaemonStartOptions,
   type ReclaimOutcome,
@@ -71,6 +72,10 @@ export async function clearEmbeddingPort(
   deps: PortClearanceDeps,
 ): Promise<EmbeddingClearance> {
   if (!requested) return { options: undefined, adoptedPid: null };
+  // Atomic Core's embedding module picks its own port: nothing to clear.
+  if (EMBEDDING_MODELS_CATALOG.find(m => m.id === requested.modelId)?.requiresCoreEmbeddingModule) {
+    return { options: requested, adoptedPid: null };
+  }
   const outcome = await (deps.reclaim ?? reclaimManagedPort)({
     port: requested.port,
     role: "embedding",

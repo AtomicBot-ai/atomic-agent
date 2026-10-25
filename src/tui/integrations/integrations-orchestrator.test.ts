@@ -26,7 +26,9 @@ const TOKEN = "1234567:abcdefghijklmnopqrstuvwxyz0123456789";
  * orchestrator: the property under test is "did the running channel
  * actually come up", which a mock cannot answer.
  */
-function makeBotFactory(opts: { getMeError?: Error } = {}): BotFactory {
+function makeBotFactory(
+  opts: { getMeError?: Error; bots?: BotInstance[] } = {},
+): BotFactory {
   return () => {
     const bot: BotInstance = {
       api: {
@@ -44,6 +46,7 @@ function makeBotFactory(opts: { getMeError?: Error } = {}): BotFactory {
       start: vi.fn(),
       stop: vi.fn(async () => undefined),
     };
+    opts.bots?.push(bot);
     return bot;
   };
 }
@@ -73,7 +76,9 @@ describe("IntegrationsOrchestrator — live channel controls", () => {
   let stateDir: string;
   let logger: StructuredLogger;
 
-  function makeChannel(opts: { getMeError?: Error } = {}): TelegramChannel {
+  function makeChannel(
+    opts: { getMeError?: Error; bots?: BotInstance[] } = {},
+  ): TelegramChannel {
     return new TelegramChannel({
       runtime: {
         approvals: { resolve: vi.fn(() => true) },
@@ -190,6 +195,57 @@ describe("IntegrationsOrchestrator — live channel controls", () => {
     const last = settled(bus);
     expect(last.error).toMatch(/Unauthorized/);
     expect(last.message).toBeUndefined();
+  });
+
+  it("pair shows a one-time /start code and then who claimed it (ATO-718)", async () => {
+    const bots: BotInstance[] = [];
+    const channel = makeChannel({ bots });
+    const { hub, bus } = makeHub(channel);
+    await hub.saveField("telegram", "botToken", TOKEN);
+
+    await hub.runAction("telegram", "pair");
+    const shown = settled(bus).message ?? "";
+    const code = /\/start (\d{6}) /.exec(shown)?.[1];
+    expect(code).toBeDefined();
+    expect(shown).toContain("@test_bot");
+    expect(shown).toContain("5 minutes");
+
+    const handler = vi.mocked(bots.at(-1)!.setTextHandler).mock.calls.at(-1)![0];
+    // Any other DM claims nothing.
+    await handler({
+      from: { id: 666, username: "stranger" },
+      chat: { id: 666, type: "private" },
+      text: "hello bot",
+      message_id: 1,
+    });
+    expect(channel.getOwnerUserId()).toBeNull();
+
+    await handler({
+      from: { id: 7, username: "real_owner" },
+      chat: { id: 7, type: "private" },
+      text: `/start ${code}`,
+      message_id: 2,
+    });
+    await vi.waitFor(() => {
+      expect(settled(bus).message).toBe("Paired: @real_owner is now the owner.");
+    });
+    expect(channel.getOwnerUserId()).toBe(7);
+  });
+
+  it("pair asks before replacing a paired owner", async () => {
+    const channel = makeChannel();
+    const { hub, bus } = makeHub(channel);
+    await hub.saveField("telegram", "botToken", TOKEN);
+    await channel.setOwnerUserId(42);
+
+    await hub.runAction("telegram", "pair");
+    expect(settled(bus).message).toContain("Press p again within 15 seconds");
+    expect(channel.pairingState().active).toBe(false);
+
+    await hub.runAction("telegram", "pair");
+    expect(settled(bus).message).toMatch(/\/start \d{6} /);
+    expect(channel.pairingState().active).toBe(true);
+    channel.cancelPairing();
   });
 
   it("the Channel toggle starts and stops the live channel", async () => {

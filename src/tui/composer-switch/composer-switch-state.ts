@@ -9,7 +9,7 @@
  * without closing, which is what makes the row behave like one control
  * strip rather than three unrelated popups.
  */
-export type ComposerSwitchKind = "backend" | "provider" | "model" | "workers";
+export type ComposerSwitchKind = "backend" | "provider" | "model" | "workerProvider" | "workers";
 
 /** Left-to-right order of the controls, and of the ←/→ walk. */
 export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
@@ -27,12 +27,16 @@ export const COMPOSER_SWITCH_KINDS: readonly ComposerSwitchKind[] = [
  */
 export function composerSwitchKindsFor(
   backend: ComposerBackendKind,
+  engineChoice = false,
 ): readonly ComposerSwitchKind[] {
   // Fusion's provider and model controls address the orchestrator leg;
   // its fourth control, `workers`, is the local half — the worker model
   // and how many run at once. Nowhere else draws it.
-  if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workers"];
-  return backend === "local" ? ["backend", "model"] : COMPOSER_SWITCH_KINDS;
+  if (backend === "fusion") return [...COMPOSER_SWITCH_KINDS, "workerProvider", "workers"];
+  // The local engine is not a choice in normal UI (snapshots pass false): Core runs it, and
+  // llama.cpp is reached from the core failure notice or `/model engine`.
+  if (backend === "local" && !engineChoice) return ["backend", "model"];
+  return COMPOSER_SWITCH_KINDS;
 }
 
 /**
@@ -71,7 +75,8 @@ export const COMPOSER_SWITCH_TITLES: Record<ComposerSwitchKind, string> = {
   backend: "Where it runs",
   provider: "Provider",
   model: "Model",
-  workers: "Workers",
+  workerProvider: "Worker inference engine",
+  workers: "Worker model",
 };
 
 /** Step `delta` controls along the row, clamped at both ends. */

@@ -1,8 +1,12 @@
+import { coreKeyForUrl } from "../local-llm/core/core-state.js";
+import { refreshCoreKeyForUrl } from "../local-llm/core/core-sessions.js";
 import { ENV_DEFAULTS } from "../config/config-schema.js";
 import { getConfig } from "../config/index.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { readErrnoCode } from "./errno-code.js";
 import { discardResponseBody } from "./discard-response-body.js";
+import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
+import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -379,14 +383,35 @@ export class LlamaServerError extends Error {
      * that both surface as `status === null`.
      */
     public readonly code: string | undefined = undefined,
-    options?: { cause?: unknown },
+    options?: { cause?: unknown; body?: LlamaErrorBody },
   ) {
     super(message);
     this.name = "LlamaServerError";
     if (options?.cause !== undefined) {
       (this as { cause?: unknown }).cause = options.cause;
     }
+    if (options?.body !== undefined) this.body = options.body;
   }
+
+  /**
+   * The reason code out of an HTTP error body, when llama.cpp sent one
+   * (`{"error":{"type":"exceed_context_size_error",...}}`). Only the
+   * type is kept, never the server's message: the error reporter reads
+   * `body.type` through its strict pattern for the `upstream_error_type`
+   * tag, the same field `OpenAiHttpError` carries.
+   */
+  readonly body?: LlamaErrorBody;
+}
+
+/** What a llama-server error body says, reduced to its reason code. */
+export interface LlamaErrorBody {
+  readonly type: string;
+}
+
+/** `error.type` of a llama-server error body, or undefined. Pure; never throws. */
+export function readLlamaErrorBody(rawBody: string): LlamaErrorBody | undefined {
+  const type = parseProviderErrorBody(rawBody).type;
+  return type !== undefined ? { type } : undefined;
 }
 
 /** Cap on how much of a server error body we fold into the message. */
@@ -438,8 +463,11 @@ async function buildHttpError(
   url: string,
 ): Promise<LlamaServerError> {
   let detail = "";
+  let body: LlamaErrorBody | undefined;
   try {
-    detail = extractLlamaErrorDetail(await response.text());
+    const text = await response.text();
+    detail = extractLlamaErrorDetail(text);
+    body = readLlamaErrorBody(text);
   } catch {
     // Body already consumed / unreadable — keep the status-only message.
   }
@@ -448,6 +476,9 @@ async function buildHttpError(
     detail ? `${base}: ${detail}` : base,
     response.status,
     url,
+    false,
+    undefined,
+    body !== undefined ? { body } : undefined,
   );
 }
 
@@ -493,6 +524,12 @@ export interface LlamaServerClientOptions {
    * immediately so retry logic is exercised without real time.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Asked once when a completion is refused with 401: the current key for
+   * the server at `url`, or `null`. Defaults to re-reading the managed
+   * Core session's key (`refreshCoreKeyForUrl`). Injectable for tests.
+   */
+  refreshApiKey?: (url: string) => Promise<string | null>;
 }
 
 export interface LlamaServerProps {
@@ -527,6 +564,7 @@ export class LlamaServerClient {
   private readonly completionRetriesOverride: number | undefined;
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
+  private readonly refreshApiKey: (url: string) => Promise<string | null>;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
   /**
@@ -589,6 +627,8 @@ export class LlamaServerClient {
     this.completionRetriesOverride = options.completionRetries;
     this.completionRetryBackoffMsOverride = options.completionRetryBackoffMs;
     this.sleep = options.sleep ?? defaultSleep;
+    this.refreshApiKey = options.refreshApiKey ??
+      ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
   }
 
   /**
@@ -854,6 +894,9 @@ export class LlamaServerClient {
       async () => {
         const { controller, cleanup, timedOut } = this.createRequestController(
           request.signal,
+          "total",
+          undefined,
+          request.requestTimeoutMs,
         );
         try {
           const response = await this.fetchImpl(url, {
@@ -869,12 +912,13 @@ export class LlamaServerClient {
           this.recordThroughput(json);
           return normaliseCompletionResponse(json);
         } catch (err) {
-          throw this.wrapTransportError(err, url, timedOut());
+          throw this.wrapTransportError(err, url, timedOut(), request.requestTimeoutMs);
         } finally {
           cleanup();
         }
       },
       request.signal,
+      headers,
     );
   }
 
@@ -930,6 +974,7 @@ export class LlamaServerClient {
           }
         },
         request.signal,
+        headers,
       );
     } catch (err) {
       if (err instanceof LlamaServerError) throw err;
@@ -997,7 +1042,12 @@ export class LlamaServerClient {
       let buffer = "";
       let accumulated = "";
       let accumulatedReasoning = "";
-      while (true) {
+      // A small local model that falls into a loop spends the whole cap
+      // on it (minutes, on a slow machine). Cut it as soon as the tail
+      // is one block repeated; the step is retried at the same cap.
+      const repetition = createStreamRepetitionWatcher();
+      let looped: CompletionResult | null = null;
+      while (looped === null) {
         const { value, done } = await reader.read();
         if (done) break;
         // A byte arrived: the server is alive, so start the clock over —
@@ -1023,6 +1073,20 @@ export class LlamaServerClient {
               accumulated += delta;
               accumulatedReasoning += reasoningDelta;
               yield { delta, reasoningDelta, done: false };
+              const loop = parsed.stop
+                ? null
+                : repetition.push(delta, reasoningDelta);
+              if (loop !== null) {
+                looped = {
+                  ...finalResult,
+                  content: accumulated,
+                  reasoningContent: accumulatedReasoning,
+                  stop: false,
+                  truncated: true,
+                  earlyStop: { reason: "repetition", ...loop },
+                };
+                break;
+              }
             }
             if (parsed.stop) {
               this.recordThroughput(parsed);
@@ -1038,6 +1102,16 @@ export class LlamaServerClient {
           }
           eventEnd = buffer.indexOf("\n\n");
         }
+      }
+      if (looped !== null) {
+        // Close the connection now, not when the consumer gets round to
+        // finishing this generator: closing it is what makes llama-server
+        // stop generating and free the slot. The `finally` below sees the
+        // abort and leaves it be.
+        void reader?.cancel().catch(() => undefined);
+        controller.abort();
+        yield { delta: "", reasoningDelta: "", done: true };
+        return looped;
       }
       return finalResult;
     } catch (err) {
@@ -1115,6 +1189,8 @@ export class LlamaServerClient {
     externalSignal?: AbortSignal,
     initialKind: "total" | "first-token" = "total",
     watch?: { slotId: number },
+    /** A per-request `total` budget (`CompletionRequest.requestTimeoutMs`). */
+    totalBudgetMs?: number,
   ): {
     controller: AbortController;
     cleanup: () => void;
@@ -1146,7 +1222,7 @@ export class LlamaServerClient {
       setTimeout(() => {
         expired = kind;
         controller.abort();
-      }, this.budgetFor(kind));
+      }, kind === "total" && totalBudgetMs !== undefined ? totalBudgetMs : this.budgetFor(kind));
     let timer = arm();
     let streamTimer: ReturnType<typeof setTimeout> | null = null;
     const timedOut = (): LlamaTimeoutKind | null => expired;
@@ -1405,6 +1481,7 @@ export class LlamaServerClient {
     err: unknown,
     url: string,
     timedOut: LlamaTimeoutKind | null,
+    totalBudgetMs: number = this.requestTimeoutMs,
   ): LlamaServerError {
     if (err instanceof LlamaServerError) return err;
     // Each deadline needs its own advice. "Lower completionMaxTokens"
@@ -1501,7 +1578,7 @@ export class LlamaServerClient {
     }
     if (timedOut === "total") {
       return new LlamaServerError(
-        `llama-server request exceeded requestTimeoutMs (${this.requestTimeoutMs}ms) — ` +
+        `llama-server request exceeded requestTimeoutMs (${totalBudgetMs}ms) — ` +
           `raise localModels.requestTimeoutMs or lower completionMaxTokens`,
         null,
         url,
@@ -1579,9 +1656,23 @@ export class LlamaServerClient {
       "content-type": "application/json",
       accept: stream ? "text/event-stream" : "application/json",
     };
-    const apiKey = this.apiKeyOverride ?? getConfig().localModels.apiKey;
+    const config = getConfig();
+    const coreKey = coreKeyForUrl(config.paths.localModelsDataDir, this.baseUrlOverride ?? config.localModels.url);
+    const apiKey = coreKey ?? this.apiKeyOverride ?? config.localModels.apiKey;
     if (apiKey) headers.authorization = `Bearer ${apiKey}`;
     return headers;
+  }
+
+  /**
+   * Put the server's current key into `headers`. True when it is a
+   * different key from the one just refused, so a replay can succeed.
+   */
+  private async refreshKey(url: string, headers: Record<string, string>): Promise<boolean> {
+    let key: string | null;
+    try { key = await this.refreshApiKey(url); } catch { key = null; }
+    if (!key || headers.authorization === `Bearer ${key}`) return false;
+    headers.authorization = `Bearer ${key}`;
+    return true;
   }
 
   private resolveRetryParams(): { maxAttempts: number; backoffMs: number } {
@@ -1603,14 +1694,20 @@ export class LlamaServerClient {
    * failures — network errors surface as `LlamaServerError` with
    * `status === null`, and 5xx responses come through with `status >= 500`.
    * Grammar/validation 4xx errors and abort signals short-circuit.
+   *
+   * With `headers`, a 401 asks for a fresh key once (`refreshKey`) and,
+   * when there is a different one, replays the request with it outside
+   * the retry budget; a 401 that stands says what to do about it.
    */
   private async runWithRetry<T>(
     url: string,
     attempt: () => Promise<T>,
     signal?: AbortSignal,
+    headers?: Record<string, string>,
   ): Promise<T> {
     const { maxAttempts, backoffMs } = this.resolveRetryParams();
     let lastError: unknown;
+    let keyRefreshed = false;
     for (let i = 1; i <= maxAttempts; i += 1) {
       if (signal?.aborted) {
         throw new LlamaServerError("completion aborted by caller", null, url);
@@ -1623,6 +1720,16 @@ export class LlamaServerClient {
         // surfaces as a `status === null` LlamaServerError which would
         // otherwise be treated as a transient network failure.
         if (signal?.aborted) throw err;
+        if (headers && isUnauthorized(err)) {
+          if (!keyRefreshed) {
+            keyRefreshed = true;
+            if (await this.refreshKey(url, headers)) {
+              i -= 1;
+              continue;
+            }
+          }
+          throw keyRefusedError(err);
+        }
         if (!isRetryableLlamaError(err) || i >= maxAttempts) throw err;
         await this.sleep(computeBackoffMs(backoffMs, i));
       }
@@ -1660,6 +1767,20 @@ function normaliseCompletionResponse(
     payload,
     timings,
   );
+  // llama-server's `truncated` means the context overflowed (prompt, or
+  // the window filling mid-reply). A reply stopped by `n_predict` says so
+  // only in `stop_type: "limit"` (`stopped_limit` on older builds) with
+  // `truncated: false`; reading `truncated` alone took a reply cut at the
+  // cap for a healthy stop. It is reported as `finishReason: "length"`,
+  // the same reply-cap signal the OpenAI-compatible providers give.
+  const stopType =
+    typeof payload.stop_type === "string"
+      ? payload.stop_type
+      : payload.stopped_limit === true
+        ? "limit"
+        : undefined;
+  const contextOverflow = Boolean(payload.truncated);
+  const replyCapHit = stopType === "limit" && !contextOverflow;
   return {
     content: typeof payload.content === "string" ? payload.content : "",
     reasoningContent:
@@ -1667,7 +1788,9 @@ function normaliseCompletionResponse(
         ? payload.reasoning_content
         : "",
     stop: Boolean(payload.stop),
-    truncated: Boolean(payload.truncated),
+    truncated: contextOverflow || replyCapHit,
+    ...(stopType !== undefined ? { stopType } : {}),
+    ...(replyCapHit ? { finishReason: "length" } : {}),
     timing: {
       promptMs: toNumber(timings.prompt_ms),
       predictedMs: toNumber(timings.predicted_ms),
@@ -1760,6 +1883,28 @@ function isRetryableLlamaError(err: unknown): boolean {
   if (err.status === null) return true;
   if (err.status >= 500 && err.status < 600) return true;
   return false;
+}
+
+function isUnauthorized(err: unknown): err is LlamaServerError {
+  return err instanceof LlamaServerError && err.status === 401;
+}
+
+/**
+ * A 401 that a fresh key did not cure. Still a 401, so it classifies as
+ * before; the words say what fixes it instead of a bare status.
+ */
+function keyRefusedError(err: LlamaServerError): LlamaServerError {
+  return new LlamaServerError(
+    `${err.message}. The local model server refused the agent's key. ` +
+      "For the model the agent runs, restart it (atomic-agent models stop, then atomic-agent models start); " +
+      "for your own server, check localModels.apiKey or ATOMIC_AGENT_LLAMA_API_KEY.",
+    401,
+    err.url,
+    false,
+    err.code,
+    // Keep the server's reason code for the upstream_error_type tag.
+    { cause: err, ...(err.body !== undefined ? { body: err.body } : {}) },
+  );
 }
 
 /**

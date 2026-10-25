@@ -160,4 +160,50 @@ describe("SkillRegistry disabled filtering", () => {
       "delta",
     ]);
   });
+
+  it("not-found error names the enabled skills and never a disabled one", async () => {
+    const registry = new SkillRegistry(
+      { globalDir: global, projectDir: null },
+      ["beta"],
+    );
+    await registry.refresh();
+    expect(() => registry.get("hobby_builder")).toThrow(
+      "skill not installed: hobby_builder. Installed skills: alpha, gamma",
+    );
+    await expect(registry.readBody("hobby_builder")).rejects.toThrow(
+      "Installed skills: alpha, gamma",
+    );
+    let message = "";
+    try {
+      registry.get("hobby_builder");
+    } catch (err) {
+      message = (err as Error).message;
+    }
+    expect(message).not.toContain("beta");
+  });
+
+  it("not-found error says so when no skills are enabled", async () => {
+    const registry = new SkillRegistry(
+      { globalDir: global, projectDir: null },
+      ["alpha", "beta", "gamma"],
+    );
+    await registry.refresh();
+    expect(() => registry.get("x")).toThrow(
+      "skill not installed: x. No skills are installed.",
+    );
+  });
+
+  it("not-found error caps a long list of installed names", () => {
+    const names = Array.from(
+      { length: 23 },
+      (_, i) => `s${String(i).padStart(2, "0")}`,
+    );
+    const err = new SkillNotFoundError("x", names);
+    expect(err.message).toBe(
+      `skill not installed: x. Installed skills: ${names
+        .slice(0, 20)
+        .join(", ")}, ... (+3 more)`,
+    );
+    expect(new SkillNotFoundError("x").message).toBe("skill not installed: x");
+  });
 });

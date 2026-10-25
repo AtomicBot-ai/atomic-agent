@@ -3,7 +3,7 @@
 Status: current
 Owner: src/llm/
 
-`modelMode` records the behavior policy for a model, initially selected when adding a provider and manually overridable. It is independent of server location, tool transport and `llm.runMode.mode`, which selects local/cloud/Fusion routing. `local` keeps existing prompt packing, caps and result aging. `cloud` keeps full selected instructions and obtained tool output in an append-only model-visible history. Research stopping, Fusion reading limits and background memory extraction still use their existing policies; their adaptation remains in [the implementation plan](../../../docs/plans/cloud-model-adaptation.md).
+`modelMode` records the behavior policy for a model, initially selected when adding a provider and manually overridable. It is independent of server location, tool transport and `llm.runMode.mode`, which selects local/cloud/Fusion routing. `local` keeps existing prompt packing, caps and result aging. `cloud` keeps full selected instructions and obtained tool output in an append-only model-visible history. A reply cut by its cap is retried by mode too: see [recovery](../../agent/docs/recovery.md). Research stopping, Fusion reading limits and background memory extraction still use their existing policies; their adaptation remains in [the implementation plan](../../../docs/plans/cloud-model-adaptation.md).
 
 ## Configuration and switching
 

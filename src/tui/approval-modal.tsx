@@ -12,10 +12,20 @@ import {
   type ApprovalCategory,
 } from "../approval/approval-level.js";
 import {
+  excerptPreview,
+  hiddenLinesNote,
+  previewLines,
+} from "../approval/approval-preview.js";
+import {
   APPROVAL_CHORDS,
   canEditPath,
   decideApproval,
 } from "./app-key-bindings.js";
+import {
+  APPROVAL_PREVIEW_LIMITS,
+  approvalPreviewPages,
+  approvalPreviewTruncated,
+} from "./approval-preview-pages.js";
 import { MultiLineEditor } from "./components/multi-line-editor.js";
 import { readableOn } from "./theme/readable-foreground.js";
 import { theme } from "./theme/theme.js";
@@ -32,6 +42,13 @@ interface ApprovalModalProps {
   onPathChange: (value: string) => void;
   onPathSubmit: (value: string) => void;
   onPathCancel: () => void;
+  /**
+   * Page of the full command on screen, or `null` for the excerpt
+   * (ATO-876). Only meaningful while the preview is cut.
+   */
+  previewPage?: number | null;
+  /** Clicking the full-command button; `ctrl+z` does the same. */
+  onPreviewPage?: () => void;
 }
 
 /**
@@ -62,6 +79,8 @@ export function ApprovalModal({
   onPathChange,
   onPathSubmit,
   onPathCancel,
+  previewPage = null,
+  onPreviewPage = () => {},
 }: ApprovalModalProps): ReactElement {
   const categoryLabel = formatApprovalCategory(request.category);
   // `[s]` for any grantable category (everything but trust_config);
@@ -95,10 +114,12 @@ export function ApprovalModal({
           {request.reason}
         </Text>
         {request.preview ? (
-          <Text>
-            <Text color="gray">preview: </Text>
-            {clip(request.preview, 240)}
-          </Text>
+          <ApprovalPreview
+            request={request}
+            preview={request.preview}
+            page={editing ? null : previewPage}
+            onPage={onPreviewPage}
+          />
         ) : null}
         {request.affectedResources && request.affectedResources.length > 0 ? (
           <Text>
@@ -191,9 +212,9 @@ export function ApprovalModal({
                 </ApprovalButton>
               ) : null}
               {editable ? (
-                <EditPathButton onOpen={onPathOpen}>
+                <CommandButton onPress={onPathOpen}>
                   {`edit target path… · ctrl+${APPROVAL_CHORDS.contextual}`}
-                </EditPathButton>
+                </CommandButton>
               ) : null}
             </Box>
           ) : null}
@@ -225,9 +246,77 @@ function footerHint(grantable: boolean, category: ApprovalCategory): string {
   return `approve covers this call once; the session grants last until the app exits (never persisted); loosen the standing stance with the coding-mode control in the composer · ${typing}`;
 }
 
-function clip(value: string, limit: number): string {
-  if (value.length <= limit) return value;
-  return `${value.slice(0, limit - 1)}…`;
+/**
+ * The command (or diff, or URL) under decision. One line sits next to
+ * its label as before; several go one per row under it, so a script
+ * reads as the script it is. A cut used to be a bare `…` at character
+ * 240, hiding the lines after it; now it is whole lines plus a note.
+ *
+ * A cut preview also offers the full command (ATO-876): `ctrl+z` or the
+ * button under the note pages through all of it, so a dangerous line
+ * past the excerpt (an `rm -rf` on line 25) can be read before the
+ * decision. Pages are the excerpt's size, so the buttons below stay
+ * where they were.
+ */
+function ApprovalPreview({
+  request,
+  preview,
+  page,
+  onPage,
+}: {
+  request: ApprovalRequest;
+  preview: string;
+  page: number | null;
+  onPage: () => void;
+}): ReactElement {
+  const truncated = approvalPreviewTruncated(request);
+  const pages = truncated && page !== null ? approvalPreviewPages(request) : [];
+  const shown = page === null ? undefined : pages[page];
+  if (shown) {
+    const total = previewLines(preview).length;
+    const last = page === pages.length - 1;
+    return (
+      <Box flexDirection="column">
+        <Text color="gray">
+          {`preview, full command (${total} ${total === 1 ? "line" : "lines"}), page ${(page ?? 0) + 1} of ${pages.length}:`}
+        </Text>
+        {shown.map((line, index) => (
+          <Text key={index}>{`  ${line}`}</Text>
+        ))}
+        <Box marginLeft={2}>
+          <CommandButton onPress={onPage}>
+            {`${last ? "back to the short preview" : "next page"} · ctrl+${APPROVAL_CHORDS.viewFull}`}
+          </CommandButton>
+        </Box>
+      </Box>
+    );
+  }
+  const excerpt = excerptPreview(preview, APPROVAL_PREVIEW_LIMITS);
+  const note = hiddenLinesNote(excerpt.hiddenLines, excerpt.cutChars);
+  if (excerpt.lines.length === 1 && note === null) {
+    return (
+      <Text>
+        <Text color="gray">preview: </Text>
+        {excerpt.lines[0]}
+      </Text>
+    );
+  }
+  return (
+    <Box flexDirection="column">
+      <Text color="gray">preview:</Text>
+      {excerpt.lines.map((line, index) => (
+        <Text key={index}>{`  ${line}`}</Text>
+      ))}
+      {note === null ? null : <Text color="gray">{`  ${note}`}</Text>}
+      {truncated ? (
+        <Box marginLeft={2}>
+          <CommandButton onPress={onPage}>
+            {`view full command · ctrl+${APPROVAL_CHORDS.viewFull}`}
+          </CommandButton>
+        </Box>
+      ) : null}
+    </Box>
+  );
 }
 
 /**
@@ -278,16 +367,18 @@ function ButtonFace({
 }
 
 /**
- * Click target for the retarget button. Defined separately from
+ * Click target for a button that does not decide the request: the
+ * retarget button and the full-command button. Defined separately from
  * `ApprovalButton` (rather than reusing it) because it opens the target
- * field instead of deciding the request — a click that resolved the
- * approval here would be the opposite of what the operator asked for.
+ * field or pages the preview instead of deciding the request — a click
+ * that resolved the approval here would be the opposite of what the
+ * operator asked for.
  */
-function EditPathButton({
-  onOpen,
+function CommandButton({
+  onPress,
   children,
 }: {
-  onOpen: () => void;
+  onPress: () => void;
   children: string;
 }): ReactElement {
   const face = <ButtonFace tone="secondary">{children}</ButtonFace>;
@@ -299,7 +390,7 @@ function EditPathButton({
       flexShrink={0}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
-        onOpen();
+        onPress();
         return true;
       }}
     >

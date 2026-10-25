@@ -224,3 +224,32 @@ describe("Esc in the chat editor", () => {
     unmount();
   });
 });
+
+describe("Esc while an /enhance is running", () => {
+  it("cancels it from both idle branches: clearing a draft and on an empty buffer", async () => {
+    let cancels = 0;
+    const bus = makeTuiEventBus();
+    const { stdin, unmount } = render(
+      <TuiApp
+        session={SESSION}
+        bus={bus}
+        callbacks={{
+          ...trackingCallbacks({ quit: 0, abort: 0 }),
+          onPromptEnhanceCancel: () => {
+            cancels++;
+          },
+        }}
+      />,
+    );
+    await settle();
+    stdin.write("fix login");
+    await settle();
+    stdin.write(ESC);
+    await settle();
+    expect(cancels).toBe(1);
+    stdin.write(ESC);
+    await settle();
+    expect(cancels).toBe(2);
+    unmount();
+  });
+});

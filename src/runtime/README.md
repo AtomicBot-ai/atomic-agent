@@ -13,6 +13,7 @@ This area owns runtime assembly and ownership. Read [AGENTS.md](AGENTS.md) befor
 - [turn-controller.ts](turn-controller.ts)
 - [steering-inbox.ts](steering-inbox.ts)
 - [llm-fallback-seam.ts](llm-fallback-seam.ts)
+- [session-workspace.ts](session-workspace.ts): per-session cloud preparation; [workspace contract](docs/cloud-workspace.md).
 
 ## Ownership and dependencies
 
@@ -32,4 +33,4 @@ Read docs/lifecycle.md before changing ownership, shutdown or steering; ../llm/d
 
 `npx vitest run src/runtime`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
 
-Context compaction is owned by [context-compaction.ts](context-compaction.ts) and [its bounded subcall runner](context-compaction-runner.ts). Read the [compaction contract](docs/compaction.md) for control requests, checkpoints, budgets and cancellation.
+Context compaction is owned by [context-compaction.ts](context-compaction.ts) and [its runner](context-compaction-runner.ts), which chooses between [the bounded model summary](context-compaction-model.ts) and [the extractive builder](compaction-extractive.ts), or uses [a rolling summary](compaction-rolling.ts) that [the background scheduler](compaction-background.ts) extends between turns. Both summaries share [the note for a request still handled after the cut](compaction-open-request.ts). Read the [compaction contract](docs/compaction.md) for control requests, checkpoints, budgets and cancellation.

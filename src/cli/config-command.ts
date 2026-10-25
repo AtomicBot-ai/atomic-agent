@@ -3,13 +3,22 @@ import {
   ensureUserConfigFileSync,
   getConfig,
   parseUserConfigFile,
+  readUserConfigSnapshotSync,
+  readUserConfigVersionOnDiskSync,
   resetConfigCache,
   USER_CONFIG_VERSION,
+  userConfigFileSha256Sync,
   writeUserConfigFileSync,
 } from "../config/index.js";
 import { reportAnalyticsOptOut, resolveSurface } from "../analytics/index.js";
 import { getAppVersion } from "../version.js";
 import { HELP } from "./config-help.js";
+import {
+  CONFIG_CHANGED_EXIT_CODE,
+  CONFIG_CHANGED_MESSAGE,
+  takeExpectSha256,
+  WITH_SHA256_FLAG,
+} from "./config-sha256.js";
 import {
   deleteConfigPath,
   findConfigLeaf,
@@ -69,6 +78,23 @@ export async function configCommand(
 function handleGet(args: string[]): number {
   const path = getConfig().paths.userConfigFile;
   const file = ensureUserConfigFileSync(path);
+  if (args.includes(WITH_SHA256_FLAG)) {
+    if (args.length !== 1) {
+      process.stderr.write(
+        `config get failed: ${WITH_SHA256_FLAG} prints the whole file; it takes no key\n`,
+      );
+      return 1;
+    }
+    // ATO-416: the hash a later `set - --expect-sha256` compares against.
+    // Read after `ensureUserConfigFileSync` above, so a migration that
+    // rewrites the file happens before it is hashed, not after; hash and
+    // config come from one read (see `readUserConfigSnapshotSync`).
+    const snapshot = readUserConfigSnapshotSync(path);
+    process.stdout.write(
+      `${JSON.stringify({ sha256: snapshot.sha256, config: snapshot.config }, null, 2)}\n`,
+    );
+    return 0;
+  }
   if (args.length === 0) {
     process.stdout.write(`${JSON.stringify(file, null, 2)}\n`);
     return 0;
@@ -90,14 +116,20 @@ function handleGet(args: string[]): number {
 }
 
 async function handleSet(
-  args: string[],
+  rawArgs: string[],
   stdin: NodeJS.ReadableStream,
 ): Promise<number> {
+  const cas = takeExpectSha256(rawArgs);
+  if (!cas.ok) {
+    process.stderr.write(`config set failed: ${cas.error}\n`);
+    return 1;
+  }
+  const args = cas.args;
   if (args.length === 0) {
     process.stderr.write(
       "usage: atomic-agent config set <key> <value>\n" +
         "   or: atomic-agent config set '<json>'\n" +
-        "   or: atomic-agent config set - < config.json\n",
+        "   or: atomic-agent config set - [--expect-sha256 <hex>] < config.json\n",
     );
     return 1;
   }
@@ -107,7 +139,7 @@ async function handleSet(
   // as long as the write runs. The desktop app writes every config
   // change this way.
   if (args.length === 1 && args[0] === "-") {
-    return setWholeFile(await readAllText(stdin));
+    return setWholeFile(await readAllText(stdin), cas.expected);
   }
   // Form discrimination. A leading `{` means the whole-file JSON payload,
   // including the case where the shell split one JSON argument across
@@ -138,7 +170,10 @@ async function readAllText(stream: NodeJS.ReadableStream): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-async function setWholeFile(raw: string): Promise<number> {
+async function setWholeFile(
+  raw: string,
+  expectedSha256: string | null = null,
+): Promise<number> {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -152,22 +187,51 @@ async function setWholeFile(raw: string): Promise<number> {
   // the write path will not let a later `config set` lower it again, and
   // the file would sit permanently above every future schema, skipping
   // every migration.
-  if (
-    typeof (parsed as { version?: unknown } | null)?.version === "number" &&
-    (parsed as { version: number }).version > USER_CONFIG_VERSION
-  ) {
-    process.stderr.write(
-      `config set failed: version ${(parsed as { version: number }).version} is newer than this build understands (${USER_CONFIG_VERSION})\n`,
+  //
+  // ATO-416: a version already on disk is not invented, though. The
+  // desktop's bundled atag can be older than the TUI sharing its state
+  // dir; once the TUI has migrated the file, `config get` reports that
+  // newer version and the desktop sends it back unchanged. Refusing it
+  // would block every desktop save, so only a version newer than BOTH
+  // this build and the file on disk is refused. (The write keeps the
+  // on-disk version anyway — see `writeUserConfigFileSync`.)
+  const path = getConfig().paths.userConfigFile;
+  const payloadVersion = (parsed as { version?: unknown } | null)?.version;
+  if (typeof payloadVersion === "number") {
+    const accepted = Math.max(
+      USER_CONFIG_VERSION,
+      readUserConfigVersionOnDiskSync(path) ?? USER_CONFIG_VERSION,
     );
-    return 1;
+    if (payloadVersion > accepted) {
+      process.stderr.write(
+        `config set failed: version ${payloadVersion} is newer than this build understands (${accepted})\n`,
+      );
+      return 1;
+    }
   }
   const next = parseUserConfigFile(parsed);
+  // ATO-416 compare-and-swap. Checked before the opt-out report too, so
+  // a refused write never sends `analytics_disabled` for a change that
+  // did not happen, and again right before the write, after that report
+  // awaited the network. What is left is the gap between this hash and
+  // the rename inside the write: microseconds, not a read-edit-write.
+  if (expectedSha256 !== null && userConfigFileSha256Sync(path) !== expectedSha256) {
+    return refuseChangedConfig();
+  }
   await reportIfOptingOut(next.analytics.enabled);
-  const path = getConfig().paths.userConfigFile;
+  if (expectedSha256 !== null && userConfigFileSha256Sync(path) !== expectedSha256) {
+    return refuseChangedConfig();
+  }
   writeUserConfigFileSync(path, next);
   resetConfigCache();
   process.stdout.write(`wrote ${path}\n`);
   return 0;
+}
+
+/** Nothing written; the client re-reads (`get --with-sha256`) and retries. */
+function refuseChangedConfig(): number {
+  process.stderr.write(`${CONFIG_CHANGED_MESSAGE}\n`);
+  return CONFIG_CHANGED_EXIT_CODE;
 }
 
 async function setOneKey(key: string, value: string): Promise<number> {

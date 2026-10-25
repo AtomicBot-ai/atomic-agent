@@ -86,7 +86,7 @@ describe("deriveSetupState", () => {
     );
     expect(view.step).toBe("needs_pairing");
     expect(view.cta).toMatch(/pairing/i);
-    expect(view.body).toMatch(/DM your bot/i);
+    expect(view.body).toMatch(/6-digit code/i);
   });
 
   it("step=pairing_failed after a timed-out pairing window with no owner", () => {

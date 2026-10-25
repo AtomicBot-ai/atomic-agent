@@ -5,6 +5,7 @@ import type {
   TruncationCause,
   TruncationDetail,
 } from "./failure-category.js";
+import { hasRepetitiveTail } from "./repetitive-tail.js";
 
 export interface DetectedModelFailure {
   reason: ModelFailureReason;
@@ -73,12 +74,31 @@ export function detectModelFailure(
   options: DetectModelFailureOptions = {},
 ): DetectedModelFailure | null {
   if (completion.truncated) {
-    const truncation = classifyTruncation(
+    const classified = classifyTruncation(
       completion,
       options.requestedMaxTokens,
       options.contextWindow ?? null,
       options.defaultReplyCap,
     );
+    // The stream watcher already cut this reply for looping: it is a
+    // repetitive truncation whatever the tail check below would say, and
+    // no cap or window was hit, so the message names neither.
+    if (completion.earlyStop?.reason === "repetition") {
+      return {
+        reason: "truncated",
+        message: REPETITION_STOP_MESSAGE,
+        truncation: { ...classified, repetitive: true },
+      };
+    }
+    // A model that thought in circles loops in its reasoning; one that
+    // wrote in circles loops in the body. The body is the later text.
+    const truncation: TruncationDetail = hasRepetitiveTail(
+      completion.content.length > 0
+        ? completion.content
+        : completion.reasoningContent,
+    )
+      ? { ...classified, repetitive: true }
+      : classified;
     return {
       reason: "truncated",
       message: formatTruncatedMessage(truncation, options.stage),
@@ -104,6 +124,11 @@ export function detectModelFailure(
   }
   return null;
 }
+
+/** What the user reads when a looping reply was cut and its retry failed too. */
+export const REPETITION_STOP_MESSAGE =
+  "model response stopped: the model kept repeating the same text over and over. " +
+  "Try again, or use a larger model";
 
 /**
  * A reply that stopped this close to the cap spent the cap. Servers
@@ -134,7 +159,11 @@ const WINDOW_FILL_RATIO = 0.9;
  *
  * llama-server never sends `usage`, only `timings`, and its `truncated`
  * flag has one meaning — the context overflowed — so a timings-only
- * completion is the window whatever the count says.
+ * completion is the window whatever the count says. The exception is a
+ * reply llama-server itself reports as stopped by `n_predict`
+ * (`stop_type: "limit"` without an overflow, surfaced by the client as
+ * `finishReason: "length"`): that one spent the reply cap, and its prompt
+ * + reply must not be learned as the window.
  *
  * A request that carried no cap (`requestedMaxTokens === null`) cannot
  * have spent one. Seen live: an OpenRouter request with no `max_tokens`
@@ -160,7 +189,9 @@ export function classifyTruncation(
   const requested = requestedMaxTokens ?? 0;
   const windowKnown = contextWindow !== null && contextWindow > 0;
   let cause: TruncationCause = "unknown";
-  if (completion.usage === undefined && completionTokens > 0) {
+  if (isLlamaReplyCapStop(completion)) {
+    cause = "reply_cap";
+  } else if (completion.usage === undefined && completionTokens > 0) {
     cause = "context_window";
   } else if (requestedMaxTokens === null) {
     if (windowKnown) {
@@ -198,6 +229,15 @@ export function classifyTruncation(
   };
 }
 
+/** llama-server stopped the reply at `n_predict`, not at the window. */
+function isLlamaReplyCapStop(completion: CompletionResult): boolean {
+  return (
+    completion.usage === undefined &&
+    completion.stopType === "limit" &&
+    completion.finishReason === "length"
+  );
+}
+
 /**
  * The sentence the user reads when a truncated reply ends the turn.
  * Names the wall and the knob — "model response truncated" on its own
@@ -218,8 +258,11 @@ export function formatTruncatedMessage(
   switch (truncation.cause) {
     case "reply_cap":
       return (
-        `model response truncated${at}: it spent ${capName} of ` +
-        `${truncation.requestedMaxTokens} — raise it, or use a model that thinks less before answering`
+        `model response truncated${at}: it spent ${capName}` +
+        ((truncation.requestedMaxTokens ?? 0) > 0
+          ? ` of ${truncation.requestedMaxTokens}`
+          : "") +
+        ` — raise it, or use a model that thinks less before answering`
       );
     case "context_window":
       return (

@@ -12,11 +12,12 @@ import { resolve, relative, isAbsolute } from "node:path";
 import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
 import type { ProbeSample } from "./page-probe-script.js";
 import { runCommandKind } from "./run-command-kind.js";
-import { type BrowserLauncher, defaultBrowserLauncher, runPageKind } from "./run-page-kind.js";
+import { type BrowserLauncher, defaultBrowserLauncher, type PageRunOutcome, runPageKind } from "./run-page-kind.js";
 import { type FetchLike, type RequestOutcome, runServiceKind } from "./run-service-kind.js";
 import { type CheckOutcome, type CheckSubject, evaluateChecks } from "./verify-checks.js";
 import { parseVerifyRunArgs, type VerifyRunArgs, type VerifyRunKind } from "./verify-run-args.js";
 import { renderVerifyRunSummary } from "./verify-run-summary.js";
+import { terminalAppHint } from "./terminal-app-hint.js";
 import { createVerifyWorkspace, type VerifyWorkspace } from "./verify-workspace-copy.js";
 
 export interface VerifyRunResult {
@@ -41,6 +42,8 @@ export interface VerifyRunResult {
   readonly missingSelectors?: readonly string[];
   readonly probes?: Readonly<Record<string, ProbeSample[]>>;
   readonly checks?: readonly CheckOutcome[];
+  /** What the failure means and what to do instead (a terminal-only program, say). */
+  readonly hint?: string;
   readonly summary: string;
 }
 
@@ -94,8 +97,9 @@ async function runInWorkspace(args: VerifyRunArgs, dir: string, isolated: boolea
   if (args.kind === "command") {
     const out = await runCommandKind(args, { cwd, signal: ctx.signal });
     const runOk = out.spawnError === undefined && !out.timedOut && out.exitCode === 0;
+    const hint = runOk ? undefined : terminalAppHint(out.stdout, out.stderr);
     return finish(
-      { ...common, commandLine: out.commandLine, exitCode: out.exitCode, timedOut: out.timedOut, stdoutTail: out.stdoutTail, stderrTail: out.stderrTail, ...(out.spawnError === undefined ? {} : { error: `could not start \`${out.commandLine}\`: ${out.spawnError}` }) },
+      { ...common, ...(hint === undefined ? {} : { hint }), commandLine: out.commandLine, exitCode: out.exitCode, timedOut: out.timedOut, stdoutTail: out.stdoutTail, stderrTail: out.stderrTail, ...(out.spawnError === undefined ? {} : { error: `could not start \`${out.commandLine}\`: ${out.spawnError}` }) },
       { kind: "command", exitCode: out.exitCode, timedOut: out.timedOut, stdout: out.stdout, stderr: out.stderr },
       args.checks, runOk, started,
     );
@@ -112,10 +116,52 @@ async function runInWorkspace(args: VerifyRunArgs, dir: string, isolated: boolea
   const launch =
     ctx.launchBrowser ??
     defaultBrowserLauncher(ctx.config ?? { browser: getConfig().browser });
-  const out = await runPageKind(args, { cwd, signal: ctx.signal, launch });
+  if (args.start === undefined) {
+    const out = await runPageKind(args, { cwd, signal: ctx.signal, launch });
+    return finishPage(common, out, {}, args, started);
+  }
+  // The page is served by its own server: the browser opens it only once
+  // the server is ready, and the server stays up until the page run ends.
+  const held: { page?: PageRunOutcome } = {};
+  const server = await runServiceKind(args, {
+    cwd,
+    signal: ctx.signal,
+    fetchImpl: ctx.fetchImpl,
+    whileReady: async () => {
+      held.page = await runPageKind(args, { cwd, signal: ctx.signal, launch });
+    },
+  });
+  const serverFields = {
+    commandLine: server.commandLine,
+    exitCode: server.exitCode,
+    timedOut: server.timedOut,
+    ready: server.ready,
+    readyMs: server.readyMs,
+    stdoutTail: server.stdoutTail,
+    stderrTail: server.stderrTail,
+  };
+  const page = held.page;
+  if (page === undefined) {
+    const error = server.readyError ?? "the page server was not ready";
+    return finish(
+      { ...common, ...serverFields, error: `page server: ${error}` },
+      { kind: "page", errors: [], consoleErrors: [], missingSelectors: [], probes: {} },
+      args.checks, false, started,
+    );
+  }
+  return finishPage(common, page, serverFields, args, started);
+}
+
+function finishPage(
+  common: { kind: VerifyRunKind; isolated: boolean },
+  out: PageRunOutcome,
+  extra: Partial<VerifyRunResult>,
+  args: VerifyRunArgs,
+  started: number,
+): VerifyRunResult {
   const runOk = out.launched && out.loaded && out.errors.length === 0 && out.consoleErrors.length === 0;
   return finish(
-    { ...common, errors: out.errors, consoleErrors: out.consoleErrors, consoleWarnings: out.consoleWarnings, requestFailures: out.requestFailures, missingSelectors: out.missingSelectors, probes: out.probes, ...(out.error === undefined ? {} : { error: out.error }) },
+    { ...common, ...extra, errors: out.errors, consoleErrors: out.consoleErrors, consoleWarnings: out.consoleWarnings, requestFailures: out.requestFailures, missingSelectors: out.missingSelectors, probes: out.probes, ...(out.error === undefined ? {} : { error: out.error }) },
     { kind: "page", errors: out.errors, consoleErrors: out.consoleErrors, missingSelectors: out.missingSelectors, probes: out.probes },
     args.checks, runOk, started,
   );

@@ -545,7 +545,7 @@ describe("registerOsTools", () => {
       approvalRequired: false,
       config: {
         tools: {
-          shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3 },
+          shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3, envPassthrough: [] },
         },
         http: {
           enabled: true,
@@ -593,6 +593,7 @@ describe("registerOsTools", () => {
         "os.fs.hash",
         "os.fs.list",
         "os.fs.locate_project",
+        "os.fs.move",
         "os.fs.patch",
         "os.fs.read",
         "os.fs.read_document",

@@ -21,8 +21,13 @@ import {
 } from "./session-summary-page.js";
 import {
   SESSION_TITLE_METADATA_KEY,
+  SESSION_TITLE_USER_SET_AT_KEY,
   readSessionTitle,
 } from "./session-title.js";
+import {
+  readUserTitleSetAt,
+  withUserSessionTitle,
+} from "./session-title-user.js";
 import {
   currentTurnOwnerProbe,
   databaseIdentity,
@@ -131,6 +136,8 @@ function endingParams(ending: TurnEnding): {
 interface StoredRow {
   /** The generated title, `null` when there is none. */
   title: string | null;
+  /** When the operator set that title, `null` for a generated one. */
+  titleSetByUserAt: number | null;
   status: string;
   turnOwner: string | null;
 }
@@ -216,6 +223,7 @@ export interface RecentWorkingDirRow {
 export class SessionStore {
   private readonly db: Database.Database;
   private readonly insertStmt: Database.Statement;
+  private readonly insertIfAbsentStmt: Database.Statement;
   private readonly updateStmt: Database.Statement;
   private readonly selectStmt: Database.Statement;
   private readonly selectStoredStmt: Database.Statement;
@@ -273,6 +281,11 @@ export class SessionStore {
       `INSERT INTO sessions (id, working_dir, status, payload, created_at, updated_at)
        VALUES (@id, @working_dir, @status, @payload, @created_at, @updated_at)`,
     );
+    // Names no `turn_owner`: a copied row never carries a turn mark.
+    this.insertIfAbsentStmt = this.db.prepare(
+      `INSERT OR IGNORE INTO sessions (id, working_dir, status, payload, created_at, updated_at)
+       VALUES (@id, @working_dir, @status, @payload, @created_at, @updated_at)`,
+    );
     this.updateStmt = this.db.prepare(
       `UPDATE sessions
        SET working_dir = @working_dir,
@@ -292,7 +305,8 @@ export class SessionStore {
     const turnOwnerColumn = withMarks ? "turn_owner" : "NULL";
     this.selectStoredStmt = this.db.prepare(
       `SELECT status, ${turnOwnerColumn} AS turnOwner,
-              json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title
+              json_extract(payload, '$.metadata.${SESSION_TITLE_METADATA_KEY}') AS title,
+              json_extract(payload, '$.metadata.${SESSION_TITLE_USER_SET_AT_KEY}') AS titleSetByUserAt
        FROM sessions WHERE id = ?`,
     );
     this.selectStoredBareStmt = this.db.prepare(
@@ -398,9 +412,11 @@ export class SessionStore {
    * the process exited.
    *
    * So the rule is the store's, not each caller's: a write that carries
-   * no title does not remove one. Nothing renames a session today —
+   * no title does not remove one. The namer never renames a session —
    * `shouldNameSession` refuses to name a session twice — so "keep what
-   * is there" is also the product behaviour.
+   * is there" is also the product behaviour. The operator can rename one
+   * (`renameSession`); that title is stamped, and a copy without the
+   * stamp, or with an older one, cannot write over it.
    *
    * And the status a turn set is the turn's own (`statusForSave`): a
    * save never writes a live status, and never changes the status of a
@@ -589,7 +605,28 @@ export class SessionStore {
       this.insertStmt.run(this.serialize(next));
       return;
     }
-    if (stored.title !== null && readSessionTitle(next.metadata) === null) {
+    const storedUserAt = stored.titleSetByUserAt;
+    const nextUserAt = readUserTitleSetAt(next.metadata);
+    if (
+      stored.title !== null &&
+      storedUserAt !== null &&
+      (nextUserAt === null || nextUserAt < storedUserAt)
+    ) {
+      // The operator's name outranks any copy read before the rename —
+      // a turn that was running, the namer's late answer, a TUI stamp —
+      // whatever title that copy carries.
+      next = {
+        ...next,
+        metadata: {
+          ...next.metadata,
+          [SESSION_TITLE_METADATA_KEY]: stored.title,
+          [SESSION_TITLE_USER_SET_AT_KEY]: storedUserAt,
+        },
+      };
+    } else if (
+      stored.title !== null &&
+      readSessionTitle(next.metadata) === null
+    ) {
       next = {
         ...next,
         metadata: {
@@ -613,7 +650,12 @@ export class SessionStore {
    */
   private storedRow(id: string): StoredRow | undefined {
     let row:
-      | { status: string; turnOwner: string | null; title?: unknown }
+      | {
+          status: string;
+          turnOwner: string | null;
+          title?: unknown;
+          titleSetByUserAt?: unknown;
+        }
       | undefined;
     try {
       row = this.selectStoredStmt.get(id) as typeof row;
@@ -626,9 +668,66 @@ export class SessionStore {
         typeof row.title === "string" && row.title.trim().length > 0
           ? row.title
           : null,
+      titleSetByUserAt:
+        typeof row.titleSetByUserAt === "number" &&
+        Number.isFinite(row.titleSetByUserAt)
+          ? row.titleSetByUserAt
+          : null,
       status: row.status,
       turnOwner: row.turnOwner,
     };
+  }
+
+  /**
+   * Copy sessions from another state dir into this one, keeping their
+   * ids: the desktop's own dir merged into the shared one (ATO-416). A
+   * row whose id is already here is left exactly as it is — what this
+   * store holds wins — and the copy is dropped.
+   *
+   * A copied row never carries a turn: no `turn_owner` is written, and a
+   * live status (a turn that was running when the other dir's process
+   * stopped) is ended the way the boot sweep ends one whose process is
+   * gone (`INTERRUPTED_TURN_ENDING`). Otherwise the lists would show a
+   * turn nothing here is running.
+   *
+   * One `BEGIN IMMEDIATE` transaction per call, so the write lock is
+   * waited for (busy timeout) rather than failing on an upgrade while a
+   * TUI or `serve` writes the same file; callers keep batches small so
+   * the lock is never held for long. Returns the ids inserted.
+   */
+  insertMissing(states: readonly SessionState[]): string[] {
+    const insert = this.db.transaction(
+      (batch: readonly SessionState[]): string[] => {
+        const inserted: string[] = [];
+        for (const state of batch) {
+          const result = this.insertIfAbsentStmt.run(
+            this.serialize(endLiveTurn(state)),
+          ) as { changes: number };
+          if (result.changes > 0) inserted.push(state.id);
+        }
+        return inserted;
+      },
+    );
+    return insert.immediate(states);
+  }
+
+  /**
+   * Set the operator's title on a stored session, stamped so neither the
+   * namer nor a stale copy can write over it (see `save`). Returns the
+   * saved state, or `null` when there is no such session. `updatedAt` is
+   * left as it was: naming a chat is not activity in it, and a rename
+   * should not move the row to the top of the list.
+   */
+  renameSession(
+    id: string,
+    title: string,
+    now: number = Date.now(),
+  ): SessionState | null {
+    const current = this.load(id);
+    if (current === null) return null;
+    const next = withUserSessionTitle(current, title, now);
+    this.save(next);
+    return next;
   }
 
   load(id: string): SessionState | null {
@@ -778,6 +877,16 @@ export class SessionStore {
       updated_at: persistable.updatedAt,
     };
   }
+}
+
+/** `state` with a live status ended as an interrupted turn; others as they are. */
+function endLiveTurn(state: SessionState): SessionState {
+  if (!LIVE_STATUSES.has(state.status)) return state;
+  return {
+    ...state,
+    status: INTERRUPTED_TURN_ENDING.status,
+    lastError: INTERRUPTED_TURN_ENDING.lastError ?? state.lastError,
+  };
 }
 
 /**

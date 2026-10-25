@@ -19,6 +19,10 @@ import type { ToolDefinition } from "../tool-registry.js";
 import { checkCssSource } from "./check-css-syntax.js";
 import { checkHtmlSource } from "./check-html-syntax.js";
 import {
+  checkLanguageFile,
+  LANGUAGE_SYNTAX_EXTENSIONS,
+} from "./check-language-syntax.js";
+import {
   checkJavaScriptFile,
   checkPythonFile,
   checkShellFile,
@@ -78,6 +82,9 @@ async function checkOne(
     return { ...(await checkHtmlSource(file, await readFile(absolute, "utf8"))) };
   }
   if (ext === ".css") return checkCssSource(file, await readFile(absolute, "utf8"));
+  if (LANGUAGE_SYNTAX_EXTENSIONS.has(ext)) {
+    return { ...(await checkLanguageFile(absolute, ext)), file };
+  }
   return {
     file,
     ok: null,
@@ -156,7 +163,7 @@ function report(results: readonly SyntaxFileResult[]): VerifySyntaxReport {
 export const verifySyntaxTool: ToolDefinition = {
   name: VERIFY_SYNTAX_TOOL,
   description:
-    "Syntax-check files, one checker per file by extension: .js/.cjs/.mjs/.json in-process (then node --check), .ts/.tsx via the project's tsc --noEmit, .py via python3, .sh/.bash via bash -n, .html inline <script> blocks (plus a warning for content after </html>), .css brace balance. Read-only, writes nothing. A file with no checker is reported as unchecked, never as passing.",
+    "Syntax-check files, one checker per file by extension: .js/.cjs/.mjs/.json in-process (then node --check), .ts/.tsx via the project's tsc --noEmit, .py via python3, .sh/.bash via bash -n, .html inline <script> blocks (plus a warning for content after </html>), .css brace balance, .go/.rb/.php/.lua/.zsh via gofmt -l -e, ruby -c, php -l, luac -p, zsh -n when that tool is installed. Read-only, writes nothing. A file with no checker is reported as unchecked, never as passing.",
   readonly: true,
   async run(rawArgs, ctx): Promise<CompressedToolResult> {
     const files = parseVerifySyntaxArgs(rawArgs);

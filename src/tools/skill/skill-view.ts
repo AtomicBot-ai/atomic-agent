@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
+import { workspaceSkillBody } from "../../skills/workspace-skills.js";
 
 export function buildSkillViewTool(registry: SkillRegistry): ToolDefinition {
   return {
@@ -8,13 +9,14 @@ export function buildSkillViewTool(registry: SkillRegistry): ToolDefinition {
     description:
       "Load the full body of an installed skill (SKILL.md without frontmatter) into the session.",
     readonly: true,
-    async run(rawArgs) {
+    async run(rawArgs, ctx) {
       const name = rawArgs.name;
       if (typeof name !== "string" || name.length === 0) {
         throw new Error("skill.view: `name` must be a non-empty string");
       }
-      const record = registry.get(name);
-      const body = await registry.readBody(name);
+      const scoped = ctx.workspaceSkills?.assertAvailable(name);
+      const record = scoped?.record ?? registry.get(name);
+      const body = scoped ? workspaceSkillBody(scoped) : await registry.readBody(name);
       return compressToolResult(
         {
           tool: "skill.view",
@@ -25,6 +27,7 @@ export function buildSkillViewTool(registry: SkillRegistry): ToolDefinition {
               name: record.manifest.name,
               version: record.manifest.version,
               body,
+              ...(scoped && ctx.modelMode === "cloud" ? { workspace: ctx.workspaceSkills!.workingDir, sourcePath: record.manifestPath, fingerprint: scoped.fingerprint } : {}),
             },
             source: record.source,
             rootDir: record.rootDir,

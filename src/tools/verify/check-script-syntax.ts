@@ -7,6 +7,13 @@
  * review once passed four files on that basis — so a multi-file check is
  * a loop here, never a longer argv.
  *
+ * `node --check` needs a real Node.js. In a release build (a single
+ * executable application) `process.execPath` is the agent binary, which
+ * treats `--check` as an unknown CLI command, so there the checker is
+ * `node` from PATH; without one the file is reported unchecked, never
+ * failed. A non-zero exit that is not a SyntaxError is likewise "the
+ * checker did not run", not a verdict on the file.
+ *
  * Python is checked with the builtin `compile()` rather than
  * `py_compile`: `py_compile` writes `__pycache__/*.pyc` next to the file,
  * which is exactly the clutter verification must not leave in a
@@ -17,6 +24,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 
+import { isSeaBuild } from "../../runtime/self-invocation.js";
 import { checkFileParses } from "../os/fs/fs-parse-check.js";
 import { type SyntaxFileResult, tailOfOutput } from "./syntax-check-types.js";
 
@@ -102,19 +110,44 @@ function describeNodeCheckFailure(run: CheckerRun): string {
   return line === undefined ? error : `${error} (line ${line})`;
 }
 
+/**
+ * The Node.js to run `node --check` with: this process when it is Node
+ * itself, `node` from PATH when this process is the release binary.
+ */
+export function nodeForSyntaxCheck(
+  sea: boolean = isSeaBuild(),
+  execPath: string = process.execPath,
+): string {
+  return sea ? "node" : execPath;
+}
+
+const NO_NODE_FOR_CHECK =
+  "no Node.js found on PATH to run node --check (release builds cannot use their own binary for it)";
+
 /** One `node --check` for exactly one file. */
-async function nodeCheck(
+export async function nodeCheck(
   file: string,
   pathToCheck: string,
+  node: string = nodeForSyntaxCheck(),
 ): Promise<SyntaxFileResult> {
-  const run = await runChecker(process.execPath, ["--check", pathToCheck]);
+  const run = await runChecker(node, ["--check", pathToCheck]);
   if (run.missing) {
-    return { file, ok: null, checker: "none", error: "node not found" };
+    return { file, ok: null, checker: "none", error: NO_NODE_FOR_CHECK };
   }
   if (run.timedOut) {
     return { file, ok: null, checker: "node --check", error: "timed out" };
   }
   if (run.exitCode === 0) return { file, ok: true, checker: "node --check" };
+  // Only a SyntaxError is a verdict on the file. Anything else (a binary
+  // that does not know `--check`, a crash) means the check never ran.
+  if (!/\bSyntaxError\b/.test(run.stderr)) {
+    return {
+      file,
+      ok: null,
+      checker: "node --check",
+      error: `node --check did not run: ${tailOfOutput(`${run.stderr}\n${run.stdout}`, 2) || `exit ${run.exitCode}`}`,
+    };
+  }
   return {
     file,
     ok: false,

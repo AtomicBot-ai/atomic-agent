@@ -8,6 +8,8 @@ Skills are locally installed "playbooks": a markdown task description plus optio
 
 ## On-disk format
 
+This page describes Atomic's native/local registry. Cloud additionally supports [project skill compatibility and scoped controls](cloud-workspace.md), with separate loaded state and source-aware revalidation.
+
 ```
 <skill-root>/
   SKILL.md           # required: YAML frontmatter + markdown body
@@ -42,10 +44,10 @@ Validation:
 
 | Source     | Path                                     | When it wins              |
 | ---------- | ---------------------------------------- | ------------------------- |
-| `project`  | `./.atomic-agent/skills/<name>/`         | always, if present        |
-| `global`   | `$ATOMIC_AGENT_STATE_DIR/skills/<name>/` | fallback                  |
+| `global`   | `$ATOMIC_AGENT_STATE_DIR/skills/<name>/` | always, if present        |
+| `project`  | `./.atomic-agent/skills/<name>/`         | when no global skill has that name |
 
-A project-local skill with the same `name` overrides the global one. This lets users commit a skill alongside their repository and override it with a local version.
+A project-local skill cannot replace a global skill with the same `name`: the global copy is used and the project copy is skipped with a warning in the log. A checked-out repository therefore cannot swap out a skill the user installed, or inherit what that skill is trusted to do. Project skills with new names load normally. The `gog-workspace` setup check (`check-gog.sh` with no arguments) runs without an approval prompt only from the global copy; every other skill script, including any project copy, asks first.
 
 ## Starter skills
 

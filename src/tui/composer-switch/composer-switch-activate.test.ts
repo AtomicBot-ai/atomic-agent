@@ -17,6 +17,8 @@ function harness(state: TuiState) {
   const actions: TuiAction[] = [];
   const callbacks = {
     onRunModeChangeRequested: vi.fn(),
+    onComposerFusionModelRequested: vi.fn(),
+    onComposerEngineRequested: vi.fn(),
     onProvidersSetActiveText: vi.fn(),
     onProvidersSelectChatModel: vi.fn(),
     onLocalModelsSetActiveRequested: vi.fn(),
@@ -25,6 +27,8 @@ function harness(state: TuiState) {
     onLocalModelsDaemonStopRequested: vi.fn(),
     onFusionWorkersChangeRequested: vi.fn(),
   } as unknown as TuiAppCallbacks & {
+    onComposerFusionModelRequested: ReturnType<typeof vi.fn>;
+    onComposerEngineRequested: ReturnType<typeof vi.fn>;
     onRunModeChangeRequested: ReturnType<typeof vi.fn>;
     onFusionWorkersChangeRequested: ReturnType<typeof vi.fn>;
     onLocalModelsDaemonStartRequested: ReturnType<typeof vi.fn>;
@@ -305,9 +309,7 @@ describe("the fusion configurators", () => {
     const app = harness(state);
     app.pick("workers", "qwen-3.5-4b");
     // Its own writer touches `localModels.*` only, so fusion survives.
-    expect(app.callbacks.onLocalModelsSetActiveRequested).toHaveBeenCalledWith(
-      "qwen-3.5-4b",
-    );
+    expect(app.callbacks.onComposerFusionModelRequested).toHaveBeenCalledWith("worker", "qwen-3.5-4b");
     expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
     expect(app.callbacks.onRunModeChangeRequested).not.toHaveBeenCalled();
   });
@@ -323,10 +325,8 @@ describe("the fusion configurators", () => {
     };
     const app = harness(state);
     app.pick("workers", "qwen-3.5-4b");
-    expect(app.callbacks.onLocalModelsDaemonStartRequested).toHaveBeenCalled();
-    expect(
-      app.callbacks.onLocalModelsSetActiveRequested,
-    ).not.toHaveBeenCalled();
+    expect(app.callbacks.onComposerFusionModelRequested).toHaveBeenCalledWith("worker", "qwen-3.5-4b");
+    expect(app.callbacks.onProvidersSetActiveText).not.toHaveBeenCalled();
   });
 
   it("does nothing when the picked model is already live and serving", () => {
@@ -355,7 +355,7 @@ describe("the fusion configurators", () => {
     expect(app.callbacks.onRunModeChangeRequested).toHaveBeenCalledWith(
       "fusion",
       {
-        fusion: { orchestratorProvider: "openrouter" },
+        fusion: { orchestratorProvider: "openrouter", workerProvider: "local-llama" },
       },
     );
     // Not `setActiveText`: that would move the active provider away from

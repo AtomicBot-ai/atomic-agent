@@ -3,7 +3,21 @@ import { describe, expect, it } from "vitest";
 import {
   EmbeddingUnavailableError,
   LlamaEmbeddingClient,
+  promptedEmbeddingText,
 } from "./embedding-client.js";
+
+describe("promptedEmbeddingText", () => {
+  const prompts = { query: "q: ", document: "d: ", similarity: "s: " };
+  it("prefixes the purpose's prompt when the model has prompts", () => {
+    expect(promptedEmbeddingText({ text: "x", purpose: "query" }, prompts)).toBe("q: x");
+    expect(promptedEmbeddingText({ text: "x", purpose: "document" }, prompts)).toBe("d: x");
+    expect(promptedEmbeddingText({ text: "x", purpose: "similarity" }, prompts)).toBe("s: x");
+  });
+  it("leaves the text alone without prompts or without a purpose", () => {
+    expect(promptedEmbeddingText({ text: "x", purpose: "query" }, undefined)).toBe("x");
+    expect(promptedEmbeddingText({ text: "x" }, prompts)).toBe("x");
+  });
+});
 
 describe("LlamaEmbeddingClient", () => {
   function makeFetch(
@@ -57,6 +71,24 @@ describe("LlamaEmbeddingClient", () => {
     expect(r.model).toBe("test-model");
     expect(Array.from(r.vector)).toHaveLength(3);
     expect(r.vector[0]).toBeCloseTo(0.1, 6);
+  });
+
+  it("applies the model's prompt for the request purpose", async () => {
+    const seen: unknown[] = [];
+    const fetchFn = makeFetch(({ body }) => {
+      seen.push(body);
+      return new Response(JSON.stringify({ embedding: [1, 2, 3] }), { status: 200 });
+    });
+    const c = new LlamaEmbeddingClient({
+      url: "http://x",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+      prompts: { query: "q: ", document: "d: ", similarity: "s: " },
+    });
+    await c.embed({ text: "hello", purpose: "document" });
+    await c.embed({ text: "hello" });
+    expect(seen).toEqual([{ content: "d: hello" }, { content: "hello" }]);
   });
 
   it("accepts nested { embedding: number[][] } shape", async () => {
@@ -224,5 +256,36 @@ describe("LlamaEmbeddingClient", () => {
     key = "daemon-key";
     await c.embed({ text: "b" });
     expect(seen).toEqual([null, "Bearer daemon-key"]);
+  });
+
+  it("on a 401 re-reads the key once and replays with a different one (ATO-837)", async () => {
+    const seen: Array<string | null> = [];
+    const fetchFn: typeof fetch = async (_input, init) => {
+      const auth = ((init?.headers ?? {}) as Record<string, string>).authorization ?? null;
+      seen.push(auth);
+      if (auth !== "Bearer fresh-key") return new Response("Invalid API Key", { status: 401 });
+      return new Response(JSON.stringify({ embedding: [0.1, 0.2, 0.3] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+    let asks = 0;
+    let fresh: string | null = "fresh-key";
+    const c = new LlamaEmbeddingClient({
+      url: "http://127.0.0.1:9999",
+      dim: 3,
+      model: "m",
+      fetch: fetchFn,
+      getApiKey: () => "stale-key",
+      refreshApiKey: async () => { asks += 1; return fresh; },
+    });
+    await expect(c.embed({ text: "a" })).resolves.toMatchObject({ model: "m" });
+    expect(seen).toEqual(["Bearer stale-key", "Bearer fresh-key"]);
+    // Nothing better known: one request, the 401 stands.
+    seen.length = 0;
+    fresh = null;
+    await expect(c.embed({ text: "b" })).rejects.toThrow(/HTTP 401/);
+    expect(seen).toEqual(["Bearer stale-key"]);
+    expect(asks).toBe(2);
   });
 });

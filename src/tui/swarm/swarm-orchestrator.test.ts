@@ -21,6 +21,14 @@ function fakeBus() {
   };
 }
 
+interface FakeUnitConfig {
+  id: string;
+  kind: string;
+  label: string;
+  enabled: boolean;
+  ownerUserId?: string | null;
+}
+
 function fakeRuntime(over: Partial<Record<string, unknown>> = {}) {
   const views = [
     {
@@ -40,7 +48,7 @@ function fakeRuntime(over: Partial<Record<string, unknown>> = {}) {
   const listeners = new Set<() => void>();
   const swarm = {
     views: vi.fn(() => views),
-    get: vi.fn((id: string) =>
+    get: vi.fn((id: string): { config: FakeUnitConfig } | undefined =>
       id === "ops"
         ? { config: { id, kind: "telegram", label: "Ops", enabled: true } }
         : undefined,
@@ -52,7 +60,16 @@ function fakeRuntime(over: Partial<Record<string, unknown>> = {}) {
     setToken: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
     restart: vi.fn(async () => undefined),
-    startPairing: vi.fn(async () => ({ claim: { userId: 777, chatId: 777 } })),
+    startPairing: vi.fn(
+      async (
+        _id: string,
+        _timeoutMs?: number,
+        options?: { onOpened?: (w: { code: string; expiresAt: number }) => void },
+      ) => {
+        options?.onOpened?.({ code: "123456", expiresAt: Date.now() + 300_000 });
+        return { claim: { userId: 777, chatId: 777, username: "ops_owner" } };
+      },
+    ),
     cancelPairing: vi.fn(),
     onChange: (cb: () => void) => {
       listeners.add(cb);
@@ -263,11 +280,51 @@ describe("SwarmOrchestrator", () => {
       settled,
     );
     await o.pair("ops");
-    expect(swarm.startPairing).toHaveBeenCalledWith("ops");
+    expect(swarm.startPairing).toHaveBeenCalledWith(
+      "ops",
+      5 * 60_000,
+      expect.objectContaining({ replaceOwner: false }),
+    );
+    const messages = bus.emitted
+      .filter((a) => a.type === "swarm_action_settled")
+      .map((a) => (a as { message?: string }).message);
+    expect(messages).toContain(
+      "Ops: Send /start 123456 to your bot in Telegram within 5 minutes. The code works once; other messages are ignored.",
+    );
     expect(bus.emitted.at(-2)).toMatchObject({
       type: "swarm_action_settled",
-      message: "Ops paired with user 777",
+      message: "Ops: Paired: @ops_owner is now the owner.",
     });
+    o.dispose();
+  });
+
+  it("asks before re-pairing a bot that already has an owner (ATO-718)", async () => {
+    const bus = fakeBus();
+    const { runtime, swarm } = fakeRuntime();
+    swarm.get.mockReturnValue({
+      config: { id: "ops", kind: "telegram", label: "Ops", enabled: true, ownerUserId: "42" },
+    });
+    const o = new SwarmOrchestrator(runtime, bus);
+
+    await o.pair("ops");
+    expect(swarm.startPairing).not.toHaveBeenCalled();
+    expect(bus.emitted.at(-1)).toMatchObject({
+      type: "swarm_action_settled",
+      message:
+        "Ops: This bot already has an owner (Telegram user 42). Press p again within 15 seconds to replace them.",
+    });
+
+    // Too late: the confirmation lapsed, so it asks again.
+    vi.advanceTimersByTime(16_000);
+    await o.pair("ops");
+    expect(swarm.startPairing).not.toHaveBeenCalled();
+
+    await o.pair("ops");
+    expect(swarm.startPairing).toHaveBeenCalledWith(
+      "ops",
+      5 * 60_000,
+      expect.objectContaining({ replaceOwner: true }),
+    );
     o.dispose();
   });
 });

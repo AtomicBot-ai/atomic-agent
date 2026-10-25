@@ -1,26 +1,31 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
-import { createContextCompaction } from "./context-compaction.js";
+import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
+import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
+import { createBackgroundCompaction } from "./compaction-background.js";
+import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
 import { connectRuntimeChannels } from "./composition/runtime-channels.js";
 import type { AgentRuntime, CreateAgentRuntimeOptions } from "./runtime-contract.js";
-export type { AgentRuntime, CreateAgentRuntimeOptions, RuntimeEventHandlers } from "./runtime-contract.js";
+export type { AgentRuntime, CreateAgentRuntimeOptions, MemoryEmbeddingReconnect, RuntimeEventHandlers } from "./runtime-contract.js";
 export { managedLocalLlmHealthFailureHint } from "./composition/runtime-local-profile.js";
 import { createRuntimeObservability } from "./composition/runtime-observability.js";
 import { createRuntimeTraces } from "./composition/runtime-traces.js";
 import { prepareRuntimeLocalProfile, connectRuntimeLocalProfile } from "./composition/runtime-local-profile.js";
 import { connectRuntimeProviders, createRuntimeModelContext, connectRuntimeFallback, createRuntimeProviderReloads } from "./composition/runtime-inference.js";
 import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.js";
+import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
 import { resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
 import type { SessionState } from "../session/session-state.js";
+import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 
 import { TurnController } from "./turn-controller.js";
@@ -41,6 +46,7 @@ import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { ToolOutputSpill } from "../tools/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -49,9 +55,11 @@ import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
+import { readLocalEngineState } from "./local-engine-state.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
+import { SessionNotFoundError } from "./session-not-found-error.js";
 
 import { createLessonLifecycleHook } from "../memory/lessons/lesson-lifecycle-hook.js";
 
@@ -97,7 +105,7 @@ export async function createAgentRuntime(
     brokenPipe: options.brokenPipe,
   });
 
-  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured } =
+  const { setAnalyticsEnabled, reportOnboardingStep, reportModelConfigured, reportLocalEngineFailed } =
     observability.createControls();
 
   const traces = createRuntimeTraces(config, options, logger);
@@ -235,7 +243,7 @@ export async function createAgentRuntime(
     }
   }
   const memoryStores = await createRuntimeMemoryStores({
-    config, metrics, onProfileEvicted: (eviction) => {
+    config, metrics, logger, onProfileEvicted: (eviction) => {
       const sessionId = turnContext.getStore()?.sessionId;
       logger.info("profile facts evicted over memory.profile.maxEntries", {
         evicted: eviction.evicted.length,
@@ -253,6 +261,20 @@ export async function createAgentRuntime(
     },
   });
   const { profileStore, notesStore, embeddingClient, linkStore, lessonStore, procedureStore, voteStore } = memoryStores;
+  // A later embedding model pick reattaches memory through this switch
+  // instead of waiting for a restart (ATO-351). It owns the backfill
+  // from here on, so shutdown stops it through the switch.
+  const memoryEmbeddings = createMemoryEmbeddingSwitch({
+    notesStore,
+    metrics,
+    logger,
+    readConfig: () => getConfig(),
+    initial: {
+      health: memoryStores.embeddingHealth,
+      modelId: memoryStores.embeddingHealth === "disabled" ? null : (config.localModels.embeddings.modelId ?? null),
+      backfill: memoryStores.embeddingBackfill,
+    },
+  });
 
   const sessionStore = prepareRuntimeSessionStore(config, logger);
   // The commands `os.shell.run` detached at the default timeout (F47).
@@ -263,9 +285,14 @@ export async function createAgentRuntime(
     jobMaxMs: config.tools.shell.jobMaxMs,
     maxJobs: config.tools.shell.maxJobs,
   });
-  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs);
+  // Full outputs of clipped local tool results, one temp folder per
+  // session (ATO-663): removed with the session, and folders left by
+  // sessions that are gone (fusion workers are never stored) swept here.
+  const toolOutputSpill = new ToolOutputSpill();
+  toolOutputSpill.sweepStale();
+  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs, toolOutputSpill);
 
-  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous);
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill);
 
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
@@ -319,6 +346,8 @@ export async function createAgentRuntime(
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
   registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
+  registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics });
+  registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
 
   const mcpCatalog = await connectRuntimeMcpCatalog({
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
@@ -346,6 +375,7 @@ export async function createAgentRuntime(
   });
 
   const promptPreviewDeps = {
+    prepareWorkspace: createWorkspaceLoader(config),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,
@@ -361,24 +391,40 @@ export async function createAgentRuntime(
     profileWindowApplies: (id?: string) => resolveActiveLlmSlice(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined).isLlamaServer,
     resolveCatalogContextWindow: (id?: string) => resolveCatalogContextWindow(id ? fallbackChain.standingOverrideFor(id) ?? undefined : undefined),
   };
+  const compactionPromptInput = (state: SessionState) => buildRuntimePromptInput(getConfig(), promptPreviewDeps, state);
+  const compactionRoute = (id: string, pin?: string) => {
+    const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
+    const slice = resolveActiveLlmSlice(providerId);
+    // The entry's explicit output ceiling: a summary call's reasoning reserve stays under it.
+    const outputCap = resolveLlmConfig(getConfig()).providers.find((p) => p.id === slice.provider.id)?.maxOutputTokens;
+    return {
+      providerId, transport: slice.transport, local: slice.isLlamaServer,
+      ...(outputCap !== undefined ? { maxOutputTokens: outputCap } : {}),
+      ...(slice.isLlamaServer ? { prefixReuse: connectedLocal.getLiveProfile().prefixReuse ?? "partial" } : {}),
+      contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
+      serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
+    };
+  };
+  const compactionSideSlot = () => slotManager.sideCallSlotId();
+  const compactionCost = (result: CompletionResult, providerId: string) => {
+    const pricing = resolveModelPricing(result.modelId, providerId)?.pricing;
+    return pricing && result.usage ? estimateUsageCostUsd(result.usage, pricing) : undefined;
+  };
   const compaction = createContextCompaction({
     config: () => getConfig().agent.compaction,
     sessionStore, turnController, complete: llmComplete,
-    promptInput: (state) => buildRuntimePromptInput(getConfig(), promptPreviewDeps, state),
-    route: (id, pin) => {
-      const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
-      const slice = resolveActiveLlmSlice(providerId);
-      return {
-        providerId, transport: slice.transport,
-        contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
-        serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
-      };
-    },
-    sideCallSlotId: () => slotManager.sideCallSlotId(),
-    costOf: (result, providerId) => {
-      const pricing = resolveModelPricing(result.modelId, providerId)?.pricing;
-      return pricing && result.usage ? estimateUsageCostUsd(result.usage, pricing) : undefined;
-    },
+    promptInput: compactionPromptInput,
+    route: compactionRoute,
+    sideCallSlotId: compactionSideSlot,
+    costOf: compactionCost,
+    background: createBackgroundCompaction({
+      config: () => getConfig().agent.compaction,
+      sessionStore, complete: llmComplete, promptInput: compactionPromptInput,
+      route: (id) => compactionRoute(id), sideCallSlotId: compactionSideSlot, costOf: compactionCost,
+      isIdle: () => turnController.busySessionIds().length === 0,
+      isBusy: (id) => turnController.isBusy(id),
+      log: (level, message, fields) => logger[level](message, fields),
+    }),
     persist: (state, inTurn) => {
       const existed = sessionStore.load(state.id) !== null;
       sessionStore.save(state);
@@ -387,8 +433,9 @@ export async function createAgentRuntime(
     },
     warn: (sessionId, message) => logger.warn(message, { sessionId }),
     emit: (event) => {
-      if (event.type === "compaction_failed" && event.result.status === "failed") {
-        logger.warn("context compaction failed", { sessionId: event.sessionId, reason: event.result.message });
+      logCompactionOutcome(logger, event);
+      if (event.type === "compaction_completed" && event.result.message) {
+        logger.warn("context compaction fell back to an extractive summary", { sessionId: event.sessionId, reason: event.result.message });
       }
       emitAgentLoopEventFor(event.sessionId, event);
     },
@@ -403,6 +450,7 @@ export async function createAgentRuntime(
   // value on every step — `refreshSkills()` then does not require tearing
   // down the loop.
   const loopDeps = {
+    prepareWorkspace: promptPreviewDeps.prepareWorkspace,
     compaction: compaction.control,
     registry: toolRegistry,
     // A getter, so `runtime.setPlanMode` is observed by the next tool
@@ -441,6 +489,13 @@ export async function createAgentRuntime(
     liveWorkerSlots: () => slotManager.observedPoolSize(),
     onContextWindowObserved: observeContextWindow,
     onContextWindowExceeded: raiseContextWindowTo,
+    // A refused connection to a managed local model whose process is gone
+    // ends the turn at once instead of parking it (ATO-772). Read live, so
+    // a mode switch or a model start between turns is seen.
+    localEngineState: (providerId: string | undefined) => {
+      const config = getConfig();
+      return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
+    },
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
@@ -568,9 +623,12 @@ export async function createAgentRuntime(
   let swarmForShutdown: SwarmRegistry | null = null;
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
+  // In-flight `/enhance` passes; shutdown aborts them beside naming.
+  const pendingPromptEnhances = new Set<AbortController>();
   const lifecycle = createRuntimeLifecycle({
-    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight, compaction,
+    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, pendingPromptEnhances, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
+    embeddingBackfill: memoryEmbeddings,
     get scheduler() { return scheduler; },
     get taskRunner() { return taskRunner; },
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },
@@ -612,7 +670,9 @@ export async function createAgentRuntime(
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
   });
 
-  const scheduler = createRuntimeScheduler({ config, taskRunner, logger, metrics });
+  const scheduler = createRuntimeScheduler({
+    config, taskRunner, logger, metrics, resolveTelegram: () => telegramChannelForShutdown,
+  });
   const consolidatorJob = createRuntimeMemoryConsolidator({
     config, notesStore, linkStore, lessonStore, procedureStore, voteStore,
     slotManager, llmComplete, logger, metrics, traceBus,
@@ -620,6 +680,12 @@ export async function createAgentRuntime(
   consolidatorJob?.start();
 
   const runtime = {
+    getSessionWorkspace(input: SessionState | string) {
+      const session = typeof input === "string" ? sessionStore.load(input) : input;
+      if (!session) throw new SessionNotFoundError(String(input));
+      const mode = promptPreviewDeps.resolveModelMode(session.id);
+      return mode.mode === "cloud" ? promptPreviewDeps.prepareWorkspace(session, true) : null;
+    },
     config,
     loop,
     toolRegistry,
@@ -658,6 +724,26 @@ export async function createAgentRuntime(
     compactSession: compaction.compactSession,
     getSessionCompaction: compaction.getSessionCompaction,
     cancelSessionCompaction: compaction.cancelSessionCompaction,
+    enhancePrompt: (draft: string, enhanceOptions?: { sessionId?: string; signal?: AbortSignal }) => {
+      if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down" });
+      const partition = promptEnhancePartition(enhanceOptions?.sessionId);
+      return enhancePrompt(draft, {
+        complete: (params) => llmComplete(params),
+        slotId: () => slotManager.sideCallSlotId(),
+        // Same wire-shape rule as session naming: a cloud link answers a
+        // bare prompt with an empty `content`. Resolved through the
+        // partition's own standing override, like compaction's route.
+        toolTransport: resolveActiveLlmSlice(fallbackChain.standingOverrideFor(partition) ?? undefined).transport,
+        pending: pendingPromptEnhances,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
+        ...(enhanceOptions?.sessionId ? { sessionId: enhanceOptions.sessionId } : {}),
+        ...(enhanceOptions?.signal ? { signal: enhanceOptions.signal } : {}),
+        onError: (err: unknown) =>
+          logger.debug("prompt enhance failed", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+      });
+    },
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,
@@ -665,11 +751,13 @@ export async function createAgentRuntime(
     refreshLocalModelProfile: async () => {
       await profileManager?.refresh();
     },
+    reconnectMemoryEmbeddings: () => memoryEmbeddings.reconnect(),
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
     reportOnboardingStep,
     reportModelConfigured,
+    reportLocalEngineFailed,
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
     getPlanMode: () => planMode,

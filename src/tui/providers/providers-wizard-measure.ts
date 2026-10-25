@@ -33,9 +33,9 @@ import type { ProvidersWizardKind } from "./providers-wizard-state.js";
 
 const KIND_LABELS: Record<ProvidersWizardKind, string> = {
   "claude-cli":
-    "Claude Code subscription (drives your signed-in `claude` CLI — no API key)",
+    "Claude Code subscription: the agent runs on your plan (signed-in `claude`)",
   "codex-cli":
-    "OpenAI Codex subscription (drives your signed-in `codex` CLI — no API key)",
+    "OpenAI Codex subscription: the agent runs on your plan (signed-in `codex`)",
   openrouter: "OpenRouter (cloud chat + optional cloud embed)",
   aimlapi: "AI/ML API (1000+ models, OpenAI-compatible)",
   gemini: "Gemini (Google AI)",

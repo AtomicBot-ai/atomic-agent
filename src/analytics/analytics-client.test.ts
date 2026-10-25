@@ -166,3 +166,83 @@ describe("AnalyticsClient", () => {
     expect(client).toBeNull();
   });
 });
+
+// ATO-717: one-time events must know whether they were delivered.
+describe("AnalyticsClient.captureConfirmed", () => {
+  function immediatePosthog(send: () => Promise<void> | void) {
+    const listeners: Array<(err: unknown) => void> = [];
+    const posthog = {
+      capture: vi.fn(),
+      shutdown: vi.fn().mockResolvedValue(undefined),
+      on: vi.fn((event: string, cb: (err: unknown) => void) => {
+        if (event === "error") listeners.push(cb);
+        return () => {
+          listeners.splice(listeners.indexOf(cb), 1);
+        };
+      }),
+      captureImmediate: vi.fn(async (_message: unknown) => {
+        await send();
+      }),
+    };
+    const emitError = (err: unknown) => {
+      for (const cb of [...listeners]) cb(err);
+    };
+    return { posthog, emitError, listeners };
+  }
+
+  const make = (posthog: ConstructorParameters<typeof AnalyticsClient>[0]["posthog"]) =>
+    new AnalyticsClient({ installId: "x", platform: "linux", version: "1.0.0", posthog });
+
+  it("resolves true when the send completes without an error", async () => {
+    const { posthog, listeners } = immediatePosthog(() => {});
+    const client = make(posthog);
+    await expect(client.captureConfirmed("app_installed", { a: 1 })).resolves.toBe(true);
+    const arg = posthog.captureImmediate.mock.calls[0]![0] as {
+      distinctId: string;
+      event: string;
+      properties: Record<string, unknown>;
+      disableGeoip: boolean;
+    };
+    expect(arg.distinctId).toBe("x");
+    expect(arg.event).toBe("app_installed");
+    expect(arg.properties.a).toBe(1);
+    expect(arg.properties.$ip).toBe("0.0.0.0");
+    expect(arg.disableGeoip).toBe(true);
+    expect(posthog.capture).not.toHaveBeenCalled();
+    // The error listener is removed again.
+    expect(listeners).toHaveLength(0);
+  });
+
+  it("resolves false when PostHog reports a delivery error (offline)", async () => {
+    const harness = immediatePosthog(() => {
+      // posthog-node swallows the fetch failure and emits it instead.
+      harness.emitError(new Error("fetch failed"));
+    });
+    const client = make(harness.posthog);
+    await expect(client.captureConfirmed("app_installed")).resolves.toBe(false);
+    expect(harness.listeners).toHaveLength(0);
+  });
+
+  it("resolves false and never rejects when the send itself throws", async () => {
+    const { posthog } = immediatePosthog(() => {
+      throw new Error("boom");
+    });
+    const warn = vi.fn();
+    const client = new AnalyticsClient({
+      installId: "x",
+      platform: "linux",
+      version: "1.0.0",
+      posthog,
+      logger: { warn },
+    });
+    await expect(client.captureConfirmed("app_installed")).resolves.toBe(false);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("falls back to a queued capture when the implementation has no immediate send", async () => {
+    const posthog = fakePosthog();
+    const client = make(posthog);
+    await expect(client.captureConfirmed("app_installed")).resolves.toBe(true);
+    expect(posthog.capture).toHaveBeenCalledTimes(1);
+  });
+});

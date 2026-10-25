@@ -1,7 +1,5 @@
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
-import { createInterface } from "node:readline";
-import type { Interface as ReadlineInterface } from "node:readline";
 
 import {
   formatApprovalCategory,
@@ -10,7 +8,12 @@ import {
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
-import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
+import {
+  formatLlamaUnreachableHint,
+  formatLlamaWrongServerHint,
+  llamaWrongServerStatus,
+} from "../llm/llama-server-health.js";
+import { LOCAL_ENGINE_START_HINT, isLocalEngineDown } from "../llm/reliability/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -27,6 +30,10 @@ import {
   isFailedSessionStatus,
   type SessionState,
 } from "../session/session-state.js";
+import {
+  createStdinLineQueue,
+  type StdinLineQueue,
+} from "./stdin-line-queue.js";
 
 interface RunArgs {
   workingDir: string;
@@ -144,59 +151,112 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
 }
 
 /**
+ * Whether a stdin line answers an approval prompt: one of the offered
+ * keys (`y`, `s`, `a`, `n`), `yes` / `no`, or an empty line (Enter, the
+ * default `N`), in any case. Anything else is a message for the agent,
+ * not an answer.
+ */
+export function isApprovalAnswer(line: string): boolean {
+  return /^(y|yes|n|no|s|a|)$/.test(line.trim().toLowerCase());
+}
+
+/**
  * Interactive approval over stdin. We ask the operator to confirm each
  * dangerous action; `y`/`yes` approves this call, `s` also grants the
  * category for the session, `a` grants this shell command shape.
- * Anything else is a refusal. The grant options mirror the TUI prompt;
+ * Any other answer (`n`, `no`, Enter, a grant key this request does not
+ * offer) is a refusal. The grant options mirror the TUI prompt;
  * they are offered here too because a CLI operator has the same physical
  * access to the machine. A category that is never grantable
  * (`isGrantableCategory`: trust config, e-mail, fusion fan-out) only
  * ever shows `y/N`.
+ *
+ * The answer is the next line of the same stdin queue the chat loop
+ * reads (ATO-802), so a piped "y" written together with the next
+ * message answers this prompt and the message stays queued for the
+ * next turn. Only a line shaped like an answer (`isApprovalAnswer`) is
+ * taken: any other line is a refusal and stays queued as the next
+ * message, so a driver that pipes "task\ncontinue" without answering
+ * loses nothing to the prompt. EOF before an answer is a refusal.
  */
 async function promptApproval(
   request: ApprovalRequest,
+  lines: StdinLineQueue,
 ): Promise<CliApprovalAnswer> {
   const grantCategory = canGrantCategory(request);
   const grantShape = canGrantShape(request);
-  const rl = createInterface({ input: process.stdin, output: process.stderr });
-  try {
-    process.stderr.write(formatCliApprovalPrompt(request));
-    const answer = (await new Promise<string>((r) => rl.question("", r)))
-      .trim()
-      .toLowerCase();
-    if (answer === "s" && grantCategory) {
-      process.stderr.write(
-        `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,
-      );
-      return { approved: true, grant: "category" };
-    }
-    if (answer === "a" && grantShape) {
-      process.stderr.write(
-        `\n  granted: ${request.commandShape} commands for this session\n`,
-      );
-      return { approved: true, grant: "shape" };
-    }
-    return { approved: /^(y|yes)$/.test(answer) };
-  } finally {
-    rl.close();
+  process.stderr.write(formatCliApprovalPrompt(request));
+  const head = await lines.peek();
+  if (head === null) return { approved: false };
+  if (!isApprovalAnswer(head)) {
+    process.stderr.write(
+      "\n  denied: the next input line is not an answer, kept as the next message\n",
+    );
+    return { approved: false };
   }
+  await lines.next();
+  const answer = head.trim().toLowerCase();
+  if (answer === "s" && grantCategory) {
+    process.stderr.write(
+      `\n  granted: ${formatApprovalCategory(request.category)} for this session\n`,
+    );
+    return { approved: true, grant: "category" };
+  }
+  if (answer === "a" && grantShape) {
+    process.stderr.write(
+      `\n  granted: ${request.commandShape} commands for this session\n`,
+    );
+    return { approved: true, grant: "shape" };
+  }
+  return { approved: /^(y|yes)$/.test(answer) };
 }
 
 /** Transport failures that mean "nothing answered at the configured URL". */
 const TRANSPORT_NO_ANSWER =
   /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|timeout/i;
 
+/** What `formatAgentEvent` needs to decorate a local-route failure. */
+export interface LlamaHintContext {
+  /** `formatLlamaUnreachableHint(url)`, or null off the local route. */
+  llamaHint?: string | null;
+  /**
+   * `localModels.url`, set together with `llamaHint`: names the address
+   * in the wrong-server line when llama-server answered 404/405.
+   */
+  llamaUrl?: string | null;
+  hintShown?: { value: boolean };
+}
+
+/**
+ * The hint for this failure, or null. A llama-server that answered
+ * 404/405 is running, so it gets "wrong server or no model loaded"
+ * rather than "start it" (ATO-870); a transport error where nothing
+ * answered keeps the unreachable hint.
+ */
+function pickLlamaHint(
+  category: string,
+  message: string,
+  ctx: LlamaHintContext,
+): string | null {
+  if (category !== "transport" || !ctx.llamaHint) return null;
+  const status = llamaWrongServerStatus(message);
+  if (status !== null) {
+    return ctx.llamaUrl ? formatLlamaWrongServerHint(ctx.llamaUrl, status) : null;
+  }
+  return TRANSPORT_NO_ANSWER.test(message) ? ctx.llamaHint : null;
+}
+
 function withLlamaHint(
   base: string,
   category: string,
   message: string,
-  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+  ctx?: LlamaHintContext,
 ): string {
-  if (!ctx?.llamaHint || ctx.hintShown?.value) return base;
-  if (category !== "transport" || !TRANSPORT_NO_ANSWER.test(message))
-    return base;
+  if (!ctx || ctx.hintShown?.value) return base;
+  const hint = pickLlamaHint(category, message, ctx);
+  if (hint === null) return base;
   if (ctx.hintShown) ctx.hintShown.value = true;
-  const indented = ctx.llamaHint
+  const indented = hint
     .split("\n")
     .map((line) => `    ${line}`)
     .join("\n");
@@ -216,7 +276,7 @@ function withLlamaHint(
  */
 export function formatAgentEvent(
   event: AgentLoopEvent,
-  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+  ctx?: LlamaHintContext,
 ): string | null {
   switch (event.type) {
     case "user_message":
@@ -248,6 +308,9 @@ export function formatAgentEvent(
       return null;
     case "loop_failed": {
       const base = `» loop failed [${event.category}]: ${event.error.message}`;
+      // ATO-772: the managed local model's process is gone; the turn ended
+      // without waiting, and the fix is one command.
+      if (isLocalEngineDown(event.error)) return `${base}\n    ${LOCAL_ENGINE_START_HINT}`;
       return withLlamaHint(base, event.category, event.error.message, ctx);
     }
     default:
@@ -286,6 +349,8 @@ interface ChatLoopOptions {
    */
   maxSteps?: number;
   controller: AbortController;
+  /** Stdin lines, shared with the approval prompt. */
+  lines: StdinLineQueue;
 }
 
 /**
@@ -351,43 +416,11 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     }
   };
 
-  const rl = createInterface({
-    input: process.stdin,
-    output: process.stderr,
-    terminal: process.stdin.isTTY === true,
-  });
-
-  const ask = (rli: ReadlineInterface): Promise<string | null> =>
-    new Promise((resolvePrompt, rejectPrompt) => {
-      if ((rli as { closed?: boolean }).closed === true) {
-        resolvePrompt(null);
-        return;
-      }
-      const onClose = () => resolvePrompt(null);
-      rli.once("close", onClose);
-      try {
-        rli.question("you> ", (answer) => {
-          rli.off("close", onClose);
-          resolvePrompt(answer);
-        });
-      } catch (err) {
-        rli.off("close", onClose);
-        if (
-          err instanceof Error &&
-          err.message.toLowerCase().includes("readline was closed")
-        ) {
-          resolvePrompt(null);
-          return;
-        }
-        rejectPrompt(err);
-      }
-    });
-
   try {
     while (true) {
       if (opts.controller.signal.aborted) break;
       if (session.status === "completed") break;
-      const line = await ask(rl);
+      const line = await opts.lines.next("you> ");
       if (line === null) break;
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
@@ -399,7 +432,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
       await driveTurn(trimmed);
     }
   } finally {
-    rl.close();
+    opts.lines.close();
   }
   return session;
 }
@@ -426,14 +459,19 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   );
 
   let approvalChain: Promise<unknown> = Promise.resolve();
+  // Created once the runtime is up (a failed boot must not leave stdin
+  // open); approvals only arrive during a turn, after that.
+  let stdinLines: StdinLineQueue | null = null;
 
   // The hint only applies when a transport failure means "local llama is
   // down" — i.e. the active text route IS the local server. On a cloud
   // route the same category points at the provider, not at llama.
-  const llamaHint =
-    resolveLlmConfig(config).activeTextProvider === "local-llama"
-      ? formatLlamaUnreachableHint(config.localModels.url)
-      : null;
+  const onLocalRoute =
+    resolveLlmConfig(config).activeTextProvider === "local-llama";
+  const llamaHint = onLocalRoute
+    ? formatLlamaUnreachableHint(config.localModels.url)
+    : null;
+  const llamaUrl = onLocalRoute ? config.localModels.url : null;
   const hintShown = { value: false };
 
   const runtime = await createAgentRuntime({
@@ -446,21 +484,45 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         // `eventHook` argument of `runTurn` (see `driveTurn`). This
         // global handler only feeds the diagnostic stderr stream so
         // the operator can watch the macro-turn lifecycle.
-        const line = formatAgentEvent(event, { llamaHint, hintShown });
+        const line = formatAgentEvent(event, {
+          llamaHint,
+          llamaUrl,
+          hintShown,
+        });
         if (line) process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {
-        approvalChain = approvalChain.then(async () => {
-          const answer = await promptApproval(request);
-          runtime.approvals.resolve({
-            approvalId: request.approvalId,
-            approved: answer.approved,
-            // No reason on a deny: it would reach the model as the
-            // user's own words (see `ApprovalDecision.reason`).
-            ...(answer.approved ? { reason: "cli-approved" } : {}),
-            ...(answer.grant ? { grant: answer.grant } : {}),
+        // A prompt that fails is a refusal, and the chain never stays
+        // rejected: a rejected chain would skip every later approval and
+        // leave its request unresolved, hanging the turn (ATO-802).
+        approvalChain = approvalChain
+          .then(async () => {
+            let answer: CliApprovalAnswer;
+            try {
+              answer =
+                stdinLines === null
+                  ? { approved: false }
+                  : await promptApproval(request, stdinLines);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              process.stderr.write(
+                `\n  approval prompt failed (${msg}); denied\n`,
+              );
+              answer = { approved: false };
+            }
+            runtime.approvals.resolve({
+              approvalId: request.approvalId,
+              approved: answer.approved,
+              // No reason on a deny: it would reach the model as the
+              // user's own words (see `ApprovalDecision.reason`).
+              ...(answer.approved ? { reason: "cli-approved" } : {}),
+              ...(answer.grant ? { grant: answer.grant } : {}),
+            });
+          })
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            process.stderr.write(`approval could not be resolved: ${msg}\n`);
           });
-        });
       },
       onChannelStatus: (status) => {
         const suffix =
@@ -494,6 +556,11 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   let exitCode = 0;
   try {
     const session = runtime.createSession();
+    stdinLines = createStdinLineQueue({
+      input: process.stdin,
+      output: process.stderr,
+      terminal: process.stdin.isTTY === true,
+    });
     const finalSession = await runChatLoop({
       runtime,
       initialSession: session,
@@ -501,6 +568,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       // (the leg length) made every task stop at the first leg.
       ...(parsed.maxSteps === null ? {} : { maxSteps: parsed.maxSteps }),
       controller,
+      lines: stdinLines,
     });
     runtime.sessionStore.save(finalSession);
     process.stderr.write(
@@ -528,6 +596,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
     process.stderr.write(`fatal: ${msg}\n`);
     exitCode = 1;
   } finally {
+    stdinLines?.close();
     process.off("SIGINT", onSignal);
     process.off("SIGTERM", onSignal);
     await runtime.shutdown();

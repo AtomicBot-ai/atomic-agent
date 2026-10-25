@@ -29,6 +29,8 @@ export interface LocalModelPick {
   uncensored: boolean;
   /** The catalog's warning label for the row, e.g. "Use at your own risk". */
   tag?: string;
+  /** What an uncensored model is, in one sentence; shown instead of the description. */
+  note?: string;
 }
 
 /**
@@ -61,6 +63,7 @@ export function buildLocalModelPicks(
     // show; the marketing tags ("New", "Recommended") stay off this
     // screen — the picker computes its own recommendation from RAM.
     tag: def.uncensored === true ? def.tag : undefined,
+    ...(def.uncensored === true && def.note !== undefined ? { note: def.note } : {}),
   }));
 }
 

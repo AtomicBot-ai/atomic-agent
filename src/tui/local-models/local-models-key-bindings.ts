@@ -6,6 +6,7 @@ import { handleLocalModelsHfKey } from "./local-models-hf-keys.js";
 import { handleNotifyPromptKey } from "./local-models-notify-keys.js";
 import {
   resolveRowAt,
+  showsCoreFailureNotice,
   type EmbeddingModelRow,
   type LocalModelRow,
   type LocalModelsPanelState,
@@ -80,6 +81,15 @@ export function handleLocalModelsTabKey(
       dispatch({ type: "local_models_embedding_remove_confirm_closed" });
       return true;
     }
+    return true;
+  }
+
+  // Atomic Core could not be installed or started: R downloads it again.
+  // That is the only action the notice offers; every other key, L (logs)
+  // included, keeps its normal meaning.
+  if (panel.mode === "list" && showsCoreFailureNotice(panel) && input === "R") {
+    if (callbacks.onLocalModelsCoreRetryRequested) callbacks.onLocalModelsCoreRetryRequested();
+    else callbacks.onLocalModelsBackendPullRequested?.();
     return true;
   }
 

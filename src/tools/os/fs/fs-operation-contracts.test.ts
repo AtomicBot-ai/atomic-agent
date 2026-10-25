@@ -14,6 +14,7 @@ import { OS_FS_PATCH_CONTRACT } from "./fs-patch-contract.js";
 import { OS_FS_TRASH_CONTRACT, parseTrashArgs } from "./fs-trash-contract.js";
 import { OS_FS_RESTORE_CONTRACT, parseRestoreArgs } from "./fs-restore-contract.js";
 import { OS_FS_LOCATE_PROJECT_CONTRACT } from "./fs-locate-project-contract.js";
+import { OS_FS_MOVE_CONTRACT } from "./fs-move-contract.js";
 import { osFsGlobTool } from "./fs-glob.js";
 import { buildOsFsGrepTool } from "./fs-grep.js";
 import { osFsWatchTool } from "./fs-watch.js";
@@ -22,6 +23,7 @@ import { buildOsFsPatchTool } from "./fs-patch.js";
 import { buildOsFsTrashTool } from "./fs-trash.js";
 import { buildOsFsRestoreTool } from "./fs-restore.js";
 import { buildOsFsLocateProjectTool } from "./fs-locate-project.js";
+import { buildOsFsMoveTool } from "./fs-move.js";
 
 function unusedApproval(): FsDangerousToolOptions {
   return {
@@ -43,6 +45,7 @@ const projections = [
   [OS_FS_TRASH_CONTRACT, buildOsFsTrashTool(unusedApproval())],
   [OS_FS_RESTORE_CONTRACT, buildOsFsRestoreTool(unusedApproval())],
   [OS_FS_LOCATE_PROJECT_CONTRACT, buildOsFsLocateProjectTool({ listRecentSessions: () => [], projectRoots: [] })],
+  [OS_FS_MOVE_CONTRACT, buildOsFsMoveTool(unusedApproval())],
 ] as const;
 
 describe("filesystem operation metadata projections", () => {

@@ -3,10 +3,11 @@
  *
  * The reply text goes first through the ordinary `sendOutbound` path;
  * the files follow, one message each, through `api.sendFile` — the
- * grammy adapter's thin wrapper over `sendPhoto` / `sendDocument`.
- * Images that fit Telegram's photo limits go as photos so they render
- * inline; everything else (and any image Telegram rejects as a photo)
- * goes as a document, which preserves the bytes exactly.
+ * grammy adapter's thin wrapper over `sendPhoto` / `sendVideo` /
+ * `sendDocument`. Images that fit Telegram's photo limits go as photos
+ * and MP4 clips (`video.generate`) as videos, so they show inline;
+ * everything else (and any photo or video Telegram rejects) goes as a
+ * document, which preserves the bytes exactly.
  *
  * Nothing here throws: every file resolves to `sent` or to a `failed`
  * entry with a reason, and the caller posts one plain-text notice per
@@ -27,7 +28,7 @@ export const TELEGRAM_PHOTO_UPLOAD_LIMIT_BYTES = 10 * 1024 * 1024;
 /** Bot API ceiling for a file uploaded with `sendDocument`. */
 export const TELEGRAM_DOCUMENT_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024;
 
-export type OutboundFileKind = "photo" | "document";
+export type OutboundFileKind = "photo" | "video" | "document";
 
 /** What the adapter is asked to send. */
 export interface OutboundFile {
@@ -59,8 +60,11 @@ const PHOTO_EXTENSIONS: ReadonlySet<string> = new Set([
   ".webp",
 ]);
 
+/** Extensions Telegram plays inline with `sendVideo` (it documents MPEG4 only). */
+const VIDEO_EXTENSIONS: ReadonlySet<string> = new Set([".mp4"]);
+
 /**
- * Photo when the extension says image and the size fits the photo
+ * Video for an MP4. Photo when the extension says image and the size fits the photo
  * ceiling; document otherwise. Telegram re-encodes photos, so a file
  * whose exact bytes matter should not be an image — but an image that
  * arrives as a document does not render inline, and for a screenshot
@@ -70,10 +74,11 @@ export function classifyOutboundFile(
   path: string,
   bytes: number,
 ): OutboundFileKind {
+  const ext = extname(path).toLowerCase();
+  // `sendVideo` shares the 50 MB upload ceiling the caller already enforces.
+  if (VIDEO_EXTENSIONS.has(ext)) return "video";
   if (bytes > TELEGRAM_PHOTO_UPLOAD_LIMIT_BYTES) return "document";
-  return PHOTO_EXTENSIONS.has(extname(path).toLowerCase())
-    ? "photo"
-    : "document";
+  return PHOTO_EXTENSIONS.has(ext) ? "photo" : "document";
 }
 
 export async function sendAttachments(
@@ -118,7 +123,7 @@ export async function sendAttachments(
       result.sent += 1;
       continue;
     } catch (err) {
-      if (kind !== "photo") {
+      if (kind === "document") {
         result.failed.push({ path, reason: scrubErrorMessage(err) });
         opts.logger?.warn("telegram: attachment send failed", {
           chatId: opts.chatId,
@@ -130,8 +135,9 @@ export async function sendAttachments(
       }
       // Telegram rejects photos for reasons unrelated to the bytes
       // (odd dimensions, a large side ratio, a PNG it will not
-      // re-encode). The same file goes through as a document.
-      opts.logger?.warn("telegram: photo send rejected, retrying as document", {
+      // re-encode), and a video it cannot play the same way. The same
+      // file goes through as a document.
+      opts.logger?.warn(`telegram: ${kind} send rejected, retrying as document`, {
         chatId: opts.chatId,
         path,
         error: scrubErrorMessage(err),

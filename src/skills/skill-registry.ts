@@ -5,11 +5,31 @@ import { loadSkills, type LoadSkillsOptions } from "./skill-loader.js";
 
 export type SkillChangeListener = (registry: SkillRegistry) => void;
 
+/** How many installed names a not-found message lists before truncating. */
+const NOT_FOUND_NAME_LIMIT = 20;
+
+/**
+ * Thrown when a skill is missing from the filtered (enabled) view. When
+ * `installed` is given, the message names the enabled skills so a model
+ * that guessed a wrong name (e.g. `skill.view("hobby_builder")`) can
+ * correct itself instead of retrying the same call. The message always
+ * starts with `skill not installed: <name>`.
+ */
 export class SkillNotFoundError extends Error {
-  constructor(name: string) {
-    super(`skill not installed: ${name}`);
+  constructor(name: string, installed?: readonly string[]) {
+    super(`skill not installed: ${name}${describeInstalled(installed)}`);
     this.name = "SkillNotFoundError";
   }
+}
+
+function describeInstalled(installed: readonly string[] | undefined): string {
+  if (installed === undefined) return "";
+  if (installed.length === 0) return ". No skills are installed.";
+  const sorted = [...installed].sort((a, b) => a.localeCompare(b));
+  const shown = sorted.slice(0, NOT_FOUND_NAME_LIMIT).join(", ");
+  const rest = sorted.length - NOT_FOUND_NAME_LIMIT;
+  const more = rest > 0 ? `, ... (+${rest} more)` : "";
+  return `. Installed skills: ${shown}${more}`;
 }
 
 /**
@@ -99,7 +119,12 @@ export class SkillRegistry {
 
   get(name: string): SkillRecord {
     const record = this.records.get(name);
-    if (!record) throw new SkillNotFoundError(name);
+    if (!record) {
+      throw new SkillNotFoundError(
+        name,
+        this.list().map((s) => s.manifest.name),
+      );
+    }
     return record;
   }
 

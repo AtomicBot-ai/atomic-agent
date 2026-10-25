@@ -2,7 +2,10 @@ import { getConfig, type RunModeName } from "../../config/index.js";
 import { usesExternalCliAuth } from "../../config/provider-auth-mode.js";
 import { resolveLlmProviderApiKey } from "../../config/resolve-llm-api-key.js";
 import { LOCAL_PROVIDER_KIND } from "../../config/llm-run-mode-config.js";
-import { resolveLlmConfig } from "../../llm/provider/registry/index.js";
+import {
+  entryHasNoChatModel,
+  resolveLlmConfig,
+} from "../../llm/provider/registry/index.js";
 import type { ResolvedLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import {
   describeRunMode,
@@ -65,8 +68,9 @@ export class RunModeOrchestrator {
 
   async setMode(
     mode: RunModeName,
-    opts: RunModeChangeOptions = {},
+    opts: RunModeChangeOptions & { stillWanted?: () => boolean } = {},
   ): Promise<void> {
+    if (opts.stillWanted && !opts.stillWanted()) return;
     const config = getConfig();
     const resolved = resolveLlmConfig(config);
     const rm = resolveRunMode(resolved);
@@ -106,7 +110,8 @@ export class RunModeOrchestrator {
       const workerLeg =
         opts.fusion?.workerProvider ??
         (rm.workerProviderId !== leg ? rm.workerProviderId : null) ??
-        resolved.providers.find((p) => p.id !== leg)?.id ??
+        resolved.providers.find((p) => p.id !== leg && !entryHasNoChatModel(p))
+          ?.id ??
         null;
       if (workerLeg === null) {
         this.refuse(
@@ -144,6 +149,21 @@ export class RunModeOrchestrator {
       leg = rm.workerProviderId ?? "local-llama";
     }
 
+    // Before the write, not after: `providerRegistry.setActive` refuses
+    // a provider that has no chat model (ATO-386), and persisting first
+    // would leave the config naming it active for the next boot.
+    const legs = mode === "fusion" ? [leg, fusion?.workerProvider] : [leg];
+    const chatless = legs.find((id) => {
+      const entry = resolved.providers.find((p) => p.id === id);
+      return entry !== undefined && entryHasNoChatModel(entry);
+    });
+    if (chatless !== undefined) {
+      this.refuse(
+        `"${chatless}" has no chat model, so it cannot run ${mode} mode. Pin a chat model for it first.`,
+      );
+      return;
+    }
+
     try {
       setRunModeInConfig({
         mode,
@@ -169,6 +189,7 @@ export class RunModeOrchestrator {
         }`,
       });
     }
+    if (opts.stillWanted && !opts.stillWanted()) return;
     this.deps.providers.refresh();
     if (mode !== "local") void this.deps.providers.ensureInlineModels(leg);
     const now = this.current();
@@ -272,8 +293,9 @@ export class RunModeOrchestrator {
    * the pre-flight has already said whether one is usable.
    */
   private firstUsableCloudProvider(resolved: ResolvedLlmConfig): string | null {
+    // An embedding-only entry is not a candidate: it cannot answer chat.
     const cloud = resolved.providers.filter(
-      (p) => p.kind !== LOCAL_PROVIDER_KIND,
+      (p) => p.kind !== LOCAL_PROVIDER_KIND && !entryHasNoChatModel(p),
     );
     const keyed = cloud.find(
       (p) => Boolean(resolveLlmProviderApiKey(p)) || usesExternalCliAuth(p),

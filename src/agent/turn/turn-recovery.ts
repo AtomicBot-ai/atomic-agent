@@ -2,7 +2,7 @@ import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
-import { CancelledError, LlamaServerError, LlmFailure, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
+import { CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
 import type { LlmFailureCategory, TruncationDetail } from "../../llm/index.js";
 import { readFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../../llm/fallback/failed-links.js";
@@ -10,7 +10,7 @@ import { readErrnoCode } from "../../llm/errno-code.js";
 import { readProviderErrorVerdict } from "../../llm/reliability/provider-error-verdict.js";
 import { classifyProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-rejection-recovery.js";
-import { composeTruncationNotice, planTruncationRetry, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
+import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
 import { PARSE_RECOVERY_BUDGET, composeParseFailureNotice, isRecoverableParseFailure } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./empty-completion-recovery.js";
 import { FINALIZATION_REQUEST_DEADLINE_MS, type RequestDeadline } from "../request-deadline.js";
@@ -19,7 +19,7 @@ import type { TurnLoopState } from "./turn-state.js";
 
 export type TurnRecoveryDependencies = Pick<
   AgentLoopDependencies,
-  "contextWindow" | "onContextWindowObserved" | "onEvent" | "logger" | "metrics"
+  "contextWindow" | "onContextWindowObserved" | "onEvent" | "logger" | "metrics" | "localEngineState"
 >;
 
 export interface TurnRecoveryContext {
@@ -35,6 +35,8 @@ export interface TurnRecoveryContext {
   durationCeilingMs: number;
   providerWaitCfg: { enabled: boolean; maxWaitMs: number };
   recoveryStepAvailable: (stepIndex: number) => boolean;
+  /** The model mode serving the step; absent (legacy wiring) reads as `local`. */
+  modelMode?: "local" | "cloud";
 }
 
 export type TurnRecoveryDecision =
@@ -55,6 +57,7 @@ export function recoverTurnStep(
     effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
     durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
   } = context;
+  const modelMode = context.modelMode ?? "local";
   requestDeadline.dispose();
   let runError: Error | null = err instanceof Error ? err : new Error(String(err));
   let category = classifyFailure(err);
@@ -125,17 +128,22 @@ export function recoverTurnStep(
     return { kind: "stop" };
   }
   // The reply was cut short. Retry the step with a request the wall
-  // does not apply to — a larger cap, or a prompt packed to the
-  // window the server just revealed. Same replay argument as the
-  // outage wait below: the completion failed before any tool ran.
-  // Ahead of the finalization guard on purpose: the summary step
-  // is the one a reasoning model is likeliest to think past, and
-  // one bounded retry that replays nothing is not "more work".
+  // does not apply to: a notice asking for less, plus a larger cap, a
+  // held cap or a prompt packed to the window the server just
+  // revealed. Same replay argument as the outage wait below: the
+  // completion failed before any tool ran. Ahead of the finalization
+  // guard on purpose: the summary step is the one a reasoning model is
+  // likeliest to think past, and a bounded retry that replays nothing
+  // is not "more work".
+  const stepTruncationAttempts =
+    turn.truncationRetry?.stepIndex === i ? turn.truncationRetry.attempts : 0;
   const truncationPlan: TruncationRetryPlan | null = cancelled
     ? null
     : planTruncationRetry({
         error: err,
-        alreadyRetried: turn.truncationRetry?.stepIndex === i,
+        stepAttempts: stepTruncationAttempts,
+        turnAttempts: turn.truncationRetries,
+        modelMode,
         contextWindow: deps.contextWindow?.() ?? null,
         fallbackMaxTokens: getConfig().localModels.completionMaxTokens,
         canFitWindow: deps.onContextWindowObserved !== undefined,
@@ -143,13 +151,25 @@ export function recoverTurnStep(
   if (truncationPlan !== null) {
     const detail: TruncationDetail = truncationPlan.detail;
     const retry: TruncationRetry = truncationPlan.retry;
+    const retryCap = truncationRetryMaxTokens(retry);
     turn.truncationRetry = {
       stepIndex: i,
-      original: runError,
-      ...(retry.kind === "raise_cap"
-        ? { maxTokens: retry.maxTokens }
+      attempts: stepTruncationAttempts + 1,
+      // The step's first cut: the failure reported if the provider
+      // refuses the retry's cap.
+      original:
+        stepTruncationAttempts > 0 && turn.truncationRetry !== null
+          ? turn.truncationRetry.original
+          : runError,
+      ...(retryCap !== undefined ? { maxTokens: retryCap } : {}),
+      // A held cap is one the provider already accepted: a size refusal
+      // of the retry is about the prompt, and the repack below may run.
+      ...(retry.kind === "raise_cap" ||
+      (retryCap !== undefined && detail.requestedMaxTokens === undefined)
+        ? { raised: true as const }
         : {}),
     };
+    turn.truncationRetries += 1;
     if (retry.kind === "fit_window") {
       deps.onContextWindowObserved?.(retry.contextWindow);
     }
@@ -175,6 +195,7 @@ export function recoverTurnStep(
       ...(detail.requestedMaxTokens !== undefined
         ? { requestedMaxTokens: detail.requestedMaxTokens }
         : {}),
+      ...(detail.repetitive === true ? { repetitive: true as const } : {}),
       retry,
     });
     deps.logger?.warn("completion truncated; retrying the step", {
@@ -185,10 +206,14 @@ export function recoverTurnStep(
       promptTokens: detail.promptTokens,
       // `null` in the log: the request carried no cap at all.
       requestedMaxTokens: detail.requestedMaxTokens ?? null,
+      repetitive: detail.repetitive === true,
       retry: retry.kind,
-      ...(retry.kind === "raise_cap"
-        ? { maxTokens: retry.maxTokens }
-        : { contextWindow: retry.contextWindow }),
+      attempt: stepTruncationAttempts + 1,
+      ...(retryCap !== undefined
+        ? { maxTokens: retryCap }
+        : retry.kind === "fit_window"
+          ? { contextWindow: retry.contextWindow }
+          : {}),
     });
     runError = null;
     return { kind: "retry_same" };
@@ -365,7 +390,7 @@ export function recoverTurnStep(
         alreadyRetried: turn.sizeRepackRetry?.stepIndex === i,
         raisedCapRefused:
           turn.truncationRetry?.stepIndex === i &&
-          turn.truncationRetry.maxTokens !== undefined,
+          turn.truncationRetry.raised === true,
         transport: effectiveTransport,
         promptTokens: turn.lastPromptTokens,
         contextWindow: deps.contextWindow?.() ?? null,
@@ -455,10 +480,59 @@ export function recoverTurnStep(
   // buys a second helping of the same silence — see
   // `isOwnLlamaDeadlineExpiry`.
   const retryHint = verdict?.kind === "retry_after" ? verdict : null;
+  // Before parking: is the thing we would wait for coming back at all?
+  // A refused connection to the managed local model whose process is
+  // certainly gone (pid dead, or none recorded, and no start, load or
+  // engine install under way) is not an outage that ends by itself: the
+  // operator would watch the whole wait budget run out before being told
+  // (ATO-772). Such a turn ends with the reason as data once a short
+  // grace has passed with the process still gone. The grace is for the
+  // restart watchers (the TUI's and the desktop's daemon supervisor,
+  // `localModels.managed.autoRestart`): they bring back a model that
+  // crashed under them, the desktop one as soon as it sees the turn's
+  // `provider_waiting`, and once their restart is under way the engine
+  // reads alive (or unknown, under Core's engine lock) and the turn waits
+  // for it as before. While the process is gone the retries come every
+  // couple of seconds, so the end, or the recovery, is seen at once.
+  // An engine that is alive or whose state is unknown keeps the wait
+  // below, unchanged; so does every other link, an external server
+  // included, because the runtime answers `unknown` for them.
+  let localEngineGone = false;
+  let localEngineDown = false;
   if (
     category === "transport" &&
     !cancelled &&
     !creditRefused &&
+    retryHint === null &&
+    deps.localEngineState !== undefined &&
+    noAnswerAtAll(err) &&
+    isWaitableOutage(err)
+  ) {
+    const failingLink = readFailingLink(err);
+    localEngineGone = deps.localEngineState(failingLink) === "dead";
+    const graceSpent =
+      !providerWaitCfg.enabled ||
+      turn.outageWaitedMs >=
+        Math.min(LOCAL_ENGINE_RESTART_GRACE_MS, providerWaitCfg.maxWaitMs);
+    if (localEngineGone && graceSpent) {
+      localEngineDown = true;
+      const causeCode = readErrnoCode(err);
+      deps.logger?.warn("local model is not running; ending the turn instead of waiting", {
+        sessionId: state.id,
+        stepIndex: i,
+        waitedMs: turn.outageWaitedMs,
+        error: runError.message,
+        ...(causeCode !== undefined ? { causeCode } : {}),
+        ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+      });
+      runError = new LocalEngineDownError(failingLink ?? "local-llama", err);
+    }
+  }
+  if (
+    category === "transport" &&
+    !cancelled &&
+    !creditRefused &&
+    !localEngineDown &&
     providerWaitCfg.enabled &&
     (isWaitableOutage(err) || retryHint !== null) &&
     turn.outageWaitedMs < providerWaitCfg.maxWaitMs
@@ -473,6 +547,9 @@ export function recoverTurnStep(
       // Never sleep past the budget: the last wait ends exactly at
       // it, so the operator's configured ceiling is the truth.
       Math.max(1, providerWaitCfg.maxWaitMs - turn.outageWaitedMs),
+      // A local model whose process is gone is looked at again soon:
+      // either a restart brings it back or the grace above runs out.
+      localEngineGone ? LOCAL_ENGINE_GONE_RETRY_MS : Number.POSITIVE_INFINITY,
     );
     turn.outageAttempts += 1;
     turn.awaitingRecovery = true;
@@ -515,6 +592,7 @@ export function recoverTurnStep(
   // with the truncation that started it, which names the knob.
   if (
     turn.truncationRetry?.stepIndex === i &&
+    turn.truncationRetry.raised === true &&
     turn.truncationRetry.maxTokens !== undefined &&
     isRequestSizeRejection(err)
   ) {
@@ -551,6 +629,7 @@ export function recoverTurnStep(
     type: "loop_failed",
     error: runError,
     category,
+    outage: { waitedMs: turn.outageWaitedMs, attempts: turn.outageAttempts },
   });
   deps.metrics?.recordLlmFailure({
     sessionId: state.id,
@@ -597,6 +676,15 @@ function isWaitableOutage(err: unknown): boolean {
   }
   if (err.status === null) return true;
   return err.status >= 500 || err.status === 408 || err.status === 429;
+}
+
+/**
+ * No HTTP response came back at all (a refused or reset connection, an
+ * untyped socket failure). Only that is evidence the model process may
+ * be gone: a status means some server answered.
+ */
+function noAnswerAtAll(err: unknown): boolean {
+  return !(err instanceof TransportError) || err.status === null;
 }
 
 /**
@@ -689,6 +777,17 @@ function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
   }
   return false;
 }
+
+/**
+ * How long a turn keeps waiting on a managed local model whose process is
+ * gone before it ends with `LocalEngineDownError` (ATO-772). Long enough
+ * for a restart watcher to begin bringing a crashed model back: the TUI's
+ * supervisor restarts after two dead looks three seconds apart, the
+ * desktop's on the turn's first `provider_waiting`.
+ */
+export const LOCAL_ENGINE_RESTART_GRACE_MS = 8_000;
+/** The retry interval while that process is gone. */
+const LOCAL_ENGINE_GONE_RETRY_MS = 2_000;
 
 /** First backoff after the provider stops answering. */
 const PROVIDER_WAIT_BASE_MS = 2_000;

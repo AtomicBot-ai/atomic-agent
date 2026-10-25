@@ -16,6 +16,7 @@ import { SkillsHubList } from "./skills-hub-list.js";
 import { SkillsHubCard } from "./skills-hub-card.js";
 import { SkillsInstallConfirm } from "./skills-install-confirm.js";
 import { SkillsRemoveConfirm } from "./skills-remove-confirm.js";
+import { SkillsControls } from "./skills-controls.js";
 
 export interface SkillsPanelProps {
   panel: SkillsPanelState;
@@ -69,6 +70,7 @@ export function SkillsPanel(props: SkillsPanelProps): ReactElement {
   }
   return (
     <Box flexDirection="column">
+      {panel.workspace ? <SkillsControls panel={panel} /> : null}
       <FilterBar
         filter={panel.filterStatus}
         visibleCount={visibleRows.length}

@@ -134,7 +134,10 @@ function moveSwitch(
 ): void {
   // The walk visits the controls the strip draws for this backend —
   // on the managed-local route that is backend ⇄ model, no provider.
-  const kinds = composerSwitchKindsFor(selectComposerBackend(state));
+  const kinds = composerSwitchKindsFor(
+    selectComposerBackend(state),
+    state.localModelsPanel.backend.atomicCoreChoice === true,
+  );
   const next = neighbourSwitchKind(kind, delta, kinds);
   if (next === kind) return;
   dispatch({ type: "composer_switch_opened", kind: next });

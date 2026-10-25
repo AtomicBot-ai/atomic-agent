@@ -15,6 +15,7 @@ export {
   captureAnalyticsDisabled,
   captureAppInstalled,
   captureAppOpened,
+  captureLocalEngineFailed,
   captureMessageSent,
   captureModelConfigured,
   captureOnboardingStep,
@@ -22,8 +23,11 @@ export {
 export type {
   AnalyticsDisabledVia,
   AppInstalledContext,
+  LocalEngine,
+  LocalEngineFailedContext,
   MessageEventContext,
 } from "./analytics-events.js";
+export { reportLocalEngineFailed } from "./report-local-engine-failed.js";
 export {
   parseSurface,
   resolveSurface,
@@ -65,6 +69,6 @@ export type {
   RuntimeTelemetry,
   RuntimeTelemetryFactories,
 } from "./toggle-runtime-telemetry.js";
-export { TurnUsageMeter } from "./turn-usage-meter.js";
+export { TurnUsageMeter, completionUsageForTurn } from "./turn-usage-meter.js";
 export type { TurnUsageSnapshot } from "./turn-usage-meter.js";
 export { sanitizeModelAlias } from "./sanitize-model-alias.js";

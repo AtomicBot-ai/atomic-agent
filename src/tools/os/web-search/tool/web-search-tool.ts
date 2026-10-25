@@ -14,6 +14,7 @@ import {
   createPersistentSearchCache,
   createSearchCache,
 } from "../transport/search-cache.js";
+import { WebSearchUnavailableError } from "../web-search-errors.js";
 import type { WebSearchResult } from "../web-search-provider.js";
 import { checkMissingSearchKey } from "./warn-missing-search-key.js";
 
@@ -78,7 +79,8 @@ export function buildOsWebSearchTool(
   // Emitted once at construction, not per search: a primary that is skipped
   // for want of its key redirects every subsequent query, and one line at
   // startup is what turns that from invisible into diagnosable (#179).
-  // Keyless Exa is not one of them: it is skipped by design (ATO-120).
+  // Keyless Exa is not one of them: it runs on its free tier, and when
+  // that runs out the result itself asks for a key (ATO-327).
   const missingKey = checkMissingSearchKey({
     config: options.config,
     env: options.env ?? process.env,
@@ -93,11 +95,13 @@ export function buildOsWebSearchTool(
     name: TOOL_NAME,
     description:
       "Search the web through the configured provider and return compact " +
-      "title/url/snippet results. Default provider is Exa when its " +
-      "environment API key is set, DuckDuckGo otherwise and as the " +
-      "fallback; SearXNG is keyless, Brave needs an environment API key. " +
+      "title/url/snippet results. Default provider is Exa (its free " +
+      "keyless tier, or an environment API key when set), with " +
+      "DuckDuckGo as the fallback; SearXNG is keyless, Brave needs an " +
+      "environment API key. " +
       "Use os.web.fetch to read a chosen result page.",
     readonly: true,
+    untrustedOutput: "web search results",
     async run(rawArgs, ctx) {
       const cfg = options.config.web.search;
       if (!cfg.enabled) {
@@ -141,6 +145,11 @@ export function buildOsWebSearchTool(
               ...(outcome.degraded.length > 0
                 ? { degraded: outcome.degraded }
                 : {}),
+              // Keyless Exa hit its free limit; a host renders a key card
+              // from this (ATO-327, `WebSearchKeyRequired`).
+              ...(outcome.keyRequired
+                ? { keyRequired: outcome.keyRequired }
+                : {}),
             },
           },
           {
@@ -149,15 +158,27 @@ export function buildOsWebSearchTool(
           },
         );
       } catch (err) {
-        return compressToolResult({
-          tool: TOOL_NAME,
-          status: "error",
-          output: (err as Error).message,
-          details: {
-            provider: cfg.provider,
-            query: args.query,
+        // Every provider failed: the message is a per-provider report plus
+        // one action (ATO-325), longer than the default 400-char summary.
+        const unavailable =
+          err instanceof WebSearchUnavailableError ? err : undefined;
+        return compressToolResult(
+          {
+            tool: TOOL_NAME,
+            status: "error",
+            output: (err as Error).message,
+            details: {
+              provider: cfg.provider,
+              query: args.query,
+              ...(unavailable ? { failures: unavailable.failures } : {}),
+              // `WebSearchKeyRequired`: a free Exa key would fix this.
+              ...(unavailable?.keyRequired
+                ? { keyRequired: unavailable.keyRequired }
+                : {}),
+            },
           },
-        });
+          unavailable ? { maxSummaryLength: 2_000 } : {},
+        );
       }
     },
   };

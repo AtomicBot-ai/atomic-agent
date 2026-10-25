@@ -362,6 +362,7 @@ export function loadConfig(): AtomicAgentConfig {
         100_000,
       ),
       disabled: user.skills.disabled,
+      cloudWorkspaces: user.skills.cloudWorkspaces,
       taps: user.skills.taps,
       clawhub: user.skills.clawhub,
     },
@@ -384,6 +385,7 @@ export function loadConfig(): AtomicAgentConfig {
         defaultTimeoutMs: user.tools.shell.defaultTimeoutMs,
         jobMaxMs: user.tools.shell.jobMaxMs,
         maxJobs: user.tools.shell.maxJobs,
+        envPassthrough: [...user.tools.shell.envPassthrough],
       },
     },
     log: { level: logLevel },
@@ -509,6 +511,7 @@ export function loadConfig(): AtomicAgentConfig {
         fts5Weight: user.memory.embeddings.fts5Weight,
         vectorWeight: user.memory.embeddings.vectorWeight,
         bruteForceCeiling: user.memory.embeddings.bruteForceCeiling,
+        backfill: user.memory.embeddings.backfill,
       },
       links: {
         enabled: user.memory.links.enabled,

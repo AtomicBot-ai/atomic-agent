@@ -3,20 +3,21 @@
 Status: current
 Owner: src/config/
 
-Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 75. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
+Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
 
 ## version
 
-- `version` (default `75`).
+- `version` (default `78`).
 
 ## localModels
 
-- `localModels.url` (default `"http://127.0.0.1:8080"`).
+- `localModels.url` (default `"http://127.0.0.1:9931"`, llama-server's own default port since llama.cpp v0.7.0; Docker images still listen on 8080).
 - `localModels.mode` (default `"external"`).
 - `localModels.completionMaxTokens` (default `16384`).
 - `localModels.useServerTemplate` (default `"auto"`).
 - `localModels.thinking` (default `"auto"`).
-- `localModels.reasoningBudgetTokens` (default `1500`).
+- `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced up to 499 by llama.cpp, see #600).
+- `localModels.managed.engine` (default `"atomic-core"`).
 - `localModels.managed.modelId` (default `null`).
 - `localModels.managed.port` (default `19091`).
 - `localModels.managed.dataDirOverride` (default `null`).
@@ -90,6 +91,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 75.
 - `tools.shell.defaultTimeoutMs` (default `600000`).
 - `tools.shell.jobMaxMs` (default `3600000`).
 - `tools.shell.maxJobs` (default `3`).
+- `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
 
 ## sessions
 
@@ -137,7 +139,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 75.
 - `memory.embeddings.enabled` (default `false`).
 - `memory.embeddings.fts5Weight` (default `0.5`).
 - `memory.embeddings.vectorWeight` (default `0.5`).
-- `memory.embeddings.bruteForceCeiling` (default `200`).
+- `memory.embeddings.bruteForceCeiling` (default `2000`).
+- `memory.embeddings.backfill` (default `true`).
 - `memory.links.enabled` (default `true`).
 - `memory.links.autoGenerate` (default `true`).
 - `memory.links.expansionDepth` (default `1`).

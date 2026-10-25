@@ -20,6 +20,7 @@ export { REPAIR_MAX_TOKENS } from "./step/step-parsing.js";
 import { prepareStepInference } from "./step/step-inference.js";
 
 import { executeBatch, toBatchInputs } from "./dispatch/batch-scheduler.js";
+import { toolLogFields } from "./tool-log-fields.js";
 
 import { ModelError, detectModelFailure } from "../llm/index.js";
 // The detector moved to the llm layer so the stream consumer can share its
@@ -208,7 +209,8 @@ async function executeStepInner(
   // Names of skills already loaded this session: a `skill.view` for any of
   // these is short-circuited inside `executeBatch` with a terse pointer
   // instead of re-reading and re-dumping the body.
-  const loadedSkillNames = new Set(ctx.session.loadedSkills.map((s) => s.name));
+  const servedCloud = (completion.servedModelMode ?? deps.modelMode)?.mode === "cloud";
+  const loadedSkillNames = new Set((servedCloud ? ctx.session.cloudLoadedSkills ?? ctx.session.loadedSkills : ctx.session.loadedSkills).map((s) => s.name));
   // The paths the user named so far, for the read scope: re-read from the
   // transcript every step so a path named mid-turn (steering) counts on
   // the next call, and nothing the model wrote ever widens it.
@@ -233,6 +235,7 @@ async function executeStepInner(
         ? executeCallsInOrder
         : executeBatch;
   const batchOutcome = await runBatch(inputs, deps.registry, {
+    ...(ctx.workspace ? { workspaceSkills: ctx.workspace.skills } : {}),
     ...(completion.servedModelMode ?? deps.modelMode ? { modelMode: (completion.servedModelMode ?? deps.modelMode)!.mode } : {}),
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
@@ -281,6 +284,7 @@ async function executeStepInner(
         tool: result.tool,
         status: result.status,
         durationMs,
+        ...toolLogFields(inputs[batchIndex]?.call.args, result),
       });
     },
   });
