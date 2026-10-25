@@ -10,6 +10,7 @@
 import { composioIntegration } from "./composio-integration.js";
 import { atomicMailIntegration } from "./atomic-mail-integration.js";
 import { discordIntegration } from "./discord-integration.js";
+import { exaIntegration } from "./exa-integration.js";
 import { githubIntegration } from "./github-integration.js";
 import { telegramIntegration } from "./telegram-integration.js";
 import type { IntegrationDescriptor } from "./integration-descriptor.js";
@@ -22,6 +23,7 @@ export function listIntegrations(): readonly IntegrationDescriptor[] {
     telegramIntegration,
     discordIntegration,
     atomicMailIntegration,
+    exaIntegration,
   ];
 }
 
