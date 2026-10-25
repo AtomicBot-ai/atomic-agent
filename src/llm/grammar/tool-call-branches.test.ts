@@ -107,6 +107,18 @@ describe("os.fs.read and os.fs.write need their required args (ATO-909)", () => 
   });
 });
 
+describe("a shell cmd may start with an escape", () => {
+  it("accepts a cmd opening on an escape and still refuses an empty one", async () => {
+    for (const [id, grammar] of await grammars()) {
+      const g = buildGrammarForTools(grammar, ["os.shell.run"]);
+      expect(gbnfAccepts(g, "root", call("os.shell.run", { cmd: "\\ls -la" })), id).toBe(true);
+      expect(gbnfAccepts(g, "root", call("os.shell.run", { cmd: "\"quoted dir\"/run.sh" })), id).toBe(true);
+      expect(gbnfAccepts(g, "root", call("os.shell.run", { cmd: "" })), id).toBe(false);
+      expect(gbnfAccepts(g, "root", call("os.shell.run", {})), id).toBe(false);
+    }
+  });
+});
+
 describe("per-request narrowing keeps or drops the fs branches", () => {
   it("keeps the branches a request admits and lists them", async () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);

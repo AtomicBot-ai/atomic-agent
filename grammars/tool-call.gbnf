@@ -20,11 +20,11 @@ other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":"
 # args could be `{}`, and small local models took that way out, emitting
 # `{"tool":"os.shell.run","args":{}}` instead of the command they had just
 # planned (Nemotron 3.5 Bolt E4B, 23.10.2026). Here `cmd` comes first and is
-# a non-empty string (its body is `chars`, so a reasoning profile's marker
-# guard still applies); the other keys stay free-form. `tool-name` does not
-# list "os.shell.run".
+# a `required-string` (below: non-empty, may open on an escape such as the
+# alias-skipping `\\ls`, marker guard intact); the other keys stay
+# free-form. `tool-name` does not list "os.shell.run".
 shell-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.shell.run\"" ws "," ws "\"args\"" ws ":" ws shell-args ws "}"
-shell-args ::= "{" ws "\"cmd\"" ws ":" ws "\"" [^"\\\x00-\x1f<|] chars "\"" ( ws "," ws pair )* ws "}"
+shell-args ::= "{" ws "\"cmd\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
 # The same hole, and the same fix, for `os.fs.read` and `os.fs.write`
 # (ATO-909): `{"tool":"os.fs.read","args":{}}` was legal and fails in the
 # tool. Each tool's own check is the bar: read needs a non-empty `path`;
