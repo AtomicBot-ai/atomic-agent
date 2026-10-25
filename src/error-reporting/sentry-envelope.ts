@@ -72,6 +72,8 @@ export function buildEnvelope(
   if (ev.toolTransport) tags.tool_transport = ev.toolTransport;
   if (ev.failureStage) tags.failure_stage = ev.failureStage;
   if (ev.tool) tags.tool = ev.tool;
+  if (ev.toolErrorKind) tags.tool_error_kind = ev.toolErrorKind;
+  if (ev.toolNameClass) tags.tool_name_class = ev.toolNameClass;
   if (ev.transportHost) tags.transport_host = ev.transportHost;
   if (ev.upstreamErrorType) {
     tags.upstream_error_type = ev.upstreamErrorType;
@@ -102,8 +104,10 @@ export function buildEnvelope(
     // is the more specific of the two wherever BOTH are set, and the only
     // wrapper that sets both is `toLlmFailure`'s catch-all, whose `tool`
     // is the useless literal `"unknown"`. The order never costs a real
-    // tool name: `step-executor.ts`'s unregistered-tool throw is the one
-    // `ToolExecutionError` carrying a genuine one, and it passes no cause.
+    // tool name: the `ToolExecutionError`s that carry a genuine one pass
+    // no cause. The unregistered-tool throw is the exception to `tool`:
+    // its name is the model's guess, one new issue per guess, so it
+    // discriminates on a fixed value instead (`discriminatorOf`).
     //
     // Do NOT read that order as "`causeType` is rare". `toLlmFailure`
     // attaches `{ cause }` on every arm it wraps — `CancelledError`,
@@ -129,7 +133,7 @@ export function buildEnvelope(
       "{{ default }}",
       ev.errorType,
       ev.category ?? "",
-      ev.causeType ?? ev.tool ?? ev.reason ?? ev.transportHost ?? "",
+      discriminatorOf(ev),
       ...(ev.upstreamErrorType !== undefined ? [ev.upstreamErrorType] : []),
       topFrame,
     ],
@@ -155,6 +159,19 @@ export function buildEnvelope(
   const payload = JSON.stringify(event);
   const body = `${envelopeHeader}\n${itemHeader}\n${payload}\n`;
   return { eventId, body };
+}
+
+/** Fingerprint element for every unregistered-tool failure. */
+export const UNREGISTERED_TOOL_DISCRIMINATOR = "unregistered_tool";
+
+/**
+ * The fingerprint's extra discriminator (see `buildEnvelope`). A
+ * streak of unregistered tool names is one issue whatever the names
+ * were; every other event keeps the chain it always had.
+ */
+function discriminatorOf(ev: ScrubbedErrorEvent): string {
+  if (ev.toolErrorKind === "unregistered") return UNREGISTERED_TOOL_DISCRIMINATOR;
+  return ev.causeType ?? ev.tool ?? ev.reason ?? ev.transportHost ?? "";
 }
 
 /** A stack frame as Sentry's ingest protocol wants it. */
