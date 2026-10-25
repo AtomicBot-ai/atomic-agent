@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
-import { fullToolResult } from "../../../compressor/result-compressor.js";
+import { compressToolResult, fullToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolContext } from "../../tool-registry.js";
 import {
   looksLikeScriptCode,
+  markRecoveredResult,
   recoverMissingShellCmd,
 } from "./recover-missing-cmd.js";
 import { buildOsShellTool } from "./shell.js";
@@ -121,6 +122,25 @@ function approvingTool() {
   });
   return buildOsShellTool({ approvals: gate, approvalRequired: true });
 }
+
+describe("markRecoveredResult (#901)", () => {
+  it("marks a compressed result without redefining its fixed fullOutput", () => {
+    const compressed = compressToolResult({
+      tool: "os.shell.run",
+      status: "ok",
+      output: "line one\nline two",
+      details: { exitCode: 0 },
+    });
+    const marked = markRecoveredResult(compressed, { cmd: "ls", args: [], shellLine: false });
+    expect(marked.details.recoveredMissingCmd).toBe("argv");
+    expect(marked.summary).toContain("the call had no `cmd`");
+    expect(Object.keys(marked)).not.toContain("fullOutput");
+    const full = fullToolResult(marked);
+    expect(full.summary.startsWith("line one\nline two\n")).toBe(true);
+    expect(full.summary).toContain("the call had no `cmd`");
+    expect(compressed.details.recoveredMissingCmd).toBeUndefined();
+  });
+});
 
 describe("a recovered call still goes through the guard and approval (#901)", () => {
   it("asks for approval with the reconstructed argv, and says so in the reason", async () => {

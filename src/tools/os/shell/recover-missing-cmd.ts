@@ -100,16 +100,26 @@ export function markRecoveredResult(
 ): CompressedToolResult {
   const ran = "exitCode" in result.details || result.details.detached === true;
   const notice = missingCmdNotice(recovered, ran);
-  result.summary = `${result.summary}\n${notice}`;
+  // compressToolResult defines fullOutput as a fixed property, so build a
+  // fresh result (the spread drops the non-enumerable fields) and define them
+  // again, the same way retainToolOutput does.
+  const marked: CompressedToolResult = {
+    ...result,
+    summary: `${result.summary}\n${notice}`,
+    details: {
+      ...result.details,
+      recoveredMissingCmd: recovered.shellLine ? "shell_line" : "argv",
+    },
+  };
   if (result.fullOutput !== undefined) {
-    Object.defineProperty(result, "fullOutput", {
-      value: `${result.fullOutput.trimEnd()}\n${notice}`,
+    Object.defineProperty(marked, "fullOutput", {
+      value: `${result.fullOutput}\n${notice}`,
+      enumerable: false,
+    });
+    Object.defineProperty(marked, "fullOutputTruncated", {
+      value: result.fullOutputTruncated === true,
       enumerable: false,
     });
   }
-  result.details = {
-    ...result.details,
-    recoveredMissingCmd: recovered.shellLine ? "shell_line" : "argv",
-  };
-  return result;
+  return marked;
 }
