@@ -59,6 +59,8 @@ import {
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
   coreEmbeddingEngineRequired,
+  holdEmbeddingForLowMemory,
+  LOW_MEMORY_EMBEDDING_NOTE,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -75,6 +77,9 @@ import { selectManagedEngine } from "../local-llm/engine-selection.js";
 import { persistManagedEngine } from "./models-engine.js";
 import { reportLocalEngineFailed } from "../analytics/index.js";
 import { getAppVersion } from "../version.js";
+
+/** What `start` and `start-embedding` print when the memory model is held back (ATO-379). */
+const LOW_MEMORY_EMBEDDING_LINE = `embedding: skipped (low memory) — ${LOW_MEMORY_EMBEDDING_NOTE}\n`;
 
 /**
  * Report an Atomic Core failure the command is about to print
@@ -809,6 +814,8 @@ export async function runLocalModelsStart(
       process.stderr.write(
         `embedding: failed to start (${result.embedding.error}) — hybrid recall disabled, FTS5 still works\n`,
       );
+    } else if ("lowMemory" in result.embedding) {
+      process.stdout.write(LOW_MEMORY_EMBEDDING_LINE);
     } else {
       // skipped — either feature disabled or model missing
       if (!embCfg.enabled) {
@@ -868,6 +875,11 @@ export async function runLocalModelsStartEmbedding(signal?: AbortSignal): Promis
     // Core's module may be starting or restarting, with no process yet.
     const what = now.pid !== null ? `running pid ${now.pid}` : now.loading ? "starting" : "running";
     process.stdout.write(`embedding: already ${what} on port ${now.port} (${modelId})\n`);
+    return 0;
+  }
+  // ATO-379: the desktop reaches this on its own, so it is an automatic start too.
+  if (!(await holdEmbeddingForLowMemory(dataDir)).ok) {
+    process.stdout.write(LOW_MEMORY_EMBEDDING_LINE);
     return 0;
   }
   const embDef = getEmbeddingModelDef(modelId);

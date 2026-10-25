@@ -18,6 +18,7 @@ vi.mock("../../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
+    holdEmbeddingForLowMemory: vi.fn(async () => ({ ok: true })),
   };
 });
 
@@ -30,6 +31,7 @@ import {
   resolveServerBinPath,
 } from "../../local-llm/index.js";
 import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
+import { resetLowMemoryEmbeddingNote } from "../../local-llm/server/embedding-memory-gate.js";
 import {
   getUserConfigPath,
   readUserConfigFileSync,
@@ -65,6 +67,8 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
       action: "skipped",
     });
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockReset().mockResolvedValue({ ok: true });
+    resetLowMemoryEmbeddingNote();
   });
 
   afterEach(() => {
@@ -99,6 +103,39 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     expect(actions.map((a) => a.line).filter(Boolean)).toContain(
       "local-llm: embedding daemon up (bge-m3, pid 4242) — hybrid recall on",
     );
+  });
+
+  it("does not start the embedding daemon on a machine with little memory, and says so once (ATO-379)", async () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    stubBackendInstalled(dataDir);
+    stubEmbeddingModelDownloaded(dataDir, "bge-m3");
+    stubChatStatus(true);
+    stubEmbeddingStatus(false);
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockResolvedValue({
+      ok: false, reason: "total-ram", totalBytes: 4 * 1024 ** 3, freeBytes: 1024 ** 3,
+    });
+
+    const actions: Emitted[] = [];
+    const orchestrator = new LocalModelsOrchestrator({
+      emit(a: unknown) {
+        actions.push(a as Emitted);
+      },
+      subscribe: () => () => {},
+    });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    await orchestrator.setActiveEmbedding("bge-m3");
+    const optIn = getConfig().memory.embeddings.enabled;
+    await orchestrator.setActiveEmbedding("bge-m3");
+
+    expect(vi.mocked(localLlm.holdEmbeddingForLowMemory)).toHaveBeenCalledWith(dataDir);
+    expect(vi.mocked(localLlm.startEmbeddingDaemon)).not.toHaveBeenCalled();
+    const notes = actions
+      .map((a) => a.line)
+      .filter((line) => line === "local-llm: Low memory: memory search uses keywords only.");
+    expect(notes).toHaveLength(1);
+    // Held back, not switched off: the opt-in is what it was.
+    expect(getConfig().memory.embeddings.enabled).toBe(optIn);
   });
 
   it("does NOT start the embedding daemon when chat is down — leaves it to the next paired startDaemon", async () => {

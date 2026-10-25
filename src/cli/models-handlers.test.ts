@@ -17,6 +17,7 @@ vi.mock("../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     getEmbeddingDaemonStatus: vi.fn(),
     isEmbeddingModelDownloaded: vi.fn(),
+    holdEmbeddingForLowMemory: vi.fn(async () => ({ ok: true })),
     stopDaemon: vi.fn(),
     stopChatAndEmbeddingDaemons: vi.fn(),
   };
@@ -158,6 +159,19 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     const stderr = stderrChunks.join("");
     expect(stderr).toContain("falling back to the CPU build");
     expect(stderr).toContain('recorded backendVariant "cpu"');
+  });
+
+  it("says once that the memory model was held back for low memory (ATO-379)", async () => {
+    prepareManagedWindowsInstall();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValueOnce({
+      chat: { pid: 777 },
+      embedding: { skipped: true, lowMemory: true },
+    } as never);
+
+    await expect(runLocalModelsStart()).resolves.toBe(0);
+
+    const stdout = vi.mocked(process.stdout.write).mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(stdout.match(/^embedding: skipped \(low memory\) — Low memory: memory search uses keywords only\.$/gm)).toHaveLength(1);
   });
 
   it("does not fall back on a pre-spawn failure", async () => {
@@ -369,6 +383,7 @@ describe("runLocalModelsStartEmbedding", () => {
     vi.spyOn(process.stderr, "write").mockReturnValue(true);
     vi.mocked(localLlm.resolveManagedDevice).mockReset().mockResolvedValue(undefined);
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset().mockResolvedValue({ pid: 4243 });
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockReset().mockResolvedValue({ ok: true });
     vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset().mockResolvedValue({
       running: false, pid: null, port: 19092, healthy: false, loading: false,
     });
@@ -421,6 +436,16 @@ describe("runLocalModelsStartEmbedding", () => {
     await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
     expect(stdoutChunks.join("")).toMatch(/^embedding: disabled/m);
     expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+  });
+
+  it("holds the memory model back on a machine with little memory (ATO-379)", async () => {
+    writeConfig(true);
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockResolvedValue({
+      ok: false, reason: "total-ram", totalBytes: 4 * 1024 ** 3, freeBytes: 1024 ** 3,
+    });
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+    expect(stdoutChunks.join("")).toMatch(/^embedding: skipped \(low memory\) — Low memory: memory search uses keywords only\.$/m);
   });
 
   it("exits 1 when the start fails", async () => {
