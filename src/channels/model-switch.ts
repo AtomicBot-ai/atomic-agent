@@ -43,7 +43,9 @@ export interface LlmSwitchTarget {
   /**
    * What a failed switch puts back as the active provider. Defaults to
    * the config's; the desktop passes the registry's, because it writes
-   * the file before it asks for the switch.
+   * the file before it asks for the switch. (For the same reason a failed
+   * desktop switch "restores" the model pin the file already holds; the
+   * desktop then restarts the agent onto the file, so nothing is lost.)
    */
   previousActiveId?: string;
 }
