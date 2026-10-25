@@ -17,7 +17,7 @@ export interface RecoveredShellCmd {
  * shell line seldom starts a statement this way.
  */
 const SCRIPT_CODE_RE =
-  /(?:^|[\n;])\s*(?:import\s+[\w.]+|from\s+[\w.]+\s+import\b|print\s*\(|def\s+\w+\s*\(|console\.\w+\s*\(|require\s*\(|process\.\w+|(?:const|let|var)\s+\w+\s*=)/;
+  /(?:^|[\n;])\s*(?:import\s+[\w.]+|from\s+[\w.]+\s+import\b|print\s*\(|def\s+\w+\s*\(|console\.\w+\s*\(|require\s*\(|process\.\w+\s*[.(\[]|(?:const|let|var)\s+\w+\s*=)/;
 
 export function looksLikeScriptCode(line: string): boolean {
   return SCRIPT_CODE_RE.test(line);
@@ -76,24 +76,37 @@ export function recoverMissingShellCmd(
  * Said after the output of a recovered call (the shell summary keeps
  * the tail of a long output, so a line above it would be cut), so the
  * model sends `cmd` next time instead of relying on the recovery.
+ * `ran` is false for a call the guard blocked or that failed before it
+ * started: then the notice only says how the call was read.
  */
-export function missingCmdNotice(recovered: RecoveredShellCmd): string {
+export function missingCmdNotice(recovered: RecoveredShellCmd, ran: boolean): string {
+  const verb = ran ? "ran" : "read";
   const how = recovered.shellLine
-    ? `ran the \`-c\` line as a shell command line (sh -c): ${JSON.stringify(recovered.cmd)}`
-    : `ran it as ${JSON.stringify({ cmd: recovered.cmd, args: recovered.args })}`;
+    ? `${verb} the \`-c\` line as a shell command line (sh -c): ${JSON.stringify(recovered.cmd)}`
+    : `${verb} it as ${JSON.stringify({ cmd: recovered.cmd, args: recovered.args })}`;
   return `os.shell.run: the call had no \`cmd\`; reconstructed from args and ${how}. Next time put the program in \`cmd\` and its arguments in \`args\`.`;
 }
 
 /**
  * Marks a result as coming from a recovered call: the notice at the end
- * of the summary, and `details.recoveredMissingCmd` so the recoveries can
- * be counted. Mutated in place so the non-enumerable full output stays.
+ * of the summary and of the full output (what cloud mode shows, via
+ * `fullToolResult`), and `details.recoveredMissingCmd` so the
+ * recoveries can be counted. Mutated in place; the full output stays
+ * non-enumerable, as `retainToolOutput` keeps it.
  */
 export function markRecoveredResult(
   result: CompressedToolResult,
   recovered: RecoveredShellCmd,
 ): CompressedToolResult {
-  result.summary = `${result.summary}\n${missingCmdNotice(recovered)}`;
+  const ran = "exitCode" in result.details || result.details.detached === true;
+  const notice = missingCmdNotice(recovered, ran);
+  result.summary = `${result.summary}\n${notice}`;
+  if (result.fullOutput !== undefined) {
+    Object.defineProperty(result, "fullOutput", {
+      value: `${result.fullOutput.trimEnd()}\n${notice}`,
+      enumerable: false,
+    });
+  }
   result.details = {
     ...result.details,
     recoveredMissingCmd: recovered.shellLine ? "shell_line" : "argv",

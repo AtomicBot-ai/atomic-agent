@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
+import { fullToolResult } from "../../../compressor/result-compressor.js";
 import type { ToolContext } from "../../tool-registry.js";
 import {
   looksLikeScriptCode,
@@ -75,7 +76,12 @@ describe("recoverMissingShellCmd (#901)", () => {
       expect(looksLikeScriptCode(line)).toBe(true);
       expect(recoverMissingShellCmd({ args: ["-c", line] }, "linux")).toBeNull();
     }
-    for (const line of ["ls -la | grep src", "git status && git log -1", "printf '%s\\n' a b"]) {
+    for (const line of [
+      "ls -la | grep src",
+      "git status && git log -1",
+      "printf '%s\\n' a b",
+      "ls; process.sh",
+    ]) {
       expect(looksLikeScriptCode(line)).toBe(false);
     }
   });
@@ -154,6 +160,8 @@ describe("a recovered call still goes through the guard and approval (#901)", ()
     expect(result.details.guardRule).toBe("policy.git_remote_sync_off");
     expect(result.details.cmd).toBe("git fetch --all && git pull");
     expect(result.details.recoveredMissingCmd).toBe("shell_line");
+    expect(result.summary).toContain("reconstructed from args and read the `-c` line");
+    expect(result.summary).not.toContain("and ran ");
   });
 
   it.skipIf(process.platform === "win32")(
@@ -201,6 +209,26 @@ describe.skipIf(process.platform === "win32")(
       expect(result.status).toBe("ok");
       expect(result.summary).toContain("2000");
       expect(result.summary.trimEnd().endsWith("its arguments in `args`.")).toBe(true);
+    });
+
+    it("keeps the notice in the full output cloud mode shows", async () => {
+      const result = await approvingTool().run(
+        { args: ["-c", "seq 1 2000"], timeoutMs: 10_000 },
+        ctx(),
+      );
+      const full = fullToolResult(result);
+      expect(full.summary).not.toBe(result.summary);
+      expect(full.summary).toContain("\n1000\n");
+      expect(full.summary.trimEnd().endsWith("its arguments in `args`.")).toBe(true);
+      expect(Object.keys(result)).not.toContain("fullOutput");
+    });
+
+    it("leaves a call that named `cmd` unmarked", async () => {
+      const result = await approvingTool().run({ cmd: "echo", args: ["named-901"] }, ctx());
+      expect(result.status).toBe("ok");
+      expect(result.details.recoveredMissingCmd).toBeUndefined();
+      expect(result.summary).not.toContain("the call had no `cmd`");
+      expect(fullToolResult(result).summary).not.toContain("the call had no `cmd`");
     });
 
     it("runs a program named as the first arg", async () => {
