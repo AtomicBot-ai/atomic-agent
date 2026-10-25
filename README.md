@@ -642,6 +642,8 @@ Reasoning models spend that same budget on thinking, so a low ceiling can be use
 
 Local models use `localModels.completionMaxTokens` (llama.cpp's `n_predict`, default `16384`). Set it to `0` in `config.json` for no cap; generation then stops at a stop token or when the context window fills. That knob bounds time and runaway loops, not memory: what your machine commits is decided at daemon start by the model and `--ctx-size`, and does not grow with the length of one reply.
 
+If a small local model keeps repeating itself, `localModels.drySampler: true` turns on llama.cpp's DRY anti-repeat sampler for local completions (Atomic Core or llama-server only; off by default, not yet measured on our task set).
+
 </details>
 
 <details>

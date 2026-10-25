@@ -1002,6 +1002,10 @@ export interface UserConfigFile {
 // `notion` skills working. An older file has no field and takes the
 // default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
 // other inherited key; the fix is one line in config.
+// Unversioned, additive: `localModels.drySampler` (default `false`,
+// ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
+// every `/completion` request (`src/llm/dry-sampler.ts`); only llama.cpp
+// engines receive them. An older file has no field and reads as off.
 export const USER_CONFIG_VERSION = 78;
 
 /**

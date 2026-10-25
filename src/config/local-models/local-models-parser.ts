@@ -476,6 +476,10 @@ export function parseUserLocalModelsConfig(
       localModels.reasoningBudgetTokens,
       readDefaults,
     ),
+    drySampler: parseBool(
+      localModels.drySampler ?? readDefaults().drySampler,
+      "localModels.drySampler",
+    ),
     managed,
     embeddings: embeddingsDaemon,
     download,

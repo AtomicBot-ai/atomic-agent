@@ -246,6 +246,11 @@ export interface RuntimeLocalModelsConfig {
   thinking: LocalTemplateSetting;
   /** Mirrors `UserConfigFile.localModels.reasoningBudgetTokens`. */
   reasoningBudgetTokens: number;
+  /**
+   * Mirrors `UserConfigFile.localModels.drySampler`. Optional so a
+   * hand-built runtime config that predates the field reads as off.
+   */
+  drySampler?: boolean;
   managed: UserManagedLocalLlmConfig;
   /**
    * Memory-v2 phase 1B. Second managed daemon for `/embedding`.
@@ -303,6 +308,16 @@ export interface UserLocalModelsConfig {
    * Added in config v68; default `0` since v78 (was 1500).
    */
   reasoningBudgetTokens: number;
+  /**
+   * Turn on llama.cpp's DRY ("don't repeat yourself") sampler for every
+   * local completion on a llama.cpp-family engine (Atomic Core, the
+   * managed llama-server, an External llama-server). It penalises a
+   * token that would extend a sequence already seen in the reply, which
+   * targets the verbatim loops small models fall into. Ollama and cloud
+   * providers never see it. Default `false`, unversioned and additive:
+   * an older file has no field and reads as off.
+   */
+  drySampler: boolean;
   managed: UserManagedLocalLlmConfig;
   /**
    * Memory-v2 phase 1B. Optional second managed daemon for

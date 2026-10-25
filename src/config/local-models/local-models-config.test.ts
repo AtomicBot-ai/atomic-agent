@@ -52,7 +52,7 @@ describe("local model configuration domain seams", () => {
     const root = schema.parseUserConfigFile({}).localModels;
     expect(parsed).toStrictEqual(defaults);
     expect(root).toStrictEqual(defaults);
-    expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "useServerTemplate", "thinking", "reasoningBudgetTokens", "managed", "embeddings", "download", "customModels"]);
+    expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "useServerTemplate", "thinking", "reasoningBudgetTokens", "drySampler", "managed", "embeddings", "download", "customModels"]);
     expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
     expect(defaults.managed).not.toBe(other.managed);
     expect(defaults.embeddings).not.toBe(other.embeddings);

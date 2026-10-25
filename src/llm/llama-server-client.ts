@@ -7,6 +7,7 @@ import { readErrnoCode } from "./errno-code.js";
 import { discardResponseBody } from "./discard-response-body.js";
 import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
+import { drySamplerFields } from "./dry-sampler.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -530,6 +531,12 @@ export interface LlamaServerClientOptions {
    * Core session's key (`refreshCoreKeyForUrl`). Injectable for tests.
    */
   refreshApiKey?: (url: string) => Promise<string | null>;
+  /**
+   * Overrides `config.localModels.drySampler`: send llama.cpp's DRY
+   * anti-repeat sampler fields with every completion. When omitted, the
+   * client reads the config on each request.
+   */
+  drySampler?: boolean;
 }
 
 export interface LlamaServerProps {
@@ -565,6 +572,7 @@ export class LlamaServerClient {
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly refreshApiKey: (url: string) => Promise<string | null>;
+  private readonly drySamplerOverride: boolean | undefined;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
   /**
@@ -629,6 +637,7 @@ export class LlamaServerClient {
     this.sleep = options.sleep ?? defaultSleep;
     this.refreshApiKey = options.refreshApiKey ??
       ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
+    this.drySamplerOverride = options.drySampler;
   }
 
   /**
@@ -1616,6 +1625,10 @@ export class LlamaServerClient {
     const base = this.baseUrlOverride ?? config.localModels.url;
     const url = llamaEndpointUrl(base, config.localModels.completionPath);
     const headers = this.buildHeaders(stream);
+    const nPredict = resolveNPredict(
+      request.maxTokens ?? request.maxOutputTokens,
+      config.localModels.completionMaxTokens,
+    );
     const payload: Record<string, unknown> = {
       prompt: request.prompt,
       stream,
@@ -1625,13 +1638,14 @@ export class LlamaServerClient {
       top_k: request.topK ?? ENV_TOP_K ?? 40,
       // The per-step cap first, then the turn's own ceiling (a fusion
       // worker's `workerMaxOutputTokens`), then the config knob.
-      n_predict: resolveNPredict(
-        request.maxTokens ?? request.maxOutputTokens,
-        config.localModels.completionMaxTokens,
-      ),
+      n_predict: nPredict,
       repeat_penalty: request.repeatPenalty ?? 1.1,
       repeat_last_n: request.repeatLastN ?? 256,
     };
+    // ATO-332: opt-in, off by default until measured on real tasks.
+    if (this.drySamplerOverride ?? (config.localModels.drySampler === true)) {
+      Object.assign(payload, drySamplerFields(nPredict));
+    }
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;
     const resolvedSeed =
