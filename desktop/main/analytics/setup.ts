@@ -99,7 +99,7 @@ export function shouldReportSwitch(kind: SwitchKind | undefined, from: string | 
 }
 
 type SwitchLike = {
-  ok?: boolean; restart?: boolean; daemon?: string; providerId?: string; modelId?: string;
+  ok?: boolean; restart?: boolean; liveSwapped?: boolean; daemon?: string; providerId?: string; modelId?: string;
   runMode?: { before?: string; after?: string; enteredFusion?: boolean };
 } & Parameters<typeof switchOutcome>[0];
 
@@ -118,6 +118,10 @@ export function switchEnd(begin: { from: string | null; at: number }, res: unkno
     const { result, refusal } = switchOutcome(r);
     if (shouldReportSwitch(kind, begin.from, to)) {
       track("backend_switched", { from: begin.from, to, result, refusal, restart: r?.restart === true, ms });
+    }
+    // ATO-1021: what a switch cost the person, live or restarted.
+    if (r?.ok && (r.restart === true || r.liveSwapped === true)) {
+      track("model_switched", { live: r.liveSwapped === true, restart: r.restart === true, ms });
     }
     const effect = daemonEffect(r?.daemon);
     if (effect && effect !== "untouched" && effect !== "superseded" && effect !== "skipped") {

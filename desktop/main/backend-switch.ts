@@ -112,6 +112,8 @@ export interface SwitchResult {
   restart?: boolean;
   /** Set by main.ts's applySwitch: the switch landed, but `atag serve` was not restarted under the turns still running — it restarts once the last one ends. */
   restartHeld?: boolean;
+  /** ATO-1021, set by main.ts's applySwitch: the running agent took the new route live (`POST /api/llm/active`), no restart. */
+  liveSwapped?: boolean;
   /** activateCloud: no cloud provider configured — open the add wizard. */
   needsProvider?: boolean;
   /** The chosen provider has no key — open its configure step, as the TUI does. */
@@ -917,6 +919,12 @@ export interface SwitchAgent {
   turnsInFlight(): number;
   /** Stop `atag serve` and start it again, on the config as the file has it then. */
   restart(): Promise<void>;
+  /**
+   * ATO-1021: move the running agent onto the file's route live, without a
+   * restart. Answers false when it could not (an older agent, a turn that
+   * started meanwhile, a refused switch): the restart then runs as before.
+   */
+  liveSwap?(res: SwitchResult): Promise<boolean>;
 }
 let switchAgent: SwitchAgent | null = null;
 let restartOwed = false;
@@ -959,7 +967,9 @@ export async function restartAfterSwitch(
   wanted: boolean,
   /** Backlog 35: superseded by a stop, with the file on another route than serve booted on and no newer switch on its way (main.ts). */
   drifted = false,
-): Promise<{ restart: boolean; restartHeld?: true }> {
+  /** ATO-1021: main.ts judged the move one the agent can take live (a cloud pick on a cloud route, nothing else moved). */
+  live = false,
+): Promise<{ restart: boolean; restartHeld?: true; liveSwapped?: true }> {
   // One at a time: from the last look at `restarting` to restartNow setting it, nothing is awaited.
   while (restarting) await restarting;
   const agent = switchAgent;
@@ -968,6 +978,26 @@ export async function restartAfterSwitch(
   if (agent.turnsInFlight() > 0) {
     restartOwed = true;
     return mine ? { restart: false, restartHeld: true } : { restart: false };
+  }
+  /* ATO-1021: a cloud model pick swapped live costs well under a second where
+     the restart cost 3-8 s (and queued the next message behind it). Only for
+     this switch's own move, never to pay a restart an earlier one owes. */
+  if (live && mine && !drifted && !restartOwed && agent.liveSwap) {
+    // Held in `restarting` like a restart, so the next switch waits it out.
+    const swap = agent.liveSwap(res).catch(() => false);
+    const run: Promise<void> = swap.then(() => undefined)
+      .finally(() => { if (restarting === run) restarting = null; });
+    restarting = run;
+    const swapped = await swap;
+    await run;
+    if (swapped) return { restart: false, liveSwapped: true };
+    // Not taken: the restart as before, judged again after the wait.
+    while (restarting) await restarting;
+    if (turnsClosed) return { restart: false };
+    if (agent.turnsInFlight() > 0) {
+      restartOwed = true;
+      return { restart: false, restartHeld: true };
+    }
   }
   await restartNow(agent);
   return { restart: true };
