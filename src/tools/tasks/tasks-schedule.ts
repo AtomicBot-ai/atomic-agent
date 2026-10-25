@@ -132,11 +132,21 @@ export function buildTasksScheduleTool(
   };
 }
 
+/**
+ * `null`, `""` and `0` count as not given: some models fill every unused
+ * optional field with its zero value (`{"at": 0, "inSeconds": 60}`).
+ * Neither field has a meaningful zero: `at: 0` is 1970 and `inSeconds: 0`
+ * is "now", which is what omitting both already does.
+ */
+function scheduleField(value: unknown): unknown {
+  return value === null || value === "" || value === 0 ? undefined : value;
+}
+
 function parseOneShotSchedule(
   rawArgs: Record<string, unknown>,
 ): TaskSchedule | null {
-  const at = rawArgs.at;
-  const inSeconds = rawArgs.inSeconds;
+  const at = scheduleField(rawArgs.at);
+  const inSeconds = scheduleField(rawArgs.inSeconds);
   if (at !== undefined && inSeconds !== undefined) {
     throw new TaskValidationError(
       "schedule",

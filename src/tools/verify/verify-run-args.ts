@@ -85,6 +85,17 @@ function optionalString(raw: unknown, field: string): string | undefined {
   return raw;
 }
 
+/**
+ * An optional string where `""` means "not given": strict native-tools
+ * providers send every unused optional field, so a model choosing `url`
+ * also sends `path: ""`. Used for the `path`/`url` pairs that must have
+ * exactly one side, and for `ready.url`, which `new URL("")` would throw on.
+ */
+function optionalNonEmptyString(raw: unknown, field: string): string | undefined {
+  const value = optionalString(raw, field);
+  return value === "" ? undefined : value;
+}
+
 function requiredString(raw: unknown, field: string): string {
   const value = optionalString(raw, field);
   if (value === undefined || value.trim().length === 0) {
@@ -148,8 +159,8 @@ function parseRequests(raw: unknown): VerifyRequestSpec[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   return list(raw, "requests", MAX_REQUESTS).map((entry, i) => {
     const r = record(entry, `requests[${i}]`);
-    const path = optionalString(r.path, `requests[${i}].path`);
-    const url = optionalString(r.url, `requests[${i}].url`);
+    const path = optionalNonEmptyString(r.path, `requests[${i}].path`);
+    const url = optionalNonEmptyString(r.url, `requests[${i}].url`);
     if ((path === undefined) === (url === undefined)) {
       fail(`requests[${i}] needs exactly one of \`path\` or \`url\``);
     }
@@ -221,7 +232,7 @@ export function parseVerifyRunArgs(raw: Record<string, unknown>): VerifyRunArgs 
     const start = record(raw.start, "start");
     const ready = raw.ready === undefined || raw.ready === null ? {} : record(raw.ready, "ready");
     const port = optionalInteger(ready.port, "ready.port");
-    const url = optionalString(ready.url, "ready.url");
+    const url = optionalNonEmptyString(ready.url, "ready.url");
     if (port === undefined && url === undefined) fail("service needs `ready.port` or `ready.url`");
     return {
       ...base,
@@ -230,8 +241,8 @@ export function parseVerifyRunArgs(raw: Record<string, unknown>): VerifyRunArgs 
       requests: parseRequests(raw.requests) ?? [],
     };
   }
-  const path = optionalString(raw.path, "path");
-  const url = optionalString(raw.url, "url");
+  const path = optionalNonEmptyString(raw.path, "path");
+  const url = optionalNonEmptyString(raw.url, "url");
   if ((path === undefined) === (url === undefined)) fail("page needs exactly one of `path` or `url`");
   const page = { ...base, path, url, script: parseScript(raw.script) ?? [], probes: parseProbes(raw.probes) ?? [] };
   if (raw.start === undefined || raw.start === null) return page;
@@ -242,7 +253,7 @@ export function parseVerifyRunArgs(raw: Record<string, unknown>): VerifyRunArgs 
   const start = record(raw.start, "start");
   const ready = raw.ready === undefined || raw.ready === null ? {} : record(raw.ready, "ready");
   const port = optionalInteger(ready.port, "ready.port");
-  const readyUrl = optionalString(ready.url, "ready.url");
+  const readyUrl = optionalNonEmptyString(ready.url, "ready.url");
   return {
     ...page,
     start: { cmd: requiredString(start.cmd, "start.cmd"), args: optionalStringArray(start.args, "start.args") ?? [] },
