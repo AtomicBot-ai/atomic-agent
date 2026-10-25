@@ -91,7 +91,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "gemma-4-31b",
     name: "Gemma 4 31B QAT GGUF",
-    description: "Biggest Gemma, slower than the 26B, for 24 GB and up",
+    description: "Biggest Gemma, for 24 GB machines and up",
     recommendRank: 6,
     minRamGb: 20,
     recommendedRamGb: 24,
@@ -165,7 +165,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "qwen-3.5-35b",
     name: "Qwen 3.5 35B-A3B GGUF",
-    description: "Older big Qwen, quick for its size, 36 GB and up",
+    description: "Older big Qwen, for 36 GB machines and up",
     recommendRank: 3,
     minRamGb: 24,
     recommendedRamGb: 36,
@@ -178,7 +178,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "nemotron-3.5-30b-a3b",
     name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B GGUF",
-    description: "Big NVIDIA model, quick for its size, text only, 32 GB and up",
+    description: "Big NVIDIA model, text only, for 32 GB machines and up",
     minRamGb: 24,
     recommendedRamGb: 32,
     sizeGb: 19.65,
