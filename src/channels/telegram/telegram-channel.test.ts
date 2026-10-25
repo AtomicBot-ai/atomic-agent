@@ -1842,6 +1842,38 @@ describe("TelegramChannel per-chat approval bindings", () => {
     expect(unsubscribes[0]!).toHaveBeenCalledTimes(1);
     await channel.stop();
   });
+
+  it("clears the session's grants when Telegram rejects the token", async () => {
+    const { factory, state } = makeBotFactory();
+    const setHandler = vi.fn<AgentRuntime["setApprovalHandlerForSession"]>(
+      () => vi.fn(),
+    );
+    const clearSessionGrants = vi.fn();
+    const channel = new TelegramChannel({
+      runtime: turnRuntime(setHandler, clearSessionGrants),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock: fakeLock().lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    await state.textHandler!({
+      from: { id: 42 },
+      chat: { id: 42, type: "private" },
+      text: "hi",
+      message_id: 1,
+    });
+    expect(clearSessionGrants).not.toHaveBeenCalled();
+
+    state.killPolling?.(botApiError(401, "Unauthorized"));
+
+    expect(channel.state()).toBe("down");
+    // Checked before stop(): giving up is what must end the grant.
+    expect(clearSessionGrants).toHaveBeenCalledWith("s-1");
+    await channel.stop();
+  });
 });
 
 describe("TelegramChannel inbound files", () => {
