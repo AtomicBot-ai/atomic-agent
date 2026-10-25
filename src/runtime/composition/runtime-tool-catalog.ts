@@ -223,9 +223,15 @@ export async function connectRuntimeMcpCatalog(input: {
   initialGrammar: string;
   visionOnLiveRoute: () => boolean;
   resolveCurrentRunMode: () => ResolvedRunMode;
+  /**
+   * Told every MCP tool-name rule this catalog applies, so a grammar held
+   * elsewhere (the hot-swap `ModelProfileManager`, which the agent loop
+   * reads first) admits the same `mcp.*` names (ATO-1029).
+   */
+  onMcpToolNameRule?: (rule: string | null) => void;
 }) {
   const { config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
-    visionOnLiveRoute, resolveCurrentRunMode } = input;
+    visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule } = input;
   let grammar = initialGrammar;
 
   // MCP client subsystem. The manager is always constructed so the
@@ -311,6 +317,7 @@ export async function connectRuntimeMcpCatalog(input: {
     const mcpToolMetas = mcpManager.listAllToolMeta();
     const rule = buildMcpToolNameRule(mcpToolMetas);
     grammar = applyMcpToolNameRule(baseGrammar, rule);
+    onMcpToolNameRule?.(rule);
     logger.info("mcp: manager started", {
       configured: mcpServerConfigs.length,
       connected: mcpManager.listStatuses().filter((s) => s.state === "up")
@@ -443,6 +450,7 @@ export async function connectRuntimeMcpCatalog(input: {
       const metas = mcpManager.listAllToolMeta();
       const rule = buildMcpToolNameRule(metas);
       grammar = applyMcpToolNameRule(baseGrammar, rule);
+      onMcpToolNameRule?.(rule);
       rebuildToolDescriptors();
       logger.info("mcp: catalog refreshed", {
         servers: serverCount,

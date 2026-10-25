@@ -146,6 +146,16 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(input.toolRegistry.list()).toHaveLength(4);
   });
 
+  it("hands every MCP tool-name rule it applies to the profile manager's hook (ATO-1029)", async () => {
+    const { input } = deps(); const seen: Array<string | null> = [];
+    const owner = await connect({ ...input, onMcpToolNameRule: (rule) => seen.push(rule) });
+    await owner.mcpManager.addServerLive(disabledServer);
+    const list = vi.spyOn(owner.mcpManager, "listAllToolMeta").mockReturnValue([meta("first")]);
+    const refresh = owner.createRefreshMcp(); await refresh();
+    list.mockReturnValue([]); await refresh();
+    expect(seen.slice(-2)).toEqual(['mcp-server-tool ::= "\\"mcp.disabled.first\\""', null]);
+  });
+
   it("keeps descriptor array identity while gates hold and changes it only when live fusion or vision flips", async () => {
     const { input, setFusion, setVision } = deps(); input.config.vision.enabled = true;
     const owner = await connect(input); const initial = owner.effectiveToolDescriptors();
