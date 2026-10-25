@@ -66,6 +66,18 @@ export const SKIP_MESSAGES: Record<CompactionSkip, string> = {
   no_reduction: "No safe, useful reduction is available.",
 };
 
+/**
+ * The `noop` message for a skip. A window too small to compact names its
+ * size and the fix when the window is known: the operator can act on that,
+ * not on "too small".
+ */
+export function skipMessage(skip: CompactionSkip, contextWindow?: number | null): string {
+  if (skip === "window_too_small" && contextWindow && contextWindow > 0) {
+    return `The model's context window (${contextWindow} tokens) is too small to compact this conversation; raise the context size.`;
+  }
+  return SKIP_MESSAGES[skip];
+}
+
 /** A control inbox, separate from user messages and from the FIFO's occupied lock. */
 export function createContextCompaction(deps: ContextCompactionDependencies) {
   const accepting = new Map<string, AbortSignal>();
@@ -78,6 +90,23 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
   const slowRoutes = new Set<string>();
   let stopped = false;
   const warned = new Set<string>();
+  // Sessions already told that automatic compaction cannot fit their window.
+  const tooSmallNoticed = new Set<string>();
+  /**
+   * Say once per session that automatic compaction is due but the window
+   * cannot hold a summary, instead of leaving trimming to drop turns
+   * silently. A `compaction_failed` event with a `noop` result reaches the
+   * TUI, traces and HTTP streams like any other compaction outcome.
+   */
+  function noticeTooSmall(id: string, reason: CompactionResult["reason"], message: string) {
+    if (tooSmallNoticed.has(id)) return;
+    tooSmallNoticed.add(id);
+    deps.warn?.(id, message);
+    try {
+      deps.emit({ type: "compaction_failed", sessionId: id, result: { status: "noop", reason, message },
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0 });
+    } catch { /* An observer must not break the step. */ }
+  }
   function diagnose(state: SessionState) {
     if (state.compactionWarning && !warned.has(state.id)) {
       warned.add(state.id); deps.warn?.(state.id, state.compactionWarning);
@@ -114,7 +143,13 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
     const prefixReuse = input.profileWindowApplies === false ? undefined : input.profile?.prefixReuse;
     const { plan, skip } = decideCompaction(input.session, prompt, config, request ? "manual" : options.requested,
       prefixReuse ? { prefixReuse } : {});
-    if (!plan) { request?.settle({ status: "noop", reason: request ? "manual" : options.requested ?? "threshold", message: SKIP_MESSAGES[skip ?? "no_reduction"] }); return undefined; }
+    if (!plan) {
+      const reason = request ? "manual" : options.requested ?? "threshold";
+      const message = skipMessage(skip ?? "no_reduction", prompt.contextWindow);
+      if (request) request.settle({ status: "noop", reason, message });
+      else if (skip === "window_too_small") noticeTooSmall(id, reason, message);
+      return undefined;
+    }
     const controller = request?.controller ?? new AbortController();
     active.set(input.session.id, controller);
     if (request) request.running = true;
@@ -213,6 +248,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
       autoTimedOut.clear();
       slowRoutes.clear();
       warned.clear();
+      tooSmallNoticed.clear();
     },
   };
 }
