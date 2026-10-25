@@ -59,6 +59,16 @@ export type ApprovalCategory =
    */
   | "fs_read_outside"
   /**
+   * A read of one of the agent's own secret files in its state directory
+   * (`.env`, `config.json`, the local server key, cached sessions), or a
+   * shell command that names one — to read it or to change it
+   * (`src/tools/read-scope/state-secrets.ts`). The read-side twin of
+   * `trust_config`: pinned at level 5 and never grantable, so a level-4
+   * operator whose shell runs unasked is still asked before
+   * `cat ~/.atomic-agent/.env` or `sed -i … config.json` runs.
+   */
+  | "state_secret"
+  /**
    * A generation billed to the operator's cloud account (`image.generate`
    * and `video.generate` on OpenRouter). Level 3 beside `http`: the lowest two levels ask
    * before money is spent; a local generation never asks.
@@ -83,8 +93,9 @@ export type ApprovalCategory =
  *    stricter than the escape hatch. The remote-sync switch
  *    (`git.remoteSync`) is checked before this ladder is consulted.
  *  - level 5 (full trust): everything, including browser navigation to
- *    non-web URLs, writes to the agent's own trust config, reads outside
- *    the working directory, and uncategorised requests.
+ *    non-web URLs, writes to the agent's own trust config, reads of the
+ *    agent's own secret files (`state_secret`), reads outside the
+ *    working directory, and uncategorised requests.
  *
  * `trust_config` is deliberately pinned at 5: a write to the file that
  * holds `agent.approvalLevel` (or the `.env` holding API tokens) is the
@@ -107,6 +118,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fusion_fanout: 4,
   browser_nonweb: 5,
   trust_config: 5,
+  state_secret: 5,
   email: 5,
   fs_read_outside: 5,
   other: 5,
@@ -169,6 +181,10 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   fusion_fanout: false,
   browser_nonweb: true,
   trust_config: false,
+  // The read-side twin of `trust_config`: "read my API keys for the
+  // rest of the session" is never a standing answer, and a `shell`
+  // grant (category or `[a]` shape) never reaches this category either.
+  state_secret: false,
   // A session grant would let the agent mail anyone for the rest of
   // the session; each mail is its own decision.
   email: false,
@@ -205,6 +221,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   fusion_fanout: "fusion · fan-out",
   browser_nonweb: "browser · non-web URL",
   trust_config: "agent trust config",
+  state_secret: "agent secret file",
   email: "e-mail send",
   fs_read_outside: "read outside the working directory",
   paid_generation: "paid generation · cloud",

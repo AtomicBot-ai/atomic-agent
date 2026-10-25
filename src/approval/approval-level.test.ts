@@ -26,6 +26,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "git_remote",
   "browser_nonweb",
   "trust_config",
+  "state_secret",
   "email",
   "fs_read_outside",
   "paid_generation",
@@ -33,12 +34,22 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config and email", () => {
+  it("grants every category except trust_config, state_secret and email", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
-        category !== "trust_config" && category !== "email",
+        category !== "trust_config" &&
+          category !== "state_secret" &&
+          category !== "email",
       );
     }
+  });
+
+  it("state_secret mirrors trust_config: silent only at full trust, never granted (ATO-877)", () => {
+    expect(isGrantableCategory("state_secret")).toBe(false);
+    // Level 4 is where the shell runs unasked; a secret file still asks.
+    expect(isAutoApprovedAt(4, "shell")).toBe(true);
+    expect(isAutoApprovedAt(4, "state_secret")).toBe(false);
+    expect(isAutoApprovedAt(5, "state_secret")).toBe(true);
   });
 
   it("trust_config is the one non-grantable category (mirrors its level-5 pin)", () => {
@@ -68,6 +79,8 @@ describe("approval ladder", () => {
       fusion_fanout: 4,
       browser_nonweb: 5,
       trust_config: 5,
+      // The read-side twin of trust_config (ATO-877).
+      state_secret: 5,
       email: 5,
       // Reads outside the working directory ask until full trust: a
       // wandering read is what the read scope exists to stop.
@@ -100,6 +113,7 @@ describe("approval ladder", () => {
     }
     expect(formatApprovalCategory("fs_write_home")).toBe("file write · home");
     expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
+    expect(formatApprovalCategory("state_secret")).toBe("agent secret file");
     expect(formatApprovalCategory("shell")).toBe("shell command");
     expect(formatApprovalCategory("git_remote")).toBe("git · remote");
     expect(formatApprovalCategory("fs_read_outside")).toBe(
