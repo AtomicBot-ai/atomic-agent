@@ -1316,6 +1316,12 @@ function reduceStepEvent(
       // The trace recorder wants them; the chat feed would drown in
       // them. Listed so the exhaustiveness check holds.
       return state;
+    case "first_token":
+    case "prompt_progress":
+      // ATO-1027: the wait before the first token, for an HTTP host's
+      // status line. The TUI's own streaming tail already shows output
+      // the moment it starts. Listed so the exhaustiveness check holds.
+      return state;
     default: {
       const unhandled: never = event;
       void unhandled;
