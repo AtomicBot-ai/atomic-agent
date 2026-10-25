@@ -21,7 +21,10 @@ describe("POST /api/llm/active", () => {
   let harness: Harness;
   let configPath: string;
 
+  let savedKey: string | undefined;
+
   beforeEach(async () => {
+    savedKey = process.env.OPENROUTER_API_KEY;
     delete process.env.OPENROUTER_API_KEY;
     harness = await startTestHarness();
     configPath = join(harness.stateDir, "config.json");
@@ -43,6 +46,8 @@ describe("POST /api/llm/active", () => {
 
   afterEach(async () => {
     vi.restoreAllMocks();
+    if (savedKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = savedKey;
     await harness.cleanup();
   });
 
@@ -85,6 +90,17 @@ describe("POST /api/llm/active", () => {
     expect(body.error.code).toBe("turn_in_progress");
     expect(harness.runtime.providerRegistry.activeTextProviderId).toBe("local-llama");
     expect(onDisk().llm.providers[1].defaultChatModel).toBe("vendor/model-a");
+  });
+
+  it("rolls back and answers 500 when the provider cannot be built", async () => {
+    vi.spyOn(harness.runtime, "reloadLlmProviders").mockRejectedValue(new Error("boom"));
+    const response = await post({ providerId: "openrouter", model: "vendor/model-b" });
+    expect(response.status).toBe(500);
+    expect(harness.runtime.providerRegistry.activeTextProviderId).toBe("local-llama");
+    const llm = onDisk().llm;
+    expect(llm.activeTextProvider).toBe("local-llama");
+    expect(llm.providers.find((p: { id: string }) => p.id === "openrouter").defaultChatModel)
+      .toBe("vendor/model-a");
   });
 
   it("answers 404 for a provider that is not configured", async () => {
