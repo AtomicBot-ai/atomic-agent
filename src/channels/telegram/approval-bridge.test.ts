@@ -119,7 +119,7 @@ function callback(
 }
 
 describe("ApprovalBridge.dispatch", () => {
-  it("sends inline keyboard with grant buttons when applicable", async () => {
+  it("offers a shell request only the command-shape grant", async () => {
     const h = makeHarness();
     const r = req("abc");
     r.commandShape = "git";
@@ -129,7 +129,8 @@ describe("ApprovalBridge.dispatch", () => {
     // Exact match, not `toContain`: the row order and every
     // `callback_data` are part of the wire contract. A shape row that
     // emitted `:s` would grant the whole category instead of the one
-    // binary the operator agreed to.
+    // binary the operator agreed to, and a shell request never gets
+    // the whole-category row from a remote chat.
     expect(keyboardOf(h.api.sendMessage)).toEqual({
       inline_keyboard: [
         [
@@ -137,10 +138,30 @@ describe("ApprovalBridge.dispatch", () => {
           { text: "❌ Deny", callback_data: "appr:abc:n" },
         ],
         [
-          { text: "🔓 Grant category for session", callback_data: "appr:abc:s" },
+          { text: `🔓 Grant "git" for session`, callback_data: "appr:abc:a" },
+        ],
+      ],
+    });
+  });
+
+  it("offers a non-shell request the category grant, named", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.tool = "os.git.push";
+    r.category = "git_remote";
+    await h.bridge.dispatch(r, 7);
+
+    expect(keyboardOf(h.api.sendMessage)).toEqual({
+      inline_keyboard: [
+        [
+          { text: "✅ Approve", callback_data: "appr:abc:y" },
+          { text: "❌ Deny", callback_data: "appr:abc:n" },
         ],
         [
-          { text: `🔓 Grant "git" for session`, callback_data: "appr:abc:a" },
+          {
+            text: "🔓 Grant git · remote for session",
+            callback_data: "appr:abc:s",
+          },
         ],
       ],
     });
@@ -169,7 +190,7 @@ describe("ApprovalBridge.dispatch", () => {
     expect(shapeRow[0]!.callback_data).toBe("appr:abc:a");
   });
 
-  it("sends an inline keyboard with approve, deny, and grant buttons", async () => {
+  it("sends only approve and deny for a shell request without a shape", async () => {
     const h = makeHarness();
     const r = req("abc");
     await h.bridge.dispatch(r, 7);
@@ -182,15 +203,13 @@ describe("ApprovalBridge.dispatch", () => {
     expect(text).toContain("os.shell.run");
     expect(text).toContain("kind: shell command");
     expect(text).toContain("git push");
-    // Shell requests get approve/deny + grant-category row (no shape button without commandShape)
+    // Opaque or compound shell: no shape to grant, and never the whole
+    // shell category from a remote chat.
     expect(keyboardOf(h.api.sendMessage)).toEqual({
       inline_keyboard: [
         [
           { text: "✅ Approve", callback_data: "appr:abc:y" },
           { text: "❌ Deny", callback_data: "appr:abc:n" },
-        ],
-        [
-          { text: "🔓 Grant category for session", callback_data: "appr:abc:s" },
         ],
       ],
     });
@@ -425,7 +444,8 @@ describe("ApprovalBridge.handleCallback", () => {
   it("grants category on `s` callback", async () => {
     const h = makeHarness();
     const r = req("abc");
-    r.commandShape = "git";
+    r.tool = "os.git.push";
+    r.category = "git_remote";
     await h.bridge.dispatch(r, 7);
 
     await h.bridge.handleCallback(callback("abc", "s"));
@@ -434,7 +454,24 @@ describe("ApprovalBridge.handleCallback", () => {
       { approvalId: "abc", approved: true, grant: "category", reason: "telegram" },
     ]);
     expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
-      text: "Approved (shell command granted for session)",
+      text: "Approved (git · remote granted for session)",
+    });
+  });
+
+  it("does not send a category grant for a forged `s` on a shell request", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.commandShape = "git";
+    await h.bridge.dispatch(r, 7);
+
+    await h.bridge.handleCallback(callback("abc", "s"));
+
+    expect(h.approvals.decisions).toEqual([
+      { approvalId: "abc", approved: true, reason: "telegram" },
+    ]);
+    expect(h.approvals.decisions[0]!.grant).toBeUndefined();
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Approved",
     });
   });
 

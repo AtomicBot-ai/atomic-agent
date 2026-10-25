@@ -134,8 +134,9 @@ interface PendingState {
  *    says so. If that upload fails the prompt says the full
  *    command could not be attached instead of dropping it silently.
  * 7. **A grant is re-checked, and the toast never overstates it.** The
- *    `s`/`a` rows only appear when `canGrantCategory` / `canGrantShape`
- *    allow them, but `callback_data` arrives from the operator's client
+ *    `s` row only appears when `canGrantCategory` allows it and the
+ *    request is not a shell command (shell gets only the `a` row, when
+ *    `canGrantShape` allows it), but `callback_data` arrives from the operator's client
  *    and a keyboard can outlive the state it was built from — so the
  *    scope is checked again against the retained request before it
  *    reaches the gate, exactly as the TUI and CLI prompts do. A scope
@@ -489,9 +490,21 @@ function grantScope(
   kind: CallbackKind,
   request: ApprovalRequest,
 ): ApprovalGrantScope | undefined {
-  if (kind === "s" && canGrantCategory(request)) return "category";
+  if (kind === "s" && offersCategoryGrant(request)) return "category";
   if (kind === "a" && canGrantShape(request)) return "shape";
   return undefined;
+}
+
+/**
+ * Whether the keyboard offers "grant this category for the session".
+ * Never for a shell request: from a remote chat a shell grant covers
+ * one binary at most (the shape row, like "Allow in this chat" on the
+ * desktop), because "every shell command for the rest of the session"
+ * would also silence `rm -rf`, `sudo` and writes to the agent's own
+ * config. A shell request without a shape gets only Approve / Deny.
+ */
+function offersCategoryGrant(request: ApprovalRequest): boolean {
+  return request.category !== "shell" && canGrantCategory(request);
 }
 
 /**
@@ -535,10 +548,10 @@ function buildKeyboard(request: ApprovalRequest): {
       },
     ],
   ];
-  if (canGrantCategory(request)) {
+  if (offersCategoryGrant(request)) {
     rows.push([
       {
-        text: "🔓 Grant category for session",
+        text: `🔓 Grant ${formatApprovalCategory(request.category)} for session`,
         callback_data: `${CALLBACK_PREFIX}${request.approvalId}:s`,
       },
     ]);
