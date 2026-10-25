@@ -1223,7 +1223,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -2308,10 +2308,14 @@ function renderSidebar() {
           + ch.rows.slice(0, ch.pinned).map(chatRow).join('')
         + '</div>'
         : '')
+      // ATO-1034: the folders (chat-folders.js), then the chats in none of them.
+      + foldersSidebarHTML(ch.groups)
       + '<div class="sb-list" data-list="chats">'
-        + '<div class="sb-list-head micro"><span>Chats</span></div>'
+        + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span>'
+          + (FOLDERS.state.folders.length ? '' : '<button class="iconbtn sb-add sb-fnew" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('folder') + '</button>')
+        + '</div>'
         + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
-           : ch.rows.length ? '' : '<div class="sb-empty">No chats yet</div>')
+           : ch.rows.length || ch.filed ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
       + (showTasks
@@ -2405,9 +2409,15 @@ function sidebarChats() {
   const stored = new Set(SESSIONS.map((s) => s.id));
   const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
   const order = orderChats(SESSIONS, pending, PREFS.pinned);
-  const all = order.pinned.concat(order.rest);
+  /* ATO-1034: a chat in a folder is drawn under that folder (all of them, a
+     folder is short), a pinned one stays in Pinned; Load more pages the rest.
+     `visible` is every row on screen, for nameVisibleSessions. */
+  const fg = folderGroups(FOLDERS.state, order.rest);
+  const all = order.pinned.concat(fg.loose);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
-  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length)};
+  const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0);
+  const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows));
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, visible, filed};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2491,7 +2501,8 @@ function chatRow(s) {
   // ATO-538: the rail paints this glyph (the title's first letter or emoji) with the dot as its badge.
   const glyph = railGlyph(s.t);
   // Studio: no chat is "open" while a Studio page is on screen.
-  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
+  // ATO-1034: draggable onto a folder (chat-folders.js).
+  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '" draggable="true"'
     + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
     + (glyph ? ' data-g="' + esc(glyph) + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
@@ -2543,8 +2554,9 @@ function chatMenuHTML() {
   const s = chatById(SESMENU.id);
   if (!s) return '';
   const id = s.id;
+  const stored = SESSIONS.some((x) => x.id === id);
   const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
-    renamable: SESSIONS.some((x) => x.id === id)});   // ATO-455: a stand-in has nothing stored to rename
+    renamable: stored, folders: stored});   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
   if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
@@ -4646,7 +4658,7 @@ function palRows() {
     .sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.s);
   const allChats = S.palMoreFor === q || chats.length <= PAL_CHATS_SHOWN + 1;
   (allChats ? chats : chats.slice(0, PAL_CHATS_SHOWN))
-    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + folderPaletteWord(s.id) + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   if (!allChats) {
     const more = chats.length - PAL_CHATS_SHOWN;
     hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
@@ -4768,6 +4780,7 @@ function overlaysHTML() {
   if (S.overlay === 'context') html += contextHTML();
   if (S.overlay === 'modes') html += modesHTML();
   if (S.overlay === 'sesmenu') html += chatMenuHTML();
+  if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
@@ -6723,6 +6736,7 @@ function act(a) {
                              PREFS.pinned = PREFS.pinned.filter((x) => x !== v);
                              delete PREFS.seen[v];
                              savePrefs();
+                             if (folderForget(FOLDERS.state, v)) saveFolders();   // ATO-1034
                              /* Backlog 25: the chat's card goes with it, and the empty view that
                                 takes its place answers no request, as after New chat. (A chat whose
                                 turn runs here never gets this far: deleteRefused.) */
@@ -6739,6 +6753,29 @@ function act(a) {
                            return; }
   // ATO-455: the row menu's Rename opens the inline box over the row's name (chat-rename.js).
   if (k === 'rename')    { close(); renameStart(v, 'row'); return; }
+  /* ATO-1034: folders (chat-folders.js). Folder ids never hold a colon, so
+     `fput:<folder>:<chat>` splits at its first one; an empty folder is "no folder". */
+  if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;
+                           f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
+  if (k === 'fnew')      { close(); folderCreate(v || null); return; }
+  if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
+  if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
+  if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
+                           if (f && folderRemove(FOLDERS.state, v)) { saveFolders(); toast('Folder deleted', 'Its chats are kept, under Chats'); }
+                           render(); return; }
+  if (k === 'fpick')     { const anchor = document.querySelector('#sidebar .sesrow[data-ses="' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v) + '"] [data-sesmenu]');
+                           const point = SESMENU.point; close();
+                           if (point) { FMENU.id = v; FMENU.point = point; S.overlay = 'fpick'; render(); focusChatMenu(0); }
+                           else folderMenuOpen('fpick', v, anchor);
+                           return; }
+  if (k === 'fput')      { const cut = v.indexOf(':'); const fid = v.slice(0, cut), sid = v.slice(cut + 1);
+                           close();
+                           if (cut >= 0 && folderPut(FOLDERS.state, sid, fid || null)) {
+                             saveFolders();
+                             // A pinned chat is drawn under Pinned only: filed, it leaves Pinned, or it would seem to go nowhere.
+                             if (fid && PREFS.pinned.includes(sid)) { PREFS.pinned = PREFS.pinned.filter((x) => x !== sid); savePrefs(); }
+                           }
+                           render(); nameVisibleSessions(); return; }
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -7443,6 +7480,13 @@ document.addEventListener('click', (e) => {
      through to [data-ses]. */
   const sm = t.closest('[data-sesmenu]');
   if (sm) { e.preventDefault(); e.stopPropagation(); openChatMenu(sm.dataset.sesmenu, null); return; }
+  // ATO-1034: a folder header's "…" (inside the header button, so first), then the header itself.
+  const fm = t.closest('[data-fmenu]');
+  if (fm) { e.preventDefault(); e.stopPropagation();
+            if (S.overlay === 'fmenu' && FMENU.id === fm.dataset.fmenu) { close(); render(); }
+            else folderMenuOpen('fmenu', fm.dataset.fmenu, fm);
+            return; }
+  const ft = t.closest('[data-ftoggle]'); if (ft) { act('ftoggle:' + ft.dataset.ftoggle); return; }
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
@@ -8563,6 +8607,11 @@ document.addEventListener('keydown', (e) => {
   if (smk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault(); e.stopPropagation(); ANX.via('key'); openChatMenu(smk.dataset.sesmenu, null); return;
   }
+  // ATO-1034: the same for a folder header's "…" (chat-folders.js).
+  const fmk = e.target.closest && e.target.closest('[data-fmenu]');
+  if (fmk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault(); e.stopPropagation(); ANX.via('key'); folderMenuOpen('fmenu', fmk.dataset.fmenu, fmk); return;
+  }
   // ATO-165: Escape closes the menu and hands the focus back to the row's "…" it came from.
   if (S.overlay === 'sesmenu' && k === 'Escape') {
     e.preventDefault();
@@ -8570,7 +8619,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   // ATO-165: the menu's rows move with the arrows, Home and End.
-  if (S.overlay === 'sesmenu' && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
+  // ATO-1034: and so do the folder menus (chat-folders.js), drawn with the same classes.
+  if ((S.overlay === 'sesmenu' || S.overlay === 'fmenu' || S.overlay === 'fpick') && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
     e.preventDefault();
     const items = Array.from(document.querySelectorAll('.sesmenu [role="menuitem"]'));
     const at = items.indexOf(document.activeElement);
@@ -8966,6 +9016,7 @@ function applySessions(res, askedAt) {
     if (row) approvalOver(sid, row.status, askedAt);
   }
   sessionsRead();   // B01 QA: requests kept while the list was not known yet
+  foldersAfterSessions();   // ATO-1034: imported chats find their folder
   return true;
 }
 
@@ -8985,7 +9036,7 @@ async function refreshSessions() {
    fire 200 requests at boot. */
 function nameVisibleSessions() {
   if (!BR) return;
-  sidebarChats().rows.filter((row) => !row.named).forEach((row) => {
+  sidebarChats().visible.filter((row) => !row.named).forEach((row) => {
     row.named = true;
     BR.session(row.id).then((res) => {
       /* Review fix: applySessions rebuilds SESSIONS with fresh objects while a
@@ -11113,6 +11164,7 @@ if (BR) {
   // as "the thread you are in" over an empty transcript.
   S.sessionId = '';
   loadPrefs();
+  loadFolders();   // ATO-1034 (chat-folders.js)
   BR.onStatus(applyStatus);
   if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);
@@ -21072,7 +21124,9 @@ document.addEventListener('contextmenu', (e) => {
 document.addEventListener('dblclick', (e) => {
   const t = e.target;
   if (!t || !t.closest || S.overlay === 'rename') return;
-  if (t.closest('[data-sesmenu]')) return;
+  if (t.closest('[data-sesmenu]') || t.closest('[data-fmenu]')) return;
+  const fh = t.closest('#sidebar .sb-fhead[data-ftoggle]');   // ATO-1034
+  if (fh) { e.preventDefault(); renameStart(fh.dataset.ftoggle, 'folder'); return; }
   const row = t.closest('#sidebar .sesrow[data-ses]');
   if (row) { e.preventDefault(); renameStart(row.dataset.ses, 'row'); return; }
   if (S.room === 'chat' && S.sessionId && t.closest('#toolbar .tb-title b')) {
@@ -27863,6 +27917,14 @@ function impFormHTML(f) {
     + '<div class="tk-card sd-rows">'
     + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
     + '</div>'
+    /* ATO-1034: imported chats go into a folder named after the app they came
+       from (chat-folders.js). Not an `atag import` option: it is the sidebar's,
+       kept in chat-folders.json, so it holds for every import and for chats
+       imported before. */
+    + '<div class="tk-card sd-rows"><div class="tk-setrow sd-frow">'
+      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">A folder per app, such as “Claude Code” or “Codex”. '
+      + 'Chats imported earlier are sorted too. A chat you move yourself stays where you put it.</div></div>'
+      + '<button class="tk-switch" role="switch" aria-checked="' + !!FOLDERS.state.autoSort + '" aria-label="Put imported chats into folders" data-act="fautosort:"></button></div></div>'
     /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.
        What it replaces, per src/import (reconcile-session.ts, import-skill-dirs.ts, each importer's secrets
        and cron steps): a chat under the same id whose messages differ, including ones added here; a skill of
@@ -28079,6 +28141,7 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   window.__sidebar = () => ({
     headers: [...document.querySelectorAll('.sb-list-head > span:first-child')].map((n) => n.textContent),
+    folders: FOLDERS.state.folders.length,   // ATO-1034
     pinnedRows: document.querySelectorAll('#sidebar [data-list="pinned"] .sesrow').length,   // ATO-165
     navrows: document.querySelectorAll('.navrow').length,
     skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),

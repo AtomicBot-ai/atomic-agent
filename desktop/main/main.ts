@@ -10,6 +10,7 @@ import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.j
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
+import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
@@ -1895,6 +1896,9 @@ function wireIpc(client: AgentClient): void {
     return { ok: true, activeNow: !GPU_OFF_THIS_RUN, next: state.off };
   });
   ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
+  // ATO-1034: chat folders, in the shared state dir so the terminal sees the same ones.
+  ipcMain.handle("app:foldersGet", () => ({ ok: true, data: readChatFolders(DESKTOP_STATE_DIR) }));
+  ipcMain.handle("app:foldersSet", (_event, value: unknown) => writeChatFolders(DESKTOP_STATE_DIR, value));
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
@@ -3005,14 +3009,17 @@ function wireIpc(client: AgentClient): void {
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
 /* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
    chat is on the list, then Chats, then Tasks when the agent holds any. */
-function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
+  // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
 const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
+  /** ATO-1034: how many chat folders the sidebar draws. */
+  folders?: number;
   navrows: number;
   skillsRow: boolean;
   /** ATO-457: the standing section rows under New chat, by label. */
