@@ -66,11 +66,12 @@ export function registerRuntimeCoreTools(input: {
   sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines">;
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
+  resolvePreviousReply?: (sessionId: string) => string | undefined;
   declaredInputs: DeclaredInputsRegistry;
   shellJobs: ShellJobRegistry;
   skillRegistry: SkillRegistry;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
-  const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, declaredInputs,
+  const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger } = input;
 
   registerOsTools(toolRegistry, {
@@ -83,6 +84,7 @@ export function registerRuntimeCoreTools(input: {
     },
     listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
     resolveOriginalRequest: resolveOriginalRequest,
+    resolvePreviousReply,
     declaredInputs,
     // The trust surface (`config.json` + `.env`) is resolved once, here,
     // and injected into the fs tools — the tools layer must not know

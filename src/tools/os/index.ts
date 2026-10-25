@@ -168,6 +168,8 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * (embedders, tests) leaves only the F36 warn-and-save path.
    */
   resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /** The agent's reply before the turn's user message, for the same refusal (ATO-860). */
+  resolvePreviousReply?: (sessionId: string) => string | undefined;
   /** A fan-out's declared inputs per worker session (`fs-declared-inputs.ts`); omitted declares nothing. */
   declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
   /**
@@ -216,6 +218,9 @@ export function registerOsTools(
     ...(options.resolveOriginalRequest === undefined
       ? {}
       : { resolveOriginalRequest: options.resolveOriginalRequest }),
+    ...(options.resolvePreviousReply === undefined
+      ? {}
+      : { resolvePreviousReply: options.resolvePreviousReply }),
     ...(options.declaredInputs === undefined
       ? {}
       : { declaredInputs: options.declaredInputs }),

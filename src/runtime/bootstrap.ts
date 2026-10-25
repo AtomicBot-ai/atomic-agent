@@ -303,12 +303,18 @@ export async function createAgentRuntime(
   // call a tool on the session (the controller runs one turn per
   // session), so a read always finds its own turn's request.
   const turnRequests = new Map<string, string>();
+  // The agent's reply just before the message that started the turn (a
+  // worker's: its parent's), for the same guard: a plain yes to
+  // "Replace sales.csv?" replaces that file (ATO-860). Kept beside
+  // `turnRequests`, set and cleared with it.
+  const turnPreviousReplies = new Map<string, string>();
   // The files a fan-out's contract declared as inputs, per worker
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
   const declaredInputs = new DeclaredInputsRegistry();
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
+    resolvePreviousReply: (id) => turnPreviousReplies.get(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
   });
 
@@ -652,7 +658,7 @@ export async function createAgentRuntime(
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
-    sessions: { sessionStore, turnContext, turnRequests },
+    sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter },
