@@ -7,7 +7,7 @@ import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
-import { gateBrowserUrl } from "./gate-browser-url.js";
+import { gateBrowserUrl, recheckLandedPage } from "./gate-browser-url.js";
 import { searchUrlFor } from "./search-engines.js";
 
 /** The engine's host goes through the same domain lists as a navigation. */
@@ -41,7 +41,9 @@ export function buildBrowserSearchTool(
         ...(engine !== undefined ? { engine } : {}),
       };
       const result = await backend.search(payload);
-      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud");
+      const landed = await recheckLandedPage(backend, policy, "browser.search");
+      if (landed) return landed;
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud", policy);
       return compressToolResult({
         tool: "browser.search",
         status: "ok",

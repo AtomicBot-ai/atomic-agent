@@ -7,6 +7,7 @@ import {
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 import { gateBrowserAction } from "./gate-browser-action.js";
+import { recheckLandedPage } from "./gate-browser-url.js";
 
 const REF_PATTERN = /^[a-zA-Z0-9]+$/;
 
@@ -62,6 +63,10 @@ export function buildBrowserTypeTool(
         pressEnter,
         clearFirst: rawArgs.clearFirst === true,
       });
+      if (pressEnter) {
+        const landed = await recheckLandedPage(backend, policy, "browser.type");
+        if (landed) return landed;
+      }
       return compressToolResult({
         tool: "browser.type",
         status: "ok",

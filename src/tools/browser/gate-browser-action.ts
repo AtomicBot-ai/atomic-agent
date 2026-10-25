@@ -11,6 +11,7 @@ import type { BrowserBackend, RefDescription } from "./browser-backend.js";
 import {
   blockedDomainMessage,
   checkBrowserHost,
+  checkBrowserUrl,
   webHostOf,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
@@ -77,10 +78,54 @@ export function buildBrowserActionPreview(
 }
 
 /**
+ * Where the action sends the browser, when the element says: a link's
+ * `href`, or the form `action` a submit (click or Enter) posts to,
+ * resolved against the element's page. `null` when it does not navigate
+ * by itself (or the URL is not one we can read).
+ */
+export function actionTargetUrl(
+  kind: BrowserActionRequest["kind"],
+  element: RefDescription,
+): string | null {
+  let raw: string | null = null;
+  if (kind === "click") {
+    raw = element.href ?? (element.isSubmit ? (element.formAction ?? "") : null);
+  } else if (kind === "type_enter" && element.inForm) {
+    raw = element.formAction ?? "";
+  }
+  if (raw === null) return null;
+  try {
+    return new URL(raw, element.pageUrl).href;
+  } catch {
+    return null;
+  }
+}
+
+async function currentUrlSafely(backend: BrowserBackend): Promise<string | null> {
+  try {
+    return await backend.currentUrl();
+  } catch {
+    return null;
+  }
+}
+
+function blockedResult(tool: string, ref: string, host: string): CompressedToolResult {
+  return compressToolResult({
+    tool,
+    status: "error",
+    output: blockedDomainMessage(tool, host),
+    details: { ref, host, reason: "blocked_domain" },
+  });
+}
+
+/**
  * Runs after the stale-ref preflight and before the backend acts.
- * Returns a tool-error result when the page's host is blocked, throws
- * `ApprovalDeniedError` when the operator says no, and resolves `null`
- * when the action may go ahead.
+ * Returns a tool-error result when the page's host, or the host a link
+ * or form would go to, is blocked; throws `ApprovalDeniedError` when the
+ * operator says no; resolves `null` when the action may go ahead.
+ *
+ * Order: blocked page → blocked / off-site target (`browser_offsite`) →
+ * the action's own category (`classify-browser-action.ts`).
  */
 export async function gateBrowserAction(
   backend: BrowserBackend,
@@ -90,14 +135,31 @@ export async function gateBrowserAction(
   ctx: Pick<ToolContext, "sessionId" | "signal">,
 ): Promise<CompressedToolResult | null> {
   const element = await describeSafely(backend, request.ref);
-  const host = element ? webHostOf(element.pageUrl) : null;
+  // Without element facts the page URL still comes from the backend, so
+  // a blocked host is refused even when the element cannot be read.
+  const pageUrl = element ? element.pageUrl : await currentUrlSafely(backend);
+  const host = pageUrl !== null ? webHostOf(pageUrl) : null;
   if (host !== null && checkBrowserHost(host, policy).kind === "blocked") {
-    return compressToolResult({
-      tool: request.tool,
-      status: "error",
-      output: blockedDomainMessage(request.tool, host),
-      details: { ref: request.ref, host, reason: "blocked_domain" },
-    });
+    return blockedResult(request.tool, request.ref, host);
+  }
+  const targetUrl = element ? actionTargetUrl(request.kind, element) : null;
+  if (targetUrl !== null) {
+    const target = checkBrowserUrl(targetUrl, policy);
+    if (target.kind === "blocked") return blockedResult(request.tool, request.ref, target.host);
+    if (target.kind === "offsite") {
+      await requireApproval(
+        dangerous,
+        {
+          sessionId: ctx.sessionId,
+          tool: request.tool,
+          category: "browser_offsite",
+          reason: `${target.host} is not in browser.allowedDomains`,
+          preview: `${buildBrowserActionPreview(request, element, host, true)} → ${targetUrl}`,
+          affectedResources: [target.host],
+        },
+        ctx.signal,
+      );
+    }
   }
   const verdict = classifyBrowserAction(request.kind, element);
   if (verdict.category === null) return null;

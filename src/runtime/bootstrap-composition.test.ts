@@ -26,7 +26,7 @@ const externalOperation = (): never => { throw new Error("Assembly fixture must 
 function browser(): BrowserBackend {
   return {
     ensureReady: async () => externalOperation(), shutdown: vi.fn(async () => {}), snapshot: async () => externalOperation(),
-    hasRef: async () => externalOperation(), describeRef: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
+    hasRef: async () => externalOperation(), describeRef: async () => externalOperation(), currentUrl: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
     type: async () => externalOperation(), search: async () => externalOperation(), tabs: async () => externalOperation(), scroll: async () => externalOperation(),
   };
 }

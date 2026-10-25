@@ -72,7 +72,11 @@ export {
   webHostOf,
 } from "./browser-domain-policy.js";
 export type { BrowserDomainPolicy, DomainVerdict } from "./browser-domain-policy.js";
-export { classifyBrowserAction, PAYMENT_HOSTS } from "./classify-browser-action.js";
+export {
+  classifyBrowserAction,
+  isPaymentPage,
+  PAYMENT_HOSTS,
+} from "./classify-browser-action.js";
 export type {
   BrowserActionCategory,
   BrowserActionKind,
@@ -102,7 +106,7 @@ export function buildBrowserTools(
     buildBrowserNavigateTool(backend, dangerous, policy),
     buildBrowserClickTool(backend, dangerous, policy),
     buildBrowserTypeTool(backend, dangerous, policy),
-    buildBrowserReadAriaTool(backend),
+    buildBrowserReadAriaTool(backend, policy),
     buildBrowserSearchTool(backend, dangerous, policy),
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),

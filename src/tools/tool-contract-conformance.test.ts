@@ -84,7 +84,7 @@ const CORE_CONTRACTS = [
 const unexpected = (): never => { throw new Error("Catalog assembly must not execute an external operation"); };
 const browser: BrowserBackend = {
   ensureReady: async () => unexpected(), shutdown: async () => {},
-  snapshot: async () => unexpected(), hasRef: async () => unexpected(), describeRef: async () => unexpected(),
+  snapshot: async () => unexpected(), hasRef: async () => unexpected(), describeRef: async () => unexpected(), currentUrl: async () => unexpected(),
   navigate: async () => unexpected(), click: async () => unexpected(),
   type: async () => unexpected(), search: async () => unexpected(),
   tabs: async () => unexpected(), scroll: async () => unexpected(),

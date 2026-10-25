@@ -84,8 +84,13 @@ export interface ScrollResult {
  * Strings are trimmed and capped; never contains a field's value.
  */
 export interface RefDescription {
-  /** Lowercased tag name (`button`, `input`, `a`, `div`, …). */
+  /**
+   * Lowercased tag of the effective control: the nearest enclosing
+   * button / link / submit / menu item / tab, else the element itself.
+   */
   tag: string;
+  /** Lowercased tag of the ref'd element itself (an `svg` inside a button). */
+  targetTag: string;
   /** Explicit `role` attribute, lowercased, or `null`. */
   role: string | null;
   /** Accessible name approximation: aria-label, label, text, title. */
@@ -108,7 +113,7 @@ export interface RefDescription {
   isSubmit: boolean;
   /** `href` of a link, or `null`. */
   href: string | null;
-  /** URL of the page the element is on. */
+  /** URL of the frame the element is in (the page URL outside iframes). */
   pageUrl: string;
 }
 
@@ -134,6 +139,8 @@ export interface BrowserBackend {
    * throw like `null` (fail closed: the action asks).
    */
   describeRef(ref: string): Promise<RefDescription | null>;
+  /** URL of the active page; the domain lists re-check it after an action. */
+  currentUrl(): Promise<string>;
 
   navigate(input: NavigateInput): Promise<{ url: string; title: string }>;
   click(input: ClickInput): Promise<{ clickedRef: string }>;

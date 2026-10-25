@@ -11,7 +11,7 @@ import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
-import { gateBrowserUrl } from "./gate-browser-url.js";
+import { gateBrowserUrl, recheckLandedPage } from "./gate-browser-url.js";
 
 /**
  * Estimated width of one rendered tab line: `*[3] <title> — <url>`.
@@ -82,6 +82,10 @@ export function buildBrowserTabsTool(
 
       await backend.ensureReady();
       const result = await backend.tabs(input);
+      if (action === "new" && input.url !== undefined) {
+        const landed = await recheckLandedPage(backend, policy, "browser.tabs");
+        if (landed) return landed;
+      }
       const rendered = result.tabs
         .map(
           (t) =>

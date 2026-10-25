@@ -7,6 +7,7 @@ import {
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 import { gateBrowserAction } from "./gate-browser-action.js";
+import { recheckLandedPage } from "./gate-browser-url.js";
 
 const REF_PATTERN = /^[a-zA-Z0-9]+$/;
 
@@ -60,6 +61,8 @@ export function buildBrowserClickTool(
         ...(modifiers !== undefined ? { modifiers } : {}),
       };
       const result = await backend.click(payload);
+      const landed = await recheckLandedPage(backend, policy, "browser.click");
+      if (landed) return landed;
       return compressToolResult({
         tool: "browser.click",
         status: "ok",

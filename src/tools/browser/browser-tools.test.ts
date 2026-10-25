@@ -88,6 +88,10 @@ class FakeBackend implements BrowserBackend {
     return this.descriptions.get(ref) ?? null;
   }
 
+  async currentUrl(): Promise<string> {
+    return this.snap.url;
+  }
+
   async navigate(
     input: NavigateInput,
   ): Promise<{ url: string; title: string }> {

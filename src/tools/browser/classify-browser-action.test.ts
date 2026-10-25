@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { RefDescription } from "./browser-backend.js";
-import { classifyBrowserAction, type BrowserActionKind } from "./classify-browser-action.js";
+import {
+  classifyBrowserAction,
+  isPaymentPage,
+  type BrowserActionKind,
+} from "./classify-browser-action.js";
 
 function el(over: Partial<RefDescription> = {}): RefDescription {
   return {
     tag: "div",
+    targetTag: "div",
     role: null,
     name: "",
     type: null,
@@ -54,7 +59,33 @@ const ROWS: Row[] = [
   ["Enter in a form textbox", "type_enter", input({ name: "Comment", inForm: true }), "browser_commit"],
   ["Enter in a chat textbox outside a form", "type_enter", el({ tag: "div", role: "textbox", editable: true, name: "Message" }), "browser_commit"],
   ["click on uninspectable element", "click", null, "browser_commit"],
-  ["type into uninspectable element", "type", null, "browser_commit"],
+  // Text typed into an element we cannot read could be a password.
+  ["type into uninspectable element", "type", null, "browser_secret"],
+  // Vocabulary (round 1).
+  ["Save", "click", el({ tag: "button", name: "Save" }), "browser_commit"],
+  ["Allow (OAuth consent)", "click", el({ tag: "button", name: "Allow" }), "browser_commit"],
+  ["Authorize app", "click", el({ tag: "button", name: "Authorize app" }), "browser_commit"],
+  ["Accept invitation", "click", el({ tag: "button", name: "Accept invitation" }), "browser_commit"],
+  ["Merge pull request", "click", el({ tag: "button", name: "Merge pull request" }), "browser_commit"],
+  ["Unsubscribe", "click", el({ tag: "button", name: "Unsubscribe" }), "browser_commit"],
+  ["Russian save", "click", el({ tag: "button", name: "Сохранить изменения" }), "browser_commit"],
+  ["Russian allow", "click", el({ tag: "button", name: "Разрешить" }), "browser_commit"],
+  ["German Absenden", "click", el({ tag: "button", name: "Absenden" }), "browser_commit"],
+  ["German compound is not 'senden'", "click", el({ tag: "a", name: "Sendungsverfolgung" }), null],
+  ["German compound is not 'speichern'", "click", el({ tag: "a", name: "Zwischenspeichern" }), null],
+  ["Spanish enviar", "click", el({ tag: "button", name: "Enviar" }), "browser_commit"],
+  ["French supprimer", "click", el({ tag: "button", name: "Supprimer" }), "browser_commit"],
+  ["Chinese confirm delete", "click", el({ tag: "button", name: "确认删除" }), "browser_commit"],
+  ["Chinese pay", "click", el({ tag: "button", name: "立即支付" }), "browser_secret"],
+  ["Place your order", "click", el({ tag: "input", type: "submit", name: "Place your order", isSubmit: true, inForm: true }), "browser_secret"],
+  ["Proceed to checkout", "click", el({ tag: "a", name: "Proceed to checkout", href: "/cart/checkout" }), "browser_secret"],
+  // "subscribe" / "buy" alone: a commit, a secret only on a payment page.
+  ["YouTube Subscribe", "click", el({ tag: "button", name: "Subscribe", pageUrl: "https://www.youtube.com/@channel" }), "browser_commit"],
+  ["newsletter Subscribe", "click", el({ tag: "button", name: "Subscribe", isSubmit: true, inForm: true }), "browser_commit"],
+  ["Buy alone off a payment page", "click", el({ tag: "button", name: "Buy" }), "browser_commit"],
+  ["Subscribe on a checkout path", "click", el({ tag: "button", name: "Subscribe", pageUrl: "https://shop.example/checkout/plan" }), "browser_secret"],
+  ["Subscribe on a payment host", "click", el({ tag: "button", name: "Subscribe", pageUrl: "https://checkout.stripe.com/c/pay/x" }), "browser_secret"],
+  ["Continue on Amazon /gp/buy", "click", el({ tag: "input", type: "submit", name: "Continue", isSubmit: true, inForm: true, pageUrl: "https://www.amazon.com/gp/buy/spc/handlers/display.html" }), "browser_secret"],
   // No prompt.
   ["plain link", "click", el({ tag: "a", name: "Learn more", href: "/docs" }), null],
   ["checkbox", "click", el({ tag: "input", type: "checkbox", name: "Remember me" }), null],
@@ -80,5 +111,13 @@ describe("classifyBrowserAction", () => {
 
   it("says why an uninspectable element asks", () => {
     expect(classifyBrowserAction("click", null).reason).toBe("could not inspect element");
+  });
+
+  it("treats known payment hosts and checkout paths as payment pages", () => {
+    expect(isPaymentPage("https://www.paypal.com/checkoutnow")).toBe(true);
+    expect(isPaymentPage("https://www.amazon.com/gp/buy/spc")).toBe(true);
+    expect(isPaymentPage("https://shop.example/checkout")).toBe(true);
+    expect(isPaymentPage("https://www.youtube.com/watch?v=x")).toBe(false);
+    expect(isPaymentPage("https://blog.example/paying-it-forward")).toBe(false);
   });
 });

@@ -98,6 +98,9 @@ class FakeBackend implements BrowserBackend {
   async describeRef(): Promise<RefDescription | null> {
     return null;
   }
+  async currentUrl(): Promise<string> {
+    return "https://example.com/";
+  }
   async scroll(_input: ScrollInput): Promise<ScrollResult> {
     return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
   }

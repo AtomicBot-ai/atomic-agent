@@ -1,5 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { describeElementInPage, toRefDescription } from "./describe-element.js";
+import { classifyBrowserAction } from "./classify-browser-action.js";
+
+const CONTROL_SELECTOR =
+  "button, [role=button], [role=link], a[href], input[type=submit], input[type=image], [role=menuitem], [role=tab]";
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 /** A hand-rolled stand-in for a DOM element: just the members the reader touches. */
 function fakeElement(spec: {
@@ -54,6 +62,31 @@ describe("describeElementInPage", () => {
   it("names an input[type=submit] by its value", () => {
     const facts = describeElementInPage(fakeElement({ tag: "input", attrs: { type: "submit" }, value: "Send" }));
     expect(facts).toMatchObject({ name: "Send", isSubmit: true });
+  });
+});
+
+describe("effective control", () => {
+  it("an svg inside a form's default button describes the button: a submit, so it asks", () => {
+    const button = fakeElement({ tag: "button", text: "Send", form: form({ method: "post" }) });
+    const svg = fakeElement({ tag: "svg", closest: { [CONTROL_SELECTOR]: button } });
+    const facts = describeElementInPage(svg);
+    expect(facts).toMatchObject({ tag: "button", targetTag: "svg", isSubmit: true, inForm: true, name: "Send" });
+    const verdict = classifyBrowserAction("click", toRefDescription(facts, "https://mail.example/"));
+    expect(verdict.category).toBe("browser_commit");
+  });
+
+  it("names a control by aria-labelledby (Amazon's buy box)", () => {
+    vi.stubGlobal("document", {
+      getElementById: (id: string) => (id === "lbl" ? { textContent: "Place your order" } : null),
+    });
+    const facts = describeElementInPage(fakeElement({ tag: "input", attrs: { type: "submit", "aria-labelledby": "lbl" } }));
+    expect(facts.name).toBe("Place your order");
+  });
+
+  it("uses the element's own frame URL as the page URL", () => {
+    vi.stubGlobal("location", { href: "https://js.stripe.com/v3/elements" });
+    const facts = describeElementInPage(fakeElement({ tag: "input", attrs: { name: "cardnumber" } }));
+    expect(toRefDescription(facts, "https://shop.example/cart").pageUrl).toBe("https://js.stripe.com/v3/elements");
   });
 });
 

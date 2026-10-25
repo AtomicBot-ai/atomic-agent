@@ -1,13 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import type {
-  AriaSnapshot,
-  BrowserBackend,
-  ClickInput,
-  NavigateInput,
-  RefDescription,
-  TabInfo,
-  TypeInput,
-} from "./browser-backend.js";
+import { describe, expect, it } from "vitest";
+import { GATE_CTX, GateBackend, facts, recordingGate } from "./browser-gate-test-helpers.js";
 import {
   buildBrowserClickTool,
   buildBrowserNavigateTool,
@@ -15,8 +7,6 @@ import {
   buildBrowserTabsTool,
   buildBrowserTypeTool,
 } from "./index.js";
-import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
-import type { ApprovalGate } from "../../approval/approval-gate.js";
 
 /**
  * The click / type approval gate and the domain lists, end to end
@@ -24,93 +14,16 @@ import type { ApprovalGate } from "../../approval/approval-gate.js";
  * classification table itself lives in classify-browser-action.test.ts.
  */
 
-const CTX = {
-  workingDir: "/tmp",
-  sessionId: "s",
-  stepIndex: 0,
-  signal: new AbortController().signal,
-};
+const CTX = GATE_CTX;
 
-function facts(over: Partial<RefDescription> = {}): RefDescription {
-  return {
-    tag: "a",
-    role: null,
-    name: "Learn more",
-    type: null,
-    autocomplete: null,
-    fieldHints: "",
-    editable: false,
-    inForm: false,
-    formAction: null,
-    formMethod: null,
-    inSearchForm: false,
-    isSubmit: false,
-    href: "/docs",
-    pageUrl: "https://shop.example/cart",
-    ...over,
-  };
-}
-
-class GateBackend implements BrowserBackend {
-  public clicks: ClickInput[] = [];
-  public types: TypeInput[] = [];
-  public navigations: NavigateInput[] = [];
-  public tabCalls = 0;
-  public searches = 0;
-  public element: RefDescription | null = facts();
-  public describeThrows = false;
-
-  async ensureReady(): Promise<void> {}
-  async shutdown(): Promise<void> {}
-  async snapshot(): Promise<AriaSnapshot> {
-    return { url: "https://shop.example/", title: "Shop", text: "", digest: "d", refs: ["e1"] };
-  }
-  async hasRef(): Promise<boolean> {
-    return true;
-  }
-  async describeRef(): Promise<RefDescription | null> {
-    if (this.describeThrows) throw new Error("evaluate timed out");
-    return this.element;
-  }
-  async navigate(input: NavigateInput): Promise<{ url: string; title: string }> {
-    this.navigations.push(input);
-    return { url: input.url, title: "t" };
-  }
-  async click(input: ClickInput): Promise<{ clickedRef: string }> {
-    this.clicks.push(input);
-    return { clickedRef: input.ref };
-  }
-  async type(input: TypeInput): Promise<{ typedLength: number }> {
-    this.types.push(input);
-    return { typedLength: input.text.length };
-  }
-  async search(): Promise<{ url: string }> {
-    this.searches += 1;
-    return { url: "https://www.google.com/search?q=x" };
-  }
-  async tabs(): Promise<{ tabs: TabInfo[] }> {
-    this.tabCalls += 1;
-    return { tabs: [] };
-  }
-  async scroll(): Promise<{ scrollY: number; scrollHeight: number; viewportHeight: number }> {
-    return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
-  }
-}
-
+/** The recorded prompts in the shape the assertions read. */
 function gate(approved: boolean) {
-  const request = vi.fn(async () =>
-    approved ? { approved: true } : { approved: false, reason: "no" },
-  );
-  const options: DangerousToolOptions = {
-    approvals: { request } as unknown as ApprovalGate,
-    approvalRequired: true,
-  };
-  return { request, options };
+  const { prompts, options } = recordingGate(approved);
+  return { request: prompts, options };
 }
 
-function promptOf(request: ReturnType<typeof gate>["request"]) {
-  const calls = request.mock.calls as unknown as Array<[Record<string, unknown>]>;
-  return calls[0]?.[0];
+function promptOf(prompts: Array<Record<string, unknown>>) {
+  return prompts[0];
 }
 
 describe("browser.click approval gate", () => {
@@ -120,7 +33,7 @@ describe("browser.click approval gate", () => {
     const { request, options } = gate(true);
     const result = await buildBrowserClickTool(backend, options).run({ ref: "e1" }, CTX);
     expect(result.status).toBe("ok");
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveLength(1);
     const prompt = promptOf(request);
     expect(prompt).toMatchObject({ tool: "browser.click", category: "browser_commit", affectedResources: ["shop.example"] });
     expect(prompt?.preview).toContain('"Continue"');
@@ -142,7 +55,7 @@ describe("browser.click approval gate", () => {
     const { request, options } = gate(false);
     const result = await buildBrowserClickTool(backend, options).run({ ref: "e1" }, CTX);
     expect(result.status).toBe("ok");
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveLength(0);
     expect(backend.clicks).toHaveLength(1);
   });
 
@@ -161,7 +74,7 @@ describe("browser.click approval gate", () => {
     const result = await tool.run({ ref: "e1" }, CTX);
     expect(result.status).toBe("error");
     expect(result.details.reason).toBe("blocked_domain");
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveLength(0);
     expect(backend.clicks).toHaveLength(0);
   });
 });
@@ -206,7 +119,7 @@ describe("browser.type approval gate", () => {
     const { request, options } = gate(false);
     const result = await buildBrowserTypeTool(backend, options).run({ ref: "e1", text: "shoes", pressEnter: true }, CTX);
     expect(result.status).toBe("ok");
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveLength(0);
   });
 });
 
@@ -219,7 +132,7 @@ describe("browser domain lists", () => {
     const result = await buildBrowserNavigateTool(backend, options, blocked).run({ url: "https://www.bank.example/" }, CTX);
     expect(result.status).toBe("error");
     expect(result.summary).toContain("browser.blockedDomains");
-    expect(request).not.toHaveBeenCalled();
+    expect(request).toHaveLength(0);
     expect(backend.navigations).toHaveLength(0);
   });
 
@@ -248,7 +161,7 @@ describe("browser domain lists", () => {
     expect(promptOf(request)).toMatchObject({ category: "browser_offsite", affectedResources: ["example.com"] });
     expect(backend.navigations).toHaveLength(0);
     await tool.run({ url: "https://github.com/x" }, CTX);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).toHaveLength(1);
     expect(backend.navigations).toHaveLength(1);
   });
 });

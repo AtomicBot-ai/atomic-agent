@@ -71,7 +71,9 @@ export const FUSION_WORKER_APPROVAL_REFUSED =
   "this step needs operator approval, which a worker cannot request. " +
   "It is outside the directories this fan-out was authorised for. Stop and, in your reply, " +
   "name the exact path so the orchestrator can send the task out again with that path in `files` — " +
-  "it cannot run the action itself.";
+  "it cannot run the action itself. " +
+  "A browser step that submits, publishes, deletes, pays or enters a password needs the user: " +
+  "report that step and do not retry it another way.";
 
 /**
  * The stable substring of the refusal that survives rewording of the

@@ -121,6 +121,11 @@ export class PlaywrightBackend implements BrowserBackend {
     return toRefDescription(raw, page.url());
   }
 
+  async currentUrl(): Promise<string> {
+    const page = await this.requireActivePage();
+    return page.url();
+  }
+
   async snapshot(options: { depth?: number; full?: boolean } = {}): Promise<AriaSnapshot> {
     const page = await this.requireActivePage();
     const bodyLocator = page.locator("body");

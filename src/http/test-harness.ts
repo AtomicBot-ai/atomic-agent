@@ -51,6 +51,9 @@ export class FakeBrowserBackend implements BrowserBackend {
   async describeRef(): Promise<RefDescription | null> {
     return null;
   }
+  async currentUrl(): Promise<string> {
+    return "https://example.com/";
+  }
   async snapshot(): Promise<AriaSnapshot> {
     return {
       url: "https://example.com/",

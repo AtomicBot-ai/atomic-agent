@@ -13,7 +13,7 @@ import * as readProtection from "../tools/read-scope/confine-reads.js";
 const externalOperation = (): never => { throw new Error("Composition test must not perform external work"); };
 const backend: BrowserBackend = {
   ensureReady: async () => externalOperation(), shutdown: async () => {},
-  snapshot: async () => externalOperation(), hasRef: async () => externalOperation(), describeRef: async () => externalOperation(),
+  snapshot: async () => externalOperation(), hasRef: async () => externalOperation(), describeRef: async () => externalOperation(), currentUrl: async () => externalOperation(),
   navigate: async () => externalOperation(), click: async () => externalOperation(),
   type: async () => externalOperation(), search: async () => externalOperation(),
   tabs: async () => externalOperation(), scroll: async () => externalOperation(),
