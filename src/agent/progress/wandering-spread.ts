@@ -42,11 +42,22 @@ export function probeFamily(tool: string): string | null {
 
 /**
  * Distinct probe signatures per wandering-prone tool since that tool's
- * run was last settled. One instance per turn, owned by the
- * `ToolLoopTracker`.
+ * run was last settled, each tagged with the ROUND it was made in. One
+ * instance per turn, owned by the `ToolLoopTracker`.
+ *
+ * A round is one model step (ATO-999, #828). The distinct-signature
+ * count is what the messages quote, but what decides is how many rounds
+ * of probing the run spans: four URLs fetched side by side in one step
+ * are one decision by the model, a fan-out, not four attempts at the
+ * same thing. Churn -- re-phrasing a query step after step -- still
+ * counts one round per step, so the shape this detector was built for
+ * is bounded exactly as before. A probe recorded without a round (no
+ * step was noted) is a round of its own, which is the per-call
+ * behaviour every caller had before rounds existed.
  */
 export class ProbeRuns {
-  private readonly runs = new Map<string, Set<string>>();
+  private readonly runs = new Map<string, Map<string, string>>();
+  private nextSoloRound = 0;
   /**
    * Tools that have completed successfully since the last read. Settling
    * is applied lazily, at the next read, so a run boundary does not
@@ -58,23 +69,25 @@ export class ProbeRuns {
   private readonly progress = new Set<string>();
 
   /**
-   * Fold a completed call into the runs. `ok` is the call's status. A
-   * vetoed call never reaches here — it did not run, so it is neither a
-   * probe nor progress.
+   * Fold a completed call into the runs. `ok` is the call's status;
+   * `round` the step it was made in. A vetoed call never reaches here --
+   * it did not run, so it is neither a probe nor progress.
    */
-  record(tool: string, argsHash: string, ok: boolean): void {
+  record(tool: string, argsHash: string, ok: boolean, round?: number): void {
     if (ok) this.progress.add(tool);
     if (probeFamily(tool) === null) return;
+    const roundKey =
+      round === undefined ? `solo:${this.nextSoloRound++}` : `step:${round}`;
     const run = this.runs.get(tool);
     if (run === undefined) {
-      this.runs.set(tool, new Set([argsHash]));
+      this.runs.set(tool, new Map([[argsHash, roundKey]]));
       return;
     }
-    run.add(argsHash);
+    if (!run.has(argsHash)) run.set(argsHash, roundKey);
   }
 
   /**
-   * The run spread for a prospective `(tool, argsHash)` — the distinct
+   * The run spread for a prospective `(tool, argsHash)` -- the distinct
    * signatures already in the run, plus one when this call introduces a
    * new one. Mirrors the window spread: the current call is not recorded
    * yet when the gate asks.
@@ -84,6 +97,22 @@ export class ProbeRuns {
     const run = this.runs.get(tool);
     if (run === undefined) return 1;
     return run.has(argsHash) ? run.size : run.size + 1;
+  }
+
+  /**
+   * How many rounds the run spans once the prospective call joins it: the
+   * distinct rounds already in the run, plus one when the call is a new
+   * signature made in a round the run has not seen yet. Without a
+   * `round` the call is a round of its own. Never above `spread`.
+   */
+  rounds(tool: string, argsHash: string, round?: number): number {
+    this.applyProgress();
+    const run = this.runs.get(tool);
+    if (run === undefined) return 1;
+    const seen = new Set(run.values());
+    if (run.has(argsHash)) return seen.size;
+    if (round !== undefined && seen.has(`step:${round}`)) return seen.size;
+    return seen.size + 1;
   }
 
   /**
