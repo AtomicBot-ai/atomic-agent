@@ -11,7 +11,25 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, execSync: execSyncMock };
 });
 
+/** The ports `getConfig()` reports; a test sets them before a stop that names none. */
+const configPorts = vi.hoisted(() => ({ chat: 0, embedding: 0 }));
+vi.mock("../../config/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../config/index.js")>();
+  return {
+    ...actual,
+    getConfig: () =>
+      ({
+        localModels: {
+          apiKey: null,
+          managed: { port: configPorts.chat },
+          embeddings: { port: configPorts.embedding },
+        },
+      }) as unknown as ReturnType<typeof actual.getConfig>,
+  };
+});
+
 import {
+  resolveEmbeddingLogFilePath,
   resolveEmbeddingPidFilePath,
   resolveLogFilePath,
   resolvePidFilePath,
@@ -151,6 +169,39 @@ describe("stopEmbeddingDaemon on Windows", () => {
 
     expect(String(execSyncMock.mock.calls[0]?.[0])).toBe("taskkill /PID 5151 /T /F");
     expect(calls.filter((s) => s === 0).length).toBeGreaterThanOrEqual(3);
+    expect(existsSync(resolveEmbeddingPidFilePath(dir))).toBe(false);
+  });
+});
+
+describe("on Windows, a stop that names no port waits on the configured one", () => {
+  // Every production caller omits `port`: the wait has to find it in config.
+  it("chat: localModels.managed.port", async () => {
+    onPlatform("win32");
+    const dir = dataDir();
+    writeFileSync(resolvePidFilePath(dir), "4242", "utf-8");
+    const { port } = await listen();
+    configPorts.chat = port;
+    configPorts.embedding = await freePort();
+    fakeProcess(1);
+
+    await stopDaemon(dir, { timeoutMs: 300 });
+
+    expect(readFileSync(resolveLogFilePath(dir), "utf-8")).toContain(`port ${port} was still in use`);
+    expect(existsSync(resolvePidFilePath(dir))).toBe(false);
+  });
+
+  it("embedding: localModels.embeddings.port", async () => {
+    onPlatform("win32");
+    const dir = dataDir();
+    writeFileSync(resolveEmbeddingPidFilePath(dir), "5151", "utf-8");
+    const { port } = await listen();
+    configPorts.embedding = port;
+    configPorts.chat = await freePort();
+    fakeProcess(1);
+
+    await stopEmbeddingDaemon(dir, { timeoutMs: 300 });
+
+    expect(readFileSync(resolveEmbeddingLogFilePath(dir), "utf-8")).toContain(`port ${port} was still in use`);
     expect(existsSync(resolveEmbeddingPidFilePath(dir))).toBe(false);
   });
 });

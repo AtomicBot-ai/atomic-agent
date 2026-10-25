@@ -41,7 +41,7 @@ export async function waitForProcessRelease(
   deps: ReleaseWaitDeps = {},
 ): Promise<ReleaseWaitResult> {
   const alive = deps.pidAlive ?? isPidAlive;
-  const open = deps.portOpen ?? isPortOpen;
+  const open = deps.portOpen ?? isPortHeld;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
   const now = deps.now ?? Date.now;
   const timeoutMs = opts.timeoutMs ?? RELEASE_WAIT_MS;
@@ -101,13 +101,39 @@ export function isPidAlive(pid: number): boolean {
 /** Open = something accepts on it: an HTTP answer, or a bind that fails. */
 export async function isPortOpen(port: number): Promise<boolean> {
   if (await isPortAnswering(port, 800)) return true;
-  return !(await canBind(port));
+  return (await probeBind(port)) !== "free";
 }
 
-function canBind(port: number): Promise<boolean> {
+/**
+ * The release wait's probe: can the next server bind the port? The bind
+ * goes first because it is what the next start needs and it answers at
+ * once; an HTTP probe of a closed loopback port can take about a second
+ * on Windows. Only a bind that fails for a reason other than "in use"
+ * falls back to asking HTTP.
+ */
+export async function isPortHeld(port: number): Promise<boolean> {
+  const bind = await probeBind(port);
+  if (bind !== "unknown") return bind === "in_use";
+  return isPortAnswering(port, 800);
+}
+
+type BindProbe = "free" | "in_use" | "unknown";
+
+/** Bind 127.0.0.1:`port` and let go; bounded so a stuck listen cannot hold the wait. */
+function probeBind(port: number, timeoutMs = 1000): Promise<BindProbe> {
   return new Promise((resolve) => {
     const server = createServer();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
+    const timer = setTimeout(() => {
+      server.close();
+      resolve("unknown");
+    }, timeoutMs);
+    server.once("error", (err: NodeJS.ErrnoException) => {
+      clearTimeout(timer);
+      resolve(err.code === "EADDRINUSE" || err.code === "EACCES" ? "in_use" : "unknown");
+    });
+    server.listen(port, "127.0.0.1", () => {
+      clearTimeout(timer);
+      server.close(() => resolve("free"));
+    });
   });
 }

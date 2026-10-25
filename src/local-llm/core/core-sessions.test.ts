@@ -233,7 +233,10 @@ describe("stopping a Core session on Windows (ATO-304)", () => {
     return port;
   }
 
-  /** A live session whose model server (the child) exits `exitAfterMs` after Core answers the unload. */
+  /**
+   * A live session whose model server (the child) exits `exitAfterMs` after Core answers the unload.
+   * Written before the platform is faked, so the record write never reaches for `icacls`.
+   */
   async function liveSession(exitAfterMs: number | null): Promise<number> {
     child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60_000)"], { stdio: "ignore" });
     const pid = child.pid!;
@@ -250,8 +253,8 @@ describe("stopping a Core session on Windows (ATO-304)", () => {
   }
 
   it("returns only once Core's llama-server has exited, so the next load can take its port", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     const pid = await liveSession(300);
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     const started = Date.now();
     await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 5_000 })).resolves.toBe(true);
     expect(Date.now() - started).toBeGreaterThanOrEqual(250);
@@ -260,16 +263,16 @@ describe("stopping a Core session on Windows (ATO-304)", () => {
   });
 
   it("gives up after its bound and notes it in the server log", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     const pid = await liveSession(null);
+    vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 300 })).resolves.toBe(true);
     expect(readFileSync(join(dir, "llama-server.log"), "utf8")).toContain(`pid ${pid} was still running`);
     expect(existsSync(coreSessionPath(dir, "chat"))).toBe(false);
   });
 
   it("does not wait on macOS or Linux, where it never did", async () => {
-    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     await liveSession(null);
+    vi.spyOn(process, "platform", "get").mockReturnValue("darwin");
     const started = Date.now();
     await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 5_000 })).resolves.toBe(true);
     expect(Date.now() - started).toBeLessThan(2_000);

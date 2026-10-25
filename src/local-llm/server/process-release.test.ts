@@ -1,4 +1,5 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -6,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   isPidAlive,
+  isPortHeld,
   noteReleaseTimeout,
   waitForProcessRelease,
   type ReleaseWaitDeps,
@@ -136,5 +138,23 @@ describe("isPidAlive", () => {
     expect(isPidAlive(4242)).toBe(true);
     vi.spyOn(process, "kill").mockImplementation(() => true);
     expect(isPidAlive(4242)).toBe(true);
+  });
+});
+
+describe("isPortHeld", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("answers from the bind alone: held while a listener has it, free once it closes, no HTTP asked", async () => {
+    const fetchSpy = vi.fn(async () => {
+      throw new Error("no HTTP probe expected");
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    const server = createServer((sock) => sock.destroy());
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as AddressInfo).port;
+    expect(await isPortHeld(port)).toBe(true);
+    await new Promise((r) => server.close(() => r(null)));
+    expect(await isPortHeld(port)).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

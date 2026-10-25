@@ -1320,7 +1320,7 @@ export async function stopDaemon(
   dataDir: string,
   opts?: StopDaemonOptions,
 ): Promise<void> {
-  if (await stopCoreSession(dataDir, "chat")) return;
+  if (await stopCoreSession(dataDir, "chat", { releaseWaitMs: opts?.timeoutMs })) return;
   const pidPath = resolvePidFilePath(dataDir);
   let raw: string;
   try {
@@ -1656,7 +1656,7 @@ export async function stopEmbeddingDaemon(
 ): Promise<void> {
   // Core's embedding module first: a model switch may leave either kind.
   await stopCoreEmbedding(dataDir, opts?.timeoutMs === undefined ? {} : { waitMs: opts.timeoutMs });
-  if (await stopCoreSession(dataDir, "embedding")) return;
+  if (await stopCoreSession(dataDir, "embedding", { releaseWaitMs: opts?.timeoutMs })) return;
   const pidPath = resolveEmbeddingPidFilePath(dataDir);
   let raw: string;
   try {
