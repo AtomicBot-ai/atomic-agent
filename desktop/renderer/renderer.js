@@ -20937,9 +20937,13 @@ function renderProseFresh(text) {
     markup: the reply is pre-wrap. */
 function codeBlockFrame(pre) {
   const lang = (/^<pre class="mdpre"[^>]*\sdata-lang="([^"]*)"/.exec(pre) || [])[1] || '';
+  // ATO-1025: the code takes colour (code-highlight.js); Copy still reads its text alone.
+  const lit = typeof highlightCode === 'function'
+    ? pre.replace(/(<code>)([\s\S]*)(<\/code><\/pre>)$/, (m, open, code, close) => open + highlightCode(code, lang) + close)
+    : pre;
   return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>'
     + '<button class="mdcopy" data-mdcopy title="Copy code" aria-label="Copy code">' + ic('copy') + '<span>Copy</span></button></div>'
-    + pre + '</div>';
+    + lit + '</div>';
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {

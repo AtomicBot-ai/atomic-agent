@@ -147,6 +147,12 @@
   background:none;color:inherit;font:inherit;cursor:pointer}
 .prose .mdcopy svg{width:12px;height:12px}
 .prose .mdcopy:hover{background:var(--hover);color:var(--ink-2)}
+/* ATO-1025: code colour (code-highlight.js), from the theme's own tokens so both themes carry it. */
+.prose .mdpre .hl-k{color:var(--reasoning)}
+.prose .mdpre .hl-s{color:var(--success)}
+.prose .mdpre .hl-n{color:var(--amber-text)}
+.prose .mdpre .hl-p{color:var(--accent)}
+.prose .mdpre .hl-c{color:var(--ink-3);font-style:italic}
 .prose strong{font-weight:600}
 .prose.usr .mdcode{background:var(--glass-18)}
 
