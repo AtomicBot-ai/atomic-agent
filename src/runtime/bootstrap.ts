@@ -5,7 +5,7 @@ import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
@@ -356,6 +356,7 @@ export async function createAgentRuntime(
   const mcpCatalog = await connectRuntimeMcpCatalog({
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode,
+    ...mcpGrammarHookFor(profileManager),
   });
   const { mcpManager, getGrammar, effectiveToolDescriptors } = mcpCatalog;
 

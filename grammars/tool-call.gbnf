@@ -13,9 +13,37 @@ root ::= tool-call-array
 # and the sampler has to escape the quote instead. The args are strict
 # (`text`, then optional `attachments`) so the generic object cannot
 # carry a reply around the rule; `tool-name` does not list "reply".
-tool-call ::= reply-call | other-call
+tool-call ::= reply-call | shell-call | fs-read-call | fs-write-call | other-call
 reply-call ::= "{" ws "\"tool\"" ws ":" ws "\"reply\"" ws "," ws "\"args\"" ws ":" ws reply-args ws "}"
 other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
+# `os.shell.run` has its own branch too: under the generic `object` rule its
+# args could be `{}`, and small local models took that way out, emitting
+# `{"tool":"os.shell.run","args":{}}` instead of the command they had just
+# planned (Nemotron 3.5 Bolt E4B, 23.10.2026). Here `cmd` comes first and is
+# a `required-string` (below: non-empty, may open on an escape such as the
+# alias-skipping `\\ls`, marker guard intact); the other keys stay
+# free-form. `tool-name` does not list "os.shell.run".
+shell-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.shell.run\"" ws "," ws "\"args\"" ws ":" ws shell-args ws "}"
+shell-args ::= "{" ws "\"cmd\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
+# The same hole, and the same fix, for `os.fs.read` and `os.fs.write`
+# (ATO-909): `{"tool":"os.fs.read","args":{}}` was legal and fails in the
+# tool. Each tool's own check is the bar: read needs a non-empty `path`;
+# write needs a non-empty `path` and a `content` string, which may be
+# empty (an empty file is a real write). The required keys come first,
+# in the order the descriptors teach; every other key stays free-form,
+# as the tool decides what it accepts. `required-string` is a non-empty
+# string whose first character is not `<` or `|`, so a reasoning
+# profile's marker guard (`chars`) still sees every `<|`; it may open on
+# an escape (a JSON-escaped UNC path does). `tool-name` lists neither
+# name. Known limit, here and in `shell-args`: the free keys may repeat a
+# required one (`{"path":"a","content":"x","path":""}`), and JSON.parse
+# keeps the last, so the tool still sees an empty value and refuses it;
+# ruling that out would mean a key rule that excludes each required name.
+fs-read-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.read\"" ws "," ws "\"args\"" ws ":" ws fs-read-args ws "}"
+fs-read-args ::= "{" ws "\"path\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
+fs-write-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.write\"" ws "," ws "\"args\"" ws ":" ws fs-write-args ws "}"
+fs-write-args ::= "{" ws "\"path\"" ws ":" ws required-string ws "," ws "\"content\"" ws ":" ws string ( ws "," ws pair )* ws "}"
+required-string ::= "\"" ( [^"\\\x00-\x1f<|] | "\\" escape ) chars "\""
 reply-args ::= "{" ws "\"text\"" ws ":" ws reply-text ( ws "," ws "\"attachments\"" ws ":" ws value )? ws "}"
 reply-text ::= "\"" reply-pending "\""
 # Right recursion over the last character: `reply-chars` may end (the
@@ -27,9 +55,9 @@ reply-pending ::= reply-hard reply-chars | reply-soft reply-pending
 reply-hard ::= [^"\\\x00-\x1f :(\[{=,] | "\\" escape
 reply-soft ::= [ :(\[{=,]
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
-tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | mcp-native-tool | mcp-server-tool | "\"finish\""
+tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | mcp-native-tool | "\"finish\""
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
-os-tool ::= "\"os." ( "shell.run" | "fs.read" | "fs.read_document" | "fs.write" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.move" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
+os-tool ::= "\"os." ( "fs.read_document" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.move" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
 discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""
 memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.store" | "notes.recall" | "notes.forget" | "lessons.recall" | "procedures.recall" ) "\""
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
@@ -50,14 +78,19 @@ fusion-tool ::= "\"fusion.delegate\""
 # run against a throwaway copy). A local orchestrator reviewing a fan-out
 # needs these in its vocabulary for the same reason it needs the fan-out.
 verify-tool ::= "\"verify." ( "syntax" | "run" ) "\""
-# Native MCP discovery / resource / prompt tools — always available.
+# Native MCP discovery / resource / prompt tools. Registered once MCP is on
+# (a server configured, or added live) and never unregistered, so they stay
+# after the last server is removed live; with MCP off from the start
+# `applyMcpToolNameRule` drops this from `tool-name`.
 mcp-native-tool ::= "\"mcp." ( "resource.list" | "resource.read" | "prompt.list" | "prompt.get" ) "\""
-# Per-server MCP tool branch. The static fallback (`mcp.<any>.<any>`)
-# is a permissive shape so the grammar still parses when MCP is
-# configured but the dynamic fragment was not stitched in yet — the
-# registry still rejects unknown names at invoke time. The runtime
-# replaces this rule via `buildGrammar` when it has an actual list
-# of qualified MCP tool names.
+# Per-server MCP tool names. Deliberately NOT referenced from `tool-name`
+# here: with no MCP tools the sampler can emit no `mcp.<server>.<tool>`
+# name, because a permissive shape let a local model invent one
+# (`mcp.example.toolkit`) and the turn died on "tool not registered"
+# (ATO-1029). When MCP tools exist, `applyMcpToolNameRule`
+# (`src/mcp/mcp-grammar-builder.ts`) replaces this placeholder with the
+# real list of qualified names and adds `mcp-server-tool` back to
+# `tool-name`, right after `mcp-native-tool`.
 mcp-server-tool ::= "\"mcp." [a-z0-9-]+ "." [a-zA-Z0-9._-]+ "\""
 
 value ::= object | array | string | number | boolean | null-lit
