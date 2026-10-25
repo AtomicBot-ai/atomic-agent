@@ -989,8 +989,9 @@ export interface UserConfigFile {
 // explicit `llama-server` in a v77+ file is honoured. Other fields, external
 // mode included, are untouched.
 // v78: `localModels.reasoningBudgetTokens` defaults to `0` (no bound, as
-// before v68). llama.cpp clamps the grammar bound to 499 tokens, so the
-// old 1500 default cut thinking models off mid-thought. An older file
+// before v68). llama.cpp's repeat limit then clamped the grammar bound to
+// 499 tokens (until ATO-607), so the old 1500 default cut thinking models
+// off mid-thought. An older file
 // holding exactly 1500 (written by the schema, not the operator) migrates
 // to `0`; any other value is a deliberate choice and is kept.
 // Unversioned, additive: `tools.shell.envPassthrough` (default

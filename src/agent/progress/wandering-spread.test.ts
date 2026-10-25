@@ -125,3 +125,42 @@ describe("probeFamily", () => {
     expect(runs.spread("os.fs.read", "c")).toBe(1);
   });
 });
+
+describe("ProbeRuns rounds (ATO-999)", () => {
+  it("counts the probes of one step as one round, and still quotes them all", () => {
+    const runs = new ProbeRuns();
+    for (const url of ["u1", "u2", "u3", "u4"]) {
+      runs.record("os.web.fetch", url, true, 1);
+    }
+    // A sibling of the same step joins the round it is already in.
+    expect(runs.rounds("os.web.fetch", "u5", 1)).toBe(1);
+    // The next step is a new round.
+    expect(runs.rounds("os.web.fetch", "u5", 2)).toBe(2);
+    // The distinct count is untouched: it is what the messages quote.
+    expect(runs.spread("os.web.fetch", "u5")).toBe(5);
+  });
+
+  it("is one round per call without a step, as before rounds existed", () => {
+    const runs = new ProbeRuns();
+    for (const q of ["q1", "q2", "q3"]) probe(runs, "os.web.search", q);
+    expect(runs.rounds("os.web.search", "q4")).toBe(4);
+    expect(runs.rounds("os.web.search", "q4")).toBe(
+      runs.spread("os.web.search", "q4"),
+    );
+  });
+
+  it("keeps a repeated signature in the round it was first made in", () => {
+    const runs = new ProbeRuns();
+    runs.record("os.web.fetch", "u1", true, 1);
+    runs.record("os.web.fetch", "u1", true, 2);
+    expect(runs.rounds("os.web.fetch", "u1", 3)).toBe(1);
+  });
+
+  it("is settled by another family exactly like the spread", () => {
+    const runs = new ProbeRuns();
+    runs.record("os.web.fetch", "u1", true, 1);
+    runs.record("os.web.fetch", "u2", true, 2);
+    runs.record("os.fs.grep", "g", true, 2);
+    expect(runs.rounds("os.web.fetch", "u3", 3)).toBe(1);
+  });
+});

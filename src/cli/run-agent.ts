@@ -13,7 +13,13 @@ import {
   formatLlamaWrongServerHint,
   llamaWrongServerStatus,
 } from "../llm/llama-server-health.js";
-import { LOCAL_ENGINE_START_HINT, isLocalEngineDown } from "../llm/reliability/index.js";
+import {
+  LOCAL_ENGINE_START_HINT,
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  classifyLocalServerError,
+  isLocalEngineDown,
+  localServerErrorLines,
+} from "../llm/reliability/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -311,6 +317,15 @@ export function formatAgentEvent(
       // ATO-772: the managed local model's process is gone; the turn ended
       // without waiting, and the fix is one command.
       if (isLocalEngineDown(event.error)) return `${base}\n    ${LOCAL_ENGINE_START_HINT}`;
+      // ATO-707 / ATO-737: a local server's typed 400 in plain words. A
+      // 404/405 keeps the wrong-server hint, which names `models check`.
+      const local = classifyLocalServerError(event.error);
+      if (local !== null && local.code !== LOCAL_SERVER_NOT_FOUND_CODE) {
+        // An OpenAI-compatible server's message already says it
+        // (`humanizeOpenAiHttpError`); saying it twice helps nobody.
+        if (event.error.message.includes(local.message)) return base;
+        return [base, ...localServerErrorLines(local).map((line) => `    ${line}`)].join("\n");
+      }
       return withLlamaHint(base, event.category, event.error.message, ctx);
     }
     default:
