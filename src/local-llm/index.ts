@@ -15,6 +15,10 @@ export {
   type EmbeddingModelId,
   type EmbeddingModelDef,
 } from "./catalog/models-catalog.js";
+export {
+  recommendedModelFor,
+  type RecommendedModelOptions,
+} from "./catalog/recommended-model.js";
 
 export {
   isWindowsArm64,
