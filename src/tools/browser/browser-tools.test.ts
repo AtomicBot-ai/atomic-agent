@@ -4,6 +4,7 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -78,6 +79,13 @@ class FakeBackend implements BrowserBackend {
 
   async hasRef(ref: string): Promise<boolean> {
     return this.liveRefs.has(ref);
+  }
+
+  /** Element facts for the click / type gate; unknown refs read as `null`. */
+  public descriptions: Map<string, RefDescription> = new Map();
+
+  async describeRef(ref: string): Promise<RefDescription | null> {
+    return this.descriptions.get(ref) ?? null;
   }
 
   async navigate(
@@ -217,21 +225,21 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("click forwards the ref", async () => {
-    const tool = buildBrowserClickTool(backend);
+    const tool = buildBrowserClickTool(backend, autoApprove());
     const result = await tool.run({ ref: "e1" }, CTX);
     expect(result.status).toBe("ok");
     expect(backend.lastClick?.ref).toBe("e1");
   });
 
   it("click rejects non-alphanumeric ref", async () => {
-    const tool = buildBrowserClickTool(backend);
+    const tool = buildBrowserClickTool(backend, autoApprove());
     await expect(tool.run({ ref: "e 1" }, CTX)).rejects.toThrow(/ref/);
     await expect(tool.run({ ref: 1 }, CTX)).rejects.toThrow(/ref/);
   });
 
   it("click fails fast with a helpful message when the ref is stale", async () => {
     backend.liveRefs = new Set(["e1"]);
-    const tool = buildBrowserClickTool(backend);
+    const tool = buildBrowserClickTool(backend, autoApprove());
     const result = await tool.run({ ref: "e337" }, CTX);
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/ref 'e337' is not present/);
@@ -241,7 +249,7 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("type records text length and pressEnter flag", async () => {
-    const tool = buildBrowserTypeTool(backend);
+    const tool = buildBrowserTypeTool(backend, autoApprove());
     const result = await tool.run(
       { ref: "e2", text: "hello", pressEnter: true },
       CTX,
@@ -253,7 +261,7 @@ describe("browser tools on a fake backend", () => {
 
   it("type fails fast with a helpful message when the ref is stale", async () => {
     backend.liveRefs = new Set(["e1"]);
-    const tool = buildBrowserTypeTool(backend);
+    const tool = buildBrowserTypeTool(backend, autoApprove());
     const result = await tool.run({ ref: "e2", text: "x" }, CTX);
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/ref 'e2' is not present/);
@@ -287,7 +295,7 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("search builds a search URL via the backend", async () => {
-    const tool = buildBrowserSearchTool(backend);
+    const tool = buildBrowserSearchTool(backend, autoApprove());
     const result = await tool.run(
       { query: "atomic agent", engine: "bing" },
       CTX,
@@ -298,7 +306,7 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("search attaches a worldSnapshot for the results page", async () => {
-    const tool = buildBrowserSearchTool(backend);
+    const tool = buildBrowserSearchTool(backend, autoApprove());
     const result = await tool.run({ query: "hermes" }, CTX);
     const snap = result.details.worldSnapshot as
       { kind: string; digest: string; text: string } | undefined;
@@ -316,7 +324,7 @@ describe("browser tools on a fake backend", () => {
     expect(navResult.status).toBe("ok");
     expect(navResult.details.worldSnapshot).toBeUndefined();
 
-    const search = buildBrowserSearchTool(flaky);
+    const search = buildBrowserSearchTool(flaky, autoApprove());
     const searchResult = await search.run({ query: "q" }, CTX);
     expect(searchResult.status).toBe("ok");
     expect(searchResult.details.worldSnapshot).toBeUndefined();

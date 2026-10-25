@@ -28,6 +28,23 @@ export type ApprovalCategory =
   | "proc_kill"
   | "git_remote"
   | "browser_nonweb"
+  /**
+   * A browser click or Enter that submits, sends, publishes or deletes
+   * something on a web page (`classify-browser-action.ts`). Level 4
+   * beside `publish`: it acts under the operator's logged-in accounts.
+   */
+  | "browser_commit"
+  /**
+   * Typing into a password / one-time-code / payment card field, or a
+   * click that pays. Level 5 and never granted: each one is its own
+   * decision.
+   */
+  | "browser_secret"
+  /**
+   * Browser navigation to a host outside a non-empty
+   * `browser.allowedDomains`. Level 3 beside `http`.
+   */
+  | "browser_offsite"
   | "trust_config"
   /**
    * Publishing under the operator's name — a pull request, an issue, a
@@ -75,15 +92,17 @@ export type ApprovalCategory =
  *    session working directory (realpath containment).
  *  - level 3 (home): file writes anywhere under the home directory,
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
- *    is not part of the gate and stays on), paid cloud generation.
+ *    is not part of the gate and stays on), paid cloud generation,
+ *    browser navigation outside `browser.allowedDomains`.
  *  - level 4 (operator): guarded shell commands, skill scripts,
  *    process kills, and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
  *    through the shell, so the dedicated tools are never looser or
- *    stricter than the escape hatch. The remote-sync switch
+ *    stricter than the escape hatch. Browser clicks / Enter that
+ *    submit, publish or delete (`browser_commit`). The remote-sync switch
  *    (`git.remoteSync`) is checked before this ladder is consulted.
  *  - level 5 (full trust): everything, including browser navigation to
- *    non-web URLs, writes to the agent's own trust config, reads outside
+ *    non-web URLs, browser passwords and payments, writes to the agent's own trust config, reads outside
  *    the working directory, and uncategorised requests.
  *
  * `trust_config` is deliberately pinned at 5: a write to the file that
@@ -99,13 +118,16 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fs_trash: 3,
   http: 3,
   paid_generation: 3,
+  browser_offsite: 3,
   shell: 4,
   script: 4,
   proc_kill: 4,
   publish: 4,
   git_remote: 4,
   fusion_fanout: 4,
+  browser_commit: 4,
   browser_nonweb: 5,
+  browser_secret: 5,
   trust_config: 5,
   email: 5,
   fs_read_outside: 5,
@@ -168,6 +190,12 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // point of the question is that the operator sees this task list.
   fusion_fanout: false,
   browser_nonweb: true,
+  // "Allow clicks that submit / post / delete in this chat" is a
+  // separate answer from any navigation grant.
+  browser_commit: true,
+  // A password or a payment is its own decision every time.
+  browser_secret: false,
+  browser_offsite: true,
   trust_config: false,
   // A session grant would let the agent mail anyone for the rest of
   // the session; each mail is its own decision.
@@ -204,6 +232,9 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   git_remote: "git · remote",
   fusion_fanout: "fusion · fan-out",
   browser_nonweb: "browser · non-web URL",
+  browser_commit: "browser · submit / publish / delete",
+  browser_secret: "browser · password or payment",
+  browser_offsite: "browser · site outside the allow-list",
   trust_config: "agent trust config",
   email: "e-mail send",
   fs_read_outside: "read outside the working directory",

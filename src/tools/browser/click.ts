@@ -1,16 +1,30 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, ClickInput } from "./browser-backend.js";
+import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
+import {
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
+import { gateBrowserAction } from "./gate-browser-action.js";
 
 const REF_PATTERN = /^[a-zA-Z0-9]+$/;
 
-export function buildBrowserClickTool(backend: BrowserBackend): ToolDefinition {
+/**
+ * A click that submits, sends, publishes, deletes or pays asks first
+ * (`classify-browser-action.ts`); a click on a blocked host is refused.
+ */
+export function buildBrowserClickTool(
+  backend: BrowserBackend,
+  dangerous: DangerousToolOptions,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+): ToolDefinition {
   return {
     name: "browser.click",
     description:
       "Click an element addressed by its `ref` (e.g. `e12`) from the latest ARIA snapshot.",
     readonly: false,
-    async run(rawArgs) {
+    async run(rawArgs, ctx) {
       const ref = rawArgs.ref;
       if (typeof ref !== "string" || !REF_PATTERN.test(ref)) {
         throw new Error(
@@ -32,6 +46,14 @@ export function buildBrowserClickTool(backend: BrowserBackend): ToolDefinition {
           details: { ref, reason: "stale_ref" },
         });
       }
+      const refused = await gateBrowserAction(
+        backend,
+        dangerous,
+        policy,
+        { tool: "browser.click", kind: "click", ref },
+        ctx,
+      );
+      if (refused) return refused;
       const payload: ClickInput = {
         ref,
         ...(button !== undefined ? { button } : {}),

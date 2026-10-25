@@ -29,7 +29,7 @@ const logger = new StructuredLogger({ level: "error", sinks: [] });
 const externalOperation = (): never => { throw new Error("Test must not perform external work"); };
 const backend: BrowserBackend = {
   ensureReady: async () => externalOperation(), shutdown: async () => {}, snapshot: async () => externalOperation(),
-  hasRef: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
+  hasRef: async () => externalOperation(), describeRef: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
   type: async () => externalOperation(), search: async () => externalOperation(), tabs: async () => externalOperation(), scroll: async () => externalOperation(),
 };
 const grammar = 'root ::= mcp-server-tool\nmcp-server-tool ::= "placeholder"\n';

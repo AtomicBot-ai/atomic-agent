@@ -52,7 +52,11 @@ export function createRuntimeToolRegistry(
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
   if (config.browser.enabled) {
-    for (const tool of buildBrowserTools(browserBackend, dangerous)) {
+    const domainPolicy = {
+      blockedDomains: config.browser.blockedDomains,
+      allowedDomains: config.browser.allowedDomains,
+    };
+    for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy)) {
       toolRegistry.register(tool);
     }
   }

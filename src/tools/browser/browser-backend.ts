@@ -77,6 +77,41 @@ export interface ScrollResult {
   viewportHeight: number;
 }
 
+/**
+ * Facts about one ref'd element, read before `browser.click` /
+ * `browser.type` so the approval gate can tell a plain link from a
+ * submit, delete or password field (`classify-browser-action.ts`).
+ * Strings are trimmed and capped; never contains a field's value.
+ */
+export interface RefDescription {
+  /** Lowercased tag name (`button`, `input`, `a`, `div`, …). */
+  tag: string;
+  /** Explicit `role` attribute, lowercased, or `null`. */
+  role: string | null;
+  /** Accessible name approximation: aria-label, label, text, title. */
+  name: string;
+  /** Lowercased `type` attribute, or `null`. */
+  type: string | null;
+  /** Lowercased `autocomplete` attribute, or `null`. */
+  autocomplete: string | null;
+  /** Lowercased name / id / placeholder / label words for field heuristics. */
+  fieldHints: string;
+  /** An `<input>`, `<textarea>` or contenteditable element. */
+  editable: boolean;
+  /** Inside (or owned by) a `<form>`. */
+  inForm: boolean;
+  formAction: string | null;
+  formMethod: string | null;
+  /** Inside a search form or `role=search` landmark. */
+  inSearchForm: boolean;
+  /** Submits its form when clicked (default-type button in a form, input submit/image). */
+  isSubmit: boolean;
+  /** `href` of a link, or `null`. */
+  href: string | null;
+  /** URL of the page the element is on. */
+  pageUrl: string;
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -93,6 +128,12 @@ export interface BrowserBackend {
    * timeout.
    */
   hasRef(ref: string): Promise<boolean>;
+  /**
+   * Describe the element behind `ref` for the click / type approval
+   * gate, or `null` when it cannot be found. May throw; callers treat a
+   * throw like `null` (fail closed: the action asks).
+   */
+  describeRef(ref: string): Promise<RefDescription | null>;
 
   navigate(input: NavigateInput): Promise<{ url: string; title: string }>;
   click(input: ClickInput): Promise<{ clickedRef: string }>;

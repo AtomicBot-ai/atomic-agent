@@ -2,9 +2,19 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, SearchInput } from "./browser-backend.js";
 import { captureWorldSnapshot } from "./capture-world-snapshot.js";
+import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
+import {
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
+import { gateBrowserUrl } from "./gate-browser-url.js";
+import { searchUrlFor } from "./search-engines.js";
 
+/** The engine's host goes through the same domain lists as a navigation. */
 export function buildBrowserSearchTool(
   backend: BrowserBackend,
+  dangerous: DangerousToolOptions,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): ToolDefinition {
   return {
     name: "browser.search",
@@ -17,6 +27,14 @@ export function buildBrowserSearchTool(
         throw new Error("browser.search: `query` must be a non-empty string");
       }
       const engine = parseEngine(rawArgs.engine);
+      const refused = await gateBrowserUrl(
+        dangerous,
+        policy,
+        "browser.search",
+        searchUrlFor(engine ?? "google", query),
+        ctx,
+      );
+      if (refused) return refused;
       await backend.ensureReady();
       const payload: SearchInput = {
         query,

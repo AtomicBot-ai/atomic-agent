@@ -93,6 +93,11 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 - `tools.shell.maxJobs` (default `3`).
 - `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
 
+## browser
+
+- `browser.blockedDomains` (default `[]`): hosts the browser tools refuse at every approval level, subdomains included.
+- `browser.allowedDomains` (default `[]`): when non-empty, opening any other host asks first (`browser_offsite`).
+
 ## sessions
 
 - `sessions.retention.enabled` (default `false`).

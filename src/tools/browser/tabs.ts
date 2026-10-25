@@ -7,6 +7,11 @@ import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+import {
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
+import { gateBrowserUrl } from "./gate-browser-url.js";
 
 /**
  * Estimated width of one rendered tab line: `*[3] <title> — <url>`.
@@ -18,6 +23,7 @@ const TAB_CHARS = 512;
 export function buildBrowserTabsTool(
   backend: BrowserBackend,
   options: DangerousToolOptions,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): ToolDefinition {
   return {
     name: "browser.tabs",
@@ -45,6 +51,11 @@ export function buildBrowserTabsTool(
       }
       if (typeof rawArgs.url === "string" && rawArgs.url.length > 0) {
         input.url = rawArgs.url;
+      }
+
+      if (action === "new" && input.url !== undefined) {
+        const refused = await gateBrowserUrl(options, policy, "browser.tabs", input.url, ctx);
+        if (refused) return refused;
       }
 
       // Mirror browser.navigate: tabs.new with a URL is the same danger surface

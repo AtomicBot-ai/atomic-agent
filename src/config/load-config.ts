@@ -349,6 +349,8 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_BROWSER_LAUNCH_TIMEOUT_MS",
         ENV_DEFAULTS.BROWSER_LAUNCH_TIMEOUT_MS,
       ),
+      blockedDomains: [...user.browser.blockedDomains],
+      allowedDomains: [...user.browser.allowedDomains],
     },
     skills: {
       // File value is the default, env var overrides it — the same

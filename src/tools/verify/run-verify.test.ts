@@ -23,6 +23,8 @@ const CONFIG: Pick<AtomicAgentConfig, "browser"> = {
     executablePath: null,
     noSandbox: false,
     launchTimeoutMs: 20_000,
+    blockedDomains: [],
+    allowedDomains: [],
   },
 };
 
