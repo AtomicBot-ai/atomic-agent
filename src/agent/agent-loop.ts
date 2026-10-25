@@ -133,7 +133,7 @@ export class AgentLoop {
     state = await refreshMemoryContext(this.deps, state, options);
     await preparedTurn.profileSynced;
     const policies = prepareTurnPolicies(session.id, options, this.deps);
-    const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes } = policies;
+    const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes, unknownTools } = policies;
     let { fusionState, reviewStall } = policies;
     const turn = createTurnLoopState();
     let overflowCompactionAttempted = false;
@@ -453,6 +453,7 @@ export class AgentLoop {
             claimEvidence,
             linkEvidence,
             progressNotes,
+            unknownTools,
             slotManager: this.deps.slotManager,
             grammar: activeGrammar,
             profile: activeProfile,

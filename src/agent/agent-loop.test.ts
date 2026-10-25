@@ -4424,15 +4424,21 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(llmCalls).toBe(1);
   });
 
-  it("classifies a missing tool call as ToolExecutionError", async () => {
+  it("classifies a streak of missing tool calls as ToolExecutionError", async () => {
+    // One call to a tool that does not exist is answered with an error
+    // result and the turn goes on (`unknown-tool.ts`); a model that
+    // keeps doing only that is still stopped on the third such step.
     const registry = buildDefaultToolRegistry();
     const stepErrors: Array<{ category: string; message: string }> = [];
+    let llmCalls = 0;
     const loop = new AgentLoop({
       registry,
       slotManager: new SlotManager(2),
       grammar: 'root ::= "ok"',
-      llmComplete: async () =>
-        makeCompletion(JSON.stringify({ tool: "does_not_exist", args: {} })),
+      llmComplete: async () => {
+        llmCalls += 1;
+        return makeCompletion(JSON.stringify({ tool: "does_not_exist", args: {} }));
+      },
       toolDescriptors: TOOLS,
       capabilities: CAPS,
       skillCatalog: SKILLS,
@@ -4448,9 +4454,11 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     const session = createEmptySessionState({ id: "s-missing", workingDir });
     const result = await loop.runTurn(session, {
       userMessage: "go",
-      maxSteps: 3,
+      maxSteps: 10,
       signal: new AbortController().signal,
     });
+    expect(llmCalls).toBe(3);
+    expect(stepErrors).toHaveLength(1);
     expect(result.reason).toBe("failed");
     expect(result.session.status).toBe("failed");
     expect(result.session.lastError).toMatch(/does_not_exist/);

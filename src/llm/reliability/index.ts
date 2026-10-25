@@ -13,7 +13,13 @@ export {
   ToolExecutionError,
   TransportError,
 } from "./llm-failures.js";
-export type { LlmFailureOptions, ModelErrorOptions } from "./llm-failures.js";
+export type {
+  LlmFailureOptions,
+  ModelErrorOptions,
+  ToolExecutionErrorKind,
+  ToolExecutionErrorOptions,
+  UnregisteredToolNameClass,
+} from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
 export {
   LOCAL_ENGINE_DOWN_CODE,
