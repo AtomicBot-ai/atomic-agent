@@ -18025,8 +18025,11 @@ function contextChip() {
     + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.12 * pct / 100).toFixed(2) + ' 47.12" transform="rotate(-90 10 10)"/>' : '')
     + '</svg>';
   /* ATO-481: from half full the ring carries its figure, so a filling
-     window reads as a gauge at a glance; below that it stays the ring alone. */
-  const fig = CTX.window && pct >= 50 ? '<span class="ctxpct">' + Math.round(pct) + '%</span>' : '';
+     window reads as a gauge at a glance. ATO-1025: below that too — a low
+     arc alone still read as a spinner that never stops ("Ask first" with an
+     endless empty spinner, review of 25.10), so the figure is always there
+     once the window is known. */
+  const fig = CTX.window ? '<span class="ctxpct">' + Math.max(1, Math.round(pct)) + '%</span>' : '';
   return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + (fig ? ' haspct' : '') + tone + cchipOpen('context') + '" data-act="context"'
     + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + fig + '</button>';
 }
