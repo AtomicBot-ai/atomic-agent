@@ -2922,6 +2922,8 @@ function replyTurnActed(m) {
   return false;
 }
 const ACTED_RETRY_HINT = 'Repeating this turn could create or delete files a second time';
+// ATO-901: the user bubble's retry while a turn runs (msgActs).
+const BUSY_RETRY_HINT = 'Wait for the answer to finish';
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2977,9 +2979,15 @@ function msgActs(m) {
   // BOTH kinds, so a `.msgacts.usr` element would have matched nothing in
   // styles.css and would have told the next reader the user row's alignment
   // was unstyled.
-  return '<div class="' + cls + '">'
-    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>'
-    + copy + '</div>';
+  /* ATO-901: while a turn runs the retry is the muted, inert icon ATO-862
+     draws under a reply that acted, with its own sentence: pressed, it used
+     to park the text in the composer behind a toast nobody understood. The
+     render that ends the turn draws the live button back. */
+  const resend = S.busy || S.pending
+    ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + BUSY_RETRY_HINT
+      + '" aria-label="' + BUSY_RETRY_HINT + '">' + ic('retry') + '</button>'
+    : '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>';
+  return '<div class="' + cls + '">' + resend + copy + '</div>';
 }
 
 /* What is copied is `m.text` and only `m.text`. For a user message that is the
@@ -3057,7 +3065,8 @@ function resendUser(id) {
     // these two are the narrow repaints the rest of the file uses.
     refreshSend();
     ctxDraftChanged();
-    toast('A turn is already running', 'the message is in the composer — Enter folds it into this turn', 'bad');
+    // ATO-901: plain words, no dash (a "Try again" on a failure row still lands here mid-turn).
+    toast('The agent is still answering', 'Your message is in the box: press Enter to add it to this answer, or wait.', 'bad');
     return;
   }
   // Both the editor and S.draft, because submit() reads `e.value` FIRST and

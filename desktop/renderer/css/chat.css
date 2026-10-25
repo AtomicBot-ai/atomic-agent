@@ -389,6 +389,8 @@
   color:var(--ink);font:400 12px/16px var(--font-ui);letter-spacing:0;opacity:0;pointer-events:none;
   transition:opacity var(--t-state) var(--ease)}
 .msgact-off[data-tip]:hover::after{opacity:1;transition-delay:300ms}
+/* ATO-901: under the user's bubble the row sits at the right edge, so the sentence opens leftwards. */
+.turn.usr .msgact-off[data-tip]::after{left:auto;right:0}
 /* ATO-168: on a reply the actions start at the LEFT, under the text they copy
    (Danya: on the right "it flies off who knows where"); the user bubble keeps
    them at its right edge. The last reply's dot (replyDot) is a zero-height
