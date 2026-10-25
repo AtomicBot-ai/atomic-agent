@@ -203,11 +203,12 @@ export const CONVERSATION_CAP_SAFETY_MARGIN = 512;
 /**
  * Approximate token cost of the agent's fixed prompt scaffolding — the
  * stable prefix (persona + tool catalog + capabilities + instructions),
- * measured at ~5.2k and rounded up for drift. Only used for the startup
+ * measured at ~7.7k with the default tools (it was ~5.2k when this was
+ * first set) and rounded up for drift. Only used for the startup
  * sanity check on a model's context window; nothing depends on it being
  * exact, and the real per-build figure comes from `checkBudget`.
  */
-export const AGENT_FIXED_PROMPT_TOKENS = 6000;
+export const AGENT_FIXED_PROMPT_TOKENS = 8000;
 
 /**
  * Most of the window the prompt budget will hold back for the reply.

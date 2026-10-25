@@ -292,20 +292,26 @@ describe("computeEffectiveConversationCap with a reply cap past the window", () 
 
 describe("minUsableContextWindow", () => {
   it("counts the full cap when no window is being judged", () => {
-    expect(minUsableContextWindow(16_384)).toBe(6000 + 16_384 + 512);
+    expect(minUsableContextWindow(16_384)).toBe(8000 + 16_384 + 512);
   });
 
   it("judges a window by the reserve the budget holds on it", () => {
     // 96k on a 32k window reserves 16 384, so 32k is usable: no warning.
-    expect(minUsableContextWindow(96_000, 32_768)).toBe(6000 + 16_384 + 512);
+    expect(minUsableContextWindow(96_000, 32_768)).toBe(8000 + 16_384 + 512);
     expect(32_768).toBeGreaterThanOrEqual(minUsableContextWindow(96_000, 32_768));
     // A window too small for the scaffolding plus its reserve still is.
-    expect(minUsableContextWindow(96_000, 8000)).toBe(6000 + 2000 + 512);
+    expect(minUsableContextWindow(96_000, 8000)).toBe(8000 + 2000 + 512);
     expect(8000).toBeLessThan(minUsableContextWindow(96_000, 8000));
   });
 
+  it("warns again for a 10k window against the measured scaffold", () => {
+    // 8000 + 2560 + 512: the ~7.7k scaffold leaves a 10k window no history.
+    expect(minUsableContextWindow(16_384, 10_240)).toBe(8000 + 2560 + 512);
+    expect(minUsableContextWindow(16_384, 10_240)).toBeGreaterThan(10_240);
+  });
+
   it("counts a 16k window as usable with its smaller reserve", () => {
-    expect(minUsableContextWindow(16_384, 16_384)).toBe(6000 + 4096 + 512);
+    expect(minUsableContextWindow(16_384, 16_384)).toBe(8000 + 4096 + 512);
     expect(16_384).toBeGreaterThanOrEqual(minUsableContextWindow(16_384, 16_384));
   });
 });
