@@ -60,6 +60,22 @@ describe("gated-call approval categories", () => {
     expect(gatedCallRunsUnattended("os.email.send", { level: 4 })).toBe(false);
   });
 
+  it("keeps os.screen.* in one serial class; input asks as screen_control, the capture never", () => {
+    for (const name of ["os.screen.capture", "os.screen.click", "os.screen.type", "os.screen.key"]) {
+      expect(resourceClassFor(name), name).toBe("approval_gated");
+    }
+    expect(approvalCategoriesFor("os.screen.capture")).toEqual([]);
+    for (const level of [1, 2, 3, 4, 5] as const) {
+      expect(gatedCallRunsUnattended("os.screen.capture", { level })).toBe(true);
+    }
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) {
+      expect(approvalCategoriesFor(name)).toEqual(["screen_control"]);
+      expect(gatedCallRunsUnattended(name, { level: 3 }), name).toBe(false);
+      expect(gatedCallRunsUnattended(name, { level: 4 }), name).toBe(true);
+      expect(gatedCallRunsUnattended(name, { level: 1, grantedCategories: ["screen_control"] }), name).toBe(true);
+    }
+  });
+
   it("honours a session category grant, but never for a non-grantable category", () => {
     expect(
       gatedCallRunsUnattended("os.shell.run", {

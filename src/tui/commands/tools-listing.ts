@@ -44,6 +44,10 @@ const FAMILY_ALIASES: ReadonlyMap<string, string> = new Map([
   ["images", "image"],
   ["draw", "image"],
   ["git", "os.git"],
+  ["screen", "os.screen"],
+  ["mouse", "os.screen"],
+  ["keyboard", "os.screen"],
+  ["screenshot", "os.screen"],
 ]);
 
 /**
@@ -67,6 +71,8 @@ export interface ToolGateSourceConfig {
     readonly agentToolsEnabled: boolean;
   };
   readonly mcp: { readonly servers: readonly unknown[] };
+  /** `tools.screen.enabled`; optional so hand-built test configs need not name it. */
+  readonly tools?: { readonly screen?: { readonly enabled: boolean } };
   readonly llm?: {
     readonly runMode?: { readonly mode?: string };
     readonly providers?: readonly { readonly kind: string; readonly apiKey?: string; readonly baseUrl?: string }[];
@@ -120,6 +126,9 @@ export function effectiveToolDescriptors(
     fusion: { enabled: config.llm?.runMode?.mode === "fusion" },
     image: { available: openRouterImageKey(config, env) !== undefined },
     video: { available: openRouterImageKey(config, env) !== undefined },
+    screen: {
+      enabled: config.tools?.screen?.enabled === true && process.platform === "darwin",
+    },
   });
 }
 

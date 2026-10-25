@@ -387,6 +387,7 @@ export function loadConfig(): AtomicAgentConfig {
         maxJobs: user.tools.shell.maxJobs,
         envPassthrough: [...user.tools.shell.envPassthrough],
       },
+      screen: { enabled: user.tools.screen.enabled },
     },
     log: { level: logLevel },
     tasks: {

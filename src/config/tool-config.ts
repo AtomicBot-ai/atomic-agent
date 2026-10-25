@@ -48,6 +48,10 @@ export interface RuntimeToolsConfig {
      */
     envPassthrough: string[];
   };
+  screen: {
+    /** Registers `os.screen.*` (macOS only). Mirrors `UserToolsConfig.screen`. */
+    enabled: boolean;
+  };
 }
 
 export interface UserToolsConfig {
@@ -87,6 +91,17 @@ export interface UserToolsConfig {
      */
     envPassthrough: string[];
   };
+  screen: {
+    /**
+     * Computer use on macOS (ATO-525): `os.screen.capture` takes
+     * screenshots and `os.screen.{click,type,key}` drive the real mouse
+     * and keyboard, each input asking as `screen_control` below
+     * approval level 4. Default `false`: opt-in, and read at start, so
+     * turning it on takes a restart. macOS also asks for Screen
+     * Recording and Accessibility permission for the host app.
+     */
+    enabled: boolean;
+  };
 }
 
 export function createToolsDefaults(): UserToolsConfig {
@@ -108,12 +123,21 @@ export function createToolsDefaults(): UserToolsConfig {
       // here, so a command the model runs never sees them (ATO-347).
       envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
     },
+    // Off until the operator asks for it: a model that can click and
+    // type anywhere is not a default.
+    screen: { enabled: false },
   };
 }
 
+/**
+ * `raw` is the `tools.shell` block (the historical signature);
+ * `rawScreen` the `tools.screen` block. A file without either takes the
+ * defaults — `tools.screen` is unversioned and additive.
+ */
 export function parseToolsConfig(
   raw: Record<string, unknown>,
   readDefaults: () => UserToolsConfig,
+  rawScreen: Record<string, unknown> = {},
 ): UserToolsConfig {
   return {
     shell: {
@@ -141,6 +165,12 @@ export function parseToolsConfig(
           "tools.shell.envPassthrough",
         ) ?? []),
       ],
+    },
+    screen: {
+      enabled: parseBool(
+        rawScreen.enabled ?? readDefaults().screen.enabled,
+        "tools.screen.enabled",
+      ),
     },
   };
 }

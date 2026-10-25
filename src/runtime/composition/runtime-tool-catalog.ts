@@ -18,7 +18,7 @@ import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
 import { buildBrowserTools } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
-import { registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry } from "../../tools/os/index.js";
+import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
 import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
@@ -102,6 +102,13 @@ export function registerRuntimeCoreTools(input: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
     },
     shellJobs,
+  });
+  // Computer use (ATO-525): screenshot, click, type, key — macOS only and
+  // opt-in (`tools.screen.enabled`, default off). Every input action asks
+  // as `screen_control`; the descriptors follow the same gate below.
+  registerOsScreenTools(toolRegistry, {
+    ...dangerous,
+    enabled: config.tools.screen.enabled,
   });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the
@@ -373,6 +380,9 @@ export async function connectRuntimeMcpCatalog(input: {
       image: { available: openRouterImageKey(getConfig()) !== undefined },
       // Same key, same reason: every clip is made on OpenRouter.
       video: { available: openRouterImageKey(getConfig()) !== undefined },
+      // Boot-time, like the registration above: the tools exist only when
+      // they were switched on before start and the host is a Mac.
+      screen: { enabled: config.tools.screen.enabled && process.platform === "darwin" },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(

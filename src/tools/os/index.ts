@@ -79,6 +79,8 @@ export { buildOsWebSearchTool } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
+export { OS_SCREEN_TOOL_NAMES, registerOsScreenTools } from "./screen/index.js";
+export type { RegisterOsScreenToolsOptions } from "./screen/index.js";
 export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 export { osFsHashTool } from "./fs/fs-hash.js";
 export { osFsDiffTool } from "./fs/fs-diff.js";

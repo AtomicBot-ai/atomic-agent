@@ -1002,6 +1002,9 @@ export interface UserConfigFile {
 // `notion` skills working. An older file has no field and takes the
 // default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
 // other inherited key; the fix is one line in config.
+// Unversioned, additive: `tools.screen.enabled` (default `false`,
+// ATO-525). Turns on the macOS `os.screen.*` tools; an older file has no
+// field and keeps them off.
 export const USER_CONFIG_VERSION = 78;
 
 /**
@@ -1415,6 +1418,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
   const tools = (obj.tools as Record<string, unknown> | undefined) ?? {};
   const toolsShell = (tools.shell as Record<string, unknown> | undefined) ?? {};
+  const toolsScreen = (tools.screen as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchInputs = prepareWebSearchInputs(
@@ -1526,7 +1530,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
     },
     projects: parseProjectsConfig(projects, () => USER_CONFIG_DEFAULTS.projects),
-    tools: parseToolsConfig(toolsShell, () => USER_CONFIG_DEFAULTS.tools),
+    tools: parseToolsConfig(toolsShell, () => USER_CONFIG_DEFAULTS.tools, toolsScreen),
     sessions: parseSessionConfig(sessionsRetention, () => USER_CONFIG_DEFAULTS.sessions),
     tracing: parseTracingConfig(mergedTrace, () => USER_CONFIG_DEFAULTS.tracing),
     memory: parseMemoryConfig(
