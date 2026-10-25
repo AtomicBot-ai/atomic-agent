@@ -1,5 +1,5 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { getConfig, getTrustConfigPaths } from "../../config/index.js";
+import { getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
@@ -550,9 +550,16 @@ export function registerRuntimeFusionAndReadScope(input: {
   // scope as a token check. Installed here, after every native
   // filesystem tool and the shell are registered. The scope is re-read
   // per call, so `agent.readScope: "unrestricted"` needs no restart.
+  // The agent's own secret files (`.env`, `config.json`, local server
+  // keys) ask as `state_secret` on any read or shell command naming
+  // them, whatever the scope and below full trust (ATO-877).
   confineReads(toolRegistry, {
     grantedDirs: (sessionId) => approvals.fanoutScopes.scopeFor(sessionId),
     readScope: () => getConfig().agent.readScope,
     approvals: dangerous,
+    stateSecrets: {
+      stateDir: config.paths.stateDir,
+      files: getStateSecretPaths(config.paths),
+    },
   });
 }

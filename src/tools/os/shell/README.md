@@ -13,6 +13,7 @@ This area owns the implementation of `os.shell.run`, including its command, jobs
 - [shell-job-calls.ts](shell-job-calls.ts) handles job lookup, wait, kill, collection and detached-result rendering. IDs are scoped to the session that started the job.
 - [shell-result.ts](shell-result.ts) renders output and exit/timeout observations. [node-check-notice.ts](node-check-notice.ts) explains commands whose successful exit does not establish that every named file was checked.
 - Every command spawns with [the filtered environment](../../../sandbox/command-env.ts): provider keys, bot tokens and other secret-looking variables are removed, except the names in `tools.shell.envPassthrough` (passed in as `envPassthrough`; omitted means none). A variable the command line sets itself is unaffected.
+- A command naming one of the agent's own secret files (`.env`, `config.json`, local server keys in the state directory) asks as `state_secret` before it runs, at every level below 5, through [the read-scope wrapper](../../read-scope/state-secrets.ts); a `shell` grant never covers it. Best-effort: a path built at run time is not seen.
 
 The existing [shell-command-guard](../shell-command-guard/index.ts) owns command classification, normalization and policy rules. It is shared with agent verification command classification and remains a separate owner. Approval owns grants and interaction; sandbox owns process execution. This directory does not own runtime shutdown ordering or configuration defaults.
 

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { getConfig, resetConfigCache, getTrustConfigPaths } from "../../config/index.js";
+import { getConfig, resetConfigCache, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { ApprovalGate } from "../../approval/approval-gate.js";
@@ -208,6 +208,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(resolveOriginalRequest).toHaveBeenCalledWith("session");
     expect(wired.workerSupportsSlotAffinity("missing")).toBe(false);
     expect(protectedReads.approvals).toBe(dangerous);
+    // The secret-file guard gets the state's own list (ATO-877).
+    expect(protectedReads.stateSecrets).toEqual({ stateDir: config.paths.stateDir, files: getStateSecretPaths(config.paths) });
     config.agent.readScope = "unrestricted"; expect(protectedReads.readScope?.()).toBe("unrestricted");
     config.agent.readScope = "working-dir"; expect(protectedReads.readScope?.()).toBe("working-dir");
     expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate"]);
