@@ -346,8 +346,7 @@ export async function runInitialCompletion(
   const durationMs = Date.now() - startedAt;
   // How much of the completion was thinking, in the budget's units, so
   // a trace shows a step that hit the reasoning bound (`reasoningTokens`
-  // at about the effective budget, `effectiveReasoningBudgetTokens`, not
-  // the configured one). Same extraction the reasoning event
+  // at about the configured budget). Same extraction the reasoning event
   // below uses, keyed off the link that served the completion.
   const reasoningTokens = estimateReasoningTokens(
     resolveReasoning(

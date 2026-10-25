@@ -457,11 +457,14 @@ describe("the reasoning budget (F49)", () => {
     expect(gemma).toContain("channel-body ::= channel-fragment*");
   });
 
-  it("bounds the think prelude at a configured budget, clamped to llama.cpp's 1,999-char GBNF limit (#600)", async () => {
+  it("bounds the think prelude at the full configured budget, chained under llama.cpp's 1,999-repeat GBNF limit (#600, ATO-607)", async () => {
     const qwen = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
       reasoningBudgetTokens: 1500,
     });
-    expect(qwen).toContain("think-body ::= think-char{0,1999}");
+    // 1,500 tokens = 6,000 chars: three full 1,999 links and a tail of 3.
+    expect(qwen).toContain("think-body ::= think-char{0,1998} | think-char{1999} think-body-2");
+    expect(qwen).toContain("think-body-4 ::= think-char{0,3}");
+    expect(qwen).not.toContain("think-char{0,1999}");
     expect(qwen).toContain(
       'think-char ::= [^<] | "<" [^/] | "</" [^t] | "</t" [^h] | "</th" [^i] | "</thi" [^n] | "</thin" [^k] | "</think" [^>]',
     );
@@ -473,7 +476,8 @@ describe("the reasoning budget (F49)", () => {
     const gemma = await buildGrammar(GEMMA4_THINK_PROFILE, undefined, {
       reasoningBudgetTokens: 1500,
     });
-    expect(gemma).toContain("channel-body ::= channel-char{0,1999}");
+    expect(gemma).toContain("channel-body ::= channel-char{0,1998} | channel-char{1999} channel-body-2");
+    expect(gemma).toContain("channel-body-4 ::= channel-char{0,3}");
     expect(gemma).toContain('channel-char ::= [^<] | "<" [^c]');
     expect(gemma).not.toContain("channel-fragment");
   });
@@ -518,12 +522,31 @@ describe("the reasoning budget (F49)", () => {
     const bounded = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
       reasoningBudgetTokens: 1500,
     });
-    expect(bounded).toContain("think-char{0,1999}");
+    expect(bounded).toContain("think-body-4 ::= think-char{0,3}");
     const unbounded = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
       reasoningBudgetTokens: 0,
     });
-    expect(Math.abs(bounded.length - unbounded.length)).toBeLessThan(64);
+    // Four chained body rules, about 70 bytes each.
+    expect(Math.abs(bounded.length - unbounded.length)).toBeLessThan(512);
     expect(bounded.length).toBeLessThan(16 * 1024);
+    // The config ceiling, 32,768 tokens: 66 body rules, still a few KB.
+    const ceiling = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 32768,
+    });
+    expect(ceiling).toContain("think-body-66 ::= think-char{0,1137}");
+    expect(ceiling).not.toContain("think-body-67");
+    expect(ceiling.length - unbounded.length).toBeLessThan(8 * 1024);
+  });
+
+  it("admits a 1,500-token body in full and refuses one character past it (ATO-607)", async () => {
+    const qwen = await buildGrammar(QWEN_THINK_PROFILE, undefined, {
+      reasoningBudgetTokens: 1500,
+    });
+    expect(gbnfAccepts(qwen, "root", QWEN("x".repeat(2000)))).toBe(true);
+    expect(gbnfAccepts(qwen, "root", QWEN("x".repeat(6000)))).toBe(true);
+    expect(gbnfAccepts(qwen, "root", QWEN("x".repeat(6001)))).toBe(false);
+    // The final step lifts the whole chain.
+    expect(gbnfAccepts(withUnboundedReasoningPrelude(qwen), "root", QWEN("x".repeat(6001)))).toBe(true);
   });
 
   it("withUnboundedReasoningPrelude lifts the bound for the final step and touches nothing else", async () => {
