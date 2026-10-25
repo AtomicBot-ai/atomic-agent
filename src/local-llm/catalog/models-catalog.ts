@@ -84,8 +84,10 @@ export interface LocalModelDef {
    * Place in the recommendation order, 1 = the first choice. Set only on
    * widely used model families (Qwen, Gemma); `recommendedModelFor` picks
    * the best-ranked entry the machine runs comfortably. An entry without
-   * a rank is still offered, just never auto-recommended. The order is a
-   * product choice of well-known models, not a measured benchmark.
+   * a rank is still offered, just never auto-recommended. Models with few
+   * active weights (`-A3B`, `-A4B`) come before dense ones of their size,
+   * because a fast first answer matters most; no dense 27B+ entry may
+   * outrank one that fits the same memory (pinned by the tests).
    */
   recommendRank?: number;
   tag?: string;
@@ -151,7 +153,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 6.72,
     sizeLabel: "6.7 GB",
     description: "Mid-size Gemma, for 12 GB machines and up",
-    recommendRank: 8,
+    recommendRank: 9,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 8,
@@ -172,7 +174,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 14.25,
     sizeLabel: "14.2 GB",
     description: "Big Gemma that stays quick for its size, 20 GB and up",
-    recommendRank: 6,
+    recommendRank: 2,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 16,
@@ -194,7 +196,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 17.29,
     sizeLabel: "17.3 GB",
     description: "Biggest Gemma, slower than the 26B, for 24 GB and up",
-    recommendRank: 4,
+    recommendRank: 6,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
@@ -216,7 +218,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 17.9,
     sizeLabel: "17.9 GB",
     description: "Newest big Qwen, for 28 GB machines and up",
-    recommendRank: 1,
+    recommendRank: 4,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
@@ -238,7 +240,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 17.6,
     sizeLabel: "17.6 GB",
     description: "Big Qwen, older version, for 28 GB machines and up",
-    recommendRank: 3,
+    recommendRank: 5,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
@@ -259,7 +261,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 22.4,
     sizeLabel: "22.4 GB",
     description: "Big Qwen that stays quick for its size, 36 GB and up",
-    recommendRank: 2,
+    recommendRank: 1,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 24,
@@ -280,7 +282,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 2.7,
     sizeLabel: "2.7 GB",
     description: "Small and quick to download, for 8 GB machines and up",
-    recommendRank: 9,
+    recommendRank: 8,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 6,
@@ -307,7 +309,6 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 10,
     recommendedRamGb: 16,
     family: "qwen",
-    tag: "Recommended",
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -323,7 +324,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     fileSizeGb: 22.0,
     sizeLabel: "22 GB",
     description: "Older big Qwen, quick for its size, 36 GB and up",
-    recommendRank: 5,
+    recommendRank: 3,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 24,

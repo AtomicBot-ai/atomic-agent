@@ -36,14 +36,32 @@ describe("recommendedModelFor (curated catalog)", () => {
   it.each([
     [8, "qwen-3.5-4b"],
     [16, "qwen-3.5-9b"],
-    [32, "qwen-3.8-27b"],
-    [64, "qwen-3.8-27b"],
+    [32, "gemma-4-26b-a4b"],
+    [64, "qwen-3.6-35b-a3b"],
   ])("recommends a model for a %i GB machine", (ramGb, expected) => {
     expect(recommendedModelFor(ramGb)?.id).toBe(expected);
   });
 
-  it("never recommends the biggest unranked model on a 32 GB machine", () => {
+  // A dense 27B answers far slower than a model with few active weights
+  // (our own benchmark), so a 32 GB machine must not default to one.
+  it("never recommends the biggest model or a dense 27B on a 32 GB machine", () => {
     expect(recommendedModelFor(32)?.id).not.toBe("nemotron-3.5-30b-a3b");
+    expect(recommendedModelFor(32)?.id).not.toBe("qwen-3.8-27b");
+  });
+
+  it("ranks every few-active-weights model above a dense 27B+ it fits beside", () => {
+    const ranked = LOCAL_MODELS_CATALOG.filter((m) => m.recommendRank !== undefined);
+    const isMoe = (m: LocalModelDef): boolean => /-A\d+B\b/.test(m.name);
+    const bigDense = ranked.filter((m) => !isMoe(m) && m.recommendedRamGb >= 24);
+    expect(bigDense.length).toBeGreaterThan(0);
+    for (const dense of bigDense) {
+      for (const moe of ranked.filter(isMoe)) {
+        if (moe.recommendedRamGb > dense.recommendedRamGb) continue;
+        expect(moe.recommendRank!, `${moe.id} vs ${dense.id}`).toBeLessThan(
+          dense.recommendRank!,
+        );
+      }
+    }
   });
 
   it("only recommends a model the machine runs comfortably", () => {
@@ -70,11 +88,11 @@ describe("recommendedModelFor (curated catalog)", () => {
     }
   });
 
-  // The static "Recommended" label the catalog carries must name the
-  // model the rule picks for a 16 GB machine, so the two never disagree.
-  it("keeps the Recommended tag on the 16 GB recommendation", () => {
+  // The recommendation depends on the machine, so a static label would
+  // contradict it on every other machine size: the catalog carries none.
+  it("leaves the Recommended label to the rule, never to a static tag", () => {
     const tagged = LOCAL_MODELS_CATALOG.filter((m) => m.tag === "Recommended");
-    expect(tagged.map((m) => m.id)).toEqual([recommendedModelFor(16)?.id]);
+    expect(tagged.map((m) => m.id)).toEqual([]);
   });
 });
 
