@@ -22,7 +22,7 @@ function constLine(name) {
 }
 
 function harness() {
-  const c = vm.createContext({ calls: [], REPLY_PATH_RETRY_MS: 15000, Date });
+  const c = vm.createContext({ calls: [] });
   vm.runInContext(
     constLine("PROSE_CACHE") + fn("renderProse")
       + "function renderProseFresh(t) { calls.push(t); return t.includes('PENDING') ? '<span data-rpath=\"x\">' + t + '</span>' : '<p>' + t + '</p>'; }"
@@ -74,4 +74,6 @@ test("a chat render morphs #content and wires the scroller once", () => {
   assert.doesNotMatch(body, /c\.innerHTML = chatView\(\)/);
   const after = fn("afterChat");
   assert.match(after, /SCROLL_WIRED\.has\(sc\)/);
+  // S.stick is set in the event, not a frame later: a stream frame would snap a scroll-up back.
+  assert.match(after, /addEventListener\('scroll', \(\) => \{\s*S\.stick = /);
 });
