@@ -533,7 +533,7 @@ export interface LlamaServerClientOptions {
   refreshApiKey?: (url: string) => Promise<string | null>;
   /**
    * Overrides `config.localModels.drySampler`: send llama.cpp's DRY
-   * anti-repeat sampler fields with every completion. When omitted, the
+   * anti-repeat sampler fields with every `/completion` request. When omitted, the
    * client reads the config on each request.
    */
   drySampler?: boolean;
@@ -1625,10 +1625,6 @@ export class LlamaServerClient {
     const base = this.baseUrlOverride ?? config.localModels.url;
     const url = llamaEndpointUrl(base, config.localModels.completionPath);
     const headers = this.buildHeaders(stream);
-    const nPredict = resolveNPredict(
-      request.maxTokens ?? request.maxOutputTokens,
-      config.localModels.completionMaxTokens,
-    );
     const payload: Record<string, unknown> = {
       prompt: request.prompt,
       stream,
@@ -1638,13 +1634,16 @@ export class LlamaServerClient {
       top_k: request.topK ?? ENV_TOP_K ?? 40,
       // The per-step cap first, then the turn's own ceiling (a fusion
       // worker's `workerMaxOutputTokens`), then the config knob.
-      n_predict: nPredict,
+      n_predict: resolveNPredict(
+        request.maxTokens ?? request.maxOutputTokens,
+        config.localModels.completionMaxTokens,
+      ),
       repeat_penalty: request.repeatPenalty ?? 1.1,
       repeat_last_n: request.repeatLastN ?? 256,
     };
     // ATO-332: opt-in, off by default until measured on real tasks.
     if (this.drySamplerOverride ?? (config.localModels.drySampler === true)) {
-      Object.assign(payload, drySamplerFields(nPredict));
+      Object.assign(payload, drySamplerFields());
     }
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;

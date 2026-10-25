@@ -1004,7 +1004,7 @@ export interface UserConfigFile {
 // other inherited key; the fix is one line in config.
 // Unversioned, additive: `localModels.drySampler` (default `false`,
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
-// every `/completion` request (`src/llm/dry-sampler.ts`); only llama.cpp
+// every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
 // engines receive them. An older file has no field and reads as off.
 export const USER_CONFIG_VERSION = 78;
 

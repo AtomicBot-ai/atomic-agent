@@ -310,11 +310,12 @@ export interface UserLocalModelsConfig {
   reasoningBudgetTokens: number;
   /**
    * Turn on llama.cpp's DRY ("don't repeat yourself") sampler for every
-   * local completion on a llama.cpp-family engine (Atomic Core, the
+   * `/completion` request to a llama.cpp-family engine (Atomic Core, the
    * managed llama-server, an External llama-server). It penalises a
-   * token that would extend a sequence already seen in the reply, which
-   * targets the verbatim loops small models fall into. Ollama and cloud
-   * providers never see it. Default `false`, unversioned and additive:
+   * token that would extend a sequence already in the last 256 tokens
+   * of prompt plus reply, which targets the verbatim loops small models
+   * fall into. Ollama, cloud providers and the vision describe call
+   * never see it. Default `false`, unversioned and additive:
    * an older file has no field and reads as off.
    */
   drySampler: boolean;
