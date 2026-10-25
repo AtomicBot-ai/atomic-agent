@@ -110,7 +110,10 @@ export function buildReasoningPreludeRules(
  * two alternatives split on the count (fewer than `C`, or at least `C`),
  * so a body of a given length has one parse and the sampler keeps a
  * constant number of live stacks, unlike the tempting
- * `( unit{0,C} ){0,k}`, which admits a length in many ways. The head
+ * `( unit{0,C} ){0,k}`, which admits a length in many ways. (The single
+ * parse and constant stack count are argued here, not tested: the test
+ * matcher tracks end positions only, and no test drives llama.cpp's
+ * sampler.) The head
  * line keeps its name, so the root and `withUnboundedReasoningPrelude`
  * still find it.
  */
