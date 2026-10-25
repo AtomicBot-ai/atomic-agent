@@ -40,9 +40,11 @@ const HELP =
     '  use <id>                      Set active model and switch mode to "managed"',
     "  status                        Show mode, backend version, active model, daemon/health",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
-    "                                --context-at-least <n>: an auto-sized window on a GPU",
-    "                                with its own memory starts at least this large (still",
-    "                                within what fits); how a client grows it between turns",
+    "                                --grow-context: on a GPU with its own memory, start the",
+    "                                auto window at 32768 and record how far it may grow",
+    "                                (for a client that grows it between turns)",
+    "                                --context-at-least <n>: with --grow-context, after",
+    "                                `models stop`, start the window at least this large",
     "  stop [--chat-only]            Stop daemon (SIGTERM → SIGKILL after 3s); --chat-only",
     "                                keeps the embedding model running for memory search",
     "  engine [status|check|atomic-core|llama-server]  Inspect or choose the local engine",
@@ -83,10 +85,19 @@ const HELP =
     "  atomic-agent models status",
   ].join("\n") + "\n";
 
-/** `--context-at-least <n>`: a positive integer, or nothing (ignored otherwise). */
-function parseContextAtLeast(raw: string | undefined): { contextAtLeast?: number } {
+/**
+ * `models start` window flags: `--grow-context`, and
+ * `--context-at-least <n>` (a positive integer; anything else is ignored).
+ */
+export function parseStartContextFlags(
+  args: readonly string[],
+): { growContext?: true; contextAtLeast?: number } {
+  const raw = readCliOption([...args], "--context-at-least");
   const n = raw === undefined ? NaN : Number(raw);
-  return Number.isInteger(n) && n > 0 ? { contextAtLeast: n } : {};
+  return {
+    ...(args.includes("--grow-context") ? { growContext: true as const } : {}),
+    ...(Number.isInteger(n) && n > 0 ? { contextAtLeast: n } : {}),
+  };
 }
 
 export async function modelsCommand(args: string[]): Promise<number> {
@@ -124,7 +135,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runLocalModelsStart({
           interactive: args.includes("--interactive"),
           signal: cancel.signal,
-          ...parseContextAtLeast(readCliOption(args, "--context-at-least")),
+          ...parseStartContextFlags(args),
         });
       case "stop":
         return runLocalModelsStop({ chatOnly: args.includes("--chat-only") });

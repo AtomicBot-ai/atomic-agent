@@ -48,7 +48,7 @@ import {
   UNIFIED_MEMORY_KV_SHARE,
   type KvLayoutSource,
 } from "./context-size.js";
-import { GPU_AUTO_MAX_SLOTS, resolveGrowingAutoContext } from "./context-growth.js";
+import { GPU_AUTO_MAX_CONTEXT, resolveDedicatedGpuAutoContext } from "./context-growth.js";
 import {
   classifyPrefixReuse,
   kvLayoutSourceFromMetadata,
@@ -124,18 +124,26 @@ export interface DaemonStartOptions {
    */
   contextSize?: number;
   /**
-   * The growing auto window (`context-growth.ts`): with `contextSize`
-   * auto on a GPU with memory of its own, start at least this large
-   * instead of `GPU_AUTO_START_CONTEXT` — how the daemon's owner restarts
-   * it one step bigger once the conversation has filled the window
-   * (`decideContextGrowth`). Still held to what fits the device; ignored
-   * for a pinned `contextSize`, unified memory and CPU-only launches.
+   * Opt in to the growing auto window (`context-growth.ts`): with
+   * `contextSize` auto on a GPU with memory of its own, start at
+   * `GPU_AUTO_START_CONTEXT` and record a ceiling the owner may grow it
+   * to. Only a caller that grows it between turns passes this (the TUI on
+   * a plain local chat route); every other auto launch on such a card
+   * gets the fit, at most `GPU_AUTO_MAX_CONTEXT`. Ignored for a pinned
+   * `contextSize`, unified memory and CPU-only launches.
+   */
+  growContext?: boolean;
+  /**
+   * With `growContext`: start at least this large instead of
+   * `GPU_AUTO_START_CONTEXT` — how the owner restarts the daemon one step
+   * bigger once the conversation has filled the window
+   * (`decideContextGrowth`). Still held to the ceiling.
    */
   autoContextAtLeast?: number;
   /**
    * Internal: a lower ceiling for `parallel: "auto"` slots
-   * (`WorkerSlotsInput.maxSlots`), set by `startDaemon` for a growing
-   * launch. A pinned `parallel` ignores it.
+   * (`WorkerSlotsInput.maxSlots`), set by `startDaemon` for an auto
+   * window on a GPU with its own memory. A pinned `parallel` ignores it.
    */
   autoSlotsCap?: number;
   /**
@@ -701,12 +709,14 @@ async function resolveEffectiveContextSize(
     /** The model's attention layout from its header, when readable. */
     kvLayout?: KvLayoutSource | null;
     listDevices: ListDevices;
-    /** `DaemonStartOptions.autoContextAtLeast`. */
+    /** `DaemonStartOptions.growContext` / `.autoContextAtLeast`. */
+    growContext?: boolean;
     autoContextAtLeast?: number;
   },
 ): Promise<{
   contextSize: number;
   autoContextCeiling: number | null;
+  autoSlotsCap: number | null;
   kvBudgetBytes: number | null;
   deviceBudgetBytes: number | null;
   note: string | null;
@@ -732,16 +742,24 @@ async function resolveEffectiveContextSize(
     cacheType: MANAGED_KV_CACHE_TYPE,
   };
   const fitContext = estimateContextSize({ ...input, systemMemoryMiB });
-  // A GPU with memory of its own, auto-sized: start small, and let the
-  // fit be the ceiling the window grows to (`context-growth.ts`).
-  const growing =
+  // A GPU with memory of its own, auto-sized: held to
+  // `GPU_AUTO_MAX_CONTEXT`, and started small when the owner grows it
+  // with the conversation (`context-growth.ts`).
+  const gpu =
     opts.configured <= 0 && freeVramMiB !== null && freeVramMiB > 0 && systemMemoryMiB === null
-      ? resolveGrowingAutoContext({ fitContext, atLeast: opts.autoContextAtLeast ?? null })
+      ? resolveDedicatedGpuAutoContext({
+          fitContext,
+          growable: opts.growContext === true,
+          atLeast: opts.autoContextAtLeast ?? null,
+        })
       : null;
-  const contextSize = growing ? growing.contextSize : fitContext;
-  let note: string | null = growing
-    ? `started small to grow with the conversation, up to ${growing.ceiling}`
-    : null;
+  const contextSize = gpu ? gpu.contextSize : fitContext;
+  let note: string | null = null;
+  if (gpu && gpu.ceiling !== null) {
+    note = `started small to grow with the conversation, up to ${gpu.ceiling}`;
+  } else if (gpu && fitContext > contextSize) {
+    note = `held to ${GPU_AUTO_MAX_CONTEXT} on a GPU with its own memory (${fitContext} would fit)`;
+  }
   if (systemMemoryMiB !== null) {
     const fits = estimateContextSize(input);
     if (fits > contextSize) {
@@ -766,7 +784,8 @@ async function resolveEffectiveContextSize(
   const kvBudgetBytes = budgetBytes(true);
   return {
     contextSize,
-    autoContextCeiling: growing ? growing.ceiling : null,
+    autoContextCeiling: gpu ? gpu.ceiling : null,
+    autoSlotsCap: gpu ? gpu.maxSlots : null,
     kvBudgetBytes: kvBudgetBytes === null ? null : Math.max(0, kvBudgetBytes),
     deviceBudgetBytes: budgetBytes(false),
     note,
@@ -1125,6 +1144,7 @@ export async function startDaemon(
   const {
     contextSize,
     autoContextCeiling,
+    autoSlotsCap,
     kvBudgetBytes,
     deviceBudgetBytes,
     note: contextNote,
@@ -1133,6 +1153,7 @@ export async function startDaemon(
     hasMmproj: Boolean(opts.mmprojFile),
     kvLayout,
     listDevices,
+    ...(opts.growContext === true ? { growContext: true } : {}),
     ...(opts.autoContextAtLeast === undefined ? {} : { autoContextAtLeast: opts.autoContextAtLeast }),
   });
   const swaFull =
@@ -1196,7 +1217,7 @@ export async function startDaemon(
       device,
       swaFullFlag: swaFull.enabled,
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
-      ...(autoContextCeiling === null ? {} : { autoSlotsCap: GPU_AUTO_MAX_SLOTS }),
+      ...(autoSlotsCap === null ? {} : { autoSlotsCap }),
     },
     modelPath,
     model.id,

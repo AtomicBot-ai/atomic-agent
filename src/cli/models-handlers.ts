@@ -158,6 +158,7 @@ export {
   renderPullRetry,
 } from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
+import { formatStatusContextLine } from "./models-status-context.js";
 import { roundTokensPerSecond } from "../prompt/fusion-machine-facts.js";
 import { resolveLocalLegRole, resolveRunMode } from "../llm/run-mode/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
@@ -508,19 +509,10 @@ export async function runLocalModelsStatus(): Promise<number> {
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
   process.stdout.write(`health:         ${health}\n`);
-  // The window the live daemon runs with, and how far an auto one may
-  // still grow with the conversation (`context-growth.ts`).
-  const launch = st.running ? readLaunchRecord(dataDir, st.pid) : null;
-  if (launch && launch.contextSize > 0) {
-    const ceiling = launch.autoContextCeiling ?? null;
-    process.stdout.write(
-      `context:        ${launch.contextSize} tokens` +
-        (ceiling !== null && ceiling > launch.contextSize
-          ? ` (auto: grows up to ${ceiling} as the conversation does)`
-          : "") +
-        "\n",
-    );
-  }
+  const contextLine = formatStatusContextLine(
+    st.running ? readLaunchRecord(dataDir, st.pid) : null,
+  );
+  if (contextLine) process.stdout.write(contextLine);
   if (st.authMismatch) {
     process.stdout.write(
       "note:           a model server answers on this port but rejects the running model's key, so every request would fail. Run 'atomic-agent models stop', then 'models start'.\n",
@@ -555,9 +547,14 @@ export async function runLocalModelsStart(
     interactive?: boolean;
     signal?: AbortSignal;
     /**
-     * `--context-at-least`: the growing auto window starts at least this
-     * large (`DaemonStartOptions.autoContextAtLeast`) — a client growing
-     * the window between turns restarts the daemon with it.
+     * `--grow-context`: opt in to the growing auto window
+     * (`DaemonStartOptions.growContext`) — only for a client that grows
+     * it between turns.
+     */
+    growContext?: boolean;
+    /**
+     * `--context-at-least`: with `growContext`, start the window at least
+     * this large (`DaemonStartOptions.autoContextAtLeast`).
      */
     contextAtLeast?: number;
   } = {},
@@ -738,6 +735,7 @@ export async function runLocalModelsStart(
         modelId: mid,
         port: cfg.localModels.managed.port,
         contextSize: cfg.localModels.managed.contextSize,
+        ...(opts.growContext ? { growContext: true } : {}),
         ...(opts.contextAtLeast ? { autoContextAtLeast: opts.contextAtLeast } : {}),
         parallel: cfg.localModels.managed.parallel,
         localLegRole,

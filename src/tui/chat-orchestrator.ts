@@ -1571,8 +1571,12 @@ export class ChatOrchestrator {
         if (readyGate.kind === "notice" && this.session?.id === turnSessionId) this.notify(readyGate.text);
       }
       // ATO-848: a conversation that has filled the local auto window gets
-      // a bigger one before this turn is sent (one step per turn).
-      if (gateFacts.activeProviderIsLocal && gateFacts.managedMode) {
+      // a bigger one before this turn is sent (one step per turn) — never
+      // while another turn (a background thread, the scheduler, HTTP,
+      // Telegram) is using the server the restart would take down.
+      const othersBusy = this.detachedTurns.size > 0 ||
+        (this.runtime.turnController?.busySessionIds?.() ?? []).some(id => id !== turnSessionId);
+      if (gateFacts.activeProviderIsLocal && gateFacts.managedMode && !othersBusy) {
         await this.localModels.growContextForPrompt?.(turnSession.contextUsage?.tokens);
       }
       controller.signal.throwIfAborted();

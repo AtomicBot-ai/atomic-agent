@@ -66,8 +66,9 @@ export interface UserManagedLocalLlmConfig {
    *     shares the system's RAM (Apple silicon, an integrated GPU) also
    *     leaving the system its headroom and the cache within its share of
    *     physical memory (`resolveContextKvBudgetMiB`). On a GPU with
-   *     memory of its own the window starts at 32,768 and grows toward
-   *     that fit as the conversation does (`context-growth.ts`).
+   *     memory of its own the fit is held to 131,072, and a launch whose
+   *     owner grows it starts at 32,768 and grows toward that as the
+   *     conversation does (`context-growth.ts`).
    *   - a positive value — pin `--ctx-size` exactly, clamped only to the
    *     model's trained context ceiling. The settings list offers 32,768,
    *     65,536, 131,072 and `CONTEXT_SIZE_MODEL_MAX` (1,048,576: "the

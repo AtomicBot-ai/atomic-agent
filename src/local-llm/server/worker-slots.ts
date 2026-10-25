@@ -162,9 +162,9 @@ export interface WorkerSlotsInput {
    */
   localLegRole?: LocalLegRole;
   /**
-   * A lower ceiling than {@link MAX_AUTO_SLOTS} for this launch — the
-   * growing auto window on a dedicated GPU (`GPU_AUTO_MAX_SLOTS` in
-   * `context-growth.ts`). Only the derived count reads it; a pinned
+   * A lower ceiling than {@link MAX_AUTO_SLOTS} for this launch — an
+   * auto window on a GPU with its own memory (`GPU_AUTO_MAX_SLOTS` /
+   * `GPU_GROWING_MAX_SLOTS` in `context-growth.ts`). Only the derived count reads it; a pinned
    * `parallel` is honoured as written.
    */
   maxSlots?: number;
