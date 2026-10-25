@@ -8,6 +8,7 @@ import type { ModelProfile } from "../llm/model-profile.js";
 import type { ModelProfileManager } from "../llm/model-profile-manager.js";
 import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import type { FailureVerdict } from "../llm/reliability/failure-catalog.js";
 import type { ProviderWaitCause, ProviderWaitFailure } from "../llm/reliability/provider-wait-cause.js";
 import type { LlmFailureCategory, TruncationCause } from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
@@ -779,6 +780,12 @@ export type AgentLoopEvent =
       stepIndex: number;
       /** Graduated severity from the `ToolLoopTracker`. */
       level?: "warn" | "critical" | "breaker";
+      /**
+       * `breaker` only: the shared failure-catalog entry for the stop
+       * (`same_call_repeated` / `loop_detected`), so a host words it and
+       * picks its button from the same list as `loop_failed` (ATO-384).
+       */
+      failure?: FailureVerdict;
       /** Which sub-detector fired. */
       detector?:
         | "generic_repeat"
@@ -811,12 +818,17 @@ export type AgentLoopEvent =
    * consumers never need to classify the error themselves.
    * `outage` is the provider-outage wait the turn had spent when it
    * failed (zero when it never parked); error reporting tags it.
+   * `failure` is the shared failure-catalog entry (ATO-384): a stable
+   * `cause` id, a plain `phrase` to show, and the `action` button that
+   * helps. Set by the agent loop on every failure; optional only so an
+   * older emitter stays valid.
    */
   | {
       type: "loop_failed";
       error: Error;
       category: LlmFailureCategory;
       outage?: { waitedMs: number; attempts: number };
+      failure?: FailureVerdict;
     }
   /**
    * The provider fallback chain changed the active provider for this

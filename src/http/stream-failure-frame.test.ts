@@ -81,7 +81,7 @@ describe("loop_failed over SSE", () => {
     hook({ type: "loop_failed", error: only, category: classifyFailure(only) } as never);
 
     expect(sse.written).toEqual([
-      { name: "error", payload: { error: "fetch failed", category: "transport" } },
+      { name: "error", payload: { error: "fetch failed", category: "transport", failure: { cause: "offline", phrase: "Can't reach the provider. Check your connection.", action: "retry" } } },
     ]);
   });
 
@@ -95,7 +95,12 @@ describe("loop_failed over SSE", () => {
     expect(sse.written).toEqual([
       {
         name: "error",
-        payload: { error: "The local model isn't running.", category: "transport", code: "local_engine_down" },
+        payload: {
+          error: "The local model isn't running.",
+          category: "transport",
+          code: "local_engine_down",
+          failure: { cause: "local_engine_down", phrase: "The local model isn't running.", action: "none" },
+        },
       },
     ]);
   });
@@ -110,7 +115,10 @@ describe("loop_failed over SSE", () => {
     hook({ type: "loop_failed", error: down, category: classifyFailure(down) } as never);
 
     expect(sse.written).toHaveLength(1);
-    expect(sse.written[0]!.payload).toMatchObject({ code: "local_engine_down" });
+    expect(sse.written[0]!.payload).toMatchObject({
+      code: "local_engine_down",
+      failure: { cause: "local_engine_down", action: "none" },
+    });
   });
 
   it("puts local_engine_down in the envelope's code for an OpenAI-compatible client", () => {
@@ -213,6 +221,7 @@ describe("a billing refusal over SSE", () => {
           error: failure.message,
           category: "transport",
           cause: { kind: "billing", status: 403 },
+          failure: { cause: "out_of_credit", phrase: "Your account with this provider is out of credit.", action: "switch-model" },
         },
       },
     ]);
@@ -232,6 +241,7 @@ describe("a billing refusal over SSE", () => {
         error: failure.message,
         category: "transport",
         cause: { kind: "billing", status: 403 },
+        failure: { cause: "out_of_credit", phrase: "Your account with this provider is out of credit.", action: "switch-model" },
       },
     });
   });
@@ -281,6 +291,7 @@ describe("a billing refusal over SSE", () => {
           error: failure.message,
           category: "transport",
           cause: { kind: "billing", status: 403 },
+          failure: { cause: "out_of_credit", phrase: "Your account with this provider is out of credit.", action: "switch-model" },
           fallback_failures: [
             {
               providerId: "primary",
@@ -301,7 +312,92 @@ describe("a billing refusal over SSE", () => {
       event: { type: "step_error", error: only, category: "transport" },
     } as never);
     expect(sse.written).toEqual([
-      { name: "error", payload: { error: "fetch failed", category: "transport" } },
+      { name: "error", payload: { error: "fetch failed", category: "transport", failure: { cause: "offline", phrase: "Can't reach the provider. Check your connection.", action: "retry" } } },
+    ]);
+  });
+});
+
+/**
+ * ATO-384: every failure frame carries the shared catalog entry —
+ * `failure: {cause, phrase, action}` — beside the fields it always had,
+ * so a host words the failure and picks its button from one list.
+ */
+describe("the failure catalog entry on error frames", () => {
+  const makeSse = () => {
+    const written: Array<{ name: string | null; payload: unknown }> = [];
+    return {
+      written,
+      writer: {
+        closed: false,
+        writeEvent(name: string | null, payload: unknown) {
+          written.push({ name, payload });
+        },
+      },
+    };
+  };
+  const env = (extensionsEnabled: boolean) =>
+    ({
+      completionId: "cmpl-1",
+      created: 0,
+      session: { id: "sess-1" },
+      request: { model: "atomic-agent", extensionsEnabled },
+    }) as never;
+  const rateLimited = () =>
+    new TransportError(
+      "fake answered 429.",
+      429,
+      "https://api.fake.test/v1/chat/completions",
+      { cause: new OpenAiHttpError("openai provider 429: slow down", 429, "https://api.fake.test/v1/chat/completions") },
+    );
+
+  it("loop_failed passes the loop's own verdict through, existing fields untouched", () => {
+    const sse = makeSse();
+    const error = rateLimited();
+    buildStreamEventHook(sse.writer as never, env(true))({
+      type: "loop_failed",
+      error,
+      category: "transport",
+      failure: { cause: "rate_limited", phrase: "Too many requests right now. Try again in a moment.", action: "retry" },
+    } as never);
+    expect(sse.written).toEqual([
+      {
+        name: "error",
+        payload: {
+          error: "fake answered 429.",
+          category: "transport",
+          failure: { cause: "rate_limited", phrase: "Too many requests right now. Try again in a moment.", action: "retry" },
+        },
+      },
+    ]);
+  });
+
+  it("a failed step's frame is classified on the spot", () => {
+    const sse = makeSse();
+    buildStreamEventHook(sse.writer as never, env(true))({
+      type: "llm_event",
+      event: { type: "step_error", error: rateLimited(), category: "transport" },
+    } as never);
+    expect(sse.written[0]!.payload).toMatchObject({
+      error: "fake answered 429.",
+      category: "transport",
+      failure: { cause: "rate_limited", action: "retry" },
+    });
+  });
+
+  it("an OpenAI-compatible client's envelope stays the standard one", () => {
+    const sse = makeSse();
+    buildStreamEventHook(sse.writer as never, env(false))({
+      type: "loop_failed",
+      error: rateLimited(),
+      category: "transport",
+    } as never);
+    expect(sse.written).toEqual([
+      {
+        name: null,
+        payload: {
+          error: { message: "fake answered 429.", type: "agent.transport", param: null, code: null },
+        },
+      },
     ]);
   });
 });

@@ -8,6 +8,7 @@ import { readFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../../llm/fallback/failed-links.js";
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readProviderErrorVerdict } from "../../llm/reliability/provider-error-verdict.js";
+import { classifyFailureCause } from "../../llm/reliability/classify-failure-cause.js";
 import { classifyProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-rejection-recovery.js";
 import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
@@ -630,6 +631,7 @@ export function recoverTurnStep(
     error: runError,
     category,
     outage: { waitedMs: turn.outageWaitedMs, attempts: turn.outageAttempts },
+    failure: classifyFailureCause(runError, category),
   });
   deps.metrics?.recordLlmFailure({
     sessionId: state.id,

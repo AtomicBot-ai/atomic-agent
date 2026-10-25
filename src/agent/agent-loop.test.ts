@@ -3244,6 +3244,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       level: "breaker",
       detector: "wandering",
       count: 12,
+      // ATO-384: the breaker's stop carries the shared catalog entry.
+      failure: { cause: "loop_detected", action: "switch-model" },
     });
     const last = result.session.turns.at(-1);
     expect(last).toMatchObject({ kind: "assistant_reply" });
