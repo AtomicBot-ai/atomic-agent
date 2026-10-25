@@ -264,6 +264,23 @@ describe("compaction on small context windows (ATO-257)", () => {
     expect(summaryReserve(1200, 780)).toBe(240);
   });
 
+  it("plans a 512-token summary where 20% of the allowance is less but half the target holds it", () => {
+    let state = recordTurn(createEmptySessionState({ id: "chat", workingDir: dir }), userTurn("ORIGINAL: keep the green button"));
+    for (let i = 0; i < 10; i++) {
+      state = recordTurn(state, assistantToolCallTurn({ tool: "os.fs.read", args: { path: `/f-${i}` } }));
+      state = recordTurn(state, toolResultTurn({ tool: "os.fs.read", status: "ok", summary: `result ${i}` }));
+    }
+    const built = buildPrompt(input(state));
+    const prompt = { ...built, compactionBudget: { ...built.compactionBudget!, cap: 2000, activeTokens: 2000 } };
+    for (const requested of [undefined, "overflow"] as const) {
+      const plan = decideCompaction(state, prompt, createCompactionDefaults(), requested).plan!;
+      expect(plan.targetTokens).toBe(1300);
+      // 20% of the allowance alone would be 400.
+      expect(plan.summaryMaxTokens).toBe(MIN_SUMMARY_RESERVE_TOKENS);
+      expect(plan.summaryMaxTokens).toBeGreaterThan(Math.floor(2000 * 0.2));
+    }
+  });
+
   it("says plainly that an 8k window cannot compact, for manual and once for automatic", async () => {
     const state = history();
     const prompt = buildPrompt(windowed(8192)(state));
@@ -281,6 +298,13 @@ describe("compaction on small context windows (ATO-257)", () => {
     expect(f.events.some((event) => event.type === "compaction_started")).toBe(false);
     expect(f.complete).not.toHaveBeenCalled();
     expect(f.persist).not.toHaveBeenCalled();
+    // Another window that is still too small is told again, once.
+    expect(f.control.beforeStep(windowed(6144)(state), { signal })).toBeUndefined();
+    expect(f.control.beforeStep(windowed(6144)(state), { signal })).toBeUndefined();
+    const again = f.events.filter((event) => event.type === "compaction_failed");
+    expect(again).toHaveLength(2);
+    expect(again[1]).toMatchObject({ result: { status: "noop", reason: "threshold",
+      message: "The model's context window (6144 tokens) is too small to compact this conversation; raise the context size." } });
   });
 
   it("keeps the planner's numbers on 32k and 128k windows", () => {

@@ -90,17 +90,19 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
   const slowRoutes = new Set<string>();
   let stopped = false;
   const warned = new Set<string>();
-  // Sessions already told that automatic compaction cannot fit their window.
+  // Session and window pairs already told that automatic compaction cannot fit:
+  // a different window (another model, a changed context size) is told again.
   const tooSmallNoticed = new Set<string>();
   /**
-   * Say once per session that automatic compaction is due but the window
+   * Say once per session and window that automatic compaction is due but the window
    * cannot hold a summary, instead of leaving trimming to drop turns
    * silently. A `compaction_failed` event with a `noop` result reaches the
    * TUI, traces and HTTP streams like any other compaction outcome.
    */
-  function noticeTooSmall(id: string, reason: CompactionResult["reason"], message: string) {
-    if (tooSmallNoticed.has(id)) return;
-    tooSmallNoticed.add(id);
+  function noticeTooSmall(id: string, contextWindow: number | null, reason: CompactionResult["reason"], message: string) {
+    const key = JSON.stringify([id, contextWindow]);
+    if (tooSmallNoticed.has(key)) return;
+    tooSmallNoticed.add(key);
     deps.warn?.(id, message);
     try {
       deps.emit({ type: "compaction_failed", sessionId: id, result: { status: "noop", reason, message },
@@ -147,7 +149,7 @@ export function createContextCompaction(deps: ContextCompactionDependencies) {
       const reason = request ? "manual" : options.requested ?? "threshold";
       const message = skipMessage(skip ?? "no_reduction", prompt.contextWindow);
       if (request) request.settle({ status: "noop", reason, message });
-      else if (skip === "window_too_small") noticeTooSmall(id, reason, message);
+      else if (skip === "window_too_small") noticeTooSmall(id, prompt.contextWindow, reason, message);
       return undefined;
     }
     const controller = request?.controller ?? new AbortController();

@@ -112,8 +112,8 @@ compact"). Automatic and overflow compaction still try every cut on such a
 window (the extractive fallback needs no model call); when none fits they report
 the same skip, and the runtime says so once per session with a warning log line
 and a `compaction_failed` event carrying a `noop` result and that message,
-instead of leaving trimming to drop turns without a word. On a local window
-under 32k the prompt's reply reserve is smaller (see
+instead of leaving trimming to drop turns without a word. On any route with a
+known window under 32k the prompt's reply reserve is smaller (see
 [prompt assembly](../../prompt/docs/assembly.md)), so a 16k model with the
 default tools now has history room to compact at all.
 
