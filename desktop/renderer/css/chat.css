@@ -48,6 +48,10 @@
    nowrap preview or an unbroken token would widen the whole transcript column. */
 .turn{display:grid;grid-template-columns:0 minmax(0,1fr);gap:0;margin:0}
 .turn>*,.sysrow>*{min-width:0}
+/* ATO-1023: rows well above the last few are not laid out or painted while
+   they are off screen. `auto` keeps the size a row had once it was seen, so
+   the scroll height does not shift when it is scrolled back into view. */
+.col720>.turn:not(:nth-last-child(-n+12)){content-visibility:auto;contain-intrinsic-size:auto 120px}
 .tk-asst{min-width:0}
 
 /* ---------------- empty chat (CH-01) ----------------
