@@ -9,11 +9,7 @@ import {
   writeUserConfigFileSync,
   type UserConfigFile,
 } from "../config/index.js";
-import {
-  installSkill,
-  SkillInstallError,
-  uninstallSkill,
-} from "../skills/skill-installer.js";
+import { uninstallSkill } from "../skills/skill-installer.js";
 import { loadSkills } from "../skills/skill-loader.js";
 import {
   browseHub,
@@ -28,20 +24,29 @@ import {
 import {
   browseClawHub,
   ClawHubClient,
+  installLocalSkill,
   installSkillRouted,
   listStarterSkillNames,
   looksLikeClawHubIdentifier,
   searchClawHub,
+  SkillHubInstallError,
   type HubSkillEntry,
+  type ScanGateOptions,
 } from "../skills/index.js";
+import {
+  createInstallConfirm,
+  formatScanFindings,
+} from "./skill-install-confirm.js";
 
 const HELP =
   [
     "atomic-agent skill — manage installed skills",
     "",
     "Subcommands:",
-    "  install <path|owner/repo[/path]|@owner/slug> [--force] [--acknowledge-risk]",
-    "                             Install a skill from a local directory, the GitHub skill hub, or ClawHub (@owner/slug)",
+    "  install <path|owner/repo[/path]|@owner/slug> [--force] [--yes] [--acknowledge-risk]",
+    "                             Install a skill from a local directory, the GitHub skill hub, or ClawHub (@owner/slug).",
+    "                             Every install is security-scanned: caution asks first (--yes skips the question;",
+    "                             without a terminal it is required), dangerous needs --acknowledge-risk",
     "  uninstall <name>           Remove an installed global skill",
     "  list                       List installed skills (project + global) with enabled/disabled state",
     "  show <name>                Print SKILL.md for an installed skill",
@@ -131,24 +136,29 @@ function handleWorkspaceSkill(args: string[], workspace: string): number {
 }
 
 async function handleInstall(args: string[]): Promise<number> {
-  const source = args.find((a) => !a.startsWith("--"));
+  const source = args.find((a) => !a.startsWith("-"));
   if (!source) {
     process.stderr.write(
-      "usage: atomic-agent skill install <path|owner/repo[/path]> [--force] [--acknowledge-risk]\n",
+      "usage: atomic-agent skill install <path|owner/repo[/path]> [--force] [--yes] [--acknowledge-risk]\n",
     );
     return 2;
   }
   const force = args.includes("--force");
-  const acknowledgeRisk = args.includes("--acknowledge-risk");
+  const gate: ScanGateOptions = {
+    acknowledgeRisk: args.includes("--acknowledge-risk"),
+    confirmCaution: args.includes("--yes") || args.includes("-y"),
+    confirm: createInstallConfirm(),
+  };
   const config = getConfig();
   // A ClawHub identifier (`@owner/slug`) routes through the registry
   // installer; a GitHub identifier (`owner/repo[/path]`) routes through
-  // the tap installer; anything else is a local directory path.
+  // the tap installer; anything else is a local directory path. All
+  // three run the same security scan and gate.
   if (looksLikeClawHubIdentifier(source)) {
     return await handleClawHubInstall(
       source,
       force,
-      acknowledgeRisk,
+      gate,
       config.paths.globalSkillsDir,
       config.skills.clawhub.apiBase,
     );
@@ -157,33 +167,52 @@ async function handleInstall(args: string[]): Promise<number> {
     return await handleHubInstall(
       source,
       force,
-      acknowledgeRisk,
+      gate,
       config.paths.globalSkillsDir,
     );
   }
   try {
-    const result = await installSkill({
+    const result = await installLocalSkill({
       sourceDir: resolve(source),
       targetRoot: config.paths.globalSkillsDir,
       force,
+      ...gate,
     });
     process.stdout.write(
-      `installed ${result.manifest.name} (v${result.manifest.version}) at ${result.installedAt}\n`,
+      `installed ${result.manifest.name} (v${result.manifest.version}) at ${result.installedAt} — ${summarizeScan(result.scan)}\n`,
     );
     return 0;
   } catch (err) {
-    if (err instanceof SkillInstallError && err.code === "already_installed") {
-      process.stderr.write(`${err.message}\n`);
+    return reportInstallError(err, gate);
+  }
+}
+
+/** Print an install failure (with scan findings when the gate refused). */
+function reportInstallError(err: unknown, gate: ScanGateOptions): number {
+  if (err instanceof SkillHubInstallError && err.scan) {
+    if (err.code === "needs_confirmation" && gate.confirm) {
+      // The findings were shown with the question; the operator said no.
+      process.stderr.write("install cancelled\n");
       return 1;
     }
-    throw err;
+    process.stderr.write(formatScanFindings(err.scan));
+    process.stderr.write(`${err.message}\n`);
+    process.stderr.write(
+      err.code === "needs_confirmation"
+        ? "re-run with --yes to install anyway\n"
+        : "re-run with --acknowledge-risk to install anyway\n",
+    );
+    return 1;
   }
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`${message}\n`);
+  return 1;
 }
 
 async function handleHubInstall(
   identifier: string,
   force: boolean,
-  acknowledgeRisk: boolean,
+  gate: ScanGateOptions,
   targetRoot: string,
 ): Promise<number> {
   try {
@@ -191,27 +220,21 @@ async function handleHubInstall(
       identifier,
       targetRoot,
       force,
-      acknowledgeRisk,
+      ...gate,
     });
     process.stdout.write(
       `installed ${result.manifest.name} (v${result.manifest.version}) from ${identifier} — ${summarizeScan(result.scan)}\n`,
     );
     return 0;
   } catch (err) {
-    if (err instanceof SkillInstallError && err.code === "already_installed") {
-      process.stderr.write(`${err.message}\n`);
-      return 1;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${message}\n`);
-    return 1;
+    return reportInstallError(err, gate);
   }
 }
 
 async function handleClawHubInstall(
   identifier: string,
   force: boolean,
-  acknowledgeRisk: boolean,
+  gate: ScanGateOptions,
   targetRoot: string,
   apiBase: string,
 ): Promise<number> {
@@ -222,20 +245,14 @@ async function handleClawHubInstall(
       clawHubClient: new ClawHubClient({ apiBase }),
       targetRoot,
       force,
-      acknowledgeRisk,
+      ...gate,
     });
     process.stdout.write(
       `installed ${result.manifest.name} (v${result.manifest.version}) from ${identifier} — ${summarizeScan(result.scan)}\n`,
     );
     return 0;
   } catch (err) {
-    if (err instanceof SkillInstallError && err.code === "already_installed") {
-      process.stderr.write(`${err.message}\n`);
-      return 1;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${message}\n`);
-    return 1;
+    return reportInstallError(err, gate);
   }
 }
 
