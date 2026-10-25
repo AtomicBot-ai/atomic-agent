@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
+import { describeArgumentError } from "../../argument-error-hint.js";
 import { ToolRegistry, type ToolContext } from "../../tool-registry.js";
 import { findUnknownArguments } from "../../unknown-argument-guard.js";
 import { buildOsFsMoveTool } from "./fs-move.js";
@@ -24,17 +25,51 @@ describe("readMoveAliases", () => {
     });
   });
 
-  it("keeps a single destination as the tool's own `to` (folder or file is the tool's rule)", () => {
-    expect(readMoveAliases({ paths: ["a.zip"], destination: "Archives" })!.args).toEqual({
-      from: "a.zip",
-      to: "Archives",
+  it("reads a one-entry list with a folder-like destination as a move INTO that folder", () => {
+    // Not a rename of a.zip to an extensionless file called `Archives`:
+    // two paths mean "into the folder", so one path does too.
+    expect(readMoveAliases({ paths: ["a.zip"], destination: "Archives" }, { platform: "linux" })).toEqual({
+      args: { from: "a.zip", to: "Archives/" },
+      note: `note: read \`paths\` as \`from\` and \`destination\` as the folder \`to\`: \`Archives/\`; ${HINT}`,
     });
+    expect(readMoveAliases({ sources: ["a.zip"], target: "Out/" }, { platform: "linux" })!.args.to).toBe("Out/");
+  });
+
+  it("keeps a one-entry list's destination as the target path when it reads as a file", () => {
+    const linux = { platform: "linux" as const };
+    // An extension in the last segment.
+    expect(readMoveAliases({ paths: ["a.zip"], destination: "Archives/b.zip" }, linux)!.args.to).toBe("Archives/b.zip");
+    // The source's own name repeated.
+    expect(readMoveAliases({ paths: ["dir/README"], destination: "Docs/README" }, linux)!.args.to).toBe("Docs/README");
+    // An existing file (the registry's probe).
+    expect(
+      readMoveAliases({ paths: ["a"], destination: "Makefile" }, { ...linux, isFile: (p) => p === "Makefile" })!.args.to,
+    ).toBe("Makefile");
+    // A leading dot alone is a hidden name, not an extension.
+    expect(readMoveAliases({ paths: ["a"], destination: ".cache" }, linux)!.args.to).toBe(".cache/");
+  });
+
+  it("keeps the tool's own `to` rule for a string source alias", () => {
+    expect(readMoveAliases({ src: "a.zip", dest: "Archives" })!.args).toEqual({ from: "a.zip", to: "Archives" });
+    expect(readMoveAliases({ source: ["a.zip"], target: "Archives" })!.args).toEqual({ from: "a.zip", to: "Archives" });
+  });
+
+  it("reads a list that arrived as a JSON string", () => {
+    expect(
+      readMoveAliases({ paths: '["a.zip","b.zip"]', destination: "Archives" }, { platform: "linux" })!.args.moves,
+    ).toEqual([
+      { from: "a.zip", to: "Archives/" },
+      { from: "b.zip", to: "Archives/" },
+    ]);
+    // Only a real JSON list: a name in brackets stays a path.
+    expect(readMoveAliases({ src: "[draft].txt", dest: "x.txt" })!.args.from).toBe("[draft].txt");
+    expect(readMoveAliases({ src: "[a]", dest: "x.txt" })!.args.from).toBe("[a]");
   });
 
   it("reads several paths and one destination as moves into that folder", () => {
     const reading = readMoveAliases(
       { paths: ["a.zip", "b.zip"], destination: "Archives", overwrite: true },
-      "linux",
+      { platform: "linux" },
     );
     expect(reading).toEqual({
       args: {
@@ -49,13 +84,19 @@ describe("readMoveAliases", () => {
   });
 
   it("does not add a second separator to a destination that already names a folder", () => {
-    expect(readMoveAliases({ sources: ["a", "b"], target: "Out/" }, "linux")!.args.moves).toEqual([
+    expect(readMoveAliases({ sources: ["a", "b"], target: "Out/" }, { platform: "linux" })!.args.moves).toEqual([
       { from: "a", to: "Out/" },
       { from: "b", to: "Out/" },
     ]);
-    expect(readMoveAliases({ sources: ["a", "b"], target: "Out\\" }, "win32")!.args.moves).toEqual([
+    expect(readMoveAliases({ sources: ["a", "b"], target: "Out\\" }, { platform: "win32" })!.args.moves).toEqual([
       { from: "a", to: "Out\\" },
       { from: "b", to: "Out\\" },
+    ]);
+    // A Windows drive path without a trailing separator gets `/`, which
+    // the tool reads as a separator on every platform.
+    expect(readMoveAliases({ paths: ["a", "b"], destination: "C:\\Out" }, { platform: "win32" })!.args.moves).toEqual([
+      { from: "a", to: "C:\\Out/" },
+      { from: "b", to: "C:\\Out/" },
     ]);
   });
 
@@ -71,6 +112,8 @@ describe("readMoveAliases", () => {
     expect(readMoveAliases({ from: "a", paths: ["b"], destination: "c" })).toBeNull();
     expect(readMoveAliases({ to: "x", src: "a", dest: "b" })).toBeNull();
     expect(readMoveAliases({ moves: [{ from: "a", to: "b" }], src: "c", dest: "d" })).toBeNull();
+    // A strict provider's empty filler is not a canonical key.
+    expect(readMoveAliases({ src: "a", dest: "b", from: null, moves: [] })!.args).toEqual({ from: "a", to: "b" });
   });
 
   it("reads nothing that is ambiguous or incomplete", () => {
@@ -113,6 +156,26 @@ describe("os.fs.move aliases at the unknown-argument guard", () => {
       .toEqual(["recursive"]);
     expect(findUnknownArguments("os.fs.move", { from: "a", to: "b", recursive: true })!.unknownKeys)
       .toEqual(["recursive"]);
+  });
+});
+
+describe("os.fs.move aliases in the argument-error hint", () => {
+  it("does not call an aliased call's keys wrong", () => {
+    expect(
+      describeArgumentError({
+        tool: "os.fs.move",
+        args: { src: "a.txt", dest: "b.txt" },
+        message: "os.fs.move: nothing at `a.txt`",
+      }),
+    ).toBeNull();
+    // An unknown key beside the aliases is still reported.
+    expect(
+      describeArgumentError({
+        tool: "os.fs.move",
+        args: { src: "a.txt", dest: "b.txt", recursive: true },
+        message: "os.fs.move: nothing at `a.txt`",
+      })!.message,
+    ).toContain("received keys: recursive, from, to");
   });
 });
 
@@ -161,9 +224,11 @@ describe("os.fs.move aliases through the registry", () => {
     );
     expect(result.status).toBe("ok");
     expect(existsSync(join(dir, "Archives/archive (4).zip"))).toBe(true);
-    expect(result.summary.split("\n")[0]).toBe(
-      `note: read \`paths\` as \`from\` and \`destination\` as \`to\`; ${HINT}`,
-    );
+    // Last line, so the first stays the outcome the tool log and
+    // compaction quote.
+    const lines = result.summary.split("\n");
+    expect(lines.at(-1)).toBe(`note: read \`paths\` as \`from\` and \`destination\` as \`to\`; ${HINT}`);
+    expect(lines[0]).not.toMatch(/^note:/);
   });
 
   it("moves several files into a folder that does not exist yet", async () => {
@@ -196,6 +261,42 @@ describe("os.fs.move aliases through the registry", () => {
     const plain = await reg.invoke("os.fs.move", { from: "a", to: "b" }, ctx());
     expect(seen).toEqual([{ from: "a", to: "b" }, { from: "a", to: "b" }]);
     expect(plain.summary).toBe("done");
+  });
+
+  it("moves one listed file into a folder that does not exist yet", async () => {
+    await put("a.zip");
+    const result = await registry().invoke("os.fs.move", { paths: ["a.zip"], destination: "Archives" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(existsSync(join(dir, "Archives/a.zip"))).toBe(true);
+  });
+
+  it("keeps an existing extensionless file as the target (overwrite asked for)", async () => {
+    await put("a");
+    await put("Makefile");
+    const result = await registry().invoke(
+      "os.fs.move",
+      { paths: ["a"], destination: "Makefile", overwrite: true },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(existsSync(join(dir, "a"))).toBe(false);
+    expect(existsSync(join(dir, "Makefile"))).toBe(true);
+  });
+
+  it("rethrows an error whose message cannot be set, unchanged", async () => {
+    // Getter-only, like a DOMException's: assigning to it throws in strict mode.
+    const thrown = new Error("frozen");
+    Object.defineProperty(thrown, "message", { get: () => "frozen" });
+    const reg = new ToolRegistry();
+    reg.register({
+      name: "os.fs.move",
+      description: "stub",
+      readonly: false,
+      run: async () => {
+        throw thrown;
+      },
+    });
+    await expect(reg.invoke("os.fs.move", { src: "a", dest: "b" }, ctx())).rejects.toBe(thrown);
   });
 
   it("puts the note on an error the aliased call ends in", async () => {

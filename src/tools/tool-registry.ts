@@ -1,7 +1,9 @@
+import { statSync } from "node:fs";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { fullToolResult } from "../compressor/result-compressor.js";
 import { readArgumentAliases, withAliasNote } from "./argument-aliases.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
+import { resolveUserPath } from "./os/expand-home.js";
 import { markUntrustedResult } from "./untrusted-tool-output.js";
 import type { ToolRole } from "./tool-roles.js";
 import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
@@ -137,8 +139,11 @@ export class ToolRegistry {
     const tool = this.get(name);
     // An alias shape the tool reads (`argument-aliases.ts`: `os.fs.move`
     // `{paths, destination}`) is rewritten here, before any wrapper
-    // (read scope) sees the call, and the result says how it was read.
-    const aliased = readArgumentAliases(name, args);
+    // (read scope) sees the call, and the result's last line says how
+    // it was read.
+    const aliased = readArgumentAliases(name, args, {
+      isFile: (path) => isExistingFile(path, ctx.workingDir),
+    });
     let result: CompressedToolResult;
     try {
       // Models sometimes emit a JSON value one level over-encoded (a
@@ -148,8 +153,14 @@ export class ToolRegistry {
       result = await tool.run(coerceToolArgs(name, aliased?.args ?? args), ctx);
     } catch (err) {
       // Same error object (its class matters to callers), one more line.
+      // A message that cannot be set (a getter-only DOMException) is left
+      // as it is: the error itself must reach the caller unchanged.
       if (aliased !== null && err instanceof Error && !ctx.signal.aborted) {
-        err.message = `${err.message}\n${aliased.note}`;
+        try {
+          err.message = `${err.message}\n${aliased.note}`;
+        } catch {
+          // keep `err` as thrown
+        }
       }
       throw err;
     }
@@ -163,5 +174,14 @@ export class ToolRegistry {
     return tool.untrustedOutput === undefined
       ? shown
       : markUntrustedResult(shown, tool.untrustedOutput);
+  }
+}
+
+/** `path` (resolved against `workingDir`) is an existing file; any failure is no. */
+function isExistingFile(path: string, workingDir: string): boolean {
+  try {
+    return statSync(resolveUserPath(path, workingDir)).isFile();
+  } catch {
+    return false;
   }
 }

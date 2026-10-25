@@ -1,5 +1,5 @@
 import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
-import { readArgumentAliases } from "./argument-aliases.js";
+import { canonicalArgs } from "./argument-aliases.js";
 
 /**
  * What a tool's argument error should also say: which keys arrived,
@@ -57,7 +57,7 @@ export function describeArgumentError(input: {
   message: string;
 }): ArgumentErrorHint | null {
   if (!ARGUMENT_ERROR_WORDING.test(input.message)) return null;
-  const args = readArgumentAliases(input.tool, input.args)?.args ?? input.args;
+  const args = canonicalArgs(input.tool, input.args);
   const receivedKeys = Object.keys(args);
   const expectedKeys = expectedKeysFor(input.tool);
   const expectedSet = new Set(expectedKeys);

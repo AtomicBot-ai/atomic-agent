@@ -1,5 +1,5 @@
 import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
-import { readArgumentAliases } from "./argument-aliases.js";
+import { canonicalArgs } from "./argument-aliases.js";
 import { nearestKey } from "./argument-error-hint.js";
 import { normalizeArgKeys } from "./coerce-tool-args.js";
 
@@ -54,7 +54,7 @@ export function findUnknownArguments(
   const properties = schemaProperties(tool);
   if (properties === null) return null;
   const expectedKeys = Object.keys(properties);
-  const canonical = readArgumentAliases(tool, args)?.args ?? args;
+  const canonical = canonicalArgs(tool, args);
   const unknownKeys = Object.keys(normalizeArgKeys(canonical, properties)).filter(
     (key) => !Object.hasOwn(properties, key),
   );
