@@ -16,6 +16,7 @@ import {
   createEmptySessionState,
   type SessionState,
 } from "../session/index.js";
+import { getConfig } from "../config/index.js";
 
 import { openaiError } from "./openai-errors.js";
 import {
@@ -32,6 +33,8 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { createTurnPhaseTracker } from "./stream-turn-phase.js";
+import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
@@ -255,7 +258,25 @@ async function handleStream(
     });
   }
 
-  const hook = buildStreamEventHook(sse, env);
+  const frames = buildStreamEventHook(sse, env);
+  // ATO-1027: what the turn is doing while no text shows, and a word
+  // when a local model is slow to start. Extensions-only.
+  const phases = env.request.extensionsEnabled
+    ? createTurnPhaseTracker({
+        sessionId: env.session.id,
+        write: (name, payload) => {
+          if (!sse.closed) sse.writeEvent(name, payload);
+        },
+        slowFirstTokenHint: () => buildSlowFirstTokenHint(getConfig()),
+      })
+    : null;
+  const hook = phases
+    ? (event: AgentLoopEvent): void => {
+        phases.onEvent(event);
+        frames(event);
+      }
+    : frames;
+  phases?.start();
 
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
@@ -271,6 +292,7 @@ async function handleStream(
     // catch only fires for unclassified exceptions.
     error = err instanceof Error ? err : new Error(String(err));
   } finally {
+    phases?.dispose();
     ctx.completionRegistry.unregister(env.completionId);
   }
 

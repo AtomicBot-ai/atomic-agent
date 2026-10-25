@@ -7,6 +7,7 @@ import { readErrnoCode } from "./errno-code.js";
 import { discardResponseBody } from "./discard-response-body.js";
 import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
+import { takePromptProgress } from "./llama-prompt-progress.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -1055,13 +1056,29 @@ export class LlamaServerClient {
         // Deliberately not called on `done` — that breaks straight out of
         // the loop into `finally { cleanup() }` with nothing awaited in
         // between, so there is no window left for the timer to fire.
-        keepAlive("idle");
+        // Except a prompt-progress event (ATO-1027): that is the server
+        // still reading the prompt, not the reply starting, so it keeps
+        // the first-token budget and the `/slots` watch running. Marked
+        // before the first yield of this read, as the call always was.
+        let alive = false;
+        const markAlive = (): void => {
+          if (alive) return;
+          alive = true;
+          keepAlive("idle");
+        };
         buffer += value;
         let eventEnd = buffer.indexOf("\n\n");
+        // Bytes that complete no event yet are still a live server.
+        if (eventEnd === -1) markAlive();
         while (eventEnd !== -1) {
           const rawEvent = buffer.slice(0, eventEnd);
           buffer = buffer.slice(eventEnd + 2);
           const parsed = parseSseEvent(rawEvent);
+          if (parsed && takePromptProgress(parsed, request.onPromptProgress)) {
+            eventEnd = buffer.indexOf("\n\n");
+            continue;
+          }
+          markAlive();
           if (parsed) {
             const delta =
               typeof parsed.content === "string" ? parsed.content : "";
@@ -1634,6 +1651,9 @@ export class LlamaServerClient {
     };
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;
+    // Asked only when someone listens (ATO-1027); a build that does not
+    // know the field ignores it and streams exactly as before.
+    if (stream && request.onPromptProgress) payload.return_progress = true;
     const resolvedSeed =
       typeof request.seed === "number" ? request.seed : ENV_SEED;
     if (typeof resolvedSeed === "number") payload.seed = resolvedSeed;

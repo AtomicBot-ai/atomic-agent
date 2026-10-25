@@ -335,7 +335,7 @@ export async function runInitialCompletion(
   const startedAt = Date.now();
   const completion = deps.llmCompleteStream
     ? await consumeStream(
-        deps.llmCompleteStream(llmParams),
+        deps.llmCompleteStream(withPromptProgress(llmParams, ctx.stepIndex, deps.onEvent)),
         ctx.stepIndex,
         deps.profile,
         deps.toolTransport,
@@ -567,6 +567,24 @@ export function buildLlmStreamParams(args: {
 
 
 /**
+ * The streamed request with a prompt-progress listener that reports as
+ * `prompt_progress` step events (ATO-1027). Unchanged when nothing
+ * listens to step events.
+ */
+function withPromptProgress(
+  params: LlmStreamParams,
+  stepIndex: number,
+  onEvent: ((event: StepEvent) => void) | undefined,
+): LlmStreamParams {
+  if (!onEvent) return params;
+  return {
+    ...params,
+    onPromptProgress: (progress) =>
+      onEvent({ type: "prompt_progress", stepIndex, ...progress }),
+  };
+}
+
+/**
  * Drain the SSE generator, feeding each token delta to the grammar-aware
  * stream parser and relaying its emissions as `StepEvent`s. The generator's
  * terminal return value carries the final `CompletionResult` (timings,
@@ -647,6 +665,8 @@ export async function consumeStream(
   // log mentions and every later completion queues behind, for the life
   // of the process. This is the one abandon site the release exists for.
   let drained = false;
+  // The first output of any kind, told once (`first_token`, ATO-1027).
+  let firstToken = false;
   try {
     while (true) {
       const next = await stream.next();
@@ -678,6 +698,12 @@ export async function consumeStream(
       if (chunk.delta.length > 0) {
         accumulated += chunk.delta;
         emitParseEvents(getParser().push(chunk.delta));
+      }
+      // After the chunk's own deltas, so a host already knows whether
+      // the output began as reasoning or as the answer.
+      if (!firstToken && (chunk.delta.length > 0 || (chunk.reasoningDelta && chunk.reasoningDelta.length > 0))) {
+        firstToken = true;
+        onEvent?.({ type: "first_token", stepIndex });
       }
       if (chunk.done) {
         // Some servers close the iterator right after the done frame; keep
