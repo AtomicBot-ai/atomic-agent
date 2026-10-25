@@ -58,7 +58,7 @@ describe("models check (ATO-873)", () => {
     );
   });
 
-  it("exits 0 when a llama.cpp server is ready", async () => {
+  it("exits 0 when a llama.cpp server answers", async () => {
     const recheck = vi.fn(async () =>
       verdict({ verdict: "ok", ok: true, message: "ready", portHint: null }),
     );

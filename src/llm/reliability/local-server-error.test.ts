@@ -6,6 +6,7 @@ import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-
 import { GrammarError, TransportError } from "./llm-failures.js";
 import {
   LOCAL_CONTEXT_EXCEEDED_CODE,
+  LOCAL_PROVIDER_NOT_FOUND_CODE,
   LOCAL_REQUEST_INVALID_CODE,
   LOCAL_SERVER_NOT_FOUND_ADVICE,
   LOCAL_SERVER_NOT_FOUND_CODE,
@@ -156,5 +157,64 @@ describe("classifyLocalServerError: what it leaves alone", () => {
     ).toBeNull();
     expect(classifyLocalServerError(new Error("llama-server returned http 404"))).toBeNull();
     expect(classifyLocalServerError("not an error")).toBeNull();
+  });
+});
+
+describe("classifyLocalServerError: which address Reconnect would check", () => {
+  const err = (url: string) => llamaHttp(404, url);
+
+  it("keeps local_server_not_found when the error is at localModels.url", () => {
+    expect(
+      classifyLocalServerError(err("http://127.0.0.1:9931/v1/chat/completions"), {
+        llamaUrl: "http://127.0.0.1:9931",
+      })?.code,
+    ).toBe(LOCAL_SERVER_NOT_FOUND_CODE);
+  });
+
+  it("says local_provider_not_found for another address, or an unknown one", () => {
+    expect(
+      classifyLocalServerError(err("http://127.0.0.1:8090/completion"), { llamaUrl: "http://127.0.0.1:9931" })?.code,
+    ).toBe(LOCAL_PROVIDER_NOT_FOUND_CODE);
+    expect(
+      classifyLocalServerError(err("http://127.0.0.1:9931/completion"), { llamaUrl: null })?.code,
+    ).toBe(LOCAL_PROVIDER_NOT_FOUND_CODE);
+    expect(
+      classifyLocalServerError(err("http://127.0.0.1:9931/completion"), { llamaUrl: "not a url" })?.code,
+    ).toBe(LOCAL_PROVIDER_NOT_FOUND_CODE);
+  });
+
+  it("gives no recheck line for local_provider_not_found", () => {
+    const verdict = classifyLocalServerError(err("http://127.0.0.1:8090/completion"), {
+      llamaUrl: "http://127.0.0.1:9931",
+    });
+    expect(localServerErrorLines(verdict!)).toHaveLength(1);
+  });
+});
+
+describe("classifyLocalServerError: OpenAI-compatible guards", () => {
+  it("ignores a local 400 that timed out or was reported inside an open stream", () => {
+    const url = "http://127.0.0.1:1234/v1/chat/completions";
+    const timedOut = new OpenAiHttpError(
+      `openai provider 400: ${INVALID_BODY}`,
+      400,
+      url,
+      true,
+      null,
+      "lmstudio",
+      undefined,
+      { body: parseProviderErrorBody(INVALID_BODY) },
+    );
+    const inStream = new OpenAiHttpError(
+      "stream error",
+      400,
+      url,
+      false,
+      null,
+      "lmstudio",
+      undefined,
+      { body: parseProviderErrorBody(INVALID_BODY), streamError: "invalid request" },
+    );
+    expect(classifyLocalServerError(timedOut)).toBeNull();
+    expect(classifyLocalServerError(inStream)).toBeNull();
   });
 });

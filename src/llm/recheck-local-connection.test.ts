@@ -27,13 +27,14 @@ describe("recheckLocalConnection (ATO-873)", () => {
     );
   });
 
-  it("says ready for a llama.cpp server that answers", async () => {
+  it("says a llama.cpp server answers, without promising the chat route works", async () => {
     const out = await recheckLocalConnection({
       url: "http://127.0.0.1:9931",
       check: answering(result({ reachable: true, status: 200, kind: "llama-server" })),
     });
     expect(out).toMatchObject({ verdict: "ok", ok: true, portHint: null });
-    expect(out.message).toContain("ready");
+    expect(out.message).toContain("answers as a llama.cpp server");
+    expect(out.message).toContain("no model is loaded behind its chat route");
   });
 
   it("names Ollama and steers it to the providers", async () => {

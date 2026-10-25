@@ -114,9 +114,12 @@ describe("loop_failed over SSE", () => {
     expect(sse.written[0]!.payload).toMatchObject({ code: "local_engine_down" });
   });
 
+  const llamaAt8080 = () => "http://127.0.0.1:8080";
+  const llamaAt9931 = () => "http://127.0.0.1:9931";
+
   it("marks a llama.cpp 404 with local_server_not_found and plain advice (ATO-708, ATO-873)", () => {
     const sse = makeSse();
-    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const hook = buildStreamEventHook(sse.writer as never, env(true), llamaAt8080);
     const raw = new LlamaServerError("llama-server returned http 404", 404, "http://127.0.0.1:8080/v1/chat/completions");
     const wrapped = new TransportError(raw.message, 404, raw.url, { cause: raw });
 
@@ -133,7 +136,7 @@ describe("loop_failed over SSE", () => {
 
   it("marks a llama.cpp context overflow with local_context_exceeded (ATO-737)", () => {
     const sse = makeSse();
-    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const hook = buildStreamEventHook(sse.writer as never, env(true), llamaAt8080);
     const body = readLlamaErrorBody(
       JSON.stringify({ error: { code: 400, message: "request exceeds the available context size", type: "exceed_context_size_error" } }),
     );
@@ -156,7 +159,7 @@ describe("loop_failed over SSE", () => {
 
   it("puts local_server_not_found in the envelope's code for an OpenAI-compatible client", () => {
     const sse = makeSse();
-    const hook = buildStreamEventHook(sse.writer as never, env(false));
+    const hook = buildStreamEventHook(sse.writer as never, env(false), llamaAt9931);
     const raw = new LlamaServerError("llama-server returned http 405", 405, "http://127.0.0.1:9931/completion");
 
     hook({ type: "loop_failed", error: raw, category: classifyFailure(raw) } as never);
@@ -167,13 +170,78 @@ describe("loop_failed over SSE", () => {
 
   it("adds no code to a cloud failure", () => {
     const sse = makeSse();
-    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const hook = buildStreamEventHook(sse.writer as never, env(true), llamaAt8080);
     const err = new TransportError("openrouter answered 404", 404, "https://openrouter.ai/api/v1/chat/completions");
 
     hook({ type: "loop_failed", error: err, category: classifyFailure(err) } as never);
 
     const payload = sse.written[0]!.payload as { code?: string; advice?: string };
     expect(payload.code).toBeUndefined();
+    expect(payload.advice).toBeUndefined();
+  });
+
+  it("gives the failed step's frame the code too: hosts keep the first error frame (ATO-708)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true), llamaAt9931);
+    const raw = new LlamaServerError("llama-server returned http 404", 404, "http://127.0.0.1:9931/v1/chat/completions");
+    const failure = new TransportError(raw.message, 404, raw.url, { cause: raw });
+
+    hook({ type: "llm_event", event: { type: "step_error", error: failure, category: "transport" } } as never);
+
+    expect(sse.written).toHaveLength(1);
+    const payload = sse.written[0]!.payload as { error: string; code?: string; advice?: string };
+    expect(payload.error).toBe("llama-server returned http 404");
+    expect(payload.code).toBe("local_server_not_found");
+    expect(payload.advice).toContain("isn't a model server");
+  });
+
+  it("does not promise Reconnect for a llama-server entry at another address", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true), llamaAt9931);
+    const raw = new LlamaServerError("llama-server returned http 404", 404, "http://127.0.0.1:8090/v1/chat/completions");
+
+    hook({ type: "loop_failed", error: raw, category: classifyFailure(raw) } as never);
+
+    const payload = sse.written[0]!.payload as { code?: string; advice?: string };
+    expect(payload.code).toBe("local_provider_not_found");
+    expect(payload.advice).toContain("isn't a model server");
+  });
+
+  it("does not promise Reconnect when the configured address is unknown", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true), () => null);
+    const raw = new LlamaServerError("llama-server returned http 404", 404, "http://127.0.0.1:9931/completion");
+
+    hook({ type: "loop_failed", error: raw, category: classifyFailure(raw) } as never);
+
+    expect((sse.written[0]!.payload as { code?: string }).code).toBe("local_provider_not_found");
+  });
+
+  it("on fallover, codes the first link's 404 shown in the frame", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true), llamaAt9931);
+    const primary = new LlamaServerError("llama-server returned http 404", 404, "http://127.0.0.1:9931/completion");
+    const tail = new TypeError("fetch failed");
+    attachFailedAttempts(tail, [{ providerId: "local-llama", error: primary }]);
+
+    hook({ type: "loop_failed", error: tail, category: classifyFailure(tail) } as never);
+
+    const payload = sse.written[0]!.payload as { error: string; code?: string };
+    expect(payload.error).toBe("llama-server returned http 404");
+    expect(payload.code).toBe("local_server_not_found");
+  });
+
+  it("on fallover, a dead managed engine that ended the turn wins over the first link's 404", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true), llamaAt9931);
+    const primary = new LlamaServerError("llama-server returned http 404", 404, "http://127.0.0.1:9931/completion");
+    const down = new LocalEngineDownError("local-llama");
+    attachFailedAttempts(down, [{ providerId: "openrouter", error: primary }]);
+
+    hook({ type: "loop_failed", error: down, category: classifyFailure(down) } as never);
+
+    const payload = sse.written[0]!.payload as { code?: string; advice?: string };
+    expect(payload.code).toBe("local_engine_down");
     expect(payload.advice).toBeUndefined();
   });
 

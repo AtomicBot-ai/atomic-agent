@@ -10,7 +10,8 @@ import { isLocalProviderUrl } from "./provider/presets/is-local-provider-url.js"
 /**
  * What the Reconnect check found at the llama.cpp address (ATO-873):
  *
- *  - `ok`: a llama.cpp server answers there and is ready.
+ *  - `ok`: a llama.cpp server answers `/health` there. That does not
+ *    prove its chat route has a model; the message says so.
  *  - `loading`: a llama.cpp server is there, still loading its model.
  *  - `ollama` / `atomic_chat` / `openai_compat`: an OpenAI-compatible
  *    server answers there, which the llama.cpp route cannot drive; it
@@ -33,7 +34,7 @@ export interface LocalConnectionCheck {
   /** The address that was checked. */
   readonly url: string;
   readonly verdict: LocalConnectionVerdict;
-  /** True only for `ok`. */
+  /** True only for `ok`: a llama.cpp server answers (not a promise the chat route works). */
   readonly ok: boolean;
   /** The verdict in one or two plain sentences. */
   readonly message: string;
@@ -98,7 +99,12 @@ function messageOf(
 ): string {
   switch (verdict) {
     case "ok":
-      return `${url} is a llama.cpp server and it is ready. Send the message again.`;
+      // `/health` passing does not prove the chat route serves a model:
+      // say what was checked, and what a second 404 would mean.
+      return (
+        `${url} answers as a llama.cpp server. Send the message again; ` +
+        `if it fails with 404 again, no model is loaded behind its chat route.`
+      );
     case "not_model_server":
       return `${url} answers${health.status === null ? "" : ` (http ${health.status})`}, but it isn't a model server.`;
     case "unreachable":

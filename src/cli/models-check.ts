@@ -18,7 +18,7 @@ export interface ModelsCheckDeps {
  * Reads the config, writes nothing: an address on llama.cpp's old 8080
  * default gets a line about 9931, never a rewrite.
  *
- * Exit 0 when a llama.cpp server is ready there, 1 for every other
+ * Exit 0 when a llama.cpp server answers there, 1 for every other
  * verdict, so a script can gate on it. `--json` prints the result object
  * (`url`, `verdict`, `ok`, `message`, `portHint`).
  */

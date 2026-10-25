@@ -40,7 +40,7 @@ const HELP =
     '  use <id>                      Set active model and switch mode to "managed"',
     "  status                        Show mode, backend version, active model, daemon/health",
     "  check [--json]                Ask localModels.url what answers there (llama.cpp, Ollama,",
-    "                                still loading, not a model server); exit 1 unless ready",
+    "                                still loading, not a model server); exit 1 unless llama.cpp",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
     "  stop [--chat-only]            Stop daemon (SIGTERM → SIGKILL after 3s); --chat-only",
     "                                keeps the embedding model running for memory search",

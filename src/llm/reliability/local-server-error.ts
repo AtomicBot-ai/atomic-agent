@@ -25,11 +25,19 @@ import { isLocalProviderUrl } from "../provider/presets/is-local-provider-url.js
  *    `invalid_request_error` for anything else.
  */
 export const LOCAL_SERVER_NOT_FOUND_CODE = "local_server_not_found";
+/**
+ * The same 404/405 from a llama-server provider entry whose address is
+ * not `localModels.url` (a custom id, a fallback link, an older config).
+ * The Reconnect check probes `localModels.url` only, so a host must not
+ * offer it for this code.
+ */
+export const LOCAL_PROVIDER_NOT_FOUND_CODE = "local_provider_not_found";
 export const LOCAL_CONTEXT_EXCEEDED_CODE = "local_context_exceeded";
 export const LOCAL_REQUEST_INVALID_CODE = "local_request_invalid";
 
 export type LocalServerErrorCode =
   | typeof LOCAL_SERVER_NOT_FOUND_CODE
+  | typeof LOCAL_PROVIDER_NOT_FOUND_CODE
   | typeof LOCAL_CONTEXT_EXCEEDED_CODE
   | typeof LOCAL_REQUEST_INVALID_CODE;
 
@@ -89,21 +97,39 @@ const BAD_REQUEST_CODE: Readonly<Record<LocalBadRequestKind, LocalServerErrorCod
  * no reason in its body and every other status return null: their
  * wording stays what it was.
  */
-export function classifyLocalServerError(err: unknown): LocalServerError | null {
+export interface ClassifyLocalServerErrorOptions {
+  /**
+   * `localModels.url`, the address the Reconnect check probes. When given,
+   * a 404/405 from any other origin is `local_provider_not_found`, and a
+   * null (unknown address) counts as another origin. Left out (TUI, CLI),
+   * every llama.cpp 404/405 is `local_server_not_found`.
+   */
+  readonly llamaUrl?: string | null;
+}
+
+export function classifyLocalServerError(
+  err: unknown,
+  options: ClassifyLocalServerErrorOptions = {},
+): LocalServerError | null {
   let current: unknown = err;
   for (let depth = 0; depth < MAX_CAUSE_DEPTH && current instanceof Error; depth += 1) {
-    if (current instanceof LlamaServerError) return fromLlamaError(current);
+    if (current instanceof LlamaServerError) return fromLlamaError(current, options);
     if (current instanceof OpenAiHttpError) return fromOpenAiError(current);
     current = (current as { cause?: unknown }).cause;
   }
   return null;
 }
 
-function fromLlamaError(err: LlamaServerError): LocalServerError | null {
+function fromLlamaError(
+  err: LlamaServerError,
+  options: ClassifyLocalServerErrorOptions,
+): LocalServerError | null {
   if (err.timedOut) return null;
   if (err.status === 404 || err.status === 405) {
+    const elsewhere =
+      options.llamaUrl !== undefined && !sameOrigin(err.url, options.llamaUrl);
     return {
-      code: LOCAL_SERVER_NOT_FOUND_CODE,
+      code: elsewhere ? LOCAL_PROVIDER_NOT_FOUND_CODE : LOCAL_SERVER_NOT_FOUND_CODE,
       status: err.status === 404 ? 404 : 405,
       url: err.url,
       message: LOCAL_SERVER_NOT_FOUND_MESSAGE,
@@ -111,6 +137,16 @@ function fromLlamaError(err: LlamaServerError): LocalServerError | null {
     };
   }
   return badRequest(err.status, err.body?.type, err.message, err.url);
+}
+
+/** Same scheme, host and port. False when either side is not a URL. */
+function sameOrigin(a: string, b: string | null): boolean {
+  if (b === null) return false;
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
 }
 
 function fromOpenAiError(err: OpenAiHttpError): LocalServerError | null {

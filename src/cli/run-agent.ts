@@ -321,6 +321,9 @@ export function formatAgentEvent(
       // 404/405 keeps the wrong-server hint, which names `models check`.
       const local = classifyLocalServerError(event.error);
       if (local !== null && local.code !== LOCAL_SERVER_NOT_FOUND_CODE) {
+        // An OpenAI-compatible server's message already says it
+        // (`humanizeOpenAiHttpError`); saying it twice helps nobody.
+        if (event.error.message.includes(local.message)) return base;
         return [base, ...localServerErrorLines(local).map((line) => `    ${line}`)].join("\n");
       }
       return withLlamaHint(base, event.category, event.error.message, ctx);

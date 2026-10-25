@@ -16,7 +16,9 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { GrammarError, LocalEngineDownError } from "../llm/reliability/index.js";
+import { GrammarError, LocalEngineDownError, TransportError } from "../llm/reliability/index.js";
+import { OpenAiHttpError, humanizeOpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
 import { LlamaServerError, readLlamaErrorBody } from "../llm/llama-server-client.js";
 import {
   formatAgentEvent,
@@ -246,6 +248,33 @@ describe("formatAgentEvent for a local server's typed 400 (ATO-707, ATO-737)", (
         "    The conversation no longer fits in the local model's context window. " +
         "Compact this chat or start a new one, or give the model a larger context size.",
     );
+  });
+});
+
+describe("formatAgentEvent for a local OpenAI-compatible server's typed 400", () => {
+  it("does not repeat a sentence the message already says", () => {
+    const body = JSON.stringify({ error: { message: "Unknown role: tool", type: "invalid_request_error" } });
+    const raw = new OpenAiHttpError(
+      `openai provider 400: ${body}`,
+      400,
+      "http://127.0.0.1:1234/v1/chat/completions",
+      false,
+      null,
+      "lmstudio",
+      undefined,
+      { body: parseProviderErrorBody(body) },
+    );
+    const said = humanizeOpenAiHttpError(raw);
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new TransportError(said, 400, raw.url, { cause: raw }),
+        category: "transport" as never,
+      },
+      { llamaHint: HINT, hintShown: { value: false } },
+    );
+    expect(line).toBe(`» loop failed [transport]: ${said}`);
+    expect(line?.split("turned the request down as invalid")).toHaveLength(2);
   });
 });
 
