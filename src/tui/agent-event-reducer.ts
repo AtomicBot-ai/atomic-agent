@@ -1001,6 +1001,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     case "compaction_failed":
       return appendChatMessage(state, { role: "system", text: event.result.status === "cancelled"
         ? "Context compaction cancelled."
+        // A planned skip (e.g. a window too small to compact): nothing failed.
+        : event.result.status === "noop"
+        ? `Context compaction skipped: ${event.result.message ?? "no safe, useful reduction is available."}`
         : `Context compaction failed: ${(event.result.message ?? "unknown error").replace(/[.!?]+$/, "")}. Existing context retained; history trimming remains available.`,
       });
     case "history_trimmed":
