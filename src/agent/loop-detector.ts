@@ -158,8 +158,10 @@ export class ToolLoopTracker {
    */
   readonly fileVersions = new FileReadVersions();
   /**
-   * Write/edit/patch attempts per path this turn (ATO-1000): a re-read
-   * after an attempt on its path, landed or failed, is a new question.
+   * Write, edit, applied patch, move and restore attempts per path this
+   * turn (ATO-1000): a re-read after an attempt on its path, landed or
+   * failed, is a new question -- up to `MAX_FAILED_EPOCHS` failures in a
+   * row (`mutation-epochs.ts`).
    */
   private readonly mutations = new MutationEpochs();
   /**
@@ -400,14 +402,19 @@ export class ToolLoopTracker {
   }
 
   /**
-   * A write, edit, patch, move or restore was attempted: open a new read
-   * epoch for its paths and forget the read-coverage no-progress count
-   * on them, so the re-read a failed edit calls for is neither vetoed
-   * nor warned about (ATO-1000). Coverage itself is kept: a second
-   * identical re-read with nothing attempted in between still warns.
+   * A write, edit, applied patch, move or restore was attempted: open a
+   * new read epoch for its paths and forget the read-coverage no-progress
+   * count on them, so the re-read a failed edit calls for is neither
+   * vetoed nor warned about (ATO-1000). Coverage itself is kept: a second
+   * identical re-read with nothing attempted in between still warns. A
+   * path past `MAX_FAILED_EPOCHS` failures in a row opens nothing.
    */
-  private noteMutationAttempt(tool: string, args: unknown): void {
-    const touched = this.mutations.note(tool, args);
+  private noteMutationAttempt(
+    tool: string,
+    args: unknown,
+    landed: boolean,
+  ): void {
+    const touched = this.mutations.note(tool, args, landed);
     if (touched === null) return;
     for (const [path, entry] of this.readCoverage) {
       if (entry.noProgress === 0) continue;
@@ -441,7 +448,7 @@ export class ToolLoopTracker {
       this.noteVeto(tool, args);
       return { repeat: false, count: 0, fingerprint: "" };
     }
-    this.noteMutationAttempt(tool, args);
+    this.noteMutationAttempt(tool, args, result.status === "ok");
     const resultHash = hashToolOutcome(tool, args, result);
     if (resultHash === undefined) {
       return { repeat: false, count: 0, fingerprint: "" };

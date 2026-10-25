@@ -10,13 +10,18 @@
  * the previous read returned. Each cycle added one to the streak, the
  * fifth re-read was vetoed, and the turn could neither read nor edit.
  *
- * A write, edit, patch, move or restore that was ATTEMPTED on a path --
+ * A write, edit, applied patch, move or restore ATTEMPTED on a path --
  * landed or not -- is the event that makes a re-read of that path worth
- * having, so it opens a new epoch for the path. A read is tagged with the
- * epoch it was made in, and the repeat and no-progress counters only
- * compare reads of one epoch. Reading the same file over and over with
- * nothing tried in between stays in one epoch and is caught as before;
- * an edit that keeps failing the same way is caught by its own streak.
+ * having, so it opens a new epoch for the path. A patch dry run changes
+ * nothing and opens none. A read is tagged with the epoch it was made in,
+ * and the repeat and no-progress counters only compare reads of one epoch.
+ *
+ * Failed attempts open epochs only up to `MAX_FAILED_EPOCHS` in a row per
+ * path; after that the path stays in its epoch until a change lands, so a
+ * model alternating identical re-reads with ever-different failing edits
+ * is vetoed on the re-reads again. Still caught as before: re-reading with
+ * nothing tried in between, re-reading while only other files are edited,
+ * and an edit that keeps failing the same way (its own streak).
  */
 
 /** Tools whose attempt opens a new read epoch for the paths they target. */
@@ -30,6 +35,13 @@ const MUTATING_TOOLS: ReadonlySet<string> = new Set([
 
 /** Cap on paths tracked in one turn; the least recently touched goes first. */
 const MAX_TRACKED_PATHS = 200;
+
+/**
+ * Consecutive failed attempts on one path that still open a new epoch.
+ * Three failed edits each followed by a re-read is ordinary recovery; a
+ * fourth with no change landed is the edit side of a loop.
+ */
+export const MAX_FAILED_EPOCHS = 3;
 
 /**
  * A path as the model wrote it, made comparable: separators unified,
@@ -66,15 +78,16 @@ export function readTargetPath(tool: string, args: unknown): string | null {
 
 /**
  * The paths a mutating call targets, normalized: `"any"` when the call
- * names its files somewhere the tracker does not parse (a patch body),
- * `null` for a call that mutates nothing.
+ * names its files somewhere the tracker does not parse (a `patchPath`, a
+ * diff without readable headers), `null` for a call that mutates nothing
+ * -- including a patch dry run (`apply` is not `true`).
  */
 export function mutationTargets(
   tool: string,
   args: unknown,
 ): readonly string[] | "any" | null {
   if (!MUTATING_TOOLS.has(tool)) return null;
-  if (tool === "os.fs.patch") return "any";
+  if (tool === "os.fs.patch") return patchTargets(args);
   const raw: string[] = [];
   for (const key of ["path", "from", "to"]) {
     const value = stringField(args, key);
@@ -96,41 +109,103 @@ export function mutationTargets(
 }
 
 /**
+ * Files an applied patch touches, read from its `---` / `+++` headers
+ * with `stripComponents` (default 1, as the tool) dropped and `rootDir`
+ * prefixed. `"any"` when they cannot be read; `null` for a dry run.
+ */
+function patchTargets(args: unknown): readonly string[] | "any" | null {
+  if (args === null || typeof args !== "object") return "any";
+  const record = args as Record<string, unknown>;
+  if (record.apply !== true) return null;
+  const patch = stringField(args, "patch");
+  if (patch === null || stringField(args, "patchPath") !== null) return "any";
+  const strip =
+    typeof record.stripComponents === "number" && record.stripComponents >= 0
+      ? Math.floor(record.stripComponents)
+      : 1;
+  const root = stringField(args, "rootDir");
+  const found = new Set<string>();
+  for (const line of patch.split(/\r?\n/)) {
+    const header = /^(?:---|\+\+\+) (.+)$/.exec(line);
+    if (header === null) continue;
+    const name = header[1]!.split("\t")[0]!.trim();
+    if (name === "" || name === "/dev/null") continue;
+    const parts = name.split(/[\\/]/);
+    const rel = parts.slice(Math.min(strip, parts.length - 1)).join("/");
+    const isAbsolute = rel.startsWith("/") || /^[a-zA-Z]:/.test(rel);
+    found.add(
+      normalizeLoopPath(root !== null && !isAbsolute ? `${root}/${rel}` : rel),
+    );
+  }
+  return found.size === 0 ? "any" : [...found];
+}
+
+/**
  * Per-turn epoch book. Epochs are sequence numbers of the latest attempt
- * that touched a path, so they only ever grow for a given path.
+ * that opened one for a path, so they only ever grow for a given path --
+ * eviction included: an evicted path's sequence becomes the floor every
+ * later lookup starts from.
  */
 export class MutationEpochs {
   private seq = 0;
   private anySeq = 0;
+  private evictedFloor = 0;
+  private anyFailures = 0;
   private readonly latest = new Map<string, number>();
+  /** Consecutive failed attempts per path since a change last landed. */
+  private readonly failures = new Map<string, number>();
 
   /**
-   * Fold a completed (non-vetoed) call in. Returns what it touched, so
-   * the caller can reset its own per-path state, or `null`.
+   * Fold a completed (non-vetoed) call in; `landed` is whether it
+   * succeeded. Returns the targets that opened a new epoch, so the caller
+   * can reset its own per-path state, or `null` when none did.
    */
-  note(tool: string, args: unknown): readonly string[] | "any" | null {
+  note(
+    tool: string,
+    args: unknown,
+    landed: boolean,
+  ): readonly string[] | "any" | null {
     const targets = mutationTargets(tool, args);
     if (targets === null) return null;
-    this.seq += 1;
     if (targets === "any") {
+      this.anyFailures = landed ? 0 : this.anyFailures + 1;
+      if (this.anyFailures > MAX_FAILED_EPOCHS) return null;
+      this.seq += 1;
       this.anySeq = this.seq;
       return targets;
     }
+    const opened: string[] = [];
     for (const path of targets) {
+      const failed = landed ? 0 : (this.failures.get(path) ?? 0) + 1;
+      this.failures.set(path, failed);
+      if (failed > MAX_FAILED_EPOCHS) continue;
+      opened.push(path);
+    }
+    if (opened.length === 0) return null;
+    this.seq += 1;
+    for (const path of opened) {
       this.latest.delete(path);
       this.latest.set(path, this.seq);
     }
     while (this.latest.size > MAX_TRACKED_PATHS) {
-      const oldest = this.latest.keys().next();
+      const oldest = this.latest.entries().next();
       if (oldest.done) break;
-      this.latest.delete(oldest.value);
+      const [path, seq] = oldest.value;
+      this.evictedFloor = Math.max(this.evictedFloor, seq);
+      this.latest.delete(path);
+      this.failures.delete(path);
     }
-    return targets;
+    while (this.failures.size > MAX_TRACKED_PATHS) {
+      const oldest = this.failures.keys().next();
+      if (oldest.done) break;
+      this.failures.delete(oldest.value);
+    }
+    return opened;
   }
 
   /** The epoch a read of `path` (normalized) is made in now. */
   epochFor(path: string): number {
-    let epoch = this.anySeq;
+    let epoch = Math.max(this.anySeq, this.evictedFloor);
     for (const [touched, seq] of this.latest) {
       if (seq > epoch && samePathTarget(touched, path)) epoch = seq;
     }

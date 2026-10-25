@@ -49,11 +49,12 @@ export function probeFamily(tool: string): string | null {
  * count is what the messages quote, but what decides is how many rounds
  * of probing the run spans: four URLs fetched side by side in one step
  * are one decision by the model, a fan-out, not four attempts at the
- * same thing. Churn -- re-phrasing a query step after step -- still
- * counts one round per step, so the shape this detector was built for
- * is bounded exactly as before. A probe recorded without a round (no
- * step was noted) is a round of its own, which is the per-call
- * behaviour every caller had before rounds existed.
+ * same thing. Churn of one probe per step still counts one round per
+ * step, so that shape stops at the same call as before; k probes per
+ * step now take k times as many calls to reach the run cap and are
+ * bounded by the window ceiling instead. A probe recorded without a
+ * round (no step was noted) is a round of its own, which is the
+ * per-call behaviour every caller had before rounds existed.
  */
 export class ProbeRuns {
   private readonly runs = new Map<string, Map<string, string>>();
