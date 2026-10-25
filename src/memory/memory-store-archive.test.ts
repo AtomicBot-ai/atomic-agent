@@ -91,6 +91,31 @@ describe("MemoryStore archive (phase 5)", () => {
     ).toEqual([b.id]);
   });
 
+  it("list({ updatedBefore }) filters by age before the row cap (#903)", () => {
+    const old = h.store.store({ content: "old note", source: "agent" }, 1_000);
+    // Push the old row past the 200-row cap with newer rows.
+    const big = new MemoryStore({
+      dbFile: join(h.dir, "memory-big.sqlite"),
+      maxEntries: 1000,
+    });
+    try {
+      const oldBig = big.store({ content: "old note", source: "agent" }, 1_000);
+      for (let i = 0; i < 210; i += 1) {
+        big.store({ content: `fresh note ${i}`, source: "agent" }, 50_000);
+      }
+      expect(
+        big.list({ updatedBefore: 10_000, limit: 200 }).map((r) => r.id),
+      ).toEqual([oldBig.id]);
+      expect(big.list({ updatedBefore: 999, limit: 200 })).toEqual([]);
+    } finally {
+      big.close();
+    }
+    expect(h.store.list({ updatedBefore: 1_000 }).map((r) => r.id)).toEqual([
+      old.id,
+    ]);
+    expect(() => h.store.list({ updatedBefore: Number.NaN })).toThrow();
+  });
+
   it("archiveInto with empty parentIds is a no-op", () => {
     expect(h.store.archiveInto([], 1)).toBe(0);
   });
