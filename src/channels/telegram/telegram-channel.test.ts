@@ -1507,7 +1507,10 @@ describe("TelegramChannel per-chat approval bindings", () => {
   });
 
   /** A runtime real enough for the inbound handler to run a turn. */
-  function turnRuntime(setHandler: ReturnType<typeof vi.fn>): AgentRuntime {
+  function turnRuntime(
+    setHandler: ReturnType<typeof vi.fn>,
+    clearSessionGrants?: ReturnType<typeof vi.fn>,
+  ): AgentRuntime {
     const sessions = new Map<
       string,
       {
@@ -1520,7 +1523,10 @@ describe("TelegramChannel per-chat approval bindings", () => {
     >();
     let n = 0;
     return {
-      approvals: { resolve: vi.fn(() => true) },
+      approvals: {
+        resolve: vi.fn(() => true),
+        ...(clearSessionGrants ? { clearSessionGrants } : {}),
+      },
       setApprovalHandlerForSession: setHandler,
       createSession: () => {
         const s = {
@@ -1602,6 +1608,47 @@ describe("TelegramChannel per-chat approval bindings", () => {
         .filter((m) => m.text === "ok")
         .map((m) => m.chatId),
     ).toEqual([42, -100, 42]);
+  });
+
+  it("clears the old session's grants on /new, and only that session's", async () => {
+    // A grant the owner made from the keyboard lasts for the session the
+    // chat was on. Once /new moves the chat off it, a later /switch back
+    // (or another surface on that session) must not inherit the grant.
+    const { factory, state } = makeBotFactory();
+    const { lock } = fakeLock();
+    const setHandler = vi.fn(() => vi.fn());
+    const clearSessionGrants = vi.fn();
+    const channel = new TelegramChannel({
+      runtime: turnRuntime(setHandler, clearSessionGrants),
+      config: makeConfig(dir),
+      token: "1234:abcdef",
+      logger,
+      botFactory: factory,
+      lock,
+      emitStatus: () => undefined,
+    });
+    await channel.start();
+    const dm = {
+      from: { id: 42 },
+      chat: { id: 42, type: "private" },
+      text: "hi",
+      message_id: 1,
+    };
+    const group = {
+      from: { id: 42 },
+      chat: { id: -100, type: "supergroup", title: "Ops" },
+      text: "@test_bot hi",
+      message_id: 2,
+    };
+    await state.textHandler!(dm);
+    await state.textHandler!(group);
+    expect(clearSessionGrants).not.toHaveBeenCalled();
+
+    await state.textHandler!({ ...dm, text: "/new", message_id: 3 });
+
+    expect(clearSessionGrants).toHaveBeenCalledWith("s-1");
+    expect(clearSessionGrants).not.toHaveBeenCalledWith("s-2");
+    await channel.stop();
   });
 
   /** An approval the agent asks for in session `sessionId`. */

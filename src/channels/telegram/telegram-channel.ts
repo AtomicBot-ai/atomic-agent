@@ -1102,8 +1102,16 @@ export class TelegramChannel {
     this.approvalSubscriptions.set(sessionId, { target, unsubscribe });
   }
 
-  /** Drop the approval binding for a session no chat talks to anymore. */
+  /**
+   * Drop the approval binding for a session no chat talks to anymore,
+   * and the session grants the owner made for it from the keyboard: a
+   * grant lasts for the session the chat was on, so `/new`, `/switch`
+   * and delete end it, as a session switch does in the TUI. Without
+   * this a grant would stay in memory until the process exits and come
+   * back with a later `/switch` to that session.
+   */
   private releaseApprovalSession(sessionId: string): void {
+    this.deps.runtime.approvals.clearSessionGrants?.(sessionId);
     const existing = this.approvalSubscriptions.get(sessionId);
     if (!existing) return;
     existing.unsubscribe();
