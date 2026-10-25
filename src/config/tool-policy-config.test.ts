@@ -28,7 +28,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
     const projects = createProjectsDefaults();
     const tools = createToolsDefaults();
     const vision = createVisionDefaults();
-    expect(http).toStrictEqual({ enabled: true, approvalMode: "never", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000 });
+    expect(http).toStrictEqual({ enabled: true, approvalMode: "writes", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000 });
     expect(projects).toStrictEqual({ roots: [] });
     expect(tools).toStrictEqual({ shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"] } });
     expect(vision).toStrictEqual({ enabled: true, autoDetect: true, maxImageBytes: 8 * 1024 * 1024, maxImagesPerCall: 4 });
@@ -53,14 +53,19 @@ describe("outbound HTTP and tool configuration ownership", () => {
   });
 
   it.each([
-    { version: 24, raw: undefined, expected: "never", reads: 0 },
-    { version: 24, raw: null, expected: "never", reads: 0 },
-    { version: 24, raw: "writes", expected: "never", reads: 0 },
+    { version: 24, raw: undefined, expected: "always", reads: 1 },
+    { version: 24, raw: null, expected: "always", reads: 1 },
+    { version: 24, raw: "writes", expected: "writes", reads: 0 },
     { version: 24, raw: "always", expected: "always", reads: 0 },
-    { version: 24, raw: "never", expected: "never", reads: 0 },
+    { version: 24, raw: "never", expected: "writes", reads: 0 },
     { version: 25, raw: undefined, expected: "always", reads: 1 },
     { version: 25, raw: null, expected: "always", reads: 1 },
     { version: 25, raw: "writes", expected: "writes", reads: 0 },
+    { version: 25, raw: "never", expected: "writes", reads: 0 },
+    { version: 78, raw: "never", expected: "writes", reads: 0 },
+    { version: 78, raw: "always", expected: "always", reads: 0 },
+    { version: 79, raw: "never", expected: "never", reads: 0 },
+    { version: 79, raw: undefined, expected: "always", reads: 1 },
   ])("retains HTTP migration lookup branches at v$version for $raw", ({ version, raw, expected, reads }) => {
     const original = schema.USER_CONFIG_DEFAULTS.http;
     const defaults = createHttpDefaults();
@@ -102,7 +107,7 @@ describe("outbound HTTP and tool configuration ownership", () => {
     const noDefaults = () => { throw new Error("explicit fields must not read defaults"); };
     const http = { enabled: false, approvalMode: "never", hostAllowlist: [], maxResponseBytes: 1, defaultTimeoutMs: 1 };
     const vision = { enabled: false, autoDetect: false, maxImageBytes: 1, maxImagesPerCall: 1 };
-    expect(parseHttpConfig(http, 25, noDefaults)).toStrictEqual(http);
+    expect(parseHttpConfig(http, 79, noDefaults)).toStrictEqual(http);
     expect(parseProjectsConfig({ roots: [] }, noDefaults)).toStrictEqual({ roots: [] });
     expect(parseToolsConfig({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: [] }, noDefaults).shell)
       .toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: [] });

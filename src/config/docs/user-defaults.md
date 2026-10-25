@@ -3,11 +3,11 @@
 Status: current
 Owner: src/config/
 
-Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
+Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
 
 ## version
 
-- `version` (default `78`).
+- `version` (default `79`).
 
 ## localModels
 
@@ -62,7 +62,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 ## http
 
 - `http.enabled` (default `true`).
-- `http.approvalMode` (default `"never"`).
+- `http.approvalMode` (default `"writes"`: a POST asks, a GET does not).
 - `http.hostAllowlist` (default `null`).
 - `http.maxResponseBytes` (default `1048576`).
 - `http.defaultTimeoutMs` (default `30000`).
