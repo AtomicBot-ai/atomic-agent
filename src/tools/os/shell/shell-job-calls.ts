@@ -60,18 +60,24 @@ export type ShellCallForm =
 /**
  * Whether a form field was really passed. Some models fill every
  * optional field with its zero value (`{"cmd": "pwd", "wait": 0,
- * "kill": 0, "jobs": false}`, seen from GPT-6 Astra), so `0`, `""` and
- * a stringified `"0"` count as absent alongside `undefined`, `null` and
- * `false`. No real job id is lost: ids are positive integers.
+ * "kill": 0, "jobs": false}`, seen from GPT-6 Astra). `undefined`,
+ * `null`, `false` and a blank string are absent for every field; for
+ * the job-id fields `wait`/`kill` a zero (`0` or `"0"`) is absent too.
+ * No real job id is lost: ids are positive integers.
  */
-function isPresent(value: unknown): boolean {
+function isPresent(key: string, value: unknown): boolean {
   if (value === undefined || value === null || value === false) return false;
-  if (value === 0) return false;
-  if (typeof value === "string") {
-    const trimmed = value.trim();
-    if (trimmed === "" || trimmed === "0") return false;
-  }
+  if (typeof value === "string" && value.trim() === "") return false;
+  if ((key === "wait" || key === "kill") && isZeroId(value)) return false;
   return true;
+}
+
+function isZeroId(value: unknown): boolean {
+  return value === 0 || (typeof value === "string" && value.trim() === "0");
+}
+
+function jobIdHint(kind: "wait" | "kill"): string {
+  return `os.shell.run: ${kind} must be a job id (a positive integer), e.g. {"${kind}": 3}; {"jobs": true} lists them`;
 }
 
 function parseJobId(raw: unknown): number | null {
@@ -89,7 +95,7 @@ export function classifyShellCall(
   rawArgs: Record<string, unknown>,
 ): ShellCallForm {
   const present = ["cmd", "wait", "kill", "jobs"].filter((key) =>
-    isPresent(rawArgs[key]),
+    isPresent(key, rawArgs[key]),
   );
   if (present.length > 1) {
     return {
@@ -97,17 +103,19 @@ export function classifyShellCall(
       message: `os.shell.run: pass one of cmd, wait, kill, jobs (got ${present.join(", ")})`,
     };
   }
-  if (isPresent(rawArgs.jobs)) return { kind: "jobs" };
+  if (isPresent("jobs", rawArgs.jobs)) return { kind: "jobs" };
   for (const kind of ["wait", "kill"] as const) {
-    if (!isPresent(rawArgs[kind])) continue;
+    if (!isPresent(kind, rawArgs[kind])) continue;
     const id = parseJobId(rawArgs[kind]);
-    if (id === null) {
-      return {
-        kind: "invalid",
-        message: `os.shell.run: ${kind} must be a job id (a positive integer), e.g. {"${kind}": 3}; {"jobs": true} lists them`,
-      };
-    }
+    if (id === null) return { kind: "invalid", message: jobIdHint(kind) };
     return { kind, id };
+  }
+  // No form at all, but a zero job id: the model meant a job form, so
+  // say what an id is rather than that `cmd` is missing.
+  if (present.length === 0) {
+    for (const kind of ["wait", "kill"] as const) {
+      if (isZeroId(rawArgs[kind])) return { kind: "invalid", message: jobIdHint(kind) };
+    }
   }
   return { kind: "cmd" };
 }

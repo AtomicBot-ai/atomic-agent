@@ -27,6 +27,8 @@ describe("classifyShellCall", () => {
       kind: "cmd",
     });
     expect(classifyShellCall({ cmd: "ls", wait: "0", kill: "0" })).toEqual({ kind: "cmd" });
+    // The zero rule is for job ids only; a blank cmd is absent, a "0" cmd is a command.
+    expect(classifyShellCall({ cmd: "0", wait: 3 }).kind).toBe("invalid");
     expect(classifyShellCall({ cmd: "ls", wait: null, kill: undefined })).toEqual({
       kind: "cmd",
     });
@@ -65,10 +67,13 @@ describe("classifyShellCall", () => {
   });
 
   it("never turns a zero into job 0; a non-id value is still refused", () => {
-    // A lone zero is no job form at all: it falls through to the cmd
-    // form, whose own check refuses the missing command.
-    expect(classifyShellCall({ wait: 0 })).toEqual({ kind: "cmd" });
-    expect(classifyShellCall({ kill: 0 })).toEqual({ kind: "cmd" });
+    // A lone zero is no job form, but the model meant one: it gets the
+    // job-id hint, not "`cmd` must be a non-empty string".
+    for (const [kind, raw] of [["wait", 0], ["kill", 0], ["wait", "0"], ["kill", "0"]] as const) {
+      const form = classifyShellCall({ cmd: "", [kind]: raw, jobs: false });
+      expect(form.kind).toBe("invalid");
+      expect(form.kind === "invalid" && form.message).toContain(`${kind} must be a job id`);
+    }
     for (const bad of [-1, 1.5, "soon", true]) {
       const form = classifyShellCall({ wait: bad });
       expect(form.kind).toBe("invalid");

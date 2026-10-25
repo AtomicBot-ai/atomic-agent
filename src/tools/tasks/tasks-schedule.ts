@@ -133,13 +133,17 @@ export function buildTasksScheduleTool(
 }
 
 /**
- * `null`, `""` and `0` count as not given: some models fill every unused
- * optional field with its zero value (`{"at": 0, "inSeconds": 60}`).
+ * Only a finite, non-zero number counts as given: some models fill every
+ * unused optional field with its zero value (`{"at": 0, "inSeconds": 60}`),
+ * or with `null`, `""` or `false`. A value that is not a number was never
+ * used (numeric strings are not coerced), so it cannot make a conflict.
  * Neither field has a meaningful zero: `at: 0` is 1970 and `inSeconds: 0`
  * is "now", which is what omitting both already does.
  */
-function scheduleField(value: unknown): unknown {
-  return value === null || value === "" || value === 0 ? undefined : value;
+function scheduleField(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value !== 0
+    ? value
+    : undefined;
 }
 
 function parseOneShotSchedule(

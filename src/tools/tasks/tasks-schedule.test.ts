@@ -187,6 +187,18 @@ describe("tasks.schedule", () => {
     );
     expect(eager.status).toBe("ok");
     expect(runner.create.mock.calls[2]![0].schedule).toBeUndefined();
+
+    const nonNumbers = await tool.run(
+      { userMessage: "later", at: false, inSeconds: 60 },
+      makeCtx(),
+    );
+    expect(nonNumbers.status).toBe("ok");
+    expect(runner.create.mock.calls[3]![0].schedule?.kind).toBe("at");
+    const stringZero = await tool.run(
+      { userMessage: "later", at: "0", inSeconds: 60 },
+      makeCtx(),
+    );
+    expect(stringZero.status).toBe("ok");
   });
 
   it('passes notify: "telegram" through to the created record', async () => {

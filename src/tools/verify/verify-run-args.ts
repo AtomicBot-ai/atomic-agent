@@ -88,7 +88,7 @@ function optionalString(raw: unknown, field: string): string | undefined {
 /**
  * An optional string where `""` means "not given": strict native-tools
  * providers send every unused optional field, so a model choosing `url`
- * also sends `path: ""`. Used for the `path`/`url` pairs that must have
+ * also sends `path: ""`. Used for a page's `path`/`url`, which must have
  * exactly one side, and for `ready.url`, which `new URL("")` would throw on.
  */
 function optionalNonEmptyString(raw: unknown, field: string): string | undefined {
@@ -181,8 +181,12 @@ function parseRequests(raw: unknown): VerifyRequestSpec[] | undefined {
   if (raw === undefined || raw === null) return undefined;
   return list(raw, "requests", MAX_REQUESTS).map((entry, i) => {
     const r = record(entry, `requests[${i}]`);
-    const path = optionalNonEmptyString(r.path, `requests[${i}].path`);
-    const url = optionalNonEmptyString(r.url, `requests[${i}].url`);
+    // An empty side is a default-filled field only next to a non-empty
+    // other side; a lone `path: ""` still means the service root.
+    let path = optionalString(r.path, `requests[${i}].path`);
+    let url = optionalString(r.url, `requests[${i}].url`);
+    if (path === "" && url) path = undefined;
+    if (url === "" && path) url = undefined;
     if ((path === undefined) === (url === undefined)) {
       fail(`requests[${i}] needs exactly one of \`path\` or \`url\``);
     }

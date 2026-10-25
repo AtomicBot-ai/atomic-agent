@@ -150,6 +150,12 @@ describe("parseVerifyRunArgs, empty-string defaults (ATO-891)", () => {
     expect(args.requests).toMatchObject([{ path: "/", url: undefined }, { path: undefined, url: "http://127.0.0.1:3000/health" }]);
   });
 
+  it("keeps a lone empty request path, which means the service root", () => {
+    const args = parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 }, requests: [{ path: "" }] });
+    expect(args.requests).toMatchObject([{ path: "", url: undefined }]);
+    expect(() => parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 }, requests: [{ path: "", url: "" }] })).toThrow("requests[0] needs exactly one of `path` or `url`");
+  });
+
   it("falls back to the page url when ready.url is empty", () => {
     expect(parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "x" }, ready: { url: "" } }).ready).toMatchObject({ url: "http://127.0.0.1:8766/" });
   });
