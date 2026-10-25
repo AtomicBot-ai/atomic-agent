@@ -21,7 +21,7 @@ Empty optional sections are omitted. Notice composition and structured messages 
 
 ## Local budget and packing
 
-Configured caps, context-window detection, reserved completion capacity and section budgets jointly bound the prompt. ConversationMaxTokens=0 means auto; the configured fallback when a window is unknown is not an arbitrary tiny token share. The packer retains its cut between overflows and cuts deeper when prefix reuse is unavailable; for the same reason [the compaction planner](../plan-compaction.ts) keeps a smaller tail there. Profile, lessons, procedures and loaded sections consume room that must not be counted twice.
+Configured caps, context-window detection, reserved completion capacity and section budgets jointly bound the prompt. The local reply reserve (`effectiveReplyReserve`) is `localModels.completionMaxTokens`, at most half a known window, and on a window under 32k at most what leaves the prompt 16k (never below a quarter of the window or 1024): 8k reserves 2048, 16k 4096, 24k 8192, 32k and up are unchanged. With half of a 16k window reserved the default scaffold left the transcript only the 512-token floor. The reserve is the budget's figure, not `n_predict`. ConversationMaxTokens=0 means auto; the configured fallback when a window is unknown is not an arbitrary tiny token share. The packer retains its cut between overflows and cuts deeper when prefix reuse is unavailable; for the same reason [the compaction planner](../plan-compaction.ts) keeps a smaller tail there. Profile, lessons, procedures and loaded sections consume room that must not be counted twice.
 
 Read the implementation for exact defaults; historical ~2.5k targets are not a universal current window ceiling.
 

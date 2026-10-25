@@ -228,6 +228,31 @@ describe("effectiveReplyReserve", () => {
   it("reserves nothing for the no-cap sentinel", () => {
     expect(effectiveReplyReserve(0, 32_768)).toBe(0);
   });
+
+  /**
+   * ATO-257: on a 16k window half of it (8192) plus the ~7.7k scaffold
+   * plus the margin left the transcript nothing, so compaction never had
+   * room. A small window keeps 16k (or three quarters of itself) for the
+   * prompt instead.
+   */
+  it("shrinks the reserve on a window under 32k", () => {
+    expect(effectiveReplyReserve(16_384, 8192)).toBe(2048);
+    expect(effectiveReplyReserve(16_384, 16_384)).toBe(4096);
+    expect(effectiveReplyReserve(16_384, 24_576)).toBe(8192);
+    expect(effectiveReplyReserve(96_000, 16_384)).toBe(4096);
+    // Never below 1024 while the cap and half the window allow it.
+    expect(effectiveReplyReserve(16_384, 3000)).toBe(1024);
+    expect(effectiveReplyReserve(16_384, 1500)).toBe(750);
+    // A cap smaller than the small-window figure is kept as configured.
+    expect(effectiveReplyReserve(2048, 16_384)).toBe(2048);
+  });
+
+  it("leaves windows from 32k up at the configured cap or half the window", () => {
+    expect(effectiveReplyReserve(16_384, 32_768)).toBe(16_384);
+    expect(effectiveReplyReserve(16_384, 131_072)).toBe(16_384);
+    expect(effectiveReplyReserve(96_000, 131_072)).toBe(65_536);
+    expect(effectiveReplyReserve(8192, 32_768)).toBe(8192);
+  });
 });
 
 describe("computeEffectiveConversationCap with a reply cap past the window", () => {
@@ -249,6 +274,20 @@ describe("computeEffectiveConversationCap with a reply cap past the window", () 
     expect(cap).toBe(11_472);
     expect(cap).toBeGreaterThan(CONVERSATION_CAP_FLOOR);
   });
+
+  it("leaves a 16k window history room past the agent scaffold (ATO-257)", () => {
+    const cap = computeEffectiveConversationCap({
+      configuredCap: 32_000,
+      autoFill: true,
+      stablePrefixTokens: 7700,
+      sessionTokens: 0,
+      worldSnapshotTokens: 0,
+      completionMaxTokens: 16_384,
+      contextWindow: 16_384,
+    });
+    // 16384 - 7700 - 4096 - 512; with half the window reserved it was the 512 floor.
+    expect(cap).toBe(4076);
+  });
 });
 
 describe("minUsableContextWindow", () => {
@@ -260,8 +299,14 @@ describe("minUsableContextWindow", () => {
     // 96k on a 32k window reserves 16 384, so 32k is usable: no warning.
     expect(minUsableContextWindow(96_000, 32_768)).toBe(6000 + 16_384 + 512);
     expect(32_768).toBeGreaterThanOrEqual(minUsableContextWindow(96_000, 32_768));
-    // A window too small for the scaffolding plus half of itself still is.
-    expect(12_000).toBeLessThan(minUsableContextWindow(96_000, 12_000));
+    // A window too small for the scaffolding plus its reserve still is.
+    expect(minUsableContextWindow(96_000, 8000)).toBe(6000 + 2000 + 512);
+    expect(8000).toBeLessThan(minUsableContextWindow(96_000, 8000));
+  });
+
+  it("counts a 16k window as usable with its smaller reserve", () => {
+    expect(minUsableContextWindow(16_384, 16_384)).toBe(6000 + 4096 + 512);
+    expect(16_384).toBeGreaterThanOrEqual(minUsableContextWindow(16_384, 16_384));
   });
 });
 
