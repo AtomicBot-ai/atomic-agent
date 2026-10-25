@@ -190,6 +190,41 @@ describe("ApprovalBridge.dispatch", () => {
     expect(shapeRow[0]!.callback_data).toBe("appr:abc:a");
   });
 
+  it.each(["other", "script", "proc_kill", "http"] as const)(
+    "offers no category grant for a broad category (%s)",
+    async (category) => {
+      const h = makeHarness();
+      const r = req("abc");
+      r.tool = category === "other" ? "mcp.github.create_issue" : "some.tool";
+      r.category = category;
+      await h.bridge.dispatch(r, 7);
+
+      expect(keyboardOf(h.api.sendMessage)).toEqual({
+        inline_keyboard: [
+          [
+            { text: "✅ Approve", callback_data: "appr:abc:y" },
+            { text: "❌ Deny", callback_data: "appr:abc:n" },
+          ],
+        ],
+      });
+    },
+  );
+
+  it.each(["python3", "node", "python3.12", "pwsh.exe"])(
+    "offers no shape grant for an interpreter (%s)",
+    async (shape) => {
+      const h = makeHarness();
+      const r = req("abc");
+      r.commandShape = shape;
+      await h.bridge.dispatch(r, 7);
+
+      const data = keyboardOf(h.api.sendMessage)
+        .inline_keyboard.flat()
+        .map((b) => b.callback_data);
+      expect(data).toEqual(["appr:abc:y", "appr:abc:n"]);
+    },
+  );
+
   it("sends only approve and deny for a shell request without a shape", async () => {
     const h = makeHarness();
     const r = req("abc");
@@ -473,6 +508,32 @@ describe("ApprovalBridge.handleCallback", () => {
     expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
       text: "Approved",
     });
+  });
+
+  it("does not send a shape grant for a forged `a` on an interpreter", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.commandShape = "python3";
+    await h.bridge.dispatch(r, 7);
+
+    await h.bridge.handleCallback(callback("abc", "a"));
+
+    expect(h.approvals.decisions[0]!.grant).toBeUndefined();
+    expect(h.api.answerCallbackQuery).toHaveBeenCalledWith("cb-1", {
+      text: "Approved",
+    });
+  });
+
+  it("does not send a category grant for a forged `s` on a broad category", async () => {
+    const h = makeHarness();
+    const r = req("abc");
+    r.tool = "mcp.github.create_issue";
+    r.category = "other";
+    await h.bridge.dispatch(r, 7);
+
+    await h.bridge.handleCallback(callback("abc", "s"));
+
+    expect(h.approvals.decisions[0]!.grant).toBeUndefined();
   });
 
   it("grants shape on `a` callback", async () => {
