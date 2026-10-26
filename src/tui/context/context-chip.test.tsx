@@ -112,6 +112,15 @@ describe("ContextChip", () => {
     expect(text).toContain("5.4k");
   });
 
+  it("keeps the bar but drops an unbounded window", () => {
+    const text = label(
+      usage({ contextWindow: Number.MAX_SAFE_INTEGER }),
+    );
+    expect(text).toContain("6.4k/32k cap");
+    expect(text).not.toContain(" · 9");
+    expect(text).not.toMatch(/cap · /);
+  });
+
   it("still gauges when no window is known", () => {
     const noWindow = label(usage({ contextWindow: null, percent: null }));
     expect(noWindow).toContain("6.4k/32k cap");
