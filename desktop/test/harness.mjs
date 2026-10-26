@@ -51,6 +51,47 @@ const PROVIDERS = {
  */
 export const PROVIDER = process.env.ATAG_TEST_PROVIDER || 'aimlapi';
 
+/**
+ * Why this machine cannot drive the scenarios at all, or null when it can.
+ * Every scenario types a provider key into the wizard, so without a seed
+ * `.env` holding that key none of them can be driven honestly. That is the
+ * stand not being ready, not the app failing, and it is reported as a skip
+ * (ATO-926).
+ */
+export function seedEnvProblem(seedEnv = SEED_ENV, provider = PROVIDER) {
+  const envKey = PROVIDERS[provider]?.envKey ?? 'a provider key';
+  if (!seedEnv || !existsSync(seedEnv)) return `no seed .env: set ATAG_TEST_ENV to a file holding ${envKey}`;
+  if (!new RegExp(`^${envKey}=[ \\t]*\\S`, 'm').test(readFileSync(seedEnv, 'utf8'))) {
+    return `the seed .env has no ${envKey}: add it to ${seedEnv}`;
+  }
+  return null;
+}
+
+/** Exit code when nothing ran because the stand is not ready: non-zero so a
+    gate never reads "nothing ran" as green, and apart from 1 (an app
+    failure) and 2 (no scenario matched). */
+export const EXIT_NOT_READY = 3;
+
+/**
+ * The run-all summary line and exit code for a list of scenario results.
+ * 1 when the app failed anywhere; EXIT_NOT_READY when nothing was driven and
+ * the stand was the reason; 0 otherwise.
+ */
+export function summarize(results) {
+  const failed = results.filter((r) => !r.ok && !r.modelFault);
+  const shortfalls = results.filter((r) => r.modelFault);
+  const skipped = results.filter((r) => r.skipped);
+  const notReady = results.filter((r) => r.notReady);
+  const passed = results.length - failed.length - shortfalls.length - skipped.length;
+  const reason = notReady.length ? ` (${notReady[0].skipped})` : '';
+  const line = `${passed} passed, ${failed.length} app failures, `
+    + `${shortfalls.length} model shortfalls, ${skipped.length} skipped${reason}`;
+  let code = 0;
+  if (failed.length) code = 1;
+  else if (notReady.length && passed === 0 && shortfalls.length === 0) code = EXIT_NOT_READY;
+  return { line, code, failed, shortfalls, skipped };
+}
+
 export function providerKey() {
   if (!SEED_ENV || !existsSync(SEED_ENV)) {
     throw new Error(`no seed .env — set ATAG_TEST_ENV to a file holding ${PROVIDERS[PROVIDER].envKey}`);
@@ -448,6 +489,11 @@ export async function scenario(name, body, { firstRunFirst = true, setup, skip =
     console.log(`– ${name} — SKIPPED: ${skip}`);
     return { name, ok: true, skipped: skip, secs: '0' };
   }
+  const notReady = seedEnvProblem();
+  if (notReady) {
+    console.log(`– ${name} — SKIPPED: ${notReady}`);
+    return { name, ok: true, skipped: notReady, notReady: true, secs: '0' };
+  }
   const dirs = freshDirs(name);
   console.log(`   state ${dirs.stateDir}`);
   console.log(`   workspace ${dirs.workspace}`);
@@ -515,7 +561,7 @@ export { write, readIf as read, sleep, MOD_KEY };
 /** `node scenarios/foo.mjs` → run it and set the exit code. */
 export async function main(result) {
   const r = await result;
-  process.exit(r && r.ok ? 0 : 1);
+  process.exit(r && r.notReady ? EXIT_NOT_READY : r && r.ok ? 0 : 1);
 }
 
 export const SCENARIO_NAME = (url) => basename(new URL(url).pathname).replace(/\.mjs$/, '');
