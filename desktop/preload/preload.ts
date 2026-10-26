@@ -279,8 +279,9 @@ contextBridge.exposeInMainWorld("atomic", {
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
   /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
   skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),
-  skillInstall: (identifier: string, acknowledgeRisk?: boolean) =>
-    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk }),
+  // PR #916: confirmCaution approves a caution verdict only (`--yes`); acknowledgeRisk is the dangerous override.
+  skillInstall: (identifier: string, acknowledgeRisk?: boolean, confirmCaution?: boolean) =>
+    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk, confirmCaution: !!confirmCaution }),
   clawhubSkillDetail: (apiBase: string, slug: string, owner?: string | null) =>
     ipcRenderer.invoke("app:clawhubSkillDetail", { apiBase, slug, owner: owner ?? null }),
   memoryQuery: (stateDir: string, name: string, params?: unknown[]) =>

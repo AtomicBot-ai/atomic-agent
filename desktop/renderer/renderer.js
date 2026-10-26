@@ -23178,11 +23178,13 @@ function skpRemoveConfirmHTML() {
           + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="[y] delete">Delete</button></div>')
     + '</div></div>';
 }
-/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override. */
+/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override.
+   PR #916: a CAUTION verdict asks too, in the calmer amber frame. */
 function skpInstallConfirmHTML() {
   const c = SKP.installConfirm;
-  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
-    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
+  const caution = c.verdict === 'caution';
+  return '<div class="set-overlay"><div class="tk-modal' + (caution ? '' : ' tk-modal--danger') + ' set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
+    + '<div class="set-mhead"><span class="tk-ico ' + (caution ? 'tk-ico--amber' : 'tk-ico--red') + '">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
     + '<p>Install <b class="mono">' + esc(c.identifier) + '</b>?</p>'
     // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, shown plainly — no invented rule id in the finding slot.
     + '<div class="tuierr tk-out set-scan">' + esc(c.message) + '</div>'
@@ -23510,7 +23512,9 @@ async function skpInstall(ack) {
   const id = (SKP.installConfirm && SKP.installConfirm.identifier) || (SKP.hubCard && SKP.hubCard.installId);
   if (!id) return;
   SKP.installing = true; SKP.installError = null; render();
-  const res = await BR.skillInstall(id, !!ack);
+  // PR #916: a confirmed CAUTION approves caution only (--yes); a changed skill that now scans dangerous still asks.
+  const caution = !!ack && !!SKP.installConfirm && SKP.installConfirm.verdict === 'caution';
+  const res = await BR.skillInstall(id, !!ack && !caution, caution);
   SKP.installing = false;
   if (res && res.ok) {
     SKP.installConfirm = null; SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; SKP.mode = 'list';

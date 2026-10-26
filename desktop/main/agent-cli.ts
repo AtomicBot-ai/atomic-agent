@@ -3002,18 +3002,21 @@ export async function skillBrowse(
  * A `caution` verdict, with no terminal to ask on, exits with
  * `install needs confirmation: <id> — <scan summary>` (PR #869): that comes
  * back as `blocked` too, with `caution`, and the tab's confirm says so.
- * Confirmed, the install runs again with `--acknowledge-risk`, which the
- * agent also takes for a caution verdict (install-from-hub.ts scanGate).
+ * Confirmed, the install runs again with `--yes` (`confirmCaution`), which
+ * approves a caution verdict only: if the skill changed and now scans
+ * dangerous, the CLI still refuses it (src/cli/skill.ts).
  */
 export async function skillInstall(
   identifier: string,
   acknowledgeRisk: boolean,
   cwd?: string,
+  confirmCaution = false,
 ): Promise<{ ok: boolean; line?: string; blocked?: boolean; caution?: boolean; message?: string; error?: string }> {
   const id = identifier.trim();
   if (!/^@?[\w.-]+(?:\/[\w.-]+){1,4}$/.test(id)) return { ok: false, error: `not a hub identifier: ${identifier}` };
   const args = ["skill", "install", id];
   if (acknowledgeRisk) args.push("--acknowledge-risk");
+  else if (confirmCaution) args.push("--yes");
   const res = await cli(args, 180_000, cwd);
   if (res.ok) return { ok: true, line: res.stdout.trim().split("\n").pop() ?? "" };
   const message = (res.stderr.trim() || res.error || "install failed").split("\n").pop() ?? "";
