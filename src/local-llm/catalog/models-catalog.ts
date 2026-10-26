@@ -292,6 +292,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     minRamGb: 4,
     recommendedRamGb: 6,
     family: "qwen",
+    supportsVision: false,
   },
   {
     id: "qwen-3.5-4b",
