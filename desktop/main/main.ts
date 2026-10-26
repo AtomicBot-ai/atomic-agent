@@ -12890,8 +12890,10 @@ async function chromeTest(
        shows the muted hint there instead (ATO-862). The fixture prompt needs
        no tool, but a model that reaches for one anyway is not this check's
        failure, so the expectation follows what the transcript drew. */
-    const asstOrder = asstActs && !asstActs.acted ? '["resend","copy"]' : '["hint","copy"]';
-    const asstTitles = asstActs && !asstActs.acted ? '["Ask again","Copy message"]' : '["Repeating this turn could create or delete files a second time","Copy message"]';
+    // ATO-1046: Read aloud follows copy where the system has voices.
+    const speak = !!asstActs && Array.isArray(asstActs.order) && asstActs.order[asstActs.order.length - 1] === "speak";
+    const asstOrder = (asstActs && !asstActs.acted ? '["resend","copy"' : '["hint","copy"') + (speak ? ',"speak"]' : "]");
+    const asstTitles = (asstActs && !asstActs.acted ? '["Ask again","Copy message"' : '["Repeating this turn could create or delete files a second time","Copy message"') + (speak ? ',"Read aloud"]' : "]");
     check(
       "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
       !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
@@ -12975,8 +12977,8 @@ async function chromeTest(
     check(
       "item 4: a streaming reply carries no actions, and a finished one does",
       !!streamed && streamed.streaming.buttons === 0
-        // Two either way: Ask again or the muted hint (ATO-862), then copy.
-        && streamed.finished.buttons === 2
+        // Two either way: Ask again or the muted hint (ATO-862), then copy; a third, Read aloud, where there are voices (ATO-1046).
+        && (streamed.finished.buttons === 2 || streamed.finished.buttons === 3)
         && streamed.offMessages === 0,
       `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
     );

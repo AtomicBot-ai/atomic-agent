@@ -105,6 +105,9 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
            on most layouts; the hidden twins take ⌘+ and the numpad keys. */
         ...zoomItems(),
         sep,
+        // ATO-1046: each new reply read aloud with the system's voices (renderer tts.js).
+        item("Read Replies Aloud", "tts:auto"),
+        sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),
           item("Light", "theme:light"),
