@@ -6,6 +6,9 @@
   const now = BR && BR.remoteGet ? await BR.remoteGet() : null;
   if (now && now.url) { $('url').value = now.url; say('Connected to ' + now.url + (now.connected ? '' : ' (not answering)'), now.connected ? 'ok' : 'bad'); }
   else say('This app runs its own agent on this computer.');
+  // An http:// address that is not this computer: say the key travels in clear.
+  const httpNote = () => { const v = $('url').value.trim(); $('http-note').hidden = !(/^http:\/\//i.test(v) && !/^http:\/\/(localhost|127\.|\[::1\])/i.test(v)); };
+  $('url').addEventListener('input', httpNote); httpNote();
   const busy = (on) => { for (const id of ['connect', 'local', 'cancel']) $(id).disabled = on; };
   $('connect').addEventListener('click', async () => {
     busy(true); say('Checking…');

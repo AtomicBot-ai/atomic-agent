@@ -667,7 +667,35 @@ export class AgentClient extends EventEmitter {
     }
     this.setStatus({ state: "connected", error: null, llama: check.llama, workingDir: check.workingDir ?? this.status.workingDir });
     this.openApprovalStream(() => this.stopEpoch === epoch && this.remote === r);
+    this.watchRemote(epoch, r);
     return this.status;
+  }
+
+  /* No child to exit when a remote agent goes away: /health every 15 s says so.
+     Three misses read as an error (the window says the agent is not answering);
+     an answer again reads as connected. */
+  private watchRemote(epoch: number, r: { url: string; token: string }): void {
+    let misses = 0;
+    const tick = async (): Promise<void> => {
+      if (this.stopEpoch !== epoch || this.remote !== r) return;
+      let up = false;
+      try {
+        const res = await fetch(`${r.url}/health?llama=0`, { signal: AbortSignal.timeout(5_000) });
+        void res.body?.cancel().catch(() => undefined);
+        up = res.ok;
+      } catch {
+        up = false;
+      }
+      if (this.stopEpoch !== epoch || this.remote !== r) return;
+      misses = up ? 0 : misses + 1;
+      if (misses >= 3 && this.status.state === "connected") {
+        this.setStatus({ state: "error", error: `The agent at ${r.url} stopped answering.` });
+      } else if (up && this.status.state === "error") {
+        this.setStatus({ state: "connected", error: null });
+      }
+      setTimeout(() => void tick(), 15_000).unref?.();
+    };
+    setTimeout(() => void tick(), 15_000).unref?.();
   }
 
   private headers(): Record<string, string> {
