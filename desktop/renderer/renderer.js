@@ -11300,9 +11300,11 @@ if (BR) {
       /* ATO-729: a new folder restarts the agent, which would end a running
          turn. The chip, Settings › Change… and the menu all land here, so the
          picker stays shut mid-turn, as with a model switch. */
-      const held = restartStopsTurn();
-      if (held) { restartRefusedToast(held); return; }
-      BR.chooseWorkspace().then(applyWorkspaceChoice);
+      /* ATO-731: the folder is the chat's now and nothing restarts, so only a
+         turn in the chat on screen holds the picker (main refuses again if one
+         began meanwhile). A cloud chat keeps its folder and a new chat opens. */
+      if (S.busy) { restartRefusedToast({here:true, title:''}); return; }
+      BR.chooseWorkspace(SK.workingDir ? null : (S.agentSession || null)).then(applyWorkspaceChoice);
       return;
     }
     return originalAct(a);
@@ -11316,14 +11318,17 @@ function applyWorkspaceChoice(dir) {
   if (!dir) return;
   /* ATO-733: a turn began while the picker was open, and main left the folder
      and the agent as they were rather than cut it. */
-  if (typeof dir === 'object') {
+  if (typeof dir === 'object' && !dir.live) {
     if (dir.busy) restartRefusedToast(restartStopsTurn() || {here:false, title:'', elsewhere: dir.elsewhere ? 1 : 0});
     return;
   }
+  // ATO-731: the chat on screen (and every new one) works there now; the agent kept running.
+  const live = typeof dir === 'object' && dir.live;
+  if (live) dir = dir.dir;
   const cloud = !!SK.workingDir;
   WORKSPACE = dir;
   if (cloud) act('session:new');
-  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
+  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + (live ? ' · this chat works there now' : ' · the agent is restarting there')});
   render();
 }
 

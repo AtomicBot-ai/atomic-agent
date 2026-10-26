@@ -1453,7 +1453,8 @@ function wireIpc(client: AgentClient): void {
       });
       appUpdater()?.turnsChanged();
     }
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
+    // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
+    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.status.workingDir);
     return { ok: true, turnId };
   }
 
@@ -1528,7 +1529,7 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
-  ipcMain.handle("app:chooseWorkspace", async () => {
+  ipcMain.handle("app:chooseWorkspace", async (_event, sessionId: unknown) => {
     if (!win) return null;
     const picked = await dialog.showOpenDialog(win, {
       properties: ["openDirectory", "createDirectory"],
@@ -1537,6 +1538,19 @@ function wireIpc(client: AgentClient): void {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
+    /* ATO-731 (Nadya 26.10): each chat keeps its own folder and the agent is
+       not restarted. The chat on screen moves there (refused only while that
+       chat runs a turn), and every new chat opens there (agent:chat sends
+       working_dir). An agent without the route takes the old way below. */
+    const sid = typeof sessionId === "string" && sessionId ? sessionId : null;
+    const moved = client.status.state === "connected" ? await client.setSessionWorkingDir(sid, dir) : { supported: false as const };
+    if (moved.supported) {
+      if (moved.busy) return { busy: true, elsewhere: false };
+      A.workspaceChosen(dir);
+      client.status.workingDir = dir;
+      writeWorkspace(app.getPath("userData"), dir);
+      return { dir, live: true };
+    }
     /* ATO-733: a turn may have begun while the picker was open; the restart
        below would cut it. The window says so and the folder stays as it was
        (workspace-busy.ts); the folder and its analytics change only when the

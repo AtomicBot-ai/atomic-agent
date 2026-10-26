@@ -148,7 +148,8 @@ contextBridge.exposeInMainWorld("atomic", {
   diskSpace: () => ipcRenderer.invoke("app:diskSpace"),
 
   /** Shell affordances. */
-  chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
+  // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.
+  chooseWorkspace: (sessionId?: string | null) => ipcRenderer.invoke("app:chooseWorkspace", sessionId ?? null),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
   // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
   fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),

@@ -1099,7 +1099,8 @@ export class AgentClient extends EventEmitter {
   // the Chats list was truncated by the server one "Load more" in and an older
   // chat could not be reached — or pinned — at all. 200 is the route's cap and
   // the TUI's own scan window (chat-orchestrator.ts RAIL_SCAN_LIMIT).
-  sessions = () => this.json<unknown>("/api/sessions?limit=200");
+  // ATO-731: chats keep their own folders; an agent from before `scope` lists this folder's, as before.
+  sessions = () => this.json<unknown>("/api/sessions?limit=200&scope=all");
   models = () => this.json<unknown>("/v1/models");
   session = (id: string) => this.json<unknown>(`/api/sessions/${encodeURIComponent(id)}`);
   /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */
@@ -1377,6 +1378,30 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /**
+   * ATO-731: move one chat to another folder (`POST /api/sessions/{id}/working-dir`),
+   * no restart. `supported: false` on an agent without the route; `busy` while
+   * that chat runs a turn. With no stored chat yet (`id` null or unknown) only
+   * the route's presence is checked: the next chat opens there through `working_dir`.
+   */
+  async setSessionWorkingDir(id: string | null, workingDir: string): Promise<{ supported: true; busy?: boolean } | { supported: false }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(id ?? "-")}/working-dir`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify({ workingDir }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.status === 409) return { supported: true, busy: true };
+      // 404 for a chat not stored yet is fine: the folder applies to the chat it starts.
+      return { supported: true };
+    } catch {
+      return { supported: false };
+    }
+  }
+
   // --- Lane B — context before the first message (item 3) ---
 
   /**
@@ -1526,6 +1551,7 @@ export class AgentClient extends EventEmitter {
     turnId: string,
     messages: Array<{ role: string; content: string }>,
     sessionId?: string,
+    workingDir?: string,
   ): Promise<void> {
     const controller = new AbortController();
     this.turns.set(turnId, controller);
@@ -1545,6 +1571,8 @@ export class AgentClient extends EventEmitter {
           stream: true,
           messages,
           session_id: chatSessionIdFor(sessionId),
+          // ATO-731: the folder a NEW session works in; the agent keeps an existing session's own.
+          ...(workingDir ? { working_dir: workingDir } : {}),
         }),
         signal: controller.signal,
       });
