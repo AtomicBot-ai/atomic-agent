@@ -49,6 +49,7 @@ import {
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
+import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -195,6 +196,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
     { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },
     { method: "DELETE", path: "/api/telegram/pairing", handler: telegramPairing.cancel },
+    // ATO-758: the channel's state, and another poller of the same bot when that is what holds it off.
+    { method: "GET", path: "/api/telegram/channel", handler: createTelegramChannelHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },
