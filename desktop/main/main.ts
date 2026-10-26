@@ -10078,6 +10078,8 @@ function rebuildMenu(): void {
       return;
     }
     if (command === "bg:startAtLogin") {
+      // A dev or unpackaged run would register the bare Electron binary, not the app.
+      if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
       const host = loginHost();
       if (!setStartAtLogin(host, !startsAtLogin(host))) console.error("[desktop] start at login: the system did not take the change");
       rebuildMenu();
