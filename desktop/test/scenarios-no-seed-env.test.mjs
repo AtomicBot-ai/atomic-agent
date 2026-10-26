@@ -34,6 +34,11 @@ test('a seed .env without the provider key is also a stand problem, not an app f
   assert.match(harness.seedEnvProblem(env, 'aimlapi'), /has no AIMLAPI_API_KEY/);
   writeFileSync(env, 'AIMLAPI_API_KEY=abc\n');
   assert.equal(harness.seedEnvProblem(env, 'aimlapi'), null);
+  // providerKey() trims the value, so a space after = is still a key.
+  writeFileSync(env, 'AIMLAPI_API_KEY= abc\n');
+  assert.equal(harness.seedEnvProblem(env, 'aimlapi'), null);
+  writeFileSync(env, 'AIMLAPI_API_KEY=\n');
+  assert.match(harness.seedEnvProblem(env, 'aimlapi'), /has no AIMLAPI_API_KEY/);
 });
 
 test('run-all counts them as skipped, not app failures, with a distinct exit code', () => {

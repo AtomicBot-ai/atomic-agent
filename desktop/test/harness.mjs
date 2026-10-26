@@ -61,7 +61,7 @@ export const PROVIDER = process.env.ATAG_TEST_PROVIDER || 'aimlapi';
 export function seedEnvProblem(seedEnv = SEED_ENV, provider = PROVIDER) {
   const envKey = PROVIDERS[provider]?.envKey ?? 'a provider key';
   if (!seedEnv || !existsSync(seedEnv)) return `no seed .env: set ATAG_TEST_ENV to a file holding ${envKey}`;
-  if (!new RegExp(`^${envKey}=\\S`, 'm').test(readFileSync(seedEnv, 'utf8'))) {
+  if (!new RegExp(`^${envKey}=[ \\t]*\\S`, 'm').test(readFileSync(seedEnv, 'utf8'))) {
     return `the seed .env has no ${envKey}: add it to ${seedEnv}`;
   }
   return null;
