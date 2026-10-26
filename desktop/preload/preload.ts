@@ -445,6 +445,8 @@ contextBridge.exposeInMainWorld("atomic", {
   updateDismiss: () => ipcRenderer.invoke("updates:dismiss"),
   updateSkip: () => ipcRenderer.invoke("updates:skip"),
   updateSetAuto: (on: boolean) => ipcRenderer.invoke("updates:setAuto", on === true),
+  // ATO-575: read beta builds too.
+  updateSetBeta: (on: boolean) => ipcRenderer.invoke("updates:setBeta", on === true),
   onUpdateState: (cb: (payload: unknown) => void) => on("updates:state", cb),
 
   /** Analytics (desktop/ANALYTICS.md): fire and forget. Main re-validates
