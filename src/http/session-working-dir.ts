@@ -49,7 +49,8 @@ export function createSetSessionWorkingDirHandler(): HttpHandler {
       sendError(res, 404, openaiError(`session ${JSON.stringify(id)} not found`));
       return;
     }
-    if (ctx.runtime.turnController.isBusy(id)) {
+    // This process's turn, or one another process on the same state dir runs (the store's `running`).
+    if (ctx.runtime.turnController.isBusy(id) || session.status === "running") {
       sendError(res, 409, openaiError("this chat has a turn in progress; change its folder when it finishes", "invalid_request_error", null, "turn_in_progress"));
       return;
     }
