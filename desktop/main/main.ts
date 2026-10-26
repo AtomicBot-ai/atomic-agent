@@ -214,6 +214,7 @@ import {
   importAgentDir,
   IMPORT_DOMAINS,
   useConfigRoute,
+  useRemoteModels,
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -3160,6 +3161,8 @@ function wireIpc(client: AgentClient): void {
     } else {
       useConfigRoute(null);
     }
+    // ATO-1127: connected to another computer, Settings › Models reads that computer's models.
+    useRemoteModels(client.isRemote && status.state === "connected" ? { text: (view) => client.localModelsText(view) } : null);
   });
 }
 

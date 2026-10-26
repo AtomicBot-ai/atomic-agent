@@ -100,6 +100,35 @@ export function inCliStandIn(): boolean {
   return cliStandIns.getStore() !== undefined;
 }
 
+/* ---------------------------------------------------------------
+   ATO-1127 (Nadya 26.10) — connected to an agent on another computer,
+   Settings › Models shows THAT computer's models. `models list` and
+   `models status` are read from it (GET /api/local-models/*: the same text
+   the CLI prints, so every parser here stays as it is); every other models
+   command (pull, start, stop, use, remove, update) belongs to that computer
+   and is refused here in words, instead of quietly acting on this one.
+   --------------------------------------------------------------- */
+export interface RemoteModels {
+  text(view: "list" | "status"): Promise<string | null>;
+}
+let remoteModels: RemoteModels | null = null;
+/** main.ts: the remote agent's models while connected to one, null otherwise. */
+export function useRemoteModels(route: RemoteModels | null): void {
+  remoteModels = route;
+}
+/** Said for a models command while the app runs chats on another computer. */
+export const REMOTE_MODELS_HERE =
+  "This app is connected to an agent on another computer: its models are managed there (atag models … on that computer).";
+
+async function remoteModelsCall(route: RemoteModels, args: string[]): Promise<CliResult> {
+  const view = args[1] === "list" || args[1] === "status" ? args[1] : null;
+  if (!view || args.length > 2) return { ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE };
+  const text = await route.text(view);
+  return text === null
+    ? { ok: false, stdout: "", stderr: "", error: "The agent on the other computer did not say which models it has (it may be older than this app)." }
+    : { ok: true, stdout: text, stderr: "" };
+}
+
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
   /* ATO-416: anything but a read, run inside a config-lock hold, may have
      changed config.json under the hash that hold last read (a leaf
@@ -110,6 +139,7 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
   if (cas && !(args[0] === "config" && args[1] === "get")) cas.sha = undefined;
   const standIn = cliStandIns.getStore();
   if (standIn) return standIn.cli(args, input);
+  if (remoteModels && args[0] === "models") return remoteModelsCall(remoteModels, args);
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {

@@ -621,6 +621,18 @@ export class AgentClient extends EventEmitter {
     return `http://127.0.0.1:${this.port}`;
   }
 
+  /** ATO-1127: what `models list` / `models status` print on the agent's own machine (GET /api/local-models/*); null when it cannot say. */
+  async localModelsText(view: "list" | "status"): Promise<string | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/local-models/${view}`, { headers: this.headers(), signal: AbortSignal.timeout(20_000) });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { text?: unknown };
+      return typeof body.text === "string" ? body.text : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** The bearer token: the remote agent's, or the one this client gave its own `atag serve`. */
   private authToken(): string {
     return this.remote ? this.remote.token : this.token;
