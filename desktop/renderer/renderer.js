@@ -23189,7 +23189,9 @@ function skpInstallConfirmHTML() {
     + '<p class="set-cap">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</p>'
     + (SKP.installing ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">installing…</span></div>'
         : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="[n] cancel">Cancel</button>'
-          + '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>')
+          + (c.verdict === 'caution'
+            ? '<button class="btn btn-p sm" data-act="skills:installAck" title="[y] install">Install</button></div>'
+            : '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>'))
     + '</div></div>';
 }
 function skpHubIdLabel(identifier) {
@@ -23516,7 +23518,8 @@ async function skpInstall(ack) {
     SKP.msg = {text:res.line || ('installed from ' + id), restart:true}; // the CLI's own `installed <name> (v…) from <id> — <scan>` line
     await skpReloadRows(); render(); return;
   }
-  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:'dangerous', message:res.message || ''}; render(); return; }
+  // PR #869: a CAUTION verdict asks too (the CLI will not install it without a confirm), in milder words.
+  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:res.caution ? 'caution' : 'dangerous', message:res.message || ''}; render(); return; }
   SKP.installConfirm = null;
   SKP.installError = (res && res.error) || 'install failed';
   SKP.msg = {text:'install ' + id + ' failed: ' + SKP.installError};
