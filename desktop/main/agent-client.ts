@@ -1099,6 +1099,112 @@ export class AgentClient extends EventEmitter {
     this.request<unknown>("POST", "/api/skills/uninstall", { name, source });
 
   /**
+   * ATO-1021: `POST /api/llm/active` — move the running agent onto a
+   * provider (and chat model) live, no restart. `supported: false` on an
+   * agent from before the route (404); `busy` when a turn holds the shared
+   * provider (409). Never throws: the caller restarts instead.
+   */
+  async setActiveLlm(providerId: string, model: string | null): Promise<{
+    ok: boolean; supported: boolean; busy?: boolean; ms?: number; error?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/llm/active`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(model === null ? { providerId } : { providerId, model }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.status === 404) {
+        const text = await res.text();
+        // A 404 that names the provider is the route's own answer; anything else is "no such route".
+        return { ok: false, supported: text.includes("is not configured"), error: "HTTP 404" };
+      }
+      if (res.status === 409) return { ok: false, supported: true, busy: true, error: "HTTP 409" };
+      if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
+      const body = (await res.json()) as { ms?: number };
+      return { ok: true, supported: true, ...(typeof body.ms === "number" ? { ms: body.ms } : {}) };
+    } catch (err) {
+      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * ATO-1022: the config file and its hash, read by the running agent
+   * (`GET /api/config`) instead of an `atag config get` process. Null when
+   * this agent cannot say (no hash in its answer, not reachable): the caller
+   * reads through the CLI then.
+   */
+  async configWithSha(): Promise<{ sha256: string; config: unknown } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/config`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { sha256?: unknown; config?: unknown };
+      if (typeof body.sha256 !== "string" || !/^[0-9a-f]{64}$/i.test(body.sha256)) return null;
+      if (!body.config || typeof body.config !== "object") return null;
+      return { sha256: body.sha256.toLowerCase(), config: body.config };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ATO-1022: the whole-file write (`PUT /api/config`), the agent's
+   * `config set - [--expect-sha256]` without the process. `json` is the
+   * config already serialised. Null when the route is not there or the
+   * agent did not answer, so the caller writes through the CLI.
+   */
+  async putConfig(json: string, expectSha256: string | null): Promise<
+    { ok: true } | { ok: false; conflicted: boolean; error: string } | null
+  > {
+    try {
+      const res = await fetch(`${this.base()}/api/config`, {
+        method: "PUT",
+        headers: this.headers(),
+        body: `{"config":${json}${expectSha256 ? `,"expectSha256":${JSON.stringify(expectSha256)}` : ""}}`,
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.ok) return { ok: true };
+      const text = await res.text();
+      let parsed: { error?: { message?: string; code?: string } } = {};
+      try {
+        parsed = JSON.parse(text) as typeof parsed;
+      } catch {
+        /* not JSON */
+      }
+      // An agent from before the route answers "No route for PUT /api/config".
+      if (res.status === 404) return null;
+      if (res.status === 409 && parsed.error?.code === "config_changed") {
+        return { ok: false, conflicted: true, error: "config changed since it was read" };
+      }
+      return { ok: false, conflicted: false, error: `config set failed: ${parsed.error?.message ?? `HTTP ${res.status}`}` };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * ATO-1024: `POST /api/memory/embeddings/reconnect` — have the running agent
+   * attach the embedding server it did not find at boot. Null when the agent
+   * has no such route or did not answer; never throws.
+   */
+  async reconnectEmbeddings(): Promise<{ health: string; modelId: string | null; changed?: boolean } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/memory/embeddings/reconnect`, {
+        method: "POST",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as { health: string; modelId: string | null; changed?: boolean };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * The composer's coding mode, applied live on the runtime by
    * /api/coding-mode exactly as the TUI does — no config write, no
    * restart. Older agents have no such route; a 404 is reported as
@@ -1150,6 +1256,27 @@ export class AgentClient extends EventEmitter {
       return readPairingReply(res.status, await res.text());
     } catch (err) {
       return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-758: `/api/telegram/channel` — the channel's state, and another poller
+   * of the same bot when that is what holds it off. Null on an agent without
+   * the route, or one that is not up; never throws.
+   */
+  async telegramChannel(): Promise<{
+    available: boolean; state: string | null; lastError: string | null;
+    otherPoller: { where: "this_computer"; pid: number | null } | { where: "elsewhere" } | null;
+  } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/telegram/channel`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as NonNullable<Awaited<ReturnType<AgentClient["telegramChannel"]>>>;
+    } catch {
+      return null;
     }
   }
 

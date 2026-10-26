@@ -86,4 +86,6 @@ export function wireAgentLiveIpc(client: AgentClient): void {
     if (!isTelegramPairingOp(op)) return { ok: false, error: "op must be start, status or cancel" };
     return client.telegramPairing(op, replaceOwner === true);
   });
+  // ATO-758: why the bot does not answer, when another poller holds it off.
+  ipcMain.handle("agent:telegramChannel", () => client.telegramChannel());
 }

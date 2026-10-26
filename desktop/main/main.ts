@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Notification, powerMonitor, shell, systemPreferences} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, shell, systemPreferences, Tray } from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
@@ -100,6 +100,7 @@ import {
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
+import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
   agentStarting,
@@ -141,7 +142,7 @@ import {
   daemonWatchState,
   hostDaemonWatch,
   onAgentFrame,
-  pairEmbeddingsBeforeServe,
+  pairEmbeddingsAtLaunch,
   resumeChatAfterStudio,
   updateBegins,
   yieldChatToStudio,
@@ -208,6 +209,7 @@ import {
   detectImportAgents,
   importAgentDir,
   IMPORT_DOMAINS,
+  useConfigRoute,
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -732,7 +734,7 @@ function parsePullProgress(
 // pins its provider at boot, so a switch whose write found the file already
 // naming that provider (the TUI or a hand edit moved the file while this
 // window was open) still has to restart when serve is behind the file.
-interface BootRoute { provider: string; model: string | null; key: string }
+interface BootRoute { provider: string; model: string | null; key: string; mode: string }
 let bootRoute: Promise<BootRoute | null> = Promise.resolve(null);
 /** The route a config names, as `atag serve` would boot on it. */
 function routeOf(cfg: UserConfigShape | undefined): BootRoute {
@@ -749,7 +751,7 @@ function routeOf(cfg: UserConfigShape | undefined): BootRoute {
     ? [rm.orchestratorProviderId, rm.orchestratorModel, rm.workerProviderId, rm.workerModel, rm.workers]
     : [];
   const key = JSON.stringify([provider, provider === "local-llama" ? null : model, rm.effective, ...seats]);
-  return { provider, model, key };
+  return { provider, model, key, mode: rm.effective };
 }
 async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null> {
   try {
@@ -758,6 +760,34 @@ async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null>
   } catch {
     return null;
   }
+}
+
+/**
+ * ATO-1024: the embedding server the launch paired beside serve's start, attached
+ * by the running agent once it is up. An agent that was still booting when the
+ * server came up found it itself, and this is a no-op there; one that has no
+ * route keeps keyword recall until its next start, as before.
+ */
+async function attachEmbeddingsLive(client: AgentClient, waitMs = 120_000): Promise<void> {
+  if (client.status.state !== "connected") {
+    const connected = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => { client.off("status", onStatus); resolve(false); }, waitMs);
+      // Only "connected" ends the wait: a stopped or error state on the way up (a retry, a restart) is not the answer.
+      function onStatus(status: { state?: string }): void {
+        if (status.state !== "connected") return;
+        clearTimeout(timer);
+        client.off("status", onStatus);
+        resolve(true);
+      }
+      client.on("status", onStatus);
+    });
+    if (!connected) {
+      console.error("[desktop] local-llm: the agent did not come up in time to attach the embedding server; memory search uses words until its next start");
+      return;
+    }
+  }
+  const r = await client.reconnectEmbeddings();
+  if (r?.changed && r.health === "ok") console.error("[desktop] local-llm: memory search attached to the embedding server — semantic search on");
 }
 
 function send(channel: string, payload?: unknown): void {
@@ -1161,6 +1191,7 @@ function wireUpdater(): void {
   ipcMain.handle("updates:dismiss", () => updater.dismiss());
   ipcMain.handle("updates:skip", () => updater.skip());
   ipcMain.handle("updates:setAuto", (_event, on: unknown) => updater.setAutoCheck(on === true));
+  ipcMain.handle("updates:setBeta", (_event, on: unknown) => updater.setBeta(on === true));
 }
 
 /**
@@ -1902,8 +1933,9 @@ function wireIpc(client: AgentClient): void {
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
-  // boot and has no reload route on 0.5.4, so a result that says
-  // `restart` is followed by the same stop+start `agent:restart` does.
+  // boot, so a result that says `restart` is followed by the same
+  // stop+start `agent:restart` does — unless the agent can take a cloud
+  // model pick live (ATO-1021, `liveSwap` below).
   /* Backlog 18 (its second review): whether and when the restart comes is
      backend-switch's call (restartAfterSwitch) — never under a turn in flight,
      never for a superseded result. It is handed this client: the turns it
@@ -1924,6 +1956,32 @@ function wireIpc(client: AgentClient): void {
          at once. So main puts back the last mode the window set first, and the
          turns waiting for this restart (agent:chat) go after it. */
       if (lastCodingMode && !quitting && client.status.state === "connected") await client.codingMode(lastCodingMode);
+    },
+    /* ATO-1021: the route as the file now names it, taken live by the running
+       agent. Only a single-mode cloud route: a local one moves a daemon, and
+       Fusion's seats are read at boot. The route serve is on is then this one,
+       so the next switch is judged against it. */
+    liveSwap: async (res) => {
+      if (quitting || client.status.state !== "connected" || !res.providerId) return false;
+      let cfg: UserConfigShape | undefined;
+      try {
+        cfg = ((await client.config()) as { config?: UserConfigShape }).config;
+      } catch {
+        return false;
+      }
+      const next = routeOf(cfg);
+      // Any llama-server entry, not only local-llama: a local route has a model profile serve sets up at boot.
+      const kind = (cfg?.llm?.providers ?? []).find((p) => p.id === next.provider)?.kind;
+      if (next.provider !== res.providerId || kind === "llama-server" || next.mode === "fusion") return false;
+      // No model: the file already names it, and a pin would rewrite the file under the window's next write.
+      const swap = await client.setActiveLlm(next.provider, null);
+      if (swap.busy) return "busy";
+      if (!swap.ok) {
+        console.warn(`[desktop] model switch: live swap not taken (${swap.error ?? "unknown"}), restarting the agent`);
+        return false;
+      }
+      bootRoute = Promise.resolve(next);
+      return true;
     },
   });
   // A restart held back for the turns runs as the last one ends — on a live agent; a dead one is started afresh by whoever starts it.
@@ -1962,8 +2020,12 @@ function wireIpc(client: AgentClient): void {
       const read = await readWholeConfig();
       drifted = read.ok && !!read.config && switchesOnTheirWay <= 1 && routeOf(read.config).key !== boot.key;
     }
-    const { restart, restartHeld } = await restartAfterSwitch(res, wanted || drifted, drifted);
-    return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), status: client.status };
+    /* ATO-1021: a cloud pick on an agent already on a single-mode cloud route,
+       with no daemon stopped or started, is swapped live instead of restarted. */
+    const live = !!boot && !drifted && res.transport === "native_tools"
+      && (res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" && boot.mode !== "fusion";
+    const { restart, restartHeld, liveSwapped } = await restartAfterSwitch(res, wanted || drifted, drifted, live);
+    return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), ...(liveSwapped ? { liveSwapped } : {}), status: client.status };
   };
   /* Backlog 35: the switches between their IPC call and applySwitch's answer.
      Not a generation count: a newer switch can end without a restart (no key,
@@ -2466,9 +2528,9 @@ function wireIpc(client: AgentClient): void {
     return hubCache.refresh(q, hubConfigKey(DESKTOP_STATE_DIR), () => skillBrowse(q, client.status.workingDir));
   });
   ipcMain.handle("cli:skillInstall", (_event, payload: unknown) => {
-    const { identifier, acknowledgeRisk } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown };
+    const { identifier, acknowledgeRisk, confirmCaution } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown; confirmCaution?: unknown };
     if (typeof identifier !== "string" || !identifier.trim()) return { ok: false, error: "identifier required" };
-    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir).then((res) => (A.skillInstalled(res, acknowledgeRisk === true), res));
+    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir, confirmCaution === true).then((res) => (A.skillInstalled(res, acknowledgeRisk === true), res));
   });
   ipcMain.handle("app:clawhubSkillDetail", (_event, payload: unknown) => {
     const { apiBase, slug, owner } = (payload ?? {}) as { apiBase?: unknown; slug?: unknown; owner?: unknown };
@@ -3005,6 +3067,13 @@ function wireIpc(client: AgentClient): void {
   client.on("status", (status: { state?: string }) => {
     if (status.state === "connected") bootRoute = snapshotBootRoute(client);
     else if (status.state === "stopped" || status.state === "error") bootRoute = Promise.resolve(null);
+    /* ATO-1022: while `atag serve` is up, config reads and whole-file writes
+       go through it instead of an `atag config` process each; down, the CLI. */
+    if (status.state === "connected") {
+      useConfigRoute({ read: () => client.configWithSha(), write: (json, expect) => client.putConfig(json, expect) });
+    } else {
+      useConfigRoute(null);
+    }
   });
 }
 
@@ -9989,7 +10058,8 @@ void app.whenReady().then(async () => {
   // Item 2 (voice input): the third teardown path — this window going away
   // while the app stays alive on macOS.
   win.on("closed", () => voice.kill());
-  buildMenu((command) => send("app:menu", command));
+  rebuildMenu();
+  if (!SMOKE && !FIRST_RUN_PROBE) void syncTray();
   wireIpc(agent);
   wireUpdater();
   watchCoreUpdates();
@@ -10031,10 +10101,22 @@ void app.whenReady().then(async () => {
         else if (r.reason && !/already installed|not a packaged app/.test(r.reason)) console.error(`[desktop] local-llm: Atomic Core not placed (${r.reason})`);
       })
       .catch(() => undefined);
-    /* ATO-126: the embedding server before `atag serve` boots, which is the
-       only moment serve looks for it (a smoke run starts no model server). */
-    const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(embeddingsFirst).then(() => {
+    /* ATO-126 / ATO-1024: the embedding server is paired beside `atag serve`'s
+       start, no longer before it. serve looks for it only at boot, which held
+       the start back for up to 20 s; now, once the server answers, the running
+       agent attaches it live (attachEmbeddingsLive). Queued in the daemon's
+       turn before the launch's chat model start, as before. A smoke run starts
+       no model server. */
+    const pairBeside = (): Promise<unknown> => (SMOKE ? Promise.resolve() : pairEmbeddingsAtLaunch()
+      .then((r) => {
+        // A start that failed says so now; one that came up is said once the agent has attached it (attachEmbeddingsLive).
+        if (r?.line && !r.up) console.error(`[desktop] ${r.line}`);
+        if (r?.up && agent) return attachEmbeddingsLive(agent);
+        return undefined;
+      })
+      .catch(() => undefined));
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(() => {
+      void pairBeside();
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
@@ -10043,20 +10125,93 @@ void app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      win = createWindow();
-      win.on("closed", () => voice.kill());
-      A.appOpened("reopen", false);
-    }
+    if (BrowserWindow.getAllWindows().length === 0) openWindowAgain();
   });
 });
+
+/** The window again, once it was closed: the Dock (activate), the tray icon (ATO-598). */
+function openWindowAgain(): void {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return;
+  }
+  win = createWindow();
+  win.on("closed", () => voice.kill());
+  A.appOpened("reopen", false);
+}
+
+/* ---- ATO-598: keep running in the tray, start at login (background-mode.ts) ---- */
+const loginHost = (): LoginItemHost => ({
+  platform: process.platform,
+  execPath: process.execPath,
+  getLoginItemSettings: () => app.getLoginItemSettings(),
+  setLoginItemSettings: (s) => app.setLoginItemSettings(s),
+});
+let tray: Tray | null = null;
+
+/** The menu bar, with the Agent menu's two checkboxes as they are now; `bg:*` commands are main's own. */
+function rebuildMenu(): void {
+  const userData = app.getPath("userData");
+  buildMenu((command) => {
+    if (command === "bg:keepRunning") {
+      writeBackgroundPrefs(userData, { keepRunning: !readBackgroundPrefs(userData).keepRunning });
+      void syncTray();
+      rebuildMenu();
+      return;
+    }
+    if (command === "bg:startAtLogin") {
+      // A dev or unpackaged run would register the bare Electron binary, not the app.
+      if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
+      const host = loginHost();
+      if (!setStartAtLogin(host, !startsAtLogin(host))) console.error("[desktop] start at login: the system did not take the change");
+      rebuildMenu();
+      return;
+    }
+    send("app:menu", command);
+  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()) });
+}
+
+/** The tray icon while Keep Running is on, none while it is off. */
+async function syncTray(): Promise<void> {
+  const userData = app.getPath("userData");
+  if (!readBackgroundPrefs(userData).keepRunning) {
+    tray?.destroy();
+    tray = null;
+    return;
+  }
+  if (tray) return;
+  /* The app's own icon, shipped as resources/tray.png (electron-builder.cjs);
+     the executable's icon is the fallback. getFileIcon on Linux often answers
+     a blank image, and a blank tray icon cannot be clicked. */
+  const bundled = app.isPackaged ? join(process.resourcesPath, "tray.png") : "";
+  const icon = bundled && existsSync(bundled)
+    ? nativeImage.createFromPath(bundled)
+    : await app.getFileIcon(process.execPath, { size: "small" }).catch(() => nativeImage.createEmpty());
+  // Turned off, or made by another call, while the icon was read.
+  if (tray || !readBackgroundPrefs(userData).keepRunning) return;
+  // No image to show: no tray, so window-all-closed quits as before rather than leave an app nobody can reach.
+  if (icon.isEmpty()) { console.error("[desktop] keep running: no tray icon on this system, closing the window still quits"); return; }
+  tray = new Tray(icon.resize({ width: 16, height: 16 }));
+  tray.setToolTip("Atomic Agent");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Open Atomic Agent", click: () => openWindowAgain() },
+    { type: "separator" },
+    { label: "Quit Atomic Agent", click: () => app.quit() },
+  ]));
+  // Windows and Linux: a click on the icon opens the window; macOS opens the menu.
+  if (process.platform !== "darwin") tray.on("click", () => openWindowAgain());
+}
 
 app.on("window-all-closed", () => {
   // Item 2 (voice input): a helper that outlives its window keeps the
   // system microphone indicator lit, which is worse for trust than any bug
   // in the transcript.
   voice.kill();
-  if (process.platform !== "darwin") app.quit();
+  // ATO-598: unless Keep Running is on, closing the last window quits off macOS;
+  // and with no tray icon to come back through, it quits anyway.
+  if (quitsOnLastWindow(process.platform, readBackgroundPrefs(app.getPath("userData"))) || (process.platform !== "darwin" && !tray)) app.quit();
 });
 
 /* Item 30: the quit's own shutdown — the agent's stop, then the model
@@ -10076,10 +10231,13 @@ app.on("before-quit", (event) => {
   /* Off macOS the last window closing is the quit: asked then, a Cancel would
      leave the app running with no window, so it is not asked. Nor is the quit
      an update's install makes (ATO-229): the person asked for it, the agent is
-     stopped for it already, and a Cancel would leave the install half done. */
+     stopped for it already, and a Cancel would leave the install half done.
+     ATO-598: with Keep Running on, the app lives in the tray with no window,
+     and its Quit is a choice like the Dock's: asked there too. */
   const windowUp = !!win && !win.isDestroyed();
   const installing = appUpdater()?.state().phase === "installing";
-  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin")) {
+  const inTray = tray !== null && readBackgroundPrefs(app.getPath("userData")).keepRunning;
+  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin" || inTray)) {
     const n = queuedMessageCount();
     if (n > 0) {
       const opts = {
@@ -12890,8 +13048,10 @@ async function chromeTest(
        shows the muted hint there instead (ATO-862). The fixture prompt needs
        no tool, but a model that reaches for one anyway is not this check's
        failure, so the expectation follows what the transcript drew. */
-    const asstOrder = asstActs && !asstActs.acted ? '["resend","copy"]' : '["hint","copy"]';
-    const asstTitles = asstActs && !asstActs.acted ? '["Ask again","Copy message"]' : '["Repeating this turn could create or delete files a second time","Copy message"]';
+    // ATO-1046: Read aloud follows copy where the system has voices.
+    const speak = !!asstActs && Array.isArray(asstActs.order) && asstActs.order[asstActs.order.length - 1] === "speak";
+    const asstOrder = (asstActs && !asstActs.acted ? '["resend","copy"' : '["hint","copy"') + (speak ? ',"speak"]' : "]");
+    const asstTitles = (asstActs && !asstActs.acted ? '["Ask again","Copy message"' : '["Repeating this turn could create or delete files a second time","Copy message"') + (speak ? ',"Read aloud"]' : "]");
     check(
       "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
       !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
@@ -12975,8 +13135,8 @@ async function chromeTest(
     check(
       "item 4: a streaming reply carries no actions, and a finished one does",
       !!streamed && streamed.streaming.buttons === 0
-        // Two either way: Ask again or the muted hint (ATO-862), then copy.
-        && streamed.finished.buttons === 2
+        // Two either way: Ask again or the muted hint (ATO-862), then copy; a third, Read aloud, where there are voices (ATO-1046).
+        && (streamed.finished.buttons === 2 || streamed.finished.buttons === 3)
         && streamed.offMessages === 0,
       `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
     );

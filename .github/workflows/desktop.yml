@@ -42,6 +42,7 @@
 # App updates (ATO-229): the repository variable ATAG_UPDATE_FEED_URL, when
 # set, goes into the build (desktop/electron-builder.cjs) and electron-builder
 # also writes the update files (stable-mac.yml + the mac zip, stable.yml,
+# stable-linux.yml / stable-linux-arm64.yml for the AppImage (ATO-573),
 # blockmaps); they are uploaded with the installers. Uploading them to the
 # feed is a separate release step, not done here (desktop/README.md
 # "App updates"). Each Windows job (package win32-x64, package-win32-arm64)
@@ -106,8 +107,8 @@ jobs:
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           # win32-arm64 is not a row here: it is built by agent-win32-arm64 and
           # package-win32-arm64 below (see the header).
-          - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
-          - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb" }
+          - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:

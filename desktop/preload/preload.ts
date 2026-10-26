@@ -259,6 +259,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-859: Telegram pairing on the running agent; a start's answer carries the one-time code for the screen only. */
   telegramPairing: (op: "start" | "status" | "cancel", replaceOwner?: boolean) =>
     ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
+  // ATO-758: the live channel's state and another poller of the same bot.
+  telegramChannel: () => ipcRenderer.invoke("agent:telegramChannel"),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>
@@ -279,8 +281,9 @@ contextBridge.exposeInMainWorld("atomic", {
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
   /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
   skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),
-  skillInstall: (identifier: string, acknowledgeRisk?: boolean) =>
-    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk }),
+  // PR #916: confirmCaution approves a caution verdict only (`--yes`); acknowledgeRisk is the dangerous override.
+  skillInstall: (identifier: string, acknowledgeRisk?: boolean, confirmCaution?: boolean) =>
+    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk, confirmCaution: !!confirmCaution }),
   clawhubSkillDetail: (apiBase: string, slug: string, owner?: string | null) =>
     ipcRenderer.invoke("app:clawhubSkillDetail", { apiBase, slug, owner: owner ?? null }),
   memoryQuery: (stateDir: string, name: string, params?: unknown[]) =>
@@ -443,6 +446,8 @@ contextBridge.exposeInMainWorld("atomic", {
   updateDismiss: () => ipcRenderer.invoke("updates:dismiss"),
   updateSkip: () => ipcRenderer.invoke("updates:skip"),
   updateSetAuto: (on: boolean) => ipcRenderer.invoke("updates:setAuto", on === true),
+  // ATO-575: read beta builds too.
+  updateSetBeta: (on: boolean) => ipcRenderer.invoke("updates:setBeta", on === true),
   onUpdateState: (cb: (payload: unknown) => void) => on("updates:state", cb),
 
   /** Analytics (desktop/ANALYTICS.md): fire and forget. Main re-validates

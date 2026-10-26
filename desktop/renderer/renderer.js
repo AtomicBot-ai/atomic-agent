@@ -1374,6 +1374,7 @@ const TG = {
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
   mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
+  channel:null, // ATO-758: the live channel as the agent reports it (BR.telegramChannel)
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   confirmAt:0, // ATO-435: when it was armed; a second click sooner than TG_CONFIRM_MIN_MS is the same double-click
   // The message's kind ('owed' carries a change the agent loads at start, 'info' anything else) and the agent
@@ -1634,6 +1635,8 @@ const P = {
   alert:'<path d="M8 2.5 14 13H2zM8 6.5v3M8 11.3v.2"/>',
   info:'<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.5M8 5.2v.2"/>',
   stop:'<rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="currentColor" stroke="none"/>',
+  // ATO-1046: Read aloud.
+  speak:'<path d="M3 6.5h2l3-2.5v8l-3-2.5H3z"/><path d="M10.5 6a2.8 2.8 0 0 1 0 4M12.3 4.3a5.2 5.2 0 0 1 0 7.4"/>',
   up:'<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
   arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
   copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
@@ -2994,7 +2997,8 @@ function msgActs(m) {
         ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
         : '';
-    return '<div class="' + cls + '">' + again + copy + '</div>';
+    // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
+    return '<div class="' + cls + '">' + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '') + '</div>';
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
@@ -6714,6 +6718,8 @@ function act(a) {
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
+  // ATO-1046: View › Read Replies Aloud (tts.js).
+  if (a === 'tts:auto' && typeof ttsSetAuto === 'function') { ttsSetAuto(!TTS.auto); return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
@@ -7548,6 +7554,8 @@ document.addEventListener('click', (e) => {
   // r5 item 4: real <button> elements inside a `.turn`, so no other selector in
   // this handler competes for them.
   const cp = t.closest('[data-copy]'); if (cp) { e.preventDefault(); copyMessage(cp.dataset.copy); return; }
+  // ATO-1046: the speaker under a reply.
+  const sp = t.closest('[data-speak]'); if (sp) { e.preventDefault(); const m = S.log.find((x) => x.id === sp.dataset.speak); if (m) ttsToggle(m.id, m.text); return; }
   const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
   const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
@@ -10350,6 +10358,8 @@ function onChatEvent(ev) {
        '(no reply)'. `item` is only defined for the turn streaming into the
        chat on screen (the turnId guard above), which is the only transcript
        the bar could honestly attach to. */
+    // ATO-1046: View › Read Replies Aloud reads a finished reply of the chat on screen.
+    if (ev.kind === 'done' && item && typeof ttsTurnEnded === 'function') ttsTurnEnded(item);
     if (ev.kind === 'done' && PLAN.startedMode === 'plan' && item && String(item.text || '').trim()) {
       PLAN.on = true; PLAN.itemId = item.id; PLAN.sessionId = S.agentSession;
     }
@@ -20431,7 +20441,8 @@ async function wizActivate(k, id, model, unverified) {
   const added = wizService(k) + (model ? ' \u00b7 ' + model : '') + (unverified ? ' \u00b7 not verified: ' + unverified : '')
     + (WIZ.noFundsNote ? ' \u00b7 the account has no funds' : '');   // Backlog 40
   if (OB.open && OB.step === 'cloud') {
-    OB.restarted = !!(sel && sel.restart);
+    // ATO-1021: a pick the running agent took live is on its route already, like one it restarted for.
+    OB.restarted = !!(sel && (sel.restart || sel.liveSwapped));
     toast(unverified ? 'Provider added, key not checked' : 'Provider added', added);
     obDispatch({type:'providers_wizard_succeeded'});
     return;
@@ -23178,18 +23189,22 @@ function skpRemoveConfirmHTML() {
           + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="[y] delete">Delete</button></div>')
     + '</div></div>';
 }
-/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override. */
+/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override.
+   PR #916: a CAUTION verdict asks too, in the calmer amber frame. */
 function skpInstallConfirmHTML() {
   const c = SKP.installConfirm;
-  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
-    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
+  const caution = c.verdict === 'caution';
+  return '<div class="set-overlay"><div class="tk-modal' + (caution ? '' : ' tk-modal--danger') + ' set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
+    + '<div class="set-mhead"><span class="tk-ico ' + (caution ? 'tk-ico--amber' : 'tk-ico--red') + '">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
     + '<p>Install <b class="mono">' + esc(c.identifier) + '</b>?</p>'
     // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, shown plainly — no invented rule id in the finding slot.
     + '<div class="tuierr tk-out set-scan">' + esc(c.message) + '</div>'
     + '<p class="set-cap">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</p>'
     + (SKP.installing ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">installing…</span></div>'
         : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="[n] cancel">Cancel</button>'
-          + '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>')
+          + (c.verdict === 'caution'
+            ? '<button class="btn btn-p sm" data-act="skills:installAck" title="[y] install">Install</button></div>'
+            : '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>'))
     + '</div></div>';
 }
 function skpHubIdLabel(identifier) {
@@ -23508,7 +23523,9 @@ async function skpInstall(ack) {
   const id = (SKP.installConfirm && SKP.installConfirm.identifier) || (SKP.hubCard && SKP.hubCard.installId);
   if (!id) return;
   SKP.installing = true; SKP.installError = null; render();
-  const res = await BR.skillInstall(id, !!ack);
+  // PR #916: a confirmed CAUTION approves caution only (--yes); a changed skill that now scans dangerous still asks.
+  const caution = !!ack && !!SKP.installConfirm && SKP.installConfirm.verdict === 'caution';
+  const res = await BR.skillInstall(id, !!ack && !caution, caution);
   SKP.installing = false;
   if (res && res.ok) {
     SKP.installConfirm = null; SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; SKP.mode = 'list';
@@ -23516,7 +23533,8 @@ async function skpInstall(ack) {
     SKP.msg = {text:res.line || ('installed from ' + id), restart:true}; // the CLI's own `installed <name> (v…) from <id> — <scan>` line
     await skpReloadRows(); render(); return;
   }
-  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:'dangerous', message:res.message || ''}; render(); return; }
+  // PR #869: a CAUTION verdict asks too (the CLI will not install it without a confirm), in milder words.
+  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:res.caution ? 'caution' : 'dangerous', message:res.message || ''}; render(); return; }
   SKP.installConfirm = null;
   SKP.installError = (res && res.error) || 'install failed';
   SKP.msg = {text:'install ' + id + ' failed: ' + SKP.installError};
@@ -27355,10 +27373,12 @@ async function tgRefreshOnce() {
   if (!BR) return;
   TG.keysBusy = true;
   const stateDir = memStateDir();
-  const [cfg, env, dotenv, eff] = await Promise.all([
+  const [cfg, env, dotenv, eff, channel] = await Promise.all([
     BR.configGet(), BR.envPresent(['TELEGRAM_BOT_TOKEN']), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]}),
     tgCfgBlock() && typeof tgCfgBlock().enabled === 'boolean' ? Promise.resolve(null) : BR.configGetKey('telegram'),
+    BR.telegramChannel ? BR.telegramChannel().catch(() => null) : Promise.resolve(null),
   ]);
+  TG.channel = channel && channel.available ? channel : null;
   TG.keysBusy = false;
   if (cfg && cfg.ok && cfg.config) { LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared(); }   // ATO-204: B02's refusal
   TG.envKeys = Array.isArray(env) ? env : [];
@@ -27414,7 +27434,8 @@ function tgRestartOwed() { return TG.owedGen !== null && TG.owedGen === AGENT_GE
    the desktop can know. */
 function tgConnected(enabled, owner) { return tgHasToken() === true && owner !== null && enabled === true && !tgRestartOwed(); }
 function tgStatusHTML(enabled, owner) {
-  const on = tgConnected(enabled, owner);
+  // ATO-758: the settings say connected, but another poller holds the live channel off.
+  const on = tgConnected(enabled, owner) && !tgOtherPollerHTML(TG.channel);
   const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
     : owner === null ? 'Almost there: confirm your Telegram account below.'
     : enabled !== true ? 'Turned off: the bot does not answer until you turn it on below.'
@@ -27463,9 +27484,19 @@ function tgNoticesHTML() {
   const restartBtn = tgRestartButtonHTML(TG.restart, {esc, ic});
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
   return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+    + tgOtherPollerHTML(TG.channel)
     + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">' + esc(TG_RESTART_APPLY) + '</span>', restartBtn)
       : (msg && !(TG.msgKind === 'owed' && tgRestartSpeaks(TG.restart)) ? note(esc(msg)) : '') + (owed ? note(esc(TG_RESTART_APPLY), restartBtn) : ''))
     + tgRestartNoticeHTML(TG.restart, {esc, ic});
+}
+/* ATO-758: the bot is polled by someone else, so this agent's channel cannot start. Said in words, with what to do. */
+function tgOtherPollerHTML(ch) {
+  const o = ch && ch.state !== 'up' ? ch.otherPoller : null;
+  if (!o) return '';
+  const text = o.where === 'this_computer'
+    ? 'Another Atomic Agent on this computer is already answering this bot' + (o.pid ? ' (process ' + o.pid + ')' : '') + ', so this one cannot. Quit the other one (the terminal agent, or an old agent left running), then press Restart agent.'
+    : 'This bot is already answering from somewhere else (another computer or app using the same token), so this agent cannot. Stop it there, or give this agent its own bot, then press Restart agent.';
+  return '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(text) + '</span></div>';
 }
 /* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
@@ -30152,7 +30183,7 @@ if (typeof window !== 'undefined') {
             anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
-            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.classList.contains('msgact-off') ? 'hint' : '?'),
+            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.dataset.speak ? 'speak' : b.classList.contains('msgact-off') ? 'hint' : '?'),
             // ATO-900: the muted hint names itself in data-tip (a CSS tooltip), the others in title.
             titles: btns.map((b) => b.getAttribute('title') || b.getAttribute('data-tip')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
@@ -30176,7 +30207,8 @@ if (typeof window !== 'undefined') {
          that gained a data-resend or data-act would read as resend or '?'.
          ATO-900: its sentence is data-tip (the CSS tooltip), and one that
          also carried a native title would show it twice, so it reads '?'. */
-      return Array.from(box.querySelectorAll('button')).map((b) => b.dataset.resend
+      // ATO-1046: Read aloud is not part of the retry contract these checks pin.
+      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.resend
         ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy'
           : b.classList.contains('msgact-off') && !b.dataset.act && !b.hasAttribute('title') && b.getAttribute('aria-label') === b.getAttribute('data-tip')

@@ -8,9 +8,16 @@ import { Menu, shell, type MenuItemConstructorOptions } from "electron";
  * command palette cannot drift apart: both dispatch the same id, one
  * through IPC and one in-process.
  */
-export function buildMenu(send: (command: string) => void): void {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(send, process.platform)));
+export function buildMenu(send: (command: string) => void, toggles: MenuToggles = NO_TOGGLES): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(send, process.platform, toggles)));
 }
+
+/** ATO-598: the Agent menu's two checkboxes, as main has them now. */
+export interface MenuToggles {
+  keepRunning: boolean;
+  startAtLogin: boolean;
+}
+const NO_TOGGLES: MenuToggles = { keepRunning: false, startAtLogin: false };
 
 /**
  * The template, per platform. macOS keeps its app menu (About, Settings,
@@ -19,7 +26,11 @@ export function buildMenu(send: (command: string) => void): void {
  * and Privacy under Edit, Run Setup Again under File, About under Help, and
  * Exit at the bottom of File. Their Window menu drops the macOS-only roles.
  */
-export function menuTemplate(send: (command: string) => void, platform: NodeJS.Platform): MenuItemConstructorOptions[] {
+export function menuTemplate(
+  send: (command: string) => void,
+  platform: NodeJS.Platform,
+  toggles: MenuToggles = NO_TOGGLES,
+): MenuItemConstructorOptions[] {
   const mac = platform === "darwin";
   /* Option-chords become Shift-chords off macOS: on Windows AltGr IS
      Ctrl+Alt, so Ctrl+Alt+E would swallow the euro sign (and Ctrl+Alt+0 the
@@ -105,6 +116,9 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
            on most layouts; the hidden twins take ⌘+ and the numpad keys. */
         ...zoomItems(),
         sep,
+        // ATO-1046: each new reply read aloud with the system's voices (renderer tts.js).
+        item("Read Replies Aloud", "tts:auto"),
+        sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),
           item("Light", "theme:light"),
@@ -145,9 +159,13 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
     {
       label: "Agent",
       submenu: [
-        sep,
-        sep,
         item("Restart Agent Runtime", "agent:restart"),
+        sep,
+        /* ATO-598: main's own (main.ts handles `bg:*`); off by default. On
+           macOS the app already stays in the Dock, so the first one only adds
+           the menu bar icon there. */
+        { label: "Keep Running After the Window Closes", type: "checkbox", checked: toggles.keepRunning, click: () => send("bg:keepRunning") },
+        { label: "Start at Login", type: "checkbox", checked: toggles.startAtLogin, click: () => send("bg:startAtLogin") },
       ],
     },
     mac

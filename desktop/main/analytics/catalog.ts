@@ -228,6 +228,15 @@ export const EVENTS: Record<string, EventSpec> = {
       ms,
     },
   },
+  /* ATO-1021: every switch that moved the running agent, and how — live (POST /api/llm/active) or by a restart. */
+  model_switched: {
+    owner: "main",
+    props: {
+      live: bool,
+      restart: bool,
+      ms,
+    },
+  },
   fusion_configured: {
     owner: "main",
     props: {

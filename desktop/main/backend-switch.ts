@@ -112,6 +112,8 @@ export interface SwitchResult {
   restart?: boolean;
   /** Set by main.ts's applySwitch: the switch landed, but `atag serve` was not restarted under the turns still running — it restarts once the last one ends. */
   restartHeld?: boolean;
+  /** ATO-1021, set by main.ts's applySwitch: the running agent took the new route live (`POST /api/llm/active`), no restart. */
+  liveSwapped?: boolean;
   /** activateCloud: no cloud provider configured — open the add wizard. */
   needsProvider?: boolean;
   /** The chosen provider has no key — open its configure step, as the TUI does. */
@@ -475,7 +477,8 @@ export type BringUp = {
   /** ATO-126: the embedding server was started, or hybrid recall switched back on, for it: `atag serve` wires it only as it boots. */
   paired?: boolean;
 };
-type Paired = { paired: boolean; line?: string };
+/** `up` (ATO-1024): the embedding server answers now, whoever started it. */
+type Paired = { paired: boolean; line?: string; up?: boolean };
 
 /**
  * ATO-126 — the embedding server beside the chat one.
@@ -497,7 +500,7 @@ type Paired = { paired: boolean; line?: string };
  * only as it boots.
  *
  * Asked in the daemon's turn, once the chat server is up (and at launch before
- * it, daemon-watch pairEmbeddingsBeforeServe): when the file wants embeddings
+ * it, daemon-watch pairEmbeddingsAtLaunch): when the file wants embeddings
  * and their server is not up, it is started alone; once it is up, hybrid
  * recall is switched back on. `startOut` is the `models start` that
  * just ran, which already tried the embedding side: its failure is not tried
@@ -547,7 +550,7 @@ export async function pairEmbeddingServer(opts: {
       : "local-llm: embedding server up — semantic search comes on with the agent's next start";
   }
   const m = await setMemoryEmbeddingsEnabled(true);
-  return { paired: started || m.changed, line };
+  return { paired: started || m.changed, line, up: true };
 }
 
 /* ---- the managed daemon: starts one at a time, stops at once (item 11) ----
@@ -917,6 +920,12 @@ export interface SwitchAgent {
   turnsInFlight(): number;
   /** Stop `atag serve` and start it again, on the config as the file has it then. */
   restart(): Promise<void>;
+  /**
+   * ATO-1021: move the running agent onto the file's route live, without a
+   * restart. Answers false when it could not (an older agent, a turn that
+   * started meanwhile, a refused switch): the restart then runs as before.
+   */
+  liveSwap?(res: SwitchResult): Promise<boolean | "busy">;
 }
 let switchAgent: SwitchAgent | null = null;
 let restartOwed = false;
@@ -959,7 +968,9 @@ export async function restartAfterSwitch(
   wanted: boolean,
   /** Backlog 35: superseded by a stop, with the file on another route than serve booted on and no newer switch on its way (main.ts). */
   drifted = false,
-): Promise<{ restart: boolean; restartHeld?: true }> {
+  /** ATO-1021: main.ts judged the move one the agent can take live (a cloud pick on a cloud route, nothing else moved). */
+  live = false,
+): Promise<{ restart: boolean; restartHeld?: true; liveSwapped?: true }> {
   // One at a time: from the last look at `restarting` to restartNow setting it, nothing is awaited.
   while (restarting) await restarting;
   const agent = switchAgent;
@@ -968,6 +979,36 @@ export async function restartAfterSwitch(
   if (agent.turnsInFlight() > 0) {
     restartOwed = true;
     return mine ? { restart: false, restartHeld: true } : { restart: false };
+  }
+  /* ATO-1021: a cloud model pick swapped live costs well under a second where
+     the restart cost 3-8 s (and queued the next message behind it). Only for
+     this switch's own move, never to pay a restart an earlier one owes. */
+  if (live && mine && !drifted && !restartOwed && agent.liveSwap) {
+    /* Held in `restarting` like a restart, so the next switch and a turn
+       asked for meanwhile (agent:chat) wait it out — and released only once
+       this decided: a swap not taken hands the slot straight to its restart. */
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    restarting = held;
+    const swapped = await agent.liveSwap(res).catch(() => false as const);
+    if (swapped === true || turnsClosed) {
+      if (restarting === held) restarting = null;
+      release();
+      return swapped === true ? { restart: false, liveSwapped: true } : { restart: false };
+    }
+    if (swapped === "busy") {
+      /* The agent answered 409: a turn the window does not stream (Telegram,
+         a scheduled task) holds the provider. A restart now would cut it, so
+         it is held like one for the window's own turns. */
+      if (restarting === held) restarting = null;
+      release();
+      restartOwed = true;
+      return { restart: false, restartHeld: true };
+    }
+    const restarted = restartNow(agent);
+    release();
+    await restarted;
+    return { restart: true };
   }
   await restartNow(agent);
   return { restart: true };

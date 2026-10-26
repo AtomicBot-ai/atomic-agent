@@ -10,6 +10,7 @@ import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
   createGetConfigHandler,
   createPatchConfigHandler,
+  createPutConfigHandler,
 } from "./route-config.js";
 import {
   createGetSkillHandler,
@@ -46,6 +47,9 @@ import {
   createSetMcpServerEnabledHandler,
 } from "./route-mcp.js";
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
+import { createSetActiveLlmHandler } from "./route-llm-active.js";
+import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
+import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -98,6 +102,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/config",
       handler: createPatchConfigHandler(),
     },
+    // ATO-1022: the desktop's whole-file write, without an `atag config set` process.
+    { method: "PUT", path: "/api/config", handler: createPutConfigHandler() },
     { method: "GET", path: "/api/skills", handler: createListSkillsHandler() },
     {
       method: "GET",
@@ -182,10 +188,16 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
     // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
+    // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.
+    { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
+    // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
+    { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
     { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
     { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },
     { method: "DELETE", path: "/api/telegram/pairing", handler: telegramPairing.cancel },
+    // ATO-758: the channel's state, and another poller of the same bot when that is what holds it off.
+    { method: "GET", path: "/api/telegram/channel", handler: createTelegramChannelHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },

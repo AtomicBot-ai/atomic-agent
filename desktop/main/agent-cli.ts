@@ -298,6 +298,42 @@ export function configBytesSha256(raw: string | Buffer | null): string {
   return createHash("sha256").update(raw ?? "").digest("hex");
 }
 
+/* ---------------------------------------------------------------
+   ATO-1022 — the config through the running agent.
+
+   Every read and whole-file write above was an `atag` process (a cold Node
+   start, 150-400 ms each), and a model pick made five to nine of them in a
+   row. While `atag serve` is up, main hands this module its two config
+   routes (main.ts, on connect): `GET /api/config` answers the same
+   `{sha256, config}` pair `config get --with-sha256` prints, and
+   `PUT /api/config` is `config set - [--expect-sha256]` with the same
+   validation and the same refusal when the file moved. Either answering
+   null (an older agent, an agent going down) sends that call through the
+   CLI as before. A stand-in (the smoke) is always the CLI's.
+   --------------------------------------------------------------- */
+export interface ConfigRoute {
+  read(): Promise<{ sha256: string; config: unknown } | null>;
+  write(json: string, expectSha256: string | null): Promise<
+    { ok: true } | { ok: false; conflicted: boolean; error: string } | null
+  >;
+}
+let configRoute: ConfigRoute | null = null;
+let configRouteBin: string | undefined;
+/** main.ts: the running agent's config routes, or null while there is none. */
+export function useConfigRoute(route: ConfigRoute | null): void {
+  configRoute = route;
+  configRouteBin = process.env.ATOMIC_AGENT_BIN;
+}
+/**
+ * The route, while the CLI still names the agent it belongs to. A check that
+ * points the CLI at another binary or state dir (smoke T18, T34, T44 put a
+ * recording shim in ATOMIC_AGENT_BIN) means its calls to go there, never to
+ * the app's own running agent.
+ */
+function liveConfigRoute(): ConfigRoute | null {
+  return configRoute && process.env.ATOMIC_AGENT_BIN === configRouteBin ? configRoute : null;
+}
+
 /**
  * The read with its hash, in ONE agent process, so the two describe the
  * same file. The agent's spelling lives here and nowhere else: today
@@ -310,6 +346,11 @@ let shaReadUnsupported = false;
 export async function readConfigWithSha(): Promise<{ ok: boolean; config?: unknown; sha256: string | null; error?: string }> {
   // A stand-in (the suite) is always asked the new way, and what it answers never teaches the real agent's flag.
   const standIn = inCliStandIn();
+  const route = standIn ? null : liveConfigRoute();
+  if (route) {
+    const viaAgent = await route.read();
+    if (viaAgent) return { ok: true, config: viaAgent.config, sha256: viaAgent.sha256 };
+  }
   if (standIn || !shaReadUnsupported) {
     const res = await cli(["config", "get", "--with-sha256"]);
     if (res.ok) {
@@ -696,6 +737,20 @@ async function writeWholeConfig(config: unknown): Promise<CliResult> {
      has a hash nobody has read. */
   const cas = casHolds.getStore();
   const expect = cas?.sha;
+  const route = inCliStandIn() ? null : liveConfigRoute();
+  if (route) {
+    const viaAgent = await route.write(json, expect ?? null);
+    if (viaAgent) {
+      // As cli() does for a write: the file this changed has a hash nobody has read.
+      if (cas) cas.sha = undefined;
+      if (viaAgent.ok) return { ok: true, stdout: "", stderr: "" };
+      if (expect && viaAgent.conflicted) {
+        if (cas) cas.conflicted = true;
+        return { ok: false, stdout: "", stderr: viaAgent.error, exitCode: 3, error: CONFIG_CHANGED_ELSEWHERE };
+      }
+      return { ok: false, stdout: "", stderr: viaAgent.error, error: explainConfigWriteFailure(viaAgent.error) };
+    }
+  }
   /* ATO-132: the file goes in on stdin (`config set -`), never as an
      argument. It carries the providers' API keys, and any process on the
      machine can read another's command line for as long as it runs. */
@@ -814,6 +869,8 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
     return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
   }
   const config = current.config as { llm?: { providers?: ProviderEntry[] } };
+  // ATO-1022: what the file holds, to skip a write that would change nothing (a re-pick of the same model).
+  const before = JSON.stringify(config);
   const llm = (config.llm ??= {});
   const providers = (llm.providers ??= []);
   const at = providers.findIndex((p) => p.id === entry.id);
@@ -829,6 +886,9 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
     clean.modelMode ??= defaultProviderModelMode(clean);
     providers.push(clean);
   }
+  // The coherence repair writeWholeConfig makes counts as a change too.
+  normaliseLlmBlock(config);
+  if (JSON.stringify(config) === before) return { ok: true, stdout: "", stderr: "" };
   return writeWholeConfig(config);
 }
 
@@ -2998,20 +3058,32 @@ export async function skillBrowse(
  * that comes back as `blocked` so the tab shows the TUI's confirm with
  * the CLI's line as its one finding. Success is the CLI's own
  * `installed <name> (v…) from <id> — <scan summary>` line.
+ *
+ * A `caution` verdict, with no terminal to ask on, exits with
+ * `install needs confirmation: <id> — <scan summary>` (PR #869): that comes
+ * back as `blocked` too, with `caution`, and the tab's confirm says so.
+ * Confirmed, the install runs again with `--yes` (`confirmCaution`), which
+ * approves a caution verdict only: if the skill changed and now scans
+ * dangerous, the CLI still refuses it (src/cli/skill.ts).
  */
 export async function skillInstall(
   identifier: string,
   acknowledgeRisk: boolean,
   cwd?: string,
-): Promise<{ ok: boolean; line?: string; blocked?: boolean; message?: string; error?: string }> {
+  confirmCaution = false,
+): Promise<{ ok: boolean; line?: string; blocked?: boolean; caution?: boolean; message?: string; error?: string }> {
   const id = identifier.trim();
   if (!/^@?[\w.-]+(?:\/[\w.-]+){1,4}$/.test(id)) return { ok: false, error: `not a hub identifier: ${identifier}` };
   const args = ["skill", "install", id];
   if (acknowledgeRisk) args.push("--acknowledge-risk");
+  else if (confirmCaution) args.push("--yes");
   const res = await cli(args, 180_000, cwd);
   if (res.ok) return { ok: true, line: res.stdout.trim().split("\n").pop() ?? "" };
   const message = (res.stderr.trim() || res.error || "install failed").split("\n").pop() ?? "";
   if (/flagged dangerous by the security scan/.test(res.stderr)) return { ok: false, blocked: true, message };
+  // The verdict line, not the CLI's "re-run with --yes" hint printed after it.
+  const caution = /^.*install needs confirmation:.*$/m.exec(res.stderr);
+  if (caution) return { ok: false, blocked: true, caution: true, message: caution[0].trim() };
   return { ok: false, error: message };
 }
 
