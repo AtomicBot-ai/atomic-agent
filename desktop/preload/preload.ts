@@ -251,6 +251,7 @@ contextBridge.exposeInMainWorld("atomic", {
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
   // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
   onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
+  starterGet: () => ipcRenderer.invoke("app:starterGet"),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),

@@ -22,9 +22,16 @@ function starterNoticeHTML() {
     + '<button class="btn btn-s sm" data-act="onboarding">' + (STARTER.phase === 'failed' ? 'Set up' : 'Add a key or a model') + '</button></div>';
 }
 
-/** Send is held while the starter model is still coming (renderer submit). */
+/** Send is held while the starter model is still coming, unless the person moved to the cloud meanwhile (renderer submit). */
 function starterHoldsSend() {
-  return STARTER.phase === 'downloading';
+  if (STARTER.phase !== 'downloading') return false;
+  return !(typeof selBackend === 'function' && selBackend() === 'cloud');
+}
+
+/** A window that loads after main said where the starter stands asks once (app:starterGet). */
+function starterCatchUp() {
+  if (typeof BR === 'undefined' || !BR || !BR.starterGet) return;
+  BR.starterGet().then((ev) => { if (ev && !STARTER.phase) starterOnEvent(ev); }).catch(() => {});
 }
 
 function starterOnEvent(ev) {
@@ -37,6 +44,7 @@ function starterOnEvent(ev) {
     OB.open = false;
     if (typeof obSkyStop === 'function') obSkyStop();
   }
+  if (STARTER.phase === 'done') STARTER.phase = null;   // another choice stood; the line goes
   if (STARTER.phase === 'ready' && typeof refreshLiveConfig === 'function') refreshLiveConfig().catch(() => {});
   render();
 }

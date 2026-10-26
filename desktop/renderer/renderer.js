@@ -16234,6 +16234,7 @@ if (BR) {
   BR.onPull((ev) => { if (ev) dlOnPull(ev); });
   // ATO-1042: the starter model's download and arrival (starter-chat.js).
   if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
+  if (typeof starterCatchUp === 'function') starterCatchUp();
   BR.onPull((ev) => { if (typeof starterOnPull === 'function') starterOnPull(ev); });
 
   /* First run: the wizard opens itself, exactly as the TUI does.
