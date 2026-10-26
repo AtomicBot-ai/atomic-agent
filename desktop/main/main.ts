@@ -1161,6 +1161,7 @@ function wireUpdater(): void {
   ipcMain.handle("updates:dismiss", () => updater.dismiss());
   ipcMain.handle("updates:skip", () => updater.skip());
   ipcMain.handle("updates:setAuto", (_event, on: unknown) => updater.setAutoCheck(on === true));
+  ipcMain.handle("updates:setBeta", (_event, on: unknown) => updater.setBeta(on === true));
 }
 
 /**
