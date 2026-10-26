@@ -88,3 +88,16 @@ test('an agent that cannot answer sends the call to the CLI', async () => {
   assert.equal(asked, 1);
   assert.notEqual(read.config?.llm?.activeTextProvider, 'route-sentinel');
 });
+
+test('a check that points the CLI at another binary is not sent to the running agent', async () => {
+  const r = route(CFG);
+  useConfigRoute(r);
+  const keep = process.env.ATOMIC_AGENT_BIN;
+  process.env.ATOMIC_AGENT_BIN = '/nonexistent/another-shim';
+  try {
+    await readWholeConfig();
+    assert.equal(r.calls.read, 0);
+  } finally {
+    process.env.ATOMIC_AGENT_BIN = keep;
+  }
+});
