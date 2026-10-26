@@ -71,7 +71,7 @@ describe("models-catalog", () => {
 
   it("omits mmproj fields on text-only catalog entries", () => {
     const textOnly = LOCAL_MODELS_CATALOG.filter((m) => !m.supportsVision);
-    expect(textOnly.map((m) => m.id)).toEqual(["nemotron-3.5-30b-a3b"]);
+    expect(textOnly.map((m) => m.id)).toEqual(["qwen-3.5-2b", "nemotron-3.5-30b-a3b"]);
     for (const def of textOnly) {
       expect(def.mmprojUrl).toBeUndefined();
       expect(def.mmprojFilename).toBeUndefined();
