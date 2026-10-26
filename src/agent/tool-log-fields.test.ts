@@ -47,6 +47,19 @@ describe("toolLogFields", () => {
     expect(toolLogFields(undefined, result())).toEqual({});
   });
 
+  it("logs an aliased move's source and its error, not the alias note (ATO-899)", () => {
+    expect(
+      toolLogFields(
+        { src: "a.txt", dest: "b.txt" },
+        result({
+          tool: "os.fs.move",
+          status: "error",
+          summary: "os.fs.move: nothing at `a.txt`\nnote: read `src` as `from` and `dest` as `to`; …",
+        }),
+      ),
+    ).toEqual({ path: "a.txt", reason: "os.fs.move: nothing at `a.txt`" });
+  });
+
   it("skips the compressor's key: signature so a later quoted line stays out", () => {
     const fields = toolLogFields(
       { path: "a.py" },

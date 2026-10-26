@@ -54,6 +54,15 @@ describe("formatPauseDigest", () => {
     expect(text).not.toContain("os.fs.read src/parser.ts");
   });
 
+  it("lists the destinations of an aliased os.fs.move (ATO-899)", () => {
+    const text = formatPauseDigest([
+      userTurn("sort the archives", 1),
+      ...step("os.fs.move", { paths: ["a.zip", "b.zip"], destination: "Archives" }, "ok"),
+      ...step("os.fs.move", { src: "old.txt", dest: "new.txt" }, "ok"),
+    ])!;
+    expect(text).toContain("- Files changed: Archives/, new.txt\n");
+  });
+
   it("caps long fields and the file list", () => {
     const turns: ConversationTurn[] = [userTurn("x".repeat(500), 1)];
     for (let n = 0; n < 12; n += 1) {

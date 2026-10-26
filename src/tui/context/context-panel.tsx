@@ -246,7 +246,9 @@ function buildRows(
 /**
  * The reply reservation as this window can actually honour it: the
  * prompt budget's own figure (`effectiveReplyReserve` — the configured
- * cap, held to half a window it does not fit in), and never more than
+ * cap, held to half a window it does not fit in, and on a window under
+ * 32k to what leaves the prompt 16k, but at least a quarter of the
+ * window), and never more than
  * the prompt left of the window. The desktop's context popover ports
  * this rule (`ctxReplyReserve` in desktop/renderer/renderer.js).
  */

@@ -10,6 +10,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [tool-registry.ts](tool-registry.ts)
 - [tool-roles.ts](tool-roles.ts)
 - [unknown-argument-guard.ts](unknown-argument-guard.ts)
+- [argument-aliases.ts](argument-aliases.ts)
 - [control-marker-guard.ts](control-marker-guard.ts)
 - [tool-output-spill.ts](tool-output-spill.ts)
 - [untrusted-tool-output.ts](untrusted-tool-output.ts)

@@ -1,4 +1,5 @@
 import type { ConversationTurn } from "../session/conversation-turn.js";
+import { canonicalArgs } from "../tools/argument-aliases.js";
 
 type ToolCall = Pick<Extract<ConversationTurn, { kind: "assistant_tool_call" }>, "tool" | "args">;
 type ToolResult = Extract<ConversationTurn, { kind: "tool_result" }>;
@@ -96,7 +97,9 @@ function outcome(call: ToolCall, result: ToolResult | undefined): { text: string
  */
 export function describeToolStep(call: ToolCall, result: ToolResult | undefined): ToolStepFacts {
   const facts: ToolStepFacts = { line: "", changed: [], read: [], urls: [] };
-  const args = call.args ?? {};
+  // As the tool read them: an `os.fs.move` sent as `{paths, destination}`
+  // ran as `{from, to}` / `moves` (`argument-aliases.ts`).
+  const args = canonicalArgs(call.tool, call.args ?? {});
   const path = stringArg(args, "path", "filePath", "file", "dir", "directory");
   const url = stringArg(args, "url");
   let target: string;

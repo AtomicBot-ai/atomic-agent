@@ -14,7 +14,11 @@ import {
   createPersistentSearchCache,
   createSearchCache,
 } from "../transport/search-cache.js";
-import { WebSearchUnavailableError } from "../web-search-errors.js";
+import {
+  EXA_GET_KEY_URL,
+  WebSearchUnavailableError,
+  type WebSearchKeyHelp,
+} from "../web-search-errors.js";
 import type { WebSearchResult } from "../web-search-provider.js";
 import { checkMissingSearchKey } from "./warn-missing-search-key.js";
 
@@ -40,6 +44,12 @@ export interface OsWebSearchOptions {
   env?: NodeJS.ProcessEnv;
   /** Warning sink; defaults to stderr. Injectable for tests. */
   warn?: (message: string) => void;
+  /**
+   * Where this process's user adds an Exa key, for the advice in the
+   * error (ATO-345). The terminal UI passes `integrations-hub`; omitted
+   * keeps the desktop / `.env` advice.
+   */
+  keyHelp?: WebSearchKeyHelp;
 }
 
 interface WebSearchArgs {
@@ -91,6 +101,10 @@ export function buildOsWebSearchTool(
       ((message: string) => process.stderr.write(`${message}\n`));
     warn(missingKey.message);
   }
+  // Sessions already told, in this process, that /integrations takes an
+  // Exa key (ATO-345). Once per session: the note repeats on every search
+  // while Exa is parked, and one line is enough for the model to pass on.
+  const keyHintedSessions = new Set<string>();
   return {
     name: TOOL_NAME,
     description:
@@ -130,13 +144,20 @@ export function buildOsWebSearchTool(
           },
           cache,
           cooldown,
+          ...(options.keyHelp === undefined ? {} : { keyHelp: options.keyHelp }),
         });
         return compressToolResult(
           {
             tool: TOOL_NAME,
             status: "ok",
             output:
-              renderNotes(outcome.degraded) + renderResults(outcome.results),
+              renderNotes(outcome.degraded) +
+              renderKeyHint(
+                options.keyHelp === "integrations-hub" &&
+                  outcome.keyRequired?.reason === "rate_limited" &&
+                  firstTime(keyHintedSessions, ctx.sessionId),
+              ) +
+              renderResults(outcome.results),
             details: {
               provider: outcome.provider,
               fromCache: outcome.fromCache,
@@ -217,6 +238,23 @@ function parseArgs(
 function renderNotes(degraded: readonly string[]): string {
   if (degraded.length === 0) return "";
   return `${degraded.map((note) => `[search] ${note}`).join("\n")}\n\n`;
+}
+
+/** True the first time `id` is seen, recording it. */
+function firstTime(seen: Set<string>, id: string): boolean {
+  if (seen.has(id)) return false;
+  seen.add(id);
+  return true;
+}
+
+/**
+ * The terminal UI's one-line hint when a fallback answered because keyless
+ * Exa ran out (ATO-345): the search worked, but the user can fix the cause
+ * in `/integrations`. The URL is the one `keyRequired.getKeyUrl` carries.
+ */
+function renderKeyHint(show: boolean): string {
+  if (!show) return "";
+  return `[search] Free Exa searches ran out. Tell the user: open /integrations and add an Exa key (${EXA_GET_KEY_URL}).\n\n`;
 }
 
 function renderResults(results: readonly WebSearchResult[]): string {

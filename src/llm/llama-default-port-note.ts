@@ -22,3 +22,20 @@ export function llamaDefaultPortNote(url: string): string | null {
     "Older builds and the Docker images use 8080."
   );
 }
+
+/**
+ * One line for a loopback address on 8080, llama.cpp's old default, when
+ * something there answered but it is not a working llama-server (ATO-708,
+ * ATO-873). Configs written before the default moved keep 8080 while a
+ * fresh `llama-server` listens on 9931, and the 8080 port is then often
+ * held by an unrelated program that answers 404. The agent never rewrites
+ * the address itself: this only says where to look. Null for any other
+ * host or port.
+ */
+export function llamaLegacyPortNote(url: string): string | null {
+  if (!isLoopbackUrlOnPort(url, [8080])) return null;
+  return (
+    "This address uses port 8080, llama.cpp's old default. " +
+    "A current llama-server listens on 9931: if yours does, change the address to port 9931."
+  );
+}
