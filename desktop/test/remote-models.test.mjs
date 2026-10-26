@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 // Anything that falls through to the CLI here would hit this machine's agent; point it nowhere.
 process.env.ATOMIC_AGENT_BIN = '/nonexistent/atag-for-remote-models-test';
 const require = createRequire(import.meta.url);
-const { useRemoteModels, modelsList, modelsUse, REMOTE_MODELS_HERE } = require('../out/main/agent-cli.js');
+const { useRemoteModels, modelsList, modelsUse, modelsPull, modelsStatus, REMOTE_MODELS_HERE } = require('../out/main/agent-cli.js');
 
 /**
  * ATO-1127 (Nadya 26.10): connected to an agent on another computer,
@@ -40,4 +40,21 @@ test('switching the model while remote is refused in words', async () => {
   assert.equal(res.ok, false);
   assert.equal(res.error, REMOTE_MODELS_HERE);
   assert.equal(asked, 0);
+});
+
+test('a download while remote starts nothing on this computer', async () => {
+  useRemoteModels({ text: async () => LIST });
+  const lines = [];
+  const pull = modelsPull('other', (l) => lines.push(l));
+  const res = await pull.done;
+  assert.equal(res.ok, false);
+  assert.equal(res.error, REMOTE_MODELS_HERE);
+  assert.deepEqual(lines, []);
+});
+
+test('the status comes from the remote agent too', async () => {
+  const asked = [];
+  useRemoteModels({ text: async (view) => { asked.push(view); return 'mode: managed\n'; } });
+  await modelsStatus();
+  assert.deepEqual(asked, ['status']);
 });

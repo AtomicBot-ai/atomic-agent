@@ -3161,8 +3161,9 @@ function wireIpc(client: AgentClient): void {
     } else {
       useConfigRoute(null);
     }
-    // ATO-1127: connected to another computer, Settings › Models reads that computer's models.
-    useRemoteModels(client.isRemote && status.state === "connected" ? { text: (view) => client.localModelsText(view) } : null);
+    // ATO-1127: on another computer's agent, Settings › Models reads that computer's models,
+    // also while it is not answering (then it says so) — never this computer's models instead.
+    useRemoteModels(client.isRemote ? { text: (view) => client.localModelsText(view) } : null);
   });
 }
 
