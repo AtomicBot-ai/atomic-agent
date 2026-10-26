@@ -19,6 +19,7 @@ import {
 } from "../session/index.js";
 import { getConfig } from "../config/index.js";
 
+import { checkWorkingDir } from "./session-working-dir.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -70,6 +71,8 @@ interface ChatCompletionRequest {
   stream?: boolean;
   stream_options?: { include_usage?: boolean };
   session_id?: string;
+  /** ATO-731: the folder a NEW session works in (absolute); an existing one keeps its own. */
+  working_dir?: string;
 }
 
 interface ParsedRequest {
@@ -81,6 +84,8 @@ interface ParsedRequest {
   userMessage: string;
   firstUserMessage: string;
   sessionIdOverride: string | null;
+  /** ATO-731: `working_dir`, checked; null for the server's own folder. */
+  workingDir: string | null;
   extensionsEnabled: boolean;
 }
 
@@ -1002,6 +1007,15 @@ async function parseRequestBody(
     sendError(res, 400, openaiError("Invalid session ID"));
     return null;
   }
+  let workingDir: string | null = null;
+  if (body.working_dir !== undefined && body.working_dir !== null) {
+    const check = checkWorkingDir(body.working_dir);
+    if (!check.ok) {
+      sendError(res, 400, openaiError(check.error, "invalid_request_error", "working_dir"));
+      return null;
+    }
+    workingDir = check.dir;
+  }
   return {
     model:
       typeof body.model === "string" && body.model.length > 0
@@ -1013,6 +1027,7 @@ async function parseRequestBody(
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
+    workingDir,
     extensionsEnabled: isExtensionsHeaderTruthy(
       getHeader(req, EXTENSIONS_HEADER),
     ),
@@ -1053,7 +1068,7 @@ function resolveSession(
   if (existing) return existing;
   const state = createEmptySessionState({
     id: desiredId,
-    workingDir: ctx.runtime.capabilities.workingDir,
+    workingDir: parsed.workingDir ?? ctx.runtime.capabilities.workingDir,
     metadata: { source: "openai-chat", model: parsed.model },
   });
   ctx.runtime.sessionStore.save(state);
