@@ -3021,7 +3021,9 @@ export async function skillInstall(
   if (res.ok) return { ok: true, line: res.stdout.trim().split("\n").pop() ?? "" };
   const message = (res.stderr.trim() || res.error || "install failed").split("\n").pop() ?? "";
   if (/flagged dangerous by the security scan/.test(res.stderr)) return { ok: false, blocked: true, message };
-  if (/install needs confirmation/.test(res.stderr)) return { ok: false, blocked: true, caution: true, message };
+  // The verdict line, not the CLI's "re-run with --yes" hint printed after it.
+  const caution = /^.*install needs confirmation:.*$/m.exec(res.stderr);
+  if (caution) return { ok: false, blocked: true, caution: true, message: caution[0].trim() };
   return { ok: false, error: message };
 }
 
