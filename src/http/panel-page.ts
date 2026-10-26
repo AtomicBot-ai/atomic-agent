@@ -40,6 +40,7 @@ let open = null, timer = null, approvals = new Map();
 const api = async (path, init) => {
   const res = await fetch(path, Object.assign({}, init, {headers: Object.assign({'content-type': 'application/json', authorization: 'Bearer ' + key}, (init && init.headers) || {})}));
   if (res.status === 401) { forget(); throw new Error('The key was not accepted.'); }
+  if (res.status === 429) throw new Error('Too many wrong keys from this device; wait a minute.');
   if (!res.ok) throw new Error('The agent answered ' + res.status);
   return res.json();
 };
@@ -82,9 +83,11 @@ async function send() {
   $('text').value = '';
   const body = {model: 'atomic-agent', stream: false, messages: [{role: 'user', content: text}]};
   if (open) body.session_id = open;
+  // A refused message (a turn already running, an error) comes back to the box, with why.
+  const failed = (e) => { $('text').value = text; const p = document.createElement('p'); p.className = 'err'; p.textContent = e.message; $('main').appendChild(p); };
   const pending = api('/v1/chat/completions', {method: 'POST', body: JSON.stringify(body)});
-  if (!open) { const r = await pending.catch(() => null); if (r && r.session_id) show(r.session_id); }
-  else setTimeout(() => show(open), 500);
+  if (!open) { const r = await pending.catch((e) => { failed(e); return null; }); if (r && r.session_id) show(r.session_id); }
+  else { pending.catch(failed); setTimeout(() => show(open), 500); }
 }
 function approvalsHTML(sessionId) {
   return [...approvals.values()].filter((a) => !sessionId || a.sessionId === sessionId).map((a) =>
@@ -101,6 +104,9 @@ async function watchApprovals() {
     if (!key) { await new Promise((r) => setTimeout(r, 2000)); continue; }
     try {
       const res = await fetch('/api/events', {headers: {authorization: 'Bearer ' + key}});
+      // A wrong key, or one throttled: stop asking (each try counts against the address) until it is typed again.
+      if (res.status === 401) { forget(); continue; }
+      if (res.status === 429) { await new Promise((r) => setTimeout(r, 60000)); continue; }
       if (!res.ok || !res.body) throw new Error('events');
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
       for (;;) {
