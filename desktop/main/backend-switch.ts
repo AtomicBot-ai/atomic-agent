@@ -924,7 +924,7 @@ export interface SwitchAgent {
    * restart. Answers false when it could not (an older agent, a turn that
    * started meanwhile, a refused switch): the restart then runs as before.
    */
-  liveSwap?(res: SwitchResult): Promise<boolean>;
+  liveSwap?(res: SwitchResult): Promise<boolean | "busy">;
 }
 let switchAgent: SwitchAgent | null = null;
 let restartOwed = false;
@@ -989,11 +989,20 @@ export async function restartAfterSwitch(
     let release!: () => void;
     const held = new Promise<void>((r) => { release = r; });
     restarting = held;
-    const swapped = await agent.liveSwap(res).catch(() => false);
-    if (swapped || turnsClosed) {
+    const swapped = await agent.liveSwap(res).catch(() => false as const);
+    if (swapped === true || turnsClosed) {
       if (restarting === held) restarting = null;
       release();
-      return swapped ? { restart: false, liveSwapped: true } : { restart: false };
+      return swapped === true ? { restart: false, liveSwapped: true } : { restart: false };
+    }
+    if (swapped === "busy") {
+      /* The agent answered 409: a turn the window does not stream (Telegram,
+         a scheduled task) holds the provider. A restart now would cut it, so
+         it is held like one for the window's own turns. */
+      if (restarting === held) restarting = null;
+      release();
+      restartOwed = true;
+      return { restart: false, restartHeld: true };
     }
     const restarted = restartNow(agent);
     release();

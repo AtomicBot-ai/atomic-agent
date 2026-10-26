@@ -1944,6 +1944,7 @@ function wireIpc(client: AgentClient): void {
       if (next.provider !== res.providerId || kind === "llama-server" || next.mode === "fusion") return false;
       // No model: the file already names it, and a pin would rewrite the file under the window's next write.
       const swap = await client.setActiveLlm(next.provider, null);
+      if (swap.busy) return "busy";
       if (!swap.ok) {
         console.warn(`[desktop] model switch: live swap not taken (${swap.error ?? "unknown"}), restarting the agent`);
         return false;

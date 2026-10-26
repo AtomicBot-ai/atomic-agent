@@ -67,3 +67,10 @@ test('under a turn in flight the restart is held and nothing is swapped', async 
   assert.deepEqual(await restartAfterSwitch(PICK, true, false, true), { restart: false, restartHeld: true });
   assert.deepEqual(a.calls, { restart: 0, swap: 0 });
 });
+
+test('a swap the agent refuses for a turn it runs (409) holds the restart instead of cutting that turn', async () => {
+  const a = agent({ swap: async () => 'busy' });
+  restartsAgent(a);
+  assert.deepEqual(await restartAfterSwitch(PICK, true, false, true), { restart: false, restartHeld: true });
+  assert.deepEqual(a.calls, { restart: 0, swap: 1 });
+});
