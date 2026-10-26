@@ -616,12 +616,63 @@ export class AgentClient extends EventEmitter {
 
   private base(): string {
     if (!this.port) throw new Error("agent is not running");
+    // ATO-1127: a remote agent is reached at its own address.
+    if (this.remote) return this.remote.url;
     return `http://127.0.0.1:${this.port}`;
+  }
+
+  /** The bearer token: the remote agent's, or the one this client gave its own `atag serve`. */
+  private authToken(): string {
+    return this.remote ? this.remote.token : this.token;
+  }
+
+  /* ---- ATO-1127: a remote agent (another computer, a VPS) ----
+     With a remote set, start() spawns nothing: it checks the address answers
+     /health and takes the token on an authenticated route, then reads as
+     connected, and every route, chat and the approval stream go there. stop()
+     only lets go of it. Model servers, downloads and the CLI's config
+     commands stay this computer's: the remote agent runs its own models. */
+  private remote: { url: string; token: string } | null = null;
+  setRemote(remote: { url: string; token: string } | null): void {
+    this.remote = remote ? { url: remote.url.trim().replace(/\/+$/, ""), token: remote.token } : null;
+  }
+  get isRemote(): boolean {
+    return this.remote !== null;
+  }
+
+  private async connectRemote(): Promise<AgentStatus> {
+    const r = this.remote!;
+    const epoch = this.stopEpoch;
+    this.stopping = false;
+    let port: number;
+    try {
+      const u = new URL(r.url);
+      port = Number(u.port) || (u.protocol === "https:" ? 443 : 80);
+    } catch {
+      this.setStatus({ state: "error", port: null, error: `Not an address: ${r.url}` });
+      return this.status;
+    }
+    this.port = port;
+    this.setStatus({ state: "starting", binary: r.url, port, error: null });
+    const check = await probeRemoteAgent(r.url, r.token);
+    if (this.stopEpoch !== epoch) {
+      this.port = null;
+      this.setStatus({ state: "stopped", port: null, llama: null, error: null });
+      return this.status;
+    }
+    if (!check.ok) {
+      this.port = null;
+      this.setStatus({ state: "error", port: null, llama: null, error: check.error });
+      return this.status;
+    }
+    this.setStatus({ state: "connected", error: null, llama: check.llama, workingDir: check.workingDir ?? this.status.workingDir });
+    this.openApprovalStream(() => this.stopEpoch === epoch && this.remote === r);
+    return this.status;
   }
 
   private headers(): Record<string, string> {
     return {
-      authorization: `Bearer ${this.token}`,
+      authorization: `Bearer ${this.authToken()}`,
       "content-type": "application/json",
     };
   }
@@ -651,7 +702,7 @@ export class AgentClient extends EventEmitter {
     if (this.closed || this.stopRequests !== asked) return this.status;
     if (this.starting) return this.starting;
     if (this.child) return this.status;
-    const run = this.spawnAndWait().finally(() => {
+    const run = (this.remote ? this.connectRemote() : this.spawnAndWait()).finally(() => {
       if (this.starting === run) this.starting = null;
     });
     this.starting = run;
@@ -793,7 +844,7 @@ export class AgentClient extends EventEmitter {
 
     const budget = this.opts.healthBudgetMs ?? this.healthBudgetMs();
     const verdict = await this.waitForHealth(child, port, budget, superseded);
-    if (verdict === "healthy") this.openApprovalStream(child);
+    if (verdict === "healthy") this.openApprovalStream(() => this.child === child);
     /* Backlog 41: "did not become healthy" is said only when the budget really
        ran out with this agent still running. An agent that exited while it
        booted has already said how (childExited); one a stop ended is a
@@ -939,23 +990,29 @@ export class AgentClient extends EventEmitter {
    * stream open (it opens one itself once healthy).
    */
   reopenApprovalStream(): boolean {
+    if (!this.events || this.events.signal.aborted || this.stopping) return false;
+    if (this.remote) {
+      const epoch = this.stopEpoch, r = this.remote;
+      this.openApprovalStream(() => this.stopEpoch === epoch && this.remote === r);
+      return true;
+    }
     const child = this.child;
-    if (!child || !this.events || this.events.signal.aborted || this.stopping) return false;
-    this.openApprovalStream(child);
+    if (!child) return false;
+    this.openApprovalStream(() => this.child === child);
     return true;
   }
 
   /** SSE stream of approval requests, reconnected while this child lives. */
-  private openApprovalStream(child: ChildProcess): void {
+  private openApprovalStream(alive: () => boolean): void {
     this.events?.abort();
     const controller = new AbortController();
     this.events = controller;
 
     void (async () => {
-      while (!controller.signal.aborted && this.child === child) {
+      while (!controller.signal.aborted && alive()) {
         try {
           const res = await fetch(`${this.base()}/api/events`, {
-            headers: { authorization: `Bearer ${this.token}` },
+            headers: { authorization: `Bearer ${this.authToken()}` },
             signal: controller.signal,
           });
           if (!res.body) throw new Error("no body");
@@ -1802,4 +1859,37 @@ export function extractLlamaModelLabel(
     return parts[parts.length - 1] || trimmed;
   }
   return null;
+}
+
+/**
+ * ATO-1127: whether a remote agent answers at `url` and takes `token`: its
+ * public /health, then an authenticated route. The error says which failed,
+ * in words a person can act on.
+ */
+export async function probeRemoteAgent(url: string, token: string, timeoutMs = 8_000): Promise<
+  { ok: true; llama: { url: string; reachable: boolean } | null; workingDir: string | null } | { ok: false; error: string }
+> {
+  const base = url.trim().replace(/\/+$/, "");
+  if (!/^https?:\/\/[^/\s]+/.test(base)) return { ok: false, error: "The address must start with http:// or https://" };
+  let health: { llama?: { url: string; reachable: boolean }; workingDir?: string };
+  try {
+    const res = await fetch(`${base}/health?llama=0`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return { ok: false, error: `The agent at ${base} answered ${res.status}` };
+    health = (await res.json()) as typeof health;
+  } catch {
+    return { ok: false, error: `Nothing answered at ${base}. Check the address, that atag serve runs there with --host, and that this computer can reach it.` };
+  }
+  try {
+    const res = await fetch(`${base}/api/capabilities`, {
+      headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    void res.body?.cancel().catch(() => undefined);
+    if (res.status === 401) return { ok: false, error: "The agent did not accept the token. Copy its API key again." };
+    if (res.status === 429) return { ok: false, error: "Too many wrong tokens from this computer; try again in a minute." };
+    if (!res.ok) return { ok: false, error: `The agent at ${base} answered ${res.status}` };
+  } catch {
+    return { ok: false, error: `The agent at ${base} stopped answering.` };
+  }
+  return { ok: true, llama: health.llama ?? null, workingDir: health.workingDir ?? null };
 }

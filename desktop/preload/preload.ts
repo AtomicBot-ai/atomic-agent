@@ -236,6 +236,10 @@ contextBridge.exposeInMainWorld("atomic", {
   // item 6: the sidebar's own pin/read state (Electron userData/prefs.json). ATO-165: the
   // chat row's menu is drawn in the window now (renderer chatMenuHTML), so no native menu here.
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
+  // ATO-1127: the agent on another computer.
+  remoteGet: () => ipcRenderer.invoke("app:remoteGet"),
+  remoteSet: (remote: { url: string; token: string }) => ipcRenderer.invoke("app:remoteSet", remote),
+  remoteClear: () => ipcRenderer.invoke("app:remoteClear"),
   // ATO-1030: hardware acceleration, as this run has it and as the next launch will.
   gpuGet: () => ipcRenderer.invoke("app:gpuGet"),
   gpuSet: (on: boolean) => ipcRenderer.invoke("app:gpuSet", on),

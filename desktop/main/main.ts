@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, shell, systemPreferences, Tray } from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
@@ -27,7 +27,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient, APPROVAL_DECISIONS } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -103,6 +103,7 @@ import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
+import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
@@ -1969,6 +1970,39 @@ function wireIpc(client: AgentClient): void {
   // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
   // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
+  /* ATO-1127: the "Connect to another computer" window. Set checks the address
+     and the key first (probeRemoteAgent) and saves only what answered; the
+     agent is then let go of and the remote one connected. Clear goes back to
+     this computer's own agent. */
+  ipcMain.handle("app:remoteGet", () => {
+    const r = readRemoteAgent(app.getPath("userData"), keyBox());
+    return { url: r?.url ?? null, connected: client.isRemote && client.status.state === "connected" };
+  });
+  ipcMain.handle("app:remoteSet", async (_event, payload: unknown) => {
+    const { url, token } = (payload ?? {}) as { url?: unknown; token?: unknown };
+    const clean = typeof url === "string" ? cleanRemoteUrl(url) : null;
+    if (!clean) return { ok: false, error: "Type an address like http://192.168.1.20:8787 (no path)." };
+    if (typeof token !== "string" || token.trim().length === 0) return { ok: false, error: "Type the agent's API key." };
+    const probe = await probeRemoteAgent(clean, token.trim());
+    if (!probe.ok) return probe;
+    if (!writeRemoteAgent(app.getPath("userData"), keyBox(), { url: clean, token: token.trim() })) {
+      return { ok: false, error: "This system has no keychain to keep the key safely, so it was not saved." };
+    }
+    A.agentRestarting("other");
+    await client.stop();
+    client.setRemote({ url: clean, token: token.trim() });
+    const status = await client.start();
+    return status.state === "connected" ? { ok: true } : { ok: false, error: status.error ?? "Could not connect." };
+  });
+  ipcMain.handle("app:remoteClear", async () => {
+    writeRemoteAgent(app.getPath("userData"), keyBox(), null);
+    if (!client.isRemote) return { ok: true };
+    await client.stop();
+    client.setRemote(null);
+    await client.start();
+    void startLocalDaemonAtBoot();
+    return { ok: true };
+  });
   // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
   ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
   ipcMain.handle("app:gpuSet", (_event, on: unknown) => {
@@ -10109,6 +10143,8 @@ void app.whenReady().then(async () => {
     homedir(),
   );
   agent = new AgentClient(workspace);
+  // ATO-1127: an agent on another computer, when one was saved (remote-agent.ts).
+  if (!SMOKE && !FIRST_RUN_PROBE) agent.setRemote(readRemoteAgent(app.getPath("userData"), keyBox()));
   win = createWindow();
   // Item 2 (voice input): the third teardown path — this window going away
   // while the app stays alive on macOS.
@@ -10171,11 +10207,14 @@ void app.whenReady().then(async () => {
       })
       .catch(() => undefined));
     void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(() => {
-      void pairBeside();
+      // ATO-1127: a remote agent runs its own models; this computer starts none for it.
+      const remote = !!agent?.isRemote;
+      if (!remote) void pairBeside();
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
-      else void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).catch(() => undefined);
+      else if (!remote) void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).catch(() => undefined);
+      else A.launchBackendSettled(true);
     });
   });
 
@@ -10216,6 +10255,7 @@ function rebuildMenu(): void {
       rebuildMenu();
       return;
     }
+    if (command === "remote:open") { openRemoteConnect(); return; }
     if (command === "bg:startAtLogin") {
       // A dev or unpackaged run would register the bare Electron binary, not the app.
       if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
@@ -13745,4 +13785,37 @@ async function r5SeamTest(
     after.opened === true && after.open === false,
     `openedAfterClose=${after.opened} wizardOpen=${after.open}`,
   );
+}
+
+/* ---- ATO-1127: connect to an agent on another computer ---- */
+
+/** The system keychain behind the saved remote key (Electron safeStorage). */
+function keyBox(): KeyBox {
+  return {
+    available: () => safeStorage.isEncryptionAvailable(),
+    seal: (plain) => safeStorage.encryptString(plain).toString("base64"),
+    open: (sealed) => safeStorage.decryptString(Buffer.from(sealed, "base64")),
+  };
+}
+
+let remoteWindow: BrowserWindow | null = null;
+/** Agent › Connect to Another Computer…: a small window over the main one (renderer/remote-connect.html). */
+function openRemoteConnect(): void {
+  if (remoteWindow && !remoteWindow.isDestroyed()) { remoteWindow.focus(); return; }
+  remoteWindow = new BrowserWindow({
+    width: 480,
+    height: 380,
+    resizable: false,
+    minimizable: false,
+    title: "Connect to another computer",
+    ...(win && !win.isDestroyed() ? { parent: win, modal: true } : {}),
+    webPreferences: {
+      preload: join(__dirname, "..", "preload", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  remoteWindow.on("closed", () => { remoteWindow = null; });
+  void remoteWindow.loadFile(join(__dirname, "..", "renderer", "remote-connect.html"));
 }
