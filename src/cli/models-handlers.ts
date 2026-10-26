@@ -170,10 +170,10 @@ import {
   followDownloadJob,
 } from "./models-downloads.js";
 
-export async function runLocalModelsList(): Promise<number> {
+export async function runLocalModelsList(write: (text: string) => void = (t) => { process.stdout.write(t); }): Promise<number> {
   const cfg = getConfig();
   const dataDir = cfg.paths.localModelsDataDir;
-  process.stdout.write(
+  write(
     "ID                   | FAMILY   | SIZE   | CONTEXT | DL  | ACTIVE\n",
   );
   // Curated catalog plus the operator's own Hugging Face additions —
@@ -186,7 +186,7 @@ export async function runLocalModelsList(): Promise<number> {
       cfg.localModels.mode === "managed"
         ? "*"
         : " ";
-    process.stdout.write(
+    write(
       `${m.id.padEnd(20)} | ${m.family.padEnd(8)} | ${m.sizeLabel.padEnd(6)} | ${m.contextLabel.padEnd(7)} | ${dl.padEnd(3)} | ${active}\n`,
     );
   }
@@ -479,10 +479,10 @@ function describeComputeBackend(installed: string | undefined): string {
   return `${installed} — this machine warrants ${want}; run 'models update'`;
 }
 
-export async function runLocalModelsStatus(): Promise<number> {
+export async function runLocalModelsStatus(write: (text: string) => void = (t) => { process.stdout.write(t); }): Promise<number> {
   const cfg = getConfig();
   if (cfg.localModels.mode === "external") {
-    process.stdout.write(
+    write(
       `mode:           external\nurl:            ${cfg.localModels.url}\n`,
     );
     return 0;
@@ -499,26 +499,26 @@ export async function runLocalModelsStatus(): Promise<number> {
   }
   const st = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
   const health = st.healthy ? "ok" : st.authMismatch ? "key rejected" : st.loading ? "loading" : "down";
-  process.stdout.write(`mode:           managed\n`);
-  process.stdout.write(`data dir:       ${dataDir}\n`);
-  process.stdout.write(
+  write(`mode:           managed\n`);
+  write(`data dir:       ${dataDir}\n`);
+  write(
     `backend:        ${ver?.tag ?? "(none)"} (installed ${ver?.downloadedAt ?? "n/a"}), binary ${binOk ? "ok" : "missing"}\n`,
   );
-  process.stdout.write(
+  write(
     `compute:        ${cfg.localModels.managed.engine === "atomic-core" ? (ver?.asset ?? "not installed") + " (selected by Atomic Core)" : describeComputeBackend(ver?.asset)}\n`,
   );
-  process.stdout.write(`active model:   ${modelLine}\n`);
-  process.stdout.write(
+  write(`active model:   ${modelLine}\n`);
+  write(
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
-  process.stdout.write(`health:         ${health}\n`);
+  write(`health:         ${health}\n`);
   if (st.authMismatch) {
-    process.stdout.write(
+    write(
       "note:           a model server answers on this port but rejects the running model's key, so every request would fail. Run 'atomic-agent models stop', then 'models start'.\n",
     );
   }
   if (st.coreOrphaned) {
-    process.stdout.write(
+    write(
       "note:           Atomic Chat's engine stopped unexpectedly; this model is still running without it. 'atomic-agent models stop' or 'models start' restarts the engine and cleans it up.\n",
     );
   }
@@ -536,7 +536,7 @@ export async function runLocalModelsStatus(): Promise<number> {
   }
   const fault = describeServerFault(logText);
   if (fault) {
-    process.stdout.write(`fault:          ${fault.summary}\n`);
+    write(`fault:          ${fault.summary}\n`);
   }
   return 0;
 }
