@@ -1,6 +1,7 @@
 export {
   LOCAL_MODELS_CATALOG,
   DEFAULT_LLAMACPP_MODEL_ID,
+  STARTER_LOCAL_MODEL_ID,
   getLocalModelDef,
   isKnownLocalModelId,
   listLocalModels,
