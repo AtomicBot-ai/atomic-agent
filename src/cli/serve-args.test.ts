@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   isLoopbackListenHost,
+  lanUrls,
   parseArgs,
   serveAuthWarning,
   type ServeArgs,
@@ -44,15 +45,20 @@ describe("serve refuses a network host without an API key (ATO-760)", () => {
   );
 
   it("starts on a network host with --api-key", () => {
-    const parsed = parsedOk(["--host", "0.0.0.0", "--api-key", "s3cret"]);
+    const parsed = parsedOk(["--host", "0.0.0.0", "--api-key", "s3cret-0123456789ab"]);
     expect(parsed.host).toBe("0.0.0.0");
-    expect(parsed.apiKey).toBe("s3cret");
+    expect(parsed.apiKey).toBe("s3cret-0123456789ab");
   });
 
   it("starts on a network host with ATOMIC_AGENT_API_KEY", () => {
-    vi.stubEnv("ATOMIC_AGENT_API_KEY", "from-env");
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "from-env-0123456789");
     const parsed = parsedOk(["--host", "0.0.0.0"]);
-    expect(parsed.apiKey).toBe("from-env");
+    expect(parsed.apiKey).toBe("from-env-0123456789");
+  });
+
+  it("refuses a short key on a network host, and keeps it on loopback (ATO-1126)", () => {
+    expect(parseError(["--host", "0.0.0.0", "--api-key", "short"])).toContain("at least 16");
+    expect(parsedOk(["--api-key", "short"]).apiKey).toBe("short");
   });
 
   it("rejects an empty --api-key instead of treating it as a key", () => {
@@ -108,5 +114,20 @@ describe("isLoopbackListenHost", () => {
     expect(isLoopbackListenHost("::")).toBe(false);
     expect(isLoopbackListenHost("128.0.0.1")).toBe(false);
     expect(isLoopbackListenHost("127.evil.example")).toBe(false);
+  });
+});
+
+describe("lanUrls (ATO-1126)", () => {
+  const nics = {
+    lo0: [{ address: "127.0.0.1", family: "IPv4", internal: true }],
+    en0: [{ address: "192.168.1.20", family: "IPv4", internal: false }, { address: "fe80::1", family: "IPv6", internal: false }],
+  } as unknown as Parameters<typeof lanUrls>[2];
+  it("lists this machine's LAN addresses when serve listens everywhere", () => {
+    expect(lanUrls("0.0.0.0", 8787, nics)).toEqual(["http://192.168.1.20:8787"]);
+    expect(lanUrls("::", 8787, nics)).toEqual(["http://192.168.1.20:8787"]);
+  });
+  it("lists nothing for loopback or one named host", () => {
+    expect(lanUrls("127.0.0.1", 8787, nics)).toEqual([]);
+    expect(lanUrls("192.168.1.20", 8787, nics)).toEqual([]);
   });
 });
