@@ -47,4 +47,9 @@ describe("POST /api/sessions/{id}/working-dir (ATO-731)", () => {
     expect((await post("nope", harness.workingDir)).status).toBe(404);
     expect((await post("wd-2", "relative")).status).toBe(400);
   });
+
+  it("refuses a chat another process runs a turn in", async () => {
+    harness.runtime.sessionStore.save({ ...createEmptySessionState({ id: "wd-3", workingDir: harness.workingDir }), status: "running" });
+    expect((await post("wd-3", harness.workingDir)).status).toBe(409);
+  });
 });
