@@ -13,13 +13,20 @@ import {
   getLocalModelDef,
   isKnownEmbeddingModelId,
   LOCAL_MODELS_CATALOG,
+  STARTER_LOCAL_MODEL_ID,
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 13 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(13);
+  it("has exactly 14 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(14);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(13);
+    expect(ids.size).toBe(14);
+  });
+
+  it("names a small starter that is never auto-recommended (ATO-1041)", () => {
+    const starter = getLocalModelDef(STARTER_LOCAL_MODEL_ID);
+    expect(starter.fileSizeGb).toBeLessThan(1.5);
+    expect(starter.recommendRank).toBeUndefined();
   });
 
   it("defaults to qwen-3.5-4b", () => {
@@ -64,7 +71,7 @@ describe("models-catalog", () => {
 
   it("omits mmproj fields on text-only catalog entries", () => {
     const textOnly = LOCAL_MODELS_CATALOG.filter((m) => !m.supportsVision);
-    expect(textOnly.map((m) => m.id)).toEqual(["nemotron-3.5-30b-a3b"]);
+    expect(textOnly.map((m) => m.id)).toEqual(["qwen-3.5-2b", "nemotron-3.5-30b-a3b"]);
     for (const def of textOnly) {
       expect(def.mmprojUrl).toBeUndefined();
       expect(def.mmprojFilename).toBeUndefined();
