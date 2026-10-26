@@ -45,6 +45,7 @@ export class AuthThrottle {
   failed(address: string | undefined): void {
     if (!address || isLoopbackAddress(address)) return;
     const t = this.now();
+    this.sweep(t);
     const recent = (this.failures.get(address) ?? []).filter((at) => t - at < this.windowMs);
     recent.push(t);
     if (recent.length >= this.maxFailures) {
@@ -53,6 +54,13 @@ export class AuthThrottle {
       return;
     }
     this.failures.set(address, recent);
+  }
+
+  /** Forget windows and blocks that have run out, so addresses that stop calling do not pile up. */
+  private sweep(t: number): void {
+    if (this.failures.size + this.blockedUntil.size < 1024) return;
+    for (const [a, list] of this.failures) if (list.every((at) => t - at >= this.windowMs)) this.failures.delete(a);
+    for (const [a, until] of this.blockedUntil) if (until <= t) this.blockedUntil.delete(a);
   }
 
   succeeded(address: string | undefined): void {
