@@ -1259,6 +1259,13 @@ A scenario that fails because the model did not do what was asked exits with
 is not blamed for a model's bad day, and a model's bad day never hides an app
 defect.
 
+A machine with no seed `.env` (or one without the provider key) cannot drive
+any scenario, so each one is reported `– SKIP` with the reason and nothing is
+launched. `run-all.mjs` then prints `0 passed, 0 app failures, 0 model
+shortfalls, N skipped (no seed .env: set ATAG_TEST_ENV ...)` and exits **3**:
+not green, because nothing ran, and not 1, because the app did not fail
+(ATO-926).
+
 A failure has a third possible author: **the machine**. Every failure prints
 the load average beside it, and says so plainly when the box is saturated.
 This is not hypothetical — 03, 04 and 05 all timed out at 90 s waiting for the
