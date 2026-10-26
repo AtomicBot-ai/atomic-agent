@@ -318,9 +318,20 @@ export interface ConfigRoute {
   >;
 }
 let configRoute: ConfigRoute | null = null;
+let configRouteBin: string | undefined;
 /** main.ts: the running agent's config routes, or null while there is none. */
 export function useConfigRoute(route: ConfigRoute | null): void {
   configRoute = route;
+  configRouteBin = process.env.ATOMIC_AGENT_BIN;
+}
+/**
+ * The route, while the CLI still names the agent it belongs to. A check that
+ * points the CLI at another binary or state dir (smoke T18, T34, T44 put a
+ * recording shim in ATOMIC_AGENT_BIN) means its calls to go there, never to
+ * the app's own running agent.
+ */
+function liveConfigRoute(): ConfigRoute | null {
+  return configRoute && process.env.ATOMIC_AGENT_BIN === configRouteBin ? configRoute : null;
 }
 
 /**
@@ -335,8 +346,9 @@ let shaReadUnsupported = false;
 export async function readConfigWithSha(): Promise<{ ok: boolean; config?: unknown; sha256: string | null; error?: string }> {
   // A stand-in (the suite) is always asked the new way, and what it answers never teaches the real agent's flag.
   const standIn = inCliStandIn();
-  if (!standIn && configRoute) {
-    const viaAgent = await configRoute.read();
+  const route = standIn ? null : liveConfigRoute();
+  if (route) {
+    const viaAgent = await route.read();
     if (viaAgent) return { ok: true, config: viaAgent.config, sha256: viaAgent.sha256 };
   }
   if (standIn || !shaReadUnsupported) {
@@ -725,8 +737,9 @@ async function writeWholeConfig(config: unknown): Promise<CliResult> {
      has a hash nobody has read. */
   const cas = casHolds.getStore();
   const expect = cas?.sha;
-  if (!inCliStandIn() && configRoute) {
-    const viaAgent = await configRoute.write(json, expect ?? null);
+  const route = inCliStandIn() ? null : liveConfigRoute();
+  if (route) {
+    const viaAgent = await route.write(json, expect ?? null);
     if (viaAgent) {
       // As cli() does for a write: the file this changed has a hash nobody has read.
       if (cas) cas.sha = undefined;
