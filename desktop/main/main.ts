@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Notification, powerMonitor, shell, systemPreferences} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, shell, systemPreferences, Tray } from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
@@ -100,6 +100,7 @@ import {
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
+import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
   agentStarting,
@@ -10056,7 +10057,8 @@ void app.whenReady().then(async () => {
   // Item 2 (voice input): the third teardown path — this window going away
   // while the app stays alive on macOS.
   win.on("closed", () => voice.kill());
-  buildMenu((command) => send("app:menu", command));
+  rebuildMenu();
+  if (!SMOKE && !FIRST_RUN_PROBE) void syncTray();
   wireIpc(agent);
   wireUpdater();
   watchCoreUpdates();
@@ -10122,20 +10124,84 @@ void app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      win = createWindow();
-      win.on("closed", () => voice.kill());
-      A.appOpened("reopen", false);
-    }
+    if (BrowserWindow.getAllWindows().length === 0) openWindowAgain();
   });
 });
+
+/** The window again, once it was closed: the Dock (activate), the tray icon (ATO-598). */
+function openWindowAgain(): void {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return;
+  }
+  win = createWindow();
+  win.on("closed", () => voice.kill());
+  A.appOpened("reopen", false);
+}
+
+/* ---- ATO-598: keep running in the tray, start at login (background-mode.ts) ---- */
+const loginHost = (): LoginItemHost => ({
+  platform: process.platform,
+  execPath: process.execPath,
+  getLoginItemSettings: () => app.getLoginItemSettings(),
+  setLoginItemSettings: (s) => app.setLoginItemSettings(s),
+});
+let tray: Tray | null = null;
+
+/** The menu bar, with the Agent menu's two checkboxes as they are now; `bg:*` commands are main's own. */
+function rebuildMenu(): void {
+  const userData = app.getPath("userData");
+  buildMenu((command) => {
+    if (command === "bg:keepRunning") {
+      writeBackgroundPrefs(userData, { keepRunning: !readBackgroundPrefs(userData).keepRunning });
+      void syncTray();
+      rebuildMenu();
+      return;
+    }
+    if (command === "bg:startAtLogin") {
+      // A dev or unpackaged run would register the bare Electron binary, not the app.
+      if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
+      const host = loginHost();
+      if (!setStartAtLogin(host, !startsAtLogin(host))) console.error("[desktop] start at login: the system did not take the change");
+      rebuildMenu();
+      return;
+    }
+    send("app:menu", command);
+  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()) });
+}
+
+/** The tray icon while Keep Running is on, none while it is off. */
+async function syncTray(): Promise<void> {
+  const userData = app.getPath("userData");
+  if (!readBackgroundPrefs(userData).keepRunning) {
+    tray?.destroy();
+    tray = null;
+    return;
+  }
+  if (tray) return;
+  const icon = await app.getFileIcon(process.execPath, { size: "small" }).catch(() => nativeImage.createEmpty());
+  // Turned off, or made by another call, while the icon was read.
+  if (tray || !readBackgroundPrefs(userData).keepRunning) return;
+  tray = new Tray(icon.isEmpty() ? icon : icon.resize({ width: 16, height: 16 }));
+  tray.setToolTip("Atomic Agent");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Open Atomic Agent", click: () => openWindowAgain() },
+    { type: "separator" },
+    { label: "Quit Atomic Agent", click: () => app.quit() },
+  ]));
+  // Windows and Linux: a click on the icon opens the window; macOS opens the menu.
+  if (process.platform !== "darwin") tray.on("click", () => openWindowAgain());
+}
 
 app.on("window-all-closed", () => {
   // Item 2 (voice input): a helper that outlives its window keeps the
   // system microphone indicator lit, which is worse for trust than any bug
   // in the transcript.
   voice.kill();
-  if (process.platform !== "darwin") app.quit();
+  // ATO-598: unless Keep Running is on, closing the last window quits off macOS.
+  if (quitsOnLastWindow(process.platform, readBackgroundPrefs(app.getPath("userData")))) app.quit();
 });
 
 /* Item 30: the quit's own shutdown — the agent's stop, then the model
@@ -10155,10 +10221,13 @@ app.on("before-quit", (event) => {
   /* Off macOS the last window closing is the quit: asked then, a Cancel would
      leave the app running with no window, so it is not asked. Nor is the quit
      an update's install makes (ATO-229): the person asked for it, the agent is
-     stopped for it already, and a Cancel would leave the install half done. */
+     stopped for it already, and a Cancel would leave the install half done.
+     ATO-598: with Keep Running on, the app lives in the tray with no window,
+     and its Quit is a choice like the Dock's: asked there too. */
   const windowUp = !!win && !win.isDestroyed();
   const installing = appUpdater()?.state().phase === "installing";
-  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin")) {
+  const inTray = tray !== null && readBackgroundPrefs(app.getPath("userData")).keepRunning;
+  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin" || inTray)) {
     const n = queuedMessageCount();
     if (n > 0) {
       const opts = {
