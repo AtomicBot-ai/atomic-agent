@@ -48,6 +48,7 @@ import {
 } from "./route-mcp.js";
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
+import { createLocalModelsTextHandler } from "./route-local-models.js";
 import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
@@ -197,6 +198,9 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
     // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.
     { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
+    // ATO-1127: this machine's local models, for a desktop connected from another computer.
+    { method: "GET", path: "/api/local-models/list", handler: createLocalModelsTextHandler("list") },
+    { method: "GET", path: "/api/local-models/status", handler: createLocalModelsTextHandler("status") },
     // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
     { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.

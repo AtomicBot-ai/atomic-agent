@@ -160,6 +160,8 @@ export function menuTemplate(
       label: "Agent",
       submenu: [
         item("Restart Agent Runtime", "agent:restart"),
+        // ATO-1127: run chats on an agent on another computer or a VPS (main.ts openRemoteConnect).
+        item("Connect to Another Computer…", "remote:open"),
         sep,
         /* ATO-598: main's own (main.ts handles `bg:*`); off by default. On
            macOS the app already stays in the Dock, so the first one only adds

@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'">
+<title>Connect to another computer</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="styles.css">
+<style>
+  body{margin:0;padding:20px 22px;background:var(--paper);color:var(--ink);font:400 13px/18px var(--font-ui)}
+  h1{font:600 15px/20px var(--font-ui);margin:0 0 6px}
+  p{margin:0 0 14px;color:var(--ink-2)}
+  label{display:block;margin:10px 0 4px;font-weight:500}
+  input{width:100%;box-sizing:border-box;padding:7px 9px;border:1px solid var(--line);border-radius:8px;background:var(--lift);color:var(--ink);font:400 13px/18px var(--font-mono, monospace)}
+  .acts{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+  .msg{min-height:18px;margin-top:10px}
+  .msg.bad{color:var(--critical)} .msg.ok{color:var(--success)}
+</style>
+</head>
+<body>
+  <h1>Connect to another computer</h1>
+  <p>Run <code>atag serve --host 0.0.0.0</code> with an API key there, then type its address and key here. Chats then run on that computer; its models and settings are its own.</p>
+  <p id="http-note" hidden>Over http:// the key and your chats cross the network unencrypted. Use it on a network you trust, or reach the agent through Tailscale or https.</p>
+  <label for="url">Address</label>
+  <input id="url" type="url" spellcheck="false" placeholder="http://192.168.1.20:8787" autocomplete="off">
+  <label for="token">API key</label>
+  <input id="token" type="password" spellcheck="false" autocomplete="off">
+  <div id="msg" class="msg" role="status"></div>
+  <div class="acts">
+    <button id="local" class="btn btn-s sm" type="button">Use this computer</button>
+    <button id="cancel" class="btn btn-s sm" type="button">Cancel</button>
+    <button id="connect" class="btn btn-p sm" type="button">Connect</button>
+  </div>
+  <script src="remote-connect.js"></script>
+</body>
+</html>

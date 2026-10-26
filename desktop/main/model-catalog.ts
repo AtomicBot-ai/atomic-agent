@@ -139,6 +139,16 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     vision: true,
   },
   {
+    id: "qwen-3.5-2b",
+    name: "Qwen 3.5 2B GGUF",
+    description: "Tiny starter model, ready in a minute; any machine",
+    minRamGb: 4,
+    recommendedRamGb: 6,
+    sizeGb: 1.34,
+    contextLabel: "256K",
+    vision: false,
+  },
+  {
     id: "qwen-3.5-4b",
     name: "Qwen 3.5 4B GGUF",
     description: "Small and quick to download, for 8 GB machines and up",

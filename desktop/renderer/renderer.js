@@ -2667,7 +2667,7 @@ function emptyChat() {
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
-  return '<div class="emptychat">' + sharedSetupNoticeHTML() + emptyPlateHTML()
+  return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
     + '<div class="ghost">'
       + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
@@ -7006,6 +7006,8 @@ function submit(preparedSkillText, opts) {
   // promises it will not: post the pre-dictation draft and land the
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
+  // ATO-1042: the starter model is still on its way; the draft stays and the line above says how far it is.
+  if (typeof starterHoldsSend === 'function' && starterHoldsSend()) { toast('The model is still downloading', 'Your message stays here; send it once the line above says Ready.', 'bad'); return; }
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
   /* ATO-405: files in the composer ride in the message itself, as the
@@ -11298,9 +11300,11 @@ if (BR) {
       /* ATO-729: a new folder restarts the agent, which would end a running
          turn. The chip, Settings › Change… and the menu all land here, so the
          picker stays shut mid-turn, as with a model switch. */
-      const held = restartStopsTurn();
-      if (held) { restartRefusedToast(held); return; }
-      BR.chooseWorkspace().then(applyWorkspaceChoice);
+      /* ATO-731: the folder is the chat's now and nothing restarts, so only a
+         turn in the chat on screen holds the picker (main refuses again if one
+         began meanwhile). A cloud chat keeps its folder and a new chat opens. */
+      if (S.busy) { restartRefusedToast({here:true, title:''}); return; }
+      BR.chooseWorkspace(SK.workingDir ? null : (S.agentSession || null)).then(applyWorkspaceChoice);
       return;
     }
     return originalAct(a);
@@ -11314,14 +11318,18 @@ function applyWorkspaceChoice(dir) {
   if (!dir) return;
   /* ATO-733: a turn began while the picker was open, and main left the folder
      and the agent as they were rather than cut it. */
-  if (typeof dir === 'object') {
+  if (typeof dir === 'object' && !dir.live) {
+    if (dir.error) { toast('The folder was not changed', dir.error, 'bad'); return; }
     if (dir.busy) restartRefusedToast(restartStopsTurn() || {here:false, title:'', elsewhere: dir.elsewhere ? 1 : 0});
     return;
   }
+  // ATO-731: the chat on screen (and every new one) works there now; the agent kept running.
+  const live = typeof dir === 'object' && dir.live;
+  if (live) dir = dir.dir;
   const cloud = !!SK.workingDir;
   WORKSPACE = dir;
   if (cloud) act('session:new');
-  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
+  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + (live ? ' · this chat works there now' : ' · the agent is restarting there')});
   render();
 }
 
@@ -16230,6 +16238,10 @@ if (BR) {
   /* The one pull subscriber the flow needs. The LLM pane keeps its own —
      `dlOnPull` is inert unless this flow started the download. */
   BR.onPull((ev) => { if (ev) dlOnPull(ev); });
+  // ATO-1042: the starter model's download and arrival (starter-chat.js).
+  if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
+  if (typeof starterCatchUp === 'function') starterCatchUp();
+  BR.onPull((ev) => { if (typeof starterOnPull === 'function') starterOnPull(ev); });
 
   /* First run: the wizard opens itself, exactly as the TUI does.
      r5 item 9 — `fresh` is latched in the main process BEFORE anything can

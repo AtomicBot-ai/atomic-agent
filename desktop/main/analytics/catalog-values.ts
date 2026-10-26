@@ -79,7 +79,7 @@ export const SWITCH_REFUSALS = [
 export const DOWNLOAD_FAIL_REASONS = [
   "offline", "busy", "exited", "disk_full", "http_error", "no_progress", "other",
 ] as const;
-export const DOWNLOAD_TRIGGERS = ["onboarding", "settings", "selector", "other"] as const;
+export const DOWNLOAD_TRIGGERS = ["onboarding", "settings", "selector", "first_run", "other"] as const;
 export const UI_VIA = ["click", "menu", "shortcut", "palette", "slash", "other"] as const;
 
 /* ---- string shapes ---- */
