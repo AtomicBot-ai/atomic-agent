@@ -1249,6 +1249,27 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /**
+   * ATO-758: `/api/telegram/channel` — the channel's state, and another poller
+   * of the same bot when that is what holds it off. Null on an agent without
+   * the route, or one that is not up; never throws.
+   */
+  async telegramChannel(): Promise<{
+    available: boolean; state: string | null; lastError: string | null;
+    otherPoller: { where: "this_computer"; pid: number | null } | { where: "elsewhere" } | null;
+  } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/telegram/channel`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as NonNullable<Awaited<ReturnType<AgentClient["telegramChannel"]>>>;
+    } catch {
+      return null;
+    }
+  }
+
   // --- Lane B — context before the first message (item 3) ---
 
   /**

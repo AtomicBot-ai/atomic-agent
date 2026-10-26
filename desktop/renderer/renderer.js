@@ -1374,6 +1374,7 @@ const TG = {
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
   mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
+  channel:null, // ATO-758: the live channel as the agent reports it (BR.telegramChannel)
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   confirmAt:0, // ATO-435: when it was armed; a second click sooner than TG_CONFIRM_MIN_MS is the same double-click
   // The message's kind ('owed' carries a change the agent loads at start, 'info' anything else) and the agent
@@ -27356,10 +27357,12 @@ async function tgRefreshOnce() {
   if (!BR) return;
   TG.keysBusy = true;
   const stateDir = memStateDir();
-  const [cfg, env, dotenv, eff] = await Promise.all([
+  const [cfg, env, dotenv, eff, channel] = await Promise.all([
     BR.configGet(), BR.envPresent(['TELEGRAM_BOT_TOKEN']), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]}),
     tgCfgBlock() && typeof tgCfgBlock().enabled === 'boolean' ? Promise.resolve(null) : BR.configGetKey('telegram'),
+    BR.telegramChannel ? BR.telegramChannel().catch(() => null) : Promise.resolve(null),
   ]);
+  TG.channel = channel && channel.available ? channel : null;
   TG.keysBusy = false;
   if (cfg && cfg.ok && cfg.config) { LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared(); }   // ATO-204: B02's refusal
   TG.envKeys = Array.isArray(env) ? env : [];
@@ -27415,7 +27418,8 @@ function tgRestartOwed() { return TG.owedGen !== null && TG.owedGen === AGENT_GE
    the desktop can know. */
 function tgConnected(enabled, owner) { return tgHasToken() === true && owner !== null && enabled === true && !tgRestartOwed(); }
 function tgStatusHTML(enabled, owner) {
-  const on = tgConnected(enabled, owner);
+  // ATO-758: the settings say connected, but another poller holds the live channel off.
+  const on = tgConnected(enabled, owner) && !tgOtherPollerHTML(TG.channel);
   const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
     : owner === null ? 'Almost there: confirm your Telegram account below.'
     : enabled !== true ? 'Turned off: the bot does not answer until you turn it on below.'
@@ -27464,9 +27468,19 @@ function tgNoticesHTML() {
   const restartBtn = tgRestartButtonHTML(TG.restart, {esc, ic});
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
   return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
+    + tgOtherPollerHTML(TG.channel)
     + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">' + esc(TG_RESTART_APPLY) + '</span>', restartBtn)
       : (msg && !(TG.msgKind === 'owed' && tgRestartSpeaks(TG.restart)) ? note(esc(msg)) : '') + (owed ? note(esc(TG_RESTART_APPLY), restartBtn) : ''))
     + tgRestartNoticeHTML(TG.restart, {esc, ic});
+}
+/* ATO-758: the bot is polled by someone else, so this agent's channel cannot start. Said in words, with what to do. */
+function tgOtherPollerHTML(ch) {
+  const o = ch && ch.state !== 'up' ? ch.otherPoller : null;
+  if (!o) return '';
+  const text = o.where === 'this_computer'
+    ? 'Another Atomic Agent on this computer is already answering this bot' + (o.pid ? ' (process ' + o.pid + ')' : '') + ', so this one cannot. Quit the other one (the terminal agent, or an old agent left running), then press Restart agent.'
+    : 'This bot is already answering from somewhere else (another computer or app using the same token), so this agent cannot. Stop it there, or give this agent its own bot, then press Restart agent.';
+  return '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(text) + '</span></div>';
 }
 /* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
