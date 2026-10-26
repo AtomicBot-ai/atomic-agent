@@ -13,13 +13,20 @@ import {
   getLocalModelDef,
   isKnownEmbeddingModelId,
   LOCAL_MODELS_CATALOG,
+  STARTER_LOCAL_MODEL_ID,
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 13 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(13);
+  it("has exactly 14 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(14);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(13);
+    expect(ids.size).toBe(14);
+  });
+
+  it("names a small starter that is never auto-recommended (ATO-1041)", () => {
+    const starter = getLocalModelDef(STARTER_LOCAL_MODEL_ID);
+    expect(starter.fileSizeGb).toBeLessThan(1.5);
+    expect(starter.recommendRank).toBeUndefined();
   });
 
   it("defaults to qwen-3.5-4b", () => {

@@ -5,6 +5,7 @@
  */
 
 export type CuratedLocalModelId =
+  | "qwen-3.5-2b"
   | "qwen-3.5-4b"
   | "qwen-3.5-9b"
   | "qwen-3.5-35b"
@@ -273,6 +274,25 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     mmprojFilename: "mmproj-F16.gguf",
     mmprojFileSizeGb: 0.9,
   },
+  /* ATO-1041: the starter model the desktop fetches on its first launch
+     (not shipped in the installer, Nadya 25.10), so a first chat answers
+     without a key or a long download. Never auto-recommended: no
+     recommendRank, the picker's recommendation is unchanged. */
+  {
+    id: "qwen-3.5-2b",
+    name: "Qwen 3.5 2B GGUF",
+    filename: "Qwen3.5-2B-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-UD-Q4_K_XL.gguf",
+    fileSizeGb: 1.34,
+    sizeLabel: "1.3 GB",
+    description: "Tiny starter model, ready in a minute; any machine",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 4,
+    recommendedRamGb: 6,
+    family: "qwen",
+  },
   {
     id: "qwen-3.5-4b",
     name: "Qwen 3.5 4B GGUF",
@@ -445,6 +465,9 @@ export function setCustomLocalModels(defs: readonly LocalModelDef[]): void {
 export function listLocalModels(): readonly LocalModelDef[] {
   return [...LOCAL_MODELS_CATALOG, ...customModels];
 }
+
+/** ATO-1041: what the desktop downloads on its first launch, before anything is chosen. */
+export const STARTER_LOCAL_MODEL_ID: CuratedLocalModelId = "qwen-3.5-2b";
 
 export function getLocalModelDef(id: LocalModelId): LocalModelDef {
   const found = listLocalModels().find((m) => m.id === id);
