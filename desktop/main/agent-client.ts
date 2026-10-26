@@ -1125,6 +1125,10 @@ export class AgentClient extends EventEmitter {
       return { ok: true, supported: true, ...(typeof body.ms === "number" ? { ms: body.ms } : {}) };
     } catch (err) {
       return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
    * ATO-1022: the config file and its hash, read by the running agent
    * (`GET /api/config`) instead of an `atag config get` process. Null when
    * this agent cannot say (no hash in its answer, not reachable): the caller
@@ -1176,6 +1180,12 @@ export class AgentClient extends EventEmitter {
         return { ok: false, conflicted: true, error: "config changed since it was read" };
       }
       return { ok: false, conflicted: false, error: `config set failed: ${parsed.error?.message ?? `HTTP ${res.status}`}` };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * ATO-1024: `POST /api/memory/embeddings/reconnect` — have the running agent
    * attach the embedding server it did not find at boot. Null when the agent
    * has no such route or did not answer; never throws.
