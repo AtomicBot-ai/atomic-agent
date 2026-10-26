@@ -49,7 +49,10 @@ describe("POST /api/sessions/{id}/working-dir (ATO-731)", () => {
   });
 
   it("refuses a chat another process runs a turn in", async () => {
-    harness.runtime.sessionStore.save({ ...createEmptySessionState({ id: "wd-3", workingDir: harness.workingDir }), status: "running" });
+    // The store reports `running` from another process's live turn; a plain save of the field is normalised away.
+    const state = { ...createEmptySessionState({ id: "wd-3", workingDir: harness.workingDir }), status: "running" as const };
+    harness.runtime.sessionStore.save(state);
+    vi.spyOn(harness.runtime.sessionStore, "load").mockReturnValue(state);
     expect((await post("wd-3", harness.workingDir)).status).toBe(409);
   });
 });
