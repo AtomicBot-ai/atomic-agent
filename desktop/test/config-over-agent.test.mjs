@@ -2,7 +2,7 @@ import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 
-// Any call that falls through to the CLI fails loudly: there is no agent binary here.
+// Any call that falls through to the CLI goes to a binary that does not exist (or, where a real agent is installed, to it).
 process.env.ATOMIC_AGENT_BIN = '/nonexistent/atag-for-config-over-agent-test';
 const require = createRequire(import.meta.url);
 const { useConfigRoute, readWholeConfig, upsertProvider, setProviderModel } = require('../out/main/agent-cli.js');
@@ -81,7 +81,10 @@ test('a write refused because the file moved is read and planned again', async (
 });
 
 test('an agent that cannot answer sends the call to the CLI', async () => {
-  useConfigRoute({ read: async () => null, write: async () => null });
+  // The route answers null; whatever comes back is the CLI's (or its error), never the route's config.
+  let asked = 0;
+  useConfigRoute({ read: async () => { asked += 1; return null; }, write: async () => null });
   const read = await readWholeConfig();
-  assert.equal(read.ok, false);   // the CLI was asked, and there is no binary here
+  assert.equal(asked, 1);
+  assert.notEqual(read.config?.llm?.activeTextProvider, 'route-sentinel');
 });
