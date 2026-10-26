@@ -4265,6 +4265,11 @@ function afterChat(keep, hadFocus, caret) {
   } else if (hadFocus && !S.settings && !S.overlay && S.menuOpen === null) {
     e.focus();
     if (caret) e.setSelectionRange(Math.min(caret[0], e.value.length), Math.min(caret[1], e.value.length));
+  } else if (document.activeElement === e && (S.settings || S.overlay || S.menuOpen !== null)) {
+    /* ATO-1023 follow-up: renderContent morphs now, so this textarea outlives
+       the render and its caret no longer dies with it. A modal that opened
+       from the composer takes the caret out explicitly, as the rewrite used to. */
+    e.blur();
   }
   const sc = $('#scroller');
   if (sc) {
@@ -30350,7 +30355,19 @@ if (typeof window !== 'undefined') {
     // draft, so CTX.draftTokens is put back with everything else.
     const keep = {busy: S.busy, draft: S.draft, draftTokens: CTX.draftTokens};
     S.busy = true; render();
-    const out = window.__clickRetry();
+    /* ATO-901: while a turn runs the bubble's retry is the inert hint, not a
+       button that parks the text. A resend that still lands mid-turn (a
+       failure row's Try again calls resendUser) is driven directly. */
+    const inert = !document.querySelector('.turn.usr [data-resend]')
+      && !!document.querySelector('.turn.usr .msgact-off[aria-disabled="true"]');
+    const lastUser = S.log.slice().reverse().find((m) => m.k === 'user' && String(m.text || '').trim());
+    const before = S.log.length;
+    if (lastUser) resendUser(lastUser.id);
+    const e0 = $('#entry'), sb = document.querySelector('.sendbtn');
+    const out = lastUser ? {inert, before, after: S.log.length, draft: S.draft, entry: e0 ? e0.value : null,
+      focused: document.activeElement === e0, send: sb ? (sb.dataset.act || null) : null,
+      sendTitle: sb ? sb.getAttribute('title') : null, draftTokens: CTX.draftTokens,
+      toasts: S.toasts.map((t) => [t.t, t.s, t.kind || 'ok'])} : null;
     S.busy = keep.busy; S.draft = keep.draft; CTX.draftTokens = keep.draftTokens;
     const e = $('#entry'); if (e) e.value = keep.draft;
     render();

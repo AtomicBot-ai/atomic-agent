@@ -7813,7 +7813,8 @@ async function settingsTestPartC(
   // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
   // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite Can replace your data", "Sessions to import"])
+    // ATO-1034 (folders): "Put imported chats into folders" sits before Overwrite.
+    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Put imported chats into folders", "Overwrite Can replace your data", "Sessions to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
@@ -8128,10 +8129,13 @@ async function uiTest(
   const chatsHead = heads.heads.find((h) => h.list === "chats");
   const tasksShown = !!tasksHead && tasksHead.act !== null;
   check("item 4: no plus on the head row", heads.headPlus === false, JSON.stringify(heads.headPlus));
+  /* ATO-1034 (folders): the Chats header's one control is New folder
+     (`fnew:`), never a second way to start a chat. */
   check(
     "calm: New chat is a labelled button, and the Chats header has no plus",
     !!heads.newChat && heads.newChat.act === "session:new" && heads.newChat.visible
-      && /New chat/.test(heads.newChat.text) && !!chatsHead && chatsHead.buttons === 0,
+      && /New chat/.test(heads.newChat.text) && !!chatsHead
+      && (chatsHead.buttons === 0 || (chatsHead.buttons === 1 && chatsHead.act === "fnew:")),
     JSON.stringify({ newChat: heads.newChat, chats: chatsHead }),
   );
   check(
@@ -12946,8 +12950,14 @@ async function chromeTest(
        text sits on white — and hardcoding either here means editing this
        check every time the palette moves. What must hold is that the control
        reads as red in both themes, and that the two are not the same red. */
-    const retryDark = await js<string>("(() => { window.__theme('dark'); return window.__msgActs('user').dangerColor; })()");
-    const retryLight = await js<string>("(() => { window.__theme('light'); return window.__msgActs('user').dangerColor; })()");
+    /* ATO-1023: the row now survives the render (morph), so its colour
+       transition (--t-state) runs on a theme change: read it once it settled. */
+    await js<void>("window.__theme('dark')");
+    await new Promise((r) => setTimeout(r, 400));
+    const retryDark = await js<string>("window.__msgActs('user').dangerColor");
+    await js<void>("window.__theme('light')");
+    await new Promise((r) => setTimeout(r, 400));
+    const retryLight = await js<string>("window.__msgActs('user').dangerColor");
     const readsRed = (c: string): boolean => {
       const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c);
       return !!m && Number(m[1]) > 150 && Number(m[1]) > Number(m[2]) * 2 && Number(m[1]) > Number(m[3]) * 2;
@@ -13220,19 +13230,21 @@ async function chromeTest(
 
     // Retry while a turn runs must not masquerade as a steer.
     const busyRetry = await js<{
-      before: number; after: number; draft: string; entry: string; focused: boolean;
+      inert: boolean; before: number; after: number; draft: string; entry: string; focused: boolean;
       send: string | null; sendTitle: string | null; draftTokens: number;
       toasts: Array<[string, string, string]>;
     } | null>(
       "window.__retryWhileBusy()",
     );
     check(
+      /* ATO-901: the bubble's retry is inert while a turn runs; a resend that
+         still lands mid-turn (Try again) parks the text and says so in plain words. */
       "item 4: retry refuses to masquerade as a steer while a turn runs",
-      !!busyRetry && busyRetry.after === busyRetry.before
+      !!busyRetry && busyRetry.inert && busyRetry.after === busyRetry.before
         && busyRetry.entry === "Reply with exactly: chrome lane ready"
         && busyRetry.focused
-        && busyRetry.toasts.some((t) => t[0] === "A turn is already running"
-            && t[1] === "the message is in the composer — Enter folds it into this turn" && t[2] === "bad"),
+        && busyRetry.toasts.some((t) => t[0] === "The agent is still answering"
+            && t[1] === "Your message is in the box: press Enter to add it to this answer, or wait." && t[2] === "bad"),
       JSON.stringify(busyRetry),
     );
     // Review fix: the toast promises "Enter folds it into this turn", and the
