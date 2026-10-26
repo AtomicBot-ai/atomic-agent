@@ -26,3 +26,16 @@ test('an agent whose catalog has no starter: nothing to fetch', () => {
 test('the vendored catalog knows the starter', () => {
   assert.ok(curatedMetaIds().includes(STARTER_MODEL_ID));
 });
+
+test('an external server, or an offer made before: leave it', async () => {
+  assert.equal(starterVerdict({ chatModels: list(false), cloudReady: false, localMode: 'external' }).fetch, false);
+  assert.equal(starterVerdict({ chatModels: list(false), cloudReady: false, offeredBefore: true }).fetch, false);
+});
+
+test('a choice made during the download stands', () => {
+  const { starterStillWanted } = require('../out/main/starter-model.js');
+  assert.equal(starterStillWanted({ chatModels: list(false), cloudReady: false, activeProvider: 'local-llama' }), true);
+  assert.equal(starterStillWanted({ chatModels: list(false), cloudReady: true, activeProvider: 'local-llama' }), false);
+  assert.equal(starterStillWanted({ chatModels: list(true), cloudReady: false, activeProvider: 'local-llama' }), false);
+  assert.equal(starterStillWanted({ chatModels: list(false), cloudReady: false, activeProvider: 'openrouter' }), false);
+});

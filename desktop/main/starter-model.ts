@@ -19,17 +19,34 @@ export interface StarterInputs {
   chatModels: Array<{ id: string; downloaded: boolean }> | null;
   /** Whether a cloud provider with a usable key is configured. */
   cloudReady: boolean;
+  /** `localModels.mode`: an external server (Ollama, LM Studio) is the person's own choice. */
+  localMode?: string | null;
+  /** Offered once already (userData/starter.json): a removed or failed starter is not fetched again on every launch. */
+  offeredBefore?: boolean;
 }
 
 export type StarterVerdict =
   | { fetch: true }
-  | { fetch: false; why: "has_model" | "has_cloud" | "unknown" | "not_in_catalog" };
+  | { fetch: false; why: "has_model" | "has_cloud" | "unknown" | "not_in_catalog" | "external" | "offered" };
 
 export function starterVerdict(i: StarterInputs): StarterVerdict {
+  if (i.offeredBefore) return { fetch: false, why: "offered" };
   if (i.cloudReady) return { fetch: false, why: "has_cloud" };
+  if (i.localMode && i.localMode !== "managed") return { fetch: false, why: "external" };
   if (!i.chatModels) return { fetch: false, why: "unknown" };
   if (i.chatModels.some((m) => m.downloaded)) return { fetch: false, why: "has_model" };
   // An agent from before the starter entry does not list it: nothing to fetch.
   if (!i.chatModels.some((m) => m.id === STARTER_MODEL_ID)) return { fetch: false, why: "not_in_catalog" };
   return { fetch: true };
+}
+
+/**
+ * Whether the finished download should become the route: the person did not
+ * choose anything else meanwhile (a cloud key, another model on disk, another
+ * active provider).
+ */
+export function starterStillWanted(i: { chatModels: Array<{ id: string; downloaded: boolean }> | null; cloudReady: boolean; activeProvider: string | null }): boolean {
+  if (i.cloudReady) return false;
+  if (i.activeProvider && i.activeProvider !== "local-llama") return false;
+  return !(i.chatModels ?? []).some((m) => m.downloaded && m.id !== STARTER_MODEL_ID);
 }

@@ -102,7 +102,7 @@ import {
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
-import { STARTER_MODEL_ID, starterVerdict } from "./starter-model.js";
+import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
@@ -1615,22 +1615,43 @@ function wireIpc(client: AgentClient): void {
      model, then routes to it (starter-model.ts). The window hears
      `app:starterModel` ({ id, phase: downloading | ready | failed }) and the
      usual `cli:pull` frames. */
-  fetchStarterModel = async () => {
-    if (SMOKE || FIRST_RUN_PROBE || quitting) return;
+  /* The last thing said about the starter, for a window that loads after it was said (app:starterGet). */
+  let starterLast: Record<string, unknown> | null = null;
+  const starterSay = (ev: Record<string, unknown>) => { starterLast = ev; send("app:starterModel", ev); };
+  ipcMain.handle("app:starterGet", () => starterLast);
+  const starterState = async () => {
     const [list, read] = await Promise.all([chatModelsList(), readWholeConfig()]);
     const names = keyNamesAvailable();
-    const cloudReady = (read.config?.llm?.providers ?? []).some((p) => p.kind !== "llama-server" && providerIsUsable(p, names));
-    const verdict = starterVerdict({ chatModels: list.ok && list.models ? list.models : null, cloudReady });
+    return {
+      chatModels: list.ok && list.models ? list.models : null,
+      cloudReady: (read.config?.llm?.providers ?? []).some((p) => p.kind !== "llama-server" && providerIsUsable(p, names)),
+      localMode: (read.config?.localModels as { mode?: string } | undefined)?.mode ?? null,
+      activeProvider: read.config?.llm?.activeTextProvider ?? null,
+    };
+  };
+  const starterFile = () => join(app.getPath("userData"), "starter.json");
+  fetchStarterModel = async () => {
+    if (SMOKE || FIRST_RUN_PROBE || quitting) return;
+    const now = await starterState();
+    const verdict = starterVerdict({ ...now, offeredBefore: existsSync(starterFile()) });
     if (!verdict.fetch) return;
     const id = STARTER_MODEL_ID;
     const r = startModelPull(id, "first_run", (res) => {
-      if (!res.ok || quitting) { send("app:starterModel", { id, phase: "failed", error: res.error ?? null }); return; }
-      void switched(() => selectLocalModel(id)).then((sw) => {
-        const ok = !!(sw && (sw as { ok?: boolean }).ok);
-        send("app:starterModel", { id, phase: ok ? "ready" : "failed", error: ok ? null : ((sw as { error?: string }).error ?? null) });
-      });
+      if (!res.ok || quitting) { starterSay({ id, phase: "failed", error: res.error ?? null }); return; }
+      // Chosen something else meanwhile (a key, another model): the starter stays on disk, the choice stands.
+      void starterState().then((after) => {
+        if (!starterStillWanted(after)) { starterSay({ id, phase: "done" }); return; }
+        return switched(() => selectLocalModel(id)).then((sw) => {
+          const ok = !!(sw && (sw as { ok?: boolean }).ok);
+          starterSay({ id, phase: ok ? "ready" : "failed", error: ok ? null : ((sw as { error?: string }).error ?? null) });
+        });
+      }).catch(() => undefined);
     });
-    if (r.ok) send("app:starterModel", { id, phase: "downloading" });
+    if (r.ok) {
+      // Offered once: a removed or failed starter is not fetched again on the next launch.
+      try { writeFileSync(starterFile(), `${JSON.stringify({ id, at: Date.now() })}\n`); } catch { /* fetched again next launch */ }
+      starterSay({ id, phase: "downloading" });
+    }
   };
   /* r5 item 7 (setup wizard) — the llama.cpp runtime phase, streamed.
      `atag models pull` never fetches the backend, so the TUI's first
