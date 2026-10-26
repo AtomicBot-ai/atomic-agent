@@ -1587,8 +1587,10 @@ without a click.
 - Beta (ATO-575): Settings › General › "Get beta versions" reads the feed's
   `beta-mac.yml` / `beta.yml` / `beta-linux*.yml` instead of the build's own
   channel. Turning it off never downgrades: the beta stays until a stable
-  version is newer. A feed without beta files answers the check with the usual
-  "no update information" line.
+  version is newer. A feed without beta files falls back to the build's own
+  channel, so the switch never hides a stable release; when betas are
+  published, each stable release needs a `beta*` copy too, or beta readers
+  wait for the next beta.
 - The person's choices are in Electron userData `updates.json` (auto-check, beta,
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's

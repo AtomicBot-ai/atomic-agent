@@ -678,7 +678,22 @@ export class AppUpdateController {
       return { version: this.fakeVersion, releaseNotes: "Smoother model downloads and fixes for long chats." };
     }
     const updater = this.ensureUpdater();
-    const res = await updater.checkForUpdates();
+    let res: Awaited<ReturnType<AppUpdater["checkForUpdates"]>>;
+    try {
+      res = await updater.checkForUpdates();
+    } catch (err) {
+      /* ATO-575: a feed with no beta files yet. Beta must never cost the
+         stable releases, so the check reads the build's own channel instead. */
+      if (!this.prefs.beta || !/\b404\b|Cannot find channel|Cannot find latest/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      updater.channel = this.channel;
+      updater.allowDowngrade = false;
+      try {
+        res = await updater.checkForUpdates();
+      } finally {
+        updater.channel = "beta";
+        updater.allowDowngrade = false;
+      }
+    }
     /* electron-updater can answer a newer version that is not for this
        machine (a staged rollout, minimumSystemVersion): isUpdateAvailable is
        false then, and downloadUpdate would refuse it. */
