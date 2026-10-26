@@ -17,9 +17,9 @@ describe("POST /api/memory/embeddings/reconnect", () => {
   const post = () => fetch(`${harness.baseUrl}/api/memory/embeddings/reconnect`, { method: "POST" });
 
   it("reattaches through the runtime and answers where memory stands", async () => {
-    const reconnect = vi
-      .spyOn(harness.runtime, "reconnectMemoryEmbeddings")
-      .mockResolvedValue({ health: "ok", modelId: "embeddinggemma-2", changed: true });
+    // The method is optional on AgentRuntime, so it is replaced rather than spied on.
+    const reconnect = vi.fn(async () => ({ health: "ok" as const, modelId: "embeddinggemma-2", changed: true }));
+    (harness.runtime as { reconnectMemoryEmbeddings?: typeof reconnect }).reconnectMemoryEmbeddings = reconnect;
     const response = await post();
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ health: "ok", modelId: "embeddinggemma-2", changed: true });
