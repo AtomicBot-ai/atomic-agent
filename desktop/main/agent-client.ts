@@ -1099,6 +1099,36 @@ export class AgentClient extends EventEmitter {
     this.request<unknown>("POST", "/api/skills/uninstall", { name, source });
 
   /**
+   * ATO-1021: `POST /api/llm/active` — move the running agent onto a
+   * provider (and chat model) live, no restart. `supported: false` on an
+   * agent from before the route (404); `busy` when a turn holds the shared
+   * provider (409). Never throws: the caller restarts instead.
+   */
+  async setActiveLlm(providerId: string, model: string | null): Promise<{
+    ok: boolean; supported: boolean; busy?: boolean; ms?: number; error?: string;
+  }> {
+    try {
+      const res = await fetch(`${this.base()}/api/llm/active`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(model === null ? { providerId } : { providerId, model }),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (res.status === 404) {
+        const text = await res.text();
+        // A 404 that names the provider is the route's own answer; anything else is "no such route".
+        return { ok: false, supported: text.includes("is not configured"), error: "HTTP 404" };
+      }
+      if (res.status === 409) return { ok: false, supported: true, busy: true, error: "HTTP 409" };
+      if (!res.ok) return { ok: false, supported: true, error: `HTTP ${res.status}` };
+      const body = (await res.json()) as { ms?: number };
+      return { ok: true, supported: true, ...(typeof body.ms === "number" ? { ms: body.ms } : {}) };
+    } catch (err) {
+      return { ok: false, supported: true, error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
    * The composer's coding mode, applied live on the runtime by
    * /api/coding-mode exactly as the TUI does — no config write, no
    * restart. Older agents have no such route; a 404 is reported as

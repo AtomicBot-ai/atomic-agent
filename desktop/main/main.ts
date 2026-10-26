@@ -732,7 +732,7 @@ function parsePullProgress(
 // pins its provider at boot, so a switch whose write found the file already
 // naming that provider (the TUI or a hand edit moved the file while this
 // window was open) still has to restart when serve is behind the file.
-interface BootRoute { provider: string; model: string | null; key: string }
+interface BootRoute { provider: string; model: string | null; key: string; mode: string }
 let bootRoute: Promise<BootRoute | null> = Promise.resolve(null);
 /** The route a config names, as `atag serve` would boot on it. */
 function routeOf(cfg: UserConfigShape | undefined): BootRoute {
@@ -749,7 +749,7 @@ function routeOf(cfg: UserConfigShape | undefined): BootRoute {
     ? [rm.orchestratorProviderId, rm.orchestratorModel, rm.workerProviderId, rm.workerModel, rm.workers]
     : [];
   const key = JSON.stringify([provider, provider === "local-llama" ? null : model, rm.effective, ...seats]);
-  return { provider, model, key };
+  return { provider, model, key, mode: rm.effective };
 }
 async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null> {
   try {
@@ -1902,8 +1902,9 @@ function wireIpc(client: AgentClient): void {
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
-  // boot and has no reload route on 0.5.4, so a result that says
-  // `restart` is followed by the same stop+start `agent:restart` does.
+  // boot, so a result that says `restart` is followed by the same
+  // stop+start `agent:restart` does — unless the agent can take a cloud
+  // model pick live (ATO-1021, `liveSwap` below).
   /* Backlog 18 (its second review): whether and when the restart comes is
      backend-switch's call (restartAfterSwitch) — never under a turn in flight,
      never for a superseded result. It is handed this client: the turns it
@@ -1924,6 +1925,32 @@ function wireIpc(client: AgentClient): void {
          at once. So main puts back the last mode the window set first, and the
          turns waiting for this restart (agent:chat) go after it. */
       if (lastCodingMode && !quitting && client.status.state === "connected") await client.codingMode(lastCodingMode);
+    },
+    /* ATO-1021: the route as the file now names it, taken live by the running
+       agent. Only a single-mode cloud route: a local one moves a daemon, and
+       Fusion's seats are read at boot. The route serve is on is then this one,
+       so the next switch is judged against it. */
+    liveSwap: async (res) => {
+      if (quitting || client.status.state !== "connected" || !res.providerId) return false;
+      let cfg: UserConfigShape | undefined;
+      try {
+        cfg = ((await client.config()) as { config?: UserConfigShape }).config;
+      } catch {
+        return false;
+      }
+      const next = routeOf(cfg);
+      // Any llama-server entry, not only local-llama: a local route has a model profile serve sets up at boot.
+      const kind = (cfg?.llm?.providers ?? []).find((p) => p.id === next.provider)?.kind;
+      if (next.provider !== res.providerId || kind === "llama-server" || next.mode === "fusion") return false;
+      // No model: the file already names it, and a pin would rewrite the file under the window's next write.
+      const swap = await client.setActiveLlm(next.provider, null);
+      if (swap.busy) return "busy";
+      if (!swap.ok) {
+        console.warn(`[desktop] model switch: live swap not taken (${swap.error ?? "unknown"}), restarting the agent`);
+        return false;
+      }
+      bootRoute = Promise.resolve(next);
+      return true;
     },
   });
   // A restart held back for the turns runs as the last one ends — on a live agent; a dead one is started afresh by whoever starts it.
@@ -1962,8 +1989,12 @@ function wireIpc(client: AgentClient): void {
       const read = await readWholeConfig();
       drifted = read.ok && !!read.config && switchesOnTheirWay <= 1 && routeOf(read.config).key !== boot.key;
     }
-    const { restart, restartHeld } = await restartAfterSwitch(res, wanted || drifted, drifted);
-    return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), status: client.status };
+    /* ATO-1021: a cloud pick on an agent already on a single-mode cloud route,
+       with no daemon stopped or started, is swapped live instead of restarted. */
+    const live = !!boot && !drifted && res.transport === "native_tools"
+      && (res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" && boot.mode !== "fusion";
+    const { restart, restartHeld, liveSwapped } = await restartAfterSwitch(res, wanted || drifted, drifted, live);
+    return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), ...(liveSwapped ? { liveSwapped } : {}), status: client.status };
   };
   /* Backlog 35: the switches between their IPC call and applySwitch's answer.
      Not a generation count: a newer switch can end without a restart (no key,
