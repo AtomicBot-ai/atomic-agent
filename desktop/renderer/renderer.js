@@ -2667,7 +2667,7 @@ function emptyChat() {
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
-  return '<div class="emptychat">' + sharedSetupNoticeHTML() + emptyPlateHTML()
+  return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
     + '<div class="ghost">'
       + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
@@ -7006,6 +7006,8 @@ function submit(preparedSkillText, opts) {
   // promises it will not: post the pre-dictation draft and land the
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
+  // ATO-1042: the starter model is still on its way; the draft stays and the line above says how far it is.
+  if (typeof starterHoldsSend === 'function' && starterHoldsSend()) { toast('The model is still downloading', 'Your message stays here; send it once the line above says Ready.', 'bad'); return; }
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
   /* ATO-405: files in the composer ride in the message itself, as the
@@ -16230,6 +16232,9 @@ if (BR) {
   /* The one pull subscriber the flow needs. The LLM pane keeps its own —
      `dlOnPull` is inert unless this flow started the download. */
   BR.onPull((ev) => { if (ev) dlOnPull(ev); });
+  // ATO-1042: the starter model's download and arrival (starter-chat.js).
+  if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
+  BR.onPull((ev) => { if (typeof starterOnPull === 'function') starterOnPull(ev); });
 
   /* First run: the wizard opens itself, exactly as the TUI does.
      r5 item 9 — `fresh` is latched in the main process BEFORE anything can

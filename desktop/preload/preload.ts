@@ -249,6 +249,8 @@ contextBridge.exposeInMainWorld("atomic", {
   foldersGet: () => ipcRenderer.invoke("app:foldersGet"),
   foldersSet: (value: unknown) => ipcRenderer.invoke("app:foldersSet", value),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
+  // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
+  onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),
