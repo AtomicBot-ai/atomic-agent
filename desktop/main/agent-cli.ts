@@ -100,6 +100,37 @@ export function inCliStandIn(): boolean {
   return cliStandIns.getStore() !== undefined;
 }
 
+/* ---------------------------------------------------------------
+   ATO-1127 (Nadya 26.10) — connected to an agent on another computer,
+   Settings › Models shows THAT computer's models. `models list` and
+   `models status` are read from it (GET /api/local-models/*: the same text
+   the CLI prints, so every parser here stays as it is); every other models
+   command (pull, start, stop, use, remove, update) belongs to that computer
+   and is refused here in words, instead of quietly acting on this one. The
+   pulls and the engine update spawn the binary themselves, so they check
+   `remoteModels` too. `models search` (cloud catalogs) is not a local model.
+   --------------------------------------------------------------- */
+export interface RemoteModels {
+  text(view: "list" | "status"): Promise<string | null>;
+}
+let remoteModels: RemoteModels | null = null;
+/** main.ts: the remote agent's models while connected to one, null otherwise. */
+export function useRemoteModels(route: RemoteModels | null): void {
+  remoteModels = route;
+}
+/** Said for a models command while the app runs chats on another computer. */
+export const REMOTE_MODELS_HERE =
+  "This app is connected to an agent on another computer: its models are managed there (atag models … on that computer).";
+
+async function remoteModelsCall(route: RemoteModels, args: string[]): Promise<CliResult> {
+  const view = args[1] === "list" || args[1] === "status" ? args[1] : null;
+  if (!view || args.length > 2) return { ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE };
+  const text = await route.text(view);
+  return text === null
+    ? { ok: false, stdout: "", stderr: "", error: "The agent on the other computer did not say which models it has (it may be older than this app)." }
+    : { ok: true, stdout: text, stderr: "" };
+}
+
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
   /* ATO-416: anything but a read, run inside a config-lock hold, may have
      changed config.json under the hash that hold last read (a leaf
@@ -110,6 +141,8 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
   if (cas && !(args[0] === "config" && args[1] === "get")) cas.sha = undefined;
   const standIn = cliStandIns.getStore();
   if (standIn) return standIn.cli(args, input);
+  // `models search` reads a cloud provider's catalog, not this computer's models: it stays here.
+  if (remoteModels && args[0] === "models" && args[1] !== "search") return remoteModelsCall(remoteModels, args);
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {
@@ -545,6 +578,7 @@ export function modelsPull(
   id: string,
   onLine: (line: string) => void,
 ): { done: Promise<CliResult>; cancel: () => void } {
+  if (remoteModels) return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE }), cancel: () => {} };
   const binary = resolveBinary();
   // Item 7A: 96 — see modelsUse above (huggingface-model-def.ts:25).
   if (!binary || !/^[\w.-]{1,96}$/.test(id)) {
@@ -3183,6 +3217,8 @@ export interface EmbeddingCatalogModel {
 export async function modelsListEmbeddings(): Promise<{
   ok: boolean; models?: EmbeddingCatalogModel[]; daemon?: { running: boolean; pid: number | null; port: number | null; health: string }; error?: string;
 }> {
+  // Remote agent: its embedding models are not listed over the network yet; an empty list, not an error line.
+  if (remoteModels) return { ok: true, models: [] };
   const res = await cli(["models", "list-embeddings"], 45_000);
   if (!res.ok) return { ok: false, error: res.error };
   const models: EmbeddingCatalogModel[] = [];
@@ -3527,6 +3563,7 @@ export function modelsPullEmbedding(
   id: string,
   onLine: (line: string) => void,
 ): { done: Promise<CliResult>; cancel: () => void } {
+  if (remoteModels) return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE }), cancel: () => {} };
   const binary = resolveBinary();
   if (!binary || !MODEL_ID_RE.test(id)) {
     return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }), cancel: () => {} };
@@ -4351,6 +4388,12 @@ export function modelsUpdateStream(
   onLine: (line: string) => void,
   limits: { firstProgressMs?: number; stallMs?: number } = {},
 ): { done: Promise<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>; cancel: () => void } {
+  if (remoteModels) {
+    return {
+      done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
+      cancel: () => {},
+    };
+  }
   const binary = resolveBinary();
   if (!binary) {
     return {

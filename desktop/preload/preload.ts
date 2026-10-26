@@ -148,7 +148,8 @@ contextBridge.exposeInMainWorld("atomic", {
   diskSpace: () => ipcRenderer.invoke("app:diskSpace"),
 
   /** Shell affordances. */
-  chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
+  // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.
+  chooseWorkspace: (sessionId?: string | null) => ipcRenderer.invoke("app:chooseWorkspace", sessionId ?? null),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
   // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
   fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),
@@ -236,6 +237,10 @@ contextBridge.exposeInMainWorld("atomic", {
   // item 6: the sidebar's own pin/read state (Electron userData/prefs.json). ATO-165: the
   // chat row's menu is drawn in the window now (renderer chatMenuHTML), so no native menu here.
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
+  // ATO-1127: the agent on another computer.
+  remoteGet: () => ipcRenderer.invoke("app:remoteGet"),
+  remoteSet: (remote: { url: string; token: string }) => ipcRenderer.invoke("app:remoteSet", remote),
+  remoteClear: () => ipcRenderer.invoke("app:remoteClear"),
   // ATO-1030: hardware acceleration, as this run has it and as the next launch will.
   gpuGet: () => ipcRenderer.invoke("app:gpuGet"),
   gpuSet: (on: boolean) => ipcRenderer.invoke("app:gpuSet", on),
@@ -245,6 +250,9 @@ contextBridge.exposeInMainWorld("atomic", {
   foldersGet: () => ipcRenderer.invoke("app:foldersGet"),
   foldersSet: (value: unknown) => ipcRenderer.invoke("app:foldersSet", value),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
+  // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
+  onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
+  starterGet: () => ipcRenderer.invoke("app:starterGet"),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),

@@ -21,6 +21,7 @@ import { chromeTheme } from "../theme/theme.js";
 import { fitToWidth } from "../components/fit-to-width.js";
 import { formatTokens } from "../components/format-tokens.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
+import { isKnownLimit } from "./context-chip.js";
 
 /** Panel width, clamped to the pane on narrow terminals. */
 const PREFERRED_WIDTH = 58;
@@ -316,7 +317,10 @@ function TaskSelector({
   onStep?: (delta: number) => void;
 }): ReactElement {
   const label = " tasks per turn".padEnd(LABEL_WIDTH);
-  const value = String(selected).padStart(String(PAIRS_MAX).length);
+  // No task limit on this route: say so rather than print the sentinel.
+  const value = (isKnownLimit(selected) ? String(selected) : "all").padStart(
+    String(PAIRS_MAX).length,
+  );
   return (
     <Box>
       <Text color={chromeTheme.colors.railForeground}>{label}</Text>

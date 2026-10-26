@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, shell, systemPreferences, Tray } from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
@@ -27,7 +27,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient, APPROVAL_DECISIONS } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -64,6 +64,8 @@ import {
   traceTools,
   // Lane B — backend switch
   chatModelsList,
+  keyNamesAvailable,
+  providerIsUsable,
   configSetWhole,
   explainConfigWriteFailure,
   managedDataDir,
@@ -100,6 +102,8 @@ import {
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
+import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
+import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
@@ -210,6 +214,7 @@ import {
   importAgentDir,
   IMPORT_DOMAINS,
   useConfigRoute,
+  useRemoteModels,
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -1448,7 +1453,9 @@ function wireIpc(client: AgentClient): void {
       });
       appUpdater()?.turnsChanged();
     }
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
+    // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
+    // A remote agent opens new chats in its own folder: this computer's path means nothing there.
+    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.isRemote ? undefined : client.status.workingDir);
     return { ok: true, turnId };
   }
 
@@ -1523,7 +1530,7 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
-  ipcMain.handle("app:chooseWorkspace", async () => {
+  ipcMain.handle("app:chooseWorkspace", async (_event, sessionId: unknown) => {
     if (!win) return null;
     const picked = await dialog.showOpenDialog(win, {
       properties: ["openDirectory", "createDirectory"],
@@ -1532,6 +1539,20 @@ function wireIpc(client: AgentClient): void {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
+    /* ATO-731 (Nadya 26.10): each chat keeps its own folder and the agent is
+       not restarted. The chat on screen moves there (refused only while that
+       chat runs a turn), and every new chat opens there (agent:chat sends
+       working_dir). An agent without the route takes the old way below. */
+    const sid = typeof sessionId === "string" && sessionId ? sessionId : null;
+    const moved = client.status.state === "connected" ? await client.setSessionWorkingDir(sid, dir) : { supported: false as const };
+    if (moved.supported) {
+      if (moved.busy) return { busy: true, elsewhere: false };
+      if (moved.error) return { error: moved.error };
+      A.workspaceChosen(dir);
+      client.status.workingDir = dir;
+      writeWorkspace(app.getPath("userData"), dir);
+      return { dir, live: true };
+    }
     /* ATO-733: a turn may have begun while the picker was open; the restart
        below would cut it. The window says so and the folder stays as it was
        (workspace-busy.ts); the folder and its analytics change only when the
@@ -1580,8 +1601,13 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
+    return startModelPull(id, (opts as { trigger?: unknown } | undefined)?.trigger);
+  });
+  /* The weights download, for the window's pull and for the launch's starter
+     model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
+     download card follows either (dlAdopt). `onDone` hears how it ended. */
+  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void) {
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
-    const trigger = (opts as { trigger?: unknown } | undefined)?.trigger;   // analytics label only
     const running = downloadRunning();
     // A refusal for the download already running is the window following it (dlAdopt), not a failure.
     if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: DOWNLOAD_BUSY, running }; }
@@ -1598,9 +1624,53 @@ function wireIpc(client: AgentClient): void {
       pull = null;
       A.downloadFinished(id, res);
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+      onDone?.(res);
     });
     return { ok: true, started: true };
-  });
+  }
+
+  /* ATO-1041: the first launch with nothing to answer on fetches the starter
+     model, then routes to it (starter-model.ts). The window hears
+     `app:starterModel` ({ id, phase: downloading | ready | failed }) and the
+     usual `cli:pull` frames. */
+  /* The last thing said about the starter, for a window that loads after it was said (app:starterGet). */
+  let starterLast: Record<string, unknown> | null = null;
+  const starterSay = (ev: Record<string, unknown>) => { starterLast = ev; send("app:starterModel", ev); };
+  ipcMain.handle("app:starterGet", () => starterLast);
+  const starterState = async () => {
+    const [list, read] = await Promise.all([chatModelsList(), readWholeConfig()]);
+    const names = keyNamesAvailable();
+    return {
+      chatModels: list.ok && list.models ? list.models : null,
+      cloudReady: (read.config?.llm?.providers ?? []).some((p) => p.kind !== "llama-server" && providerIsUsable(p, names)),
+      localMode: (read.config?.localModels as { mode?: string } | undefined)?.mode ?? null,
+      activeProvider: read.config?.llm?.activeTextProvider ?? null,
+    };
+  };
+  const starterFile = () => join(app.getPath("userData"), "starter.json");
+  fetchStarterModel = async () => {
+    if (SMOKE || FIRST_RUN_PROBE || quitting) return;
+    const now = await starterState();
+    const verdict = starterVerdict({ ...now, offeredBefore: existsSync(starterFile()) });
+    if (!verdict.fetch) return;
+    const id = STARTER_MODEL_ID;
+    const r = startModelPull(id, "first_run", (res) => {
+      if (!res.ok || quitting) { starterSay({ id, phase: "failed", error: res.error ?? null }); return; }
+      // Chosen something else meanwhile (a key, another model): the starter stays on disk, the choice stands.
+      void starterState().then((after) => {
+        if (!starterStillWanted(after)) { starterSay({ id, phase: "done" }); return; }
+        return switched(() => selectLocalModel(id)).then((sw) => {
+          const ok = !!(sw && (sw as { ok?: boolean }).ok);
+          starterSay({ id, phase: ok ? "ready" : "failed", error: ok ? null : ((sw as { error?: string }).error ?? null) });
+        });
+      }).catch(() => undefined);
+    });
+    if (r.ok) {
+      // Offered once: a removed or failed starter is not fetched again on the next launch.
+      try { writeFileSync(starterFile(), `${JSON.stringify({ id, at: Date.now() })}\n`); } catch { /* fetched again next launch */ }
+      starterSay({ id, phase: "downloading" });
+    }
+  };
   /* r5 item 7 (setup wizard) — the llama.cpp runtime phase, streamed.
      `atag models pull` never fetches the backend, so the TUI's first
      phase row can only be driven by `models update`. It rides the same
@@ -1917,6 +1987,39 @@ function wireIpc(client: AgentClient): void {
   // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
   // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
+  /* ATO-1127: the "Connect to another computer" window. Set checks the address
+     and the key first (probeRemoteAgent) and saves only what answered; the
+     agent is then let go of and the remote one connected. Clear goes back to
+     this computer's own agent. */
+  ipcMain.handle("app:remoteGet", () => {
+    const r = readRemoteAgent(app.getPath("userData"), keyBox());
+    return { url: r?.url ?? null, connected: client.isRemote && client.status.state === "connected" };
+  });
+  ipcMain.handle("app:remoteSet", async (_event, payload: unknown) => {
+    const { url, token } = (payload ?? {}) as { url?: unknown; token?: unknown };
+    const clean = typeof url === "string" ? cleanRemoteUrl(url) : null;
+    if (!clean) return { ok: false, error: "Type an address like http://192.168.1.20:8787 (no path)." };
+    if (typeof token !== "string" || token.trim().length === 0) return { ok: false, error: "Type the agent's API key." };
+    const probe = await probeRemoteAgent(clean, token.trim());
+    if (!probe.ok) return probe;
+    if (!writeRemoteAgent(app.getPath("userData"), keyBox(), { url: clean, token: token.trim() })) {
+      return { ok: false, error: "This system has no keychain to keep the key safely, so it was not saved." };
+    }
+    A.agentRestarting("other");
+    await client.stop();
+    client.setRemote({ url: clean, token: token.trim() });
+    const status = await client.start();
+    return status.state === "connected" ? { ok: true } : { ok: false, error: status.error ?? "Could not connect." };
+  });
+  ipcMain.handle("app:remoteClear", async () => {
+    writeRemoteAgent(app.getPath("userData"), keyBox(), null);
+    if (!client.isRemote) return { ok: true };
+    await client.stop();
+    client.setRemote(null);
+    await client.start();
+    void startLocalDaemonAtBoot();
+    return { ok: true };
+  });
   // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
   ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
   ipcMain.handle("app:gpuSet", (_event, on: unknown) => {
@@ -3074,6 +3177,9 @@ function wireIpc(client: AgentClient): void {
     } else {
       useConfigRoute(null);
     }
+    // ATO-1127: on another computer's agent, Settings › Models reads that computer's models,
+    // also while it is not answering (then it says so) — never this computer's models instead.
+    useRemoteModels(client.isRemote ? { text: (view) => client.localModelsText(view) } : null);
   });
 }
 
@@ -9690,6 +9796,9 @@ async function installEngineAtLaunch(): Promise<boolean> {
  * and the active model is on disk; a running daemon, an external or cloud
  * route, or a model not yet downloaded leaves everything as it is.
  */
+/** ATO-1041: set by wireIpc (it needs the pull slot and the switch path); run once the launch start settled. */
+let fetchStarterModel: (() => Promise<void>) | null = null;
+
 async function startLocalDaemonAtBoot(): Promise<void> {
   let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
   try {
@@ -10054,6 +10163,8 @@ void app.whenReady().then(async () => {
     homedir(),
   );
   agent = new AgentClient(workspace);
+  // ATO-1127: an agent on another computer, when one was saved (remote-agent.ts).
+  if (!SMOKE && !FIRST_RUN_PROBE) agent.setRemote(readRemoteAgent(app.getPath("userData"), keyBox()));
   win = createWindow();
   // Item 2 (voice input): the third teardown path — this window going away
   // while the app stays alive on macOS.
@@ -10116,11 +10227,14 @@ void app.whenReady().then(async () => {
       })
       .catch(() => undefined));
     void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(() => {
-      void pairBeside();
+      // ATO-1127: a remote agent runs its own models; this computer starts none for it.
+      const remote = !!agent?.isRemote;
+      if (!remote) void pairBeside();
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
-      else void startLocalDaemonAtBoot();
+      else if (!remote) void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).catch(() => undefined);
+      else A.launchBackendSettled(true);
     });
   });
 
@@ -10161,6 +10275,7 @@ function rebuildMenu(): void {
       rebuildMenu();
       return;
     }
+    if (command === "remote:open") { openRemoteConnect(); return; }
     if (command === "bg:startAtLogin") {
       // A dev or unpackaged run would register the bare Electron binary, not the app.
       if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
@@ -13690,4 +13805,37 @@ async function r5SeamTest(
     after.opened === true && after.open === false,
     `openedAfterClose=${after.opened} wizardOpen=${after.open}`,
   );
+}
+
+/* ---- ATO-1127: connect to an agent on another computer ---- */
+
+/** The system keychain behind the saved remote key (Electron safeStorage). */
+function keyBox(): KeyBox {
+  return {
+    available: () => safeStorage.isEncryptionAvailable(),
+    seal: (plain) => safeStorage.encryptString(plain).toString("base64"),
+    open: (sealed) => safeStorage.decryptString(Buffer.from(sealed, "base64")),
+  };
+}
+
+let remoteWindow: BrowserWindow | null = null;
+/** Agent › Connect to Another Computer…: a small window over the main one (renderer/remote-connect.html). */
+function openRemoteConnect(): void {
+  if (remoteWindow && !remoteWindow.isDestroyed()) { remoteWindow.focus(); return; }
+  remoteWindow = new BrowserWindow({
+    width: 480,
+    height: 380,
+    resizable: false,
+    minimizable: false,
+    title: "Connect to another computer",
+    ...(win && !win.isDestroyed() ? { parent: win, modal: true } : {}),
+    webPreferences: {
+      preload: join(__dirname, "..", "preload", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  remoteWindow.on("closed", () => { remoteWindow = null; });
+  void remoteWindow.loadFile(join(__dirname, "..", "renderer", "remote-connect.html"));
 }

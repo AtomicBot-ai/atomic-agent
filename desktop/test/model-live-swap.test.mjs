@@ -74,3 +74,15 @@ test('a swap the agent refuses for a turn it runs (409) holds the restart instea
   assert.deepEqual(await restartAfterSwitch(PICK, true, false, true), { restart: false, restartHeld: true });
   assert.deepEqual(a.calls, { restart: 0, swap: 1 });
 });
+
+test('a live pick never pays a restart an earlier switch owes: the owed restart runs instead', async () => {
+  // A switch under a running turn leaves a restart owed ...
+  let turns = 1;
+  const a = { calls: { restart: 0, swap: 0 }, turnsInFlight: () => turns, restart: async () => { a.calls.restart += 1; }, liveSwap: async () => { a.calls.swap += 1; return true; } };
+  restartsAgent(a);
+  assert.deepEqual(await restartAfterSwitch(PICK, true, false, false), { restart: false, restartHeld: true });
+  // ... and the next pick, live-swappable, restarts rather than swapping over it.
+  turns = 0;
+  assert.deepEqual(await restartAfterSwitch(PICK, true, false, true), { restart: true });
+  assert.deepEqual(a.calls, { restart: 1, swap: 0 });
+});
