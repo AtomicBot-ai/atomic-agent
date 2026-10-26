@@ -73,6 +73,11 @@ const config = {
       "from": "LICENSE",
       "to": "LICENSE.txt"
     },
+    /* ATO-598: the tray / menu bar icon (main.ts syncTray). */
+    {
+      "from": "build/icons/32x32.png",
+      "to": "tray.png"
+    },
     {
       "from": "THIRD-PARTY-NOTICES.txt",
       "to": "THIRD-PARTY-NOTICES.txt"

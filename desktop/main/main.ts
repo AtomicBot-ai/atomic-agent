@@ -10182,10 +10182,18 @@ async function syncTray(): Promise<void> {
     return;
   }
   if (tray) return;
-  const icon = await app.getFileIcon(process.execPath, { size: "small" }).catch(() => nativeImage.createEmpty());
+  /* The app's own icon, shipped as resources/tray.png (electron-builder.cjs);
+     the executable's icon is the fallback. getFileIcon on Linux often answers
+     a blank image, and a blank tray icon cannot be clicked. */
+  const bundled = app.isPackaged ? join(process.resourcesPath, "tray.png") : "";
+  const icon = bundled && existsSync(bundled)
+    ? nativeImage.createFromPath(bundled)
+    : await app.getFileIcon(process.execPath, { size: "small" }).catch(() => nativeImage.createEmpty());
   // Turned off, or made by another call, while the icon was read.
   if (tray || !readBackgroundPrefs(userData).keepRunning) return;
-  tray = new Tray(icon.isEmpty() ? icon : icon.resize({ width: 16, height: 16 }));
+  // No image to show: no tray, so window-all-closed quits as before rather than leave an app nobody can reach.
+  if (icon.isEmpty()) { console.error("[desktop] keep running: no tray icon on this system, closing the window still quits"); return; }
+  tray = new Tray(icon.resize({ width: 16, height: 16 }));
   tray.setToolTip("Atomic Agent");
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: "Open Atomic Agent", click: () => openWindowAgain() },
@@ -10201,8 +10209,9 @@ app.on("window-all-closed", () => {
   // system microphone indicator lit, which is worse for trust than any bug
   // in the transcript.
   voice.kill();
-  // ATO-598: unless Keep Running is on, closing the last window quits off macOS.
-  if (quitsOnLastWindow(process.platform, readBackgroundPrefs(app.getPath("userData")))) app.quit();
+  // ATO-598: unless Keep Running is on, closing the last window quits off macOS;
+  // and with no tray icon to come back through, it quits anyway.
+  if (quitsOnLastWindow(process.platform, readBackgroundPrefs(app.getPath("userData"))) || (process.platform !== "darwin" && !tray)) app.quit();
 });
 
 /* Item 30: the quit's own shutdown — the agent's stop, then the model
