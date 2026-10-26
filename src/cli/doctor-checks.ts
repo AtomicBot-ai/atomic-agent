@@ -112,7 +112,9 @@ function checkMcpCommands(ctx: DoctorContext): DoctorFinding[] {
   servers.forEach((raw, i) => {
     const server = asObject(raw);
     const transport = asObject(server?.transport);
-    if (!server || server.enabled === false || transport?.kind !== "stdio" || typeof transport.command !== "string") return;
+    // `enabled` goes through parseBool in the schema: "false", "0", "off", "no" are off too.
+    const off = server?.enabled === false || (typeof server?.enabled === "string" && ["false", "0", "off", "no"].includes(server.enabled.toLowerCase()));
+    if (!server || off || transport?.kind !== "stdio" || typeof transport.command !== "string") return;
     const name = typeof server.name === "string" ? server.name : `#${i}`;
     if (commandExists(transport.command, ctx)) {
       out.push({ check: "mcp", status: "ok", message: `${name}: ${transport.command} found` });
@@ -151,8 +153,9 @@ export function findOnPath(command: string, env: NodeJS.ProcessEnv = process.env
     if (!dir) continue;
     for (const ext of exts) {
       try {
-        accessSync(join(dir, command + ext), platform === "win32" ? constants.F_OK : constants.X_OK);
-        return true;
+        const path = join(dir, command + ext);
+        accessSync(path, platform === "win32" ? constants.F_OK : constants.X_OK);
+        if (statSync(path).isFile()) return true;
       } catch {
         // not here
       }

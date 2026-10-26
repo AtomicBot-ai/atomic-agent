@@ -26,6 +26,7 @@ const HELP = [
 export interface DoctorCommandDeps {
   stateDir?: string;
   write?: (text: string) => void;
+  writeErr?: (text: string) => void;
   context?: Partial<DoctorContext>;
   now?: () => Date;
 }
@@ -86,6 +87,8 @@ export async function doctorCommand(args: string[], deps: DoctorCommandDeps = {}
     chmod: (p, m) => chmodSync(p, m),
     ...deps.context,
   };
+  // With --json, stdout is the findings array alone; what --fix did goes to stderr.
+  const say = args.includes("--json") ? (deps.writeErr ?? ((t: string) => { process.stderr.write(t); })) : write;
   let findings = runDoctorChecks(ctx);
   const fixable = findings.filter((f) => f.fix);
 
@@ -101,11 +104,11 @@ export async function doctorCommand(args: string[], deps: DoctorCommandDeps = {}
       const tree = readRawConfigTree(configPath);
       for (const f of treeFixes) f.fix!.tree!(tree);
       writeRawUserConfigFileSync(configPath, tree);
-      write(`backed up config.json to ${backup} (atag doctor --undo puts it back)\n`);
+      say(`backed up config.json to ${backup} (atag doctor --undo puts it back)\n`);
     }
     for (const f of fixable) {
       f.fix!.file?.();
-      write(`fixed  ${f.check}: ${f.fix!.describe}\n`);
+      say(`fixed  ${f.check}: ${f.fix!.describe}\n`);
     }
     findings = runDoctorChecks(ctx);
   }

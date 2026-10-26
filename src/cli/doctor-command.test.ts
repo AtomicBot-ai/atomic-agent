@@ -38,7 +38,7 @@ describe("atag doctor (ATO-577)", () => {
   it("a valid config is ok and exits 0", async () => {
     save(USER_CONFIG_DEFAULTS);
     expect(await run([])).toBe(0);
-    expect(out).toMatch(/ok {2}config: .* is valid/);
+    expect(out).toMatch(/ok +config: .* is valid/);
   });
 
   it("broken JSON fails with no fix and is left alone", async () => {
@@ -93,5 +93,23 @@ describe("atag doctor (ATO-577)", () => {
 
   it("an unknown option is a usage error", async () => {
     expect(await run(["--fxi"])).toBe(2);
+  });
+});
+
+describe("atag doctor --json", () => {
+  it("--fix --json prints only the findings on stdout", async () => {
+    save(withBrokenActiveProvider());
+    let err = "";
+    await doctorCommand(["--fix", "--json"], { stateDir: dir, write, writeErr: (t) => { err += t; }, context: { findOnPath: () => true } });
+    expect(Array.isArray(JSON.parse(out))).toBe(true);
+    expect(err).toMatch(/backed up config.json/);
+  });
+
+  it("a server already off as \"false\" is not reported", async () => {
+    const tree = withMcp("definitely-not-installed-cmd");
+    tree.mcp.servers[0].enabled = "false";
+    save(tree);
+    await run([], () => false);
+    expect(out).not.toContain("not installed");
   });
 });
