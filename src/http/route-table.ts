@@ -10,6 +10,7 @@ import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
   createGetConfigHandler,
   createPatchConfigHandler,
+  createPutConfigHandler,
 } from "./route-config.js";
 import {
   createGetSkillHandler,
@@ -99,6 +100,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/config",
       handler: createPatchConfigHandler(),
     },
+    // ATO-1022: the desktop's whole-file write, without an `atag config set` process.
+    { method: "PUT", path: "/api/config", handler: createPutConfigHandler() },
     { method: "GET", path: "/api/skills", handler: createListSkillsHandler() },
     {
       method: "GET",
