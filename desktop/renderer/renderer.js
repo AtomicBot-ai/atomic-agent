@@ -1635,6 +1635,8 @@ const P = {
   alert:'<path d="M8 2.5 14 13H2zM8 6.5v3M8 11.3v.2"/>',
   info:'<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.5M8 5.2v.2"/>',
   stop:'<rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="currentColor" stroke="none"/>',
+  // ATO-1046: Read aloud.
+  speak:'<path d="M3 6.5h2l3-2.5v8l-3-2.5H3z"/><path d="M10.5 6a2.8 2.8 0 0 1 0 4M12.3 4.3a5.2 5.2 0 0 1 0 7.4"/>',
   up:'<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
   arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
   copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
@@ -2995,7 +2997,8 @@ function msgActs(m) {
         ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
           + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
         : '';
-    return '<div class="' + cls + '">' + again + copy + '</div>';
+    // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
+    return '<div class="' + cls + '">' + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '') + '</div>';
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
@@ -6715,6 +6718,8 @@ function act(a) {
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
+  // ATO-1046: View › Read Replies Aloud (tts.js).
+  if (a === 'tts:auto' && typeof ttsSetAuto === 'function') { ttsSetAuto(!TTS.auto); return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
@@ -7549,6 +7554,8 @@ document.addEventListener('click', (e) => {
   // r5 item 4: real <button> elements inside a `.turn`, so no other selector in
   // this handler competes for them.
   const cp = t.closest('[data-copy]'); if (cp) { e.preventDefault(); copyMessage(cp.dataset.copy); return; }
+  // ATO-1046: the speaker under a reply.
+  const sp = t.closest('[data-speak]'); if (sp) { e.preventDefault(); const m = S.log.find((x) => x.id === sp.dataset.speak); if (m) ttsToggle(m.id, m.text); return; }
   const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
   const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
@@ -10351,6 +10358,8 @@ function onChatEvent(ev) {
        '(no reply)'. `item` is only defined for the turn streaming into the
        chat on screen (the turnId guard above), which is the only transcript
        the bar could honestly attach to. */
+    // ATO-1046: View › Read Replies Aloud reads a finished reply of the chat on screen.
+    if (ev.kind === 'done' && item && typeof ttsTurnEnded === 'function') ttsTurnEnded(item);
     if (ev.kind === 'done' && PLAN.startedMode === 'plan' && item && String(item.text || '').trim()) {
       PLAN.on = true; PLAN.itemId = item.id; PLAN.sessionId = S.agentSession;
     }
@@ -30167,7 +30176,7 @@ if (typeof window !== 'undefined') {
             anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
-            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.classList.contains('msgact-off') ? 'hint' : '?'),
+            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.dataset.speak ? 'speak' : b.classList.contains('msgact-off') ? 'hint' : '?'),
             // ATO-900: the muted hint names itself in data-tip (a CSS tooltip), the others in title.
             titles: btns.map((b) => b.getAttribute('title') || b.getAttribute('data-tip')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
@@ -30191,7 +30200,8 @@ if (typeof window !== 'undefined') {
          that gained a data-resend or data-act would read as resend or '?'.
          ATO-900: its sentence is data-tip (the CSS tooltip), and one that
          also carried a native title would show it twice, so it reads '?'. */
-      return Array.from(box.querySelectorAll('button')).map((b) => b.dataset.resend
+      // ATO-1046: Read aloud is not part of the retry contract these checks pin.
+      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.resend
         ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
         : b.dataset.copy ? 'copy'
           : b.classList.contains('msgact-off') && !b.dataset.act && !b.hasAttribute('title') && b.getAttribute('aria-label') === b.getAttribute('data-tip')
