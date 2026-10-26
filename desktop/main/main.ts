@@ -1454,7 +1454,8 @@ function wireIpc(client: AgentClient): void {
       appUpdater()?.turnsChanged();
     }
     // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.status.workingDir);
+    // A remote agent opens new chats in its own folder: this computer's path means nothing there.
+    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.isRemote ? undefined : client.status.workingDir);
     return { ok: true, turnId };
   }
 
@@ -1546,6 +1547,7 @@ function wireIpc(client: AgentClient): void {
     const moved = client.status.state === "connected" ? await client.setSessionWorkingDir(sid, dir) : { supported: false as const };
     if (moved.supported) {
       if (moved.busy) return { busy: true, elsewhere: false };
+      if (moved.error) return { error: moved.error };
       A.workspaceChosen(dir);
       client.status.workingDir = dir;
       writeWorkspace(app.getPath("userData"), dir);

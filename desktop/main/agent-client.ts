@@ -1384,7 +1384,7 @@ export class AgentClient extends EventEmitter {
    * that chat runs a turn. With no stored chat yet (`id` null or unknown) only
    * the route's presence is checked: the next chat opens there through `working_dir`.
    */
-  async setSessionWorkingDir(id: string | null, workingDir: string): Promise<{ supported: true; busy?: boolean } | { supported: false }> {
+  async setSessionWorkingDir(id: string | null, workingDir: string): Promise<{ supported: true; busy?: boolean; error?: string } | { supported: false }> {
     try {
       const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(id ?? "-")}/working-dir`, {
         method: "POST",
@@ -1393,10 +1393,15 @@ export class AgentClient extends EventEmitter {
         signal: AbortSignal.timeout(10_000),
       });
       const text = await res.text();
+      if (res.ok) return { supported: true };
       if (res.status === 404 && /No route for/.test(text)) return { supported: false };
       if (res.status === 409) return { supported: true, busy: true };
-      // 404 for a chat not stored yet is fine: the folder applies to the chat it starts.
-      return { supported: true };
+      // A chat not stored yet: the folder applies to the chat it starts.
+      if (res.status === 404 && /not found/.test(text)) return { supported: true };
+      // A folder the agent cannot use (a remote agent has no such path), a refused key, an error: nothing moved.
+      let message = `HTTP ${res.status}`;
+      try { message = (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? message; } catch { /* not JSON */ }
+      return { supported: true, error: message };
     } catch {
       return { supported: false };
     }

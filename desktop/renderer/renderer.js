@@ -11319,6 +11319,7 @@ function applyWorkspaceChoice(dir) {
   /* ATO-733: a turn began while the picker was open, and main left the folder
      and the agent as they were rather than cut it. */
   if (typeof dir === 'object' && !dir.live) {
+    if (dir.error) { toast('The folder was not changed', dir.error, 'bad'); return; }
     if (dir.busy) restartRefusedToast(restartStopsTurn() || {here:false, title:'', elsewhere: dir.elsewhere ? 1 : 0});
     return;
   }
