@@ -23189,18 +23189,22 @@ function skpRemoveConfirmHTML() {
           + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="[y] delete">Delete</button></div>')
     + '</div></div>';
 }
-/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override. */
+/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override.
+   PR #916: a CAUTION verdict asks too, in the calmer amber frame. */
 function skpInstallConfirmHTML() {
   const c = SKP.installConfirm;
-  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
-    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
+  const caution = c.verdict === 'caution';
+  return '<div class="set-overlay"><div class="tk-modal' + (caution ? '' : ' tk-modal--danger') + ' set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
+    + '<div class="set-mhead"><span class="tk-ico ' + (caution ? 'tk-ico--amber' : 'tk-ico--red') + '">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
     + '<p>Install <b class="mono">' + esc(c.identifier) + '</b>?</p>'
     // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, shown plainly — no invented rule id in the finding slot.
     + '<div class="tuierr tk-out set-scan">' + esc(c.message) + '</div>'
     + '<p class="set-cap">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</p>'
     + (SKP.installing ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">installing…</span></div>'
         : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="[n] cancel">Cancel</button>'
-          + '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>')
+          + (c.verdict === 'caution'
+            ? '<button class="btn btn-p sm" data-act="skills:installAck" title="[y] install">Install</button></div>'
+            : '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>'))
     + '</div></div>';
 }
 function skpHubIdLabel(identifier) {
@@ -23519,7 +23523,9 @@ async function skpInstall(ack) {
   const id = (SKP.installConfirm && SKP.installConfirm.identifier) || (SKP.hubCard && SKP.hubCard.installId);
   if (!id) return;
   SKP.installing = true; SKP.installError = null; render();
-  const res = await BR.skillInstall(id, !!ack);
+  // PR #916: a confirmed CAUTION approves caution only (--yes); a changed skill that now scans dangerous still asks.
+  const caution = !!ack && !!SKP.installConfirm && SKP.installConfirm.verdict === 'caution';
+  const res = await BR.skillInstall(id, !!ack && !caution, caution);
   SKP.installing = false;
   if (res && res.ok) {
     SKP.installConfirm = null; SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; SKP.mode = 'list';
@@ -23527,7 +23533,8 @@ async function skpInstall(ack) {
     SKP.msg = {text:res.line || ('installed from ' + id), restart:true}; // the CLI's own `installed <name> (v…) from <id> — <scan>` line
     await skpReloadRows(); render(); return;
   }
-  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:'dangerous', message:res.message || ''}; render(); return; }
+  // PR #869: a CAUTION verdict asks too (the CLI will not install it without a confirm), in milder words.
+  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:res.caution ? 'caution' : 'dangerous', message:res.message || ''}; render(); return; }
   SKP.installConfirm = null;
   SKP.installError = (res && res.error) || 'install failed';
   SKP.msg = {text:'install ' + id + ' failed: ' + SKP.installError};

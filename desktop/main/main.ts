@@ -2528,9 +2528,9 @@ function wireIpc(client: AgentClient): void {
     return hubCache.refresh(q, hubConfigKey(DESKTOP_STATE_DIR), () => skillBrowse(q, client.status.workingDir));
   });
   ipcMain.handle("cli:skillInstall", (_event, payload: unknown) => {
-    const { identifier, acknowledgeRisk } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown };
+    const { identifier, acknowledgeRisk, confirmCaution } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown; confirmCaution?: unknown };
     if (typeof identifier !== "string" || !identifier.trim()) return { ok: false, error: "identifier required" };
-    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir).then((res) => (A.skillInstalled(res, acknowledgeRisk === true), res));
+    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir, confirmCaution === true).then((res) => (A.skillInstalled(res, acknowledgeRisk === true), res));
   });
   ipcMain.handle("app:clawhubSkillDetail", (_event, payload: unknown) => {
     const { apiBase, slug, owner } = (payload ?? {}) as { apiBase?: unknown; slug?: unknown; owner?: unknown };

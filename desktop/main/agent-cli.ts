@@ -3045,20 +3045,30 @@ export async function skillBrowse(
  * that comes back as `blocked` so the tab shows the TUI's confirm with
  * the CLI's line as its one finding. Success is the CLI's own
  * `installed <name> (v…) from <id> — <scan summary>` line.
+ *
+ * A `caution` verdict, with no terminal to ask on, exits with
+ * `install needs confirmation: <id> — <scan summary>` (PR #869): that comes
+ * back as `blocked` too, with `caution`, and the tab's confirm says so.
+ * Confirmed, the install runs again with `--yes` (`confirmCaution`), which
+ * approves a caution verdict only: if the skill changed and now scans
+ * dangerous, the CLI still refuses it (src/cli/skill.ts).
  */
 export async function skillInstall(
   identifier: string,
   acknowledgeRisk: boolean,
   cwd?: string,
-): Promise<{ ok: boolean; line?: string; blocked?: boolean; message?: string; error?: string }> {
+  confirmCaution = false,
+): Promise<{ ok: boolean; line?: string; blocked?: boolean; caution?: boolean; message?: string; error?: string }> {
   const id = identifier.trim();
   if (!/^@?[\w.-]+(?:\/[\w.-]+){1,4}$/.test(id)) return { ok: false, error: `not a hub identifier: ${identifier}` };
   const args = ["skill", "install", id];
   if (acknowledgeRisk) args.push("--acknowledge-risk");
+  else if (confirmCaution) args.push("--yes");
   const res = await cli(args, 180_000, cwd);
   if (res.ok) return { ok: true, line: res.stdout.trim().split("\n").pop() ?? "" };
   const message = (res.stderr.trim() || res.error || "install failed").split("\n").pop() ?? "";
   if (/flagged dangerous by the security scan/.test(res.stderr)) return { ok: false, blocked: true, message };
+  if (/install needs confirmation/.test(res.stderr)) return { ok: false, blocked: true, caution: true, message };
   return { ok: false, error: message };
 }
 
