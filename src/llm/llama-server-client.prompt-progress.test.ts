@@ -35,7 +35,7 @@ function streamingClient(options: {
     progressWatch: false,
     requestTimeoutMs: options.requestTimeoutMs ?? 60_000,
     firstTokenTimeoutMs: options.firstTokenTimeoutMs ?? 60_000,
-    fetchImpl: (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    fetchImpl: (async (_input: string | URL | Request, init?: RequestInit) => {
       bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
       return new Response(
         new ReadableStream<Uint8Array>({
