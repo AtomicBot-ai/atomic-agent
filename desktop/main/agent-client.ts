@@ -1176,6 +1176,19 @@ export class AgentClient extends EventEmitter {
         return { ok: false, conflicted: true, error: "config changed since it was read" };
       }
       return { ok: false, conflicted: false, error: `config set failed: ${parsed.error?.message ?? `HTTP ${res.status}`}` };
+   * ATO-1024: `POST /api/memory/embeddings/reconnect` — have the running agent
+   * attach the embedding server it did not find at boot. Null when the agent
+   * has no such route or did not answer; never throws.
+   */
+  async reconnectEmbeddings(): Promise<{ health: string; modelId: string | null; changed?: boolean } | null> {
+    try {
+      const res = await fetch(`${this.base()}/api/memory/embeddings/reconnect`, {
+        method: "POST",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (!res.ok) return null;
+      return (await res.json()) as { health: string; modelId: string | null; changed?: boolean };
     } catch {
       return null;
     }

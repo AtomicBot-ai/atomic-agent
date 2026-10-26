@@ -477,7 +477,8 @@ export type BringUp = {
   /** ATO-126: the embedding server was started, or hybrid recall switched back on, for it: `atag serve` wires it only as it boots. */
   paired?: boolean;
 };
-type Paired = { paired: boolean; line?: string };
+/** `up` (ATO-1024): the embedding server answers now, whoever started it. */
+type Paired = { paired: boolean; line?: string; up?: boolean };
 
 /**
  * ATO-126 — the embedding server beside the chat one.
@@ -499,7 +500,7 @@ type Paired = { paired: boolean; line?: string };
  * only as it boots.
  *
  * Asked in the daemon's turn, once the chat server is up (and at launch before
- * it, daemon-watch pairEmbeddingsBeforeServe): when the file wants embeddings
+ * it, daemon-watch pairEmbeddingsAtLaunch): when the file wants embeddings
  * and their server is not up, it is started alone; once it is up, hybrid
  * recall is switched back on. `startOut` is the `models start` that
  * just ran, which already tried the embedding side: its failure is not tried
@@ -549,7 +550,7 @@ export async function pairEmbeddingServer(opts: {
       : "local-llm: embedding server up — semantic search comes on with the agent's next start";
   }
   const m = await setMemoryEmbeddingsEnabled(true);
-  return { paired: started || m.changed, line };
+  return { paired: started || m.changed, line, up: true };
 }
 
 /* ---- the managed daemon: starts one at a time, stops at once (item 11) ----

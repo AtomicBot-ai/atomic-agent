@@ -48,6 +48,7 @@ import {
 } from "./route-mcp.js";
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
+import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -188,6 +189,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
     // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.
     { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
+    // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
+    { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
     { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
     { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },

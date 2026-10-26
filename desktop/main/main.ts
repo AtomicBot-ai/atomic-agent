@@ -141,7 +141,7 @@ import {
   daemonWatchState,
   hostDaemonWatch,
   onAgentFrame,
-  pairEmbeddingsBeforeServe,
+  pairEmbeddingsAtLaunch,
   resumeChatAfterStudio,
   updateBegins,
   yieldChatToStudio,
@@ -759,6 +759,34 @@ async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null>
   } catch {
     return null;
   }
+}
+
+/**
+ * ATO-1024: the embedding server the launch paired beside serve's start, attached
+ * by the running agent once it is up. An agent that was still booting when the
+ * server came up found it itself, and this is a no-op there; one that has no
+ * route keeps keyword recall until its next start, as before.
+ */
+async function attachEmbeddingsLive(client: AgentClient, waitMs = 120_000): Promise<void> {
+  if (client.status.state !== "connected") {
+    const connected = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => { client.off("status", onStatus); resolve(false); }, waitMs);
+      // Only "connected" ends the wait: a stopped or error state on the way up (a retry, a restart) is not the answer.
+      function onStatus(status: { state?: string }): void {
+        if (status.state !== "connected") return;
+        clearTimeout(timer);
+        client.off("status", onStatus);
+        resolve(true);
+      }
+      client.on("status", onStatus);
+    });
+    if (!connected) {
+      console.error("[desktop] local-llm: the agent did not come up in time to attach the embedding server; memory search uses words until its next start");
+      return;
+    }
+  }
+  const r = await client.reconnectEmbeddings();
+  if (r?.changed && r.health === "ok") console.error("[desktop] local-llm: memory search attached to the embedding server — semantic search on");
 }
 
 function send(channel: string, payload?: unknown): void {
@@ -10070,10 +10098,22 @@ void app.whenReady().then(async () => {
         else if (r.reason && !/already installed|not a packaged app/.test(r.reason)) console.error(`[desktop] local-llm: Atomic Core not placed (${r.reason})`);
       })
       .catch(() => undefined);
-    /* ATO-126: the embedding server before `atag serve` boots, which is the
-       only moment serve looks for it (a smoke run starts no model server). */
-    const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(embeddingsFirst).then(() => {
+    /* ATO-126 / ATO-1024: the embedding server is paired beside `atag serve`'s
+       start, no longer before it. serve looks for it only at boot, which held
+       the start back for up to 20 s; now, once the server answers, the running
+       agent attaches it live (attachEmbeddingsLive). Queued in the daemon's
+       turn before the launch's chat model start, as before. A smoke run starts
+       no model server. */
+    const pairBeside = (): Promise<unknown> => (SMOKE ? Promise.resolve() : pairEmbeddingsAtLaunch()
+      .then((r) => {
+        // A start that failed says so now; one that came up is said once the agent has attached it (attachEmbeddingsLive).
+        if (r?.line && !r.up) console.error(`[desktop] ${r.line}`);
+        if (r?.up && agent) return attachEmbeddingsLive(agent);
+        return undefined;
+      })
+      .catch(() => undefined));
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(() => {
+      void pairBeside();
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
