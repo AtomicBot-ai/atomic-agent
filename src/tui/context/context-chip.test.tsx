@@ -79,6 +79,39 @@ describe("ContextChip", () => {
     expect(label(usage({ conversationPercent: 100 }))).toContain("[========]");
   });
 
+  /**
+   * ATO-904. The cloud route has no task limit and reports it as
+   * `Number.MAX_SAFE_INTEGER`; the chip printed `6/9007199254740991
+   * tasks`. An unbounded limit is not a number the operator can use.
+   */
+  it("shows the bare task count when the task limit is unbounded", () => {
+    const text = label(
+      usage({ pairs: 6, pairsCap: Number.MAX_SAFE_INTEGER }),
+    );
+    expect(text).toContain("6 tasks · ");
+    expect(text).not.toContain(String(Number.MAX_SAFE_INTEGER));
+    expect(text).not.toMatch(/6\/\d/);
+  });
+
+  it("keeps the task ratio when the limit is real", () => {
+    expect(label(usage({ pairs: 6, pairsCap: 20 }))).toContain("6/20 tasks");
+  });
+
+  it("drops the bar and the window when they are unbounded sentinels", () => {
+    const text = label(
+      usage({
+        tokens: 5400,
+        conversationCap: Number.MAX_SAFE_INTEGER,
+        conversationPercent: 0,
+        contextWindow: Number.POSITIVE_INFINITY,
+      }),
+    );
+    expect(text).not.toContain("[");
+    expect(text).not.toContain("cap");
+    expect(text).not.toContain("Infinity");
+    expect(text).toContain("5.4k");
+  });
+
   it("still gauges when no window is known", () => {
     const noWindow = label(usage({ contextWindow: null, percent: null }));
     expect(noWindow).toContain("6.4k/32k cap");
