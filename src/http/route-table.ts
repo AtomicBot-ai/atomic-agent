@@ -49,6 +49,7 @@ import {
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
 import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
+import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
@@ -159,6 +160,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/sessions/{id}",
       handler: createRenameSessionHandler(),
     },
+    // ATO-731: one chat's folder, changed without restarting serve.
+    { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",
