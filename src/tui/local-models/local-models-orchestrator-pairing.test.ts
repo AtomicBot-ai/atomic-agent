@@ -139,7 +139,7 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     expect(vi.mocked(localLlm.startEmbeddingDaemon)).not.toHaveBeenCalled();
     // Held back, not switched off: the operator's opt-in stays on.
     expect(getConfig().memory.embeddings.enabled).toBe(true);
-    expect(readUserConfigFileSync(getUserConfigPath(stateDir)).memory.embeddings.enabled).toBe(true);
+    expect(readUserConfigFileSync(getUserConfigPath(stateDir))!.memory.embeddings.enabled).toBe(true);
 
     // A second pass is held back again, without a second note.
     await orchestrator.setActiveEmbedding("bge-m3");
