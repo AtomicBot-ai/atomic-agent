@@ -49,6 +49,7 @@ import {
 import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
 import { createLocalModelsTextHandler } from "./route-local-models.js";
+import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
@@ -80,6 +81,9 @@ export function buildRouteTable(): RouteDefinition[] {
       handler: createModelsHandler(),
       requiresAuth: false,
     },
+    // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
+    { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
+    { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },
     {
       method: "POST",
       path: "/v1/chat/completions",
