@@ -770,15 +770,19 @@ async function attachEmbeddingsLive(client: AgentClient, waitMs = 120_000): Prom
   if (client.status.state !== "connected") {
     const connected = await new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => { client.off("status", onStatus); resolve(false); }, waitMs);
+      // Only "connected" ends the wait: a stopped or error state on the way up (a retry, a restart) is not the answer.
       function onStatus(status: { state?: string }): void {
-        if (status.state === "starting") return;
+        if (status.state !== "connected") return;
         clearTimeout(timer);
         client.off("status", onStatus);
-        resolve(status.state === "connected");
+        resolve(true);
       }
       client.on("status", onStatus);
     });
-    if (!connected) return;
+    if (!connected) {
+      console.error("[desktop] local-llm: the agent did not come up in time to attach the embedding server; memory search uses words until its next start");
+      return;
+    }
   }
   const r = await client.reconnectEmbeddings();
   if (r?.changed && r.health === "ok") console.error("[desktop] local-llm: memory search attached to the embedding server — semantic search on");
@@ -10059,7 +10063,8 @@ void app.whenReady().then(async () => {
        no model server. */
     const pairBeside = (): Promise<unknown> => (SMOKE ? Promise.resolve() : pairEmbeddingsAtLaunch()
       .then((r) => {
-        if (r?.line) console.error(`[desktop] ${r.line}`);
+        // A start that failed says so now; one that came up is said once the agent has attached it (attachEmbeddingsLive).
+        if (r?.line && !r.up) console.error(`[desktop] ${r.line}`);
         if (r?.up && agent) return attachEmbeddingsLive(agent);
         return undefined;
       })
