@@ -10136,10 +10136,13 @@ app.on("before-quit", (event) => {
   /* Off macOS the last window closing is the quit: asked then, a Cancel would
      leave the app running with no window, so it is not asked. Nor is the quit
      an update's install makes (ATO-229): the person asked for it, the agent is
-     stopped for it already, and a Cancel would leave the install half done. */
+     stopped for it already, and a Cancel would leave the install half done.
+     ATO-598: with Keep Running on, the app lives in the tray with no window,
+     and its Quit is a choice like the Dock's: asked there too. */
   const windowUp = !!win && !win.isDestroyed();
   const installing = appUpdater()?.state().phase === "installing";
-  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin")) {
+  const inTray = tray !== null && readBackgroundPrefs(app.getPath("userData")).keepRunning;
+  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin" || inTray)) {
     const n = queuedMessageCount();
     if (n > 0) {
       const opts = {
