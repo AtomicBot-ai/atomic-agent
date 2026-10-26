@@ -10,6 +10,7 @@
  */
 
 import type { RestartTrigger } from "./catalog-values.js";
+import { prevSessionEnd } from "./classify.js";
 import { flagsStore, refreshRunMode, shutdownAnalytics, track } from "./core.js";
 
 /** Process start, as near as Node can tell. */
@@ -17,6 +18,9 @@ const PROCESS_START = Date.now() - Math.round(process.uptime() * 1000);
 
 const L = {
   prevCrashed: false,
+  /** ATO-1030: how the last session ended when it did not quit cleanly. */
+  prevTrouble: null as "crashed" | "os_shutdown" | null,
+  trouble: null as "crashed" | "os_shutdown" | null,
   orphanReaped: false,
   openedSent: false,
   windowAt: null as number | null,
@@ -37,7 +41,23 @@ export function beginSession(): void {
     const store = flagsStore();
     if (!store) return;
     L.prevCrashed = store.get().sessionOpen === true;
-    store.set({ sessionOpen: true });
+    L.prevTrouble = L.prevCrashed ? store.get().sessionTrouble : null;
+    store.set({ sessionOpen: true, sessionTrouble: null });
+  } catch {
+    /* never */
+  }
+}
+
+/**
+ * ATO-1030: something this session saw that explains an unclean end: a crashed
+ * process, or the OS logging off or shutting down. An OS shutdown is the last
+ * word; a crash after it is part of it.
+ */
+export function noteSessionTrouble(kind: "crashed" | "os_shutdown"): void {
+  try {
+    if (L.trouble === "os_shutdown" || L.trouble === kind) return;
+    L.trouble = kind;
+    flagsStore()?.set({ sessionTrouble: kind });
   } catch {
     /* never */
   }
@@ -61,6 +81,7 @@ export function appOpened(kind: "cold" | "reopen", freshState: boolean, inApplic
     launch_kind: kind,
     fresh_state: freshState,
     prev_session_crashed: kind === "cold" && (L.prevCrashed || L.orphanReaped),
+    ...(kind === "cold" ? { prev_session_end: prevSessionEnd(L.prevCrashed || L.orphanReaped, L.prevTrouble) } : {}),
     ...(inApplications === null ? {} : { in_applications: inApplications }),
   });
 }

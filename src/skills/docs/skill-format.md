@@ -56,7 +56,7 @@ Atomic Agent ships with 17 starter skills that are auto-installed into the globa
 ## CLI
 
 ```sh
-atomic-agent skill install <path|owner/repo[/path]|@owner/slug> [--force] [--acknowledge-risk]
+atomic-agent skill install <path|owner/repo[/path]|@owner/slug> [--force] [--yes] [--acknowledge-risk]
                                         # install from a local folder, a GitHub tap, or ClawHub (@owner/slug)
 atomic-agent skill uninstall <name>     # remove an installed global skill
 atomic-agent skill list                 # list installed skills (project + global) with enabled/disabled state
@@ -68,7 +68,19 @@ atomic-agent skill search <query>       # search ClawHub + configured taps
 atomic-agent skill tap list|add <owner/repo>|remove <owner/repo>   # manage hub taps
 ```
 
-Local installation is `SKILL.md` validation plus `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`).
+Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`).
+
+### Install security scan
+
+Every install runs the heuristic scanner (`src/skills/hub/skill-security-scanner.ts`) before anything is copied: local folders (CLI, `POST /api/skills/install`, sidecar `skill_install`), GitHub taps and ClawHub. It reads `SKILL.md`, markdown/text files, scripts by extension and every file under `scripts/` or `bin/`. Files are never skipped for size: up to 4 MiB a file is scanned whole; a bigger one has its first and last 512 KiB scanned and adds a `caution` finding; past 64 MiB for one skill, and for symlinks (never followed), the unread file is a `caution` finding too. ClawHub's own verdict is merged in: `malicious` is `dangerous`, `suspicious` and `unknown` (no scan result) are `caution`.
+
+The verdict gates the install (`enforceScanGate`):
+
+- `ok` installs.
+- `caution` needs an explicit yes. The CLI asks `[y/N]` in a terminal; `--yes` answers it for scripts; without a terminal and without `--yes` the install is refused. The HTTP route answers 428 `needs_confirmation` with the findings and installs on a retry with `confirm: true`; the sidecar fails the request unless `confirm: true`. The TUI shows its confirm modal.
+- `dangerous` is refused unless `--acknowledge-risk` (HTTP/sidecar `acknowledgeRisk: true`); `--yes` and `confirm` do not override it.
+
+The scan is a tripwire, not a sandbox: a clean verdict does not prove a skill is safe.
 
 ## Agent tools
 

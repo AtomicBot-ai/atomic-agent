@@ -86,6 +86,12 @@ export interface DaemonSupervisorDeps {
   say(line: string): void;
   /** Why the server failed, from its log, or null. */
   describeFault(): string | null;
+  /**
+   * ATO-278: a server that was up has died — once per death, as recovery
+   * begins, not again while a restart of it keeps failing. `fault` is
+   * describeFault's line; `upMs` how long it had been up.
+   */
+  died?(info: { fault: string | null; upMs: number }): void;
   now?(): number;
 }
 
@@ -118,6 +124,8 @@ export class DaemonSupervisor {
   private last: SupervisorNotice | null = null;
   /** Studio holds the memory: the server is down on purpose for a while, and stays the app's. */
   private yieldedTo: string | null = null;
+  /** ATO-278: the server was up since its last start (a start, or a look that saw it): only then is it going down a death. */
+  private seenUp = false;
 
   constructor(private readonly deps: DaemonSupervisorDeps) {
     this.lastStartAt = this.now();
@@ -159,6 +167,7 @@ export class DaemonSupervisor {
   yieldTo(holder: string): void {
     this.yieldedTo = holder;
     this.deadLooks = 0;
+    this.seenUp = false;
     this.closeIncident(true);
   }
 
@@ -171,6 +180,8 @@ export class DaemonSupervisor {
     if (this.yieldedTo === null) return;
     this.yieldedTo = null;
     this.deadLooks = 0;
+    // The app starts it again itself; until that start or a look sees it up, its being down is no death.
+    this.seenUp = false;
     this.lastStartAt = this.now();
   }
 
@@ -190,6 +201,7 @@ export class DaemonSupervisor {
     this.owned = true;
     this.gaveUp = false;
     this.deadLooks = 0;
+    this.seenUp = true;
     this.lastStartAt = this.now();
     // The "stopped restarting it" notice goes once the person has started it again.
     if (gaveUp) this.notify({ kind: "clear" });
@@ -220,6 +232,7 @@ export class DaemonSupervisor {
         return;
       }
       const look = await this.deps.look();
+      if (look === "up") this.seenUp = true;
       // The look takes a moment: a stop or a switch may have come during it.
       if (look !== "down" || !this.listening()) {
         this.deadLooks = 0;
@@ -243,6 +256,7 @@ export class DaemonSupervisor {
     if (this.recovering) return this.recovering;
     if (!this.listening()) return false;
     const look = await this.deps.look();
+    if (look === "up") this.seenUp = true;
     if (look !== "down" || !this.listening()) return false;
     return this.recover(reason);
   }
@@ -290,6 +304,11 @@ export class DaemonSupervisor {
 
   private async runRecovery(reason: string): Promise<boolean> {
     this.deadLooks = 0;
+    /* ATO-278: an open incident means this is a failed restart seen down
+       again, not a new death; nor is a server that never came up since its
+       start (a failed start after a Studio yield). */
+    if (this.incidentSince === null && this.seenUp) this.toldDied();
+    this.seenUp = false;
     // A server that stayed up past the window proved itself: its death starts the count over.
     if (this.now() - this.lastStartAt <= QUICK_DEATH_MS) this.quickDeaths += 1;
     else this.quickDeaths = 0;
@@ -318,6 +337,7 @@ export class DaemonSupervisor {
     // A failed start leaves the server down, so the next looks come back here as a quick death.
     this.lastStartAt = this.now();
     if (res.ok) {
+      this.seenUp = true;
       const afterMs = this.now() - (this.incidentSince ?? this.now());
       this.deps.say(`[desktop] local-llm: the model server is back up after ${Math.round(afterMs / 1000)} s (auto-restart)`);
       this.notify({ kind: "restarted", afterMs });
@@ -354,6 +374,14 @@ export class DaemonSupervisor {
         + "or set localModels.managed.autoRestart to false to manage it by hand",
     );
     this.notify({ kind: "gave_up", deaths: MAX_QUICK_DEATHS, fault });
+  }
+
+  private toldDied(): void {
+    try {
+      this.deps.died?.({ fault: this.deps.describeFault(), upMs: Math.max(0, this.now() - this.lastStartAt) });
+    } catch {
+      /* a report never fails the supervisor */
+    }
   }
 
   private notify(notice: SupervisorNotice): void {

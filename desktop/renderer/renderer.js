@@ -2,6 +2,8 @@
 
 /* The Electron preload exposes window.atomic. Without it (opened as a
    plain page) the app runs the scripted demo instead of a real agent. */
+// Declared up top: render() can run renderProse before the code below is evaluated (TDZ).
+const PROSE_CACHE = {map: new Map(), ver: 0, last: '', max: 600};
 const BR = typeof window !== "undefined" ? window.atomic : null;
 /* The platform the window runs on. The scripted demo (no bridge) and macOS
    take every path below exactly as before; the Windows and Linux arms only
@@ -1223,7 +1225,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -1436,7 +1438,7 @@ const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
    server's log shown there — open or not, its last read, the poll's timer. */
 /* ATO-720..722: `check` is the provider row's last live check ({id, busy, res, at}); `provErr` the last
    error a turn met on each provider ({text, at}), dropped once a turn on it completes or a check passes. */
-const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{} };
+const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{}, gpu:null, gpuAsked:false };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
@@ -2308,10 +2310,14 @@ function renderSidebar() {
           + ch.rows.slice(0, ch.pinned).map(chatRow).join('')
         + '</div>'
         : '')
+      // ATO-1034: the folders (chat-folders.js), then the chats in none of them.
+      + foldersSidebarHTML(ch.groups)
       + '<div class="sb-list" data-list="chats">'
-        + '<div class="sb-list-head micro"><span>Chats</span></div>'
+        + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span>'
+          + (FOLDERS.state.folders.length ? '' : '<button class="iconbtn sb-add sb-fnew" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('folder') + '</button>')
+        + '</div>'
         + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
-           : ch.rows.length ? '' : '<div class="sb-empty">No chats yet</div>')
+           : ch.rows.length || ch.filed ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
       + (showTasks
@@ -2405,9 +2411,15 @@ function sidebarChats() {
   const stored = new Set(SESSIONS.map((s) => s.id));
   const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
   const order = orderChats(SESSIONS, pending, PREFS.pinned);
-  const all = order.pinned.concat(order.rest);
+  /* ATO-1034: a chat in a folder is drawn under that folder (all of them, a
+     folder is short), a pinned one stays in Pinned; Load more pages the rest.
+     `visible` is every row on screen, for nameVisibleSessions. */
+  const fg = folderGroups(FOLDERS.state, order.rest);
+  const all = order.pinned.concat(fg.loose);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
-  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length)};
+  const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0);
+  const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows));
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, visible, filed};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2491,7 +2503,8 @@ function chatRow(s) {
   // ATO-538: the rail paints this glyph (the title's first letter or emoji) with the dot as its badge.
   const glyph = railGlyph(s.t);
   // Studio: no chat is "open" while a Studio page is on screen.
-  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
+  // ATO-1034: draggable onto a folder (chat-folders.js).
+  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '" draggable="true"'
     + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
     + (glyph ? ' data-g="' + esc(glyph) + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
@@ -2543,8 +2556,9 @@ function chatMenuHTML() {
   const s = chatById(SESMENU.id);
   if (!s) return '';
   const id = s.id;
+  const stored = SESSIONS.some((x) => x.id === id);
   const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
-    renamable: SESSIONS.some((x) => x.id === id)});   // ATO-455: a stand-in has nothing stored to rename
+    renamable: stored, folders: stored});   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
   if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
@@ -2622,7 +2636,15 @@ function renderContent() {
     const pe = document.getElementById('entry');
     const hadFocus = !!(pe && document.activeElement === pe);
     const caret = hadFocus ? [pe.selectionStart, pe.selectionEnd] : null;
-    c.innerHTML = chatView(); afterChat(keep, hadFocus, caret); return;
+    /* ATO-1023: morphed, not replaced (dom-morph.js, as repaintTranscript
+       does for a stream frame). A click used to throw away the transcript and
+       the composer: the scroller, the textarea and every running animation
+       were new nodes on each render. Kept nodes keep their focus, caret,
+       scroll and animation; only markup that changed is swapped. */
+    const next = document.createElement('template');
+    next.innerHTML = chatView();
+    morphChildren(c, next.content);
+    afterChat(keep, hadFocus, caret); return;
   }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
   c.innerHTML = skillsView();
@@ -2922,6 +2944,8 @@ function replyTurnActed(m) {
   return false;
 }
 const ACTED_RETRY_HINT = 'Repeating this turn could create or delete files a second time';
+// ATO-901: the user bubble's retry while a turn runs (msgActs).
+const BUSY_RETRY_HINT = 'Wait for the answer to finish';
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2977,9 +3001,15 @@ function msgActs(m) {
   // BOTH kinds, so a `.msgacts.usr` element would have matched nothing in
   // styles.css and would have told the next reader the user row's alignment
   // was unstyled.
-  return '<div class="' + cls + '">'
-    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>'
-    + copy + '</div>';
+  /* ATO-901: while a turn runs the retry is the muted, inert icon ATO-862
+     draws under a reply that acted, with its own sentence: pressed, it used
+     to park the text in the composer behind a toast nobody understood. The
+     render that ends the turn draws the live button back. */
+  const resend = S.busy || S.pending
+    ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + BUSY_RETRY_HINT
+      + '" aria-label="' + BUSY_RETRY_HINT + '">' + ic('retry') + '</button>'
+    : '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>';
+  return '<div class="' + cls + '">' + resend + copy + '</div>';
 }
 
 /* What is copied is `m.text` and only `m.text`. For a user message that is the
@@ -3057,7 +3087,8 @@ function resendUser(id) {
     // these two are the narrow repaints the rest of the file uses.
     refreshSend();
     ctxDraftChanged();
-    toast('A turn is already running', 'the message is in the composer — Enter folds it into this turn', 'bad');
+    // ATO-901: plain words, no dash (a "Try again" on a failure row still lands here mid-turn).
+    toast('The agent is still answering', 'Your message is in the box: press Enter to add it to this answer, or wait.', 'bad');
     return;
   }
   // Both the editor and S.draft, because submit() reads `e.value` FIRST and
@@ -3781,7 +3812,7 @@ function composer() {
 
        It hangs off `.composerwrap` now, which is the same anchor visually
        (the composer is its last child) and does not clip. */
-    + (S.slash ? slashPopover() : '')
+    + (slashShown() ? slashPopover() : '')
     // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
     + attMenuHTML()
     + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
@@ -4202,6 +4233,7 @@ function voiceMenuHTML() {
     + '</div>';
 }
 
+const SCROLL_WIRED = new WeakSet();
 function afterChat(keep, hadFocus, caret) {
   const e = $('#entry');
   if (!e) return;
@@ -4233,14 +4265,33 @@ function afterChat(keep, hadFocus, caret) {
   } else if (hadFocus && !S.settings && !S.overlay && S.menuOpen === null) {
     e.focus();
     if (caret) e.setSelectionRange(Math.min(caret[0], e.value.length), Math.min(caret[1], e.value.length));
+  } else if (document.activeElement === e && (S.settings || S.overlay || S.menuOpen !== null)) {
+    /* ATO-1023 follow-up: renderContent morphs now, so this textarea outlives
+       the render and its caret no longer dies with it. A modal that opened
+       from the composer takes the caret out explicitly, as the rewrite used to. */
+    e.blur();
   }
   const sc = $('#scroller');
   if (sc) {
-    sc.addEventListener('scroll', () => {
-      S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
-      $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
-      apprJumpSync();
-    });
+    /* ATO-1023: the scroller now outlives a render (renderContent morphs), so
+       it is wired once. A WeakSet, not a data- attribute: the next morph would
+       strip an attribute the markup does not carry. S.stick is set in the
+       event itself: a stream frame's rAF runs before any rAF this handler
+       could ask for, and would snap a scroll-up back to the bottom. The
+       toolbar class and the approval jump wait for the frame. */
+    if (!SCROLL_WIRED.has(sc)) {
+      SCROLL_WIRED.add(sc);
+      let frame = 0;
+      sc.addEventListener('scroll', () => {
+        S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+        if (frame) return;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
+          apprJumpSync();
+        });
+      }, {passive: true});
+    }
     if (S.stick) sc.scrollTop = sc.scrollHeight;
     // Scroll-stable cards: a scrolled-up user is put back at the same pixel
     // after a whole-DOM render (streaming deltas, reconcileToolCards, expand
@@ -4623,7 +4674,7 @@ function palRows() {
     .sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.s);
   const allChats = S.palMoreFor === q || chats.length <= PAL_CHATS_SHOWN + 1;
   (allChats ? chats : chats.slice(0, PAL_CHATS_SHOWN))
-    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + folderPaletteWord(s.id) + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   if (!allChats) {
     const more = chats.length - PAL_CHATS_SHOWN;
     hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
@@ -4705,6 +4756,13 @@ function paletteHTML() {
 }
 
 /* ---------------- slash completion ---------------- */
+/** ATO-923: the command list only while nothing is over the composer. The
+    palette, a menu, the model pickers, Settings or a question (S.alert)
+    would otherwise have it hanging over them; it comes back with the
+    render that closes them, the typed `/` still there. */
+function slashShown() {
+  return !!S.slash && !S.overlay && !SEL.open && !S.settings && !S.alert;
+}
 function slashMatches() {
   // The command word only: with arguments typed (`/runmode status`) the list
   // keeps showing that command and its hint instead of "no matching command".
@@ -4745,6 +4803,7 @@ function overlaysHTML() {
   if (S.overlay === 'context') html += contextHTML();
   if (S.overlay === 'modes') html += modesHTML();
   if (S.overlay === 'sesmenu') html += chatMenuHTML();
+  if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
@@ -5729,7 +5788,13 @@ function diagnosticsPane() {
     // Chat review (Д29): written as the chat and Settings › General write it.
     ['Working folder', workingDirLabel(wd), wd, wd],
     ['Local model server', llama],
+    // ATO-1030: hardware acceleration, off after repeated GPU crashes or by hand; a change applies at the next launch.
+    ...(DIAG.gpu ? [['Graphics acceleration', diagGpuValue(DIAG.gpu), '', '', {gpu:true}]] : []),
   ];
+  if (!DIAG.gpuAsked && BR && BR.gpuGet) {
+    DIAG.gpuAsked = true;
+    BR.gpuGet().then((r) => { if (r && r.ok) { DIAG.gpu = r; diagRepaint(); } }).catch(() => {});
+  }
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
   // ATO-723: `open` is the folder its Show in Finder button hands to BR.openPath.
   DIAG.copy = rows.map(([k, v, , open, x]) => ({label:k, value:(x && x.copy) || v || '', open:open || ''}));
@@ -5743,6 +5808,7 @@ function diagnosticsPane() {
       + rows.map(([k, v, full, , x], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
         + '<div class="set-diagv' + (x && x.tone ? ' set-diagv--' + x.tone : ' mono') + '" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
         + (x && x.restart ? '<button class="btn btn-s xs set-diagrestart" data-act="agent:restart">' + ic('refresh') + 'Restart</button>' : '')
+        + (x && x.gpu ? '<button class="btn btn-s xs set-diagrestart" data-act="diag:gpu">' + (DIAG.gpu && DIAG.gpu.next === null ? 'Turn off' : 'Turn on') + '</button>' : '')
         + (rows[i][3] && BR && BR.openPath ? '<button class="iconbtn sm set-copybtn set-openbtn" data-act="diag:open:' + i + '" title="' + esc(reveal) + '" aria-label="' + esc(reveal + ': ' + k) + '">' + ic('folder') + '</button>' : '')
         + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
@@ -6018,6 +6084,13 @@ function diagAgentLogPath(sd) {
   const sep = PLATFORM === 'win32' ? '\\' : '/';
   return sd.replace(/[\\/]+$/, '') + sep + 'agent.log';
 }
+/** ATO-1030: the Graphics acceleration row: this run's state, and the next launch's when it differs. */
+function diagGpuValue(g) {
+  const now = g.activeNow ? 'On' : 'Off';
+  const next = g.next === null ? 'on' : 'off';
+  if ((g.next === null) === g.activeNow) return g.activeNow ? now : now + (g.next === 'auto' ? ' (the graphics process kept crashing)' : '');
+  return now + ', ' + next + ' from the next start';
+}
 /* ATO-723: a folder or log opened from Diagnostics, with main's own words
    when it cannot (a log not written yet, a folder that is gone). */
 async function diagOpen(path, what) {
@@ -6033,6 +6106,16 @@ function diagAct(what) {
     return;
   }
   if (what === 'agentlog') { diagOpen(DIAG.agentLog, 'the agent log'); return; }
+  if (what === 'gpu') {
+    if (!DIAG.gpu || !BR || !BR.gpuSet) return;
+    BR.gpuSet(DIAG.gpu.next !== null).then((r) => {
+      if (!r || !r.ok) { toast('Could not change graphics acceleration', (r && r.error) || '', 'bad'); return; }
+      DIAG.gpu = r;
+      toast('Graphics acceleration ' + (r.next === null ? 'on' : 'off'), 'Takes effect the next time the app starts');
+      diagRepaint();
+    }).catch(() => {});
+    return;
+  }
   if (what === 'check') { diagCheckProvider(); return; }
   if (what === 'startModel') { diagStartModel(); return; }
   if (what === 'openlog') { if (DIAG.log && DIAG.log.path && !DIAG.log.external) diagOpen(DIAG.log.path, 'the model server log'); return; }
@@ -6676,6 +6759,7 @@ function act(a) {
                              PREFS.pinned = PREFS.pinned.filter((x) => x !== v);
                              delete PREFS.seen[v];
                              savePrefs();
+                             if (folderForget(FOLDERS.state, v)) saveFolders();   // ATO-1034
                              /* Backlog 25: the chat's card goes with it, and the empty view that
                                 takes its place answers no request, as after New chat. (A chat whose
                                 turn runs here never gets this far: deleteRefused.) */
@@ -6692,6 +6776,29 @@ function act(a) {
                            return; }
   // ATO-455: the row menu's Rename opens the inline box over the row's name (chat-rename.js).
   if (k === 'rename')    { close(); renameStart(v, 'row'); return; }
+  /* ATO-1034: folders (chat-folders.js). Folder ids never hold a colon, so
+     `fput:<folder>:<chat>` splits at its first one; an empty folder is "no folder". */
+  if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;
+                           f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
+  if (k === 'fnew')      { close(); folderCreate(v || null); return; }
+  if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
+  if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
+  if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
+                           if (f && folderRemove(FOLDERS.state, v)) { saveFolders(); toast('Folder deleted', 'Its chats are kept, under Chats'); }
+                           render(); return; }
+  if (k === 'fpick')     { const anchor = document.querySelector('#sidebar .sesrow[data-ses="' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v) + '"] [data-sesmenu]');
+                           const point = SESMENU.point; close();
+                           if (point) { FMENU.id = v; FMENU.point = point; S.overlay = 'fpick'; render(); focusChatMenu(0); }
+                           else folderMenuOpen('fpick', v, anchor);
+                           return; }
+  if (k === 'fput')      { const cut = v.indexOf(':'); const fid = v.slice(0, cut), sid = v.slice(cut + 1);
+                           close();
+                           if (cut >= 0 && folderPut(FOLDERS.state, sid, fid || null)) {
+                             saveFolders();
+                             // A pinned chat is drawn under Pinned only: filed, it leaves Pinned, or it would seem to go nowhere.
+                             if (fid && PREFS.pinned.includes(sid)) { PREFS.pinned = PREFS.pinned.filter((x) => x !== sid); savePrefs(); }
+                           }
+                           render(); nameVisibleSessions(); return; }
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -7396,6 +7503,13 @@ document.addEventListener('click', (e) => {
      through to [data-ses]. */
   const sm = t.closest('[data-sesmenu]');
   if (sm) { e.preventDefault(); e.stopPropagation(); openChatMenu(sm.dataset.sesmenu, null); return; }
+  // ATO-1034: a folder header's "…" (inside the header button, so first), then the header itself.
+  const fm = t.closest('[data-fmenu]');
+  if (fm) { e.preventDefault(); e.stopPropagation();
+            if (S.overlay === 'fmenu' && FMENU.id === fm.dataset.fmenu) { close(); render(); }
+            else folderMenuOpen('fmenu', fm.dataset.fmenu, fm);
+            return; }
+  const ft = t.closest('[data-ftoggle]'); if (ft) { act('ftoggle:' + ft.dataset.ftoggle); return; }
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
@@ -8422,6 +8536,7 @@ function refreshSlash() {
      immediately before the composer, inside the wrapper that does not clip. */
   const wrap = $('.composerwrap'); if (!wrap) return;
   const old = wrap.querySelector('.slash'); if (old) old.remove();
+  if (!slashShown()) { refreshSend(); return; }
   const composer = wrap.querySelector('#composer');
   if (composer) composer.insertAdjacentHTML('beforebegin', slashPopover());
   else wrap.insertAdjacentHTML('beforeend', slashPopover());
@@ -8516,6 +8631,11 @@ document.addEventListener('keydown', (e) => {
   if (smk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault(); e.stopPropagation(); ANX.via('key'); openChatMenu(smk.dataset.sesmenu, null); return;
   }
+  // ATO-1034: the same for a folder header's "…" (chat-folders.js).
+  const fmk = e.target.closest && e.target.closest('[data-fmenu]');
+  if (fmk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault(); e.stopPropagation(); ANX.via('key'); folderMenuOpen('fmenu', fmk.dataset.fmenu, fmk); return;
+  }
   // ATO-165: Escape closes the menu and hands the focus back to the row's "…" it came from.
   if (S.overlay === 'sesmenu' && k === 'Escape') {
     e.preventDefault();
@@ -8523,7 +8643,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   // ATO-165: the menu's rows move with the arrows, Home and End.
-  if (S.overlay === 'sesmenu' && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
+  // ATO-1034: and so do the folder menus (chat-folders.js), drawn with the same classes.
+  if ((S.overlay === 'sesmenu' || S.overlay === 'fmenu' || S.overlay === 'fpick') && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
     e.preventDefault();
     const items = Array.from(document.querySelectorAll('.sesmenu [role="menuitem"]'));
     const at = items.indexOf(document.activeElement);
@@ -8653,7 +8774,7 @@ document.addEventListener('keydown', (e) => {
      could be sent with the keyboard at all. It falls through to submit(), as
      does a line that matches no command (submit says "unknown command"). */
   const slashArgs = /^\/\S+\s+\S/.test(S.draft);
-  if (S.slash && e.target.id === 'entry' && !(k === 'Enter' && !e.shiftKey && (slashArgs || !slashMatches().length))) {
+  if (slashShown() && e.target.id === 'entry' && !(k === 'Enter' && !e.shiftKey && (slashArgs || !slashMatches().length))) {
     const m = slashMatches();
     if (k === 'ArrowDown') { e.preventDefault(); S.slashCur = Math.min(S.slashCur + 1, m.length - 1); refreshSlash(); return; }
     if (k === 'ArrowUp')   { e.preventDefault(); S.slashCur = Math.max(S.slashCur - 1, 0); refreshSlash(); return; }
@@ -8919,6 +9040,7 @@ function applySessions(res, askedAt) {
     if (row) approvalOver(sid, row.status, askedAt);
   }
   sessionsRead();   // B01 QA: requests kept while the list was not known yet
+  foldersAfterSessions();   // ATO-1034: imported chats find their folder
   return true;
 }
 
@@ -8938,7 +9060,7 @@ async function refreshSessions() {
    fire 200 requests at boot. */
 function nameVisibleSessions() {
   if (!BR) return;
-  sidebarChats().rows.filter((row) => !row.named).forEach((row) => {
+  sidebarChats().visible.filter((row) => !row.named).forEach((row) => {
     row.named = true;
     BR.session(row.id).then((res) => {
       /* Review fix: applySessions rebuilds SESSIONS with fresh objects while a
@@ -11066,6 +11188,7 @@ if (BR) {
   // as "the thread you are in" over an empty transcript.
   S.sessionId = '';
   loadPrefs();
+  loadFolders();   // ATO-1034 (chat-folders.js)
   BR.onStatus(applyStatus);
   if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);
@@ -11481,8 +11604,9 @@ const UNCENSORED_NOTE = 'Fewer safety refusals: it may answer requests other mod
 const UNCENSORED_WORD = 'Fewer refusals';
 
 /**
- * The catalogue ordered for THIS machine: best fit first, and within a
- * fit band the largest model first — the best thing that actually runs.
+ * The catalogue ordered for THIS machine: best fit first; within a fit
+ * band the catalogue's recommendation order (`recommendRank`, the agent's
+ * recommendedModelFor, ATO-817), then the largest unranked model.
  * Reduced-refusal weights sink to the bottom of their band, the way the
  * TUI's own picker pins them (models-catalog.ts `uncensored`).
  */
@@ -11500,6 +11624,8 @@ function orderModelsByFit(models, ram) {
     if (fa.rank !== fb.rank) return fa.rank - fb.rank;
     const ua = a.uncensored ? 1 : 0, ub = b.uncensored ? 1 : 0;
     if (ua !== ub) return ua - ub;
+    const ka = Number(a.recommendRank) || Infinity, kb = Number(b.recommendRank) || Infinity;
+    if (ka !== kb) return ka - kb;
     const ra = Number(a.recommendedRamGb) || 0, rb = Number(b.recommendedRamGb) || 0;
     if (ra !== rb) return rb - ra;
     return (Number(b.sizeGb) || sizeStringGb(b.size)) - (Number(a.sizeGb) || sizeStringGb(a.size));
@@ -18025,8 +18151,11 @@ function contextChip() {
     + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.12 * pct / 100).toFixed(2) + ' 47.12" transform="rotate(-90 10 10)"/>' : '')
     + '</svg>';
   /* ATO-481: from half full the ring carries its figure, so a filling
-     window reads as a gauge at a glance; below that it stays the ring alone. */
-  const fig = CTX.window && pct >= 50 ? '<span class="ctxpct">' + Math.round(pct) + '%</span>' : '';
+     window reads as a gauge at a glance. ATO-1025: below that too — a low
+     arc alone still read as a spinner that never stops ("Ask first" with an
+     endless empty spinner, review of 25.10), so the figure is always there
+     once the window is known. */
+  const fig = CTX.window ? '<span class="ctxpct">' + Math.max(1, Math.round(pct)) + '%</span>' : '';
   return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + (fig ? ' haspct' : '') + tone + cchipOpen('context') + '" data-act="context"'
     + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + fig + '</button>';
 }
@@ -20833,7 +20962,33 @@ function renderMarkdown(escaped) {
   return { html: out.join('\n'), held };
 }
 
+/* ATO-1023: a finished message's markup is the same on every paint, so it is
+   made once. renderProse ran the markdown, link and chip passes over every
+   message of the chat on every render, and on every frame of a stream. A hit
+   needs the text and the same path answers from main (PROSE_CACHE.ver moves
+   when any lands, and again when a "not there" answer is due to be asked
+   again). Markup still waiting on main ([data-rpath]) is not
+   kept. A streaming reply's text only grows, so its previous frame's entry is
+   dropped when the next one is stored: the cache holds messages, not frames. */
 function renderProse(text) {
+  const key = typeof text === 'string' ? text : String(text == null ? '' : text);
+  const C = PROSE_CACHE;
+  const hit = C.map.get(key);
+  if (hit && hit.ver === C.ver) {
+    C.map.delete(key); C.map.set(key, hit);
+    return hit.html;
+  }
+  const html = renderProseFresh(key);
+  if (html.indexOf('data-rpath=') < 0) {
+    if (C.last && C.last !== key && key.startsWith(C.last)) C.map.delete(C.last);
+    C.map.delete(key);
+    C.map.set(key, {html, ver: C.ver});
+    C.last = key;
+    if (C.map.size > C.max) C.map.delete(C.map.keys().next().value);
+  }
+  return html;
+}
+function renderProseFresh(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
   // Chat review (Д23): letters of any script, so `~/Документы/отчёт.docx` reads as a path too,
   // and extensions up to ten characters (`run.command`): main decides what each one is.
@@ -20884,9 +21039,13 @@ function renderProse(text) {
     markup: the reply is pre-wrap. */
 function codeBlockFrame(pre) {
   const lang = (/^<pre class="mdpre"[^>]*\sdata-lang="([^"]*)"/.exec(pre) || [])[1] || '';
+  // ATO-1025: the code takes colour (code-highlight.js); Copy still reads its text alone.
+  const lit = typeof highlightCode === 'function'
+    ? pre.replace(/(<code>)([\s\S]*)(<\/code><\/pre>)$/, (m, open, code, close) => open + highlightCode(code, lang) + close)
+    : pre;
   return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>'
     + '<button class="mdcopy" data-mdcopy title="Copy code" aria-label="Copy code">' + ic('copy') + '<span>Copy</span></button></div>'
-    + pre + '</div>';
+    + lit + '</div>';
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {
@@ -20933,6 +21092,11 @@ async function replyPathsAsk() {
     REPLY_PATHS.set(p, v);
     if (v.ok) landed = true;
   });
+  /* ATO-1023: markup made before these answers may name them differently. A
+     "not there" answer is asked again after REPLY_PATH_RETRY_MS, so the markup
+     made from it goes stale then too. */
+  PROSE_CACHE.ver++;
+  if (batch.some((p) => !REPLY_PATHS.get(p).ok)) setTimeout(() => { PROSE_CACHE.ver++; }, REPLY_PATH_RETRY_MS);
   if (!landed) return;
   document.querySelectorAll('[data-rpath]').forEach((n) => {
     const v = REPLY_PATHS.get(n.dataset.rpath);
@@ -20983,7 +21147,9 @@ document.addEventListener('contextmenu', (e) => {
 document.addEventListener('dblclick', (e) => {
   const t = e.target;
   if (!t || !t.closest || S.overlay === 'rename') return;
-  if (t.closest('[data-sesmenu]')) return;
+  if (t.closest('[data-sesmenu]') || t.closest('[data-fmenu]')) return;
+  const fh = t.closest('#sidebar .sb-fhead[data-ftoggle]');   // ATO-1034
+  if (fh) { e.preventDefault(); renameStart(fh.dataset.ftoggle, 'folder'); return; }
   const row = t.closest('#sidebar .sesrow[data-ses]');
   if (row) { e.preventDefault(); renameStart(row.dataset.ses, 'row'); return; }
   if (S.room === 'chat' && S.sessionId && t.closest('#toolbar .tb-title b')) {
@@ -27774,6 +27940,14 @@ function impFormHTML(f) {
     + '<div class="tk-card sd-rows">'
     + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
     + '</div>'
+    /* ATO-1034: imported chats go into a folder named after the app they came
+       from (chat-folders.js). Not an `atag import` option: it is the sidebar's,
+       kept in chat-folders.json, so it holds for every import and for chats
+       imported before. */
+    + '<div class="tk-card sd-rows"><div class="tk-setrow sd-frow">'
+      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">A folder per app, such as “Claude Code” or “Codex”. '
+      + 'Chats imported earlier are sorted too. A chat you move yourself stays where you put it.</div></div>'
+      + '<button class="tk-switch" role="switch" aria-checked="' + !!FOLDERS.state.autoSort + '" aria-label="Put imported chats into folders" data-act="fautosort:"></button></div></div>'
     /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.
        What it replaces, per src/import (reconcile-session.ts, import-skill-dirs.ts, each importer's secrets
        and cron steps): a chat under the same id whose messages differ, including ones added here; a skill of
@@ -27990,6 +28164,7 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   window.__sidebar = () => ({
     headers: [...document.querySelectorAll('.sb-list-head > span:first-child')].map((n) => n.textContent),
+    folders: FOLDERS.state.folders.length,   // ATO-1034
     pinnedRows: document.querySelectorAll('#sidebar [data-list="pinned"] .sesrow').length,   // ATO-165
     navrows: document.querySelectorAll('.navrow').length,
     skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),
@@ -30180,7 +30355,19 @@ if (typeof window !== 'undefined') {
     // draft, so CTX.draftTokens is put back with everything else.
     const keep = {busy: S.busy, draft: S.draft, draftTokens: CTX.draftTokens};
     S.busy = true; render();
-    const out = window.__clickRetry();
+    /* ATO-901: while a turn runs the bubble's retry is the inert hint, not a
+       button that parks the text. A resend that still lands mid-turn (a
+       failure row's Try again calls resendUser) is driven directly. */
+    const inert = !document.querySelector('.turn.usr [data-resend]')
+      && !!document.querySelector('.turn.usr .msgact-off[aria-disabled="true"]');
+    const lastUser = S.log.slice().reverse().find((m) => m.k === 'user' && String(m.text || '').trim());
+    const before = S.log.length;
+    if (lastUser) resendUser(lastUser.id);
+    const e0 = $('#entry'), sb = document.querySelector('.sendbtn');
+    const out = lastUser ? {inert, before, after: S.log.length, draft: S.draft, entry: e0 ? e0.value : null,
+      focused: document.activeElement === e0, send: sb ? (sb.dataset.act || null) : null,
+      sendTitle: sb ? sb.getAttribute('title') : null, draftTokens: CTX.draftTokens,
+      toasts: S.toasts.map((t) => [t.t, t.s, t.kind || 'ok'])} : null;
     S.busy = keep.busy; S.draft = keep.draft; CTX.draftTokens = keep.draftTokens;
     const e = $('#entry'); if (e) e.value = keep.draft;
     render();

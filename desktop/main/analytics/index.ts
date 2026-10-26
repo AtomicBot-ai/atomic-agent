@@ -29,6 +29,7 @@ export {
   beginSession,
   launchBackendSettled,
   noteOrphanReaped,
+  noteSessionTrouble,
   turnEnded,
   windowCrashed,
   windowShown,
@@ -46,11 +47,13 @@ export {
 } from "./downloads.js";
 export {
   configureSetup,
+  localBackendCrashed,
   localBackendStarted,
   localBackendSupervised,
   engineRecoveryShown,
   maybeModelConfigured,
   providerKeyChecked,
+  readServerFaultWith,
   shouldReportSwitch,
   switchBegin,
   switchEnd,

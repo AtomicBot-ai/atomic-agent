@@ -15,6 +15,10 @@ export {
   type EmbeddingModelId,
   type EmbeddingModelDef,
 } from "./catalog/models-catalog.js";
+export {
+  recommendedModelFor,
+  type RecommendedModelOptions,
+} from "./catalog/recommended-model.js";
 
 export {
   isWindowsArm64,
@@ -236,6 +240,13 @@ export {
   type ThroughputRecord,
   type ThroughputSample,
 } from "./server/daemon-lifecycle.js";
+export {
+  checkEmbeddingMemory,
+  claimLowMemoryEmbeddingNote,
+  holdEmbeddingForLowMemory,
+  LOW_MEMORY_EMBEDDING_NOTE,
+  type EmbeddingMemoryVerdict,
+} from "./server/embedding-memory-gate.js";
 export {
   readManagedEngineLiveness,
   type ManagedEngineLiveness,

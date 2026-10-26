@@ -4,7 +4,7 @@ import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
-import { HELP, parseArgs } from "./serve-args.js";
+import { HELP, parseArgs, serveAuthWarning } from "./serve-args.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
   formatReapOutcomes,
@@ -98,6 +98,8 @@ export async function serveCommand(args: string[]): Promise<number> {
     process.stderr.write(
       `[atomic-agent] serve listening on http://${handle.host}:${handle.port} (${authNote}, cwd=${parsed.workingDir})\n`,
     );
+    const authWarning = serveAuthWarning(parsed);
+    if (authWarning) process.stderr.write(authWarning);
 
     releaseRecord = registerServe(stateDir, {
       pid: process.pid,

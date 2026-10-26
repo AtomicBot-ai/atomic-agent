@@ -281,5 +281,25 @@ describe.skipIf(process.platform === "win32")(
       // No form at all is the pre-existing `cmd` refusal.
       await expect(tool.run({}, ctx())).rejects.toThrow(/`cmd` must be a non-empty string/);
     });
+
+    it("runs a cmd whose unused job fields come filled with zero values (ATO-891)", async () => {
+      const tool = shellTool(DEFAULT_WAIT_MS, jobs);
+      const result = await tool.run(
+        {
+          cmd: "echo zero-defaults",
+          args: [],
+          timeoutMs: 10_000,
+          keep: false,
+          wait: 0,
+          kill: 0,
+          jobs: false,
+        },
+        ctx(),
+      );
+      expect(result.status).toBe("ok");
+      expect(result.summary).toContain("zero-defaults");
+      expect(result.details.invalidCall).toBeUndefined();
+      expect(jobs.list(SESSION)).toEqual([]);
+    });
   },
 );

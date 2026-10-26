@@ -178,9 +178,10 @@ export async function checks10(js: Js, check: Check): Promise<void> {
     !r.error && !!d && d.text === "Working…5 s" && d.under && d.asst === false && d.replyRow && d.lastReply === "",
     r.error ?? JSON.stringify(d),
   );
+  // ATO-1025: the word no longer shimmers for anyone; the spinner and the seconds carry it.
   check(
-    "T10: the word shimmers (still under reduced motion)",
-    !!d && d.anim === (d.reduced ? "none" : "chat-shimmer"),
+    "T10: the word stays still (the spinner and the seconds say it is alive)",
+    !!d && d.anim === "none",
     JSON.stringify({ anim: d?.anim, reduced: d?.reduced }),
   );
   const t = r.tick;

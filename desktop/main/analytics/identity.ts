@@ -101,6 +101,8 @@ export interface DesktopFlags {
   modelConfiguredSent: boolean;
   /** Set while a session runs, cleared on a clean quit: still set at launch = the last one crashed. */
   sessionOpen: boolean;
+  /** ATO-1030: what the open session last saw go wrong — a crash, or the OS shutting down. Null: nothing (a kill, a power loss). */
+  sessionTrouble: "crashed" | "os_shutdown" | null;
 }
 
 export class DesktopFlagsStore {
@@ -116,6 +118,7 @@ export class DesktopFlagsStore {
       installedAt: typeof at === "number" && Number.isFinite(at) ? at : null,
       modelConfiguredSent: raw.modelConfiguredSent === true,
       sessionOpen: raw.sessionOpen === true,
+      sessionTrouble: raw.sessionTrouble === "crashed" || raw.sessionTrouble === "os_shutdown" ? raw.sessionTrouble : null,
     };
   }
 

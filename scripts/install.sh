@@ -438,12 +438,28 @@ trap 'cleanup; exit 143' TERM
 download "$TAR_URL" "$WORK/${TAR_NAME}" "downloading atomic-agent"
 download "$SHA_URL" "$WORK/${TAR_NAME}.sha256"
 
+# The checksum is not optional: an archive that cannot be verified is not
+# installed, the same as install.ps1. It used to warn and carry on when
+# neither shasum nor sha256sum existed, installing whatever arrived.
 if command -v shasum >/dev/null 2>&1; then
   (cd "$WORK" && shasum -a 256 -c "${TAR_NAME}.sha256")
 elif command -v sha256sum >/dev/null 2>&1; then
   (cd "$WORK" && sha256sum -c "${TAR_NAME}.sha256")
+elif command -v openssl >/dev/null 2>&1; then
+  # The .sha256 file is `shasum -a 256` style: "<hex>  <filename>".
+  EXPECTED_SHA="$(awk 'NR == 1 { print tolower($1) }' "$WORK/${TAR_NAME}.sha256")"
+  ACTUAL_SHA="$(openssl dgst -sha256 -r "$WORK/${TAR_NAME}" | awk '{ print tolower($1) }')"
+  if [ -z "$EXPECTED_SHA" ] || [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+    echo "checksum mismatch for ${TAR_NAME}" >&2
+    echo "  expected: ${EXPECTED_SHA:-<none>}" >&2
+    echo "  actual:   ${ACTUAL_SHA}" >&2
+    exit 1
+  fi
+  echo "${TAR_NAME}: OK"
 else
-  echo "warning: shasum/sha256sum not found; skipping checksum verify" >&2
+  echo "error: cannot verify the download: none of shasum, sha256sum or openssl is installed." >&2
+  echo "install one of them (for example coreutils, which provides sha256sum) and run the installer again." >&2
+  exit 1
 fi
 
 (cd "$WORK" && tar -xzf "${TAR_NAME}")

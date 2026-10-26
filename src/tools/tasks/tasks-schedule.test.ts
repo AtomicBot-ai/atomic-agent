@@ -157,6 +157,50 @@ describe("tasks.schedule", () => {
     expect(runner.create).not.toHaveBeenCalled();
   });
 
+  it("treats zero-valued and null schedule fields as not given (ATO-891)", async () => {
+    const runner = makeTaskRunner();
+    const tool = buildTasksScheduleTool({
+      taskRunner: runner as never,
+      createSession: makeSessionFactory(),
+      defaultMaxAttempts: 3,
+    });
+    const before = Date.now();
+    const relative = await tool.run(
+      { userMessage: "later", at: 0, inSeconds: 60 },
+      makeCtx(),
+    );
+    expect(relative.status).toBe("ok");
+    const first = runner.create.mock.calls[0]![0].schedule;
+    expect(first?.kind === "at" && first.at).toBeGreaterThanOrEqual(before + 59_000);
+
+    const target = Date.now() + 120_000;
+    const absolute = await tool.run(
+      { userMessage: "at a time", at: target, inSeconds: null },
+      makeCtx(),
+    );
+    expect(absolute.status).toBe("ok");
+    expect(runner.create.mock.calls[1]![0].schedule).toEqual({ kind: "at", at: target });
+
+    const eager = await tool.run(
+      { userMessage: "now", at: 0, inSeconds: 0 },
+      makeCtx(),
+    );
+    expect(eager.status).toBe("ok");
+    expect(runner.create.mock.calls[2]![0].schedule).toBeUndefined();
+
+    const nonNumbers = await tool.run(
+      { userMessage: "later", at: false, inSeconds: 60 },
+      makeCtx(),
+    );
+    expect(nonNumbers.status).toBe("ok");
+    expect(runner.create.mock.calls[3]![0].schedule?.kind).toBe("at");
+    const stringZero = await tool.run(
+      { userMessage: "later", at: "0", inSeconds: 60 },
+      makeCtx(),
+    );
+    expect(stringZero.status).toBe("ok");
+  });
+
   it('passes notify: "telegram" through to the created record', async () => {
     const runner = makeTaskRunner();
     const tool = buildTasksScheduleTool({

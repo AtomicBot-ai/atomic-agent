@@ -5,15 +5,16 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification, powerMonitor, shell, systemPreferences} from "electron";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
+import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
-import { homedir, tmpdir, totalmem } from "node:os";
+import { freemem, homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
@@ -97,7 +98,8 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
-import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";   // #680: the chosen folder survives a relaunch
+import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
+import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import {
   activateProvider,
   agentStarting,
@@ -1884,7 +1886,19 @@ function wireIpc(client: AgentClient): void {
   // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
   // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
+  // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
+  ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
+  ipcMain.handle("app:gpuSet", (_event, on: unknown) => {
+    if (typeof on !== "boolean") return { ok: false, error: "on must be a boolean" };
+    const userData = app.getPath("userData");
+    const state = setHardwareAcceleration(readGpuState(userData), on);
+    writeGpuState(userData, state);
+    return { ok: true, activeNow: !GPU_OFF_THIS_RUN, next: state.off };
+  });
   ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
+  // ATO-1034: chat folders, in the shared state dir so the terminal sees the same ones.
+  ipcMain.handle("app:foldersGet", () => ({ ok: true, data: readChatFolders(DESKTOP_STATE_DIR) }));
+  ipcMain.handle("app:foldersSet", (_event, value: unknown) => writeChatFolders(DESKTOP_STATE_DIR, value));
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
@@ -2696,7 +2710,7 @@ function wireIpc(client: AgentClient): void {
     if (r.via !== "launch") send("cli:daemon", r);
     // A Core that would not start at launch is told too: the window offers the way out, not a log line.
     noteEngine(r, { via: r.via });
-    if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
+    if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null, r);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
@@ -2949,11 +2963,13 @@ function wireIpc(client: AgentClient): void {
     /* ATO-763: the report waits a moment for the agent's last stderr lines
        (the pipe can close after the exit), then sends only their category. */
     const exitedAt = Date.now();
+    // ATO-424: the machine's free memory at the exit itself, not 300 ms later.
+    const exitFreeMem = freemem();
     setTimeout(() => {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS));
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
@@ -2995,14 +3011,17 @@ function wireIpc(client: AgentClient): void {
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
 /* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
    chat is on the list, then Chats, then Tasks when the agent holds any. */
-function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
+  // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
 /** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
 const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
+  /** ATO-1034: how many chat folders the sidebar draws. */
+  folders?: number;
   navrows: number;
   skillsRow: boolean;
   /** ATO-457: the standing section rows under New chat, by label. */
@@ -7794,7 +7813,8 @@ async function settingsTestPartC(
   // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
   // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite Can replace your data", "Sessions to import"])
+    // ATO-1034 (folders): "Put imported chats into folders" sits before Overwrite.
+    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Put imported chats into folders", "Overwrite Can replace your data", "Sessions to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
@@ -8109,10 +8129,13 @@ async function uiTest(
   const chatsHead = heads.heads.find((h) => h.list === "chats");
   const tasksShown = !!tasksHead && tasksHead.act !== null;
   check("item 4: no plus on the head row", heads.headPlus === false, JSON.stringify(heads.headPlus));
+  /* ATO-1034 (folders): the Chats header's one control is New folder
+     (`fnew:`), never a second way to start a chat. */
   check(
     "calm: New chat is a labelled button, and the Chats header has no plus",
     !!heads.newChat && heads.newChat.act === "session:new" && heads.newChat.visible
-      && /New chat/.test(heads.newChat.text) && !!chatsHead && chatsHead.buttons === 0,
+      && /New chat/.test(heads.newChat.text) && !!chatsHead
+      && (chatsHead.buttons === 0 || (chatsHead.buttons === 1 && chatsHead.act === "fnew:")),
     JSON.stringify({ newChat: heads.newChat, chats: chatsHead }),
   );
   check(
@@ -9622,7 +9645,7 @@ async function startLocalDaemonAtBoot(): Promise<void> {
        waiting out the load. It says how it went through onBackgroundBringUp. */
     const bringUpAt = Date.now();
     const up = await bringUpAtLaunch(target.modelId);
-    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt);
+    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt, up);
     backendUp = up.daemon === "started" || up.daemon === "untouched" || up.daemon === "restarted";
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -9864,6 +9887,22 @@ A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
 wireProcessErrorReporting();
 
+/* ATO-1030: a GPU process that crashed twice in a short while turned hardware
+   acceleration off for the launches after it (gpu-fallback.ts). Electron only
+   honours this before the app is ready. A smoke run keeps the default. */
+const GPU_OFF_THIS_RUN = !SMOKE && readGpuState(app.getPath("userData")).off !== null;
+if (GPU_OFF_THIS_RUN) {
+  app.disableHardwareAcceleration();
+  console.error("[desktop] hardware acceleration is off for this run (Settings › Diagnostics turns it back on)");
+}
+app.on("child-process-gone", (_event, details) => {
+  if (details.type !== "GPU" || details.reason === "clean-exit" || SMOKE) return;
+  const userData = app.getPath("userData");
+  const { state, turnedOff } = noteGpuCrash(readGpuState(userData), Date.now());
+  writeGpuState(userData, state);
+  if (turnedOff) console.error("[desktop] the graphics process crashed again: hardware acceleration is off from the next launch");
+});
+
 
 /** Core checks follow the app update cadence; they never install or stop a model. */
 function watchCoreUpdates(): void {
@@ -9900,6 +9939,8 @@ function watchCoreUpdates(): void {
 }
 
 void app.whenReady().then(async () => {
+  // ATO-1030: macOS and Linux say so before the OS shuts down (Windows: the window's `session-end`).
+  powerMonitor.on("shutdown", () => A.noteSessionTrouble("os_shutdown"));
   /* ATO-370: a mac app run from the DMG or Downloads cannot update itself.
      Ask before anything starts: Move relaunches the app from /Applications,
      so nothing of this launch should be running by then. Not now asks again
@@ -12909,8 +12950,14 @@ async function chromeTest(
        text sits on white — and hardcoding either here means editing this
        check every time the palette moves. What must hold is that the control
        reads as red in both themes, and that the two are not the same red. */
-    const retryDark = await js<string>("(() => { window.__theme('dark'); return window.__msgActs('user').dangerColor; })()");
-    const retryLight = await js<string>("(() => { window.__theme('light'); return window.__msgActs('user').dangerColor; })()");
+    /* ATO-1023: the row now survives the render (morph), so its colour
+       transition (--t-state) runs on a theme change: read it once it settled. */
+    await js<void>("window.__theme('dark')");
+    await new Promise((r) => setTimeout(r, 400));
+    const retryDark = await js<string>("window.__msgActs('user').dangerColor");
+    await js<void>("window.__theme('light')");
+    await new Promise((r) => setTimeout(r, 400));
+    const retryLight = await js<string>("window.__msgActs('user').dangerColor");
     const readsRed = (c: string): boolean => {
       const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c);
       return !!m && Number(m[1]) > 150 && Number(m[1]) > Number(m[2]) * 2 && Number(m[1]) > Number(m[3]) * 2;
@@ -13183,19 +13230,21 @@ async function chromeTest(
 
     // Retry while a turn runs must not masquerade as a steer.
     const busyRetry = await js<{
-      before: number; after: number; draft: string; entry: string; focused: boolean;
+      inert: boolean; before: number; after: number; draft: string; entry: string; focused: boolean;
       send: string | null; sendTitle: string | null; draftTokens: number;
       toasts: Array<[string, string, string]>;
     } | null>(
       "window.__retryWhileBusy()",
     );
     check(
+      /* ATO-901: the bubble's retry is inert while a turn runs; a resend that
+         still lands mid-turn (Try again) parks the text and says so in plain words. */
       "item 4: retry refuses to masquerade as a steer while a turn runs",
-      !!busyRetry && busyRetry.after === busyRetry.before
+      !!busyRetry && busyRetry.inert && busyRetry.after === busyRetry.before
         && busyRetry.entry === "Reply with exactly: chrome lane ready"
         && busyRetry.focused
-        && busyRetry.toasts.some((t) => t[0] === "A turn is already running"
-            && t[1] === "the message is in the composer — Enter folds it into this turn" && t[2] === "bad"),
+        && busyRetry.toasts.some((t) => t[0] === "The agent is still answering"
+            && t[1] === "Your message is in the box: press Enter to add it to this answer, or wait." && t[2] === "bad"),
       JSON.stringify(busyRetry),
     );
     // Review fix: the toast promises "Enter folds it into this turn", and the
