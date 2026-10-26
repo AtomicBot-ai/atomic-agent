@@ -64,6 +64,8 @@ import {
   traceTools,
   // Lane B — backend switch
   chatModelsList,
+  keyNamesAvailable,
+  providerIsUsable,
   configSetWhole,
   explainConfigWriteFailure,
   managedDataDir,
@@ -100,6 +102,7 @@ import {
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
+import { STARTER_MODEL_ID, starterVerdict } from "./starter-model.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
@@ -1580,8 +1583,13 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
+    return startModelPull(id, (opts as { trigger?: unknown } | undefined)?.trigger);
+  });
+  /* The weights download, for the window's pull and for the launch's starter
+     model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
+     download card follows either (dlAdopt). `onDone` hears how it ended. */
+  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void) {
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
-    const trigger = (opts as { trigger?: unknown } | undefined)?.trigger;   // analytics label only
     const running = downloadRunning();
     // A refusal for the download already running is the window following it (dlAdopt), not a failure.
     if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: DOWNLOAD_BUSY, running }; }
@@ -1598,9 +1606,32 @@ function wireIpc(client: AgentClient): void {
       pull = null;
       A.downloadFinished(id, res);
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+      onDone?.(res);
     });
     return { ok: true, started: true };
-  });
+  }
+
+  /* ATO-1041: the first launch with nothing to answer on fetches the starter
+     model, then routes to it (starter-model.ts). The window hears
+     `app:starterModel` ({ id, phase: downloading | ready | failed }) and the
+     usual `cli:pull` frames. */
+  fetchStarterModel = async () => {
+    if (SMOKE || FIRST_RUN_PROBE || quitting) return;
+    const [list, read] = await Promise.all([chatModelsList(), readWholeConfig()]);
+    const names = keyNamesAvailable();
+    const cloudReady = (read.config?.llm?.providers ?? []).some((p) => p.kind !== "llama-server" && providerIsUsable(p, names));
+    const verdict = starterVerdict({ chatModels: list.ok && list.models ? list.models : null, cloudReady });
+    if (!verdict.fetch) return;
+    const id = STARTER_MODEL_ID;
+    const r = startModelPull(id, "first_run", (res) => {
+      if (!res.ok || quitting) { send("app:starterModel", { id, phase: "failed", error: res.error ?? null }); return; }
+      void switched(() => selectLocalModel(id)).then((sw) => {
+        const ok = !!(sw && (sw as { ok?: boolean }).ok);
+        send("app:starterModel", { id, phase: ok ? "ready" : "failed", error: ok ? null : ((sw as { error?: string }).error ?? null) });
+      });
+    });
+    if (r.ok) send("app:starterModel", { id, phase: "downloading" });
+  };
   /* r5 item 7 (setup wizard) — the llama.cpp runtime phase, streamed.
      `atag models pull` never fetches the backend, so the TUI's first
      phase row can only be driven by `models update`. It rides the same
@@ -9690,6 +9721,9 @@ async function installEngineAtLaunch(): Promise<boolean> {
  * and the active model is on disk; a running daemon, an external or cloud
  * route, or a model not yet downloaded leaves everything as it is.
  */
+/** ATO-1041: set by wireIpc (it needs the pull slot and the switch path); run once the launch start settled. */
+let fetchStarterModel: (() => Promise<void>) | null = null;
+
 async function startLocalDaemonAtBoot(): Promise<void> {
   let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
   try {
@@ -10120,7 +10154,7 @@ void app.whenReady().then(async () => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
-      else void startLocalDaemonAtBoot();
+      else void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).catch(() => undefined);
     });
   });
 
