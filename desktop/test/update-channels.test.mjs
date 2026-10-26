@@ -26,3 +26,13 @@ test('updates.json keeps the beta choice and defaults it off', () => {
   assert.equal(U.coerceUpdatePrefs({ beta: true }).beta, true);
   assert.equal(U.coerceUpdatePrefs({ beta: 'yes' }).beta, false);
 });
+
+test('pointing the updater at a channel never leaves a downgrade allowed', () => {
+  // As electron-updater: setting the channel turns allowDowngrade on.
+  const u = { _c: null, allowDowngrade: false, get channel() { return this._c; }, set channel(v) { this._c = v; this.allowDowngrade = true; } };
+  U.readChannel(u, 'beta');
+  assert.equal(u.channel, 'beta');
+  assert.equal(u.allowDowngrade, false);
+  U.readChannel(u, 'stable');
+  assert.equal(u.allowDowngrade, false);
+});

@@ -127,6 +127,16 @@ export interface UpdatePrefs {
 
 const PREFS_DEFAULT: UpdatePrefs = { autoCheck: true, skippedVersion: null, lastDismissed: null, pendingInstall: null, beta: false };
 
+/**
+ * ATO-575: point the updater at a feed channel without ever allowing a
+ * downgrade. electron-updater's `channel` setter turns `allowDowngrade` on,
+ * so it is turned off again after it, every time.
+ */
+export function readChannel(u: { channel: string | null; allowDowngrade: boolean }, channel: string): void {
+  u.channel = channel;
+  u.allowDowngrade = false;
+}
+
 /** ATO-575: the channel the feed is read on: `beta` when the person asked for betas, else the build's own. */
 export function effectiveChannel(buildChannel: string, prefs: Pick<UpdatePrefs, "beta">): string {
   return prefs.beta ? "beta" : buildChannel;
@@ -685,13 +695,11 @@ export class AppUpdateController {
       /* ATO-575: a feed with no beta files yet. Beta must never cost the
          stable releases, so the check reads the build's own channel instead. */
       if (!this.prefs.beta || !/\b404\b|Cannot find channel|Cannot find latest/i.test(err instanceof Error ? err.message : String(err))) throw err;
-      updater.channel = this.channel;
-      updater.allowDowngrade = false;
+      readChannel(updater, this.channel);
       try {
         res = await updater.checkForUpdates();
       } finally {
-        updater.channel = "beta";
-        updater.allowDowngrade = false;
+        readChannel(updater, "beta");
       }
     }
     /* electron-updater can answer a newer version that is not for this
@@ -711,7 +719,7 @@ export class AppUpdateController {
     u.autoInstallOnAppQuit = false;
     u.allowPrerelease = false;
     // ATO-575: a beta is read from the feed's beta*.yml. Setting `channel` lets electron-updater downgrade; it never should here.
-    if (this.prefs.beta) u.channel = "beta";
+    if (this.prefs.beta) readChannel(u, "beta");
     u.allowDowngrade = false;
     u.logger = {
       info: (m?: unknown) => console.log(`[updater] ${String(m)}`),
@@ -776,8 +784,7 @@ export class AppUpdateController {
     this.prefs.beta = on;
     writeUpdatePrefs(this.prefs);
     if (this.updater) {
-      this.updater.channel = on ? "beta" : this.channel;
-      this.updater.allowDowngrade = false;
+      readChannel(this.updater, on ? "beta" : this.channel);
     }
     this.emit();
     return this.state();
