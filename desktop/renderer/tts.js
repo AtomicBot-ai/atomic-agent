@@ -33,7 +33,10 @@ function ttsPlain(md) {
     .replace(/https?:\/\/\S+/g, ' ')
     .replace(/^#{1,6}\s+/gm, '')
     .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/[*_~>|]+/g, ' ')
+    // Markdown emphasis only at word edges: my_var and a > b are read as written.
+    .replace(/(^|\s)[*_~]+|[*_~]+(?=\s|$|[.,;:!?])/g, '$1')
+    .replace(/^\s*>\s?/gm, '')
+    .replace(/\|/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
 }
@@ -93,6 +96,13 @@ function ttsRepaint() {
 
 if (typeof window !== 'undefined' && window.speechSynthesis) {
   // Voices load late on some systems: the buttons appear once they are there.
-  try { window.speechSynthesis.addEventListener('voiceschanged', () => ttsRepaint()); } catch (e) { /* older engines */ }
+  // Repainted only when voices appear or go, not on every repeat of the event.
+  let had = ttsAvailable();
+  try {
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      const now = ttsAvailable();
+      if (now !== had) { had = now; ttsRepaint(); }
+    });
+  } catch (e) { /* older engines */ }
 }
 if (typeof module !== 'undefined') module.exports = { ttsPlain };

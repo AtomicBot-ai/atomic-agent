@@ -12,4 +12,5 @@ test('code, links and markdown marks are not read out', () => {
   assert.equal(ttsPlain('Run this:\n```bash\nnpm test\n```\nthen check.'), 'Run this: (code) then check.');
   assert.equal(ttsPlain('- one\n- two'), 'one two');
   assert.equal(ttsPlain(''), '');
+  assert.equal(ttsPlain('Set my_var when a > b, *really*.'), 'Set my_var when a > b, really.');
 });
