@@ -46,6 +46,7 @@ export function otherPollerOf(
     const pid = /\bpid (\d+)\b/.exec(describeChannelLockConflict(lastError))?.[1];
     return { where: "this_computer", pid: pid ? Number(pid) : null };
   }
-  if (/\b409\b|terminated by other getUpdates|conflict/i.test(lastError)) return { where: "elsewhere" };
+  // Telegram's own 409 for a second poller; not any error that happens to say "conflict".
+  if (/\b409\b|terminated by other getUpdates/i.test(lastError)) return { where: "elsewhere" };
   return null;
 }
