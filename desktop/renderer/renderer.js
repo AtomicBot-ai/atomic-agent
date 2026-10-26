@@ -2,6 +2,8 @@
 
 /* The Electron preload exposes window.atomic. Without it (opened as a
    plain page) the app runs the scripted demo instead of a real agent. */
+// Declared up top: render() can run renderProse before the code below is evaluated (TDZ).
+const PROSE_CACHE = {map: new Map(), ver: 0, last: '', max: 600};
 const BR = typeof window !== "undefined" ? window.atomic : null;
 /* The platform the window runs on. The scripted demo (no bridge) and macOS
    take every path below exactly as before; the Windows and Linux arms only
@@ -20864,7 +20866,6 @@ function renderMarkdown(escaped) {
    again). Markup still waiting on main ([data-rpath]) is not
    kept. A streaming reply's text only grows, so its previous frame's entry is
    dropped when the next one is stored: the cache holds messages, not frames. */
-const PROSE_CACHE = {map: new Map(), ver: 0, last: '', max: 600};
 function renderProse(text) {
   const key = typeof text === 'string' ? text : String(text == null ? '' : text);
   const C = PROSE_CACHE;
