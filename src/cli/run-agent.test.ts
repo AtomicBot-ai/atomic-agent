@@ -379,7 +379,9 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
   };
 });
 
-const { runAgentCommand } = await import("./run-agent.js");
+const { runAgentCommand, STDIN_LINE_PER_TURN_NOTICE } = await import(
+  "./run-agent.js"
+);
 
 describe("runAgentCommand exit codes", () => {
   let stateDir: string;
@@ -536,6 +538,29 @@ describe("runAgentCommand exit codes", () => {
     }
     expect(turnMessages).toEqual(["the task", "continue", "and wrap up"]);
     expect(stderr).toContain('"turnCount": 3');
+  }, 60_000);
+
+  it("warns once on stderr when a piped second line becomes its own turn (ATO-910)", async () => {
+    turnMessages.length = 0;
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "ok" } });
+    feedStdin(["first line of a prompt\n", "second line\n", "third line\n"]);
+    const code = await runAgentCommand(["--cwd", workingDir, "--no-approval"]);
+    expect(code).toBe(0);
+    // The per-line turn design stays: three lines, three turns.
+    expect(turnMessages).toEqual([
+      "first line of a prompt",
+      "second line",
+      "third line",
+    ]);
+    expect(stderr.split(STDIN_LINE_PER_TURN_NOTICE)).toHaveLength(2);
+  }, 60_000);
+
+  it("prints no line-per-turn notice for a single piped line (ATO-910)", async () => {
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "ok" } });
+    feedStdin(["one line only\n"]);
+    const code = await runAgentCommand(["--cwd", workingDir, "--no-approval"]);
+    expect(code).toBe(0);
+    expect(stderr).not.toContain("each line is sent as a separate turn");
   }, 60_000);
 
   describe("approval answers come from the same stdin queue (ATO-802)", () => {

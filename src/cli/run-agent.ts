@@ -54,6 +54,7 @@ const HELP =
     "Usage:",
     "  atomic-agent run [options]           interactive: one message per line",
     '  echo "<goal>" | atomic-agent run     one-shot: answer on stdout, logs on stderr',
+    "                                       (each piped line is a separate turn)",
     "",
     "Options:",
     "  --cwd <dir>          Working directory for OS tools (default: current directory)",
@@ -366,7 +367,20 @@ interface ChatLoopOptions {
   controller: AbortController;
   /** Stdin lines, shared with the approval prompt. */
   lines: StdinLineQueue;
+  /**
+   * Stdin is piped, not a terminal. A piped multi-line prompt still runs
+   * one turn per line, so the first time a second line becomes its own
+   * turn a one-line notice goes to stderr (ATO-910).
+   */
+  piped: boolean;
 }
+
+/**
+ * The stderr notice for piped stdin whose second line became a separate
+ * turn: a multi-line prompt is not read as one message.
+ */
+export const STDIN_LINE_PER_TURN_NOTICE =
+  "stdin: each line is sent as a separate turn; join a multi-line prompt into one line to send it as one message";
 
 /**
  * Read messages line-by-line from stdin and feed them through
@@ -431,6 +445,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     }
   };
 
+  let turnsStarted = 0;
   try {
     while (true) {
       if (opts.controller.signal.aborted) break;
@@ -443,6 +458,10 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
       if (trimmed === "/abort") {
         opts.controller.abort();
         break;
+      }
+      turnsStarted += 1;
+      if (opts.piped && turnsStarted === 2) {
+        process.stderr.write(`${STDIN_LINE_PER_TURN_NOTICE}\n`);
       }
       await driveTurn(trimmed);
     }
@@ -584,6 +603,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       ...(parsed.maxSteps === null ? {} : { maxSteps: parsed.maxSteps }),
       controller,
       lines: stdinLines,
+      piped: process.stdin.isTTY !== true,
     });
     runtime.sessionStore.save(finalSession);
     process.stderr.write(
