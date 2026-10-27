@@ -74,6 +74,9 @@ import {
   resolveHuggingFaceGgufChoices,
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
+  claimLowMemoryEmbeddingNote,
+  holdEmbeddingForLowMemory,
+  LOW_MEMORY_EMBEDDING_NOTE,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -2600,7 +2603,7 @@ export class LocalModelsOrchestrator {
    * degrades to FTS5 when it is unreachable, flag or no flag.
    */
   private reportEmbeddingStartOutcome(
-    embedding: { pid: number } | { error: string } | { skipped: true },
+    embedding: { pid: number } | { error: string } | { skipped: true; lowMemory?: true },
     requested: EmbeddingDaemonStartOptions | undefined,
   ): void {
     if ("pid" in embedding) {
@@ -2615,6 +2618,9 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: embedding daemon failed — hybrid recall unavailable until it starts, FTS5 recall still works (${embedding.error})`,
       });
+    } else if ("lowMemory" in embedding) {
+      // Held back, not failed: the opt-in stays as it is (issue #465).
+      this.noteLowMemoryEmbedding();
     } else if (!requested) {
       // skipped is also returned when no embedding was requested;
       // only emit a hint when the operator has enabled embeddings but
@@ -2627,6 +2633,12 @@ export class LocalModelsOrchestrator {
         });
       }
     }
+  }
+
+  /** ATO-379: the memory model was held back for low memory; one short note per process. */
+  private noteLowMemoryEmbedding(): void {
+    if (!claimLowMemoryEmbeddingNote()) return;
+    this.bus.emit({ type: "runtime_info", line: `local-llm: ${LOW_MEMORY_EMBEDDING_NOTE}` });
   }
 
   /**
@@ -2702,6 +2714,13 @@ export class LocalModelsOrchestrator {
     }
 
     if (embStatus.running && !opts?.hotSwap) return;
+
+    // ATO-379: not started on a machine with little memory; recall stays on
+    // keywords. Transient, so the opt-in is not touched (issue #465).
+    if (!embStatus.running && !(await holdEmbeddingForLowMemory(dataDir)).ok) {
+      this.noteLowMemoryEmbedding();
+      return;
+    }
 
     if (embStatus.running && opts?.hotSwap) {
       this.bus.emit({

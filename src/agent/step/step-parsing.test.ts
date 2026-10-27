@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GEMMA4_THINK_PROFILE, PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE } from "../../llm/model-profile.js";
-import { DEFAULT_REASONING_BUDGET_TOKENS, MAX_REASONING_BUDGET_TOKENS } from "../../llm/reasoning-budget.js";
+import { DEFAULT_REASONING_BUDGET_TOKENS } from "../../llm/reasoning-budget.js";
 import { REPAIR_MAX_TOKENS, repairReplyCap } from "./step-parsing.js";
 
 describe("repair completion cap", () => {
@@ -11,8 +11,11 @@ describe("repair completion cap", () => {
 
   it("adds the enforced reasoning budget for a thinking profile on a grammar link", () => {
     for (const profile of [QWEN_THINK_PROFILE, GEMMA4_THINK_PROFILE]) {
-      expect(repairReplyCap("grammar", 8192, { profile, budgetTokens: 1500 })).toBe(REPAIR_MAX_TOKENS + MAX_REASONING_BUDGET_TOKENS);
+      expect(repairReplyCap("grammar", 8192, { profile, budgetTokens: 1500 })).toBe(REPAIR_MAX_TOKENS + 1500);
       expect(repairReplyCap("grammar", 8192, { profile, budgetTokens: 64 })).toBe(REPAIR_MAX_TOKENS + 64);
+      // Never above the step's cap, even at the config ceiling (ATO-607).
+      expect(repairReplyCap("grammar", 8192, { profile, budgetTokens: 32768 })).toBe(8192);
+      expect(repairReplyCap("grammar", 512, { profile, budgetTokens: 1500 })).toBe(REPAIR_MAX_TOKENS);
       // Absent budget: whatever the default is, the same cap as passing it, as the grammar falls back to it too.
       expect(repairReplyCap("grammar", 8192, { profile })).toBe(
         repairReplyCap("grammar", 8192, { profile, budgetTokens: DEFAULT_REASONING_BUDGET_TOKENS }),

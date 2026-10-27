@@ -16,7 +16,7 @@ import { scrubError } from "../error-reporting/error-scrubber.js";
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
 
 function createMockFetch(handler: Handler): typeof fetch {
-  return ((input: RequestInfo | URL, init?: RequestInit) => {
+  return ((input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     return handler(url, init ?? {});
   }) as typeof fetch;

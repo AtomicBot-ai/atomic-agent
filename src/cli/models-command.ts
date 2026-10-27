@@ -22,6 +22,7 @@ import {
   runLocalModelsPullWorker,
 } from "./models-downloads.js";
 import { runModelsSearch } from "./models-search-command.js";
+import { runLocalModelsCheck } from "./models-check.js";
 
 const HELP =
   [
@@ -39,6 +40,8 @@ const HELP =
     "                                forget finished records",
     '  use <id>                      Set active model and switch mode to "managed"',
     "  status                        Show mode, backend version, active model, daemon/health",
+    "  check [--json]                Ask localModels.url what answers there (llama.cpp, Ollama,",
+    "                                still loading, not a model server); exit 1 unless llama.cpp",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
     "                                --grow-context: on a GPU with its own memory, start the",
     "                                auto window at 32768 and record how far it may grow",
@@ -83,6 +86,7 @@ const HELP =
     "  atomic-agent models update",
     "  atomic-agent models start [--interactive]",
     "  atomic-agent models status",
+    "  atomic-agent models check",
   ].join("\n") + "\n";
 
 /**
@@ -131,6 +135,8 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsUse(args[1]);
       case "status":
         return runLocalModelsStatus();
+      case "check":
+        return await runLocalModelsCheck(args.slice(1));
       case "start":
         return await runLocalModelsStart({
           interactive: args.includes("--interactive"),
