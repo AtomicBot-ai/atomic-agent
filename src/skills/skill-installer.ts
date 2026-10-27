@@ -7,6 +7,12 @@ export interface InstallSkillOptions {
   sourceDir: string;
   targetRoot: string;
   force?: boolean;
+  /**
+   * Copy symlinks exactly as written instead of rewriting relative links
+   * to absolute paths into `sourceDir`. Used when `sourceDir` is a
+   * temporary staging copy that is deleted after the install.
+   */
+  verbatimSymlinks?: boolean;
 }
 
 export interface InstallSkillResult {
@@ -101,7 +107,10 @@ export async function installSkill(
   if (exists) {
     await rm(installedAt, { recursive: true, force: true });
   }
-  await cp(sourceDir, installedAt, { recursive: true });
+  await cp(sourceDir, installedAt, {
+    recursive: true,
+    ...(options.verbatimSymlinks ? { verbatimSymlinks: true } : {}),
+  });
   return { manifest, installedAt };
 }
 
