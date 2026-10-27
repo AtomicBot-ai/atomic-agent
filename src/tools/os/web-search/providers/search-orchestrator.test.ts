@@ -879,7 +879,10 @@ describe("a provider that cannot be reached (ATO-315)", () => {
         env: {},
         cooldown,
         now: () => at,
-      }).catch((e: unknown) => e as WebSearchUnavailableError);
+      }).then(
+        () => { throw new Error("expected every provider to be unreachable"); },
+        (e: unknown) => e as WebSearchUnavailableError,
+      );
 
     const first = await search("one", T0);
     expect(first).toBeInstanceOf(WebSearchUnavailableError);
@@ -979,7 +982,10 @@ describe("a provider that cannot be reached (ATO-315)", () => {
         env: EXA_KEYED,
         cooldown,
         now: () => at,
-      }).catch((e: unknown) => e as WebSearchUnavailableError);
+      }).then(
+        () => { throw new Error("expected every provider to be unreachable"); },
+        (e: unknown) => e as WebSearchUnavailableError,
+      );
 
     const first = await search("one", T0);
     expect(first).toBeInstanceOf(WebSearchUnavailableError);
