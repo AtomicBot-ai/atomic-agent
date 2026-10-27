@@ -47,6 +47,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "projects",
   "tools",
   "tools.shell",
+  "tools.screen",
   "sessions",
   "sessions.retention",
   "tracing",
