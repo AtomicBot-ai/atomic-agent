@@ -1035,8 +1035,8 @@ const SWXBR = {
   // Each stamps SWX.route so swxRun's `finally` can file the measurement
   // under the route that was actually taken (r5 review, minor).
   switchBackend: (kind) => { SWX.route = 'switchBackend'; return BR.switchBackend(kind); },
-  activateProvider: (id) => { SWX.route = 'activateProvider'; return BR.activateProvider(id); },
-  selectCloudModel: (id, model) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model); },
+  activateProvider: (id, opts) => { SWX.route = 'activateProvider'; return BR.activateProvider(id, opts); },
+  selectCloudModel: (id, model, opts) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model, opts); },
   selectLocalModel: (id) => { SWX.route = 'selectLocalModel'; return BR.selectLocalModel(id); },
   codingMode: (id) => { SWX.route = 'codingMode'; return BR.codingMode(id); },
   // Run mode — Fusion: the TUI's RunModeOrchestrator writes (main/backend-switch.ts).
@@ -5088,6 +5088,20 @@ function refreshDlProgress() {
  *  inspector. Its width (narrowed when the column is narrower) and the height
  *  the column leaves above the card are part of the returned style, so a
  *  caller's own `width:` in front of it is only the default. */
+/* ATO-1235: a popover under (or, short of room, over) a button inside
+   Settings, kept inside the window: on a 700 px window it scrolls rather
+   than run off the bottom. */
+function settingsAnchorStyle(el, width) {
+  const r = el.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight, pad = 12;
+  const w = Math.round(Math.min(width, vw - pad * 2));
+  const left = Math.round(Math.max(pad, Math.min(r.right - w, vw - pad - w)));
+  const below = vh - r.bottom - pad - 6, above = r.top - pad - 6;
+  if (below >= 260 || below >= above) {
+    return 'position:fixed;left:' + left + 'px;top:' + Math.round(Math.min(r.bottom + 6, vh - pad - 160)) + 'px;bottom:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, Math.min(below, vh - pad * 2))) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 0';
+  }
+  return 'position:fixed;left:' + left + 'px;bottom:' + Math.round(vh - r.top + 6) + 'px;top:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, above)) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 100%';
+}
 function anchorStyle(sel, width) {
   const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
   const winEl = $('#window');
@@ -17844,6 +17858,19 @@ function selShell(title, body, foot, lead) {
     || document.querySelector('.modelchip') || document.querySelector('.modechip');
   const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' || SEL.kind === 'workers' ? 520
     : SEL.kind === 'provider' ? 420 : 440;
+  /* ATO-1235: opened from Settings › Models' Add provider, the list hangs off
+     that button over a dimmed Settings, not off the composer chip under it,
+     where it lay on top of the cards with nothing between. */
+  const fromSettings = S.settings && WIZ.phase ? document.querySelector('.setwin [data-act="llm:add"]') : null;
+  if (fromSettings) {
+    return '<div class="scrim selscrim--settings" data-close="1">'
+      + '<div class="popover selpop selpop--settings tk-pop" style="' + settingsAnchorStyle(fromSettings, width) + '">'
+      + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
+      + (SEL.busy ? '<span class="cap selbusy"><span class="tk-spin"></span>' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
+      + body
+      + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
+      + '</div></div>';
+  }
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover selpop tk-pop" style="' + anchorStyle(anchor, width) + '">'
     + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
@@ -24680,7 +24707,7 @@ function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'l
 function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
 function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
 function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
-function llmLocalActive() { const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }
+function llmLocalActive() { if (LLMP.choosing) return false; const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }   // ATO-1234: a cloud pick on its way is the choice
 function llmLocalEmbActive() { const p = llmProvider(llmActiveEmbId()); return !!p && p.kind === 'llama-server'; }
 function llmLocalModels() { return (LIVE_CONFIG && LIVE_CONFIG.localModels) || {}; }
 function llmManaged() { return llmLocalModels().managed || {}; }
@@ -25032,7 +25059,8 @@ function llmProviderRow(p) {
   // Backlog 32: a saved key the agent will not send is no key: its row says so and Enter opens the key screen.
   const badKey = p.kind !== 'subscription-cli' && savedKeyInvalid(p);
   const hasKey = !badKey && llmHasKey(p);
-  const active = p.id === llmActiveTextId();
+  // ATO-1234: a pick on its way shows as the choice already.
+  const active = LLMP.choosing ? LLMP.choosing.pid === p.id : p.id === llmActiveTextId();
   const auth = p.kind === 'subscription-cli' ? 'cli auth' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey, badKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
@@ -25041,7 +25069,9 @@ function llmProviderRow(p) {
 }
 function llmChatRow(p, modelId) {
   const hasKey = !savedKeyInvalid(p) && llmHasKey(p);
-  const active = p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
+  const choosing = LLMP.choosing;
+  const active = choosing ? choosing.pid === p.id && (choosing.modelId || p.defaultChatModel || p.model) === modelId
+    : p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
   // OpenRouter/AI-ML rows show formatOpenRouterChatModelDetails / formatAimlapiChatModelDetails in the TUI — an in-process catalogue
   // formatter the CLI does not print, so every kind gets the generic effect here.
   return {kind:'cloudChatModel', id:'cloud-text:' + p.id + ':' + modelId, provider:p, providerId:p.id, modelId, active, available:hasKey,
@@ -26346,17 +26376,26 @@ function llmRestartRefusal(held) {
    row, the selector and the wizard use — never a raw llmWrite of
    activeTextProvider. The serve process is restarted by main (applySwitch), so
    the message reports the switch instead of asking for a restart. */
+/* ATO-1234: what happened to the agent, said only when it did: a cloud pick is
+   usually taken live now, and the local server stops behind it. */
+function llmSwitchTail(res) {
+  return (res.daemon === 'stopping' && !res.daemonLine ? ' The local model stops in the background.' : '')
+    + (res.liveSwapped ? '' : res.restart ? ' The agent was restarted.' : '');
+}
 async function llmSwitchProvider(id) {
   const held = restartStopsTurn();   // Backlog 28: a turn in any chat
   if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return false; }
-  LLMP.busy = true; llmRepaint();
+  // ATO-1234: the row shows the pick at once; the switch lands behind it.
+  LLMP.busy = true; LLMP.choosing = {pid: id, modelId: null}; llmRepaint();
   // r5 item 10: Settings is an in-window overlay, so this locks the same
   // composer the selector does. The refusal keeps the tab's own llmReport
   // wording rather than the selector's toast.
-  const res = await swxRun('switching…', {providerId: id},
-    () => SWXBR.activateProvider(id),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: id},
+      () => SWXBR.activateProvider(id, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return false; }
   // U29: no model yet; the provider's setup ends on its model step.
   if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
@@ -26372,19 +26411,21 @@ async function llmSwitchProvider(id) {
   const transport = res.transport || (id === 'local-llama' ? 'grammar+llama-server' : 'native_tools');
   // providers-orchestrator.ts setActiveText: the providers_status line + the feed's runtime_info.
   llmReport('Active text: ' + id + (model ? ' · ' + model : '') + ' · ' + transport, 'cloud');
-  LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + ' The agent was restarted.'};
+  LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
   return true;
 }
 async function llmSelectChatModel(pid, modelId) {
   const held = restartStopsTurn();   // Backlog 28: a turn in any chat
   if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return; }
-  LLMP.busy = true; llmRepaint();
+  LLMP.busy = true; LLMP.choosing = {pid, modelId}; llmRepaint();   // ATO-1234: the pick shows at once
   // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId) — lane B's selectCloudModel is exactly that pair, plus the restart.
-  const res = await swxRun('switching…', {providerId: pid, model: modelId},
-    () => SWXBR.selectCloudModel(pid, modelId),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: pid, model: modelId},
+      () => SWXBR.selectCloudModel(pid, modelId, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return; }
   if (!res || !res.ok) {
     llmReport(res && res.needsKey && res.keyInvalid ? savedKeyLine(pid)
@@ -26395,7 +26436,7 @@ async function llmSelectChatModel(pid, modelId) {
   // r5 item 10: swxRun re-read the live config before it resolved.
   const transport = res.transport || 'native_tools';
   llmReport('Active text: ' + pid + ' · ' + modelId + ' · ' + transport, 'cloud');
-  LLMP.msg = {text:'Selected chat model ' + pid + '/' + modelId + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + ' The agent was restarted.'};
+  LLMP.msg = {text:'Selected chat model ' + pid + '/' + modelId + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
 }
 async function llmSelectEmbeddingModel(pid, modelId) {

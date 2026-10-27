@@ -379,8 +379,8 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
   switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),
-  activateProvider: (id: string) => ipcRenderer.invoke("cli:activateProvider", id),
-  selectCloudModel: (id: string, model: string) => ipcRenderer.invoke("cli:selectCloudModel", { id, model }),
+  activateProvider: (id: string, opts?: { background?: boolean }) => ipcRenderer.invoke("cli:activateProvider", id, opts),
+  selectCloudModel: (id: string, model: string, opts?: { background?: boolean }) => ipcRenderer.invoke("cli:selectCloudModel", { id, model, background: opts?.background === true }),
   selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
   /** Run mode — Fusion: RunModeOrchestrator's writes (enter / swap / workers / worker model), each a whole-file write + agent restart. */
   enterFusion: (pins?: { orchestratorProvider?: string; workerProvider?: string }) =>

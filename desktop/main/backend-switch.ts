@@ -85,6 +85,8 @@ import { quitMayStopModel } from "./model-sessions.js";
 
 export type DaemonEffect =
   | "untouched"
+  /** ATO-1234: a provider or model pick stops the local chat server in the background, in the daemon's turn; the pick does not wait for it. */
+  | "stopping"
   | "stopped"
   | "stop-failed"
   | "started"
@@ -239,14 +241,15 @@ function earlyDaemonLook(): { running: Promise<boolean>; still: () => boolean } 
  * only a successful stop is followed by write 2 (memory.embeddings.enabled
  * = false), which is the order the TUI's stopDaemon does it.
  */
-export function activateProvider(id: string, opts: { leaveFusion?: boolean } = {}): Promise<SwitchResult> {
+export function activateProvider(id: string, opts: { leaveFusion?: boolean; stopInBackground?: boolean } = {}): Promise<SwitchResult> {
+  // ATO-1234: Settings › Models' Use passes stopInBackground: it answers once the file names the pick; the local server stops behind it.
   return activate(() => id, opts);
 }
 
 /** activateProvider for the provider `pick` names in the file as read, or `pick`'s refusal. */
 async function activate(
   pick: (cfg: UserConfigShape) => string | SwitchResult,
-  opts: { leaveFusion?: boolean; earlyLook?: boolean },
+  opts: { leaveFusion?: boolean; earlyLook?: boolean; stopInBackground?: boolean },
 ): Promise<SwitchResult> {
   /* The status beside the write: the Cloud switch's only (switchBackend), and
      only when a stop looks needed — a refused switch, the wizard's local-llama
@@ -290,7 +293,40 @@ async function activate(
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
   let embeddingKept = false;
-  if (cloud && !keepFusion) {
+  if (cloud && !keepFusion && opts.stopInBackground) {
+    /* ATO-1234: the stop (a `models status`, a `models stop --chat-only`, up to
+       seconds on a big model) used to hold the pick. It runs in the daemon's
+       turn, so a local start asked for next waits for it, and says how it
+       ended in the log. A hybrid-recall flag it turns off reaches the agent at
+       its next restart. */
+    supersedeBringUp();
+    // Said and done only when a local server looks up (its pid is alive): a cloud → cloud pick stops nothing.
+    const hint = configFileHint();
+    const likelyUp = !!hint && managedDaemonPidAlive(hint);
+    if (likelyUp) {
+      daemon = "stopping";
+      daemonLine = "local-llm: the chat server stops in the background";
+    }
+    const embeddingsAlreadyOff = !!v.embeddingsOff;
+    if (likelyUp) void withDaemonLock(async () => {
+      if (!(await localDaemonRunning({ reapWedged: false }))) return;
+      const s = await modelsStopChatOnly();
+      if (!s.ok) {
+        console.warn(`[desktop] local-llm: background stop after a cloud pick failed — ${s.error ?? "unknown error"}`);
+        return;
+      }
+      if (!s.embeddingKept && !embeddingsAlreadyOff) {
+        // Hybrid recall went off with the embedding server: the agent reads the flag at its next start, owed now and paid once no turn runs.
+        const m = await setMemoryEmbeddingsEnabled(false);
+        if (m.changed) {
+          restartOwed = true;
+          setTimeout(lastTurnEnded, 0);
+        }
+      }
+    }, () => undefined).catch((err) => {
+      console.warn(`[desktop] local-llm: background stop after a cloud pick failed — ${err instanceof Error ? err.message : String(err)}`);
+    });
+  } else if (cloud && !keepFusion) {
     // A stop never waits out a load (item 11): a bring-up on its way is ended, its start killed.
     supersedeBringUp();
     // A stop decision: whatever is still there, answering or not (item 31), is stopped and said so.
@@ -436,7 +472,7 @@ export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResu
  * nothing is written; then the model, then the activation (which also
  * stops the local daemons).
  */
-export async function selectCloudModel(providerId: string, modelId: string): Promise<SwitchResult> {
+export async function selectCloudModel(providerId: string, modelId: string, opts: { stopInBackground?: boolean } = {}): Promise<SwitchResult> {
   if (!modelId.trim()) return { ok: false, error: "chat model id is empty" };
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };
@@ -448,7 +484,7 @@ export async function selectCloudModel(providerId: string, modelId: string): Pro
   const modelChanged = entry.defaultChatModel !== modelId.trim();
   const w = await setProviderModel(providerId, modelId.trim());
   if (!w.ok) return { ok: false, error: w.error };
-  const res = await activateProvider(providerId);
+  const res = await activateProvider(providerId, opts);
   if (!res.ok) return res;
   return { ...res, model: modelId.trim(), restart: res.restart || modelChanged };
 }
