@@ -42,6 +42,15 @@ export {
   fallBackToCpuBackend,
   shouldFallBackToCpuBackend,
 } from "./backend/cpu-backend-fallback.js";
+export {
+  CORE_CPU_FALLBACK_LINE,
+  CORE_CPU_RECORDED_LINE,
+  coreCpuFallbackApplies,
+  fallBackToCoreCpuBuild,
+  revertCoreCpuFallback,
+  shouldFallBackToCoreCpuBuild,
+  type CoreCpuSwap,
+} from "./backend/core-cpu-backend-fallback.js";
 
 export {
   resolveBackendDir,

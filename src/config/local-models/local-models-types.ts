@@ -1,5 +1,5 @@
 import type { LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
-import type { BackendVariantPreference } from "../../local-llm/backend/windows-backend-variant.js";
+import type { BackendVariantPreference, CoreBackendVariant } from "../../local-llm/backend/windows-backend-variant.js";
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
 
 export type LocalLlmMode = "external" | "managed";
@@ -58,6 +58,18 @@ export interface UserManagedLocalLlmConfig {
    * Added in config v47; older files transparently get `"auto"`.
    */
   backendVariant: BackendVariantPreference;
+  /**
+   * Which build Atomic Core installs on Windows x64 (the `atomic-core`
+   * engine; `backendVariant` above is the llama-server engine's).
+   *   - `"auto"` (default) — Core's recommendation for this hardware.
+   *   - `"cpu"` — Core's CPU build. Written only after a start found
+   *     Core's GPU build crashing on load and the CPU build then served
+   *     the model; every later Core install, update and "Download again"
+   *     keeps it. Set back to `"auto"` and run `atomic-agent models
+   *     update` to try the GPU build again.
+   * Ignored on every other platform. Older files inherit `"auto"`.
+   */
+  coreBackendVariant: CoreBackendVariant;
   /**
    * llama-server context window (`--ctx-size`) for the managed chat
    * daemon.

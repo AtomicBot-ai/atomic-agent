@@ -1029,6 +1029,12 @@ export interface UserConfigFile {
 // Unversioned, additive: `tools.screen.enabled` (default `false`,
 // ATO-525). Turns on the macOS `os.screen.*` tools; an older file has no
 // field and keeps them off.
+// Unversioned, additive: `localModels.managed.coreBackendVariant`
+// (`auto` | `cpu`, default `auto`, ATO-372/373) — the build Atomic Core
+// installs on Windows x64. Its own key, not `backendVariant`: the
+// llama-server engine's older rescue wrote `"cpu"` there on any health
+// timeout, and such a file must keep Core's GPU build. An older file has
+// no field and takes `auto`, Core's recommendation, as before.
 export const USER_CONFIG_VERSION = 79;
 
 /**

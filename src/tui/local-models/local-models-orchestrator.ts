@@ -34,6 +34,12 @@ import {
   type SpawnDownloadWorkerResult,
   type StopDownloadWorkerResult,
   EMBEDDING_MODELS_CATALOG,
+  CORE_CPU_FALLBACK_LINE,
+  CORE_CPU_RECORDED_LINE,
+  coreCpuFallbackApplies,
+  fallBackToCoreCpuBuild,
+  revertCoreCpuFallback,
+  type CoreCpuSwap,
   fallBackToCpuBackend,
   getConfiguredBackendVariant,
   getDaemonStatus,
@@ -2025,11 +2031,15 @@ export class LocalModelsOrchestrator {
       const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
       // Under Atomic Core its llama-server needs the environment Core runs it with.
       const spawn = managedDeviceSource(dataDir, getConfig().localModels.managed.engine)?.spawn;
-      const device = await resolveManagedDevice(
-        binPath,
-        cfg.localModels.managed.device,
-        { multiGpu, ...(spawn ? { spawn } : {}) },
-      );
+      // The CPU-build retry runs on the CPU: a device picked for (or
+      // configured against) the crashing GPU build means nothing to it.
+      const device = opts?.cpuFallbackAttempted
+        ? "cpu"
+        : await resolveManagedDevice(
+            binPath,
+            cfg.localModels.managed.device,
+            { multiGpu, ...(spawn ? { spawn } : {}) },
+          );
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: device ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}`,
@@ -2093,7 +2103,8 @@ export class LocalModelsOrchestrator {
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
           ...(device ? { device } : {}),
-          ...(multiGpu ? { tensorSplit } : {}),
+          // No multi-GPU split on the CPU-build retry.
+          ...(multiGpu && device !== "cpu" ? { tensorSplit } : {}),
         },
         embedding: embClear.options
           ? { ...embClear.options, signal, engine: cfg.localModels.managed.engine, ...(device ? { device } : {}) }
@@ -2145,8 +2156,17 @@ export class LocalModelsOrchestrator {
         return false;
       }
       const msg = e instanceof Error ? e.message : String(e);
+      // ATO-344/372: Atomic Core's GPU build crashed loading the model.
       if (
         !opts?.cpuFallbackAttempted &&
+        getConfig().localModels.managed.engine === "atomic-core" &&
+        coreCpuFallbackApplies(dataDir, e)
+      ) {
+        return await this.fallBackToCoreCpuBuildAndRetry(dataDir, msg, opts?.signal);
+      }
+      if (
+        !opts?.cpuFallbackAttempted &&
+        getConfig().localModels.managed.engine !== "atomic-core" &&
         shouldFallBackToCpuBackend({
           installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
           configuredVariant: getConfiguredBackendVariant(),
@@ -2167,6 +2187,79 @@ export class LocalModelsOrchestrator {
       this.endActiveRefresh();
       await this.refresh();
     }
+  }
+
+  /**
+   * Atomic Core's twin of the rescue below (ATO-344/372): Core's GPU build
+   * crashed loading the model, so install Core's CPU build and retry the
+   * start once on device cpu. `coreBackendVariant = "cpu"` is recorded
+   * only when that retry serves the model; when it does not, the swap is
+   * undone (`revertCoreCpuFallback`) and the original failure is the one
+   * shown, since the GPU build was not the cause.
+   */
+  private async fallBackToCoreCpuBuildAndRetry(
+    dataDir: string,
+    failureMsg: string,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    this.bus.emit({ type: "runtime_info", line: `local-llm: ${CORE_CPU_FALLBACK_LINE}` });
+    this.bus.emit({
+      type: "local_models_pull_started",
+      pull: {
+        kind: "backend",
+        modelId: "_backend",
+        label: "Atomic Core CPU build",
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: 0,
+        error: null,
+      },
+    });
+    let swap: CoreCpuSwap;
+    try {
+      swap = await fallBackToCoreCpuBuild(dataDir, {
+        // A deadline, as for every backend download here.
+        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+        onProgress: (percent: number, transferred: number, total: number) => {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind: "backend",
+            percent,
+            transferredBytes: transferred,
+            totalBytes: total,
+          });
+        },
+      });
+      this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
+    } catch (dlErr) {
+      const msg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+      const combined = `${failureMsg} (the CPU build could not be installed: ${msg})`;
+      this.bus.emit({ type: "local_models_pull_failed", kind: "backend", error: msg });
+      this.bus.emit({ type: "local_models_daemon_error_set", message: combined });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: start failed — ${combined}` });
+      return false;
+    }
+    this.bus.emit({ type: "runtime_info", line: "local-llm: CPU build installed — retrying start…" });
+    const started = await this.startDaemonNow({ signal, backendAlreadyChecked: true, cpuFallbackAttempted: true });
+    if (!started) {
+      if (signal?.aborted) return false;
+      revertCoreCpuFallback(dataDir, swap);
+      const combined = `${failureMsg} (the CPU build failed too, so the GPU build stays selected)`;
+      this.bus.emit({ type: "local_models_daemon_error_set", message: combined });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: start failed — ${combined}` });
+      return false;
+    }
+    try {
+      persistUserLocalModelsConfig({ managed: { coreBackendVariant: "cpu" } });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: ${CORE_CPU_RECORDED_LINE}` });
+    } catch (persistErr) {
+      const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: could not persist coreBackendVariant — ${msg}; the CPU build is used for this session only`,
+      });
+    }
+    return true;
   }
 
   /**

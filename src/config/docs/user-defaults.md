@@ -26,6 +26,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.autoRestart` (default `true`).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).
+- `localModels.managed.coreBackendVariant` (default `"auto"`).
 - `localModels.managed.contextSize` (default `0`).
 - `localModels.managed.parallel` (default `"auto"`).
 - `localModels.managed.swaFull` (default `"auto"`).

@@ -13,7 +13,10 @@ import { ensureUserConfigFileSync, getUserConfigPath } from "./config-file.js";
 import { setCustomLocalModels } from "../local-llm/catalog/models-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
-import { setConfiguredBackendVariant } from "../local-llm/backend/windows-backend-variant.js";
+import {
+  setConfiguredBackendVariant,
+  setConfiguredCoreBackendVariant,
+} from "../local-llm/backend/windows-backend-variant.js";
 import { resolveLocalLlamaApiKey } from "../local-llm/server/managed-api-key.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
@@ -128,6 +131,8 @@ export function loadConfig(): AtomicAgentConfig {
   // visible to `resolveDownloadAsset`, which runs deep inside the
   // config-free local-llm layer.
   setConfiguredBackendVariant(user.localModels.managed.backendVariant);
+  // Atomic Core's own build choice, read by `installCoreBackend`.
+  setConfiguredCoreBackendVariant(user.localModels.managed.coreBackendVariant);
   // And the download fan-out: `downloadFile` is reached from the CLI, the
   // TUI and the detached pull worker, none of which should have to
   // thread a config value down to it.
