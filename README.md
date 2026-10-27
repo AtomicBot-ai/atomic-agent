@@ -73,6 +73,8 @@ sudo dnf install atomic-agent
 
 Arch Linux: `yay -S atomic-agent-bin`, or any other AUR helper.
 
+The desktop app is in the same repository: `sudo apt install atomic-agent-desktop`, `sudo dnf install atomic-agent-desktop` or `yay -S atomic-agent-desktop-bin`. It has releases of its own (`desktop-vX.Y.Z`), carries its own copy of the agent under `/opt/Atomic Agent` and leaves a packaged or installed `atomic-agent` alone; installed as a package it is updated by the package manager, while the AppImage from the releases page updates itself.
+
 Updates come with `sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`; on a packaged install `atomic-agent update` refuses and names the command to use, and the TUI does not offer its in-app update. A copy left by `install.sh` in `~/.local/bin` runs ahead of the package on the usual PATH and keeps its own updates; `atomic-agent update` names both copies when that happens, and removing the copy hands the command to the package. `sudo apt remove atomic-agent`, `sudo dnf remove atomic-agent` or `sudo pacman -R atomic-agent-bin` removes the program and leaves your data; `atomic-agent uninstall` then lists only the data. The repository keeps the last ten releases; older ones are on the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) as `.deb` and `.rpm` files. A package states the glibc its binary needs (2.34 today: Debian 12, Ubuntu 22.04, RHEL 9 and newer), and the package manager refuses where the system's is older.
 
 > [!NOTE]

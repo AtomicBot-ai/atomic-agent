@@ -179,6 +179,24 @@ and Fedora. Its `aur` job renders the PKGBUILD from the release's `.sha256`
 digests and pushes `atomic-agent-bin` to the AUR for the latest release only,
 skipping a version the AUR already has. Both steps are idempotent.
 
+**The desktop app** is the repository's second product
+(`PRODUCTS` in [linux-packaging.ts](../linux-packaging.ts)). Its deb and rpm
+(`Atomic-Agent-<version>-<arch>.<deb|rpm>`, package `atomic-agent-desktop`,
+under `/opt/Atomic Agent`, its own copy of the agent inside) are built by
+electron-builder in the desktop workflow on the desktop branches and uploaded
+with `SHA256SUMS.txt` to a `desktop-vX.Y.Z` release by hand. Publishing that
+release runs the same linux-repo.yml: `release` names the product, `fetch`
+keeps a window of ten per product and checks the desktop's packages against
+`SHA256SUMS.txt`, `build` signs any rpm that arrived unsigned with `rpmsign`
+(electron-builder signs none, and the `.repo` file has `gpgcheck=1`),
+`smoke-repo` installs `atomic-agent-desktop` and checks its libraries with
+`ldd` and its bundled agent
+([smoke-linux-desktop-package.sh](../smoke-linux-desktop-package.sh)), and
+`aur` pushes `atomic-agent-desktop-bin` from
+[PKGBUILD-desktop.in](../../packaging/PKGBUILD-desktop.in), which repacks the
+release's deb. The deployment rule of the environment `packages` must admit
+`desktop-v*` tags as well as `v*`.
+
 Secrets: `LINUX_PACKAGES_GPG_KEY` (the armored private key) and
 `LINUX_PACKAGES_GPG_PASSPHRASE` in the repository; in the environment
 `packages` (deployment tags `v*` only) also `PACKAGES_S3_ACCESS_KEY_ID`,

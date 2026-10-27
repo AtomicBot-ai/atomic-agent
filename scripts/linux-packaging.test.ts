@@ -7,13 +7,19 @@ import {
   archPkgver,
   cacheControl,
   contentType,
+  desktopPackageFileName,
   glibcFloor,
   INSTALL_DIR,
   isPackageFile,
   maxGlibc,
   PACKAGE_TARGETS,
   packageAssets,
+  parseProductId,
   parseSha256File,
+  parseSha256Sums,
+  productOfFile,
+  productOfTag,
+  PRODUCTS,
   readmeInstallBlock,
   renderPkgbuild,
   renderRepoFile,
@@ -39,6 +45,41 @@ describe("package assets", () => {
     }
     expect(isPackageFile("atomic-agent_0.7.0_amd64.deb.sha256")).toBe(false);
     expect(isPackageFile("atomic-agent-linux-x64.tar.gz")).toBe(false);
+  });
+
+  it("knows the desktop's packages by electron-builder's names, and nothing else of that release", () => {
+    const [x64, arm64] = PACKAGE_TARGETS as [(typeof PACKAGE_TARGETS)[number], (typeof PACKAGE_TARGETS)[number]];
+    expect(desktopPackageFileName("0.0.6", "deb", x64)).toBe("Atomic-Agent-0.0.6-amd64.deb");
+    expect(desktopPackageFileName("0.0.6", "deb", arm64)).toBe("Atomic-Agent-0.0.6-arm64.deb");
+    expect(desktopPackageFileName("0.0.6", "rpm", x64)).toBe("Atomic-Agent-0.0.6-x86_64.rpm");
+    for (const name of [
+      "Atomic-Agent-0.0.6-amd64.deb",
+      "Atomic-Agent-0.0.6-arm64.deb",
+      "Atomic-Agent-0.0.6-x86_64.rpm",
+      "Atomic-Agent-0.0.6-aarch64.rpm",
+    ]) {
+      expect(productOfFile(name)?.id).toBe("desktop");
+    }
+    for (const name of [
+      "Atomic-Agent-0.0.6-x86_64.AppImage",
+      "Atomic-Agent-0.0.6-arm64.dmg",
+      "Atomic-Agent-Setup-0.0.6-x64.exe",
+      "SHA256SUMS.txt",
+      "stable-linux.yml",
+    ]) {
+      expect(productOfFile(name)).toBeUndefined();
+    }
+    expect(productOfFile("atomic-agent_0.7.0_amd64.deb")?.id).toBe("cli");
+  });
+
+  it("maps release tags to products and plain versions", () => {
+    expect(productOfTag("v0.7.0")).toEqual({ product: PRODUCTS.cli, version: "0.7.0" });
+    expect(productOfTag("desktop-v0.0.6")).toEqual({ product: PRODUCTS.desktop, version: "0.0.6" });
+    expect(productOfTag("desktop-latest")).toBeUndefined();
+    expect(productOfTag("v0.7.0-rc.1")).toBeUndefined();
+    expect(productOfTag("0.7.0")).toBeUndefined();
+    expect(parseProductId("desktop")).toBe("desktop");
+    expect(() => parseProductId("snap")).toThrow("unknown product snap");
   });
 
   it("packages the Linux bundle targets and nothing else", () => {
@@ -107,6 +148,21 @@ describe("parseSha256File", () => {
   });
 });
 
+describe("parseSha256Sums", () => {
+  it("reads sha256sum's list, text or binary mode, CRLF or not, and skips what is not a digest", () => {
+    const text = [
+      `${"A".repeat(64)}  Atomic-Agent-0.0.6-amd64.deb`,
+      `${"b".repeat(64)} *Atomic-Agent-0.0.6-arm64.deb`,
+      "not a digest line",
+      "",
+    ].join("\r\n");
+    expect(parseSha256Sums(text)).toEqual({
+      "Atomic-Agent-0.0.6-amd64.deb": "a".repeat(64),
+      "Atomic-Agent-0.0.6-arm64.deb": "b".repeat(64),
+    });
+  });
+});
+
 describe("renderPkgbuild", () => {
   const template = readFileSync("packaging/PKGBUILD.in", "utf8");
   const sums = { "linux-x64": "4".repeat(64), "linux-arm64": "5".repeat(64) };
@@ -137,7 +193,28 @@ describe("renderPkgbuild", () => {
   it("refuses a release missing an archive's digest", () => {
     expect(() =>
       renderPkgbuild(template, { version: "0.7.0", sums: { "linux-x64": sums["linux-x64"] }, sourceBase: "x" }),
-    ).toThrow("no sha256 for the linux-arm64 archive");
+    ).toThrow("no sha256 for linux-arm64");
+  });
+
+  it("fills the desktop template from the release's debs and their SHA256SUMS digests", () => {
+    const desktop = readFileSync("packaging/PKGBUILD-desktop.in", "utf8");
+    const debSums = {
+      "Atomic-Agent-0.0.6-amd64.deb": "6".repeat(64),
+      "Atomic-Agent-0.0.6-arm64.deb": "7".repeat(64),
+    };
+    const text = renderPkgbuild(desktop, { version: "0.0.6", sums: debSums, sourceBase: "https://dl/desktop-v0.0.6" });
+    expect(text).not.toMatch(/@[A-Z0-9_]+@/);
+    expect(text).toContain("pkgname=atomic-agent-desktop-bin\n");
+    expect(text).toContain("pkgver=0.0.6\n");
+    expect(text).toContain("_base='https://dl/desktop-v0.0.6'");
+    expect(text).toContain('source_x86_64=("${_base}/Atomic-Agent-0.0.6-amd64.deb")');
+    expect(text).toContain('source_aarch64=("${_base}/Atomic-Agent-0.0.6-arm64.deb")');
+    expect(text).toContain(`sha256sums_x86_64=('${"6".repeat(64)}')`);
+    expect(text).toContain(`sha256sums_aarch64=('${"7".repeat(64)}')`);
+    expect(text).toContain("noextract=('Atomic-Agent-0.0.6-amd64.deb' 'Atomic-Agent-0.0.6-arm64.deb')");
+    // The CLI's digests are not demanded by a template that does not use them.
+    expect(() => renderPkgbuild(desktop, { version: "0.0.6", sums: { "Atomic-Agent-0.0.6-amd64.deb": "6".repeat(64) }, sourceBase: "x" }))
+      .toThrow("no sha256 for Atomic-Agent-0.0.6-arm64.deb");
   });
 });
 
@@ -165,15 +242,42 @@ describe("selectReleases", () => {
     ]);
     expect(selectReleases(releases).map((r) => r.tag)).toEqual(["v0.10.0", "v0.9.0", "v0.8.0"]);
   });
+
+  it("keeps each product's own window: desktop releases never count for the CLI, nor the reverse", () => {
+    const desktop = (tag: string, over: Partial<GithubRelease> = {}): GithubRelease => ({
+      tag_name: tag,
+      draft: false,
+      prerelease: false,
+      assets: [{ name: `Atomic-Agent-${tag.slice("desktop-v".length)}-amd64.deb` }],
+      ...over,
+    });
+    const releases = [
+      desktop("desktop-v0.0.5"),
+      release("v0.9.0"),
+      desktop("desktop-v0.0.6"),
+      desktop("desktop-latest", { prerelease: true }),
+      desktop("desktop-v0.0.1", { assets: [{ name: "Atomic-Agent-0.0.1-x86_64.AppImage" }] }),
+      release("v0.10.0"),
+    ];
+    expect(selectReleases(releases, 10, PRODUCTS.desktop)).toEqual([
+      { tag: "desktop-v0.0.6", version: "0.0.6" },
+      { tag: "desktop-v0.0.5", version: "0.0.5" },
+    ]);
+    expect(selectReleases(releases, 1, PRODUCTS.cli)).toEqual([{ tag: "v0.10.0", version: "0.10.0" }]);
+  });
 });
 
 describe("repository layout", () => {
-  it("puts debs in the pool and rpms beside the dnf metadata", () => {
+  it("puts debs in the pool by package name and rpms beside the dnf metadata", () => {
     expect(repoPath("atomic-agent_0.7.0_amd64.deb")).toBe(
       "deb/pool/main/a/atomic-agent/atomic-agent_0.7.0_amd64.deb",
     );
     expect(repoPath("atomic-agent_0.7.0_x86_64.rpm")).toBe("rpm/packages/atomic-agent_0.7.0_x86_64.rpm");
-    expect(() => repoPath("SHA256SUMS")).toThrow("not a package");
+    expect(repoPath("Atomic-Agent-0.0.6-amd64.deb")).toBe(
+      "deb/pool/main/a/atomic-agent-desktop/Atomic-Agent-0.0.6-amd64.deb",
+    );
+    expect(repoPath("Atomic-Agent-0.0.6-x86_64.rpm")).toBe("rpm/packages/Atomic-Agent-0.0.6-x86_64.rpm");
+    expect(() => repoPath("SHA256SUMS.txt")).toThrow("not a package");
   });
 
   it("writes a .repo that checks the metadata and, when signed, the packages", () => {
@@ -188,6 +292,8 @@ describe("repository layout", () => {
   it.each([
     ["deb/pool/main/a/atomic-agent/atomic-agent_0.7.0_amd64.deb", "immutable", "application/vnd.debian.binary-package"],
     ["rpm/packages/atomic-agent_0.7.0_x86_64.rpm", "immutable", "application/x-rpm"],
+    ["deb/pool/main/a/atomic-agent-desktop/Atomic-Agent-0.0.6-arm64.deb", "immutable", "application/vnd.debian.binary-package"],
+    ["rpm/packages/Atomic-Agent-0.0.6-aarch64.rpm", "immutable", "application/x-rpm"],
     ["deb/dists/stable/InRelease", "no-cache", "text/plain; charset=utf-8"],
     ["deb/dists/stable/Release.gpg", "no-cache", "application/pgp-signature"],
     ["deb/dists/stable/main/binary-amd64/Packages.gz", "no-cache", "application/gzip"],

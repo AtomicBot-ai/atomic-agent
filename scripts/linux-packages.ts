@@ -4,6 +4,7 @@
  *
  *   npx tsx scripts/linux-packages.ts build [--version X.Y.Z] [--archives bundle] [--out dist/pkg]
  *   npx tsx scripts/linux-packages.ts pkgbuild [--version X.Y.Z] [--archives bundle] [--source-base URL] [--out .]
+ *   npx tsx scripts/linux-packages.ts pkgbuild --product desktop --version X.Y.Z --sums SHA256SUMS.txt [--out .]
  *
  * `build` runs on Linux (it needs nfpm, tar and readelf from binutils) for both architectures at
  * once: a package is the release archive `atomic-agent-<slug>.tar.gz` extracted under
@@ -12,7 +13,9 @@
  * (a dry run). Each package gets a `<name>.sha256` beside it, as the bundles have.
  *
  * `pkgbuild` reads the archives' `.sha256` digests (`package-bundle.ts` writes them) and fills
- * packaging/PKGBUILD.in. `--source-base` defaults to the release's download URL on GitHub.
+ * packaging/PKGBUILD.in. `--source-base` defaults to the release's download URL on GitHub. With
+ * `--product desktop` it fills packaging/PKGBUILD-desktop.in from the desktop release's
+ * SHA256SUMS.txt instead (the debs electron-builder built, repacked for pacman).
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -37,7 +40,10 @@ import {
   PACKAGE_FORMATS,
   PACKAGE_TARGETS,
   packageFileName,
+  parseProductId,
   parseSha256File,
+  parseSha256Sums,
+  PRODUCTS,
   renderPkgbuild,
   type PackageTarget,
 } from "./linux-packaging.js";
@@ -152,17 +158,27 @@ function build(): void {
 }
 
 function pkgbuild(): void {
-  const archives = resolve(option("archives", join(ROOT, "bundle")));
-  const sourceBase = option("source-base", `https://github.com/${GITHUB_REPO}/releases/download/v${version}`);
+  const product = PRODUCTS[parseProductId(option("product", "cli"))];
+  const sourceBase = option(
+    "source-base",
+    `https://github.com/${GITHUB_REPO}/releases/download/${product.tagPrefix}${version}`,
+  );
   const out = resolve(option("out", "."));
   const sums: Record<string, string> = {};
-  for (const target of PACKAGE_TARGETS) {
-    const name = archiveAsset(target);
-    const digest = join(archives, `${name}.sha256`);
-    if (!existsSync(digest)) fail(`${digest} is missing; download the release's digests first`);
-    sums[target.slug] = parseSha256File(readFileSync(digest, "utf8"), name);
+  if (product.digests === "sha256sums") {
+    const file = option("sums");
+    if (!file) fail(`pkgbuild --product ${product.id} needs --sums <the release's SHA256SUMS.txt>`);
+    Object.assign(sums, parseSha256Sums(readFileSync(file, "utf8")));
+  } else {
+    const archives = resolve(option("archives", join(ROOT, "bundle")));
+    for (const target of PACKAGE_TARGETS) {
+      const name = archiveAsset(target);
+      const digest = join(archives, `${name}.sha256`);
+      if (!existsSync(digest)) fail(`${digest} is missing; download the release's digests first`);
+      sums[target.slug] = parseSha256File(readFileSync(digest, "utf8"), name);
+    }
   }
-  const template = readFileSync(join(ROOT, "packaging", "PKGBUILD.in"), "utf8");
+  const template = readFileSync(join(ROOT, "packaging", product.pkgbuild), "utf8");
   let text: string;
   try {
     text = renderPkgbuild(template, { version, sums, sourceBase });
@@ -171,7 +187,7 @@ function pkgbuild(): void {
   }
   mkdirSync(out, { recursive: true });
   writeFileSync(join(out, "PKGBUILD"), text, "utf8");
-  stdout.write(`wrote ${join(out, "PKGBUILD")} for atomic-agent ${version}\n`);
+  stdout.write(`wrote ${join(out, "PKGBUILD")} for ${product.aur} ${version}\n`);
 }
 
 const command = argv[2];

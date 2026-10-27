@@ -1,31 +1,37 @@
 /**
  * The apt and dnf repository (REPOSITORY in linux-packaging.ts: a public Hetzner Object Storage
- * bucket). GitHub Releases are the source of truth: the repository is rebuilt from scratch out of
- * the newest releases' packages on every release, signed, and mirrored to the bucket, so a failed
- * or repeated run never leaves state to repair. The pure parts (which releases, layout, upload
- * order) are in linux-packaging.ts.
+ * bucket) of both products, the CLI (`vX.Y.Z` releases) and the desktop app (`desktop-vX.Y.Z`).
+ * GitHub Releases are the source of truth: the repository is rebuilt from scratch out of the
+ * newest releases' packages of each product on every release, signed, and mirrored to the bucket,
+ * so a failed or repeated run never leaves state to repair. The pure parts (products, which
+ * releases, layout, upload order) are in linux-packaging.ts.
  *
- *   npx tsx scripts/linux-repo.ts fetch --out dl [--keep 10]                      # packages of the window, checked
+ *   npx tsx scripts/linux-repo.ts release --tag TAG                                # does TAG go in? (workflow outputs)
+ *   npx tsx scripts/linux-repo.ts latest --product cli|desktop                     # the product's newest release tag
+ *   npx tsx scripts/linux-repo.ts fetch --out dl [--keep 10]                      # packages of each window, checked
  *   npx tsx scripts/linux-repo.ts build --assets dl --key FPR --out site [--base-url URL]
  *                                      [--publish-keys FPR,FPR] [--unsigned-packages]
  *   npx tsx scripts/linux-repo.ts sync --site site [--bucket NAME --endpoint URL --region R] [--dry-run]
  *   npx tsx scripts/linux-repo.ts readme --block apt|dnf [--base-url URL]         # the README's commands
  *
- * `fetch` needs `gh` (GH_TOKEN); `build` needs dpkg-scanpackages, apt-ftparchive, createrepo_c and
- * gpg (the key's passphrase, if any, in LINUX_PACKAGES_GPG_PASSPHRASE); `sync` needs the aws CLI
- * with the bucket's credentials in AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+ * `release`, `latest` and `fetch` need `gh` (GH_TOKEN); `build` needs dpkg-scanpackages,
+ * apt-ftparchive, createrepo_c, rpmsign and gpg (the key's passphrase, if any, in
+ * LINUX_PACKAGES_GPG_PASSPHRASE); `sync` needs the aws CLI with the bucket's credentials in
+ * AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   readFileSync,
   rmSync,
   statSync,
   writeFileSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { argv, env, exit, stderr, stdout } from "node:process";
 import { fileURLToPath } from "node:url";
@@ -37,14 +43,20 @@ import {
   KEY_FILE,
   PACKAGE_NAME,
   PACKAGE_TARGETS,
+  parseProductId,
   parseSha256File,
+  parseSha256Sums,
+  PRODUCTS,
+  productOfTag,
   readmeInstallBlock,
   REPOSITORY,
   renderRepoFile,
   repoPath,
   selectReleases,
+  SHA256SUMS_FILE,
   syncPlan,
   type GithubRelease,
+  type Product,
 } from "./linux-packaging.js";
 
 const ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -86,26 +98,105 @@ function walk(dir: string): string[] {
 
 const sha256 = (path: string): string => createHash("sha256").update(readFileSync(path)).digest("hex");
 
-function fetchReleases(): void {
-  const out = resolve(option("out", "dl"));
-  const keep = Number(option("keep", "10"));
+function listReleases(): GithubRelease[] {
   const pages = JSON.parse(
     run("gh", ["api", "--paginate", "--slurp", `repos/${GITHUB_REPO}/releases?per_page=100`]),
   ) as GithubRelease[][];
-  const window = selectReleases(pages.flat(), keep);
-  if (window.length === 0) fail("no published stable release carries packages");
-  rmSync(out, { recursive: true, force: true });
-  for (const { tag } of window) {
-    const dir = join(out, tag);
-    // The packages and their digests: atomic-agent_<v>_<arch>.<fmt> and the same with .sha256.
-    run("gh", ["release", "download", tag, "--repo", GITHUB_REPO, "--dir", dir, "-p", `${PACKAGE_NAME}_*`]);
-    for (const file of readdirSync(dir).filter(isPackageFile)) {
-      const digest = parseSha256File(readFileSync(join(dir, `${file}.sha256`), "utf8"), file);
-      if (digest !== sha256(join(dir, file))) fail(`${tag}/${file} does not match its .sha256`);
-      rmSync(join(dir, `${file}.sha256`));
+  return pages.flat();
+}
+
+/**
+ * Whether a tag's release goes into the repository, as the workflow's outputs: tag, version,
+ * product (cli | desktop, empty for a tag of neither), the package and AUR names, publish.
+ */
+function release(): void {
+  const tag = option("tag");
+  if (!tag) fail("release needs --tag <release tag>");
+  const match = productOfTag(tag);
+  let reason: string | undefined;
+  if (!match) {
+    reason = `${tag} is not a stable vX.Y.Z or desktop-vX.Y.Z tag`;
+  } else {
+    const info = JSON.parse(
+      run("gh", ["release", "view", tag, "--repo", GITHUB_REPO, "--json", "isDraft,isPrerelease,assets"]),
+    ) as { isDraft: boolean; isPrerelease: boolean; assets: Array<{ name: string }> };
+    if (info.isDraft) reason = `${tag} is a draft`;
+    else if (info.isPrerelease) reason = `${tag} is a pre-release`;
+    else if (!info.assets.some((a) => match.product.file.test(a.name))) {
+      reason = `${tag} has no ${match.product.name} packages`;
     }
-    stdout.write(`${tag}: ${readdirSync(dir).join(", ")}\n`);
   }
+  if (reason) stderr.write(`linux-repo: ${reason}; the repository stays as it is\n`);
+  const lines = [
+    `tag=${tag}`,
+    `version=${match?.version ?? ""}`,
+    `product=${match?.product.id ?? ""}`,
+    `package=${match?.product.name ?? ""}`,
+    `aur=${match?.product.aur ?? ""}`,
+    `publish=${reason === undefined}`,
+  ];
+  stdout.write(`${lines.join("\n")}\n`);
+}
+
+/** The newest published stable release of a product that carries packages: its tag. */
+function latest(): void {
+  const product = PRODUCTS[parseProductId(option("product"))];
+  const [newest] = selectReleases(listReleases(), 1, product);
+  if (!newest) fail(`no published stable ${product.name} release carries packages`);
+  stdout.write(`${newest.tag}\n`);
+}
+
+/** The digests a release lists in its SHA256SUMS.txt, by file name. */
+function readSha256Sums(dir: string, tag: string): Record<string, string> {
+  const path = join(dir, SHA256SUMS_FILE);
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    fail(`${tag} has no ${SHA256SUMS_FILE}; the desktop release must list its packages' digests`);
+  }
+  rmSync(path);
+  return parseSha256Sums(text);
+}
+
+function fetchProduct(product: Product, releases: GithubRelease[], out: string, keep: number): number {
+  let count = 0;
+  for (const { tag } of selectReleases(releases, keep, product)) {
+    const dir = join(out, tag);
+    // The packages and their digests: a .sha256 beside each (the CLI) or one SHA256SUMS.txt (the
+    // desktop, whose release is assembled by hand from the desktop workflow's artifacts).
+    const patterns = product.patterns.flatMap((p) => ["-p", p]);
+    run("gh", ["release", "download", tag, "--repo", GITHUB_REPO, "--dir", dir, ...patterns]);
+    const packages = readdirSync(dir).filter((f) => product.file.test(f));
+    if (packages.length === 0) fail(`${tag} has no ${product.name} packages`);
+    const sums = product.digests === "sha256sums" ? readSha256Sums(dir, tag) : undefined;
+    for (const file of packages) {
+      let digest: string | undefined;
+      if (sums) {
+        digest = sums[file];
+        if (!digest) fail(`${tag}/${SHA256SUMS_FILE} does not list ${file}`);
+      } else {
+        digest = parseSha256File(readFileSync(join(dir, `${file}.sha256`), "utf8"), file);
+        rmSync(join(dir, `${file}.sha256`));
+      }
+      if (digest !== sha256(join(dir, file))) fail(`${tag}/${file} does not match its digest`);
+    }
+    count += packages.length;
+    stdout.write(`${tag}: ${packages.join(", ")}\n`);
+  }
+  return count;
+}
+
+function fetchReleases(): void {
+  const out = resolve(option("out", "dl"));
+  const keep = Number(option("keep", "10"));
+  const releases = listReleases();
+  rmSync(out, { recursive: true, force: true });
+  let count = 0;
+  for (const product of Object.values(PRODUCTS)) {
+    count += fetchProduct(product, releases, out, keep);
+  }
+  if (count === 0) fail("no published stable release carries packages");
 }
 
 function gpg(args: string[], input?: string): string {
@@ -117,6 +208,36 @@ function gpg(args: string[], input?: string): string {
 }
 
 type Sign = (args: string[]) => string;
+
+/**
+ * Sign the rpms that arrived unsigned (the desktop's: electron-builder signs no rpm; the CLI's come
+ * signed from nfpm) with the packages key, since the .repo file asks dnf to check every package.
+ * rpmsign runs gpg itself; the passphrase reaches it through a file that lives for this call.
+ */
+function signUnsignedRpms(site: string, key: string): void {
+  const dir = join(site, "rpm", "packages");
+  const unsigned = readdirSync(dir)
+    .filter((f) => f.endsWith(".rpm"))
+    .map((f) => join(dir, f))
+    .filter((f) => run("rpm", ["-qp", "--qf", "%{SIGPGP:pgpsig}", f]).trim() === "(none)");
+  if (unsigned.length === 0) return;
+  const defines = ["--define", `_gpg_name ${key}`];
+  const pass = env.LINUX_PACKAGES_GPG_PASSPHRASE;
+  const passDir = pass ? mkdtempSync(join(tmpdir(), "rpmsign-")) : undefined;
+  if (pass && passDir) {
+    writeFileSync(join(passDir, "pass"), `${pass}\n`, { mode: 0o600 });
+    defines.push(
+      "--define",
+      `_gpg_sign_cmd_extra_args --pinentry-mode loopback --passphrase-file ${join(passDir, "pass")}`,
+    );
+  }
+  try {
+    run("rpmsign", [...defines, "--addsign", ...unsigned]);
+  } finally {
+    if (passDir) rmSync(passDir, { recursive: true, force: true });
+  }
+  stdout.write(`signed ${unsigned.length} rpm(s) that arrived unsigned\n`);
+}
 
 function buildDeb(site: string, sign: Sign): void {
   const deb = join(site, "deb");
@@ -188,6 +309,7 @@ function build(): void {
     copyFileSync(join(assets, file), target);
   }
   const sign: Sign = (args) => gpg(["--local-user", key, ...args]);
+  if (packageSignatures) signUnsignedRpms(site, key);
   buildDeb(site, sign);
   buildRpm(site, sign, { baseUrl, packageSignatures });
   writeFileSync(join(site, `${KEY_FILE}.asc`), run("gpg", ["--armor", "--export", ...publishKeys]));
@@ -243,8 +365,10 @@ function readme(): void {
 }
 
 const command = argv[2];
-if (command === "fetch") fetchReleases();
+if (command === "release") release();
+else if (command === "latest") latest();
+else if (command === "fetch") fetchReleases();
 else if (command === "build") build();
 else if (command === "sync") sync();
 else if (command === "readme") readme();
-else fail("usage: linux-repo.ts fetch|build|sync|readme [options]; see the header of this file");
+else fail("usage: linux-repo.ts release|latest|fetch|build|sync|readme [options]; see the header of this file");

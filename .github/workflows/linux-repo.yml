@@ -1,17 +1,20 @@
 name: linux-repo
 
-# The apt/dnf repository (scripts/linux-repo.ts) and the AUR package atomic-agent-bin follow
-# published releases. release.yml leaves a draft that a person publishes on GitHub; publishing it
-# fires `release: published`, which runs this. It also runs by hand for a tag:
+# The apt/dnf repository (scripts/linux-repo.ts) and the AUR packages follow published releases
+# of both products: the CLI (vX.Y.Z; release.yml leaves a draft that a person publishes) and the
+# desktop app (desktop-vX.Y.Z; a person assembles the release from the desktop workflow's
+# artifacts, with its deb, rpm and SHA256SUMS.txt). Publishing either fires `release: published`,
+# which runs this. It also runs by hand for a tag:
 #
 #   gh workflow run linux-repo.yml --ref vX.Y.Z    # on the tag: the environment admits tags only
 #
 # Pre-releases, drafts and releases without packages change nothing. The repository is rebuilt
-# from the newest ten published stable releases whichever one triggered it, so any run converges
-# on the same state.
+# from the newest ten published stable releases of each product whichever one triggered it, so
+# any run converges on the same state; the smoke and the AUR push are for the product released.
 #
-# Secrets, in the environment `packages` (deployment tags v* only): LINUX_PACKAGES_GPG_KEY and
-# LINUX_PACKAGES_GPG_PASSPHRASE (the key in packaging/atomic-chat.asc, shared with atc / eye-cli),
+# Secrets, in the environment `packages` (deployment tags v* and desktop-v* only):
+# LINUX_PACKAGES_GPG_KEY and LINUX_PACKAGES_GPG_PASSPHRASE (the key in packaging/atomic-chat.asc,
+# shared with atc / eye-cli; it also signs the desktop's rpm, which arrives unsigned),
 # PACKAGES_S3_ACCESS_KEY_ID and PACKAGES_S3_SECRET_ACCESS_KEY (the Hetzner Object Storage bucket
 # named in scripts/linux-packaging.ts), AUR_SSH_PRIVATE_KEY (the AUR account that owns atc-bin).
 on:
@@ -20,7 +23,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "The published release (vX.Y.Z); default: the tag this runs on"
+        description: "The published release (vX.Y.Z or desktop-vX.Y.Z); default: the tag this runs on"
         type: string
         required: false
 
@@ -33,26 +36,26 @@ jobs:
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       version: ${{ steps.release.outputs.version }}
+      product: ${{ steps.release.outputs.product }}
+      package: ${{ steps.release.outputs.package }}
+      aur: ${{ steps.release.outputs.aur }}
       publish: ${{ steps.release.outputs.publish }}
     steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+      - run: npm ci --ignore-scripts
+      # Which product the tag releases (scripts/linux-packaging.ts PRODUCTS) and whether the release
+      # is published, stable and carries packages; a tag of neither product, a draft or a
+      # pre-release prints why and ends the run here.
       - name: Resolve the release and whether it goes into the repository
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
-        run: |
-          set -euo pipefail
-          publish=false
-          info="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets \
-            --jq '"\(.isDraft) \(.isPrerelease) \([.assets[].name | select(test("^atomic-agent_.+\\.(deb|rpm)$"))] | length)"')"
-          read -r draft prerelease packages <<< "$info"
-          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::notice::$TAG is not a stable vX.Y.Z tag"
-          elif [ "$draft" = true ]; then echo "::notice::$TAG is a draft"
-          elif [ "$prerelease" = true ]; then echo "::notice::$TAG is a pre-release"
-          elif [ "$packages" = 0 ]; then echo "::notice::$TAG has no Linux packages"
-          else publish=true
-          fi
-          { echo "tag=$TAG"; echo "version=${TAG#v}"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+        run: npx tsx scripts/linux-repo.ts release --tag "$TAG" | tee -a "$GITHUB_OUTPUT"
 
   # The apt/dnf repository: rebuilt from scratch out of the newest stable releases (this one now
   # among them, so after publish: the repository lists public assets only), signed, mirrored to
@@ -79,7 +82,7 @@ jobs:
       - name: Install the repository tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c >/dev/null
+          sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c rpm >/dev/null
       - name: Import the packages key (must be packaging/atomic-chat.asc)
         env:
           KEY: ${{ secrets.LINUX_PACKAGES_GPG_KEY }}
@@ -104,7 +107,9 @@ jobs:
         run: npx tsx scripts/linux-repo.ts sync --site site
 
   # The live repository, the way README.md tells users to add it: catches what the loopback smoke
-  # in release.yml cannot (the domain, the cache, the published key).
+  # in release.yml cannot (the domain, the cache, the published key). For a desktop release it
+  # installs atomic-agent-desktop instead (scripts/smoke-linux-desktop-package.sh), which no
+  # earlier smoke covers: the desktop's packages are built outside release.yml.
   smoke-repo:
     needs: [release, repo]
     strategy:
@@ -117,6 +122,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     env:
       VERSION: ${{ needs.release.outputs.version }}
+      PRODUCT: ${{ needs.release.outputs.product }}
       IMAGE: ${{ matrix.image }}
       MANAGER: ${{ matrix.manager }}
     steps:
@@ -130,10 +136,13 @@ jobs:
         run: |
           set -euo pipefail
           npx tsx scripts/linux-repo.ts readme --block "$MANAGER" > install-commands.sh
+          smoke=smoke-linux-package.sh
+          if [ "$PRODUCT" = desktop ]; then smoke=smoke-linux-desktop-package.sh; fi
           docker run --rm -v "$PWD:/w:ro" "$IMAGE" \
-            sh /w/scripts/smoke-linux-package.sh "$MANAGER" "$VERSION" /w/install-commands.sh
+            sh "/w/scripts/$smoke" "$MANAGER" "$VERSION" /w/install-commands.sh
 
-  # atomic-agent-bin on the AUR: the PKGBUILD downloads this release's public bundles. Only the
+  # The AUR package of the product released: atomic-agent-bin downloads the CLI release's public
+  # bundles, atomic-agent-desktop-bin repacks the desktop release's debs. Only the product's
   # latest release goes there (publishing an older one later must not downgrade it), and a re-run
   # finds the AUR already at this version and does nothing.
   aur:
@@ -144,6 +153,8 @@ jobs:
     env:
       TAG: ${{ needs.release.outputs.tag }}
       VERSION: ${{ needs.release.outputs.version }}
+      PRODUCT: ${{ needs.release.outputs.product }}
+      AUR_PACKAGE: ${{ needs.release.outputs.aur }}
       GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
@@ -155,31 +166,36 @@ jobs:
       - name: Render the PKGBUILD for the published release
         run: |
           set -euo pipefail
-          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'atomic-agent-linux-*.tar.gz.sha256' --dir release
-          npx tsx scripts/linux-packages.ts pkgbuild --version "$VERSION" --archives release --out aur
-      - name: Skip unless this is the latest release and the AUR does not have it yet
+          if [ "$PRODUCT" = desktop ]; then
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'SHA256SUMS.txt' --dir release
+            npx tsx scripts/linux-packages.ts pkgbuild --product desktop --version "$VERSION" --sums release/SHA256SUMS.txt --out aur
+          else
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'atomic-agent-linux-*.tar.gz.sha256' --dir release
+            npx tsx scripts/linux-packages.ts pkgbuild --version "$VERSION" --archives release --out aur
+          fi
+      - name: Skip unless this is the product's latest release and the AUR does not have it yet
         id: aur
         run: |
           set -euo pipefail
-          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          latest="$(npx tsx scripts/linux-repo.ts latest --product "$PRODUCT")"
           if [ "$latest" != "$TAG" ]; then
-            echo "::notice::$TAG is not the latest release ($latest); the AUR stays as it is"
+            echo "::notice::$TAG is not the latest $PRODUCT release ($latest); the AUR stays as it is"
             echo "push=false" >> "$GITHUB_OUTPUT"; exit 0
           fi
-          current="$(curl -fsSL --globoff 'https://aur.archlinux.org/rpc/v5/info?arg[]=atomic-agent-bin' | jq -r '.results[0].Version // ""')"
+          current="$(curl -fsSL --globoff "https://aur.archlinux.org/rpc/v5/info?arg[]=$AUR_PACKAGE" | jq -r '.results[0].Version // ""')"
           want="$(npx tsx --eval "
             import { archPkgver } from './scripts/linux-packaging.ts'
             console.log(archPkgver(process.env.VERSION) + '-1')")"
-          echo "the AUR has '$current'; this release is $want"
+          echo "the AUR has $AUR_PACKAGE '$current'; this release is $want"
           if [ "$current" = "$want" ]; then echo "push=false" >> "$GITHUB_OUTPUT"; else echo "push=true" >> "$GITHUB_OUTPUT"; fi
       - uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
         if: steps.aur.outputs.push == 'true'
         with:
-          pkgname: atomic-agent-bin
+          pkgname: ${{ needs.release.outputs.aur }}
           pkgbuild: aur/PKGBUILD
           commit_username: Atomic Chat
           commit_email: support@atomic.chat
           ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
-          commit_message: atomic-agent ${{ needs.release.outputs.version }}
+          commit_message: ${{ needs.release.outputs.package }} ${{ needs.release.outputs.version }}
           # Builds the package from the PKGBUILD (downloads, checksums, package()) before pushing.
           test: true
