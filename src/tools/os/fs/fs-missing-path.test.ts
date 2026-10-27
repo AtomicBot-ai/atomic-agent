@@ -173,6 +173,13 @@ describe("read-class tools on a missing path", () => {
     });
   });
 
+  it("os.fs.list on an existing file says it is a file, not that it is missing", async () => {
+    await writeFile(join(work, "report.txt"), "x");
+    await expect(osFsListTool.run({ path: "report.txt" }, ctx)).rejects.toThrow(
+      /is a file, not a folder\. Read it with os\.fs\.read/,
+    );
+  });
+
   it("os.fs.list, os.fs.hash and os.fs.glob give the same answer", async () => {
     const list = await osFsListTool.run({ path: "backlinks_demo" }, ctx);
     expect(list.status).toBe("error");
