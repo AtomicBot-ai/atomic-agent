@@ -8,7 +8,12 @@ import { DEFAULT_AIMLAPI_BASE } from "../llm/provider/aimlapi/aimlapi-provider.j
 import { DEFAULT_GEMINI_BASE, GEMINI_API_PATH_PREFIX } from "../llm/provider/gemini/gemini-provider.js";
 import { normalizeOpenAiBaseUrl } from "../llm/provider/openai/normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "../llm/provider/openai/openai-chat-path.js";
-import { DEFAULT_OPENROUTER_BASE } from "../llm/provider/openrouter/openrouter-provider.js";
+import {
+  DEFAULT_OPENROUTER_BASE,
+  OPENROUTER_APP_CATEGORIES,
+  OPENROUTER_APP_REFERER,
+  OPENROUTER_APP_TITLE,
+} from "../llm/provider/openrouter/openrouter-provider.js";
 import {
   pickProbeModels,
   verifyProviderKey,
@@ -89,7 +94,11 @@ export function verifyTargetForEntry(entry: UserLlmProviderEntry): ProviderVerif
   let kind: ProviderVerifyKind;
   let baseUrl: string;
   let apiPathPrefix: string;
-  if (entry.kind === "openrouter") [kind, baseUrl, apiPathPrefix] = ["openrouter", DEFAULT_OPENROUTER_BASE, "/v1"];
+  let attribution: Record<string, string> | undefined;
+  if (entry.kind === "openrouter") {
+    [kind, baseUrl, apiPathPrefix] = ["openrouter", DEFAULT_OPENROUTER_BASE, "/v1"];
+    attribution = { "HTTP-Referer": OPENROUTER_APP_REFERER, "X-Title": OPENROUTER_APP_TITLE, "X-OpenRouter-Categories": OPENROUTER_APP_CATEGORIES };
+  }
   else if (entry.kind === "aimlapi") [kind, baseUrl, apiPathPrefix] = ["aimlapi", DEFAULT_AIMLAPI_BASE, "/v1"];
   else if (entry.kind === "gemini") [kind, baseUrl, apiPathPrefix] = ["gemini", DEFAULT_GEMINI_BASE, GEMINI_API_PATH_PREFIX];
   else if (entry.kind === "openai-compatible" && entry.baseUrl) {
@@ -103,7 +112,7 @@ export function verifyTargetForEntry(entry: UserLlmProviderEntry): ProviderVerif
     apiPathPrefix,
     apiKey,
     probeModels: pickProbeModels({ kind, selectedModelId: entry.defaultChatModel ?? entry.model ?? null }),
-    ...(entry.headers ? { extraHeaders: entry.headers } : {}),
+    ...(entry.headers || attribution ? { extraHeaders: { ...attribution, ...entry.headers } } : {}),
   };
 }
 
@@ -125,6 +134,7 @@ async function checkLocalEngine(cfg: AtomicAgentConfig, probes: EngineProbes): P
   } else {
     const have = probes.modelDownloaded(dir, id);
     if (have === false) out.push({ check: "model", status: "fail", message: `${id} is not downloaded; run \`atag models pull ${id}\`` });
+    else if (have === null) out.push({ check: "model", status: "warn", message: `${id} is your own model; doctor cannot tell whether its file is on disk (\`atag models status\`)` });
     else out.push({ check: "model", status: "ok", message: `${id} is on disk` });
     const need = probes.minRamGb(id);
     const total = probes.totalRamGb();
@@ -149,6 +159,8 @@ async function checkLocalEngine(cfg: AtomicAgentConfig, probes: EngineProbes): P
 
 async function checkCloudKey(entry: UserLlmProviderEntry, probes: EngineProbes): Promise<DoctorFinding[]> {
   const target = verifyTargetForEntry(entry);
+  const testable = ["openrouter", "aimlapi", "gemini"].includes(entry.kind) || (entry.kind === "openai-compatible" && !!entry.baseUrl && !isLoopback(entry.baseUrl));
+  if (!target && !testable) return [{ check: "key", status: "ok", message: `${entry.id} (${entry.kind}): doctor does not test this kind of provider` }];
   if (!target) return [{ check: "key", status: "warn", message: `${entry.id}: no API key found in config.json or the environment` }];
   const r = await probes.verifyKey(target);
   const who = `${entry.id}`;

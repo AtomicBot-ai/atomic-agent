@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  copyFileSync,
   createReadStream,
   createWriteStream,
   existsSync,
@@ -82,16 +83,17 @@ export async function backupStateDir(
     }, null, 2));
     pack.entry({ name: `${ARCHIVE_ROOT}/${MANIFEST}`, mode: 0o600 }, manifest);
     for (const rel of files) {
-      let src = join(stateDir, rel);
-      if (rel.endsWith(".sqlite")) {
-        const snap = join(scratch, rel.split(sep).join("__"));
-        await snapshotSqlite(src, snap);
-        src = snap;
-      }
+      // Each file is copied first, so one a running agent appends to (a trace,
+      // a log) cannot change size under the tar entry and abort the backup.
+      const src = join(scratch, rel.split(sep).join("__"));
+      if (rel.endsWith(".sqlite")) await snapshotSqlite(join(stateDir, rel), src);
+      else copyFileSync(join(stateDir, rel), src);
       const st = statSync(src);
+      const orig = statSync(join(stateDir, rel), { throwIfNoEntry: false });
       bytes += st.size;
-      const entry = pack.entry({ name: `${ARCHIVE_ROOT}/${rel.split(sep).join("/")}`, size: st.size, mode: st.mode & 0o777, mtime: st.mtime });
+      const entry = pack.entry({ name: `${ARCHIVE_ROOT}/${rel.split(sep).join("/")}`, size: st.size, mode: (orig?.mode ?? st.mode) & 0o777, mtime: orig?.mtime ?? st.mtime });
       await pipeline(createReadStream(src), entry);
+      rmSync(src, { force: true });
     }
     pack.finalize();
     await written;
