@@ -40,6 +40,9 @@ const CALLBACK_PREFIX = "appr:";
  */
 const SHAPE_LABEL_MAX = 32;
 
+/** What a keyboard nobody waits on any more is edited to. */
+const NO_LONGER_WAITING = "⏹ no longer waiting for an answer";
+
 /** The four button kinds encoded in `callback_data`. */
 type CallbackKind = "y" | "n" | "s" | "a";
 
@@ -290,9 +293,18 @@ export class ApprovalBridge {
 
     const pending = this.pending.get(approvalId);
     if (!pending) {
-      // Stale button — the timer fired (or the operator clicked twice
-      // in quick succession). Acknowledge so the spinner dismisses.
+      // Stale button: the timer fired, the operator clicked twice, or
+      // the process restarted and forgot it. Acknowledge so the spinner
+      // dismisses, and take the dead buttons off the message they sit
+      // on so they cannot be tapped again.
       await this.acknowledge(update.id, "Already resolved");
+      if (update.message) {
+        await this.editFinal(
+          update.message.chat.id,
+          update.message.message_id,
+          NO_LONGER_WAITING,
+        );
+      }
       return;
     }
 
@@ -320,7 +332,7 @@ export class ApprovalBridge {
       await this.editFinal(
         pending.chatId,
         pending.messageId,
-        "⏹ no longer waiting for an answer",
+        NO_LONGER_WAITING,
       );
       return;
     }

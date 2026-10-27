@@ -5,7 +5,7 @@ Scope: `src/channels/`. Inherit the root instructions; read [README.md](README.m
 ## Constraints
 
 - Keep sender identity/pairing, session mapping and approval routing isolated. Channels invoke runTurn and must handle steer returning false by their documented queue policy.
-- A remote approval may carry a session grant only from the paired owner, only for the request it was sent with, and only what `canGrantCategory` / `canGrantShape` allow for that request (Telegram since issue #230, shell as a command shape only; Discord still approves per request). End a session's grants whenever the channel drops its approval binding. Give a channel no command that changes the standing approval level.
+- A remote approval may carry a session grant only from the paired owner, only for the request it was sent with, and only what `canGrantCategory` / `canGrantShape` allow for that request (Telegram since issue #230: category grants only for narrow categories, shell only as a one-binary shape and never for an interpreter; Discord still approves per request). When the channel drops a session's approval binding, end that session's grants and take down its open keyboards. Give a channel no command that changes the standing approval level.
 - Preserve channel-specific polling/reconnect lifecycle and cleanup. Telegram polling is a scoped timer exception, not permission for general polling.
 - Preserve text formatting, length limits, retry boundaries and attachment delivery. Task reports must go to the configured owner, not an arbitrary chat.
 - Keep tokens out of logs and persisted session text; use settings/secret resolution paths.
