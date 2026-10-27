@@ -14,6 +14,8 @@ Scope: `src/tools/`. Inherit the root instructions; read [README.md](README.md) 
 
 Read docs/contracts.md for tool additions/changes and ../agent/docs/batching.md for dispatch; adjacent tool tests for argument behavior.
 
+For Fusion contracts, read [the Fusion guide](fusion/README.md); preserve checklist and terminal-evidence semantics across the delegate, agent and runtime seams.
+
 ## Checks
 
 Run `npx vitest run src/tools` for affected behavior and `npm run lint`. For documentation run `npm run docs:check`. Use narrower existing test files for a small change; cross-domain contracts require their seam tests.

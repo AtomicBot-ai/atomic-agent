@@ -119,6 +119,57 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.rows.get("session")).toBe(output.session);
   });
 
+  it("binds a fresh checklist turn identity even for identical consecutive requests", async () => {
+    const ids: string[] = [];
+    fixture.loop.runTurn.mockImplementation(async (value, options) => {
+      const id = fixture.service.resolveOperatorTurnId(value.id);
+      expect(id).toEqual(expect.any(String));
+      await Promise.resolve();
+      expect(fixture.service.resolveOperatorTurnId(value.id)).toBe(id);
+      ids.push(id!);
+      return result(value, options);
+    });
+    await fixture.service.executeTurn(session(), "same request");
+    expect(fixture.service.resolveOperatorTurnId("session")).toBeUndefined();
+    await fixture.service.executeTurn(session(), "same request");
+    expect(ids).toHaveLength(2);
+    expect(ids[1]).not.toBe(ids[0]);
+    expect(fixture.service.resolveOperatorTurnId("session")).toBeUndefined();
+  });
+
+  it("cleans checklist identity when a turn throws", async () => {
+    fixture.loop.runTurn.mockImplementation(async value => {
+      expect(fixture.service.resolveOperatorTurnId(value.id)).toEqual(expect.any(String));
+      throw new Error("checklist turn failure");
+    });
+    await expect(fixture.service.executeTurn(session(), "request")).rejects.toThrow("checklist turn failure");
+    expect(fixture.service.resolveOperatorTurnId("session")).toBeUndefined();
+  });
+
+  it("isolates checklist identities across concurrent sessions", async () => {
+    const entered = deferred<void>();
+    const release = deferred<void>();
+    let firstId: string | undefined;
+    fixture.loop.runTurn.mockImplementationOnce(async (value, options) => {
+      firstId = fixture.service.resolveOperatorTurnId(value.id);
+      entered.resolve();
+      await release.promise;
+      return result(value, options);
+    });
+    const first = fixture.service.executeTurn(session("first"), "request");
+    await entered.promise;
+    fixture.loop.runTurn.mockImplementationOnce(async (value, options) => {
+      expect(fixture.service.resolveOperatorTurnId(value.id)).not.toBe(firstId);
+      expect(fixture.service.resolveOperatorTurnId("first")).toBe(firstId);
+      return result(value, options);
+    });
+    await fixture.service.executeTurn(session("second"), "request");
+    expect(fixture.service.resolveOperatorTurnId("second")).toBeUndefined();
+    expect(fixture.service.resolveOperatorTurnId("first")).toBe(firstId);
+    release.resolve(); await first;
+    expect(fixture.service.resolveOperatorTurnId("first")).toBeUndefined();
+  });
+
   it("loop budgets retain ceiling/leg distinction, option order and the supplied signal", async () => {
     fixture.config.agent.maxSteps = 10;
     const abort = new AbortController();

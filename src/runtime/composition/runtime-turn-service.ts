@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { getConfig } from "../../config/index.js";
 import type { AgentLoop } from "../../agent/agent-loop.js";
@@ -102,6 +103,8 @@ export function createRuntimeTurnService(
   const { pendingSessionNamings, turnsInFlight } = deps.state;
   // Owned by this runtime, bounded by active turns; workers share their parent's snapshot.
   const turnModelModes = new Map<string, ModelModePolicy>();
+  // Distinct even for identical consecutive requests; bounded by active operator turns.
+  const operatorTurnIds = new Map<string, string>();
   /**
    * The loop-side budget for one turn. An explicit `maxSteps` from a
    * caller (a durable task that pins its own budget, `run --max-steps`)
@@ -413,6 +416,7 @@ export function createRuntimeTurnService(
       const inFlight = turnsInFlight.begin(runOptions.signal);
       markTurnRunning(session.id);
       try {
+        operatorTurnIds.set(session.id, randomUUID());
         turnModelModes.set(session.id, modelModePolicy);
         // Recorded for `fusion.delegate`, which quotes it to the workers.
         const turnRequest = pickOriginalRequest({
@@ -478,6 +482,7 @@ export function createRuntimeTurnService(
       } finally {
         inFlight.end();
         turnModelModes.delete(session.id);
+        operatorTurnIds.delete(session.id);
         // The turn is over, however it ended: the shell jobs it started
         // and did not `keep` are stopped here — the one choke point
         // every turn passes through (§"A turn is a task, not a step
@@ -618,7 +623,7 @@ export function createRuntimeTurnService(
     }
   };
 
-  return { executeTurn, steer, runTurn };
+  return { executeTurn, steer, runTurn, resolveOperatorTurnId: (sessionId: string) => operatorTurnIds.get(sessionId) };
 }
 
 /**
