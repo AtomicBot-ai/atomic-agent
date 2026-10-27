@@ -1580,8 +1580,12 @@ export class ChatOrchestrator {
       // Telegram) is using the server the restart would take down.
       const othersBusy = this.detachedTurns.size > 0 ||
         (this.runtime.turnController?.busySessionIds?.() ?? []).some(id => id !== turnSessionId);
-      if (gateFacts.activeProviderIsLocal && gateFacts.managedMode && !othersBusy) {
-        await this.localModels.growContextForPrompt?.(turnSession.contextUsage?.tokens);
+      // Awaited only when the conversation has a prompt to measure: the
+      // first turn of a thread is dispatched at once, as before.
+      const promptTokens = turnSession.contextUsage?.tokens;
+      if (typeof promptTokens === "number" && promptTokens > 0 &&
+        gateFacts.activeProviderIsLocal && gateFacts.managedMode && !othersBusy) {
+        await this.localModels.growContextForPrompt?.(promptTokens);
       }
       controller.signal.throwIfAborted();
       this.waitingModelMessages.delete(turnSessionId);

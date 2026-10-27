@@ -145,7 +145,7 @@ describe("decideContextGrowth", () => {
     expect(decideContextGrowth({ ...base, ceiling: undefined })).toBeNull();
     expect(decideContextGrowth({ ...base, ceiling: 32_768 })).toBeNull();
     expect(decideContextGrowth({ ...base, currentContext: 262_144, ceiling: 262_144, promptTokens: 250_000 })).toBeNull();
-    expect(decideContextGrowth({ ...base, promptTokens: 0 })).toBeNull();
+    expect(decideContextGrowth({ ...base, ceiling: 262_144, promptTokens: 0 })).toBeNull();
   });
 });
 
