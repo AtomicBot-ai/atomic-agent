@@ -886,6 +886,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // picked up before the auto-start decides whether anything is missing.
   orchestrator.localModels.adoptBackgroundDownloads();
   void orchestrator.localModels.autoStartIfReady();
+  // This TUI owns the managed model, so it is what restarts it with a
+  // smaller context window after it runs out of memory (ATO-334).
+  runtime.setLocalModelRestarter?.((contextWindow) =>
+    orchestrator.localModels.restartWithContextSize(contextWindow));
 
   // Fire-and-forget startup version check. Surfaces an in-app update
   // offer when a newer release is published; silently no-ops when

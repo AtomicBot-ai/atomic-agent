@@ -568,6 +568,12 @@ export async function runLocalModelsStart(
      * this large (`DaemonStartOptions.autoContextAtLeast`).
      */
     contextAtLeast?: number;
+    /**
+     * `--ctx-size` for this start only, in place of
+     * `localModels.managed.contextSize`; the config is not written. The
+     * desktop's restart after the model ran out of memory (ATO-334).
+     */
+    contextSize?: number;
   } = {},
 ): Promise<number> {
   const { signal } = opts;
@@ -745,9 +751,10 @@ export async function runLocalModelsStart(
         dataDir,
         modelId: mid,
         port: cfg.localModels.managed.port,
-        contextSize: cfg.localModels.managed.contextSize,
-        ...(opts.growContext ? { growContext: true } : {}),
-        ...(opts.contextAtLeast ? { autoContextAtLeast: opts.contextAtLeast } : {}),
+        contextSize: opts.contextSize ?? cfg.localModels.managed.contextSize,
+        // A one-run window (out-of-memory restart) is a fixed size: no growth.
+        ...(opts.growContext && opts.contextSize === undefined ? { growContext: true } : {}),
+        ...(opts.contextAtLeast && opts.contextSize === undefined ? { autoContextAtLeast: opts.contextAtLeast } : {}),
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,

@@ -84,7 +84,7 @@ const HELP =
     "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
     "  atomic-agent models use-embedding nomic-embed-text-v1.5",
     "  atomic-agent models update",
-    "  atomic-agent models start [--interactive]",
+    "  atomic-agent models start [--interactive] [--context-size <tokens>]",
     "  atomic-agent models status",
     "  atomic-agent models check",
   ].join("\n") + "\n";
@@ -137,12 +137,21 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsStatus();
       case "check":
         return await runLocalModelsCheck(args.slice(1));
-      case "start":
+      case "start": {
+        // `--context-size N`: this start only, not written to the config —
+        // the desktop's restart after the model ran out of memory (ATO-334).
+        const contextSize = readContextSizeFlag(args);
+        if (contextSize === "invalid") {
+          process.stderr.write("--context-size needs a whole number of tokens above 0\n");
+          return 2;
+        }
         return await runLocalModelsStart({
           interactive: args.includes("--interactive"),
           signal: cancel.signal,
           ...parseStartContextFlags(args),
+          ...(contextSize !== null ? { contextSize } : {}),
         });
+      }
       case "stop":
         return runLocalModelsStop({ chatOnly: args.includes("--chat-only") });
       case "update":
@@ -173,4 +182,17 @@ export async function modelsCommand(args: string[]): Promise<number> {
   } finally {
     if (handlesCancellation) { process.off("SIGINT", cancelCore); process.off("SIGTERM", cancelCore); }
   }
+}
+
+/**
+ * The `--context-size <tokens>` of `models start`: `null` when absent,
+ * `"invalid"` when it is not a whole number above 0.
+ */
+export function readContextSizeFlag(args: readonly string[]): number | null | "invalid" {
+  const at = args.indexOf("--context-size");
+  if (at === -1) return null;
+  const raw = args[at + 1]?.trim() ?? "";
+  if (!/^[1-9]\d*$/.test(raw)) return "invalid";
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : "invalid";
 }

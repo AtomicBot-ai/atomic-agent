@@ -42,6 +42,11 @@ export {
   isLocalEngineDown,
 } from "./local-engine-down.js";
 export {
+  LOCAL_OUT_OF_MEMORY_CODE,
+  LocalOutOfMemoryError,
+  isLocalOutOfMemory,
+} from "./local-out-of-memory.js";
+export {
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_PROVIDER_NOT_FOUND_CODE,
   LOCAL_REQUEST_INVALID_CODE,

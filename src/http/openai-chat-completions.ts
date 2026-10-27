@@ -157,6 +157,10 @@ async function handleNonStream(
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
       origin: "http",
+      // An extensions client (the desktop) draws approval prompts, so a
+      // person can be asked before an out-of-memory restart (ATO-334); a
+      // plain OpenAI client cannot answer and gets the automatic one.
+      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -300,6 +304,9 @@ async function handleStream(
       signal: controller.signal,
       origin: "http",
       eventHook: hook,
+      // See the non-stream path: only a client that draws approval
+      // prompts is asked before an out-of-memory restart (ATO-334).
+      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
@@ -647,6 +654,28 @@ export function buildStreamEventHook(
           object: "atomic.provider_recovered",
           session_id: env.session.id,
           waited_ms: event.waitedMs,
+        });
+      }
+      return;
+    }
+    /* ATO-334: the managed local model ran out of memory. `asking` comes
+       with the approval prompt the person answers (`question_id` is its
+       `approvalId`); `restarted` is the chat note; `stopped` precedes the
+       turn's error frame and names the window a restart would use, for a
+       host that owns the model (the desktop) to restart it. */
+    if (event.type === "local_model_out_of_memory") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("local_model_out_of_memory", {
+          object: "atomic.local_model_out_of_memory",
+          session_id: env.session.id,
+          phase: event.phase,
+          context_window: event.contextWindow,
+          next_context_window: event.nextContextWindow,
+          attempt: event.attempt,
+          max_attempts: event.maxAttempts,
+          message: event.message,
+          ...(event.questionId !== undefined ? { question_id: event.questionId } : {}),
+          ...(event.options !== undefined ? { options: [...event.options] } : {}),
         });
       }
       return;

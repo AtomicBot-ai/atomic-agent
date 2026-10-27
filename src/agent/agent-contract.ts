@@ -31,6 +31,53 @@ import type { ReviewStallSignal } from "./review-stall.js";
 /** See `AgentLoopDependencies.localEngineState`. */
 export type LocalEngineState = "alive" | "dead" | "unknown";
 
+/**
+ * The answers to "the local model ran out of memory" (ATO-334): restart
+ * it with half the context window, stop so the person can pick a smaller
+ * model, or stop.
+ */
+export type LocalOutOfMemoryChoice = "restart_smaller" | "pick_smaller_model" | "cancel";
+
+/** The question put to the person when the local model ran out of memory. */
+export interface LocalOutOfMemoryQuestion {
+  /** Answered through the approval surface under this id (`POST /api/approval/resolve`). */
+  questionId: string;
+  sessionId: string;
+  /** The window the model ran out of memory with. */
+  contextWindow: number;
+  /** The window a restart would use. */
+  nextContextWindow: number;
+  /** The sentence to show. */
+  message: string;
+}
+
+/**
+ * The runtime's half of recovering from a managed local model that ran
+ * out of memory (`AgentLoopDependencies.localOutOfMemory`). Recovery reads
+ * no files and starts no processes itself.
+ */
+export interface LocalOutOfMemoryPort {
+  /**
+   * The managed local model behind `providerId` has logged out of memory
+   * in its current run: the context window that run was started with
+   * (`0` when it is not known). `null` for every other link, an external
+   * server, or a run with no such fault.
+   */
+  detect(providerId: string | undefined): { contextWindow: number } | null;
+  /**
+   * Something in this process can restart the model (the TUI that owns
+   * it). `false` in a headless `serve`, where the desktop owns the model.
+   */
+  canRestart(): boolean;
+  /** Ask the person. Only called for a turn that has one to ask. */
+  ask(question: LocalOutOfMemoryQuestion, signal: AbortSignal): Promise<LocalOutOfMemoryChoice>;
+  /**
+   * Stop the model and start it again with `contextWindow`, for this run
+   * only (the config is not written). Resolves `true` once it answers.
+   */
+  restart(contextWindow: number, signal: AbortSignal): Promise<boolean>;
+}
+
 export interface AgentLoopDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../session/workspace-context.js").WorkspacePrepareOptions) => import("../session/workspace-context.js").SessionWorkspace;
   /** Save model-visible cloud messages before inference, under the turn owner. */
@@ -133,6 +180,14 @@ export interface AgentLoopDependencies {
    * say. Absent (embedders, tests) means `unknown` for every link.
    */
   localEngineState?: (providerId: string | undefined) => LocalEngineState;
+  /**
+   * The managed local model ran out of memory (ATO-334). A server error
+   * from it is then not an outage to wait out: the turn restarts the
+   * model with half the context window (asking first when
+   * `RunTurnOptions.localOutOfMemory` is `ask`) and retries the step.
+   * Absent (embedders, tests): a server error keeps the ordinary wait.
+   */
+  localOutOfMemory?: LocalOutOfMemoryPort;
   /** Defaults to `grammar` when omitted (test / legacy wiring). */
   toolTransport?: ToolCallTransport;
   toolCallAdapter?: ToolCallAdapter | null;
@@ -511,6 +566,14 @@ export interface RunTurnOptions {
    * byte-identical to before roles existed.
    */
   toolRole?: ToolRole;
+  /**
+   * What the turn does when the managed local model runs out of memory
+   * (ATO-334): `ask` the person first (a chat they are watching), or
+   * restart it with a smaller window on its own (`auto`, the default: a
+   * scheduled task, a Telegram or Discord chat, a headless run, where
+   * there is nobody to answer).
+   */
+  localOutOfMemory?: "ask" | "auto";
 }
 
 /** Why a `runTurn` invocation returned. */
@@ -585,6 +648,28 @@ export type AgentLoopEvent =
       /** The provider answered again; the parked turn is running on. */
       type: "provider_recovered";
       waitedMs: number;
+    }
+  | {
+      /**
+       * The managed local model ran out of memory (ATO-334). `asking`:
+       * the person is asked (`questionId` is answered through the
+       * approval surface, `options` are the answers); `restarting`: the
+       * model is being restarted with `nextContextWindow`; `restarted`:
+       * it is back and the step is retried; `stopped`: the turn ends
+       * with `message`. `message` is the sentence for the chat.
+       */
+      type: "local_model_out_of_memory";
+      phase: "asking" | "restarting" | "restarted" | "stopped";
+      /** The window the model ran out of memory with; `0` when unknown. */
+      contextWindow: number;
+      /** The window a restart uses; `null` when none is left to try. */
+      nextContextWindow: number | null;
+      /** Restarts this turn, counting this one. */
+      attempt: number;
+      maxAttempts: number;
+      message: string;
+      questionId?: string;
+      options?: readonly LocalOutOfMemoryChoice[];
     }
   | {
       /**

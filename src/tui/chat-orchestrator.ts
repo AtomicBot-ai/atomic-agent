@@ -1605,6 +1605,9 @@ export class ChatOrchestrator {
           : { maxSteps: this.options.maxSteps }),
         signal: controller.signal,
         origin: "tui",
+        // The operator is at the chat: a model that runs out of memory
+        // is restarted only after they answer (ATO-334).
+        interactive: true,
       });
       const attached = this.session?.id === turnSessionId;
       // A detached turn's result must not clobber the thread the

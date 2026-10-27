@@ -5,6 +5,7 @@ import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   classifyLocalServerError,
   isLocalEngineDown,
+  isLocalOutOfMemory,
 } from "../llm/reliability/index.js";
 import {
   contextUsageFromPrompt,
@@ -750,7 +751,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const localServer = engineDown ? null : classifyLocalServerError(event.error);
       const badRequest =
         localServer !== null && localServer.code !== LOCAL_SERVER_NOT_FOUND_CODE ? localServer : null;
-      const chatError = engineDown
+      // ATO-334: the out-of-memory sentence is already plain and says
+      // what to do; the transport wording around it would not.
+      const chatError = isLocalOutOfMemory(event.error)
+        ? event.error.message
+        : engineDown
         ? formatLocalEngineDownForChat()
         : badRequest !== null
           ? formatLocalServerErrorForChat(badRequest, event.error.message)
@@ -873,6 +878,20 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         line: `» "${event.provider}" is out of credit (${event.code}) — task paused; top up, then say continue`,
         color: "yellow",
       });
+    case "local_model_out_of_memory": {
+      // ATO-334. The question itself is the approval prompt; the chat
+      // gets one note, when the model is back with the smaller window.
+      // A stop is told by the turn's failure line that follows.
+      const feed = appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» local model out of memory (${event.phase}): ${event.message}`,
+        color: event.phase === "restarted" ? "green" : "yellow",
+      });
+      return event.phase === "restarted"
+        ? appendChatMessage(feed, { role: "system", text: event.message })
+        : feed;
+    }
     case "provider_recovered": {
       // Closes the wait notice `provider_waiting` posted — only when one
       // was posted, so a recovery the chat never heard about stays in

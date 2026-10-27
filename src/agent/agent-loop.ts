@@ -5,7 +5,8 @@ import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { contextWindowExhaustedError, isConversationSizeRefusal, planOverflowCompaction } from "./turn/overflow-compaction.js";
 import { createTurnLoopState } from "./turn/turn-state.js";
-import { recoverTurnStep, abortableSleep } from "./turn/turn-recovery.js";
+import { recoverTurnStep, abortableSleep, reportTurnFailure } from "./turn/turn-recovery.js";
+import { recoverFromOutOfMemory } from "./turn/out-of-memory-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
 export type { AgentLoopDependencies, ReflectionSegmentationConfig, ResolvedTurnLlmSlice, MemoryContextProviderInput, MemoryContext, MemoryContextProvider, LessonLifecycleOutcome, LessonLifecycleHook, SteeringChannel, TaskStopCause, RunTurnOptions, AgentLoopReason, AgentLoopEvent, RunTurnResult } from "./agent-contract.js";
 import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLoopTracker } from "./turn/turn-preparation.js";
@@ -608,6 +609,8 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         turn.stepsTaken += 1;
+        // A step that came back ends a run of out-of-memory restarts.
+        turn.oomRestarts = 0;
         // A step that came back whole ends a run of cut steps: the turn's
         // truncation budget bounds a model cut on every step, not a long
         // task with a cut here and there.
@@ -995,6 +998,30 @@ export class AgentLoop {
           // so step back one to land on it again.
           i -= 1;
           continue;
+        }
+        if (decision.kind === "local_out_of_memory") {
+          // ATO-334: restart the local model with a smaller window (asking
+          // first when someone is watching), then replay the same step.
+          const recovered = await recoverFromOutOfMemory({
+            sessionId: state.id, contextWindow: decision.contextWindow, cause: decision.cause, options,
+          }, this.deps, turn);
+          if (recovered.kind === "retry_same") {
+            turn.pendingNotice = noticeForThisStep;
+            i -= 1;
+            continue;
+          }
+          if (recovered.kind === "cancelled" || options.signal.aborted) {
+            turn.reason = "cancelled";
+            break;
+          }
+          const failed = reportTurnFailure(recovered.error, {
+            category: "transport", cancelled: false, creditRefused: false,
+          }, { state, stepIndex: i }, this.deps, turn);
+          return finalizeFailedAgentTurn({
+            state, options, cancelled: false, category: failed.category,
+            runError: failed.runError, creditRefused: false,
+            stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+          }, this.deps, (sessionId) => this.flushSteering(sessionId));
         }
         if (decision.kind === "retry_same") { i -= 1; continue; }
         if (decision.kind === "retry_next") continue;
