@@ -2145,8 +2145,12 @@ function wireIpc(client: AgentClient): void {
     }
     /* ATO-1021: a cloud pick on an agent already on a single-mode cloud route,
        with no daemon stopped or started, is swapped live instead of restarted. */
+    /* ATO-1234: from a local route too — the agent drops nothing it needs to
+       reach a cloud provider, and the local server stops in the background
+       (daemon "stopping"). The reverse, cloud → local, still restarts: a local
+       route has a model profile serve sets up at boot. */
     const live = !!boot && !drifted && res.transport === "native_tools"
-      && (res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" && boot.mode !== "fusion";
+      && ["untouched", "stopping"].includes(res.daemon ?? "untouched") && boot.mode !== "fusion";
     const { restart, restartHeld, liveSwapped } = await restartAfterSwitch(res, wanted || drifted, drifted, live);
     return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), ...(liveSwapped ? { liveSwapped } : {}), status: client.status };
   };

@@ -272,3 +272,9 @@
 .chat-rename{box-sizing:border-box;margin:0;padding:0 6px;border:1px solid var(--brand);border-radius:6px;
   background:var(--lift);color:var(--ink);font:inherit;font-size:13.5px;outline:none;box-shadow:var(--focus-ring)}
 .chat-rename--title{font-size:14px;font-weight:600;letter-spacing:-.01em}
+/* ATO-1235: Add provider opened from Settings › Models — dimmed Settings behind, a shadow, a list that scrolls inside the window, captions cut short. */
+.selscrim--settings{background:rgba(0,0,0,.28)}
+.selpop--settings{display:flex;flex-direction:column;box-shadow:0 18px 48px rgba(0,0,0,.28),0 2px 8px rgba(0,0,0,.16)}
+.selpop--settings .selbody{flex:1 1 auto;min-height:0;overflow:auto}
+.selpop--settings .modelrow .col{min-width:0}
+.selpop--settings .modelrow .cap{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
