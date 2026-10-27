@@ -127,6 +127,25 @@ describe("LocalModelsOrchestrator Atomic Core CPU-build fallback", () => {
     expect(last?.message).toContain("the CPU build failed too");
   });
 
+  it("undoes the swap when the CPU retry is cancelled by another model pick", async () => {
+    prepareCoreInstall();
+    const { orchestrator } = makeOrchestrator();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons)
+      .mockRejectedValueOnce(crash())
+      .mockImplementationOnce(async () => {
+        // What a newer model pick does to the running start: the queue
+        // aborts it (a pick from inside this mock would run nested).
+        (orchestrator as unknown as { operations: { latest: AbortController | null } }).operations.latest?.abort();
+        throw crash();
+      });
+
+    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true })).resolves.toBe(false);
+
+    expect(localLlm.revertCoreCpuFallback).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(localLlm.revertCoreCpuFallback).mock.calls[0]![1]).toBe(SWAP);
+    expect(getConfig().localModels.managed.coreBackendVariant).toBe("auto");
+  });
+
   it("records nothing when the CPU build cannot be installed, so the next start rescues again", async () => {
     prepareCoreInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(crash());

@@ -2274,8 +2274,11 @@ export class LocalModelsOrchestrator {
     this.bus.emit({ type: "runtime_info", line: "local-llm: CPU build installed — retrying start…" });
     const started = await this.startDaemonNow({ signal, backendAlreadyChecked: true, cpuFallbackAttempted: true });
     if (!started) {
-      if (signal?.aborted) return false;
+      // Undo the swap on a cancelled retry too (a model picked while it
+      // loaded): left in place, the CPU build stays installed with
+      // nothing recorded, and no later start rescues it back.
       revertCoreCpuFallback(dataDir, swap);
+      if (signal?.aborted) return false;
       const combined = `${failureMsg} (the CPU build failed too, so the GPU build stays selected)`;
       this.bus.emit({ type: "local_models_daemon_error_set", message: combined });
       this.bus.emit({ type: "runtime_info", line: `local-llm: start failed — ${combined}` });
