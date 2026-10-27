@@ -131,21 +131,9 @@ export function writeUserConfigFileSync(
  * UI instead. Every other caller (the CLI, the sidecar) keeps stderr,
  * which is the default.
  */
-export type ConfigNoticeSink = (line: string) => void;
-
-let configNoticeSink: ConfigNoticeSink | null = null;
-
-export function setConfigNoticeSink(sink: ConfigNoticeSink | null): void {
-  configNoticeSink = sink;
-}
-
-function emitConfigNotice(line: string): void {
-  if (configNoticeSink) {
-    configNoticeSink(line);
-    return;
-  }
-  process.stderr.write(`${line}\n`);
-}
+// The sink lives with the primitives so a block parser can say a value was set aside (ATO-1239).
+export { setConfigNoticeSink, type ConfigNoticeSink } from "./config-primitives.js";
+import { emitConfigNotice } from "./config-primitives.js";
 
 export function ensureUserConfigFileSync(path: string): UserConfigFile {
   const raw = readRawUserConfigFileSync(path);

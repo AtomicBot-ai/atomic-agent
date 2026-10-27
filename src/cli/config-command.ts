@@ -260,6 +260,12 @@ async function setOneKey(key: string, value: string): Promise<number> {
   // Validate first, write second: `parseUserConfigFile` throws on a bad
   // value, so a rejected `set` leaves the file untouched.
   const next = parseUserConfigFile(tree);
+  /* ATO-1239: reading a file, a model id this build does not know is set
+     aside (a newer app may have written it); typed here, it is a typo. */
+  if (key === "localModels.managed.modelId" && value.trim() !== "" && value !== "null" && readConfigPath(next, key) === null) {
+    process.stderr.write(`config set failed: ${key}: unknown managed local model id: ${JSON.stringify(value)} (see \`atomic-agent models list\`)\n`);
+    return 1;
+  }
   // Store the *coerced* value the schema produced ("false" → false,
   // "40" → 40) rather than the raw string. Both reload identically, since
   // the schema coerces on every read, but a config file should hold
