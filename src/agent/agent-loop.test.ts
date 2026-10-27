@@ -3199,6 +3199,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       level?: string;
       detector?: string;
       count: number;
+      failure?: unknown;
     }> = [];
     let step = 0;
     const loop = new AgentLoop({
@@ -3223,6 +3224,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             level: event.level,
             detector: event.detector,
             count: event.count,
+            ...(event.failure !== undefined ? { failure: event.failure } : {}),
           });
         }
       },
