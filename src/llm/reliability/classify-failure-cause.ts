@@ -13,6 +13,7 @@ import {
 import type { LlmFailureCategory } from "./failure-category.js";
 import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js";
 import { isLocalEngineDown } from "./local-engine-down.js";
+import { RequestTooLargeError } from "./request-too-large.js";
 import {
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_REQUEST_INVALID_CODE,
@@ -103,6 +104,16 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
     messages.some((m) => CONTEXT_OVERFLOW.test(m))
   ) {
     return "context_too_long";
+  }
+
+  // A size refusal already wrapped for the user (a 413, or a 400 "too
+  // large to process"): the same request fails on any retry, and it is
+  // not an answer the model garbled.
+  const tooLarge = chain.find(
+    (l): l is RequestTooLargeError => l instanceof RequestTooLargeError,
+  );
+  if (tooLarge !== undefined) {
+    return tooLarge.aboutContext ? "context_too_long" : "request_rejected";
   }
 
   if (
