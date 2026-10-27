@@ -376,9 +376,13 @@ export async function executeBatch(
       continue;
     }
     // Serialised group: process in batch-index order. Aborts skip the
-    // tail and mark remaining calls as cancelled.
+    // tail and mark remaining calls as cancelled. A call the operator did
+    // not approve stops the rest of its group: browser calls ask from
+    // inside a serialised group (`browser_commit` / `browser_secret`), and
+    // `[type password (denied), click "Sign in"]` must not click.
     groupTasks.push(
       (async (): Promise<void> => {
+        let deniedBy: BatchCallInput | null = null;
         for (const call of calls) {
           if (ctx.signal.aborted) {
             slots[call.batchIndex] = {
@@ -387,8 +391,25 @@ export async function executeBatch(
             };
             continue;
           }
+          if (deniedBy !== null) {
+            const notRun = notRunAfterDenialResult(call.call, deniedBy, batchSize);
+            ctx.onCallStarted?.({ batchIndex: call.batchIndex, batchSize });
+            slots[call.batchIndex] = {
+              ...slots[call.batchIndex]!,
+              compressed: notRun,
+              durationMs: 0,
+            };
+            ctx.onCallFinished?.({
+              batchIndex: call.batchIndex,
+              batchSize,
+              result: notRun,
+              durationMs: 0,
+            });
+            continue;
+          }
           try {
             await invokeOne(call);
+            if (wasNotApproved(slots[call.batchIndex]!.compressed)) deniedBy = call;
           } catch (err) {
             // CancelledError: stop the rest of this group and re-throw
             // upward so the agent loop's outer catch picks it up.
@@ -450,6 +471,39 @@ export async function executeBatch(
     cancelled: cancelled || ctx.signal.aborted,
     loopSignals,
   };
+}
+
+/**
+ * True when the call asked and was not approved: the approval ledger
+ * holds a denial, or the gate refused it (`ApprovalDeniedError`). The
+ * same reading `step-batch-policy.ts` uses for its approval barriers.
+ */
+export function wasNotApproved(result: CompressedToolResult | undefined): boolean {
+  if (result === undefined) return false;
+  if (result.approvals?.some((record) => record.verdict === "denied")) return true;
+  return (
+    result.details.errorName === "ApprovalDeniedError" ||
+    result.details.approvalDenied === true
+  );
+}
+
+/** The result a call gets when an earlier call in its group was not approved. */
+function notRunAfterDenialResult(
+  call: ToolCallPayload,
+  deniedBy: BatchCallInput,
+  batchSize: number,
+): CompressedToolResult {
+  return compressToolResult({
+    tool: call.tool,
+    status: "error",
+    output: `not run: it came after \`${deniedBy.call.tool}\` (call ${deniedBy.batchIndex + 1} of ${batchSize}) in the same batch, and that call was not approved`,
+    details: {
+      notRun: true,
+      blockedBy: deniedBy.call.tool,
+      blockedByIndex: deniedBy.batchIndex,
+      blockedCause: "not_approved",
+    },
+  });
 }
 
 /**

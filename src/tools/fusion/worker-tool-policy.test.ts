@@ -73,5 +73,7 @@ describe("worker tool policy", () => {
   it("the refusal reason tells the model to hand the action back up", () => {
     expect(FUSION_WORKER_APPROVAL_REFUSED).toMatch(/operator approval/);
     expect(FUSION_WORKER_APPROVAL_REFUSED).toMatch(/orchestrator/);
+    // A refused browser submit / password step is reported, not retried.
+    expect(FUSION_WORKER_APPROVAL_REFUSED).toMatch(/browser step .*needs the user/);
   });
 });

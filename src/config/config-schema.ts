@@ -15,6 +15,9 @@ import {
   type RuntimeVisionConfig, type UserVisionConfig,
 } from "./tool-config.js";
 
+import { createBrowserDefaults, parseBrowserConfig, type UserBrowserConfig } from "./browser-config.js";
+export type { UserBrowserConfig } from "./browser-config.js";
+
 import { createSkillsDefaults, parseSkillsConfig, parseClawHubConfigWithDefaults, DEFAULT_SKILLS_CATALOG_BUDGET, type RuntimeSkillsConfig, type UserSkillsConfig } from "./skills-config.js";
 export { DEFAULT_SKILLS_CATALOG_BUDGET, parseSkillNameArray, parseSkillTapArray } from "./skills-config.js";
 import { createSessionDefaults, parseSessionConfig, type RuntimeSessionsConfig, type UserSessionsConfig } from "./session-retention-config.js";
@@ -221,6 +224,10 @@ export interface AtomicAgentConfig {
     executablePath: string | null;
     noSandbox: boolean;
     launchTimeoutMs: number;
+    /** `UserConfigFile.browser.blockedDomains`: refused at every level. */
+    blockedDomains: string[];
+    /** `UserConfigFile.browser.allowedDomains`: non-empty ⇒ others ask. */
+    allowedDomains: string[];
   };
   skills: RuntimeSkillsConfig;
   http: RuntimeHttpConfig;
@@ -589,6 +596,11 @@ export interface UserConfigFile {
    * Per-tool operator settings (config v67).
    */
   tools: UserToolsConfig;
+  /**
+   * Browser domain lists (unversioned, additive; ATO-958). Older files
+   * have no block and take empty lists, which block and gate nothing.
+   */
+  browser: UserBrowserConfig;
   /**
    * Session retention (config v73). One bounded prune of
    * `sessions.sqlite` at startup, plus the trace file of every row it
@@ -994,6 +1006,10 @@ export interface UserConfigFile {
 // off mid-thought. An older file
 // holding exactly 1500 (written by the schema, not the operator) migrates
 // to `0`; any other value is a deliberate choice and is kept.
+// Unversioned, additive: `browser.blockedDomains` / `browser.allowedDomains`
+// (default `[]`, ATO-958). A blocked host is refused by every browser
+// tool; a non-empty allow-list makes other hosts ask (`browser_offsite`).
+// An older file has no block and takes the empty lists.
 // Unversioned, additive: `tools.shell.envPassthrough` (default
 // `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
 // `os.git.*` no longer inherit the agent's provider keys, bot tokens or
@@ -1172,6 +1188,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   },
   projects: createProjectsDefaults(),
   tools: createToolsDefaults(),
+  browser: createBrowserDefaults(),
   sessions: createSessionDefaults(),
   tracing: createTracingDefaults(),
   memory: createMemoryDefaults(),
@@ -1416,6 +1433,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const projects = (obj.projects as Record<string, unknown> | undefined) ?? {};
   const tools = (obj.tools as Record<string, unknown> | undefined) ?? {};
   const toolsShell = (tools.shell as Record<string, unknown> | undefined) ?? {};
+  const browser = (obj.browser as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchInputs = prepareWebSearchInputs(
@@ -1528,6 +1546,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
     },
     projects: parseProjectsConfig(projects, () => USER_CONFIG_DEFAULTS.projects),
     tools: parseToolsConfig(toolsShell, () => USER_CONFIG_DEFAULTS.tools),
+    browser: parseBrowserConfig(browser, () => USER_CONFIG_DEFAULTS.browser),
     sessions: parseSessionConfig(sessionsRetention, () => USER_CONFIG_DEFAULTS.sessions),
     tracing: parseTracingConfig(mergedTrace, () => USER_CONFIG_DEFAULTS.tracing),
     memory: parseMemoryConfig(

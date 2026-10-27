@@ -6,6 +6,11 @@ import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+import {
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
+import { gateBrowserUrl, recheckLandedPage } from "./gate-browser-url.js";
 
 const SAFE_SCHEMES = new Set(["http:", "https:"]);
 
@@ -26,6 +31,7 @@ export function isSafeUrl(url: string): boolean {
 export function buildBrowserNavigateTool(
   backend: BrowserBackend,
   options: DangerousToolOptions,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): ToolDefinition {
   return {
     name: "browser.navigate",
@@ -37,6 +43,8 @@ export function buildBrowserNavigateTool(
       if (typeof url !== "string" || url.length === 0) {
         throw new Error("browser.navigate: `url` must be a non-empty string");
       }
+      const refused = await gateBrowserUrl(options, policy, "browser.navigate", url, ctx);
+      if (refused) return refused;
       if (!isSafeUrl(url)) {
         await requireApproval(
           options,
@@ -59,7 +67,9 @@ export function buildBrowserNavigateTool(
         ...(waitUntil !== undefined ? { waitUntil } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
-      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud");
+      const landed = await recheckLandedPage(backend, policy, "browser.navigate", result.url);
+      if (landed) return landed;
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud", policy);
       return compressToolResult({
         tool: "browser.navigate",
         status: "ok",

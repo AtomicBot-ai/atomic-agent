@@ -25,6 +25,9 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "publish",
   "git_remote",
   "browser_nonweb",
+  "browser_commit",
+  "browser_secret",
+  "browser_offsite",
   "trust_config",
   "email",
   "fs_read_outside",
@@ -33,10 +36,12 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config and email", () => {
+  it("grants every category except trust_config, email and browser_secret", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
-        category !== "trust_config" && category !== "email",
+        category !== "trust_config" &&
+          category !== "email" &&
+          category !== "browser_secret",
       );
     }
   });
@@ -67,6 +72,12 @@ describe("approval ladder", () => {
       git_remote: 4,
       fusion_fanout: 4,
       browser_nonweb: 5,
+      // A click that submits / publishes / deletes: the `publish` rung.
+      browser_commit: 4,
+      // Passwords and payments ask until full trust.
+      browser_secret: 5,
+      // Navigation outside a non-empty allow-list: the `http` rung.
+      browser_offsite: 3,
       trust_config: 5,
       email: 5,
       // Reads outside the working directory ask until full trust: a
@@ -105,6 +116,12 @@ describe("approval ladder", () => {
     expect(formatApprovalCategory("fs_read_outside")).toBe(
       "read outside the working directory",
     );
+    expect(formatApprovalCategory("browser_commit")).toBe(
+      "browser · submit / publish / delete",
+    );
+    expect(formatApprovalCategory("browser_secret")).toBe(
+      "browser · password or payment",
+    );
   });
 
   it("level 1 asks for every category and level 5 for none (cumulative ladder)", () => {
@@ -118,6 +135,9 @@ describe("approval ladder", () => {
       "proc_kill",
       "git_remote",
       "browser_nonweb",
+      "browser_commit",
+      "browser_secret",
+      "browser_offsite",
       "trust_config",
       "email",
       "fs_read_outside",
