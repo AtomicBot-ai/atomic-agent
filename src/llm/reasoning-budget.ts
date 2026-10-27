@@ -9,23 +9,22 @@
  * reasoningBudgetTokens` bounds it. The grammar has no tokenizer, so the
  * bound is stated in characters at a fixed ratio; the same ratio prices
  * the reasoning a completion actually carried, so a step that hit the
- * bound shows `reasoningTokens` at about the effective bound
- * (`effectiveReasoningBudgetTokens`) in its trace, not the configured one.
+ * bound shows `reasoningTokens` at about the configured budget in its
+ * trace. About, not at least: the count is an estimate from the text,
+ * and a `<`-led grammar unit spans more than one character.
  *
- * The grammar bound is also capped by llama.cpp itself: a `{0,N}`
- * quantifier above 1,999 is rejected or ignored (#600), so the bound a
- * model actually gets is at most `MAX_REASONING_BUDGET_TOKENS`, whatever
- * the config asks for. With a budget of 1,500, a cut step reads about
- * 500, not 1,500.
+ * llama.cpp caps one GBNF quantifier at 1,999 repetitions (#600). Until
+ * ATO-607 that clamped the whole bound to 499 tokens, so a budget of
+ * 1,500 cut thinking at about 2,000 characters. The grammar now chains
+ * quantifiers that each stay under the cap (`buildReasoningPreludeRules`),
+ * so the configured budget is the bound the model gets.
  */
-
-import { LLAMA_SERVER_GBNF_MAX_REPETITION } from "./grammar/reasoning-prelude.js";
-import type { ModelProfile } from "./model-profile.js";
 
 /**
  * `localModels.reasoningBudgetTokens` when the file predates the field:
  * `0`, no bound (config v78). The old 1,500 was clamped to 499 by the
- * llama.cpp cap below and cut thinking models off mid-thought.
+ * llama.cpp repeat cap of the time (lifted in ATO-607) and cut thinking
+ * models off mid-thought.
  */
 export const DEFAULT_REASONING_BUDGET_TOKENS = 0;
 
@@ -36,15 +35,7 @@ export const DEFAULT_REASONING_BUDGET_TOKENS = 0;
  */
 export const REASONING_CHARS_PER_TOKEN = 4;
 
-/**
- * The largest budget llama.cpp can enforce: 1,999 grammar characters,
- * 499 tokens. A configured budget above it is clamped in the grammar.
- */
-export const MAX_REASONING_BUDGET_TOKENS = Math.floor(
-  LLAMA_SERVER_GBNF_MAX_REPETITION / REASONING_CHARS_PER_TOKEN,
-);
-
-/** The character bound requested for `budgetTokens`, before the llama.cpp cap; `0` stays `0` (unbounded). */
+/** The character bound the grammar enforces for `budgetTokens`; `0` stays `0` (unbounded). */
 export function reasoningBudgetChars(budgetTokens: number): number {
   if (!Number.isFinite(budgetTokens) || budgetTokens <= 0) return 0;
   return Math.floor(budgetTokens) * REASONING_CHARS_PER_TOKEN;
@@ -54,8 +45,7 @@ export function reasoningBudgetChars(budgetTokens: number): number {
  * The reasoning a completion carried, in budget tokens — the text before
  * the close sentinel priced at `REASONING_CHARS_PER_TOKEN`. An estimate
  * in the budget's own units, not the server's token count: that is what
- * makes a cut visible as reaching the effective budget whatever the
- * tokenizer did.
+ * makes a cut visible as reaching the budget whatever the tokenizer did.
  */
 export function estimateReasoningTokens(reasoningText: string): number {
   if (reasoningText.length === 0) return 0;
@@ -64,42 +54,11 @@ export function estimateReasoningTokens(reasoningText: string): number {
 
 /**
  * The budget a grammar-served model really gets for `budgetTokens`, in
- * tokens: `0` (unbounded) stays `0`, anything above the llama.cpp cap
- * comes back as `MAX_REASONING_BUDGET_TOKENS`.
+ * tokens: `0` (unbounded) stays `0`, anything else is the configured
+ * budget, floored. No longer capped by llama.cpp's per-quantifier limit
+ * (ATO-607); kept as the one place callers ask, so a future engine
+ * limit lands here and not at every call site.
  */
 export function effectiveReasoningBudgetTokens(budgetTokens: number): number {
-  const chars = reasoningBudgetChars(budgetTokens);
-  if (chars === 0) return 0;
-  return Math.floor(
-    Math.min(chars, LLAMA_SERVER_GBNF_MAX_REPETITION) / REASONING_CHARS_PER_TOKEN,
-  );
-}
-
-/** The hint the cap log line carries: how to lift the bound entirely. */
-export const REASONING_BUDGET_DISABLE_HINT = "set localModels.reasoningBudgetTokens 0 to disable";
-
-/**
- * Note once, at boot, that the configured budget is above what llama.cpp
- * can enforce, so the config value is not mistaken for the real bound.
- * Only for a model that thinks: a profile with a reasoning prelude
- * (`qwen-think`, `gemma4-think`) and `localModels.thinking` not `off`.
- * Every other model has no prelude, so the line would be noise about a
- * bound it never meets. `info`, not `warn`: this is a fact about the
- * engine, not a fault in the config. Logged through the runtime logger
- * because stdout belongs to the TUI.
- */
-export function logReasoningBudgetCap(
-  logger: { info(message: string, context?: Record<string, unknown>): void },
-  budgetTokens: number,
-  model: { profile: Pick<ModelProfile, "id" | "reasoningStyle">; thinking?: string },
-): void {
-  if (model.profile.reasoningStyle === "none" || model.thinking === "off") return;
-  const effective = effectiveReasoningBudgetTokens(budgetTokens);
-  if (effective === 0 || effective >= Math.floor(budgetTokens)) return;
-  logger.info(`reasoning budget capped by llama.cpp grammar limit (${REASONING_BUDGET_DISABLE_HINT})`, {
-    profile: model.profile.id,
-    configuredTokens: Math.floor(budgetTokens),
-    effectiveTokens: effective,
-    grammarChars: LLAMA_SERVER_GBNF_MAX_REPETITION,
-  });
+  return reasoningBudgetChars(budgetTokens) / REASONING_CHARS_PER_TOKEN;
 }

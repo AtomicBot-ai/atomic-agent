@@ -4,6 +4,8 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { ApprovalBus } from "./approval-bus.js";
 import type { CompletionRegistry } from "./completion-registry.js";
 import type { UndeliveredSteerStore } from "./undelivered-steers.js";
+import type { AuthThrottle } from "./auth-throttle.js";
+import { secretEquals } from "./secret-equal.js";
 
 /**
  * Small, dependency-free helpers that every HTTP route needs. Kept in
@@ -65,10 +67,27 @@ export function enforceAuth(
   req: IncomingMessage,
   res: ServerResponse,
   apiKey: string | null,
+  throttle?: AuthThrottle,
 ): boolean {
   if (apiKey === null) return true;
-  const token = getBearerToken(req);
-  if (token === apiKey) return true;
+  const address = req.socket?.remoteAddress;
+  /* ATO-1126: an address that kept guessing waits, and the comparison is
+     constant-time, so the token cannot be read back from response timing. */
+  const wait = throttle ? throttle.retryAfter(address) : 0;
+  if (wait > 0) {
+    sendJson(
+      res,
+      429,
+      openaiError("Too many wrong API keys from this address; try again later", "invalid_request_error", null, "auth_throttled"),
+      { "retry-after": String(wait) },
+    );
+    return false;
+  }
+  if (secretEquals(getBearerToken(req), apiKey)) {
+    throttle?.succeeded(address);
+    return true;
+  }
+  throttle?.failed(address);
   sendJson(
     res,
     401,

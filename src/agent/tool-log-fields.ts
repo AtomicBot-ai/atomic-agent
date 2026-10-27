@@ -1,4 +1,5 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
+import { canonicalArgs } from "../tools/argument-aliases.js";
 
 /** Longest path or reason a `tool executed` log line carries. */
 export const TOOL_LOG_FIELD_MAX_CHARS = 200;
@@ -49,7 +50,9 @@ export function toolLogFields(
 ): ToolLogFields {
   const fields: ToolLogFields = {};
   const loggable = result.tool.startsWith(LOGGABLE_TOOL_PREFIX);
-  const path = loggable ? pathOf(args) : undefined;
+  // As the tool read them: an aliased `os.fs.move` ran with `from`.
+  const read = args === undefined ? undefined : canonicalArgs(result.tool, { ...args });
+  const path = loggable ? pathOf(read) : undefined;
   if (path !== undefined) fields.path = path;
   if (result.status !== "error") return fields;
   const reason = loggable ? firstLine(result.summary) : undefined;

@@ -33,6 +33,21 @@ export class CoreRequestError extends Error {
   constructor(readonly status: number, message: string, readonly code?: string) { super(message); }
 }
 
+/**
+ * ATO-1233: the Core that answered is not the one this client connected
+ * to. `data_folder`: it serves another state folder (a lock copied or
+ * moved with the folder, or a port reused by another folder's Core), so
+ * this folder's Core is not running. `instance`: Core restarted or was
+ * upgraded under the client (another app started it anew); reconnecting
+ * from the lock reaches the new one.
+ */
+export class CoreChangedError extends Error {
+  override readonly name = "CoreChangedError";
+  constructor(readonly reason: "data_folder" | "instance") {
+    super("Atomic Core version, protocol or ownership changed. Reconnect before continuing.");
+  }
+}
+
 export class CoreControlClient {
   constructor(readonly base: string, private readonly token: string, readonly version: string,
     readonly instanceId: string, private readonly request: typeof fetch = fetch) {}
@@ -90,10 +105,10 @@ export class CoreControlClient {
 
   async snapshot(dataFolder?: string, signal?: AbortSignal): Promise<CoreSnapshot> {
     const snapshot = await this.call<CoreSnapshot>("/snapshot", undefined, signal ? { signal } : {});
+    if (dataFolder && !sameFolder(snapshot.data_folder, dataFolder)) throw new CoreChangedError("data_folder");
     if (snapshot.protocol !== CORE_PROTOCOL || snapshot.version !== this.version ||
-        snapshot.instance_id !== this.instanceId || snapshot.owner_scope !== "cli" ||
-        (dataFolder && !sameFolder(snapshot.data_folder, dataFolder))) {
-      throw new Error("Atomic Core version, protocol or ownership changed. Reconnect before continuing.");
+        snapshot.instance_id !== this.instanceId || snapshot.owner_scope !== "cli") {
+      throw new CoreChangedError("instance");
     }
     return snapshot;
   }
@@ -107,6 +122,23 @@ function sameFolder(a: string, b: string): boolean {
 
 /** `signal` cuts the handshake short (its own bound is 15 s): a shutdown must not wait it out. */
 export async function connectCore(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient | null> {
+  /* ATO-1233: a Core that answers for another folder means this folder's
+     is not running (null: the caller starts it); one that changed under the
+     lock (restarted, upgraded, started by another app at the same moment)
+     is reached by reading the lock again. */
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await connectCoreOnce(dataDir, version, signal);
+    } catch (err) {
+      if (!(err instanceof CoreChangedError)) throw err;
+      if (err.reason === "data_folder") return null;
+      if (attempt >= 3 || signal?.aborted) throw err;
+      await delay(300 * attempt, undefined, signal ? { signal } : {}).catch(() => {});
+    }
+  }
+}
+
+async function connectCoreOnce(dataDir: string, version: string, signal?: AbortSignal): Promise<CoreControlClient | null> {
   const data = coreDataDir(dataDir, version);
   const lock = readCoreJson<CoreLock>(join(data, "atomic-core", "instance.lock"));
   if (!lock || lock.state !== "ready") return null;
@@ -223,7 +255,21 @@ async function startCore(dataDir: string, version: string, signal?: AbortSignal)
 
 /** Every operation keeps a lease until it settles, including long downloads and model loads. */
 export async function withCoreClient<T>(dataDir: string, version: string, fn: (client: CoreControlClient, clientId: string) => Promise<T>, signal?: AbortSignal, opts: EnsureCoreOptions = {}): Promise<T> {
-  return withCoreLease(await ensureCore(dataDir, version, signal, opts), fn);
+  try {
+    return await withCoreLease(await ensureCore(dataDir, version, signal, opts), fn);
+  } catch (err) {
+    // ATO-1233: Core changed under the operation; connect to the one running now and do it once more.
+    if (!isCoreChanged(err) || signal?.aborted) throw err;
+    return withCoreLease(await ensureCore(dataDir, version, signal, opts), fn);
+  }
+}
+
+/** A CoreChangedError, also as the cause of a CoreUnavailableError. */
+export function isCoreChanged(err: unknown): boolean {
+  for (let e: unknown = err, depth = 0; e instanceof Error && depth < 4; e = (e as { cause?: unknown }).cause, depth++) {
+    if (e instanceof CoreChangedError) return true;
+  }
+  return false;
 }
 
 /** A client lease kept alive by heartbeats until `release`. */

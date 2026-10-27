@@ -1,0 +1,86 @@
+# The atomic-agent deb and rpm. scripts/linux-packages.ts runs nfpm once per format and
+# architecture and sets the ${...} values: VERSION (package.json), ARCH (amd64 | arm64), TREE (the
+# release bundle atomic-agent-<slug>.tar.gz, extracted: the SEA binary and the directories the
+# runtime resolves next to it), GLIBC (the newest glibc version the binary and its native addon
+# require, read from the ELF files), STAGE (the install-source marker it wrote) and
+# RPM_SIGNING_KEY_FILE (empty: unsigned).
+#
+# The tree cannot go under /usr/bin, so it lives whole under /usr/lib/atomic-agent and /usr/bin
+# holds symlinks; Node resolves process.execPath through /proc/self/exe, so the runtime finds its
+# assets as it does under ~/.local/bin. src/update/install-source.ts reads the marker.
+name: atomic-agent
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+release: '1'
+section: utils
+priority: optional
+maintainer: Atomic Chat <support@atomic.chat>
+vendor: Atomic Chat
+homepage: https://atomicagent.io
+license: MIT
+description: |-
+  Local-first AI agent for the terminal (Atomic Agent)
+  atomic-agent runs the agent loop and all its state on this machine: it browses the
+  web, reads and edits files, runs approved shell commands, remembers context across
+  sessions and calls tools over MCP, on a local model, a cloud model, or both.
+
+contents:
+  - src: ${TREE}
+    dst: /usr/lib/atomic-agent
+    type: tree
+    expand: true
+  # Tells `atomic-agent update` and `atomic-agent uninstall` that the package manager owns
+  # /usr/lib/atomic-agent (src/update/install-source.ts).
+  - src: ${STAGE}/install-source
+    dst: /usr/lib/atomic-agent/install-source
+    expand: true
+    file_info:
+      mode: 0644
+  - src: /usr/lib/atomic-agent/atomic-agent
+    dst: /usr/bin/atomic-agent
+    type: symlink
+  # The short alias install.sh also creates.
+  - src: /usr/lib/atomic-agent/atomic-agent
+    dst: /usr/bin/atag
+    type: symlink
+  - src: ./LICENSE
+    dst: /usr/share/licenses/atomic-agent/LICENSE
+    file_info:
+      mode: 0644
+
+# The glibc the binary requires (its GLIBC_ version references), so a package never installs where
+# the binary cannot start. The native addon also links libstdc++ (GLIBCXX_3.4.29, GCC 11); every
+# distribution with that glibc ships a newer one, so the version is not encoded. The Node binary
+# also links libatomic, which minimal Debian and Fedora images do not carry (a desktop usually has
+# it through gcc, which is why install.sh never showed it). scripts/linux-packages.ts reads every
+# NEEDED library of the bundle's ELF files and fails on one this list does not cover
+# (DECLARED_LIBRARIES in scripts/linux-packaging.ts); libgcc_s comes with glibc on both families.
+overrides:
+  deb:
+    depends:
+      - libc6 (>= ${GLIBC})
+      - libstdc++6
+      - libatomic1
+    recommends:
+      - git
+    suggests:
+      - wmctrl
+      - xclip
+      - wl-clipboard
+      - libnotify-bin
+  rpm:
+    depends:
+      - glibc >= ${GLIBC}
+      - libstdc++
+      - libatomic
+    recommends:
+      - git
+
+deb:
+  compression: xz
+
+rpm:
+  compression: xz
+  signature:
+    key_file: ${RPM_SIGNING_KEY_FILE}

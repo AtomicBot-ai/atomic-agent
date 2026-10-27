@@ -5,6 +5,7 @@ import {
   formatBytes,
   keepDesktopData,
   legacyDesktopDirNotice,
+  packagedUninstallNotice,
   pathEntryToRemove,
   plansToDeleteDesktopData,
   resolveUninstallPlan,
@@ -16,6 +17,14 @@ import type { UninstallPreview } from "./uninstall-state.js";
 /** Turn a resolved plan into the strings the modal renders. */
 export function toPreview(plan: ResolvedUninstallPlan): UninstallPreview {
   const legacyDir = plan.desktop.legacyDir;
+  // What stays on disk and why: a packaged program (the package manager
+  // removes it) and an old desktop directory.
+  const leftInPlace = [
+    ...(plan.installSource
+      ? [packagedUninstallNotice(plan.installSource)]
+      : []),
+    ...(legacyDir ? [legacyDesktopDirNotice(legacyDir)] : []),
+  ];
   return {
     rows: plan.measured.targets.map((target) => ({
       path: target.path,
@@ -28,7 +37,7 @@ export function toPreview(plan: ResolvedUninstallPlan): UninstallPreview {
     })),
     total: formatBytes(plan.measured.totalBytes),
     devCheckout: plan.devCheckout,
-    leftInPlace: legacyDir ? [legacyDesktopDirNotice(legacyDir)] : [],
+    leftInPlace,
     ...(plansToDeleteDesktopData(plan)
       ? { desktopSharedDir: plan.desktop.stateDir }
       : {}),
