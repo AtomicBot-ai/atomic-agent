@@ -47,7 +47,7 @@ describe("ProjectTrustOrchestrator", () => {
     skill("beta");
     await o.answer("trust");
     expect(refresh).not.toHaveBeenCalled();
-    const asked = actions.filter(a => a.type === "project_trust_asked") as Array<{ prompt: { question: string } }>;
+    const asked = actions.filter(a => a.type === "project_trust_asked") as unknown as Array<{ prompt: { question: string } }>;
     expect(asked.at(-1)?.prompt.question).toBe("This folder has 2 project skills. Trust them?");
     expect(inspectProjectTrust(getConfig(), repo).trusted.skills).toEqual([]);
   });
