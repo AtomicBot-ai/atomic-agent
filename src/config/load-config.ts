@@ -367,6 +367,7 @@ export function loadConfig(): AtomicAgentConfig {
       ),
       disabled: user.skills.disabled,
       cloudWorkspaces: user.skills.cloudWorkspaces,
+      projectTrust: user.skills.projectTrust,
       taps: user.skills.taps,
       clawhub: user.skills.clawhub,
     },

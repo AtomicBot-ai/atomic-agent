@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
 import { getConfig } from "../config/index.js";
+import { recordProjectTrust } from "../config/skill-policy-commands.js";
 
 function stageSkill(name: string): string {
   const dir = mkdtempSync(join(tmpdir(), "atomic-skill-src-"));
@@ -186,6 +187,7 @@ describe("/api/skills", () => {
     const root = realpathSync(mkdtempSync(join(tmpdir(), "http-session-workspace-"))); stagedDirs.push(root);
     const skillDir = join(root, ".agents/skills/session-guide"); mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), "---\nname: session-guide\ndescription: Session guide\n---\nSELECTED BODY");
+    recordProjectTrust(root, "trusted", { skills: ["session-guide"], instructions: [] });
     const config = getConfig();
     config.llm = { activeTextProvider: "local-llama", activeEmbeddingProvider: "local-llama", toolTransport: "auto",
       providers: [{ id: "local-llama", kind: "llama-server", url: config.localModels.url, modelMode: "cloud" }] };

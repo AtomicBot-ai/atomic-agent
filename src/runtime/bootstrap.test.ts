@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { recordProjectTrust } from "../config/skill-policy-commands.js";
 import {
   existsSync,
   mkdtempSync,
@@ -187,6 +188,8 @@ describe("createAgentRuntime", () => {
     };
     writeProjectSkill("budget-a");
     writeProjectSkill("budget-b");
+    // Project skills load once the folder is trusted (ATO-298).
+    recordProjectTrust(workingDir, "trusted", { skills: ["budget-a", "budget-b", "budget-c"], instructions: [] });
 
     // 4 tokens x 8 chars/token = 32 chars: far below one rendered entry,
     // so an honored budget collapses the catalog to the single
@@ -251,6 +254,7 @@ describe("createAgentRuntime", () => {
     };
     writeProjectSkill("dropped-a");
     writeProjectSkill("dropped-b");
+    recordProjectTrust(workingDir, "trusted", { skills: ["dropped-a", "dropped-b", "dropped-c"], instructions: [] });
 
     // Same 4-token budget the wiring test above uses: everything past
     // the always-kept first entry is cut, so `dropped` is knowable
