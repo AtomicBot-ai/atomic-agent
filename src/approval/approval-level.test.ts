@@ -29,14 +29,15 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "email",
   "fs_read_outside",
   "paid_generation",
+  "local_model_restart",
   "other",
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config and email", () => {
+  it("grants every category except trust_config, email and local_model_restart", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
-        category !== "trust_config" && category !== "email",
+        category !== "trust_config" && category !== "email" && category !== "local_model_restart",
       );
     }
   });
@@ -74,6 +75,7 @@ describe("approval ladder", () => {
       fs_read_outside: 5,
       // Money leaves the operator's cloud account: the lowest two levels ask.
       paid_generation: 3,
+      local_model_restart: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [

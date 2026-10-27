@@ -64,6 +64,13 @@ export type ApprovalCategory =
    * before money is spent; a local generation never asks.
    */
   | "paid_generation"
+  /**
+   * Restart the local model with a smaller window after it ran out of
+   * memory (ATO-334). Its own category so that answering it never
+   * stands for an MCP tool or any other uncategorised request, and the
+   * reverse; never granted for the session, like `email`.
+   */
+  | "local_model_restart"
   | "other";
 
 /**
@@ -109,6 +116,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   trust_config: 5,
   email: 5,
   fs_read_outside: 5,
+  local_model_restart: 5,
   other: 5,
 };
 
@@ -178,6 +186,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   fs_read_outside: true,
   // "Stop asking about paid images this session" is the operator's call.
   paid_generation: true,
+  // Each out-of-memory restart is asked about when it happens.
+  local_model_restart: false,
   other: true,
 };
 
@@ -208,6 +218,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   email: "e-mail send",
   fs_read_outside: "read outside the working directory",
   paid_generation: "paid generation · cloud",
+  local_model_restart: "local model · restart",
   other: "uncategorised",
 };
 
