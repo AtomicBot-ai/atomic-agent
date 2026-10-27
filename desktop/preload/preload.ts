@@ -146,9 +146,16 @@ contextBridge.exposeInMainWorld("atomic", {
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
   // ATO-507: free space on the models disk, {freeBytes, totalBytes, path} | null
   diskSpace: () => ipcRenderer.invoke("app:diskSpace"),
+  // ATO-577 / ATO-579: Settings › Diagnostics' Doctor and Data rows.
+  doctorRun: (fix: boolean) => ipcRenderer.invoke("doctor:run", fix === true),
+  dataBackup: () => ipcRenderer.invoke("data:backup"),
+  dataRestore: () => ipcRenderer.invoke("data:restore"),
+  dataMove: () => ipcRenderer.invoke("data:move"),
+  dataReset: () => ipcRenderer.invoke("data:reset"),
 
   /** Shell affordances. */
-  chooseWorkspace: () => ipcRenderer.invoke("app:chooseWorkspace"),
+  // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.
+  chooseWorkspace: (sessionId?: string | null) => ipcRenderer.invoke("app:chooseWorkspace", sessionId ?? null),
   openPath: (path: string) => ipcRenderer.invoke("app:openPath", path),
   // Chat review Д23: `fromReply` for a chip from a reply's text, which main checks again.
   fileMenu: (path: string, fromReply?: boolean) => ipcRenderer.invoke("app:fileMenu", path, fromReply === true),
@@ -236,9 +243,22 @@ contextBridge.exposeInMainWorld("atomic", {
   // item 6: the sidebar's own pin/read state (Electron userData/prefs.json). ATO-165: the
   // chat row's menu is drawn in the window now (renderer chatMenuHTML), so no native menu here.
   prefsGet: () => ipcRenderer.invoke("app:prefsGet"),
+  // ATO-1127: the agent on another computer.
+  remoteGet: () => ipcRenderer.invoke("app:remoteGet"),
+  remoteSet: (remote: { url: string; token: string }) => ipcRenderer.invoke("app:remoteSet", remote),
+  remoteClear: () => ipcRenderer.invoke("app:remoteClear"),
+  // ATO-1030: hardware acceleration, as this run has it and as the next launch will.
+  gpuGet: () => ipcRenderer.invoke("app:gpuGet"),
+  gpuSet: (on: boolean) => ipcRenderer.invoke("app:gpuSet", on),
   prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>
     ipcRenderer.invoke("app:prefsSet", prefs),
+  // ATO-1034: chat folders (~/.atomic-agent/chat-folders.json, main/chat-folders.ts).
+  foldersGet: () => ipcRenderer.invoke("app:foldersGet"),
+  foldersSet: (value: unknown) => ipcRenderer.invoke("app:foldersSet", value),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
+  // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
+  onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
+  starterGet: () => ipcRenderer.invoke("app:starterGet"),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),
@@ -253,6 +273,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-859: Telegram pairing on the running agent; a start's answer carries the one-time code for the screen only. */
   telegramPairing: (op: "start" | "status" | "cancel", replaceOwner?: boolean) =>
     ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
+  // ATO-758: the live channel's state and another poller of the same bot.
+  telegramChannel: () => ipcRenderer.invoke("agent:telegramChannel"),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>
@@ -273,8 +295,9 @@ contextBridge.exposeInMainWorld("atomic", {
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
   /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
   skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),
-  skillInstall: (identifier: string, acknowledgeRisk?: boolean) =>
-    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk }),
+  // PR #916: confirmCaution approves a caution verdict only (`--yes`); acknowledgeRisk is the dangerous override.
+  skillInstall: (identifier: string, acknowledgeRisk?: boolean, confirmCaution?: boolean) =>
+    ipcRenderer.invoke("cli:skillInstall", { identifier, acknowledgeRisk: !!acknowledgeRisk, confirmCaution: !!confirmCaution }),
   clawhubSkillDetail: (apiBase: string, slug: string, owner?: string | null) =>
     ipcRenderer.invoke("app:clawhubSkillDetail", { apiBase, slug, owner: owner ?? null }),
   memoryQuery: (stateDir: string, name: string, params?: unknown[]) =>
@@ -356,8 +379,8 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
   switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),
-  activateProvider: (id: string) => ipcRenderer.invoke("cli:activateProvider", id),
-  selectCloudModel: (id: string, model: string) => ipcRenderer.invoke("cli:selectCloudModel", { id, model }),
+  activateProvider: (id: string, opts?: { background?: boolean }) => ipcRenderer.invoke("cli:activateProvider", id, opts),
+  selectCloudModel: (id: string, model: string, opts?: { background?: boolean }) => ipcRenderer.invoke("cli:selectCloudModel", { id, model, background: opts?.background === true }),
   selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
   /** Run mode — Fusion: RunModeOrchestrator's writes (enter / swap / workers / worker model), each a whole-file write + agent restart. */
   enterFusion: (pins?: { orchestratorProvider?: string; workerProvider?: string }) =>
@@ -437,6 +460,8 @@ contextBridge.exposeInMainWorld("atomic", {
   updateDismiss: () => ipcRenderer.invoke("updates:dismiss"),
   updateSkip: () => ipcRenderer.invoke("updates:skip"),
   updateSetAuto: (on: boolean) => ipcRenderer.invoke("updates:setAuto", on === true),
+  // ATO-575: read beta builds too.
+  updateSetBeta: (on: boolean) => ipcRenderer.invoke("updates:setBeta", on === true),
   onUpdateState: (cb: (payload: unknown) => void) => on("updates:state", cb),
 
   /** Analytics (desktop/ANALYTICS.md): fire and forget. Main re-validates

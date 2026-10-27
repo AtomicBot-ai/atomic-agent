@@ -402,3 +402,10 @@ button.set-search:hover{border-color:var(--bd)}
 .set-skills .set-skomit svg{width:13px;height:13px;flex:none}
 /* ATO-241: which build, beside the version in General, small and quiet. */
 .tk-setrow .upd-build{font-size:var(--fs-label);color:var(--ink-3)}
+/* ATO-577 / ATO-579: Diagnostics' Doctor and Data (doctor-data.js). */
+.set-diag .set-h{margin:20px 0 4px;font-size:var(--fs-cap);font-weight:600}
+.set-docmark{display:inline-block;min-width:54px;font-size:var(--fs-micro);font-weight:600}
+.set-docmark--ok{color:var(--success)}
+.set-docmark--warn{color:var(--warn, #b7791f)}
+.set-docmark--err{color:var(--critical)}
+.set-diag .set-err{color:var(--critical)}

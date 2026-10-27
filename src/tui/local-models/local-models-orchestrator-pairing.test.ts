@@ -18,6 +18,7 @@ vi.mock("../../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     stopEmbeddingDaemon: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
+    holdEmbeddingForLowMemory: vi.fn(async () => ({ ok: true })),
   };
 });
 
@@ -30,12 +31,14 @@ import {
   resolveServerBinPath,
 } from "../../local-llm/index.js";
 import { resolvePlatformAsset } from "../../local-llm/backend/platform-assets.js";
+import { resetLowMemoryEmbeddingNote } from "../../local-llm/server/embedding-memory-gate.js";
 import {
   getUserConfigPath,
   readUserConfigFileSync,
   writeUserConfigFileSync,
 } from "../../config/config-file.js";
 import { persistUserLocalModelsConfig } from "../persist-user-local-models-config.js";
+import { persistMemoryEmbeddingsEnabled } from "../persist-embedding-hybrid-recall.js";
 import { LocalModelsOrchestrator } from "./local-models-orchestrator.js";
 
 type Emitted = { type: string; line?: string };
@@ -65,6 +68,8 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({
       action: "skipped",
     });
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockReset().mockResolvedValue({ ok: true });
+    resetLowMemoryEmbeddingNote();
   });
 
   afterEach(() => {
@@ -99,6 +104,51 @@ describe("LocalModelsOrchestrator embedding pairing", () => {
     expect(actions.map((a) => a.line).filter(Boolean)).toContain(
       "local-llm: embedding daemon up (bge-m3, pid 4242) — hybrid recall on",
     );
+  });
+
+  it("does not start the embedding daemon on a machine with little memory, and says so once (ATO-379)", async () => {
+    const dataDir = getConfig().paths.localModelsDataDir;
+    stubBackendInstalled(dataDir);
+    stubChatModelDownloaded(dataDir);
+    stubEmbeddingModelDownloaded(dataDir, "bge-m3");
+    persistUserLocalModelsConfig({
+      mode: "managed",
+      managed: { modelId: "qwen-3.5-4b" },
+      embeddings: { enabled: true, modelId: "bge-m3" },
+    });
+    persistMemoryEmbeddingsEnabled(true);
+    resetConfigCache();
+    stubChatStatus(true);
+    stubEmbeddingStatus(false);
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockResolvedValue({
+      ok: false, reason: "total-ram", totalBytes: 4 * 1024 ** 3, freeBytes: 1024 ** 3,
+    });
+
+    const actions: Emitted[] = [];
+    const orchestrator = new LocalModelsOrchestrator({
+      emit(a: unknown) {
+        actions.push(a as Emitted);
+      },
+      subscribe: () => () => {},
+    });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+
+    // Launch: adopts the running chat model and pairs the memory model.
+    await orchestrator.autoStartIfReady();
+    expect(vi.mocked(localLlm.holdEmbeddingForLowMemory)).toHaveBeenCalledWith(dataDir);
+    expect(vi.mocked(localLlm.startEmbeddingDaemon)).not.toHaveBeenCalled();
+    // Held back, not switched off: the operator's opt-in stays on.
+    expect(getConfig().memory.embeddings.enabled).toBe(true);
+    expect(readUserConfigFileSync(getUserConfigPath(stateDir))!.memory.embeddings.enabled).toBe(true);
+
+    // A second pass is held back again, without a second note.
+    await orchestrator.setActiveEmbedding("bge-m3");
+    expect(vi.mocked(localLlm.holdEmbeddingForLowMemory)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(localLlm.startEmbeddingDaemon)).not.toHaveBeenCalled();
+    const notes = actions
+      .map((a) => a.line)
+      .filter((line) => line === "local-llm: Low memory: memory search uses keywords only.");
+    expect(notes).toHaveLength(1);
   });
 
   it("does NOT start the embedding daemon when chat is down — leaves it to the next paired startDaemon", async () => {

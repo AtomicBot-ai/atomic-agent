@@ -181,6 +181,19 @@ function updAutoRowHTML(st) {
     + '</div>';
 }
 
+/* ATO-575: stable or beta. Only where the app updates itself; off, the version stays until a stable one is newer. */
+function updBetaRowHTML(st) {
+  if (!st || !st.enabled) return '';
+  const on = !!st.beta;
+  return '<div class="tk-setrow" id="set-upd-beta">'
+      + '<div class="body"><div class="t">Get beta versions</div>'
+        + '<div class="d">New features a few days early; they can have rough edges. Turning it off keeps this version until a stable one is newer.</div>'
+      + '</div>'
+      + setSwitchHTML({on, busy: false, disabled: UPD.busy, act: 'appupd:beta',
+        label: 'Get beta versions', title: 'Beta versions ' + (on ? 'off' : 'on')})
+    + '</div>';
+}
+
 function updVersionRowHTML(st) {
   const line = st ? updResultLine(st) : {text: '', tone: ''};
   return '<div class="tk-setrow" id="set-upd-ver">'
@@ -197,7 +210,7 @@ function updVersionRowHTML(st) {
 /** The two rows General draws. */
 function appUpdRowsHTML() {
   const st = UPD.state;
-  return updAutoRowHTML(st) + updVersionRowHTML(st);
+  return updAutoRowHTML(st) + updBetaRowHTML(st) + updVersionRowHTML(st);
 }
 
 /** A state change while General is open: just these two rows, not the whole pane. */
@@ -207,6 +220,8 @@ function updSettingsPatch() {
   const auto = document.getElementById('set-upd-auto');
   const ver = document.getElementById('set-upd-ver');
   if (auto) auto.outerHTML = updAutoRowHTML(st);
+  const beta = document.getElementById('set-upd-beta');
+  if (beta) beta.outerHTML = updBetaRowHTML(st);
   if (ver) ver.outerHTML = updVersionRowHTML(st);
 }
 
@@ -218,6 +233,13 @@ async function appUpdAct(v) {
     update: BR.updateDownload, notnow: BR.updateDismiss, skip: BR.updateSkip, cancel: BR.updateCancel,
     install: BR.updateInstall, later: BR.updateLater, check: BR.updateCheck,
   }[v];
+  if (v === 'beta') {
+    if (UPD.busy || !UPD.state || !BR.updateSetBeta) return;
+    UPD.busy = true; updSettingsPatch();
+    try { appUpdApply(await BR.updateSetBeta(!UPD.state.beta)); } catch (e) { /* the switch stays as it was */ }
+    UPD.busy = false; updSettingsPatch();
+    return;
+  }
   if (v === 'auto') {
     if (UPD.busy || !UPD.state) return;
     UPD.busy = true; updSettingsPatch();

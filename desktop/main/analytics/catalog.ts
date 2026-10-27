@@ -23,7 +23,7 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, BACKEND_FAIL_REASONS, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
   NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RESTART_TRIGGERS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SUPERVISOR_KINDS, SWITCH_REFUSALS, uiActionOk, UI_VIA,
@@ -79,7 +79,7 @@ const downloadProps: Record<string, PropSpec> = {
 
 export const EVENTS: Record<string, EventSpec> = {
   /* ---- lifecycle and health ---- */
-  app_opened: { owner: "main", props: { launch_kind: en(["cold", "reopen"]), fresh_state: bool, prev_session_crashed: bool, in_applications: bool } },
+  app_opened: { owner: "main", props: { launch_kind: en(["cold", "reopen"]), fresh_state: bool, prev_session_crashed: bool, prev_session_end: en(["clean", "os_shutdown", "crashed", "killed"]), in_applications: bool } },
   app_ready: { owner: "main", props: { ms_to_window: int({ nullable: true }), ms_to_agent: int({ nullable: true }), backend_up_at_launch: bool } },
   agent_start_failed: {
     owner: "main",
@@ -175,7 +175,24 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   local_backend_started: {
     owner: "main",
-    props: { via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }), engine: en(LOCAL_ENGINES, { nullable: true }) },
+    props: {
+      via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }), engine: en(LOCAL_ENGINES, { nullable: true }),
+      // ATO-278: why a start failed, as a code (start_failed only, else null); never the error or log text.
+      reason: en(BACKEND_FAIL_REASONS, { nullable: true }),
+    },
+  },
+  /* ATO-278: the managed local server the app had brought up died mid-session
+     (the engine watchdog, main/daemon-supervisor.ts, saw it down; once per
+     death, not again for a restart of it that fails). `reason` is a code for
+     the server log's failure line, `up_ms` how long it had been up. */
+  local_backend_crashed: {
+    owner: "main",
+    props: {
+      reason: en(BACKEND_FAIL_REASONS),
+      model_id: en(modelIds(), { fallback: "hf_custom" }),
+      up_ms: int({ nullable: true }),
+      engine: en(LOCAL_ENGINES, { nullable: true }),
+    },
   },
   /* The window put up the local engine's recovery card (main/engine-failure.ts):
      the engine did not download, verify or start. The failure itself is the
@@ -207,6 +224,15 @@ export const EVENTS: Record<string, EventSpec> = {
       to: en(RUN_MODES, { nullable: true }),
       result: en(["ok", "refused", "failed", "timeout"]),
       refusal: en(SWITCH_REFUSALS, { nullable: true }),
+      restart: bool,
+      ms,
+    },
+  },
+  /* ATO-1021: every switch that moved the running agent, and how — live (POST /api/llm/active) or by a restart. */
+  model_switched: {
+    owner: "main",
+    props: {
+      live: bool,
       restart: bool,
       ms,
     },

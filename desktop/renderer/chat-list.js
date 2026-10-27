@@ -54,6 +54,8 @@ function chatMenuItems(opts) {
     o.pinned ? {verb: 'unpin', label: 'Unpin', icon: 'pin'} : {verb: 'pin', label: 'Pin', icon: 'pin'},
     o.unread ? {verb: 'read', label: 'Mark as read', icon: 'check'} : {verb: 'unread', label: 'Mark as unread', icon: 'unread'},
     ...(o.renamable === false ? [] : [{verb: 'rename', label: 'Rename', icon: 'edit'}]),
+    // ATO-1034: "Move to folder…" opens the folder list (chat-folders.js), for a stored chat.
+    ...(o.folders === true ? [{verb: 'fpick', label: 'Move to folder…', icon: 'folder'}] : []),
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }

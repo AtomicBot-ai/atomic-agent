@@ -3,6 +3,7 @@ import {
   getLocalModelDef,
   isKnownLocalModelId,
   LOCAL_MODELS_CATALOG,
+  recommendedModelFor,
   type LocalModelDef,
   type LocalModelId,
 } from "../../local-llm/index.js";
@@ -68,9 +69,11 @@ export function buildLocalModelPicks(
 }
 
 /**
- * The best first model for this machine: the largest one that runs
- * comfortably *and* stays under the download ceiling. Falling back, in
- * order: anything that runs comfortably, then the smallest model in the
+ * The best first model for this machine: the catalog's own rule
+ * (`recommendedModelFor`, best-ranked well-known model that runs
+ * comfortably) under the download ceiling. When no ranked model
+ * qualifies: the largest one that runs comfortably under the ceiling,
+ * then anything that runs comfortably, then the smallest model in the
  * catalog — something that runs beats something that was recommended.
  */
 export function recommendLocalModel(
@@ -83,6 +86,11 @@ export function recommendLocalModel(
   // operator's own act; the recommendation star must never point at one.
   const candidates = catalog.filter((def) => def.uncensored !== true);
   if (candidates.length === 0) return null;
+  const ranked = recommendedModelFor(ramGb, {
+    catalog: candidates,
+    maxDownloadGb: FIRST_RUN_MAX_DOWNLOAD_GB,
+  });
+  if (ranked) return ranked.id;
   const comfortable = candidates.filter((def) => def.recommendedRamGb <= ramGb);
   const quick = comfortable.filter(
     (def) => def.fileSizeGb <= FIRST_RUN_MAX_DOWNLOAD_GB,

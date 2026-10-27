@@ -62,8 +62,21 @@ function renameErrorText(error) {
 
 const RENAME = {id: null, where: 'row', initial: '', draft: '', rect: null};
 
-/** Open the box over chat `id`'s name: in its row, or in the toolbar's title. */
+/** Open the box over chat `id`'s name: in its row, or in the toolbar's title.
+    ATO-1034: `where === 'folder'` opens it over folder `id`'s name instead
+    (chat-folders.js); saving then renames the folder, nothing is sent. */
 function renameStart(id, where) {
+  if (where === 'folder') {
+    const f = typeof folderById === 'function' ? folderById(FOLDERS.state, id) : null;
+    if (!f) return;
+    RENAME.id = id; RENAME.where = 'folder'; RENAME.initial = f.name; RENAME.draft = f.name; RENAME.rect = null;
+    S.overlay = 'rename';
+    render();
+    const fbox = document.getElementById('chat-rename');
+    if (!fbox) { RENAME.id = null; RENAME.draft = ''; S.overlay = null; render(); return; }
+    fbox.focus(); fbox.select();
+    return;
+  }
   const row = typeof SESSIONS !== 'undefined' ? SESSIONS.find((x) => x.id === id) : null;
   if (!row) {
     // A new chat's stand-in has no stored session yet (item 27): nothing to rename.
@@ -97,6 +110,7 @@ function revealChatRow(id) {
 function renameAnchor(id, where) {
   if (where === 'title') return document.querySelector('#toolbar .tb-title b');
   const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
+  if (where === 'folder') return document.querySelector('#sidebar .sb-folder[data-folder="' + sel + '"] .sb-fname');
   return document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"] .t1');
 }
 
@@ -113,8 +127,8 @@ function renameHTML() {
   const h = Math.max(24, Math.round(r.height) + 6);
   return '<div class="scrim rename-scrim" style="background:transparent">'
     + '<input id="chat-rename" class="chat-rename' + (RENAME.where === 'title' ? ' chat-rename--title' : '') + '"'
-      + ' type="text" maxlength="' + RENAME_MAX_CHARS + '" spellcheck="false" autocomplete="off"'
-      + ' aria-label="Chat name" value="' + esc(RENAME.draft) + '"'
+      + ' type="text" maxlength="' + (RENAME.where === 'folder' ? FOLDER_NAME_MAX : RENAME_MAX_CHARS) + '" spellcheck="false" autocomplete="off"'
+      + ' aria-label="' + (RENAME.where === 'folder' ? 'Folder name' : 'Chat name') + '" value="' + esc(RENAME.draft) + '"'
       + ' style="position:fixed;left:' + Math.round(r.left - 4) + 'px;top:' + Math.round(r.top + r.height / 2 - h / 2) + 'px;width:' + Math.round(w) + 'px;height:' + h + 'px">'
     + '</div>';
 }
@@ -130,7 +144,8 @@ function renameCancel() {
 
 function renameFocusBack(id) {
   const sel = typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(id) : id;
-  const row = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"]');
+  const row = document.querySelector('#sidebar .sesrow[data-ses="' + sel + '"]')
+    || document.querySelector('#sidebar .sb-fhead[data-ftoggle="' + sel + '"]');
   if (row) row.focus({preventScroll: true});
 }
 
@@ -139,6 +154,14 @@ function renameCommit() {
   if (!RENAME.id) return;
   const id = RENAME.id;
   const box = document.getElementById('chat-rename');
+  if (RENAME.where === 'folder') {
+    // ATO-1034: a folder lives in chat-folders.json only; nothing goes to the agent.
+    const named = folderNameCheck(box ? box.value : RENAME.draft);
+    if (!named.ok) { toast('Could not rename the folder', named.error, 'bad'); if (box) box.focus(); return; }
+    if (named.name !== RENAME.initial && folderRename(FOLDERS.state, id, named.name)) saveFolders();
+    renameCancel();
+    return;
+  }
   const checked = renameTitleCheck(box ? box.value : RENAME.draft, RENAME.initial);
   if (!checked.ok) { toast('Could not rename the chat', checked.error, 'bad'); if (box) box.focus(); return; }
   if (checked.same) { renameCancel(); return; }

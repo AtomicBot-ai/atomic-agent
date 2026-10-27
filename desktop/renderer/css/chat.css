@@ -147,12 +147,22 @@
   background:none;color:inherit;font:inherit;cursor:pointer}
 .prose .mdcopy svg{width:12px;height:12px}
 .prose .mdcopy:hover{background:var(--hover);color:var(--ink-2)}
+/* ATO-1025: code colour (code-highlight.js), from the theme's own tokens so both themes carry it. */
+.prose .mdpre .hl-k{color:var(--reasoning)}
+.prose .mdpre .hl-s{color:var(--success)}
+.prose .mdpre .hl-n{color:var(--amber-text)}
+.prose .mdpre .hl-p{color:var(--accent)}
+.prose .mdpre .hl-c{color:var(--ink-3);font-style:italic}
 .prose strong{font-weight:600}
 .prose.usr .mdcode{background:var(--glass-18)}
 
 /* files and links inside replies — the chip keeps `.filechip` + data-file, so
    the click (open) and right-click (native file menu) handlers are unchanged */
-.filechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:24px;padding:0 9px 0 7px;vertical-align:-6px;
+/* ATO-903: the chip sits on the line it is in. 24px tall at -6px it was
+   taller than the reply's line (14.5px × 1.62 ≈ 23.5px) and pushed it apart
+   and off its baseline; at 20px, centred on the lowercase letters
+   (vertical-align:middle), it fits inside the line box. */
+.filechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:20px;padding:0 8px 0 6px;vertical-align:middle;
   border-radius:var(--r-pill);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);
   font:600 var(--fs-cap)/1 var(--font-ui);color:var(--ink);white-space:nowrap;
   transition:background var(--t-state) var(--ease)}
@@ -198,17 +208,14 @@
    (workingRowHTML). It takes the reasoning line's box: the height, inset, gap
    and type of `.disc`, the spinner in the chevron's 14px slot, so the
    Reasoning line or tool step that replaces it lands where it stood. The word
-   shimmers, a lighter band crossing the muted ink, and the seconds count in
-   tabular figures. Reduced motion: the word is plain text in the secondary
+   sits in the secondary ink (ATO-1025: it shimmered once), and the seconds
+   count in tabular figures. Reduced motion: the word is plain text in the secondary
    ink, and the spinner keeps the kit's slower turn (styles.css). */
 .tk-work{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;
   font-size:var(--fs-ui);color:var(--ink-3);white-space:nowrap}
 .tk-work .tk-spin{width:12px;height:12px;margin:0 1px;border-width:1.5px}
-.tk-work-t{background:linear-gradient(90deg,var(--ink-3) 40%,var(--ink) 50%,var(--ink-3) 60%) 0 0/300% 100%;
-  -webkit-background-clip:text;background-clip:text;color:transparent;animation:chat-shimmer 2.4s linear infinite}
+.tk-work-t{color:var(--ink-2)}   /* ATO-1025: no shimmer; the spinner and the seconds already say it is alive */
 .tk-work-n{font-variant-numeric:tabular-nums}
-@keyframes chat-shimmer{from{background-position:100% 0}to{background-position:0 0}}
-@media (prefers-reduced-motion:reduce){.tk-work-t{animation:none;background:none;color:var(--ink-2)}}
 
 /* tool calls and folded runs — `.card` / `.cardhead` / `.cardbody` / `.cardsum`
    / `.du` / `.nm` are what the smoke and drivers read. At rest a row has no
@@ -389,6 +396,8 @@
   color:var(--ink);font:400 var(--fs-label)/16px var(--font-ui);letter-spacing:0;opacity:0;pointer-events:none;
   transition:opacity var(--t-state) var(--ease)}
 .msgact-off[data-tip]:hover::after{opacity:1;transition-delay:300ms}
+/* ATO-901: under the user's bubble the row sits at the right edge, so the sentence opens leftwards. */
+.turn.usr .msgact-off[data-tip]::after{left:auto;right:0}
 /* ATO-168: on a reply the actions start at the LEFT, under the text they copy
    (Danya: on the right "it flies off who knows where"); the user bubble keeps
    them at its right edge. The last reply's dot (replyDot) is a zero-height
@@ -442,7 +451,9 @@
    (`.sysact` — failure-line.drive reads it). The glyph carries the tone:
    red for a failure, amber for a pause or a warning, muted otherwise. */
 .sysrow{display:grid;grid-template-columns:16px minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:0 4px;
-  font-size:var(--fs-cap);line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere}
+  font-size:var(--fs-cap);line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere;white-space:normal}
+/* ATO-903: a system row's sentence wraps whatever it sits in ("Allowed in this chat…" was cut at the edge). */
+.sysrow .sys-tx{min-width:0;white-space:normal}
 .sysrow .sys-ic{display:grid;place-items:center;height:20px;color:var(--ink-3)}
 .sysrow .sys-ic svg{width:14px;height:14px}
 .sysrow .sys-ic.err{color:var(--critical)}

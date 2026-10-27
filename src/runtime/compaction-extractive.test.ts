@@ -102,6 +102,11 @@ describe("tool step lines", () => {
     expect(describeToolStep({ tool: "os.fs.move", args: { moves: [{ from: "/a", to: "/x/" }, { from: "/b", to: "/y/" }] } }, ok("os.fs.move"))).toMatchObject({ line: "moved 2 items → ok", changed: ["/x/", "/y/"] });
     expect(firstErrorLine("$ make\nexit: 2\ncompiling\nmake: *** [all] Error 2")).toBe("make: *** [all] Error 2");
   });
+
+  it("reads an aliased os.fs.move as the tool ran it (ATO-899)", () => {
+    expect(describeToolStep({ tool: "os.fs.move", args: { paths: ["/a.zip", "/b.zip"], destination: "/Archives" } }, ok("os.fs.move"))).toMatchObject({ line: "moved 2 items → ok", changed: ["/Archives/", "/Archives/"] });
+    expect(describeToolStep({ tool: "os.fs.move", args: { src: "/a.txt", dest: "/b.txt" } }, ok("os.fs.move"))).toMatchObject({ line: "moved /a.txt → /b.txt → ok", changed: ["/b.txt"] });
+  });
 });
 
 describe("compaction method choice", () => {
