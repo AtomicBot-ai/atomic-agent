@@ -20,7 +20,7 @@ import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
 import { buildBrowserTools } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
-import { registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry } from "../../tools/os/index.js";
+import { registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
 import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
@@ -118,9 +118,12 @@ export function registerRuntimeCoreTools(input: {
   declaredInputs: DeclaredInputsRegistry;
   shellJobs: ShellJobRegistry;
   skillRegistry: SkillRegistry;
+  /** Where the user adds an Exa key, for the web-search error (ATO-345). */
+  webSearchKeyHelp?: WebSearchKeyHelp;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
   const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, declaredInputs,
-    shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger } = input;
+    shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
+    webSearchKeyHelp } = input;
 
   registerOsTools(toolRegistry, {
     ...dangerous,
@@ -151,6 +154,7 @@ export function registerRuntimeCoreTools(input: {
       isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
     },
     shellJobs,
+    ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
   });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the
@@ -262,6 +266,23 @@ export function registerRuntimeVideoTools(input: {
   });
 }
 
+/** What `connectRuntimeMcpCatalog` tells about the MCP grammar it applies. */
+export interface McpGrammarHolder {
+  setMcpToolNameRule(rule: string | null, nativeTools: boolean): void;
+}
+
+/**
+ * The bootstrap seam between the MCP catalog and the hot-swap
+ * `ModelProfileManager`: the agent loop reads the manager's grammar
+ * before the catalog's, so without this hook the manager's grammar
+ * would admit no MCP tools at all (ATO-1029). No manager, no hook.
+ */
+export function mcpGrammarHookFor(holder: McpGrammarHolder | null | undefined): {
+  onMcpToolNameRule?: (rule: string | null, nativeTools: boolean) => void;
+} {
+  return holder ? { onMcpToolNameRule: (rule, nativeTools) => holder.setMcpToolNameRule(rule, nativeTools) } : {};
+}
+
 export async function connectRuntimeMcpCatalog(input: {
   config: AtomicAgentConfig;
   options: Pick<CreateAgentRuntimeOptions, "handlers">;
@@ -272,9 +293,16 @@ export async function connectRuntimeMcpCatalog(input: {
   initialGrammar: string;
   visionOnLiveRoute: () => boolean;
   resolveCurrentRunMode: () => ResolvedRunMode;
+  /**
+   * Told every MCP tool-name rule this catalog applies, so a grammar held
+   * elsewhere (the hot-swap `ModelProfileManager`, which the agent loop
+   * reads first) admits the same `mcp.*` names (ATO-1029); `nativeTools`
+   * is whether the `mcp.resource.*` / `mcp.prompt.*` tools are registered.
+   */
+  onMcpToolNameRule?: (rule: string | null, nativeTools: boolean) => void;
 }) {
   const { config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
-    visionOnLiveRoute, resolveCurrentRunMode } = input;
+    visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule } = input;
   let grammar = initialGrammar;
 
   // MCP client subsystem. The manager is always constructed so the
@@ -359,13 +387,19 @@ export async function connectRuntimeMcpCatalog(input: {
     registerMcpMetaToolsOnce();
     const mcpToolMetas = mcpManager.listAllToolMeta();
     const rule = buildMcpToolNameRule(mcpToolMetas);
-    grammar = applyMcpToolNameRule(baseGrammar, rule);
+    grammar = applyMcpToolNameRule(baseGrammar, rule, mcpMetaToolsRegistered);
+    onMcpToolNameRule?.(rule, mcpMetaToolsRegistered);
     logger.info("mcp: manager started", {
       configured: mcpServerConfigs.length,
       connected: mcpManager.listStatuses().filter((s) => s.state === "up")
         .length,
       tools: mcpToolMetas.length,
     });
+  } else {
+    // MCP off: neither the native `mcp.resource.*` / `mcp.prompt.*` tools
+    // nor any per-server tool is registered, so the grammar names none.
+    grammar = applyMcpToolNameRule(baseGrammar, null, false);
+    onMcpToolNameRule?.(null, false);
   }
 
   // The descriptor stays in the prompt while the live route can see
@@ -491,7 +525,8 @@ export async function connectRuntimeMcpCatalog(input: {
       }
       const metas = mcpManager.listAllToolMeta();
       const rule = buildMcpToolNameRule(metas);
-      grammar = applyMcpToolNameRule(baseGrammar, rule);
+      grammar = applyMcpToolNameRule(baseGrammar, rule, mcpMetaToolsRegistered);
+      onMcpToolNameRule?.(rule, mcpMetaToolsRegistered);
       rebuildToolDescriptors();
       logger.info("mcp: catalog refreshed", {
         servers: serverCount,

@@ -207,6 +207,10 @@ export function runSyncLoopGate(
     return { proceed: true };
   }
   const { tool, args } = input.call;
+  // Every gate of one model step shares a round, including the length-1
+  // batches an in-order or barrier run splits a step into, so siblings
+  // of one step are one fan-out to the wandering detector (ATO-999).
+  ctx.tracker.noteStep(ctx.stepIndex);
   const breakerTripped = ctx.tracker.isBreakerTripped(tool, args);
   // A wandering loop that crossed a spread cap also ends the turn
   // gracefully (the redirect notice did not land). It rides the same

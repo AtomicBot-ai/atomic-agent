@@ -17,3 +17,21 @@ export {
   isNewerVersion,
   parseSemver,
 } from "./compare-semver.js";
+export {
+  detectInstallSource,
+  readInstallSource,
+  detectShadowedPackage,
+  readShadowedPackage,
+  shadowedPackageNotice,
+  parseInstallSource,
+  installSourceLabel,
+  packageUpgradeHint,
+  packageRemoveHint,
+  packagedUpdateRefusal,
+  INSTALL_SOURCES,
+  PACKAGE_DIR,
+  PACKAGE_MARKER,
+  PACKAGED_BINARY,
+  type InstallSource,
+  type ReadInstallSourceInput,
+} from "./install-source.js";

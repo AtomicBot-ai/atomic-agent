@@ -78,7 +78,7 @@ function chatAnswer(content: string): Response {
 /** Every chat-completions POST, by host. */
 function installFetch(): { visionCalls: string[] } {
   const visionCalls: string[] = [];
-  vi.stubGlobal("fetch", (async (input: RequestInfo | URL) => {
+  vi.stubGlobal("fetch", (async (input: string | URL | Request) => {
     const url =
       typeof input === "string"
         ? input

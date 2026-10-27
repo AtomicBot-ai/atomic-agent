@@ -3,6 +3,18 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { resolveSurface, type AnalyticsSurface } from "./resolve-surface.js";
+import {
+  readInstallSource,
+  type ReadInstallSourceInput,
+} from "../update/install-source.js";
+
+function readTextFile(path: string): string | undefined {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Process-wide dimensions stamped on every analytics event and every
@@ -19,7 +31,11 @@ export interface AnalyticsDimensions {
   desktopVersion?: string;
 }
 
-/** Every install channel value that may leave the machine. */
+/**
+ * Every install channel value that may leave the machine. `deb`, `rpm` and
+ * `aur` are the terminal's own Linux packages as well as the desktop's deb;
+ * the surface dimension tells them apart.
+ */
 export const INSTALL_CHANNELS = [
   "curl_sh",
   "curl_ps1",
@@ -27,6 +43,8 @@ export const INSTALL_CHANNELS = [
   "exe",
   "appimage",
   "deb",
+  "rpm",
+  "aur",
   "unknown",
 ] as const;
 export type InstallChannel = (typeof INSTALL_CHANNELS)[number];
@@ -50,15 +68,26 @@ export function parseInstallChannel(
 
 /**
  * Resolve the install channel: the env set by the desktop app wins, then
- * the `<stateDir>/install-channel` marker written by the install scripts,
- * else `unknown`. Anything outside the enum is treated as absent.
+ * the package marker a deb, rpm or AUR install leaves beside the binary
+ * (`src/update/install-source.ts`; it describes the binary actually
+ * running, which the per-user marker below cannot once a package replaces
+ * an install-script copy), then the `<stateDir>/install-channel` marker
+ * written by the install scripts, else `unknown`. Anything outside the
+ * enum is treated as absent.
  */
 export function resolveInstallChannel(
   stateDir: string,
   env: NodeJS.ProcessEnv = process.env,
+  host: Partial<ReadInstallSourceInput> = {},
 ): InstallChannel {
   const fromEnv = parseInstallChannel(env[INSTALL_CHANNEL_ENV]);
   if (fromEnv) return fromEnv;
+  const packaged = readInstallSource({
+    platform: host.platform ?? process.platform,
+    execPath: host.execPath ?? process.execPath,
+    readFile: host.readFile ?? readTextFile,
+  });
+  if (packaged) return packaged;
   try {
     const raw = readFileSync(join(stateDir, INSTALL_CHANNEL_FILE), "utf8");
     const fromFile = parseInstallChannel(raw.split(/\r?\n/, 1)[0]);

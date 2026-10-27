@@ -14,7 +14,7 @@ import { DistillRunner } from "./distill-runner.js";
  * One tick of `runOnce` does the following, sequentially:
  *
  *   1. **Select**       candidate episodes — `consolidated_into IS NULL`
- *                       AND `updated_at < now - cooldownMs`.
+ *                       AND `updated_at <= now - cooldownMs`.
  *   2. **Acquire lease** on every candidate so the reflection-side
  *                       neighbor-evolver (phase 3) skips them while
  *                       distillation is in flight. The lease window
@@ -716,15 +716,15 @@ export class ConsolidatorJob {
    */
   private selectCandidates(now: number): MemoryEntry[] {
     const threshold = now - this.options.cooldownMs;
-    const raw = this.deps.memoryStore.list({
-      // We need archived rows out of the way and only the eligible
-      // ones. `list` already supports `excludeArchived`, and we
-      // post-filter by `updated_at < threshold` since the store
-      // does not yet expose an age filter.
+    // The age filter runs in SQL, before the row cap. Filtering after
+    // the cap read the newest 200 rows and then dropped the young ones,
+    // so on a busy store the window held few or no eligible episodes
+    // (#903).
+    return this.deps.memoryStore.list({
       excludeArchived: true,
+      updatedBefore: threshold,
       limit: 200,
     });
-    return raw.filter((entry) => entry.updatedAt <= threshold);
   }
 
   /**
