@@ -266,7 +266,11 @@ const config = {
       "libsecret-1-0",
       "libasound2",
       "libgbm1",
-      "libdrm2"
+      "libdrm2",
+      /* the bundled agent (a Node SEA under resources/agent) links libatomic
+         and libstdc++; minimal Debian and Fedora images carry neither. */
+      "libatomic1",
+      "libstdc++6"
     ]
   },
   "rpm": {
@@ -283,7 +287,10 @@ const config = {
       "(libsecret or libsecret-1-0)",
       "(alsa-lib or libasound2)",
       "(mesa-libgbm or libgbm1)",
-      "(libdrm or libdrm2)"
+      "(libdrm or libdrm2)",
+      /* the bundled agent, as above. */
+      "libatomic",
+      "libstdc++"
     ]
   },
   "afterPack": "scripts/after-pack.mjs"
