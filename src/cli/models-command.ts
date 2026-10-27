@@ -1,6 +1,7 @@
 import { modelsEngineCommand, modelsStopEmbedding } from "./models-engine.js";
 import { getConfig } from "../config/index.js";
 import {
+  readCliOption,
   runLocalModelsDevices,
   runLocalModelsList,
   runLocalModelsListEmbeddings,
@@ -42,6 +43,11 @@ const HELP =
     "  check [--json]                Ask localModels.url what answers there (llama.cpp, Ollama,",
     "                                still loading, not a model server); exit 1 unless llama.cpp",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
+    "                                --grow-context: on a GPU with its own memory, start the",
+    "                                auto window at 32768 and record how far it may grow",
+    "                                (for a client that grows it between turns)",
+    "                                --context-at-least <n>: with --grow-context, after",
+    "                                `models stop`, start the window at least this large",
     "  stop [--chat-only]            Stop daemon (SIGTERM → SIGKILL after 3s); --chat-only",
     "                                keeps the embedding model running for memory search",
     "  engine [status|check|atomic-core|llama-server]  Inspect or choose the local engine",
@@ -83,6 +89,21 @@ const HELP =
     "  atomic-agent models check",
   ].join("\n") + "\n";
 
+/**
+ * `models start` window flags: `--grow-context`, and
+ * `--context-at-least <n>` (a positive integer; anything else is ignored).
+ */
+export function parseStartContextFlags(
+  args: readonly string[],
+): { growContext?: true; contextAtLeast?: number } {
+  const raw = readCliOption([...args], "--context-at-least");
+  const n = raw === undefined ? NaN : Number(raw);
+  return {
+    ...(args.includes("--grow-context") ? { growContext: true as const } : {}),
+    ...(Number.isInteger(n) && n > 0 ? { contextAtLeast: n } : {}),
+  };
+}
+
 export async function modelsCommand(args: string[]): Promise<number> {
   getConfig();
   const sub = args[0];
@@ -120,6 +141,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return await runLocalModelsStart({
           interactive: args.includes("--interactive"),
           signal: cancel.signal,
+          ...parseStartContextFlags(args),
         });
       case "stop":
         return runLocalModelsStop({ chatOnly: args.includes("--chat-only") });

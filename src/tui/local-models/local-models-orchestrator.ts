@@ -129,7 +129,9 @@ import {
   resolveRunMode,
 } from "../../llm/run-mode/index.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
+import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
+import { growLocalContext, planLocalContextGrowth } from "./local-context-growth.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -294,6 +296,15 @@ export class LocalModelsOrchestrator {
    * `llama-server` process nothing can stop afterwards.
    */
   private restartInFlight: Promise<boolean> | null = null;
+  /**
+   * The auto window this process grew the model to (`growContextForPrompt`),
+   * recorded only once a start at that size came up: later starts of the
+   * same model begin there instead of back at the small start window.
+   * Another model starts small again.
+   */
+  private grownContext: { modelId: string; atLeast: number } | null = null;
+  /** The bigger window a growth restart is trying, read by that start only. */
+  private growthAttempt: number | null = null;
   private readonly operations = new ModelOperationQueue();
   private selectionRevision = 0;
   private closing = false;
@@ -2060,10 +2071,12 @@ export class LocalModelsOrchestrator {
       // `restartDaemon` comes back through here, and nothing about the
       // role is captured at boot.
       const resolvedLlm = resolveLlmConfig(cfg);
-      const localLegRole = resolveLocalLegRole(
-        resolvedLlm,
-        resolveRunMode(resolvedLlm, { managedModelId: mid }),
-      );
+      const runMode = resolveRunMode(resolvedLlm, { managedModelId: mid });
+      const localLegRole = resolveLocalLegRole(resolvedLlm, runMode);
+      // ATO-848: only a plain local chat route has someone to grow the
+      // window between turns (`growContextForPrompt`); a Fusion leg is
+      // served by turns this path never sees, so it gets the fixed window.
+      const growContext = activeTextProviderIsLlamaServer(resolvedLlm) && runMode.effective !== "fusion";
       const clearance = this.portClearanceDeps();
       opts?.signal?.throwIfAborted();
       const chatClear = await clearChatPort(cfg, mid, clearance);
@@ -2087,6 +2100,10 @@ export class LocalModelsOrchestrator {
         clearance,
       );
       opts?.signal?.throwIfAborted();
+      const grown = this.grownContext;
+      const contextAtLeast = growContext
+        ? (this.growthAttempt ?? (grown !== null && grown.modelId === mid ? grown.atLeast : null))
+        : null;
       const result = await this.trackCoreStart(opts?.signal, signal => startChatAndEmbeddingDaemons({
         chat: {
           engine: cfg.localModels.managed.engine,
@@ -2099,6 +2116,8 @@ export class LocalModelsOrchestrator {
           chatTemplateFile: tpl,
           mmprojFile,
           contextSize: cfg.localModels.managed.contextSize,
+          ...(growContext ? { growContext: true } : {}),
+          ...(contextAtLeast !== null ? { autoContextAtLeast: contextAtLeast } : {}),
           parallel: cfg.localModels.managed.parallel,
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
@@ -2476,6 +2495,33 @@ export class LocalModelsOrchestrator {
     });
     this.restartInFlight = inFlight;
     return inFlight;
+  }
+
+  /**
+   * ATO-848: before a turn, grow the auto window of a daemon on a GPU
+   * with memory of its own when the conversation's last prompt
+   * (`session.contextUsage.tokens`) has filled three quarters of the
+   * prompt's room — one doubling, held to what fits the card
+   * (`decideContextGrowth`), through the ordinary restart. A no-op for a
+   * pinned context, unified memory, CPU, external mode and while a model
+   * change or restart is running. Never throws: a failed growth leaves
+   * the turn to run on the window it has.
+   */
+  async growContextForPrompt(promptTokens: number | null | undefined): Promise<boolean> {
+    if (typeof promptTokens !== "number" || !(promptTokens > 0)) return false;
+    if (this.closing || this.restartInFlight || this.isSwitching) return false;
+    try {
+      return await growLocalContext({
+        plan: () => planLocalContextGrowth(getConfig(), promptTokens),
+        setAttempt: (atLeast) => { this.growthAttempt = atLeast; },
+        commit: (step) => { this.grownContext = { modelId: step.modelId, atLeast: step.to }; },
+        restart: () => this.restartDaemon(),
+        startAgain: () => this.startDaemon(),
+        emit: (line) => this.bus.emit({ type: "runtime_info", line }),
+      });
+    } catch {
+      return false;
+    }
   }
 
   async restartDaemon(): Promise<boolean> {
