@@ -1,3 +1,8 @@
+import type { AtomicAgentConfig } from "../../../../config/index.js";
+import {
+  formatCooldown,
+  type CooldownReason,
+} from "../transport/provider-cooldown.js";
 import {
   EXA_GET_KEY_URL,
   WebSearchRateLimitedError,
@@ -15,17 +20,56 @@ import {
 
 /**
  * curl and DNS failures that mean the host was never reached: no DNS
- * answer, a refused or timed out TCP/TLS handshake. Matched on the message
- * because that is all a transport throw carries.
+ * answer (exit 6), a refused connection (7), a TCP connect or name lookup
+ * that ran out the connect timeout (28), a TLS handshake that failed (35).
+ * Matched on the message because that is all a transport throw carries.
+ * A total-time timeout (exit 28 `Operation timed out`) is not one: the
+ * host answered the handshake and then was slow.
  */
 const CONNECT_FAILURE =
-  /curl: \((?:6|7)\)|could not resolve host|failed to connect|connection timed out|connection refused|resolving timed out|DNS resolution failed/i;
+  /curl: \((?:6|7|35)\)|could not resolve host|failed to connect|connection timed out|connection refused|resolving timed out|DNS resolution failed/i;
 
 /** Any other curl timeout (exit 28): the host took too long to answer. */
 const TIMEOUT_FAILURE = /curl: \(28\)|timed out/i;
 
 export function isConnectFailure(err: unknown): boolean {
   return CONNECT_FAILURE.test(errorMessage(err));
+}
+
+const DNS_FAILURE =
+  /curl: \(6\)|could not resolve host|DNS resolution failed|resolving timed out/i;
+
+/**
+ * What a connect failure was, in words (ATO-315): `curl: (28) Connection
+ * timed out after 5002 milliseconds` reads to a user as nothing at all.
+ * Order matters: a lookup that timed out is a DNS problem, not exit 28's
+ * generic "timed out".
+ */
+function connectReason(raw: string): string {
+  if (DNS_FAILURE.test(raw)) {
+    return "the site's name could not be looked up (DNS)";
+  }
+  if (/curl: \(35\)/i.test(raw)) {
+    return "the secure connection (TLS) failed";
+  }
+  if (/connection timed out|curl: \(28\)/i.test(raw)) {
+    const seconds = timeoutSeconds(raw);
+    return seconds === undefined
+      ? "the connection timed out"
+      : `the connection timed out after ${seconds} s`;
+  }
+  if (/refused/i.test(raw)) return "the connection was refused";
+  if (/network is unreachable|no route to host/i.test(raw)) {
+    return "the network could not reach the site";
+  }
+  return "the connection failed";
+}
+
+/** `after 5002 milliseconds` (or `ms`) -> `5`; undefined when not said. */
+function timeoutSeconds(raw: string): number | undefined {
+  const match = /after (\d+) (?:milliseconds|ms)\b/i.exec(raw);
+  if (!match) return undefined;
+  return Math.round(Number(match[1]) / 1000);
 }
 
 /**
@@ -44,17 +88,94 @@ export function describeFailure(
       : `${name}: rate limited (HTTP 429)`;
   }
   if (isConnectFailure(err)) {
-    return `${name}: could not connect (site unreachable from this network); ${raw}`;
+    return (
+      `${name}: could not connect, ${connectReason(raw)} ` +
+      `(site unreachable from this network); ${raw}`
+    );
   }
   if (TIMEOUT_FAILURE.test(raw)) {
-    return `${name}: timed out (no answer in time); ${raw}`;
+    const seconds = timeoutSeconds(raw);
+    const inTime = seconds === undefined ? "in time" : `in ${seconds} s`;
+    return `${name}: timed out (connected, but no answer ${inTime}); ${raw}`;
   }
   return `${name}: ${raw}`;
 }
 
+/** The key card for keyless Exa (ATO-327). */
+export function exaKeyRequired(
+  reason: WebSearchKeyRequired["reason"],
+  envVar: string,
+): WebSearchKeyRequired {
+  return { provider: "exa", reason, getKeyUrl: EXA_GET_KEY_URL, envVar };
+}
+
+/** What a keyless Exa failure says about asking for a key. */
+export function keyReasonOf(err: unknown): WebSearchKeyRequired["reason"] {
+  if (err instanceof WebSearchRateLimitedError) return "rate_limited";
+  return isConnectFailure(err) ? "unreachable" : "missing";
+}
+
 /**
- * The tool's error text: what failed, one action, and what the model
- * should do now. The last line is there because a model that only sees
+ * Why a chain provider could not be asked, for the all-failed report. Not
+ * a switch over every name on purpose: a provider added later without a
+ * case here still gets a sane line.
+ */
+export function describeUnusable(
+  name: string,
+  search: AtomicAgentConfig["web"]["search"],
+): string {
+  if (name === "brave") return `no ${search.brave.apiKeyEnv} set`;
+  if (name === "searxng") return "no `web.search.searxng.instanceUrl` set";
+  return "not configured";
+}
+
+/** Note and report line for a provider skipped because it is parked. */
+export function parkedSkipLines(
+  name: string,
+  reason: CooldownReason,
+  parkedMs: number,
+  freeTier: boolean,
+): { note: string; failure: string } {
+  const wait = formatCooldown(parkedMs);
+  if (reason === "unreachable") {
+    return {
+      note: `${name} skipped: could not connect a moment ago, retrying in ${wait}`,
+      failure: `${name}: could not connect a moment ago (site unreachable from this network), next try in ${wait}`,
+    };
+  }
+  const what = freeTier ? "free limit reached" : "rate limited";
+  return {
+    note: `${name} skipped: ${what}, retrying in ${wait}`,
+    failure: `${name}: ${what}, next try in ${wait}`,
+  };
+}
+
+/** Note for a provider just parked on a 429. */
+export function rateLimitedNote(
+  name: string,
+  parkedMs: number,
+  freeTier: boolean,
+  envVar: string,
+): string {
+  const wait = formatCooldown(parkedMs);
+  return freeTier
+    ? `${name} free limit reached (HTTP 429, no ${envVar}), parked for ${wait}`
+    : `${name} rate limited (HTTP 429), parked for ${wait}`;
+}
+
+/** Note for a provider just parked because its host was never reached. */
+export function unreachableNote(
+  name: string,
+  parkedMs: number,
+  raw: string,
+): string {
+  return `${name} could not connect, skipped for ${formatCooldown(parkedMs)}: ${raw}`;
+}
+
+/**
+ * The tool's error text: what failed, a single "To fix it" line (the
+ * free Exa key when one would help, otherwise the network or another
+ * provider), and what the model should do now. The last line is there because a model that only sees
  * "search failed" tends to rephrase the query and pay the same timeouts
  * again; told that search is out, it answers without it.
  */
@@ -86,7 +207,8 @@ export function buildUnavailableMessage(input: {
     );
   } else {
     lines.push(
-      "To fix it: check the network, or choose another provider in `web.search.provider`.",
+      "To fix it: check the network, or choose another provider in `web.search.provider`: " +
+        "`brave` (with its API key in the env) or `searxng` (with `web.search.searxng.instanceUrl`).",
     );
   }
   lines.push(
@@ -109,6 +231,6 @@ function integrationsHubKeyAdvice(
     : `To fix it: ${action.charAt(0).toLowerCase()}${action.slice(1)}`;
 }
 
-function errorMessage(err: unknown): string {
+export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
