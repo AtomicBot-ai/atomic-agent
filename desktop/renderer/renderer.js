@@ -3917,7 +3917,7 @@ function downloadingChipHtml(slot) {
     + ' aria-label="Downloading ' + esc(what) + '">' + ic('download') + '<span class="cval">Downloading ' + esc(what) + '</span></span>';
 }
 function setupChipHtml() {
-  return '<button class="cchip setupchip" data-act="settings:llm" title="No model is set up yet. Open Settings › Models"'
+  return '<button class="cchip setupchip" data-act="settings:llm:local" title="No model is set up yet. Open Settings › Models › Local models"'
     + ' aria-label="Set up a model">' + ic('plus') + '<span class="cval">Set up a model</span></button>';
 }
 /** Where · Provider · Model (· Fusion's seats), as the route draws them. */
@@ -16281,6 +16281,8 @@ if (BR) {
     if (a === 'onboarding') { openOnboarding(); return; }
     // Calm (S6): the composer's "Set up a model" chip — straight to the choice, no title card.
     if (a === 'onboarding:choose') { openOnboarding('choose'); return; }
+    // The composer's "Set up a model" chip: Settings › Models on the Local models tab (ATO-1232).
+    if (a === 'settings:llm:local') { act('settings:llm'); act('llm:mode:local'); return; }
     if (a === 'onboarding:openNow') { obOpenNow(); return; }
     if (a === 'dl:cancel') { dlCancel(); return; }
     /* r6 — three lanes found this one independently, and the operator
