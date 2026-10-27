@@ -74,6 +74,7 @@ import {
   type LocalModelId,
 } from "../catalog/models-catalog.js";
 import { resolvePlatformAsset } from "../backend/platform-assets.js";
+import { assertBackendRunsOnThisMac } from "../backend/macos-min-version.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
 import {
   buildDaemonEnv,
@@ -1111,6 +1112,9 @@ export async function startDaemon(
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
+  // ATO-116: a build stamped for a newer macOS than this Mac's is refused
+  // by dyld before it prints a line; say so instead of a crash or timeout.
+  assertBackendRunsOnThisMac(binPath);
 
   const model = getLocalModelDef(opts.modelId);
   // A model registered from disk launches straight from the operator's
@@ -1571,6 +1575,9 @@ export async function startEmbeddingDaemon(
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
+  // ATO-116: a build stamped for a newer macOS than this Mac's is refused
+  // by dyld before it prints a line; say so instead of a crash or timeout.
+  assertBackendRunsOnThisMac(binPath);
 
   const model = getEmbeddingModelDef(opts.modelId);
   const modelPath = resolveModelFilePath(
