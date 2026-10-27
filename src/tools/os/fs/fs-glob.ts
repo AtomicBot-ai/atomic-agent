@@ -9,6 +9,7 @@ import {
 import { resolveUserPath } from "../expand-home.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 import { compileGlob, matchesAny } from "./fs-glob-pattern.js";
+import { missingRoot } from "./fs-missing-path.js";
 import {
   createWalkBudget,
   DEFAULT_WALK_BUDGET,
@@ -91,6 +92,10 @@ export function buildOsFsGlobTool(
     readonly: OS_FS_GLOB_CONTRACT.readonly,
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs, ctx.workingDir);
+      // A missing root used to walk to "(no matches)", which reads as
+      // "no such files" rather than "wrong folder" (ATO-413).
+      const missing = await missingRoot("os.fs.glob", args.cwd, ctx);
+      if (missing !== null) return missing;
       const flags = args.nocase ? "i" : "";
       const matchers = args.patterns.map((p) => compileGlob(p, flags));
       const ignoreMatchers = args.ignore.map((p) => compileGlob(p, flags));

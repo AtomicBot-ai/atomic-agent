@@ -92,6 +92,27 @@ describe("toolLogFields", () => {
     ).toEqual({});
   });
 
+  it("logs a code-style error code and nothing else under that key", () => {
+    const missing = toolLogFields(
+      { path: "backlinks_demo" },
+      result({
+        status: "error",
+        summary: "os.fs.read: /w/backlinks_demo does not exist (ENOENT: no such file or directory).",
+        details: { path: "/w/backlinks_demo", errorCode: "ENOENT" },
+      }),
+    );
+    expect(missing).toEqual({
+      path: "backlinks_demo",
+      reason: "os.fs.read: /w/backlinks_demo does not exist (ENOENT: no such file or directory).",
+      errorCode: "ENOENT",
+    });
+    const odd = toolLogFields(
+      {},
+      result({ tool: "mcp.x", status: "error", details: { errorCode: "token=SECRET" } }),
+    );
+    expect(odd).toEqual({});
+  });
+
   it("clips a long path and a long reason", () => {
     const long = "x".repeat(TOOL_LOG_FIELD_MAX_CHARS + 50);
     const fields = toolLogFields(
