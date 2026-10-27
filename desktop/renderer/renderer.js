@@ -20137,6 +20137,18 @@ async function wizNext() {
   }
 }
 
+/* ATO-1196: whether the agent's words about an empty model list mean the
+   server simply has none. `models search --refresh` on a local
+   openai-compatible server that answers with zero models prints "no
+   searchable cloud models: the configured providers ship no catalog...",
+   and the old `no models` test missed it, so an empty Ollama or LM Studio
+   read "didn't list its models". Only asked for a server on this machine:
+   for a cloud provider the same line is not about the server. A failure
+   ("could not list models from ...") is not an empty server. */
+function wizSaidNoModels(said) {
+  return !said || /\bno (?:searchable cloud )?models\b/.test(said);
+}
+
 async function wizNextStep() {
   const k = WIZ.row; if (!k) return;
   if (k.subscriptionCli) return wizSubscriptionStep(k);
@@ -20309,7 +20321,7 @@ async function wizNextStep() {
       ? wizService(k) + ' is limiting requests right now (429). Wait a moment, then try again.'
       : status >= 500
       ? wizService(k) + ' had a problem answering (HTTP ' + status + '). Try again in a moment.'
-      : local && (!said || /\bno models\b/.test(said))
+      : local && wizSaidNoModels(said)
       ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
       : local
       ? Name + ' at ' + where + ' didn\u2019t list its models.'
