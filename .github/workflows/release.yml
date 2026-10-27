@@ -1,8 +1,14 @@
-# SEA release: build per-target Node SEA CLI, sign+notarize macOS, sign Windows, upload draft GitHub Release.
+# SEA release: build per-target Node SEA CLI, sign+notarize macOS, sign Windows, build the Linux
+# deb/rpm from the Linux bundles, upload a draft GitHub Release, and smoke the packages against the
+# draft in clean distro containers. Publishing the draft (by hand, on GitHub) starts
+# linux-repo.yml, which brings the apt/dnf repository and the AUR package up to the release.
+#
 # macOS secrets (match openclaw / electron-desktop): MACOS_CSC_LINK, MACOS_CSC_KEY_PASSWORD,
 # NOTARYTOOL_KEY, NOTARYTOOL_KEY_ID, NOTARYTOOL_ISSUER
 # Windows code-signing secrets (DigiCert KeyLocker, match electron-desktop): SM_API_KEY,
 # SM_CLIENT_CERT_FILE_B64, SM_CLIENT_CERT_PASSWORD, SM_CODE_SIGNING_CERT_SHA1_HASH
+# Linux packages (the key is shared with atc / eye-cli): LINUX_PACKAGES_GPG_KEY (the armored
+# private key of packaging/atomic-chat.asc), LINUX_PACKAGES_GPG_PASSPHRASE
 
 name: Release (SEA)
 
@@ -14,6 +20,11 @@ on:
     inputs:
       publish:
         description: "Create draft GitHub Release and upload artifacts"
+        required: false
+        default: false
+        type: boolean
+      allow_unsigned:
+        description: "Dry run: build the Linux packages without the packages key (never for a tag)"
         required: false
         default: false
         type: boolean
@@ -256,13 +267,114 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # The deb and rpm of this run's Linux bundles: the very archives `build` uploaded, extracted under
+  # /usr/lib/atomic-agent, nothing rebuilt (scripts/linux-packages.ts, packaging/nfpm.yaml). Each
+  # package depends on the glibc its binary and native addon require, read from the ELF files. The
+  # rpm is signed with the packages key; a run by hand may set allow_unsigned, a tag never does.
+  packages:
+    name: linux packages (deb, rpm)
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      ALLOW_UNSIGNED: ${{ github.ref_type != 'tag' && inputs.allow_unsigned && '1' || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Install dependencies (tsx only; no native builds)
+        run: npm ci --ignore-scripts
+
+      - name: Download the Linux bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: bundle
+          pattern: release-linux-*
+          merge-multiple: true
+
+      - name: Install nfpm (pinned, checksum checked)
+        env:
+          NFPM_VERSION: 2.48.0
+          NFPM_SHA256: 6d7f9a28b2f397934403950fcbba83f598b08d02edbe79a0815b3b4897341750
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/nfpm.tar.gz"
+          curl -fsSLo "$archive" \
+            "https://github.com/goreleaser/nfpm/releases/download/v$NFPM_VERSION/nfpm_${NFPM_VERSION}_Linux_x86_64.tar.gz"
+          echo "$NFPM_SHA256  $archive" | sha256sum -c -
+          tar -xzf "$archive" -C "$RUNNER_TEMP" nfpm
+          sudo install "$RUNNER_TEMP/nfpm" /usr/local/bin/nfpm
+
+      - name: Import the packages key (must be packaging/atomic-chat.asc)
+        if: env.ALLOW_UNSIGNED != '1'
+        env:
+          KEY: ${{ secrets.LINUX_PACKAGES_GPG_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "$KEY" ]; then echo "::error::the LINUX_PACKAGES_GPG_KEY secret is not set"; exit 1; fi
+          file="$RUNNER_TEMP/packages-key.asc"
+          (umask 077; printf '%s\n' "$KEY" > "$file")
+          fpr() { gpg --show-keys --with-colons "$1" | awk -F: '/^fpr:/ {print $10; exit}'; }
+          if [ "$(fpr "$file")" != "$(fpr packaging/atomic-chat.asc)" ]; then
+            echo "::error::LINUX_PACKAGES_GPG_KEY is not the key in packaging/atomic-chat.asc"; exit 1
+          fi
+          echo "RPM_SIGNING_KEY_FILE=$file" >> "$GITHUB_ENV"
+
+      - name: Determine version
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="$(node -p "require('./package.json').version")"
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build the packages
+        env:
+          NFPM_RPM_PASSPHRASE: ${{ secrets.LINUX_PACKAGES_GPG_PASSPHRASE }}
+        run: npx tsx scripts/linux-packages.ts build --version "$VERSION" --archives bundle --out dist/pkg
+
+      - name: Check the rpm signatures
+        if: env.ALLOW_UNSIGNED != '1'
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y -qq rpm >/dev/null
+          db="$RUNNER_TEMP/rpmdb"
+          mkdir -p "$db"
+          rpmkeys --dbpath "$db" --import packaging/atomic-chat.asc
+          for rpm in dist/pkg/*.rpm; do
+            out="$(rpmkeys --dbpath "$db" --checksig "$rpm")"
+            echo "$out"
+            case "$out" in *'signatures OK'*) ;; *) echo "::error::$rpm is not signed by the packages key"; exit 1 ;; esac
+          done
+
+      # `release-*` like the bundles, so the release job's merged download picks them up.
+      - name: Upload package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-packages
+          path: dist/pkg/atomic-agent_*
+          if-no-files-found: error
+          retention-days: 14
+
   release:
     name: publish draft release
-    needs: build
+    needs: [build, packages]
     if: success() && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish == true))
     runs-on: ubuntu-22.04
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -299,3 +411,88 @@ jobs:
             fi
           done
           echo "Draft release: $TAG (review and publish on GitHub)"
+
+  # Each package of the draft, installed the way README.md says in a clean container of the distro:
+  # apt and dnf from a repository of the draft served on loopback (its metadata signed with a
+  # throwaway key; the rpm signatures checked against packaging/atomic-chat.asc), Arch by building
+  # the AUR PKGBUILD against the draft's files. scripts/smoke-linux-package.sh holds the checks. A
+  # red job here means: do not publish the draft. The oldest images are what the packages' glibc
+  # floor (2.34, set by better_sqlite3.node) admits: Debian 12 and Rocky 9.
+  smoke-packages:
+    name: smoke packages (${{ matrix.image }}, ${{ matrix.runner }})
+    needs: release
+    # A draft and its assets are visible only with write access.
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, image: "debian:12", manager: apt }
+          - { runner: ubuntu-24.04, image: "ubuntu:24.04", manager: apt }
+          - { runner: ubuntu-24.04, image: "fedora:44", manager: dnf }
+          - { runner: ubuntu-24.04, image: "rockylinux/rockylinux:9", manager: dnf }
+          - { runner: ubuntu-24.04, image: "archlinux:latest", manager: pacman }
+          - { runner: ubuntu-24.04-arm, image: "debian:12", manager: apt }
+          - { runner: ubuntu-24.04-arm, image: "fedora:44", manager: dnf }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      IMAGE: ${{ matrix.image }}
+      MANAGER: ${{ matrix.manager }}
+      ALLOW_UNSIGNED: ${{ github.ref_type != 'tag' && inputs.allow_unsigned && '1' || '0' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Install dependencies (tsx only; no native builds)
+        run: npm ci --ignore-scripts
+
+      - name: Fetch the draft's packages and Linux bundles
+        run: |
+          set -euo pipefail
+          echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir dl -p 'atomic-agent_*' -p 'atomic-agent-linux-*'
+          ls -la dl
+
+      - name: Serve a repository of the draft's packages on loopback
+        if: matrix.manager != 'pacman'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c >/dev/null
+          gpg --batch --passphrase '' --quick-gen-key 'atomic-agent smoke <smoke@invalid>' rsa3072 sign 1d
+          fpr() { gpg --show-keys --with-colons "$1" | awk -F: '/^fpr:/ {print $10; exit}'; }
+          smoke="$(gpg --list-keys --with-colons smoke@invalid | awk -F: '/^fpr:/ {print $10; exit}')"
+          keys="$smoke"
+          flags=()
+          if [ "$ALLOW_UNSIGNED" = 1 ]; then
+            flags+=(--unsigned-packages)
+          else
+            gpg --batch --import packaging/atomic-chat.asc
+            keys="$keys,$(fpr packaging/atomic-chat.asc)"
+          fi
+          npx tsx scripts/linux-repo.ts build --assets dl --key "$smoke" --publish-keys "$keys" --out site \
+            --base-url http://127.0.0.1:8766 "${flags[@]}"
+          npx tsx scripts/linux-repo.ts readme --block "$MANAGER" --base-url http://127.0.0.1:8766 > install-commands.sh
+          python3 -m http.server 8766 --bind 127.0.0.1 --directory site >/dev/null 2>&1 &
+          sleep 2
+
+      - name: Render the AUR PKGBUILD against the draft's files
+        if: matrix.manager == 'pacman'
+        run: npx tsx scripts/linux-packages.ts pkgbuild --version "$VERSION" --archives dl --source-base file:///w/dl --out aur
+
+      - name: Install and check in the container
+        run: |
+          set -euo pipefail
+          input=/w/install-commands.sh
+          if [ "$MANAGER" = pacman ]; then input=/w/aur; fi
+          docker run --rm --network host -v "$PWD:/w:ro" "$IMAGE" sh /w/scripts/smoke-linux-package.sh "$MANAGER" "$VERSION" "$input"

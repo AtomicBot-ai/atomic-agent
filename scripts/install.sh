@@ -658,6 +658,13 @@ fi
 echo
 echo "installed atomic-agent to ${INSTALL_DIR}/atomic-agent"
 echo "(plus the short alias 'atag' next to it)"
+# Left by a deb, rpm or AUR package (src/update/install-source.ts). Two copies: whichever comes
+# first on PATH runs, and only the package's follows system updates.
+PACKAGE_MARKER="${ATOMIC_AGENT_PACKAGE_MARKER:-/usr/lib/atomic-agent/install-source}"
+if [ -f "$PACKAGE_MARKER" ]; then
+  echo "note: a $(cat "$PACKAGE_MARKER") package also installed atomic-agent in /usr/bin; with ${INSTALL_DIR}"
+  echo "      first on PATH this copy shadows it. Keep one: remove the package, or ${INSTALL_DIR}/atomic-agent."
+fi
 case "${PATH_STATUS:-added}" in
   present)
     echo "to run:"

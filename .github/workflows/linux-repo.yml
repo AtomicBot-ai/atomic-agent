@@ -1,0 +1,185 @@
+name: linux-repo
+
+# The apt/dnf repository (scripts/linux-repo.ts) and the AUR package atomic-agent-bin follow
+# published releases. release.yml leaves a draft that a person publishes on GitHub; publishing it
+# fires `release: published`, which runs this. It also runs by hand for a tag:
+#
+#   gh workflow run linux-repo.yml --ref vX.Y.Z    # on the tag: the environment admits tags only
+#
+# Pre-releases, drafts and releases without packages change nothing. The repository is rebuilt
+# from the newest ten published stable releases whichever one triggered it, so any run converges
+# on the same state.
+#
+# Secrets, in the environment `packages` (deployment tags v* only): LINUX_PACKAGES_GPG_KEY and
+# LINUX_PACKAGES_GPG_PASSPHRASE (the key in packaging/atomic-chat.asc, shared with atc / eye-cli),
+# PACKAGES_S3_ACCESS_KEY_ID and PACKAGES_S3_SECRET_ACCESS_KEY (the Hetzner Object Storage bucket
+# named in scripts/linux-packaging.ts), AUR_SSH_PRIVATE_KEY (the AUR account that owns atc-bin).
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The published release (vX.Y.Z); default: the tag this runs on"
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - name: Resolve the release and whether it goes into the repository
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          publish=false
+          info="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,assets \
+            --jq '"\(.isDraft) \(.isPrerelease) \([.assets[].name | select(test("^atomic-agent_.+\\.(deb|rpm)$"))] | length)"')"
+          read -r draft prerelease packages <<< "$info"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::notice::$TAG is not a stable vX.Y.Z tag"
+          elif [ "$draft" = true ]; then echo "::notice::$TAG is a draft"
+          elif [ "$prerelease" = true ]; then echo "::notice::$TAG is a pre-release"
+          elif [ "$packages" = 0 ]; then echo "::notice::$TAG has no Linux packages"
+          else publish=true
+          fi
+          { echo "tag=$TAG"; echo "version=${TAG#v}"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+
+  # The apt/dnf repository: rebuilt from scratch out of the newest stable releases (this one now
+  # among them, so after publish: the repository lists public assets only), signed, mirrored to
+  # its public bucket on Hetzner Object Storage (REPOSITORY in scripts/linux-packaging.ts).
+  # Nothing to repair after a failure: re-running the job rebuilds the same repository.
+  repo:
+    needs: release
+    if: needs.release.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    environment: packages
+    # Two releases published close together must not mirror over each other.
+    concurrency:
+      group: linux-repo
+      cancel-in-progress: false
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+      - run: npm ci --ignore-scripts
+      - name: Install the repository tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq dpkg-dev apt-utils createrepo-c >/dev/null
+      - name: Import the packages key (must be packaging/atomic-chat.asc)
+        env:
+          KEY: ${{ secrets.LINUX_PACKAGES_GPG_KEY }}
+        run: |
+          set -euo pipefail
+          expected="$(gpg --show-keys --with-colons packaging/atomic-chat.asc | awk -F: '/^fpr:/ {print $10; exit}')"
+          printf '%s\n' "$KEY" | gpg --batch --import
+          if ! gpg --list-secret-keys "$expected" >/dev/null 2>&1; then
+            echo "::error::LINUX_PACKAGES_GPG_KEY is not the key in packaging/atomic-chat.asc"; exit 1
+          fi
+          echo "PACKAGES_KEY=$expected" >> "$GITHUB_ENV"
+      - name: Fetch the packages of the newest releases, checked against their digests
+        run: npx tsx scripts/linux-repo.ts fetch --out dl
+      - name: Build the repository
+        env:
+          LINUX_PACKAGES_GPG_PASSPHRASE: ${{ secrets.LINUX_PACKAGES_GPG_PASSPHRASE }}
+        run: npx tsx scripts/linux-repo.ts build --assets dl --key "$PACKAGES_KEY" --out site
+      - name: Mirror it to the bucket
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.PACKAGES_S3_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.PACKAGES_S3_SECRET_ACCESS_KEY }}
+        run: npx tsx scripts/linux-repo.ts sync --site site
+
+  # The live repository, the way README.md tells users to add it: catches what the loopback smoke
+  # in release.yml cannot (the domain, the cache, the published key).
+  smoke-repo:
+    needs: [release, repo]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-24.04, image: "debian:12", manager: apt }
+          - { runner: ubuntu-24.04, image: "fedora:44", manager: dnf }
+          - { runner: ubuntu-24.04-arm, image: "debian:12", manager: apt }
+    runs-on: ${{ matrix.runner }}
+    env:
+      VERSION: ${{ needs.release.outputs.version }}
+      IMAGE: ${{ matrix.image }}
+      MANAGER: ${{ matrix.manager }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+      - run: npm ci --ignore-scripts
+      - name: Install from the published repository and check
+        run: |
+          set -euo pipefail
+          npx tsx scripts/linux-repo.ts readme --block "$MANAGER" > install-commands.sh
+          docker run --rm -v "$PWD:/w:ro" "$IMAGE" \
+            sh /w/scripts/smoke-linux-package.sh "$MANAGER" "$VERSION" /w/install-commands.sh
+
+  # atomic-agent-bin on the AUR: the PKGBUILD downloads this release's public bundles. Only the
+  # latest release goes there (publishing an older one later must not downgrade it), and a re-run
+  # finds the AUR already at this version and does nothing.
+  aur:
+    needs: release
+    if: needs.release.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    environment: packages
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
+      VERSION: ${{ needs.release.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+      - run: npm ci --ignore-scripts
+      - name: Render the PKGBUILD for the published release
+        run: |
+          set -euo pipefail
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'atomic-agent-linux-*.tar.gz.sha256' --dir release
+          npx tsx scripts/linux-packages.ts pkgbuild --version "$VERSION" --archives release --out aur
+      - name: Skip unless this is the latest release and the AUR does not have it yet
+        id: aur
+        run: |
+          set -euo pipefail
+          latest="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          if [ "$latest" != "$TAG" ]; then
+            echo "::notice::$TAG is not the latest release ($latest); the AUR stays as it is"
+            echo "push=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          current="$(curl -fsSL --globoff 'https://aur.archlinux.org/rpc/v5/info?arg[]=atomic-agent-bin' | jq -r '.results[0].Version // ""')"
+          want="$(npx tsx --eval "
+            import { archPkgver } from './scripts/linux-packaging.ts'
+            console.log(archPkgver(process.env.VERSION) + '-1')")"
+          echo "the AUR has '$current'; this release is $want"
+          if [ "$current" = "$want" ]; then echo "push=false" >> "$GITHUB_OUTPUT"; else echo "push=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: KSXGitHub/github-actions-deploy-aur@084b0d9b15415bf9cdb65d44dad1efe37a354050 # v4.2.0
+        if: steps.aur.outputs.push == 'true'
+        with:
+          pkgname: atomic-agent-bin
+          pkgbuild: aur/PKGBUILD
+          commit_username: Atomic Chat
+          commit_email: support@atomic.chat
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: atomic-agent ${{ needs.release.outputs.version }}
+          # Builds the package from the PKGBUILD (downloads, checksums, package()) before pushing.
+          test: true

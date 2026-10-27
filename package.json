@@ -74,6 +74,8 @@
     "bundle:build-binary": "tsx scripts/build-binary.ts",
     "bundle:package": "tsx scripts/package-bundle.ts",
     "bundle:matrix": "tsx scripts/print-matrix.ts",
+    "linux:packages": "tsx scripts/linux-packages.ts",
+    "linux:repo": "tsx scripts/linux-repo.ts",
     "fixtures:generate": "tsx scripts/generate-fixtures.ts",
     "release": "bash scripts/release.sh",
     "release:patch": "bash scripts/release.sh patch",
