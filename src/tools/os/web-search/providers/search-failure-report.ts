@@ -6,6 +6,7 @@ import {
 import {
   EXA_GET_KEY_URL,
   WebSearchRateLimitedError,
+  type WebSearchKeyHelp,
   type WebSearchKeyRequired,
 } from "../web-search-errors.js";
 
@@ -182,6 +183,8 @@ export function buildUnavailableMessage(input: {
   failures: readonly string[];
   keyRequired: WebSearchKeyRequired | undefined;
   allUnreachable: boolean;
+  /** Which "add a key" advice this process gives. Default `env-file`. */
+  keyHelp?: WebSearchKeyHelp;
 }): string {
   const lines = [
     "Web search is unavailable: no search provider answered.",
@@ -192,7 +195,9 @@ export function buildUnavailableMessage(input: {
       "None of the search sites could be reached: check the internet connection, VPN or proxy.",
     );
   }
-  if (input.keyRequired) {
+  if (input.keyRequired && input.keyHelp === "integrations-hub") {
+    lines.push(integrationsHubKeyAdvice(input.keyRequired));
+  } else if (input.keyRequired) {
     const envVar = input.keyRequired.envVar;
     lines.push(
       `To fix it: get a free Exa API key at ${EXA_GET_KEY_URL} and add it. ` +
@@ -210,6 +215,20 @@ export function buildUnavailableMessage(input: {
     "Do not repeat this search. Answer without web search and tell the user that web search is not available right now.",
   );
   return lines.join("\n");
+}
+
+/**
+ * The terminal UI's advice: its `/integrations` screen writes the key into
+ * the running process, so there is no file to edit and no restart. "Ran
+ * out" only when it did; an unreachable or failing free tier did not.
+ */
+function integrationsHubKeyAdvice(
+  keyRequired: WebSearchKeyRequired,
+): string {
+  const action = `Open /integrations and add an Exa key (${keyRequired.getKeyUrl}).`;
+  return keyRequired.reason === "rate_limited"
+    ? `Free Exa searches ran out. ${action}`
+    : `To fix it: ${action.charAt(0).toLowerCase()}${action.slice(1)}`;
 }
 
 export function errorMessage(err: unknown): string {

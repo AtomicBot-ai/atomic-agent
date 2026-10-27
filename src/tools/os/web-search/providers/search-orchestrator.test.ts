@@ -632,6 +632,60 @@ describe("an Exa primary without a key", () => {
     expect(unavailable.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
   });
 
+  it("points the terminal UI at /integrations instead of the .env file (ATO-345)", async () => {
+    const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new WebSearchRateLimitedError("exa", null);
+    });
+    ddg.search.mockImplementation(async () => {
+      throw new Error(CONNECT_TIMEOUT);
+    });
+
+    const err = (await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      keyHelp: "integrations-hub",
+    }).catch((e: unknown) => e)) as WebSearchUnavailableError;
+
+    expect(err).toBeInstanceOf(WebSearchUnavailableError);
+    expect(err.message).toContain(
+      "Free Exa searches ran out. Open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys)",
+    );
+    // No desktop card, no file to edit, no restart in the terminal UI.
+    expect(err.message).not.toContain("key card");
+    expect(err.message).not.toContain("EXA_API_KEY=...");
+    expect(err.message).not.toContain("restart");
+    expect(err.message).toContain("Do not repeat this search");
+    // The machine-readable signal is the same on every surface.
+    expect(err.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
+  });
+
+  it("does not say the free searches ran out when Exa was only unreachable (ATO-345)", async () => {
+    const { exa, ddg } = exaAndDdg();
+    exa.search.mockImplementation(async () => {
+      throw new Error("curl: (7) Failed to connect to mcp.exa.ai port 443");
+    });
+    ddg.search.mockImplementation(async () => {
+      throw new Error(CONNECT_TIMEOUT);
+    });
+
+    const err = (await runWebSearchWithFallback({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+      keyHelp: "integrations-hub",
+    }).catch((e: unknown) => e)) as WebSearchUnavailableError;
+
+    expect(err.keyRequired?.reason).toBe("unreachable");
+    expect(err.message).not.toContain("ran out");
+    expect(err.message).toContain(
+      "To fix it: open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys)",
+    );
+  });
+
   it("says Exa was unreachable when it could not be reached either", async () => {
     const { exa, ddg } = exaAndDdg();
     exa.search.mockImplementation(async () => {

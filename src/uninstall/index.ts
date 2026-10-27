@@ -25,6 +25,7 @@ export {
   type UninstallResult,
   type RemovalOutcome,
 } from "./run-uninstall.js";
+export { packagedUninstallNotice } from "./package-notice.js";
 export {
   resolveUninstallPlan,
   pathEntryToRemove,

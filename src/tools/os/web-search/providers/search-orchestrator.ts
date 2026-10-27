@@ -11,6 +11,7 @@ import {
   WebSearchBlockedError,
   WebSearchRateLimitedError,
   WebSearchUnavailableError,
+  type WebSearchKeyHelp,
   type WebSearchKeyRequired,
 } from "../web-search-errors.js";
 import type {
@@ -48,6 +49,8 @@ export interface WebSearchOrchestratorInput {
   cooldown?: ProviderCooldown;
   /** Injectable clock, so a cooldown test does not wait out a real minute. */
   now?: () => number;
+  /** Which "add a key" advice the error gives (ATO-345). Default `env-file`. */
+  keyHelp?: WebSearchKeyHelp;
 }
 
 export interface WebSearchOrchestratorResult {
@@ -234,6 +237,7 @@ export async function runWebSearchWithFallback(
         failures: report,
         keyRequired: signal,
         allUnreachable: connectFailures > 0 && connectFailures === failures.length,
+        keyHelp: input.keyHelp,
       }),
       report,
       signal,

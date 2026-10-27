@@ -5,6 +5,9 @@ export default defineConfig({
     include: [
       "src/**/*.test.ts",
       "src/**/*.test.tsx",
+      // The pure part of the Linux packaging (deb/rpm/AUR, the apt/dnf
+      // repository): names, versions, layout and upload order, no I/O.
+      "scripts/**/*.test.ts",
       // Memory-fabric benchmark campaign config + harness unit tests.
       // Kept here (vs the eval-memory vitest config which only runs
       // *.eval.ts under `npm run eval:memory`) because these are

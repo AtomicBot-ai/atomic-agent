@@ -1,6 +1,6 @@
 {
   "name": "atomic-agent",
-  "version": "0.6.11",
+  "version": "0.6.12",
   "description": "Lightweight local operator agent (browser + OS) runtime for Tauri apps. Connects to an external llama.cpp server via HTTP and exposes a sidecar NDJSON protocol plus a debug CLI.",
   "license": "MIT",
   "type": "module",
@@ -74,6 +74,8 @@
     "bundle:build-binary": "tsx scripts/build-binary.ts",
     "bundle:package": "tsx scripts/package-bundle.ts",
     "bundle:matrix": "tsx scripts/print-matrix.ts",
+    "linux:packages": "tsx scripts/linux-packages.ts",
+    "linux:repo": "tsx scripts/linux-repo.ts",
     "fixtures:generate": "tsx scripts/generate-fixtures.ts",
     "release": "bash scripts/release.sh",
     "release:patch": "bash scripts/release.sh patch",
