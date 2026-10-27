@@ -29,7 +29,7 @@ Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before 
 
 ## Reasoning budget default migration
 
-Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound, as it was before version 68. llama.cpp clamps a grammar repetition to 1,999 characters, so the old default of 1500 tokens was really 499 and cut thinking models off mid-thought. Every file since version 68 carries the value the schema wrote, so for input versions below 78 a stored value of exactly `1500` is read as that default and becomes `0`. Any other value, including a lower positive bound, is kept, and a missing field takes the new default. From version 78 an explicit `1500` is honoured. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
+Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound, as it was before version 68. At the time llama.cpp's repeat limit clamped the grammar bound to 1,999 characters, so the old default of 1500 tokens was really 499 (until ATO-607, which chains repetitions under the limit and enforces the full budget) and cut thinking models off mid-thought. Every file since version 68 carries the value the schema wrote, so for input versions below 78 a stored value of exactly `1500` is read as that default and becomes `0`. Any other value, including a lower positive bound, is kept, and a missing field takes the new default. From version 78 an explicit `1500` is honoured. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
 ## External llama.cpp URL default
 

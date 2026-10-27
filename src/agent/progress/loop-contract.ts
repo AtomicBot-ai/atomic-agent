@@ -12,8 +12,9 @@ export interface WanderingStop {
   /** Spread measured by the rule that fired; `0` for a non-probe tool. */
   spread: number;
   /**
-   * `"run"` — distinct probes since the turn last made progress outside
-   * this tool's family. `"ceiling"` — the absolute window cap
+   * `"run"` — probing since the turn last made progress outside this
+   * tool's family, measured in step rounds (`spread` still quotes the
+   * distinct probes). `"ceiling"` — the absolute window cap
    * (`WANDERING_CEILING_SHARE` of `loopHistorySize`). `null` when nothing
    * fired.
    */

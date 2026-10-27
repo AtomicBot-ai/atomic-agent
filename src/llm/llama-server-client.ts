@@ -6,7 +6,9 @@ import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { readErrnoCode } from "./errno-code.js";
 import { discardResponseBody } from "./discard-response-body.js";
 import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
+import { readContextOverflowCounts, type ContextOverflowCounts } from "./reliability/context-overflow-counts.js";
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
+import { takePromptProgress } from "./llama-prompt-progress.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -398,20 +400,27 @@ export class LlamaServerError extends Error {
    * (`{"error":{"type":"exceed_context_size_error",...}}`). Only the
    * type is kept, never the server's message: the error reporter reads
    * `body.type` through its strict pattern for the `upstream_error_type`
-   * tag, the same field `OpenAiHttpError` carries.
+   * tag, the same field `OpenAiHttpError` carries. An overflow body's
+   * `n_ctx` / `n_prompt_tokens` counts ride along for the agent loop's
+   * overflow compaction (numbers only).
    */
   readonly body?: LlamaErrorBody;
 }
 
-/** What a llama-server error body says, reduced to its reason code. */
-export interface LlamaErrorBody {
+/**
+ * What a llama-server error body says, reduced to its reason code and,
+ * for `exceed_context_size_error`, the server's own counts (`n_ctx`,
+ * `n_prompt_tokens`) — numbers only, never the message.
+ */
+export interface LlamaErrorBody extends ContextOverflowCounts {
   readonly type: string;
 }
 
-/** `error.type` of a llama-server error body, or undefined. Pure; never throws. */
+/** `error.type` (+ overflow counts) of a llama-server error body, or undefined. Pure; never throws. */
 export function readLlamaErrorBody(rawBody: string): LlamaErrorBody | undefined {
   const type = parseProviderErrorBody(rawBody).type;
-  return type !== undefined ? { type } : undefined;
+  if (type === undefined) return undefined;
+  return { type, ...readContextOverflowCounts(rawBody) };
 }
 
 /** Cap on how much of a server error body we fold into the message. */
@@ -1047,6 +1056,8 @@ export class LlamaServerClient {
       // is one block repeated; the step is retried at the same cap.
       const repetition = createStreamRepetitionWatcher();
       let looped: CompletionResult | null = null;
+      // A real (non-progress) event has arrived (ATO-1027).
+      let replyStarted = false;
       while (looped === null) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -1055,13 +1066,33 @@ export class LlamaServerClient {
         // Deliberately not called on `done` — that breaks straight out of
         // the loop into `finally { cleanup() }` with nothing awaited in
         // between, so there is no window left for the timer to fire.
-        keepAlive("idle");
+        // Except a prompt-progress event (ATO-1027): that is the server
+        // still reading the prompt, not the reply starting, so it keeps
+        // the first-token budget and the `/slots` watch running. Marked
+        // before the first yield of this read, as the call always was.
+        let alive = false;
+        const markAlive = (): void => {
+          replyStarted = true;
+          if (alive) return;
+          alive = true;
+          keepAlive("idle");
+        };
         buffer += value;
         let eventEnd = buffer.indexOf("\n\n");
+        // Bytes that complete no event yet are still a live server —
+        // unless progress was asked for and no real event has come: then
+        // they may be half a progress frame, and only a real event may
+        // move the stream off its first-token budget.
+        if (eventEnd === -1 && (replyStarted || !request.onPromptProgress)) markAlive();
         while (eventEnd !== -1) {
           const rawEvent = buffer.slice(0, eventEnd);
           buffer = buffer.slice(eventEnd + 2);
           const parsed = parseSseEvent(rawEvent);
+          if (parsed && takePromptProgress(parsed, request.onPromptProgress)) {
+            eventEnd = buffer.indexOf("\n\n");
+            continue;
+          }
+          markAlive();
           if (parsed) {
             const delta =
               typeof parsed.content === "string" ? parsed.content : "";
@@ -1634,6 +1665,9 @@ export class LlamaServerClient {
     };
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;
+    // Asked only when someone listens (ATO-1027); a build that does not
+    // know the field ignores it and streams exactly as before.
+    if (stream && request.onPromptProgress) payload.return_progress = true;
     const resolvedSeed =
       typeof request.seed === "number" ? request.seed : ENV_SEED;
     if (typeof resolvedSeed === "number") payload.seed = resolvedSeed;

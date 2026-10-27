@@ -107,6 +107,11 @@ function resolveAssetDir(envKey: string, relativeDefault: string): string {
   return resolve(process.cwd(), relativeDefault);
 }
 
+/** `<stateDir>` as `loadConfig` resolves it, without reading config.json (which may be the broken thing). */
+export function resolveStateDir(): string {
+  return resolvePath(readEnv("ATOMIC_AGENT_STATE_DIR"), ENV_DEFAULTS.STATE_DIR);
+}
+
 /**
  * Assemble the full runtime config. User-facing keys (llama.url,
  * log.level, agent.tokenBudget/maxSteps/toolTimeoutMs/approvalLevel)
@@ -114,10 +119,7 @@ function resolveAssetDir(envKey: string, relativeDefault: string): string {
  * variables.
  */
 export function loadConfig(): AtomicAgentConfig {
-  const stateDir = resolvePath(
-    readEnv("ATOMIC_AGENT_STATE_DIR"),
-    ENV_DEFAULTS.STATE_DIR,
-  );
+  const stateDir = resolveStateDir();
   const dotenv = loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
   const user = ensureUserConfigFileSync(userConfigFile);

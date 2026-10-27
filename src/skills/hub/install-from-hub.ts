@@ -13,6 +13,7 @@ import {
 } from "./skill-hub-source.js";
 import {
   scanSkillFiles,
+  summarizeScan,
   type SkillScanResult,
 } from "./skill-security-scanner.js";
 
@@ -28,12 +29,14 @@ import {
  *    `commitStagedInstall` or `discardStagedInstall`. The temp dir lives
  *    until one of those is called.
  *  - `installSkillFromHub` → one-shot convenience used by the CLI:
- *    stage, block on a `dangerous` verdict unless acknowledged, commit,
- *    discard.
+ *    stage, gate on the scan ({@link enforceScanGate}), commit, discard.
  */
 
 export type SkillHubInstallErrorCode =
-  "invalid_identifier" | "manifest_missing" | "dangerous_blocked";
+  | "invalid_identifier"
+  | "manifest_missing"
+  | "dangerous_blocked"
+  | "needs_confirmation";
 
 export class SkillHubInstallError extends Error {
   constructor(
@@ -110,6 +113,52 @@ export async function stageSkillFromHub(
   }
 }
 
+export interface ScanGateOptions {
+  /** Allow installing despite a `dangerous` verdict (implies caution). */
+  acknowledgeRisk?: boolean;
+  /** Caution already approved up front (`--yes`, `confirm: true`). */
+  confirmCaution?: boolean;
+  /**
+   * Ask the operator about a `caution` verdict (interactive CLI). Returns
+   * true to install. Not consulted when caution is already approved.
+   */
+  confirm?: (scan: SkillScanResult) => Promise<boolean>;
+}
+
+/**
+ * The one install policy every path applies to a scan result:
+ *  - `dangerous` is blocked unless `acknowledgeRisk`;
+ *  - `caution` needs an explicit yes: `acknowledgeRisk`, `confirmCaution`
+ *    or a `confirm` callback that returns true. With none of them the
+ *    install is refused (`needs_confirmation`), so a script or a non-TTY
+ *    run never installs a flagged skill by default;
+ *  - `ok` passes.
+ * Throws {@link SkillHubInstallError} carrying the scan, so callers can
+ * show the findings and retry with the matching flag.
+ */
+export async function enforceScanGate(
+  identifier: string,
+  scan: SkillScanResult,
+  options: ScanGateOptions,
+): Promise<void> {
+  if (scan.verdict === "ok") return;
+  if (scan.verdict === "dangerous") {
+    if (options.acknowledgeRisk) return;
+    throw new SkillHubInstallError(
+      `install blocked: ${identifier} flagged dangerous by the security scan (${summarizeScan(scan)})`,
+      "dangerous_blocked",
+      scan,
+    );
+  }
+  if (options.acknowledgeRisk || options.confirmCaution) return;
+  if (options.confirm && (await options.confirm(scan))) return;
+  throw new SkillHubInstallError(
+    `install needs confirmation: ${identifier} — ${summarizeScan(scan)}`,
+    "needs_confirmation",
+    scan,
+  );
+}
+
 export interface CommitInstallOptions {
   targetRoot: string;
   force?: boolean;
@@ -136,12 +185,10 @@ export async function discardStagedInstall(
   await discardDir(staged.sourceDir);
 }
 
-export interface InstallFromHubOptions {
+export interface InstallFromHubOptions extends ScanGateOptions {
   identifier: string;
   targetRoot: string;
   force?: boolean;
-  /** Allow installing despite a `dangerous` scan verdict. */
-  acknowledgeRisk?: boolean;
   client?: SkillHubClient;
   tmpRoot?: string;
 }
@@ -161,13 +208,11 @@ export async function installSkillFromHub(
     client: options.client,
     tmpRoot: options.tmpRoot,
   });
-  if (staged.scan.verdict === "dangerous" && !options.acknowledgeRisk) {
+  try {
+    await enforceScanGate(options.identifier, staged.scan, options);
+  } catch (err) {
     await discardStagedInstall(staged);
-    throw new SkillHubInstallError(
-      `install blocked: ${options.identifier} flagged dangerous by the security scan (use --acknowledge-risk to override)`,
-      "dangerous_blocked",
-      staged.scan,
-    );
+    throw err;
   }
   const result = await commitStagedInstall(staged, {
     targetRoot: options.targetRoot,

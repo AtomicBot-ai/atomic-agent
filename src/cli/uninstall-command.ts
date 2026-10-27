@@ -9,6 +9,7 @@ import {
   formatBytes,
   keepDesktopData,
   legacyDesktopDirNotice,
+  packagedUninstallNotice,
   pathEntryToRemove,
   plansToDeleteDesktopData,
   resolveUninstallPlan,
@@ -326,6 +327,8 @@ function renderPlan(
       "no installed binary found — this looks like a dev checkout, so only data",
       `is listed. The program itself is removed with git. (looked in ${plan.installDir})`,
     );
+  } else if (plan.installSource) {
+    lines.push("", packagedUninstallNotice(plan.installSource));
   }
   if (!flags.keepPath) {
     lines.push(
