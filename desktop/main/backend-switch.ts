@@ -241,9 +241,9 @@ function earlyDaemonLook(): { running: Promise<boolean>; still: () => boolean } 
  * only a successful stop is followed by write 2 (memory.embeddings.enabled
  * = false), which is the order the TUI's stopDaemon does it.
  */
-export function activateProvider(id: string, opts: { leaveFusion?: boolean } = {}): Promise<SwitchResult> {
-  // ATO-1234: a pick from Settings › Models or a chip answers once the file names it; the local server stops behind it.
-  return activate(() => id, { ...opts, stopInBackground: true });
+export function activateProvider(id: string, opts: { leaveFusion?: boolean; stopInBackground?: boolean } = {}): Promise<SwitchResult> {
+  // ATO-1234: Settings › Models' Use passes stopInBackground: it answers once the file names the pick; the local server stops behind it.
+  return activate(() => id, opts);
 }
 
 /** activateProvider for the provider `pick` names in the file as read, or `pick`'s refusal. */
@@ -459,7 +459,7 @@ export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResu
  * nothing is written; then the model, then the activation (which also
  * stops the local daemons).
  */
-export async function selectCloudModel(providerId: string, modelId: string): Promise<SwitchResult> {
+export async function selectCloudModel(providerId: string, modelId: string, opts: { stopInBackground?: boolean } = {}): Promise<SwitchResult> {
   if (!modelId.trim()) return { ok: false, error: "chat model id is empty" };
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };
@@ -471,7 +471,7 @@ export async function selectCloudModel(providerId: string, modelId: string): Pro
   const modelChanged = entry.defaultChatModel !== modelId.trim();
   const w = await setProviderModel(providerId, modelId.trim());
   if (!w.ok) return { ok: false, error: w.error };
-  const res = await activateProvider(providerId);
+  const res = await activateProvider(providerId, opts);
   if (!res.ok) return res;
   return { ...res, model: modelId.trim(), restart: res.restart || modelChanged };
 }

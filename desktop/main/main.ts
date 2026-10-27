@@ -2145,12 +2145,13 @@ function wireIpc(client: AgentClient): void {
     }
     /* ATO-1021: a cloud pick on an agent already on a single-mode cloud route,
        with no daemon stopped or started, is swapped live instead of restarted. */
-    /* ATO-1234: from a local route too — the agent drops nothing it needs to
-       reach a cloud provider, and the local server stops in the background
-       (daemon "stopping"). The reverse, cloud → local, still restarts: a local
-       route has a model profile serve sets up at boot. */
-    const live = !!boot && !drifted && res.transport === "native_tools"
-      && ["untouched", "stopping"].includes(res.daemon ?? "untouched") && boot.mode !== "fusion";
+    /* ATO-1234: Settings › Models' Use (daemon "stopping": the local server
+       stops in the background) is taken live from a local route too — the
+       agent drops nothing it needs to reach a cloud provider. The reverse,
+       cloud → local, still restarts: a local route has a model profile serve
+       sets up at boot. */
+    const live = !!boot && !drifted && res.transport === "native_tools" && boot.mode !== "fusion"
+      && ((res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" || res.daemon === "stopping");
     const { restart, restartHeld, liveSwapped } = await restartAfterSwitch(res, wanted || drifted, drifted, live);
     return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), ...(liveSwapped ? { liveSwapped } : {}), status: client.status };
   };
@@ -2175,14 +2176,16 @@ function wireIpc(client: AgentClient): void {
     if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
     return switched(() => switchBackend(kind), { explicit: true });
   });
-  ipcMain.handle("cli:activateProvider", async (_event, id: unknown) => {
+  ipcMain.handle("cli:activateProvider", async (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return switched(() => activateProvider(id));
+    // ATO-1234: Settings › Models' Use asks for the local server to stop in the background.
+    const background = !!opts && typeof opts === "object" && (opts as { background?: unknown }).background === true;
+    return switched(() => activateProvider(id, { stopInBackground: background }));
   });
   ipcMain.handle("cli:selectCloudModel", async (_event, payload: unknown) => {
     const { id, model } = (payload ?? {}) as { id?: unknown; model?: unknown };
     if (typeof id !== "string" || typeof model !== "string") return { ok: false, error: "id and model are required" };
-    return switched(() => selectCloudModel(id, model));
+    return switched(() => selectCloudModel(id, model, { stopInBackground: (payload as { background?: unknown }).background === true }));
   });
   ipcMain.handle("cli:selectLocalModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };

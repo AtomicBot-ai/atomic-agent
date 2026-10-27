@@ -1035,8 +1035,8 @@ const SWXBR = {
   // Each stamps SWX.route so swxRun's `finally` can file the measurement
   // under the route that was actually taken (r5 review, minor).
   switchBackend: (kind) => { SWX.route = 'switchBackend'; return BR.switchBackend(kind); },
-  activateProvider: (id) => { SWX.route = 'activateProvider'; return BR.activateProvider(id); },
-  selectCloudModel: (id, model) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model); },
+  activateProvider: (id, opts) => { SWX.route = 'activateProvider'; return BR.activateProvider(id, opts); },
+  selectCloudModel: (id, model, opts) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model, opts); },
   selectLocalModel: (id) => { SWX.route = 'selectLocalModel'; return BR.selectLocalModel(id); },
   codingMode: (id) => { SWX.route = 'codingMode'; return BR.codingMode(id); },
   // Run mode — Fusion: the TUI's RunModeOrchestrator writes (main/backend-switch.ts).
@@ -26389,7 +26389,7 @@ async function llmSwitchProvider(id) {
   // composer the selector does. The refusal keeps the tab's own llmReport
   // wording rather than the selector's toast.
   const res = await swxRun('switching…', {providerId: id},
-    () => SWXBR.activateProvider(id),
+    () => SWXBR.activateProvider(id, {background: true}),
     (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
   LLMP.busy = false; LLMP.choosing = null;
   if (swxSaid(res)) { llmRepaint(); return false; }
@@ -26417,7 +26417,7 @@ async function llmSelectChatModel(pid, modelId) {
   LLMP.busy = true; LLMP.choosing = {pid, modelId}; llmRepaint();   // ATO-1234: the pick shows at once
   // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId) — lane B's selectCloudModel is exactly that pair, plus the restart.
   const res = await swxRun('switching…', {providerId: pid, model: modelId},
-    () => SWXBR.selectCloudModel(pid, modelId),
+    () => SWXBR.selectCloudModel(pid, modelId, {background: true}),
     (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
   LLMP.busy = false; LLMP.choosing = null;
   if (swxSaid(res)) { llmRepaint(); return; }
