@@ -61,6 +61,13 @@ describe("maskSecrets: vendor key shapes", () => {
     );
   });
 
+  it("stops a Cookie value at a JSON-escaped line break and its closing quote", () => {
+    expect(maskSecrets('{"headers":"Cookie: sid=abc123def456\\r\\nHost: x.io"}')).toBe(
+      '{"headers":"Cookie: [redacted:cookie]\\r\\nHost: x.io"}',
+    );
+    expect(maskSecrets('"Cookie: sid=abc123def456", next')).toBe('"Cookie: [redacted:cookie]", next');
+  });
+
   it("masks Cookie and Set-Cookie header values", () => {
     expect(maskSecrets("> Cookie: sid=abc123def456; theme=dark")).toBe("> Cookie: [redacted:cookie]");
     expect(maskSecrets("< Set-Cookie: sid=zzz999yyy888; Path=/; HttpOnly")).toBe(
@@ -87,7 +94,7 @@ describe("maskSecrets: names that say secret", () => {
   it("masks .env lines and keeps the names", () => {
     const env = [
       "DB_PASSWORD=hunter2secret",
-      "export STRIPE_SECRET='abc def ghi jkl'",
+      "export STRIPE_SECRET='s3cr3t pa55'",
       'CLIENT_SECRET="Q1w2E3r4T5y6"',
       "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
     ].join("\n");
@@ -172,6 +179,46 @@ describe("maskSecrets: ordinary output is left alone", () => {
     ["placeholders", "API_KEY=<your-api-key>\nPASSWORD=********\nTOKEN=xxxxxxxxxxxx\nsecret: true"],
     ["object and cache keys", '{"key": "uploads/2024/a.png", "cache_key": "550e8400-e29b-41d4-a716-446655440000", "sort_key": "createdAt_desc"}'],
     ["slugs that start with sk-", "risk-assessment-v2 disk-cache-0123456789abcdef sk-loading-spinner-component-large"],
+    ["a CSS class that starts with sk-", '<div class="sk-skeleton-loader-row-2xl sk-pulse-animation-delay-300ms">'],
+    ["a cookie in code", "const opts = { cookie: req.headers.cookie, cookies: enabled };"],
+    [
+      "TypeScript",
+      [
+        "const token = getToken();",
+        "const opts = { password: user.password, apiKey: process.env.OPENAI_API_KEY, secret: config.secret2 };",
+        "function login(password: string, token?: AccessToken) {}",
+        "export const API_KEY = readKey(process.env);",
+      ].join("\n"),
+    ],
+    [
+      "Python",
+      [
+        "def check(password: Optional[str], token: str = DEFAULT_TOKEN) -> bool:",
+        "    password = PasswordField(max_length=128)",
+        "    api_key = os.environ['OPENAI_API_KEY']",
+        "    self.secret = settings.SECRET_KEY",
+      ].join("\n"),
+    ],
+    [
+      "Go",
+      [
+        "token, err := auth.NewToken(ctx)",
+        'cfg := Config{Password: os.Getenv("DB_PASSWORD"), APIKey: flags.APIKey}',
+        "secret := s.secrets[name]",
+      ].join("\n"),
+    ],
+    [
+      "UI strings under secret names",
+      [
+        '"password": "Enter your password here"',
+        '"token": "Your session has expired, sign in again"',
+        '"passwordPlaceholder": "e.g. hunter2"',
+        '"tokenExpired": "Token expired"',
+        '"forgotPassword": "Forgot password?"',
+        '"confirmPassword": "Confirm password"',
+        '"password": "Passwort"',
+      ].join("\n"),
+    ],
     ["prose with bearer and basic", "Bearer of bad news. The bearer tokenization-strategies doc. Basic authentication-explained."],
     ["a URL with a port and no password", "http://localhost:8080/v1/chat ssh://git@github.com/o/r.git"],
     ["clock times and versions", "12:30:45 version: 1.2.3 key: value"],

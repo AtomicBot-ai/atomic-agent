@@ -162,8 +162,7 @@ export class ToolRegistry {
     try {
       result = await tool.run(coerceToolArgs(name, args), ctx);
     } catch (err) {
-      if (masks) maskErrorSecrets(err, this.knownSecrets());
-      throw err;
+      throw masks ? maskErrorSecrets(err, this.knownSecrets()) : err;
     }
     // Secrets are masked first, so the cloud promotion, the spill file
     // and the untrusted framing below all see the marker, never the key.

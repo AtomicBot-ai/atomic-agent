@@ -9,6 +9,7 @@ import {
   checkInputReplacement,
   refuseInputReplacement,
 } from "./fs-input-guard.js";
+import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
 import { PARSE_CHECK_MAX_CHARS, withParseWarning } from "./fs-parse-check.js";
 import {
   NO_REPLACE_NOTE,
@@ -57,8 +58,17 @@ export function buildOsFsWriteTool(
       // model's own target before the operator is asked, so no prompt is
       // raised for a write that will not run; a target the operator
       // moves the write to from the prompt is their choice.
+      const existing = await readPriorFile(absolute);
+      // A `[redacted:…]` marker the model copied out of masked tool
+      // output must not land over the real secret (ATO-1077).
+      const priorText = existing?.content?.toString("utf8") ?? "";
+      refuseMaskedSecretWrite(
+        "os.fs.write",
+        path,
+        priorText,
+        mode === "append" ? priorText + content : content,
+      );
       if (mode === "replace") {
-        const existing = await readPriorFile(absolute);
         if (existing !== null) {
           const refused = await checkInputReplacement({
             store: options.restore,

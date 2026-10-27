@@ -64,6 +64,13 @@ type Rule = {
 
 const hasDigit = (s: string): boolean => /\d/.test(s);
 
+/**
+ * A real `sk-…` key has one long random run after its prefix parts
+ * (`sk-proj-<48 chars>`, `sk-or-v1-<64 hex>`); a CSS class or a slug
+ * such as `sk-skeleton-loader-row-2xl` is short hyphenated words.
+ */
+const hasLongRun = (s: string): boolean => s.split("-").some((part) => part.length >= 16);
+
 /** A vendor shape replaced whole by one marker. */
 function shape(
   re: RegExp,
@@ -95,16 +102,17 @@ const PEM_PRIVATE_KEY =
 const SHAPE_RULES: readonly Rule[] = [
   // Anthropic (`sk-ant-api03-…`, `sk-ant-oat01-…`) and OpenRouter
   // (`sk-or-v1-…`) before the generic `sk-` shape that would also match.
-  shape(/(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g, "sk-ant-", "anthropic-key"),
-  shape(/(?<![A-Za-z0-9_-])sk-or-[A-Za-z0-9_-]{20,}/g, "sk-or-", "openrouter-key"),
+  shape(/(?<![A-Za-z0-9_-])sk-ant-[A-Za-z0-9_-]{20,}/g, "sk-ant-", "anthropic-key", hasLongRun),
+  shape(/(?<![A-Za-z0-9_-])sk-or-[A-Za-z0-9_-]{20,}/g, "sk-or-", "openrouter-key", hasLongRun),
   // OpenAI (`sk-proj-…`, `sk-svcacct-…`, classic `sk-…`) and the many
   // services that copied its shape (DeepSeek, Moonshot, …). A real key
-  // has a digit; `sk-` followed by plain words is a CSS class or a slug.
+  // has a digit and a long random run; `sk-` followed by short words is
+  // a CSS class or a slug.
   shape(
     /(?<![A-Za-z0-9_-])sk-[A-Za-z0-9_-]{20,}/g,
     "sk-",
     (m) => (/^sk-(?:proj|svcacct|admin)-/.test(m) ? "openai-key" : "api-key"),
-    hasDigit,
+    (m) => hasDigit(m) && hasLongRun(m),
   ),
   shape(
     /(?<![A-Za-z0-9_])(?:gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,})/g,
@@ -144,14 +152,16 @@ const SHAPE_RULES: readonly Rule[] = [
       ),
   },
   {
-    // A `Cookie:` / `Set-Cookie:` header line carries session credentials
-    // as `name=value` pairs whose names say nothing; the whole value goes.
+    // A `Cookie:` / `Set-Cookie:` header carries session credentials as
+    // `name=value` pairs whose names say nothing; the pairs go. Only a
+    // header that starts with a pair counts (`cookie: req.headers.cookie`
+    // is code), and the value stops at a quote, a backslash (a
+    // JSON-escaped `\r\n`) or the end of the line.
     applies: (text) => /cookie/i.test(text),
     apply: (text) =>
       text.replace(
-        /(\b(?:set-)?cookie[ \t]*:[ \t]*)([^\r\n]{8,4096})/gi,
-        (match, head: string, value: string) =>
-          value.startsWith(MARKER_PREFIX) ? match : `${head}${redactedMarker("cookie")}`,
+        /(\b(?:set-)?cookie[ \t]*:[ \t]*)[A-Za-z0-9!#$%&'*+^_`|~.-]{1,128}=[^;\r\n"\\]{1,4096}(?:;[^;\r\n"\\]{0,4096}){0,64}/gi,
+        (_m, head: string) => `${head}${redactedMarker("cookie")}`,
       ),
   },
   {
@@ -179,10 +189,11 @@ const STRONG_NAME =
 /**
  * Names `isSecretEnvName` would take that describe a secret rather than
  * hold one: counts (`max_tokens`), kinds (`token_type`), where to find
- * it (`api_key_env_var`, `token_url`, `secret_path`) or its id.
+ * it (`api_key_env_var`, `token_url`, `secret_path`), its id, or UI
+ * strings about it (`passwordPlaceholder`, `tokenExpired`, `forgotPassword`).
  */
 const NOT_SECRET_NAME =
-  /TOKENIZER|(?:^|_)(?:MAX|NUM|TOTAL|PROMPT|COMPLETION|INPUT|OUTPUT|CACHED|REASONING)_TOKENS?(?:_|$)|_(?:COUNT|LIMIT|TYPE|KIND|FORMAT|ID|URL|URI|PATH|FILE|DIR|NAME|LABEL|ENDPOINT|HEADER|ENV|ENV_VAR|SCOPE|SCOPES|STATUS|VERSION|EXPIRY|EXPIRES|EXPIRES_AT|EXPIRES_IN|EXPIRATION|TTL|LENGTH|PREFIX|HINT|HASH|DIGEST|SHA|CHECKSUM|FINGERPRINT)$/;
+  /TOKENIZER|(?:^|_)(?:MAX|NUM|TOTAL|PROMPT|COMPLETION|INPUT|OUTPUT|CACHED|REASONING)_TOKENS?(?:_|$)|_(?:COUNT|LIMIT|TYPE|KIND|FORMAT|ID|URL|URI|PATH|FILE|DIR|NAME|LABEL|ENDPOINT|HEADER|ENV|ENV_VAR|SCOPE|SCOPES|STATUS|VERSION|EXPIRY|EXPIRES|EXPIRES_AT|EXPIRES_IN|EXPIRATION|TTL|LENGTH|PREFIX|HINT|HASH|DIGEST|SHA|CHECKSUM|FINGERPRINT|PLACEHOLDER|TITLE|MESSAGE|MSG|TEXT|DESCRIPTION|ERROR|TOOLTIP|CAPTION|EXPIRED|INVALID|REQUIRED|MISMATCH|PROMPT|HELP|BUTTON|LINK)$|^(?:FORGOT|SHOW|HIDE|ENTER)_/;
 
 /** `apiKey` / `x-api-key` / `db.password` → `API_KEY` / `X_API_KEY` / `DB_PASSWORD`. */
 function normaliseName(name: string): string {
@@ -245,6 +256,31 @@ function looksLikeSecretValue(value: string, strength: "strong" | "weak"): boole
 const ASSIGNMENT =
   /(?<![A-Za-z0-9_$])(["']?)([A-Za-z_][A-Za-z0-9_.-]{0,63})\1([ \t]*[:=][ \t]*)(?:"([^"\r\n]{1,512})"|'([^'\r\n]{1,512})'|([^\s"'`,;&<>(){}=?]{1,512}={0,3}))/g;
 
+/**
+ * Whether a quoted value is text for a person rather than a secret:
+ * two or more spaces, sentence punctuation, or a few plain words
+ * (`"Enter your password here"`, `"Token expired"`, `"Passwort"`).
+ */
+function looksLikeProse(value: string): boolean {
+  if ((value.match(/ /g) ?? []).length >= 2) return true;
+  if (/[.!?\u2026](?:\s|$)|,\s/.test(value)) return true;
+  if (/ /.test(value) && /^[A-Za-z' ]+$/.test(value)) return true;
+  return /^[A-Z]?[a-z]+$/.test(value);
+}
+
+/**
+ * Whether an unquoted value is a token rather than code: no member
+ * access, call, index or type annotation (`user.password`,
+ * `getToken()`, `Optional[str]`), and either letters with a digit or a
+ * long mixed-case run.
+ */
+function looksLikeBareToken(value: string, next: string): boolean {
+  if (next === "(" || next === "[") return false;
+  if (/[.()[\]:]/.test(value)) return false;
+  if (/[A-Za-z]/.test(value) && hasDigit(value)) return true;
+  return value.length >= 32 && /[a-z]/.test(value) && /[A-Z]/.test(value);
+}
+
 const ASSIGNMENT_RULE: Rule = {
   applies: (text) => text.includes("=") || text.includes(":"),
   apply: (text) =>
@@ -258,12 +294,16 @@ const ASSIGNMENT_RULE: Rule = {
         doubleQuoted: string | undefined,
         singleQuoted: string | undefined,
         bare: string | undefined,
+        offset: number,
+        whole: string,
       ) => {
         const strength = secretNameStrength(name);
         if (strength === null) return match;
         const value = doubleQuoted ?? singleQuoted ?? bare ?? "";
         const quoted = doubleQuoted !== undefined || singleQuoted !== undefined;
-        if (!quoted && /\s/.test(value)) return match;
+        if (quoted ? looksLikeProse(value) : !looksLikeBareToken(value, whole.charAt(offset + match.length))) {
+          return match;
+        }
         if (quoted && strength === "weak" && /\s/.test(value)) return match;
         if (!looksLikeSecretValue(value, strength)) return match;
         const q = doubleQuoted !== undefined ? '"' : singleQuoted !== undefined ? "'" : "";

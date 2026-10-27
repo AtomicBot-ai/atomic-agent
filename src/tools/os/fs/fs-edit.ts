@@ -21,6 +21,7 @@ import {
   nearestFragment,
   type LooseEditMatch,
 } from "./fs-edit-match.js";
+import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
 import { withParseWarning } from "./fs-parse-check.js";
 import {
   guardReplacedFile,
@@ -102,6 +103,9 @@ async function editFile(
       : args.replaceAll
         ? replaceAll(original, args.oldString, args.newString)
         : replaceOnce(original, args.oldString, args.newString);
+  // A `[redacted:…]` marker copied out of masked tool output must not
+  // land over the real secret (ATO-1077).
+  refuseMaskedSecretWrite("os.fs.edit", args.path, original, updated);
   const diff = renderUnifiedDiff(original, updated, absolute);
   const preview = clampDiffPreview(diff);
   await requireFsApproval(

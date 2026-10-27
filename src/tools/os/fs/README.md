@@ -30,6 +30,8 @@ The advertised wire schema does not replace runtime validation. For example, has
 
 [Read freshness](fs-read-freshness.ts) keeps, per turn, the digest each read saw (the read-coverage one) and our own writes' result. Write (replace), edit and patch compare the target against it before touching the file and, when it changed since the read, add a leading "re-read it" notice to the result (or to an edit's error). It is a notice, not a refusal, and never fires on the agent's own writes through these tools; a change made by the agent's own shell command still counts as a change. The tracker owns the store and the batch executor hands it to tools as `ToolContext.fileVersions`.
 
+[The masked-secret guard](fs-masked-secret-guard.ts) refuses a write, edit or patch that would add a `[redacted:…]` marker (from masked tool output, ATO-1077) the file did not already hold, before approval and with nothing written.
+
 [Parse checks](fs-parse-check.ts) and [content checks](fs-content-check.ts) own advisory diagnostics and their conservative skip conditions. Read file handles close in the operation's cleanup; watch owns its bounded one-shot watcher and closes it after collection; grep runs through the injected command runner. Trash delegates to platform trash facilities, rather than silently becoming permanent deletion.
 
 ## Validation

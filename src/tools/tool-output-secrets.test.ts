@@ -147,6 +147,53 @@ describe("ToolRegistry.invoke masks secrets in every tool's output", () => {
     expect((caught as Error).message).toBe("401 for key [redacted:openrouter-key]");
   });
 
+  it("masks a string thrown instead of an Error", async () => {
+    const registry = registryWith(async () => {
+      throw `401 for key ${OPENROUTER}`;
+    });
+    const caught = await registry.invoke("os.shell.run", {}, ctx()).catch((err: unknown) => err);
+    expect(caught).toBeInstanceOf(Error);
+    expect(String((caught as Error).message)).toBe("401 for key [redacted:openrouter-key]");
+  });
+
+  it("rethrows a non-Error value with nothing to mask unchanged", async () => {
+    const thrown = { code: 7 };
+    const registry = registryWith(async () => {
+      throw thrown;
+    });
+    expect(await registry.invoke("os.shell.run", {}, ctx()).catch((err: unknown) => err)).toBe(thrown);
+  });
+
+  it("masks the browser snapshot and loaded skill body the prompt reads, and no other detail", async () => {
+    const registry = registryWith(
+      async () => ({
+        tool: "browser.read_aria",
+        status: "ok",
+        summary: "page read",
+        details: {
+          url: "https://dash.example.com",
+          worldSnapshot: { kind: "browser", digest: "d1", text: `textbox "API key": ${OPENROUTER}` },
+          skillLoaded: { name: "deploy", version: "1", body: `export OPENROUTER_API_KEY=${OPENROUTER}` },
+          raw: `left as written ${OPENROUTER}`,
+        },
+        truncated: false,
+      }),
+      { knownSecrets: () => [] },
+      "browser.read_aria",
+    );
+    const out = await registry.invoke("browser.read_aria", {}, ctx());
+    const details = out.details as {
+      url: string;
+      worldSnapshot: { kind: string; digest: string; text: string };
+      skillLoaded: { name: string; version: string; body: string };
+      raw: string;
+    };
+    expect(details.worldSnapshot).toEqual({ kind: "browser", digest: "d1", text: 'textbox "API key": [redacted:openrouter-key]' });
+    expect(details.skillLoaded.body).toBe("export OPENROUTER_API_KEY=[redacted:openrouter-key]");
+    expect(details.url).toBe("https://dash.example.com");
+    expect(details.raw).toContain(OPENROUTER);
+  });
+
   it("leaves the terminal tools' own text alone", async () => {
     const text = `your key starts with ${OPENROUTER}`;
     const registry = registryWith(
