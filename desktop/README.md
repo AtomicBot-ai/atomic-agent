@@ -1622,9 +1622,9 @@ the update files into `desktop/release/`. Everything a release uploads to
 | macOS | `stable-mac.yml`, `Atomic-Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. File names carry no space (`mac.artifactName`): GitHub renames a space in an uploaded asset to a dot, and `stable-mac.yml` would then point at a file that 404s (ATO-255). |
 | Windows | `stable.yml` (merged, below), `Atomic-Agent-Setup-<version>-x64.exe` and `Atomic-Agent-Setup-<version>-arm64.exe`; their `.blockmap`s are optional. |
 
-Linux is not updated from inside the app yet (the updater is off there and
-Settings says so); AppImage and deb users take new versions from the
-download page.
+On Linux only the AppImage updates itself (ATO-573, above); deb and rpm
+users take new versions from the download page, and a deb or rpm installed
+from the atomic-agent apt/dnf repository is updated by the package manager.
 
 The `.yml` files name the installers by file name and carry their sha512, so
 the installers go up first and the `.yml` last (a client must never read a

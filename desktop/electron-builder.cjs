@@ -225,7 +225,8 @@ const config = {
     "syncDesktopName": true,
     "target": [
       "AppImage",
-      "deb"
+      "deb",
+      "rpm"
     ],
     "artifactName": "Atomic-Agent-${version}-${arch}.${ext}",
     /* Atomic Chat Core (scripts/fetch-core.mjs); Linux builds are unsigned. */
@@ -237,9 +238,53 @@ const config = {
       }
     ]
   },
+  /* deb and rpm: the package is `atomic-agent-desktop` (package.json `name`,
+     which electron-builder uses as is), installed under /opt with a
+     /usr/bin/atomic-agent-desktop link, so it never collides with the CLI's
+     `atomic-agent` package or /usr/bin/atomic-agent, and the two can share one
+     apt/dnf repository (scripts/linux-repo.ts on main picks these files up).
+     The runtime dependencies are spelled out per format because Debian and
+     Fedora name them differently and electron-builder 26.15's default lists
+     (gtk3, libnotify, nss, libXss, libXtst, xdg-utils, at-spi2-core, libuuid;
+     libsecret on deb only) leave out ALSA, gbm and libdrm, which Electron 44
+     loads at startup, and libsecret on rpm, which safeStorage needs. The
+     `(a or b)` entries are rpm rich dependencies (rpm >= 4.13) naming the
+     Fedora/RHEL and the openSUSE package, as electron-builder's own list does.
+     electron-builder does not sign the rpm; the repository signs it. */
   "deb": {
     "packageCategory": "devel",
-    "priority": "optional"
+    "priority": "optional",
+    "depends": [
+      "libgtk-3-0",
+      "libnotify4",
+      "libnss3",
+      "libxss1",
+      "libxtst6",
+      "xdg-utils",
+      "libatspi2.0-0",
+      "libuuid1",
+      "libsecret-1-0",
+      "libasound2",
+      "libgbm1",
+      "libdrm2"
+    ]
+  },
+  "rpm": {
+    "packageCategory": "Development/Tools",
+    "depends": [
+      "gtk3",
+      "libnotify",
+      "nss",
+      "libXScrnSaver",
+      "(libXtst or libXtst6)",
+      "xdg-utils",
+      "at-spi2-core",
+      "(libuuid or libuuid1)",
+      "(libsecret or libsecret-1-0)",
+      "(alsa-lib or libasound2)",
+      "(mesa-libgbm or libgbm1)",
+      "(libdrm or libdrm2)"
+    ]
   },
   "afterPack": "scripts/after-pack.mjs"
 };
