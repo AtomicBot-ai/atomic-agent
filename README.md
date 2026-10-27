@@ -73,9 +73,31 @@ sudo dnf install atomic-agent
 
 Arch Linux: `yay -S atomic-agent-bin`, or any other AUR helper.
 
-The desktop app is in the same repository: `sudo apt install atomic-agent-desktop`, `sudo dnf install atomic-agent-desktop` or `yay -S atomic-agent-desktop-bin`. It has releases of its own (`desktop-vX.Y.Z`), carries its own copy of the agent under `/opt/Atomic Agent` and leaves a packaged or installed `atomic-agent` alone; installed as a package it is updated by the package manager, while the AppImage from the releases page updates itself.
-
 Updates come with `sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`; on a packaged install `atomic-agent update` refuses and names the command to use, and the TUI does not offer its in-app update. A copy left by `install.sh` in `~/.local/bin` runs ahead of the package on the usual PATH and keeps its own updates; `atomic-agent update` names both copies when that happens, and removing the copy hands the command to the package. `sudo apt remove atomic-agent`, `sudo dnf remove atomic-agent` or `sudo pacman -R atomic-agent-bin` removes the program and leaves your data; `atomic-agent uninstall` then lists only the data. The repository keeps the last ten releases; older ones are on the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) as `.deb` and `.rpm` files. A package states the glibc its binary needs (2.34 today: Debian 12, Ubuntu 22.04, RHEL 9 and newer), and the package manager refuses where the system's is older.
+
+#### Desktop app
+
+The desktop app is in the same repository as `atomic-agent-desktop` (on Arch `atomic-agent-desktop-bin`). It has releases of its own (`desktop-vX.Y.Z`), carries its own copy of the agent under `/opt/Atomic Agent` and leaves a packaged or installed `atomic-agent` alone, so the two can be installed side by side. Once installed it is in the applications menu, and `atomic-agent-desktop` starts it from a terminal.
+
+Debian, Ubuntu (x86-64, arm64):
+
+```bash
+curl -fsSL https://atomic-agent-packages.fsn1.your-objectstorage.com/atomic-chat.gpg | sudo tee /usr/share/keyrings/atomic-chat.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/atomic-chat.gpg] https://atomic-agent-packages.fsn1.your-objectstorage.com/deb stable main" \
+  | sudo tee /etc/apt/sources.list.d/atomic-agent.list
+sudo apt update && sudo apt install atomic-agent-desktop
+```
+
+Fedora, RHEL, Rocky, Alma (x86-64, aarch64):
+
+```bash
+sudo curl -fsSL -o /etc/yum.repos.d/atomic-agent.repo https://atomic-agent-packages.fsn1.your-objectstorage.com/rpm/atomic-agent.repo
+sudo dnf install atomic-agent-desktop
+```
+
+Arch Linux: `yay -S atomic-agent-desktop-bin`, or any other AUR helper.
+
+Installed as a package, the app is updated with the rest of the system (`sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`) and its Settings say so instead of offering an in-app update; the AppImage from the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) updates itself. `sudo apt remove atomic-agent-desktop`, `sudo dnf remove atomic-agent-desktop` or `sudo pacman -R atomic-agent-desktop-bin` removes the app and leaves your data.
 
 > [!NOTE]
 > Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64. Intel Macs are not supported yet; Windows on ARM runs the x64 build under emulation.
