@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
@@ -13849,10 +13849,15 @@ let remoteWindow: BrowserWindow | null = null;
 /** Agent › Connect to Another Computer…: a small window over the main one (renderer/remote-connect.html). */
 function openRemoteConnect(): void {
   if (remoteWindow && !remoteWindow.isDestroyed()) { remoteWindow.focus(); return; }
+  /* ATO-1240: tall enough for the http note and an error line, never taller
+     than the screen it opens on; resizable, with the buttons pinned (the
+     page scrolls its body). */
+  const workHeight = screen.getDisplayMatching(win && !win.isDestroyed() ? win.getBounds() : { x: 0, y: 0, width: 1, height: 1 }).workArea.height;
   remoteWindow = new BrowserWindow({
     width: 480,
-    height: 380,
-    resizable: false,
+    height: Math.max(300, Math.min(460, workHeight - 40)),
+    minHeight: 260,
+    resizable: true,
     minimizable: false,
     title: "Connect to another computer",
     ...(win && !win.isDestroyed() ? { parent: win, modal: true } : {}),
