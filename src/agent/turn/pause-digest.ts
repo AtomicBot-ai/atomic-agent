@@ -1,4 +1,5 @@
 import type { ConversationTurn } from "../../session/conversation-turn.js";
+import { canonicalArgs } from "../../tools/argument-aliases.js";
 
 /**
  * A summary of a paused task built from the turn's own records, with no
@@ -125,7 +126,9 @@ function changedFiles(steps: readonly StepRecord[]): string[] {
   for (const step of steps) {
     if (!FILE_CHANGING_TOOLS.has(step.call.tool)) continue;
     if (step.result?.status !== "ok") continue;
-    for (const path of changedPathsOf(step.call.tool, step.call.args)) {
+    // As the tool read them (`argument-aliases.ts`), not as sent.
+    const args = canonicalArgs(step.call.tool, step.call.args);
+    for (const path of changedPathsOf(step.call.tool, args)) {
       seen.add(path);
     }
   }

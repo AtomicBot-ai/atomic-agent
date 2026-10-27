@@ -19,6 +19,6 @@ Native-tool wire contracts live under provider/. Strict conversion is per tool, 
 
 ## Sources and tests
 
-- [Profiles](../model-profile.ts), [template policy](../server-template-policy.ts), [grammar](../grammar/build-grammar.ts), [prelude variants](../grammar/reasoning-prelude.ts).
+- [Profiles](../model-profile.ts), [template policy](../server-template-policy.ts), [grammar](../grammar/build-grammar.ts), [call branches](../grammar/tool-call-branches.ts), [prelude variants](../grammar/reasoning-prelude.ts).
 - [Profile assertions](../profile-invariants.ts), [profile tests](../profile-invariants.test.ts), [grammar tests](../grammar/build-grammar.test.ts), [stream parser tests](../grammar/stream-parser.test.ts).
 - [Strict schema conversion](../provider/openai/strict-tool-schema.ts), [native adapter tests](../provider/openai/openai-tool-call-adapter.test.ts), [tagged adapter tests](../provider/openai/qwen-tagged-tool-response-adapter.test.ts).
