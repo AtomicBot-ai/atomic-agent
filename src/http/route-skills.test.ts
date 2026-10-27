@@ -114,7 +114,7 @@ describe("/api/skills", () => {
     expect(body.error.message).toMatch(/sourcePath/);
   });
 
-  it("asks for confirmation on a caution scan and installs after confirm: true", async () => {
+  it("asks for confirmation on a caution scan and installs after confirm with its scanId", async () => {
     const sourcePath = stageSkill("api-careful-skill");
     stagedDirs.push(sourcePath);
     writeFileSync(join(sourcePath, "fetch.sh"), "curl https://api.example\n");
@@ -131,8 +131,10 @@ describe("/api/skills", () => {
       installed: boolean;
       error: { code: string; param: string };
       scan: { verdict: string; findings: Array<{ rule: string; file: string }> };
+      scanId: string;
     };
     expect(firstBody.installed).toBe(false);
+    expect(firstBody.scanId).toMatch(/^[0-9a-f]{32}$/);
     expect(firstBody.error.code).toBe("needs_confirmation");
     expect(firstBody.error.param).toBe("confirm");
     expect(firstBody.scan.verdict).toBe("caution");
@@ -144,14 +146,38 @@ describe("/api/skills", () => {
     };
     expect(listBefore.skills.map((s) => s.name)).not.toContain("api-careful-skill");
 
-    const second = await post({ confirm: true });
+    // A bare `true` is not a yes: it names no findings.
+    expect((await post({ confirm: true })).status).toBe(428);
+
+    const second = await post({ confirm: firstBody.scanId });
     expect(second.status).toBe(200);
     const secondBody = (await second.json()) as {
       installed: boolean;
       scan: { verdict: string };
+      scanId: string;
     };
     expect(secondBody.installed).toBe(true);
     expect(secondBody.scan.verdict).toBe("caution");
+    expect(secondBody.scanId).toBe(firstBody.scanId);
+  });
+
+  it("asks again when the folder changed after the confirmed scan", async () => {
+    const sourcePath = stageSkill("api-changed-skill");
+    stagedDirs.push(sourcePath);
+    writeFileSync(join(sourcePath, "fetch.sh"), "curl https://api.example\n");
+    const post = (extra: Record<string, unknown>) =>
+      fetch(`${harness.baseUrl}/api/skills/install`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sourcePath, source: "global", ...extra }),
+      });
+    const first = (await (await post({})).json()) as { scanId: string };
+    writeFileSync(join(sourcePath, "more.sh"), "wget https://other.example\n");
+    const retry = await post({ confirm: first.scanId });
+    expect(retry.status).toBe(428);
+    const retryBody = (await retry.json()) as { scanId: string; scan: { findings: Array<{ file: string }> } };
+    expect(retryBody.scanId).not.toBe(first.scanId);
+    expect(retryBody.scan.findings).toContainEqual(expect.objectContaining({ file: "more.sh" }));
   });
 
   it("blocks a dangerous scan unless acknowledgeRisk is set", async () => {
@@ -170,11 +196,14 @@ describe("/api/skills", () => {
     const body = (await blocked.json()) as {
       error: { code: string };
       scan: { verdict: string };
+      scanId: string;
     };
     expect(body.error.code).toBe("dangerous_blocked");
     expect(body.scan.verdict).toBe("dangerous");
 
-    expect((await post({ acknowledgeRisk: true })).status).toBe(200);
+    expect((await post({ acknowledgeRisk: true })).status).toBe(403);
+    expect((await post({ confirm: body.scanId })).status).toBe(403);
+    expect((await post({ acknowledgeRisk: body.scanId })).status).toBe(200);
   });
 
   it("returns 404 for unknown skills", async () => {

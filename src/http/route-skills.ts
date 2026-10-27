@@ -3,6 +3,7 @@ import { SessionNotFoundError } from "../runtime/session-not-found-error.js";
 
 import {
   installLocalSkill,
+  scanApprovalFromIds,
   scanIdOf,
   SkillHubInstallError,
   SkillInstallError,
@@ -151,7 +152,7 @@ export function createInstallSkillHandler(): HttpHandler {
         sourceDir: body.sourcePath,
         targetRoot,
         ...(body.force === true ? { force: true } : {}),
-        ...scanApproval(body),
+        ...scanApprovalFromIds(body),
       });
       await ctx.runtime.refreshSkills();
       sendJson(res, 200, {
@@ -216,27 +217,6 @@ export function createUninstallSkillHandler(): HttpHandler {
       removed: outcome.removed,
       path: outcome.path,
     });
-  };
-}
-
-/**
- * Map the body's approvals to gate options. Only string scan ids count;
- * with none, `approvedScanId` is still set (to "") so a bare `true` can
- * never approve anything.
- */
-function scanApproval(body: InstallBody): {
-  confirmCaution: boolean;
-  acknowledgeRisk: boolean;
-  approvedScanId: string;
-} {
-  const ack = typeof body.acknowledgeRisk === "string" ? body.acknowledgeRisk : "";
-  const confirm = typeof body.confirm === "string" ? body.confirm : "";
-  const approvedScanId = ack || confirm;
-  return {
-    acknowledgeRisk: ack !== "",
-    // A dangerous approval also covers caution, but only for its own scan.
-    confirmCaution: confirm !== "" && (ack === "" || ack === confirm),
-    approvedScanId,
   };
 }
 

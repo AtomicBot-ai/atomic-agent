@@ -82,6 +82,7 @@ export {
   looksLikeHubIdentifier,
   parseSkillIdentifier,
   parseTapRepo,
+  scanApprovalFromIds,
   scanIdOf,
   scanSkillDir,
   scanSkillFiles,

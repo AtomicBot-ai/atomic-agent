@@ -41,6 +41,7 @@ export {
   discardStagedInstall,
   enforceScanGate,
   installSkillFromHub,
+  scanApprovalFromIds,
   scanIdOf,
   SkillHubInstallError,
   stageSkillFromHub,

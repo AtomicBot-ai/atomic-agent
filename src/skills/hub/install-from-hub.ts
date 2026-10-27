@@ -173,6 +173,26 @@ export async function enforceScanGate(
 }
 
 /**
+ * Gate options for a client that answers by scan id (HTTP `confirm` /
+ * `acknowledgeRisk`, sidecar `skill_install`). Only a string id counts;
+ * with none, `approvedScanId` is still set (to `""`), so a bare `true`
+ * can never approve anything. A dangerous approval also covers caution,
+ * but only for its own scan.
+ */
+export function scanApprovalFromIds(answer: {
+  confirm?: unknown;
+  acknowledgeRisk?: unknown;
+}): Required<Pick<ScanGateOptions, "confirmCaution" | "acknowledgeRisk" | "approvedScanId">> {
+  const ack = typeof answer.acknowledgeRisk === "string" ? answer.acknowledgeRisk : "";
+  const confirm = typeof answer.confirm === "string" ? answer.confirm : "";
+  return {
+    acknowledgeRisk: ack !== "",
+    confirmCaution: confirm !== "" && (ack === "" || ack === confirm),
+    approvedScanId: ack || confirm,
+  };
+}
+
+/**
  * Stable id of a scan result: a hash of its verdict and findings (paths,
  * lines, excerpts). Same folder bytes give the same id; any change to a
  * finding gives a new one.
