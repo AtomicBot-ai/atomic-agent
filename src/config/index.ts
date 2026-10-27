@@ -41,6 +41,7 @@ export {
   userConfigFileSha256Sync,
   setConfigNoticeSink,
   getDotenvPath,
+  getStateSecretPaths,
   getTrustConfigPaths,
   getUserConfigPath,
   readUserConfigFileSync,

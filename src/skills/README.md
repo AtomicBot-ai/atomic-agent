@@ -12,6 +12,7 @@ This area owns skill installation and discovery. Read [AGENTS.md](AGENTS.md) bef
 - [seed-starter-skills.ts](seed-starter-skills.ts)
 - [workspace-skills.ts](workspace-skills.ts): cloud source selection and live policy; [cloud workspace skills](docs/cloud-workspace.md).
 - [project-trust.ts](project-trust.ts): project skills and instruction files load only after the operator trusted the folder; [project folder trust](docs/project-trust.md).
+- [skill-script-runner.ts](skill-script-runner.ts): runs a declared script with the same filtered environment as a shell command (`buildCommandEnv` plus `tools.shell.envPassthrough`), so provider keys loaded from `.env` do not reach it.
 
 ## Ownership and dependencies
 
