@@ -279,8 +279,8 @@ posix("a secret-file call asks as state_secret, whatever the level grants", () =
 
   it("a session grant for the shell (category or `cat` shape) does not cover a secret file", async () => {
     install(3);
-    answer = { approved: true, grant: "category" };
-    await gate.request({ sessionId: "s-plain", tool: "os.shell.run", category: "shell", reason: "x" });
+    // The shape first: once the category is granted, a later shell
+    // request is covered by it and records no shape.
     answer = { approved: true, grant: "shape" };
     await gate.request({
       sessionId: "s-plain",
@@ -289,6 +289,8 @@ posix("a secret-file call asks as state_secret, whatever the level grants", () =
       reason: "y",
       commandShape: "cat",
     });
+    answer = { approved: true, grant: "category" };
+    await gate.request({ sessionId: "s-plain", tool: "os.shell.run", category: "shell", reason: "x" });
     expect(gate.sessionGrants("s-plain")).toEqual({ categories: ["shell"], shapes: ["cat"] });
     prompts = [];
     answer = { approved: true };
