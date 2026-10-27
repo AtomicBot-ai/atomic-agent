@@ -78,6 +78,7 @@ export function buildOsFsWriteTool(
             prior: existing,
             after: content,
             request: options.resolveOriginalRequest?.(ctx.sessionId),
+            previousReply: options.resolvePreviousReply?.(ctx.sessionId),
             declaredInputs: options.declaredInputs?.inputsOf(ctx.sessionId),
             overwrite,
           });
