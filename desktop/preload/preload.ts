@@ -146,6 +146,12 @@ contextBridge.exposeInMainWorld("atomic", {
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
   // ATO-507: free space on the models disk, {freeBytes, totalBytes, path} | null
   diskSpace: () => ipcRenderer.invoke("app:diskSpace"),
+  // ATO-577 / ATO-579: Settings › Diagnostics' Doctor and Data rows.
+  doctorRun: (fix: boolean) => ipcRenderer.invoke("doctor:run", fix === true),
+  dataBackup: () => ipcRenderer.invoke("data:backup"),
+  dataRestore: () => ipcRenderer.invoke("data:restore"),
+  dataMove: () => ipcRenderer.invoke("data:move"),
+  dataReset: () => ipcRenderer.invoke("data:reset"),
 
   /** Shell affordances. */
   // ATO-731: the chat on screen moves to the folder picked (sessionId), without restarting the agent.

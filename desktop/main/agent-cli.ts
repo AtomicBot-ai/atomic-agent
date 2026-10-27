@@ -131,6 +131,11 @@ async function remoteModelsCall(route: RemoteModels, args: string[]): Promise<Cl
     : { ok: true, stdout: text, stderr: "" };
 }
 
+/** ATO-577/579: `atag doctor` and `atag data`, whose stdout counts even when they exit non-zero. */
+export function atagRun(args: string[], timeout: number): Promise<CliResult> {
+  return cli(args, timeout);
+}
+
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
   /* ATO-416: anything but a read, run inside a config-lock hold, may have
      changed config.json under the hash that hold last read (a leaf

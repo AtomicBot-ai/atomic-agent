@@ -6,6 +6,7 @@
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, shell, systemPreferences, Tray } from "electron";
+import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
@@ -215,6 +216,7 @@ import {
   IMPORT_DOMAINS,
   useConfigRoute,
   useRemoteModels,
+  atagRun,
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -2019,6 +2021,23 @@ function wireIpc(client: AgentClient): void {
     await client.start();
     void startLocalDaemonAtBoot();
     return { ok: true };
+  });
+  // ATO-577 / ATO-579: Settings › Diagnostics' Doctor and Data rows (main/doctor-data.ts).
+  registerDoctorDataIpc({
+    ipcMain,
+    dialog,
+    window: () => win,
+    stateDir: DESKTOP_STATE_DIR,
+    run: (args, timeoutMs) => atagRun(args, timeoutMs),
+    stopModels: () => modelsStop(),
+    stopAgent: () => client.stop(),
+    startAgent: async () => {
+      if (quitting) return;
+      await client.start();
+      void startLocalDaemonAtBoot();
+    },
+    turnsInFlight: () => client.turnsInFlight,
+    isRemote: () => client.isRemote,
   });
   // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
   ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
