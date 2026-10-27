@@ -98,6 +98,7 @@ vi.mock("./chat-orchestrator.js", () => ({
     }
     exitCode = 0;
     telegram = { forwardStatus: () => {} };
+    projectTrust = { check: () => {}, answer: async () => {} };
     localModels = {
       autoStartIfReady: async () => {},
       adoptBackgroundDownloads: () => {},
