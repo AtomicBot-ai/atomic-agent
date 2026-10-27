@@ -339,7 +339,15 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_BROWSER_HEADLESS",
         ENV_DEFAULTS.BROWSER_HEADLESS,
       ),
-      cdpUrl: readEnv("ATOMIC_AGENT_BROWSER_CDP_URL") ?? null,
+      // Env wins over the file, as before the file key existed. Only the
+      // file value is held to loopback (browser-config.ts): the env var
+      // is the operator's own shell, the file can be written over HTTP.
+      cdpUrl: readEnv("ATOMIC_AGENT_BROWSER_CDP_URL") ?? user.browser.cdpUrl,
+      connect: user.browser.connect,
+      userChromeDataDir:
+        user.browser.userDataDir === null
+          ? null
+          : resolvePath(user.browser.userDataDir, user.browser.userDataDir),
       executablePath: readEnv("ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH") ?? null,
       noSandbox: readBool(
         "ATOMIC_AGENT_BROWSER_NO_SANDBOX",
