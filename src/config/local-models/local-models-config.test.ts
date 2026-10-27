@@ -53,7 +53,7 @@ describe("local model configuration domain seams", () => {
     expect(parsed).toStrictEqual(defaults);
     expect(root).toStrictEqual(defaults);
     expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "useServerTemplate", "thinking", "reasoningBudgetTokens", "managed", "embeddings", "download", "customModels"]);
-    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
+    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "coreBackendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
     expect(defaults.managed).not.toBe(other.managed);
     expect(defaults.embeddings).not.toBe(other.embeddings);
     expect(defaults.download).not.toBe(other.download);
@@ -333,5 +333,21 @@ describe("local model configuration domain seams", () => {
     expect(migrated.version).toBe(schema.USER_CONFIG_VERSION);
     migrated.localModels.managed.engine = "llama-server";
     expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.managed.engine).toBe("llama-server");
+  });
+
+  it("keeps Atomic Core on its recommended build for a file whose llama-server rescue recorded backendVariant cpu", () => {
+    // The llama-server engine's rescue wrote "cpu" on any health timeout;
+    // version 77 moved these files to atomic-core. Core reads only its own key.
+    const migrated = schema.parseUserConfigFile({ version: 76, localModels: { managed: { backendVariant: "cpu" } } });
+    expect(migrated.localModels.managed.engine).toBe("atomic-core");
+    expect(migrated.localModels.managed.backendVariant).toBe("cpu");
+    expect(migrated.localModels.managed.coreBackendVariant).toBe("auto");
+  });
+
+  it("keeps an explicit coreBackendVariant and rejects an unknown one", () => {
+    const parsed = schema.parseUserConfigFile({ version: schema.USER_CONFIG_VERSION, localModels: { managed: { coreBackendVariant: "cpu" } } });
+    expect(parsed.localModels.managed.coreBackendVariant).toBe("cpu");
+    expect(thrownError(() => schema.parseUserConfigFile({ version: schema.USER_CONFIG_VERSION, localModels: { managed: { coreBackendVariant: "vulkan" } } })))
+      .toMatchObject({ field: "localModels.managed.coreBackendVariant" });
   });
 });

@@ -1,4 +1,4 @@
-import type { BackendVariantPreference } from "../backend/windows-backend-variant.js";
+import type { CoreBackendVariant } from "../backend/windows-backend-variant.js";
 
 /** Core's answer to `/backends/llamacpp/catalog`, as far as the agent reads it. */
 export interface CoreBackendCatalog {
@@ -35,17 +35,17 @@ function findCpuBuild(catalog: CoreBackendCatalog): string | null {
 
 /**
  * Which `<tag>/<backend>` the Core install asks for. Core's recommendation,
- * except on Windows x64 with `localModels.managed.backendVariant = "cpu"`
- * (set by hand, or by the start that found the GPU build crashing on load):
- * then the CPU build from the same catalog, so a Core update or "Download
- * again" never puts the crashing GPU build back. `"auto"` (and the other
- * pins, which only the llama-server engine reads) keep the recommendation.
+ * except on Windows x64 with `localModels.managed.coreBackendVariant =
+ * "cpu"` (set by the start that found the GPU build crashing on load, or
+ * by hand): then the CPU build from the same catalog, so a Core update or
+ * "Download again" never puts the crashing GPU build back. `"auto"` keeps
+ * the recommendation; `backendVariant` is never read here.
  * Throws when CPU is asked for and the catalog has no CPU build, rather
  * than silently installing a GPU build. Pure.
  */
 export function chooseCoreBackend(
   catalog: CoreBackendCatalog,
-  preference: BackendVariantPreference,
+  preference: CoreBackendVariant,
   platform: NodeJS.Platform = process.platform,
   arch: string = process.arch,
 ): string | null {
@@ -53,7 +53,7 @@ export function chooseCoreBackend(
   if (preference !== "cpu" || platform !== "win32" || arch !== "x64") return recommended;
   const cpu = findCpuBuild(catalog);
   if (!cpu) {
-    throw new Error('Atomic Core lists no CPU build for this computer, and localModels.managed.backendVariant is "cpu". Set it to "auto" to install the recommended build.');
+    throw new Error('Atomic Core lists no CPU build for this computer, and localModels.managed.coreBackendVariant is "cpu". Set it to "auto" to install the recommended build.');
   }
   return cpu;
 }

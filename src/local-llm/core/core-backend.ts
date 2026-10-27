@@ -8,7 +8,7 @@ import { CORE_VERSION, activeCoreVersion, coreRoot, coreVersionDir, readCoreBack
 import { connectCore, CoreRequestError, withCoreClient, type CoreControlClient } from "./core-client.js";
 import { installCore, isCoreInstalled, withCoreRetries } from "./core-install.js";
 import { chooseCoreBackend, type CoreBackendCatalog } from "./core-backend-choice.js";
-import { getConfiguredBackendVariant } from "../backend/windows-backend-variant.js";
+import { getConfiguredCoreBackendVariant } from "../backend/windows-backend-variant.js";
 
 /** Core and its backend for `version` (default: the active one) are on disk. */
 export function isCoreBackendInstalled(dataDir: string, version = activeCoreVersion(dataDir)): boolean {
@@ -97,7 +97,7 @@ export async function installCoreBackend(dataDir: string, opts: DownloadFileOpti
   return await withCoreClient(dataDir, version, async client => {
     const catalog = await client.call<CoreBackendCatalog>("/backends/llamacpp/catalog", { force: true }, { signal: opts.signal, timeoutMs: 60_000 });
     // Core's recommendation, or the CPU build a Windows x64 machine was moved to (`chooseCoreBackend`).
-    const selected = chooseCoreBackend(catalog, getConfiguredBackendVariant());
+    const selected = chooseCoreBackend(catalog, getConfiguredCoreBackendVariant());
     if (!selected) throw new CoreUnavailableError({ stage: "backend", reasonCode: "no_backend", detail: "Atomic Core found no compatible inference backend for this computer" });
     const [tag, backend, extra] = selected.split("/");
     if (!tag || !backend || extra || /[\\]/.test(selected) || tag === ".." || backend === "..") throw new Error("Atomic Core returned an invalid backend selection.");

@@ -27,9 +27,10 @@ import {
   CORE_CPU_FALLBACK_LINE,
   coreCpuFallbackApplies,
   fallBackToCoreCpuBuild,
+  revertCoreCpuFallback,
   shouldFallBackToCoreCpuBuild,
 } from "./core-cpu-backend-fallback.js";
-import { getConfiguredBackendVariant, setConfiguredBackendVariant } from "./windows-backend-variant.js";
+import { getConfiguredCoreBackendVariant, setConfiguredBackendVariant, setConfiguredCoreBackendVariant } from "./windows-backend-variant.js";
 
 const crash = () => new CoreRequestError(500, "Could not load model qwen-3.5-4b after fallback attempts.", "MODEL_LOAD_FAILED");
 
@@ -62,6 +63,20 @@ describe("shouldFallBackToCoreCpuBuild", () => {
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(500, "port 19091: address already in use") })).toBe(false);
   });
 
+  it("never switches for a model llama.cpp cannot read, or Core's load timeout", () => {
+    for (const logText of [
+      "llama_model_load: error loading model: error loading model architecture: unknown model architecture: 'newarch'",
+      "gguf_init_from_file_impl: tensor 'blk.0.attn_q.weight' has invalid ggml type 42",
+      "llama_model_load: error loading model: tensor 'blk.3.ffn_up.weight' data is not within the file bounds, model is corrupted or incomplete",
+      "llama_model_load: error loading model: done_getting_tensors: wrong number of tensors; expected 291, got 290",
+    ]) {
+      expect(shouldFallBackToCoreCpuBuild({ ...eligible, logText })).toBe(false);
+    }
+    expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(500, "Model load timed out after 180 seconds") })).toBe(false);
+    expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(504, "load failed", "LOAD_TIMEOUT") })).toBe(false);
+    expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(500, "unknown model architecture: 'newarch'") })).toBe(false);
+  });
+
   it("is not put off by a normal startup log", () => {
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, logText: "main: binding port with default address family\nmain: HTTP server is listening\nllama_model_loader: loaded meta data" })).toBe(true);
   });
@@ -72,8 +87,7 @@ describe("shouldFallBackToCoreCpuBuild", () => {
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, arch: "arm64" })).toBe(false);
   });
 
-  it("honours a pinned variant, and never re-runs on the CPU build", () => {
-    expect(shouldFallBackToCoreCpuBuild({ ...eligible, configuredVariant: "vulkan" })).toBe(false);
+  it("never re-runs once Core is on the CPU build", () => {
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, configuredVariant: "cpu" })).toBe(false);
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, installedBackend: "windows-x64-cpu" })).toBe(false);
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, installedBackend: undefined })).toBe(false);
@@ -94,6 +108,7 @@ describe("Core CPU-build rescue with a mocked Core", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("win32");
     vi.spyOn(process, "arch", "get").mockReturnValue("x64");
     setConfiguredBackendVariant("auto");
+    setConfiguredCoreBackendVariant("auto");
     dir = mkdtempSync(join(tmpdir(), "core-cpu-fallback-"));
     backendPath = join(dir, "installed-backend");
     mkdirSync(backendPath, { recursive: true });
@@ -126,59 +141,64 @@ describe("Core CPU-build rescue with a mocked Core", () => {
     vi.restoreAllMocks();
     fake.call.mockReset();
     setConfiguredBackendVariant("auto");
+    setConfiguredCoreBackendVariant("auto");
     rmSync(dir, { recursive: true, force: true });
   });
 
-  /** What `models start` and the TUI do: one rescue, one retry on device cpu. */
-  async function startWithRescue(start: (device: string | undefined) => Promise<string>): Promise<string> {
-    try {
-      return await start(undefined);
-    } catch (e) {
-      if (!coreCpuFallbackApplies(dir, getConfiguredBackendVariant(), e)) throw e;
-      await fallBackToCoreCpuBuild(dir);
-      return await start("cpu");
-    }
-  }
-
   const installs = () => fake.call.mock.calls.filter(([path]) => path === "/backends/llamacpp/install");
 
-  it("installs the CPU build once after a crash on load, and the retry starts", async () => {
-    const start = vi.fn().mockRejectedValueOnce(crash()).mockResolvedValueOnce("started");
-    await expect(startWithRescue(start)).resolves.toBe("started");
-    expect(start).toHaveBeenCalledTimes(2);
-    expect(start.mock.calls[1]![0]).toBe("cpu");
+  it("applies to a crash on the GPU build, and installs the CPU build once without persisting anything", async () => {
+    expect(coreCpuFallbackApplies(dir, crash())).toBe(true);
+    const swap = await fallBackToCoreCpuBuild(dir);
     expect(installs()).toHaveLength(1);
     expect(installs()[0]![1]).toMatchObject({ version: "b2", backend: "windows-x64-cpu", asset_name: "llama-turboquant-windows-x64-cpu.zip" });
     expect(readCoreBackend(dir)?.backend).toBe("windows-x64-cpu");
-    expect(getConfiguredBackendVariant()).toBe("cpu");
+    // In-process only: the caller records it after the retry served the model.
+    expect(getConfiguredCoreBackendVariant()).toBe("cpu");
+    expect(swap.previous?.backend).toBe("windows-x64-vulkan");
+    expect(swap.previousVariant).toBe("auto");
     // The failed start's leftovers are stopped before the install.
     expect(stopBothMock).toHaveBeenCalledWith(dir);
     expect(stopBothMock.mock.invocationCallOrder[0]!).toBeLessThan(fake.call.mock.invocationCallOrder[0]!);
     expect(readFileSync(resolveLogFilePath(dir), "utf8")).toContain(CORE_CPU_FALLBACK_LINE);
     expect(CORE_CPU_FALLBACK_LINE).toContain("falling back to the CPU build (slower)");
+    // Now on the CPU build: a second failure never rescues again.
+    expect(coreCpuFallbackApplies(dir, crash())).toBe(false);
   });
 
-  it("does not switch for out of memory", async () => {
-    const oom = new CoreRequestError(500, "Could not load model: failed to allocate buffer, out of memory");
-    const start = vi.fn().mockRejectedValue(oom);
-    await expect(startWithRescue(start)).rejects.toBe(oom);
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(installs()).toHaveLength(0);
+  it("puts the GPU build back when the CPU retry fails too", async () => {
+    const swap = await fallBackToCoreCpuBuild(dir);
+    revertCoreCpuFallback(dir, swap);
     expect(readCoreBackend(dir)?.backend).toBe("windows-x64-vulkan");
+    expect(getConfiguredCoreBackendVariant()).toBe("auto");
+    expect(coreCpuFallbackApplies(dir, crash())).toBe(true);
   });
 
-  it("does not switch for an out-of-memory line in this run's log", async () => {
+  it("changes nothing when the CPU install fails, so the next start can rescue again", async () => {
+    fake.call.mockImplementation(async (path: string) => {
+      if (path === "/backends/llamacpp/catalog") throw new CoreRequestError(400, "catalog refused");
+      return {};
+    });
+    await expect(fallBackToCoreCpuBuild(dir)).rejects.toBeTruthy();
+    expect(getConfiguredCoreBackendVariant()).toBe("auto");
+    expect(readCoreBackend(dir)?.backend).toBe("windows-x64-vulkan");
+    expect(coreCpuFallbackApplies(dir, crash())).toBe(true);
+  });
+
+  it("does not apply for out of memory, in the answer or in this run's log", () => {
+    expect(coreCpuFallbackApplies(dir, new CoreRequestError(500, "Could not load model: failed to allocate buffer, out of memory"))).toBe(false);
     writeFileSync(resolveLogFilePath(dir), "[atomic-agent] launch: model qwen-3.5-4b\nggml_vulkan: ErrorOutOfDeviceMemory\n");
-    const start = vi.fn().mockRejectedValue(crash());
-    await expect(startWithRescue(start)).rejects.toBeInstanceOf(CoreRequestError);
+    expect(coreCpuFallbackApplies(dir, crash())).toBe(false);
     expect(installs()).toHaveLength(0);
   });
 
-  it("does not switch off Windows", async () => {
+  it("does not apply off Windows", () => {
     vi.spyOn(process, "platform", "get").mockReturnValue("linux");
-    const start = vi.fn().mockRejectedValue(crash());
-    await expect(startWithRescue(start)).rejects.toBeInstanceOf(CoreRequestError);
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(installs()).toHaveLength(0);
+    expect(coreCpuFallbackApplies(dir, crash())).toBe(false);
+  });
+
+  it("ignores the llama-server engine's backendVariant", () => {
+    setConfiguredBackendVariant("cpu");
+    expect(coreCpuFallbackApplies(dir, crash())).toBe(true);
   });
 });

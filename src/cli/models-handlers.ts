@@ -60,8 +60,11 @@ import {
   shouldFallBackToCpuBackend,
   coreEmbeddingEngineRequired,
   CORE_CPU_FALLBACK_LINE,
+  CORE_CPU_RECORDED_LINE,
   coreCpuFallbackApplies,
   fallBackToCoreCpuBuild,
+  revertCoreCpuFallback,
+  type CoreCpuSwap,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -756,31 +759,53 @@ export async function runLocalModelsStart(
     } catch (e) {
       // The same rescue on the Atomic Core engine (ATO-344/372): Core's
       // GPU build crashed while loading the model, so install Core's CPU
-      // build and retry once on device cpu.
+      // build and retry once on device cpu. The choice is recorded only
+      // once the CPU build served the model; otherwise it is undone and
+      // the original failure is the one reported.
       if (
         getConfig().localModels.managed.engine === "atomic-core" &&
-        coreCpuFallbackApplies(dataDir, getConfiguredBackendVariant(), e)
+        coreCpuFallbackApplies(dataDir, e)
       ) {
         process.stderr.write(`${CORE_CPU_FALLBACK_LINE}\n`);
-        persistBackendVariantCpu(cfg.paths.userConfigFile);
-        await fallBackToCoreCpuBuild(dataDir, {
-          signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
-          onProgress: (p: number, t: number, tot: number) => {
-            const line = renderPullProgress("Atomic Core CPU build", p, t, tot);
-            if (process.stderr.isTTY)
-              process.stderr.write(`\r${line.padEnd(79)}`);
-            else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
-          },
-        });
+        let swap: CoreCpuSwap;
+        try {
+          swap = await fallBackToCoreCpuBuild(dataDir, {
+            signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+            onProgress: (p: number, t: number, tot: number) => {
+              const line = renderPullProgress("Atomic Core CPU build", p, t, tot);
+              if (process.stderr.isTTY)
+                process.stderr.write(`\r${line.padEnd(79)}`);
+              else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+            },
+          });
+        } catch (installErr) {
+          if (process.stderr.isTTY) process.stderr.write("\n");
+          process.stderr.write(
+            `could not install the CPU build (${installErr instanceof Error ? installErr.message : String(installErr)}); the GPU build stays\n`,
+          );
+          throw e;
+        }
         if (process.stderr.isTTY) process.stderr.write("\n");
+        // The rescue stopped the embedding model with the rest: start it again.
+        embRunningPid = null;
         process.stderr.write("retrying start on the CPU build…\n");
-        result = await startWithDevice("cpu");
+        try {
+          result = await startWithDevice("cpu");
+        } catch (retryErr) {
+          revertCoreCpuFallback(dataDir, swap);
+          process.stderr.write(
+            `the CPU build failed too (${retryErr instanceof Error ? retryErr.message : String(retryErr)}), so the GPU build was not the cause and stays selected\n`,
+          );
+          throw e;
+        }
+        persistCoreBackendVariantCpu(cfg.paths.userConfigFile);
       } else {
         // Windows iGPU-only rescue: the installed GPU build spawned but
         // never became healthy (its compute backend cannot load a model
         // on this machine — e.g. Vulkan on an AMD APU), so swap in the
         // CPU build the nightly also publishes and retry once.
         if (
+          getConfig().localModels.managed.engine === "atomic-core" ||
           !shouldFallBackToCpuBackend({
             installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
             configuredVariant: getConfiguredBackendVariant(),
@@ -984,6 +1009,33 @@ function persistBackendVariantCpu(path: string): void {
   } catch (e) {
     process.stderr.write(
       `note: could not persist backendVariant — ${e instanceof Error ? e.message : String(e)}; the CPU build is used for this session only\n`,
+    );
+  }
+}
+
+/**
+ * Record Atomic Core's CPU fallback as `localModels.managed.coreBackendVariant
+ * = "cpu"`, after the CPU build served the model, so a Core update or
+ * "Download again" does not reinstall the GPU build that crashed.
+ * Best-effort, like `persistBackendVariantCpu`: a failed write keeps the
+ * CPU build for this session only, with a note.
+ */
+function persistCoreBackendVariantCpu(path: string): void {
+  try {
+    const user = ensureUserConfigFileSync(path);
+    const next: UserConfigFile = {
+      ...user,
+      localModels: {
+        ...user.localModels,
+        managed: { ...user.localModels.managed, coreBackendVariant: "cpu" },
+      },
+    };
+    writeUserConfigFileSync(path, next);
+    resetConfigCache();
+    process.stderr.write(`${CORE_CPU_RECORDED_LINE}\n`);
+  } catch (e) {
+    process.stderr.write(
+      `note: could not persist coreBackendVariant — ${e instanceof Error ? e.message : String(e)}; the CPU build is used for this session only\n`,
     );
   }
 }

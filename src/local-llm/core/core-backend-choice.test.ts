@@ -48,11 +48,6 @@ describe("chooseCoreBackend", () => {
     expect(chooseCoreBackend(noCpuInB2, "cpu", "win32", "x64")).toBe("b1/windows-x64-cpu");
   });
 
-  it("other pins keep the recommendation: only cpu applies to Core", () => {
-    expect(chooseCoreBackend(catalog, "vulkan", "win32", "x64")).toBe("b2/windows-x64-vulkan");
-    expect(chooseCoreBackend(catalog, "cuda-13.3", "win32", "x64")).toBe("b2/windows-x64-vulkan");
-  });
-
   it("ignores cpu off Windows x64", () => {
     const mac: CoreBackendCatalog = { recommended: "b2/macos-arm64", recommended_installed: null };
     expect(chooseCoreBackend(mac, "cpu", "darwin", "arm64")).toBe("b2/macos-arm64");
@@ -61,7 +56,7 @@ describe("chooseCoreBackend", () => {
 
   it("refuses rather than install a GPU build when cpu is asked for and none is listed", () => {
     const gpuOnly: CoreBackendCatalog = { recommended: "b2/windows-x64-vulkan", recommended_installed: null, releases: [{ tag: "b2", variants: [{ id: "windows-x64-vulkan" }] }] };
-    expect(() => chooseCoreBackend(gpuOnly, "cpu", "win32", "x64")).toThrow(/backendVariant/);
+    expect(() => chooseCoreBackend(gpuOnly, "cpu", "win32", "x64")).toThrow(/coreBackendVariant/);
   });
 
   it("falls back to the installed recommendation when Core recommends nothing new", () => {
