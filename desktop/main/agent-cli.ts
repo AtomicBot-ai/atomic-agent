@@ -4393,7 +4393,8 @@ export function noLocalModelsHere(stderr: string): string | null {
    "exited with code 1": the last line of stderr that reads like a reason
    (an error, a refusal, "ownership changed"), else its last line. Log
    prefixes and timestamps are dropped; at most 300 characters. Null when
-   stderr is empty. */
+   stderr is empty. A killed child (code null, a cancel) keeps its old
+   words, which the window reads as a cancel. */
 export function updateFailureCause(stderr: string): string | null {
   const lines = stderr.split(/\r?\n/)
     .map((l) => l.replace(/^\[atomic-agent\]\s*/, "").replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+(ERROR|WARN|INFO)\s+/, "").replace(/^(error|Error):\s*/, "").trim())
@@ -4473,7 +4474,7 @@ export function modelsUpdateStream(
     };
     child.on("exit", (code) => {
       if (code === 0) return finish({ ok: true, stdout, stderr });
-      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? updateFailureCause(stderr) ?? `models update exited with code ${code ?? "null"}` });
+      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? (code === null ? null : updateFailureCause(stderr)) ?? `models update exited with code ${code ?? "null"}` });
       const keptBackend = kept();
       finish({ ok: false, stdout, stderr, error: updateTimedOutError(timedOut, keptBackend) }, keptBackend);
     });
