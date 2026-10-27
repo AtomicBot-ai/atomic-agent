@@ -46,7 +46,7 @@ describe("turn recovery decisions and shared state", () => {
     const second = createTurnLoopState();
     first.truncationRetry = { stepIndex: 1, attempts: 1, original: new Error("cut") };
     first.reason = "cancelled";
-    expect(Object.keys(second)).toHaveLength(18);
+    expect(Object.keys(second)).toHaveLength(19);
     expect(second.truncationRetry).toBeNull();
     expect(second.reason).toBe("max_steps");
     expect(second.lastBoundaryIndex).toBe(-1);
