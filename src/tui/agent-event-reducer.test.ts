@@ -2571,6 +2571,17 @@ describe("context compaction activity", () => {
     expect(end.status).toBe(initial.status);
     expect(JSON.stringify(end.messages)).toContain(status === "failed" ? "test failure" : "cancelled");
   });
+  it("shows a skipped compaction as skipped, with its message, not as a failure", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const message = "The model's context window (8192 tokens) is too small to compact this conversation; raise the context size.";
+    const end = reduceTuiState(initial, { type: "agent_event", event: { type: "compaction_failed", sessionId: "s1",
+      result: { status: "noop", reason: "threshold", message }, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0,
+    } });
+    const text = JSON.stringify(end.messages);
+    expect(text).toContain(`Context compaction skipped: ${message}`);
+    expect(text).not.toContain("Context compaction failed");
+    expect(end.status).toBe(initial.status);
+  });
   it("does not clear an automatic operation when a manual request returns busy", () => {
     const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
     const state = reduceTuiState(initial, started("s1"));

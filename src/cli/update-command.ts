@@ -5,6 +5,10 @@ import {
   checkForAppUpdate,
   runAppUpdate,
   canSelfUpdate,
+  detectInstallSource,
+  detectShadowedPackage,
+  packagedUpdateRefusal,
+  shadowedPackageNotice,
 } from "../update/index.js";
 
 /**
@@ -16,6 +20,16 @@ export interface UpdateCommandDeps {
   checkForAppUpdate?: typeof checkForAppUpdate;
   runAppUpdate?: typeof runAppUpdate;
   canSelfUpdate?: typeof canSelfUpdate;
+  /**
+   * The Linux package that installed this binary, if any. Defaults to
+   * reading the package marker (`src/update/install-source.ts`).
+   */
+  detectInstallSource?: typeof detectInstallSource;
+  /**
+   * A Linux package installed beside a copy from elsewhere, when that copy is
+   * the one running. Defaults to reading the same marker.
+   */
+  detectShadowedPackage?: typeof detectShadowedPackage;
   /** Resolves the `update.repo` config value. Defaults to `getConfig().update.repo`. */
   getRepo?: () => string;
   /**
@@ -118,6 +132,8 @@ export async function updateCommand(
   const check = deps.checkForAppUpdate ?? checkForAppUpdate;
   const run = deps.runAppUpdate ?? runAppUpdate;
   const canSelf = deps.canSelfUpdate ?? canSelfUpdate;
+  const installSource = deps.detectInstallSource ?? detectInstallSource;
+  const shadowedPackage = deps.detectShadowedPackage ?? detectShadowedPackage;
   const getRepo = deps.getRepo ?? (() => getConfig().update.repo);
   // stdin, not stdout: the answer comes from stdin, so that is the
   // stream whose interactivity decides whether asking is possible.
@@ -135,6 +151,26 @@ export async function updateCommand(
   if (args.includes("-h") || args.includes("--help")) {
     process.stdout.write(HELP);
     return 0;
+  }
+
+  // A deb, rpm or AUR install is updated by the package manager, whatever
+  // GitHub says is latest. Decided before the network: `--check` may still
+  // ask, but an install must refuse the same way when the release is current
+  // and when it is not.
+  const packaged = installSource();
+  if (packaged && !parsed.checkOnly) {
+    process.stderr.write(`${packagedUpdateRefusal(packaged)}\n`);
+    return 1;
+  }
+  // An install.sh copy running on a machine that also has the package: the
+  // update is the copy's, and the package manager's upgrades never reach it.
+  // Said up front, before the version check, so a cancelled or up-to-date run
+  // hears it too.
+  const shadowed = parsed.checkOnly ? undefined : shadowedPackage();
+  if (shadowed) {
+    process.stderr.write(
+      `${shadowedPackageNotice(shadowed, process.execPath)}\n`,
+    );
   }
 
   try {

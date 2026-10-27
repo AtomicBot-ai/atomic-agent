@@ -26,7 +26,7 @@ describe("LlamaServerClient endpoint URLs", () => {
     const urls: string[] = [];
     const client = new LlamaServerClient({
       baseUrl: "https://box.example/llama",
-      fetchImpl: (async (input: RequestInfo | URL) => {
+      fetchImpl: (async (input: string | URL | Request) => {
         urls.push(String(input));
         return completionResponse();
       }) as typeof fetch,
@@ -39,7 +39,7 @@ describe("LlamaServerClient endpoint URLs", () => {
     const urls: string[] = [];
     const client = new LlamaServerClient({
       baseUrl: "https://box.example/llama",
-      fetchImpl: (async (input: RequestInfo | URL) => {
+      fetchImpl: (async (input: string | URL | Request) => {
         urls.push(String(input));
         return new Response(JSON.stringify({ total_slots: 1 }), {
           status: 200,
@@ -55,7 +55,7 @@ describe("LlamaServerClient endpoint URLs", () => {
     const urls: string[] = [];
     const client = new LlamaServerClient({
       baseUrl: "http://192.168.1.50:8080/v1",
-      fetchImpl: (async (input: RequestInfo | URL) => {
+      fetchImpl: (async (input: string | URL | Request) => {
         urls.push(String(input));
         return completionResponse();
       }) as typeof fetch,

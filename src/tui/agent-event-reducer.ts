@@ -1,7 +1,12 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { describeFailedAttempts } from "../llm/fallback/index.js";
-import { isLocalEngineDown, isLocalOutOfMemory } from "../llm/reliability/index.js";
+import {
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  classifyLocalServerError,
+  isLocalEngineDown,
+  isLocalOutOfMemory,
+} from "../llm/reliability/index.js";
 import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
@@ -10,7 +15,11 @@ import {
   formatBackgroundApprovalNotice,
   formatBackgroundProviderWaitNotice,
 } from "./detached-turns.js";
-import { formatAgentErrorForChat, formatLocalEngineDownForChat } from "./chat/format-agent-error-for-chat.js";
+import {
+  formatAgentErrorForChat,
+  formatLocalEngineDownForChat,
+  formatLocalServerErrorForChat,
+} from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import {
   formatProviderGaveUpLine,
@@ -732,9 +741,21 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-772: the managed local model's process is gone and the turn
       // ended without the outage wait: say so, and the command that fixes it.
       const engineDown = isLocalEngineDown(event.error);
+      // ATO-707 / ATO-737: a local server's typed 400 (context full, or a
+      // request it would not take) in plain words. Its 404/405 keeps the
+      // wrong-server hint below, which names the recheck command.
+      const localServer = engineDown ? null : classifyLocalServerError(event.error);
+      const badRequest =
+        localServer !== null && localServer.code !== LOCAL_SERVER_NOT_FOUND_CODE ? localServer : null;
       // ATO-334: the out-of-memory sentence is already plain and says
       // what to do; the transport wording around it would not.
-      const chatError = isLocalOutOfMemory(event.error) ? event.error.message : engineDown ? formatLocalEngineDownForChat() : formatAgentErrorForChat(
+      const chatError = isLocalOutOfMemory(event.error)
+        ? event.error.message
+        : engineDown
+        ? formatLocalEngineDownForChat()
+        : badRequest !== null
+          ? formatLocalServerErrorForChat(badRequest, event.error.message)
+          : formatAgentErrorForChat(
         event.category,
         event.error.message,
         {
@@ -838,7 +859,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: null,
-        line: `» the model rejected the request as too large — window learned as ~${event.contextWindow} tokens (${
+        line: `» the model rejected the request as too large — window ~${event.contextWindow} tokens (${
           event.source === "provider" ? "from its reply" : "estimated"
         }), trimming the conversation to fit and retrying step ${event.stepIndex + 1}`,
         color: "yellow",
@@ -1017,6 +1038,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     case "compaction_failed":
       return appendChatMessage(state, { role: "system", text: event.result.status === "cancelled"
         ? "Context compaction cancelled."
+        // A planned skip (e.g. a window too small to compact): nothing failed.
+        : event.result.status === "noop"
+        ? `Context compaction skipped: ${event.result.message ?? "no safe, useful reduction is available."}`
         : `Context compaction failed: ${(event.result.message ?? "unknown error").replace(/[.!?]+$/, "")}. Existing context retained; history trimming remains available.`,
       });
     case "history_trimmed":
@@ -1310,6 +1334,12 @@ function reduceStepEvent(
       // Raw plumbing: the whole completion object, the unparsed text.
       // The trace recorder wants them; the chat feed would drown in
       // them. Listed so the exhaustiveness check holds.
+      return state;
+    case "first_token":
+    case "prompt_progress":
+      // ATO-1027: the wait before the first token, for an HTTP host's
+      // status line. The TUI's own streaming tail already shows output
+      // the moment it starts. Listed so the exhaustiveness check holds.
       return state;
     default: {
       const unhandled: never = event;

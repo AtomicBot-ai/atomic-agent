@@ -91,7 +91,7 @@ describe("modelsCommand", () => {
             l.includes("nemotron-") ||
             l.includes("muse-"),
         ),
-    ).toHaveLength(13);
+    ).toHaveLength(14);
   });
 
   describe("models the operator added from Hugging Face", () => {

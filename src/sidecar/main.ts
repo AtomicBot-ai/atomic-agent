@@ -22,7 +22,7 @@ import type {
   StartSessionPayload,
 } from "./sidecar-events.js";
 import type { SessionState } from "../session/index.js";
-import { installSkill, uninstallSkill } from "../skills/index.js";
+import { installLocalSkill, uninstallSkill } from "../skills/index.js";
 import { getAppVersion } from "../version.js";
 
 interface ActiveSession {
@@ -427,12 +427,14 @@ export async function bootstrapSidecar(): Promise<{
     async (request) => {
       if (!active)
         throw new Error("no active session — call start_session first");
-      const result = await installSkill({
+      const result = await installLocalSkill({
         sourceDir: request.payload.sourcePath,
         targetRoot: config.paths.globalSkillsDir,
         ...(request.payload.force !== undefined
           ? { force: request.payload.force }
           : {}),
+        confirmCaution: request.payload.confirm === true,
+        acknowledgeRisk: request.payload.acknowledgeRisk === true,
       });
       await active.runtime.refreshSkills();
       return { name: result.manifest.name, installedAt: result.installedAt };

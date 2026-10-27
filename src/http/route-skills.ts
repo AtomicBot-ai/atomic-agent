@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { SessionNotFoundError } from "../runtime/session-not-found-error.js";
 
 import {
-  installSkill,
+  installLocalSkill,
+  SkillHubInstallError,
   SkillInstallError,
   SkillNotFoundError,
   uninstallSkill,
@@ -20,6 +21,10 @@ interface InstallBody {
   sourcePath?: string;
   force?: boolean;
   source?: "global" | "project";
+  /** Install despite a `caution` scan verdict (the user confirmed). */
+  confirm?: boolean;
+  /** Install despite a `dangerous` scan verdict (implies `confirm`). */
+  acknowledgeRisk?: boolean;
 }
 
 interface UninstallBody {
@@ -112,6 +117,13 @@ export function createGetSkillHandler(): HttpHandler {
  * We do not support remote sources (see architecture doc §9). The
  * default target is the user-global skills dir; the request may pick
  * the project-local dir explicitly.
+ *
+ * The folder goes through the same security scan as hub installs. A
+ * `caution` verdict answers 428 with `error.code: "needs_confirmation"`
+ * and the `scan` (verdict + findings) for the UI to show; the client
+ * re-sends with `confirm: true` once the user agrees. A `dangerous`
+ * verdict answers 403 `dangerous_blocked`; only `acknowledgeRisk: true`
+ * installs it. Nothing is copied before the gate passes.
  */
 export function createInstallSkillHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -129,18 +141,35 @@ export function createInstallSkillHandler(): HttpHandler {
     }
     const targetRoot = resolveSkillsTarget(ctx, body.source ?? "global");
     try {
-      const result = await installSkill({
+      const result = await installLocalSkill({
         sourceDir: body.sourcePath,
         targetRoot,
-        ...(body.force ? { force: true } : {}),
+        ...(body.force === true ? { force: true } : {}),
+        confirmCaution: body.confirm === true,
+        acknowledgeRisk: body.acknowledgeRisk === true,
       });
       await ctx.runtime.refreshSkills();
       sendJson(res, 200, {
         installed: true,
         manifest: result.manifest,
         installedAt: result.installedAt,
+        scan: result.scan,
       });
     } catch (err) {
+      if (err instanceof SkillHubInstallError && err.scan) {
+        const needsConfirm = err.code === "needs_confirmation";
+        sendJson(res, needsConfirm ? 428 : 403, {
+          ...openaiError(
+            err.message,
+            "invalid_request_error",
+            needsConfirm ? "confirm" : "acknowledgeRisk",
+            err.code,
+          ),
+          installed: false,
+          scan: err.scan,
+        });
+        return;
+      }
       if (err instanceof SkillInstallError) {
         sendError(
           res,

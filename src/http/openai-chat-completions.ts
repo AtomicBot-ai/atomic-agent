@@ -9,14 +9,17 @@ import {
   type ProviderWaitCause,
   type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
-import { LOCAL_ENGINE_DOWN_CODE, LOCAL_OUT_OF_MEMORY_CODE, classifyFailure, isLocalEngineDown, isLocalOutOfMemory } from "../llm/reliability/index.js";
+import { classifyFailure } from "../llm/reliability/index.js";
+import { currentLlamaUrl, failureReasonFields } from "./failure-reason-frame.js";
 import { readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
   createEmptySessionState,
   type SessionState,
 } from "../session/index.js";
+import { getConfig } from "../config/index.js";
 
+import { checkWorkingDir } from "./session-working-dir.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -32,6 +35,9 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { createTurnPhaseTracker } from "./stream-turn-phase.js";
+import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
+import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
@@ -65,6 +71,8 @@ interface ChatCompletionRequest {
   stream?: boolean;
   stream_options?: { include_usage?: boolean };
   session_id?: string;
+  /** ATO-731: the folder a NEW session works in (absolute); an existing one keeps its own. */
+  working_dir?: string;
 }
 
 interface ParsedRequest {
@@ -76,6 +84,8 @@ interface ParsedRequest {
   userMessage: string;
   firstUserMessage: string;
   sessionIdOverride: string | null;
+  /** ATO-731: `working_dir`, checked; null for the server's own folder. */
+  workingDir: string | null;
   extensionsEnabled: boolean;
 }
 
@@ -259,7 +269,28 @@ async function handleStream(
     });
   }
 
-  const hook = buildStreamEventHook(sse, env);
+  const frames = buildStreamEventHook(sse, env);
+  // ATO-1027: what the turn is doing while no text shows, and a word
+  // when a local model is slow to start. Extensions-only.
+  const phases = env.request.extensionsEnabled
+    ? createTurnPhaseTracker({
+        sessionId: env.session.id,
+        write: (name, payload) => {
+          if (!sse.closed) sse.writeEvent(name, payload);
+        },
+        slowFirstTokenHint: () => buildSlowFirstTokenHint(getConfig()),
+      })
+    : null;
+  const hook = phases
+    ? (event: AgentLoopEvent): void => {
+        phases.onEvent(event);
+        frames(event);
+      }
+    : frames;
+  phases?.start();
+  // Only this stream's turn asks the model server for prompt progress;
+  // the TUI, channels and workers stream as before.
+  const releaseProgress = phases ? claimTurnProgress(env.session.id) : null;
 
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
@@ -278,6 +309,8 @@ async function handleStream(
     // catch only fires for unclassified exceptions.
     error = err instanceof Error ? err : new Error(String(err));
   } finally {
+    phases?.dispose();
+    releaseProgress?.();
     ctx.completionRegistry.unregister(env.completionId);
   }
 
@@ -394,6 +427,8 @@ async function handleStream(
 export function buildStreamEventHook(
   sse: SseWriter,
   env: TurnEnv,
+  /** `localModels.url`, for the local-server failure codes. Test seam. */
+  llamaUrl: () => string | null = currentLlamaUrl,
 ): (event: AgentLoopEvent) => void {
   /* Reply text already streamed as deltas: `turnStreamed` for the whole
      turn, `stepStreamed` since the current step began. A terminal
@@ -547,6 +582,9 @@ export function buildStreamEventHook(
         const failedBefore = describeFailedLinks(inner.error);
         emitStreamError(sse, env, inner.error.message, inner.category, {
           ...billingCauseFrame(inner.error),
+          /* ATO-708 / ATO-737: the held first frame needs the local-server
+             code too, or the host never offers Reconnect. */
+          ...failureReasonFields(inner.error, inner.error, llamaUrl()),
           ...(failedBefore.length > 0
             ? { fallback_failures: failedLinksFrame(failedBefore) }
             : {}),
@@ -725,7 +763,8 @@ export function buildStreamEventHook(
           ...billingCauseFrame(primary),
           // The chain fell over to the managed local link and its model
           // process is gone: the host still needs the code to offer a start.
-          ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
+          // A local server that answered 404/405/400 gets its own code.
+          ...failureReasonFields(primary, event.error, llamaUrl()),
           fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
         });
         return;
@@ -735,11 +774,11 @@ export function buildStreamEventHook(
         ...ended,
         /* ATO-772: the managed local model's process is gone, so the turn
            ended without the outage wait. `code` lets a host offer to start
-           it (the desktop's "Start model") instead of reading the words. */
-        ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
-        /* ATO-334: out of memory and not brought back; a host can offer a
-           smaller model or restart with a smaller window. */
-        ...(isLocalOutOfMemory(event.error) ? { code: LOCAL_OUT_OF_MEMORY_CODE } : {}),
+           it (the desktop's "Start model") instead of reading the words.
+           ATO-708 / ATO-873 / ATO-737: a local server that answered
+           404/405 or a typed 400 gets a code and plain `advice`, so a host
+           can offer "Reconnect" (POST /api/local-model/recheck). */
+        ...failureReasonFields(event.error, event.error, llamaUrl()),
         ...(failedBefore.length > 0
           ? { fallback_failures: failedLinksFrame(failedBefore) }
           : {}),
@@ -997,6 +1036,15 @@ async function parseRequestBody(
     sendError(res, 400, openaiError("Invalid session ID"));
     return null;
   }
+  let workingDir: string | null = null;
+  if (body.working_dir !== undefined && body.working_dir !== null) {
+    const check = checkWorkingDir(body.working_dir);
+    if (!check.ok) {
+      sendError(res, 400, openaiError(check.error, "invalid_request_error", "working_dir"));
+      return null;
+    }
+    workingDir = check.dir;
+  }
   return {
     model:
       typeof body.model === "string" && body.model.length > 0
@@ -1008,6 +1056,7 @@ async function parseRequestBody(
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
+    workingDir,
     extensionsEnabled: isExtensionsHeaderTruthy(
       getHeader(req, EXTENSIONS_HEADER),
     ),
@@ -1048,7 +1097,7 @@ function resolveSession(
   if (existing) return existing;
   const state = createEmptySessionState({
     id: desiredId,
-    workingDir: ctx.runtime.capabilities.workingDir,
+    workingDir: parsed.workingDir ?? ctx.runtime.capabilities.workingDir,
     metadata: { source: "openai-chat", model: parsed.model },
   });
   ctx.runtime.sessionStore.save(state);

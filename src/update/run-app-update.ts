@@ -1,6 +1,11 @@
 import { spawn } from "node:child_process";
 import { dirname, posix as pathPosix, win32 as pathWin32 } from "node:path";
 
+import {
+  detectInstallSource,
+  packagedUpdateRefusal,
+} from "./install-source.js";
+
 export interface RunAppUpdateOptions {
   repo?: string;
   /** Optional tag to pin (e.g. `v0.1.40`); omit for latest. */
@@ -173,6 +178,12 @@ export async function runAppUpdate(
       "self-update is only supported for the installed binary; " +
         "update via your package manager or git checkout in development",
     );
+  }
+  // A deb, rpm or AUR install passes `canSelfUpdate` (the binary is named
+  // atomic-agent) but belongs to the package manager: see install-source.ts.
+  const packaged = detectInstallSource();
+  if (packaged) {
+    throw new AppUpdateError(packagedUpdateRefusal(packaged));
   }
 
   const repo = opts?.repo ?? DEFAULT_REPO;
