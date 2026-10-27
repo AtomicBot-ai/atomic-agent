@@ -62,11 +62,13 @@ export function isNativeToolsEmptyCompletionHandledByParser(
  *
  * A grammar link with a thinking profile (`qwen-think`, `gemma4-think`,
  * thinking not off) re-opens the think block in the repair, and the
- * grammar lets it run up to the reasoning budget before the call. Up to
- * ~500 of the 1024 tokens went to thinking, and a long reply or tool call
- * was cut. The cap grows by the budget the grammar really enforces
+ * grammar lets it run up to the reasoning budget before the call.
+ * Thinking took its share of the 1024 tokens first, and a long reply or
+ * tool call was cut. The cap grows by the budget the grammar really enforces
  * (`effectiveReasoningBudgetTokens`); an unbounded budget (`0`) has no
- * such bound, so the step's cap applies, as on `native_tools`. A model
+ * such bound, so the step's cap applies, as on `native_tools`. A bounded
+ * repair never exceeds the step's cap either (now that a budget can be
+ * up to 32,768 tokens, ATO-607). A model
  * without thinking keeps the 1024 anti-loop guard.
  */
 export function repairReplyCap(
@@ -77,7 +79,8 @@ export function repairReplyCap(
   if (transport === "native_tools") return stepCap;
   if (!reasoning.profile || reasoning.profile.reasoningStyle === "none" || reasoning.thinkingOff) return REPAIR_MAX_TOKENS;
   const budget = effectiveReasoningBudgetTokens(reasoning.budgetTokens ?? DEFAULT_REASONING_BUDGET_TOKENS);
-  return budget === 0 ? Math.max(stepCap, REPAIR_MAX_TOKENS) : REPAIR_MAX_TOKENS + budget;
+  const ceiling = Math.max(stepCap, REPAIR_MAX_TOKENS);
+  return budget === 0 ? ceiling : Math.min(REPAIR_MAX_TOKENS + budget, ceiling);
 }
 
 

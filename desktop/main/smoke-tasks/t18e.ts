@@ -1079,7 +1079,7 @@ async function chipFollowsProjector(js: Js, check: Check): Promise<void> {
   // Gone once it lands: the setup slot offers setup again; the managed route draws its own controls.
   const back = (c: Chip | null, slot: (typeof slots)[number]) =>
     !!c && !c.pull && c.projector === null && c.route === route[slot].route
-      && (slot === "model" || (c.text === "Set up a model" && c.act === "onboarding:choose"));
+      && (slot === "model" || (c.text === "Set up a model" && c.act === "settings:llm:local"));
   check(
     "T18 D7: once the projector lands the chip goes — the setup slot offers Set up a model again — and the model starts, once",
     slots.every((s) => back(at(s, "landed"), s) && back(at(s, "resumeLanded"), s)
@@ -1200,7 +1200,7 @@ async function chipFollowsOtherPulls(js: Js, check: Check): Promise<void> {
   const downloading = (c: Chip | undefined, slot: "setup" | "model", name: string) =>
     on(c, slot) && !!c && c.slot === slot && c.pull && c.tag === "SPAN" && !c.act && c.text === `Downloading ${name}` && c.opened === 0;
   const offersSetup = (c: Chip | undefined) =>
-    on(c, "setup") && !!c && c.slot === "setup" && !c.pull && c.text === "Set up a model" && c.act === "onboarding:choose";
+    on(c, "setup") && !!c && c.slot === "setup" && !c.pull && c.text === "Set up a model" && c.act === "settings:llm:local";
   const shows = (c: Chip | undefined, text: string) => on(c, "model") && !!c && c.slot === "model" && !c.pull && c.text === text;
   check(
     "T18 D8: on the setup slot the composer picker's download reads Downloading <the model> — not Set up a model, whose setup would refuse its Download — a click on it opens nothing, and Set up a model is back once it ends",

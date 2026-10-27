@@ -631,15 +631,16 @@ Honestly degraded, and labelled as such in the UI:
   the two surfaces cannot disagree. `atag models list` prints no description
   and no RAM figures and has no `--json`, so `desktop/main/model-catalog.ts`
   vendors `description` / `minRamGb` / `recommendedRamGb` / `fileSizeGb` /
-  `supportsVision` / `tag` / `uncensored` from `src/local-llm/models-catalog.ts`
+  `supportsVision` / `recommendRank` / `tag` / `uncensored` from `src/local-llm/models-catalog.ts`
   and `modelsList()` joins them on by id. `app:hostRam` (`os.totalmem()`) is
   the other input. A model whose `recommendedRamGb` the machine meets runs
   comfortably; between `minRamGb` and `recommendedRamGb` it is a tight fit and
   says so; under `minRamGb` it is shown as out of reach with the RAM it wants
   and is NOT offered as a choice in the wizard — no cursor position, no tab
-  stop, nothing to click. The best fit — the largest model that runs
-  comfortably, never a reduced-refusal one — carries `★ best fit for this
-  machine`. A reduced-refusal model stays in the list, last in its fit band,
+  stop, nothing to click. The best fit — the best-ranked model in the
+  catalogue's `recommendRank` order (the agent's `recommendedModelFor`,
+  ATO-817) that runs comfortably, never a reduced-refusal one — carries
+  `★ best fit for this machine`. A reduced-refusal model stays in the list, last in its fit band,
   with a "Fewer refusals" badge whose tooltip says in plain words that it
   gives fewer safety refusals (ATO-449). A model in the catalogue's 4B class (`recommendedRamGb ≤ 8`) says
   plainly that it is small and will get more wrong, which on a weak machine is
@@ -1259,6 +1260,13 @@ A scenario that fails because the model did not do what was asked exits with
 is not blamed for a model's bad day, and a model's bad day never hides an app
 defect.
 
+A machine with no seed `.env` (or one without the provider key) cannot drive
+any scenario, so each one is reported `– SKIP` with the reason and nothing is
+launched. `run-all.mjs` then prints `0 passed, 0 app failures, 0 model
+shortfalls, N skipped (no seed .env: set ATAG_TEST_ENV ...)` and exits **3**:
+not green, because nothing ran, and not 1, because the app did not fail
+(ATO-926).
+
 A failure has a third possible author: **the machine**. Every failure prints
 the load average beside it, and says so plainly when the box is saturated.
 This is not hypothetical — 03, 04 and 05 all timed out at 90 s waiting for the
@@ -1578,7 +1586,19 @@ without a click.
   `app_opened.in_applications` counts how many launches are outside.
 - A failed automatic check (offline, no feed) shows nothing. Settings ›
   General › Check now shows the result in plain words.
-- The person's choices are in Electron userData `updates.json` (auto-check,
+- Linux (ATO-573): an AppImage updates itself like macOS and Windows (the
+  feed's `stable-linux.yml` / `stable-linux-arm64.yml`, uploaded by the
+  `linux-*` package jobs). A .deb does not: Settings says it is updated by the
+  package manager or from the download page (updating it from the app would
+  need a root password prompt).
+- Beta (ATO-575): Settings › General › "Get beta versions" reads the feed's
+  `beta-mac.yml` / `beta.yml` / `beta-linux*.yml` instead of the build's own
+  channel. Turning it off never downgrades: the beta stays until a stable
+  version is newer. A feed without beta files falls back to the build's own
+  channel, so the switch never hides a stable release; when betas are
+  published, each stable release needs a `beta*` copy too, or beta readers
+  wait for the next beta.
+- The person's choices are in Electron userData `updates.json` (auto-check, beta,
   skipped version, last Not now, and the install in flight, which the new
   version reads once to send `update_installed`). Never in the agent's
   config.json.

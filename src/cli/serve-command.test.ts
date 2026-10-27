@@ -101,3 +101,26 @@ describe("what serve hands the runtime", () => {
     expect(options.brokenPipe).toBe("mute");
   });
 });
+
+// ATO-760: an open network port with no key hands the agent, its shell
+// and its config file to anyone on the network. Serve stops at the parse,
+// before a runtime (and so a listening socket) exists.
+describe("serve on a network host without a key", () => {
+  it("exits 1 with how to set a key, and never boots a runtime", async () => {
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "");
+    boot.options = null;
+    const stderr = vi
+      .spyOn(process.stderr, "write")
+      .mockImplementation(() => true);
+    try {
+      expect(await serveCommand(["--host", "0.0.0.0"])).toBe(1);
+      const written = stderr.mock.calls.map((c) => String(c[0])).join("");
+      expect(written).toContain("serve: --host 0.0.0.0");
+      expect(written).toContain("ATOMIC_AGENT_API_KEY");
+    } finally {
+      stderr.mockRestore();
+      vi.unstubAllEnvs();
+    }
+    expect(boot.options).toBeNull();
+  });
+});

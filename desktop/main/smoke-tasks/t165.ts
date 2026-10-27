@@ -108,10 +108,12 @@ export async function checks165(js: Js, check: Check): Promise<void> {
       const m = opened.menu;
       check(
         "T165a: the \"…\" opens the row menu — Pin/Unpin, Mark as read/unread, Rename (ATO-455), then Delete… under a rule — without opening the chat",
-        !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id && m.verbs.length === 4
+        /* ATO-1034 (folders): a stored chat also has "Move to folder…" (fpick) before Delete…. */
+        !!m && m.role === "menu" && m.overlay === "sesmenu" && m.id === a.id
+          && (m.verbs.length === 4 || (m.verbs.length === 5 && m.verbs[3] === "fpick" && m.labels[3] === "Move to folder…"))
           && ["pin", "unpin"].includes(m.verbs[0]) && ["read", "unread"].includes(m.verbs[1])
-          && m.verbs[2] === "rename" && m.labels[2] === "Rename" && m.verbs[3] === "delask"
-          && m.labels[3] === "Delete…" && m.sepBeforeDelete && show(m.danger) === show(["delask"])
+          && m.verbs[2] === "rename" && m.labels[2] === "Rename" && m.verbs[m.verbs.length - 1] === "delask"
+          && m.labels[m.labels.length - 1] === "Delete…" && m.sepBeforeDelete && show(m.danger) === show(["delask"])
           && opened.sessionId === "same" && opened.expanded === "true",
         show(opened),
       );

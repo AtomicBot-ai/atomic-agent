@@ -99,13 +99,13 @@ test("a failed check is put in plain words", () => {
 });
 
 test("updates.json: automatic checks default on; junk is dropped", () => {
-  assert.deepEqual(U.coerceUpdatePrefs(null), { autoCheck: true, skippedVersion: null, lastDismissed: null, pendingInstall: null });
+  assert.deepEqual(U.coerceUpdatePrefs(null), { autoCheck: true, skippedVersion: null, lastDismissed: null, pendingInstall: null, beta: false });
   assert.deepEqual(
     U.coerceUpdatePrefs({ autoCheck: false, skippedVersion: "0.7.0", lastDismissed: { version: "0.7.1", at: 5 }, pendingInstall: { from: "0.6.0", to: "0.7.1", at: 6 } }),
-    { autoCheck: false, skippedVersion: "0.7.0", lastDismissed: { version: "0.7.1", at: 5 }, pendingInstall: { from: "0.6.0", to: "0.7.1", at: 6 } },
+    { autoCheck: false, skippedVersion: "0.7.0", lastDismissed: { version: "0.7.1", at: 5 }, pendingInstall: { from: "0.6.0", to: "0.7.1", at: 6 }, beta: false },
   );
   const junk = U.coerceUpdatePrefs({ autoCheck: "no", skippedVersion: "../../etc", lastDismissed: { version: "x" }, pendingInstall: { to: "1.0.0" } });
-  assert.deepEqual(junk, { autoCheck: true, skippedVersion: null, lastDismissed: null, pendingInstall: null });
+  assert.deepEqual(junk, { autoCheck: true, skippedVersion: null, lastDismissed: null, pendingInstall: null, beta: false });
 });
 
 test("--fake-update takes a version and nothing else", () => {
