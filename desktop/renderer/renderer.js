@@ -5115,6 +5115,15 @@ function anchorStyle(sel, width) {
 }
 
 /**
+ * ATO-1211 — whether `limit` is a real ceiling rather than a stand-in for
+ * "no limit". A route with no bound (the cloud prompt builder) reports it as
+ * Number.MAX_SAFE_INTEGER, and that never belongs on screen as a number.
+ * Same rule as the terminal's isKnownLimit (src/tui/context/context-chip.tsx).
+ */
+function ctxKnownLimit(limit) {
+  return typeof limit === 'number' && limit > 0 && Number.isFinite(limit) && limit < 1e12;
+}
+/**
  * Item 7C — which limit is trimming the transcript, when one is.
  *
  * Nothing here is inferred: `conversationBoundBy` is the agent's own
@@ -5130,7 +5139,11 @@ function ctxBoundLine() {
   if (!u || !u.conversationBoundBy) return '';
   let text;
   if (u.conversationBoundBy === 'pairs') {
-    text = 'older turns are being dropped — ' + (u.conversationPairs || 0) + ' of ' + (u.conversationPairsCap || 0) + ' turns kept';
+    // ATO-1211: the cloud route has no turn limit and reports it as
+    // Number.MAX_SAFE_INTEGER; "12 of 9007199254740991" reads as a fault.
+    const kept = u.conversationPairs || 0;
+    text = 'older turns are being dropped — ' + kept
+      + (ctxKnownLimit(u.conversationPairsCap) ? ' of ' + u.conversationPairsCap + ' turns kept' : ' turns kept');
   } else if (u.conversationCapAuto === false && u.conversationCap === u.conversationCapConfigured) {
     // Calm (S7): no config key name in the popover (Global rules: copy).
     text = 'older turns are being dropped — the ' + fmtTokens(u.conversationCap) + '-token transcript cap is the limit';
