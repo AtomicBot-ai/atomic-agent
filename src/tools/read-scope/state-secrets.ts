@@ -37,7 +37,8 @@ import { READ_TOOL_TARGETS, URL_LIKE } from "./read-scope-targets.js";
  * base64, a script file that opens it), or a recursive command run
  * inside the state directory without naming a path. Those are what
  * the remaining layers are for: the environment filter, and the output
- * masking of ATO-1077.
+ * masking of ATO-1077 (`src/tools/tool-output-secrets.ts`), which masks
+ * the keys in whatever an approved read or a missed command prints.
  */
 
 export interface StateSecrets {
