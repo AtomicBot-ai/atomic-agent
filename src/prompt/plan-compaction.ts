@@ -33,6 +33,27 @@ export interface CompactionPlan {
 export const MIN_USEFUL_SUMMARY_TOKENS = 128;
 
 /**
+ * Summary reserve a plan gets whenever half its target can hold it, even
+ * where 20% of the history allowance is less. On a mid-size allowance
+ * (roughly 1k to 2.5k tokens) the 20% share alone gave a summary too
+ * short to carry the goal, constraints and next step, so the model's
+ * reply came back oversized or truncated. The configured maximum still
+ * wins when it is lower.
+ */
+export const MIN_SUMMARY_RESERVE_TOKENS = 512;
+
+/**
+ * The summary reserve a history allowance `cap` gives for a kept-tail
+ * target `target`: 20% of the allowance and half the target, raised to
+ * {@link MIN_SUMMARY_RESERVE_TOKENS} when half the target holds that.
+ */
+export function summaryReserve(cap: number, target: number): number {
+  const half = Math.floor(target * 0.5);
+  const share = Math.min(Math.floor(cap * 0.2), half);
+  return half >= MIN_SUMMARY_RESERVE_TOKENS ? Math.max(MIN_SUMMARY_RESERVE_TOKENS, share) : share;
+}
+
+/**
  * A manual request is skipped when the summary reserve is bound by the small
  * current history (not by the window or the configured maximum) and the saved
  * checkpoint summary already takes this share of it. A repeated `/compact`
@@ -44,7 +65,10 @@ export const ALREADY_COMPACT_SUMMARY_SHARE = 0.75;
 
 /**
  * Why no plan was made when compaction was due or requested:
- * `window_too_small` (no useful summary fits the model's history allowance),
+ * `window_too_small` (no useful summary fits the model's history allowance:
+ * a manual request stops before any cut is tried, an automatic or overflow
+ * one only after no cut fitted, so its extractive fallback still runs where
+ * a cut fits),
  * `already_compact` (a repeated manual request with nothing worth
  * summarizing again), `no_reduction` (no safe cut keeps a fresh tail within
  * the target).
@@ -66,14 +90,17 @@ export function decideCompaction(state: SessionState, prompt: BuiltPrompt, confi
   const projection = projectSessionConversation(state);
   const targetRatio = model.prefixReuse === "none" ? Math.min(config.targetRatio, NO_PREFIX_REUSE_TARGET_RATIO) : config.targetRatio;
   const targetTokens = Math.floor(targetRatio * (requested === "manual" ? Math.min(budget.cap, budget.activeTokens) : budget.cap));
-  const summaryMaxTokens = Math.min(config.summaryMaxTokens, Math.floor(budget.cap * 0.2), Math.floor(targetTokens * 0.5));
-  // Manual only: automatic and overflow compaction keep their extractive
-  // fallback, which needs no model call and can still free room on a small window.
+  const summaryMaxTokens = Math.min(config.summaryMaxTokens, summaryReserve(budget.cap, targetTokens));
   // The window's own room, independent of the configured maximum and of how much history there is now.
-  if (requested === "manual" && Math.min(Math.floor(budget.cap * 0.2), Math.floor(targetRatio * budget.cap * 0.5)) < MIN_USEFUL_SUMMARY_TOKENS) return { plan: null, skip: "window_too_small" };
+  const windowTooSmall = summaryReserve(budget.cap, Math.floor(targetRatio * budget.cap)) < MIN_USEFUL_SUMMARY_TOKENS;
+  // Manual stops here: automatic and overflow compaction keep their extractive
+  // fallback, which needs no model call and can still free room on a small window,
+  // and say the window is too small only when no cut fits either.
+  if (requested === "manual" && windowTooSmall) return { plan: null, skip: "window_too_small" };
+  const nothingFits: CompactionDecision = { plan: null, skip: windowTooSmall ? "window_too_small" : "no_reduction" };
   if (requested === "manual" && projection.checkpoint && Math.floor(targetTokens * 0.5) < Math.min(config.summaryMaxTokens, Math.floor(budget.cap * 0.2)) &&
       estimateTokens(projection.checkpoint.summary) >= summaryMaxTokens * ALREADY_COMPACT_SUMMARY_SHARE) return { plan: null, skip: "already_compact" };
-  if (summaryMaxTokens < 64) return { plan: null, skip: "no_reduction" };
+  if (summaryMaxTokens < 64) return nothingFits;
   // Finished-turn cuts first, so a request stays with its answer; then cuts inside a turn.
   const cuts = preferredCompactionCuts(state.turns);
   if (prompt.cloudContext) {
@@ -85,7 +112,7 @@ export function decideCompaction(state: SessionState, prompt: BuiltPrompt, confi
       if (tokens + pins + summaryMaxTokens + 12 > targetTokens) continue;
       return { plan: { reason, from: projection.offset, through, summaryMaxTokens, targetTokens, tokensBefore: budget.activeTokens } };
     }
-    return { plan: null, skip: "no_reduction" };
+    return nothingFits;
   }
   const boundaries = macroTurnBoundaries(state.turns, state.macroTurnStarts);
   const pairsTarget = Math.max(1, Math.floor(prompt.conversationPairsCap * targetRatio));
@@ -109,5 +136,5 @@ export function decideCompaction(state: SessionState, prompt: BuiltPrompt, confi
     if (tailTokens + overhead + summaryMaxTokens > targetTokens) continue;
     return { plan: { reason, from: projection.offset, through, summaryMaxTokens, targetTokens, tokensBefore: budget.activeTokens } };
   }
-  return { plan: null, skip: "no_reduction" };
+  return nothingFits;
 }

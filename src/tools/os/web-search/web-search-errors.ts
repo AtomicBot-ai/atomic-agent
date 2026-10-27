@@ -73,6 +73,17 @@ export interface WebSearchKeyRequired {
 export const EXA_GET_KEY_URL = "https://dashboard.exa.ai/api-keys";
 
 /**
+ * Where the user of this process adds an Exa key, which decides the advice
+ * in the search error (ATO-345):
+ * - `env-file` (the default): the desktop key card or Settings, or the
+ *   agent's `.env` plus a restart. What a desktop-spawned or headless agent
+ *   says, since it cannot tell which of the two its user is looking at.
+ * - `integrations-hub`: the terminal UI, whose `/integrations` screen saves
+ *   the key into this process, so the next search uses it.
+ */
+export type WebSearchKeyHelp = "env-file" | "integrations-hub";
+
+/**
  * Every provider in the chain failed. The message is the whole report the
  * model and the user read: one plain line per provider and one action.
  * `failures` repeats the per-provider lines for `details`.

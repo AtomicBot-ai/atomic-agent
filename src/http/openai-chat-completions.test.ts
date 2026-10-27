@@ -365,6 +365,10 @@ describe("POST /v1/chat/completions (streaming)", () => {
       expect(ended?.[1]).toBe(started?.[1]);
       expect(text).toMatch(/"content":"after one tool"/);
       expect(text).toMatch(/event: usage\n/);
+      // ATO-1027: what the turn is doing, as it changes.
+      expect(text).toMatch(/event: turn_phase\n/);
+      expect(text).toMatch(/"object":"atomic\.turn_phase"[^\n]*"phase":"starting"/);
+      expect(text).toMatch(/"phase":"running_tool"[^\n]*"tool":"browser\.read_aria"/);
       expect(text).toMatch(/data: \[DONE\]/);
     } finally {
       await harness.cleanup();
@@ -389,6 +393,7 @@ describe("POST /v1/chat/completions (streaming)", () => {
       expect(text).not.toMatch(/chat\.completion\.tool_result/);
       expect(text).not.toMatch(/event: usage\n/);
       expect(text).not.toMatch(/chat\.completion\.session/);
+      expect(text).not.toMatch(/event: turn_phase\n/);
       expect(text).toMatch(/"content":"after one tool"/);
       expect(text).toMatch(/data: \[DONE\]/);
       expect(response.headers.get(SESSION_ID_HEADER.toLowerCase())).toMatch(

@@ -107,8 +107,11 @@ export interface AgentLoopDependencies {
    * tokens. Bootstrap records it per provider/model so the next prompt
    * is packed to fit (`contextWindow` above then returns it). Absent in
    * test / legacy wiring, where a window truncation ends the turn.
+   * `providerId` names the link that revealed it when the turn was not
+   * served by the active provider (a pinned Fusion worker, a sticky
+   * fallback), so its window is not filed under the active model.
    */
-  onContextWindowObserved?: (contextWindow: number) => void;
+  onContextWindowObserved?: (contextWindow: number, providerId?: string) => void;
   /**
    * A completion just succeeded with prompt + reply tokens above the
    * window the runtime believes in. Whatever taught it that window was
@@ -599,11 +602,14 @@ export type AgentLoopEvent =
   | {
       /**
        * The provider refused the request for step `stepIndex` as too
-       * large for its context window; the window was learned
-       * (`source: "provider"` from the body's own number, `"estimate"`
-       * from the prompt estimate) and the same step is being retried
-       * with the conversation packed to it. Fired once per step; a
-       * second refusal fails the turn with the provider's sentence.
+       * large for its context window, and the same step is being
+       * retried with the conversation fitted to `contextWindow`
+       * (`source: "provider"`: the number the server named;
+       * `"estimate"`: most of the refused prompt's estimate). Either the
+       * native-tools repack (which also remembers the window) or the
+       * turn's one overflow compaction (which remembers only a window
+       * the server named) fired it. Once per step; a second refusal
+       * fails the turn.
        */
       type: "prompt_repacked";
       stepIndex: number;
