@@ -1,6 +1,6 @@
 import { getConfig } from "../config/index.js";
 import { apiKeyForUrl } from "../local-llm/server/managed-api-key.js";
-import { llamaDefaultPortNote } from "./llama-default-port-note.js";
+import { llamaDefaultPortNote, llamaLegacyPortNote } from "./llama-default-port-note.js";
 import { llamaEndpointUrl } from "./llama-endpoint-url.js";
 import { verifyGuardedEndpoint } from "./llama-server-auth-probe.js";
 
@@ -310,15 +310,20 @@ export function llamaWrongServerStatus(message: string): 404 | 405 | null {
  * wrong advice: either the address belongs to a different server, or a
  * llama-server is up with no model behind the route. The fix is the
  * address (or loading the model), never starting another server.
+ * `models check` asks the address what it is (ATO-873); an address on
+ * 8080, llama.cpp's old default, also gets the 9931 line (ATO-708).
  */
 export function formatLlamaWrongServerHint(
   url: string,
   status: 404 | 405,
 ): string {
+  const portNote = llamaLegacyPortNote(url);
   return [
     `${url} answered ${status}: this is not llama-server, or no model is loaded there`,
+    "  recheck it:          atomic-agent models check",
     "  check the address:   atomic-agent config set localModels.url <url>",
     "  or in the TUI:       LLM tab › External llama.cpp",
+    ...(portNote ? [`  ${portNote}`] : []),
   ].join("\n");
 }
 

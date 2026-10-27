@@ -1,5 +1,6 @@
 import {
   appendFileSync,
+  chmodSync,
   closeSync,
   fsyncSync,
   mkdirSync,
@@ -101,6 +102,31 @@ interface SessionWriterState {
   trimFloor: number;
 }
 
+/**
+ * Traces hold prompts, completions and tool output verbatim: file
+ * contents, command output, whatever a key or token passed through. So
+ * they get the modes `.env` and `config.json` have, owner only, instead
+ * of the umask's usual 0644/0755 that let any other account on the
+ * machine read them (ATO-760). Windows has no POSIX modes; there the
+ * mode bits are ignored and the folder's ACL applies as before.
+ */
+const TRACE_FILE_MODE = 0o600;
+const TRACE_DIR_MODE = 0o700;
+
+/**
+ * Narrow an existing path to `mode`. A directory or file an older build
+ * created with the umask's mode is tightened the first time this build
+ * touches it; `mode` on create does not reach it. Best effort: a trace
+ * sink never fails over permissions.
+ */
+function tightenMode(path: string, mode: number): void {
+  try {
+    chmodSync(path, mode);
+  } catch {
+    // Missing file (fresh session), Windows, or a path we do not own.
+  }
+}
+
 /** Monotonic suffix so two trims can never pick the same temp name. */
 let tempCounter = 0;
 
@@ -121,7 +147,8 @@ export function createNdjsonTraceSink(
   const ensureDir = (): boolean => {
     if (dirInitialized) return true;
     try {
-      mkdirSync(options.dir, { recursive: true });
+      mkdirSync(options.dir, { recursive: true, mode: TRACE_DIR_MODE });
+      tightenMode(options.dir, TRACE_DIR_MODE);
       dirInitialized = true;
       return true;
     } catch (err) {
@@ -141,6 +168,7 @@ export function createNdjsonTraceSink(
     try {
       const stat = statSync(path);
       bytesWritten = stat.size;
+      tightenMode(path, TRACE_FILE_MODE);
     } catch {
       // File does not exist yet — fresh session trace.
     }
@@ -204,7 +232,7 @@ export function createNdjsonTraceSink(
     }
 
     try {
-      appendFileSync(state.path, line, "utf8");
+      appendFileSync(state.path, line, { encoding: "utf8", mode: TRACE_FILE_MODE });
       state.bytesWritten += size;
     } catch (err) {
       options.logger?.warn("trace: failed to append event", {
@@ -343,7 +371,8 @@ function trimHeadInPlace(
     // leave the trace pointing at an unwritten extent, i.e. lose the
     // whole file rather than half of it. One flush per `cap/2` bytes
     // of trace is nothing next to that.
-    const fd = openSync(temp, "w");
+    // Created owner-only: the rename keeps the temp's mode on the trace.
+    const fd = openSync(temp, "w", TRACE_FILE_MODE);
     try {
       writeSync(fd, next);
       fsyncSync(fd);

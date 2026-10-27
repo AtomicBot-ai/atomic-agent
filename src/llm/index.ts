@@ -51,11 +51,9 @@ export {
 } from "./grammar/index.js";
 export {
   DEFAULT_REASONING_BUDGET_TOKENS,
-  MAX_REASONING_BUDGET_TOKENS,
   REASONING_CHARS_PER_TOKEN,
   effectiveReasoningBudgetTokens,
   estimateReasoningTokens,
-  logReasoningBudgetCap,
   reasoningBudgetChars,
 } from "./reasoning-budget.js";
 export { thinkingDisabledOnBuiltPrompt } from "./server-template-policy.js";
