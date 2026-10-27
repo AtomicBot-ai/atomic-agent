@@ -2546,6 +2546,10 @@ export class LocalModelsOrchestrator {
    */
   restartWithContextSize(contextSize: number): Promise<boolean> {
     if (this.restartInFlight) return this.restartInFlight;
+    // The window grown between turns (ATO-848) is what ran out of
+    // memory: a later restart or growth must not bring it back.
+    this.grownContext = null;
+    this.growthAttempt = null;
     const inFlight = this.operations.run(async () => {
       const stopped = await this.stopChatDaemonOnly({
         stoppedLine: `local-llm: the model ran out of memory — restarting it with a context window of ${contextSize} tokens…`,
