@@ -22,7 +22,7 @@ import {
 } from "./archive/index.js";
 import { buildOsHttpRequestTool } from "./web/http-request.js";
 import { buildOsWebFetchTool } from "./web/web-fetch.js";
-import { buildOsWebSearchTool } from "./web-search/index.js";
+import { buildOsWebSearchTool, type WebSearchKeyHelp } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
 import { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
@@ -76,6 +76,7 @@ export {
 export { buildOsHttpRequestTool } from "./web/http-request.js";
 export { buildOsWebFetchTool } from "./web/web-fetch.js";
 export { buildOsWebSearchTool } from "./web-search/index.js";
+export type { WebSearchKeyHelp } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
@@ -186,6 +187,12 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * the tool keeps a private one whose jobs die only at the ceiling.
    */
   shellJobs?: ShellJobRegistry;
+  /**
+   * Where the user adds an Exa key, for the advice in an `os.web.search`
+   * error (ATO-345). The terminal UI passes `integrations-hub`; omitted
+   * keeps the desktop / `.env` advice.
+   */
+  webSearchKeyHelp?: WebSearchKeyHelp;
 }
 
 export function registerOsTools(
@@ -259,6 +266,9 @@ export function registerOsTools(
     buildOsWebSearchTool({
       config: options.config,
       stateDir: options.stateDir,
+      ...(options.webSearchKeyHelp === undefined
+        ? {}
+        : { keyHelp: options.webSearchKeyHelp }),
     }),
   );
   registry.register(buildOsWebFetchTool({ config: options.config }));

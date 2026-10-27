@@ -84,6 +84,11 @@ function grammarRequestFields(params: LlmStreamParams) {
     // own template (F31). Built by the step executor only when the
     // primary is a grammar link, so it always matches `params.prompt`.
     ...(params.chat ? { chat: params.chat } : {}),
+    // How far the prompt got before the first token (ATO-1027); only a
+    // llama-server stream reports it.
+    ...(params.onPromptProgress
+      ? { onPromptProgress: params.onPromptProgress }
+      : {}),
   };
 }
 

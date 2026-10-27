@@ -133,6 +133,13 @@ export interface GetSessionPayload {
 export interface SkillInstallPayload {
   sourcePath: string;
   force?: boolean;
+  /**
+   * The folder is security-scanned first. A `caution` verdict fails the
+   * request (message names the findings) unless `confirm` is true; a
+   * `dangerous` one fails unless `acknowledgeRisk` is true.
+   */
+  confirm?: boolean;
+  acknowledgeRisk?: boolean;
 }
 
 export interface SkillUninstallPayload {

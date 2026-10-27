@@ -184,3 +184,32 @@ export function parseNonEmptyString(raw: unknown, field: string): string {
     `expected non-empty string, got ${JSON.stringify(raw)}`,
   );
 }
+
+/**
+ * Where "created default config …", "migrated config …" and a value set
+ * aside on read go (see config-file.ts ensureUserConfigFileSync). The TUI
+ * collects them into its own screen; every other caller gets stderr.
+ */
+export type ConfigNoticeSink = (line: string) => void;
+
+let configNoticeSink: ConfigNoticeSink | null = null;
+
+export function setConfigNoticeSink(sink: ConfigNoticeSink | null): void {
+  configNoticeSink = sink;
+}
+
+const noticesSaid = new Set<string>();
+/** The same line once per process: the config is parsed on every read. */
+export function emitConfigNoticeOnce(line: string): void {
+  if (noticesSaid.has(line)) return;
+  noticesSaid.add(line);
+  emitConfigNotice(line);
+}
+
+export function emitConfigNotice(line: string): void {
+  if (configNoticeSink) {
+    configNoticeSink(line);
+    return;
+  }
+  process.stderr.write(`${line}\n`);
+}
