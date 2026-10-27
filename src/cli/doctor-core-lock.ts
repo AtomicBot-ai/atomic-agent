@@ -55,6 +55,8 @@ export function checkCoreLocks(ctx: DoctorContext): DoctorFinding[] {
     } catch {
       lock = {};
     }
+    // Only a lock that still claims a running Core can get in the way; any other state is a stopped one.
+    if (lock.state !== "ready") continue;
     const folder = typeof lock.data_folder === "string" ? lock.data_folder : "";
     const otherFolder = folder !== "" && canonical(folder) !== canonical(dataDir);
     const dead = typeof lock.pid === "number" && !ctx.pidAlive(lock.pid);
