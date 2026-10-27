@@ -23,7 +23,7 @@ import * as mcp from "../../mcp/index.js";
 import type { McpToolMeta, McpSamplingHandler } from "../../mcp/index.js";
 import * as composio from "../../composio/index.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
 import { ModelProfileManager } from "../../llm/model-profile-manager.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
 import { buildGrammar } from "../../llm/grammar/build-grammar.js";
@@ -267,5 +267,38 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     config.agent.readScope = "working-dir"; expect(protectedReads.readScope?.()).toBe("working-dir");
     expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate"]);
     expect(builder.mock.invocationCallOrder[0]).toBeLessThan(confinement.mock.invocationCallOrder[0] ?? 0);
+  });
+});
+
+describe("runtimeKnownSecrets (ATO-1077)", () => {
+  it("lists the env's secret variables and the credentials stored in config", () => {
+    const config = {
+      llm: {
+        activeTextProvider: "or",
+        activeEmbeddingProvider: "or",
+        providers: [
+          { id: "or", kind: "openrouter", apiKey: "Zq9xVv81LmNbTt42", headers: { "X-Title": "atomic", Authorization: "Bearer Hh7Gg6Ff5Ee4" } },
+          { id: "local", kind: "llama" },
+        ],
+      },
+      localModels: { apiKey: "Ll3Mm4Nn5Oo6" },
+      webhooks: { deploy: { secret: "Ww1Xx2Yy3Zz4" } },
+      mcp: {
+        servers: [
+          { name: "gh", enabled: true, transport: { kind: "stdio", command: "gh-mcp" }, env: { GITHUB_TOKEN: "Gg1Hh2Ii3Jj4", LOG_LEVEL: "debug" } },
+          { name: "remote", enabled: true, transport: { kind: "streamable_http", url: "https://mcp.example.com", headers: { "X-Api-Key": "Rr1Ss2Tt3Uu4", Accept: "application/json" } } },
+        ],
+      },
+    } as unknown as Parameters<typeof runtimeKnownSecrets>[0];
+    expect(runtimeKnownSecrets(config, { GROQ_API_KEY: "gsk1234567890", PATH: "/bin" })).toEqual([
+      { label: "GROQ_API_KEY", value: "gsk1234567890" },
+      { label: "or-key", value: "Zq9xVv81LmNbTt42" },
+      { label: "or-header", value: "Bearer Hh7Gg6Ff5Ee4" },
+      { label: "or-header", value: "Hh7Gg6Ff5Ee4" },
+      { label: "local-models-key", value: "Ll3Mm4Nn5Oo6" },
+      { label: "webhook-deploy-secret", value: "Ww1Xx2Yy3Zz4" },
+      { label: "mcp-gh-GITHUB_TOKEN", value: "Gg1Hh2Ii3Jj4" },
+      { label: "mcp-remote-header", value: "Rr1Ss2Tt3Uu4" },
+    ]);
   });
 });

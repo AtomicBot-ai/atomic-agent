@@ -9,6 +9,7 @@
 
 import { classifyTransportHost } from "./classify-transport-host.js";
 import { sanitizeLlmFailureTags, type LlmFailureContext } from "./llm-failure-tags.js";
+import { maskSecrets } from "./secret-detector.js";
 
 /** Neutral, transport-agnostic shape of a scrubbed error report. */
 export interface ScrubbedErrorEvent {
@@ -27,7 +28,12 @@ export interface ScrubbedErrorEvent {
   category?: string;
   /** Where the error was captured (`uncaughtException`, `llm_failure`, …). */
   source: string;
-  /** Error message — present ONLY for allowlisted static-message errors. */
+  /**
+   * Error message — present ONLY for allowlisted static-message errors,
+   * and passed through the shared secret detector even then
+   * (`secret-detector.ts`): an audit that missed one interpolated key
+   * still sends a marker, not the key.
+   */
   message?: string;
   /** Safe scalar HTTP status, when present on the error. */
   httpStatus?: number;
@@ -440,7 +446,7 @@ export function scrubError(
   if (causeType) event.causeType = causeType;
   if (category) event.category = category;
   if (STATIC_MESSAGE_ERRORS.has(errorType) && err.message) {
-    event.message = err.message;
+    event.message = maskSecrets(err.message);
   }
   if (httpStatus !== undefined) event.httpStatus = httpStatus;
   if (code !== undefined) event.code = code;

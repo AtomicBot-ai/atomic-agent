@@ -13,6 +13,8 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
+import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
+import { isSecretEnvName } from "../../sandbox/command-env.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
@@ -40,6 +42,50 @@ import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { resolveComposioServerConfig } from "../../composio/index.js";
 
+/** Header names whose value is a credential (`Authorization`, `X-Api-Key`, `Cookie`, ...). */
+const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|auth/i;
+
+/**
+ * The exact secrets masked in tool output (ATO-1077): the agent's `.env`
+ * (loaded into `process.env`) and the credentials stored in the config
+ * file: provider keys and secret headers, the local server's key,
+ * webhook secrets, and MCP servers' secret env values and headers. Read
+ * per call, so a key added through `/providers` mid-session is covered.
+ */
+export function runtimeKnownSecrets(
+  config: Partial<Pick<AtomicAgentConfig, "llm" | "localModels" | "webhooks" | "mcp">>,
+  env: NodeJS.ProcessEnv = process.env,
+): KnownSecret[] {
+  const out = knownSecretsFromEnv(env);
+  const add = (label: string, value: unknown): void => {
+    if (typeof value === "string" && value.length > 0) out.push({ label, value });
+  };
+  const addHeaders = (label: string, headers: Readonly<Record<string, string>> | undefined): void => {
+    for (const [name, value] of Object.entries(headers ?? {})) {
+      if (!SECRET_HEADER.test(name)) continue;
+      add(label, value);
+      // `Bearer <token>` also appears without its scheme.
+      const token = /^\S+\s+(\S{8,})$/.exec(value)?.[1];
+      if (token !== undefined) add(label, token);
+    }
+  };
+  for (const entry of config.llm?.providers ?? []) {
+    add(`${entry.id}-key`, entry.apiKey);
+    addHeaders(`${entry.id}-header`, entry.headers);
+  }
+  add("local-models-key", config.localModels?.apiKey);
+  for (const [name, hook] of Object.entries(config.webhooks ?? {})) {
+    add(`webhook-${name}-secret`, hook.secret);
+  }
+  for (const server of config.mcp?.servers ?? []) {
+    for (const [name, value] of Object.entries(server.env ?? {})) {
+      if (isSecretEnvName(name)) add(`mcp-${server.name}-${name}`, value);
+    }
+    if (server.transport.kind !== "stdio") addHeaders(`mcp-${server.name}-header`, server.transport.headers);
+  }
+  return out;
+}
+
 export function createRuntimeToolRegistry(
   config: AtomicAgentConfig,
   browserBackend: BrowserBackend,
@@ -48,7 +94,10 @@ export function createRuntimeToolRegistry(
 ) {
 
 
-  const toolRegistry = new ToolRegistry(outputSpill ? { outputSpill } : {});
+  const toolRegistry = new ToolRegistry({
+    ...(outputSpill ? { outputSpill } : {}),
+    knownSecrets: () => runtimeKnownSecrets(getConfig()),
+  });
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
   if (config.browser.enabled) {
