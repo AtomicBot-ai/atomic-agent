@@ -159,7 +159,7 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
     prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons)
       .mockRejectedValueOnce(healthError())
-      .mockResolvedValueOnce({ chat: { pid: 4242 }, embedding: { skipped: true } });
+      .mockResolvedValueOnce({ chat: { pid: 4242 }, embedding: { skipped: true } } as never);
     const { orchestrator } = makeOrchestrator();
     await expect(
       orchestrator.startDaemon({ backendAlreadyChecked: true, contextSize: 65_536 }),
