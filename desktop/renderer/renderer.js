@@ -9739,7 +9739,7 @@ function turnFailure(ev) {
   /* ATO-1207: a local model whose context is full says so, with the agent's
      words under Details, before any other wording of the same failure. */
   const full = localContextFullLine(ev, selActiveProviderId());
-  if (full) return {text: esc(full), detail: String(ev.error)};
+  if (full) return {text: esc(full), detail: String(ev.error || '')};
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
   /* ATO-391: the provider replied, with an error (a 404 for a model it does
