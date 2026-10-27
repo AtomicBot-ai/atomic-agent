@@ -25,6 +25,7 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Issue reporting](issue-report/README.md)
 - [Uninstall confirmation](uninstall/README.md)
 - [Update offer and progress](update/README.md)
+- [Project folder trust prompt](project-trust/README.md)
 
 - [Chat transcript and start page](chat/README.md)
 - [Context readout and controls](context/README.md)
