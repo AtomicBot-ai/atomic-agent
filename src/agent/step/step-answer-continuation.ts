@@ -8,7 +8,7 @@ import type { ToolCallBatchParseResult } from "./step-parsing.js";
 import { detectModelFailure } from "../../llm/index.js";
 import { estimateReasoningTokens } from "../../llm/reasoning-budget.js";
 import { memoizeText, resolveReasoning } from "./step-reasoning.js";
-import { parseDepsFor, renderOpenReasoningBlock, replyCapSent, stripTrailingReasoningPrefill } from "./step-parsing.js";
+import { isNativeToolsEmptyCompletionHandledByParser, parseDepsFor, renderOpenReasoningBlock, replyCapSent, stripTrailingReasoningPrefill } from "./step-parsing.js";
 import { cutAgainReplyBatch, extractPartialAnswer, formatContinuationNotice, isContinuableTruncation, rewriteContinuedReply } from "./answer-continuation.js";
 
 /** How one continuation ended; carried by the `answer_continued` event. */
@@ -115,7 +115,12 @@ export async function continueCutAnswer(
     report("cut_again");
     return { completion: next, batch: cutAgainReplyBatch(partial, rest) };
   }
-  if (nextFailure !== null) {
+  // Empty content beside a native tool call (the rest as a `reply`
+  // call) is the parser's to read, as it is for any step.
+  if (
+    nextFailure !== null &&
+    !isNativeToolsEmptyCompletionHandledByParser(parseDepsFor(next, deps), nextFailure.reason, next)
+  ) {
     report("abandoned");
     return null;
   }
