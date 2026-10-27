@@ -165,8 +165,7 @@ export interface TraceLlmCompletion extends TraceEventBase {
    * Reasoning the completion carried, in `localModels.reasoningBudgetTokens`
    * units (four characters per token — an estimate from the text, not
    * the server's count). A step cut by the budget shows about the
-   * effective budget (at most 499, the llama.cpp grammar cap), not the
-   * configured one.
+   * configured budget.
    * Absent on traces recorded before F49.
    */
   reasoningTokens?: number;

@@ -11,6 +11,10 @@ import { ApprovalBus } from "./approval-bus.js";
 import { CompletionRegistry } from "./completion-registry.js";
 import { openaiError } from "./openai-errors.js";
 import { UndeliveredSteerStore } from "./undelivered-steers.js";
+import { AuthThrottle } from "./auth-throttle.js";
+
+/** ATO-1126: one per process; loopback callers are never counted. */
+const authThrottle = new AuthThrottle();
 import {
   BodyParseError,
   BodyTooLargeError,
@@ -214,7 +218,7 @@ async function dispatch(
     );
     return;
   }
-  if (matched.route.requiresAuth && !enforceAuth(req, res, baseCtx.apiKey)) {
+  if (matched.route.requiresAuth && !enforceAuth(req, res, baseCtx.apiKey, authThrottle)) {
     return;
   }
   const ctx: HandlerContext = { ...baseCtx, params: matched.params };

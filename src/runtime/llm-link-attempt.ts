@@ -90,6 +90,11 @@ function grammarRequestFields(params: LlmStreamParams) {
     typeof params.maxTokens !== "number"
       ? { maxTokens: params.localReplyCap }
       : {}),
+    // How far the prompt got before the first token (ATO-1027); only a
+    // llama-server stream reports it.
+    ...(params.onPromptProgress
+      ? { onPromptProgress: params.onPromptProgress }
+      : {}),
   };
 }
 

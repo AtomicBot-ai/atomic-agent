@@ -1,4 +1,4 @@
-import type { PromptMessages, ChatPromptParts, ReasoningEffort, ResponseFormatJsonSchema, ToolCallTransport } from "../../llm/provider/completion-types.js";
+import type { PromptMessages, ChatPromptParts, PromptProgress, ReasoningEffort, ResponseFormatJsonSchema, ToolCallTransport } from "../../llm/provider/completion-types.js";
 import type { StreamChunk, CompletionResult } from "../../llm/llama-server-client.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -121,6 +121,12 @@ export interface LlmStreamParams {
   signal?: AbortSignal;
   /** Per-request transport deadline; see `CompletionRequest.requestTimeoutMs`. */
   requestTimeoutMs?: number;
+  /**
+   * Prompt-evaluation progress for this completion (ATO-1027); see
+   * `CompletionRequest.onPromptProgress`. Forwarded to grammar
+   * (llama-server) links only.
+   */
+  onPromptProgress?: (progress: PromptProgress) => void;
   /**
    * Pins this completion to one configured provider id, bypassing the
    * provider fallback chain entirely. A fusion worker turn runs on the

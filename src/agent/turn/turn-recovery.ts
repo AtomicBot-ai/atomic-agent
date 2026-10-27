@@ -37,6 +37,14 @@ export interface TurnRecoveryContext {
   recoveryStepAvailable: (stepIndex: number) => boolean;
   /** The model mode serving the step; absent (legacy wiring) reads as `local`. */
   modelMode?: "local" | "cloud";
+  /**
+   * The plain error the turn ends with when it fails on a context-size
+   * refusal after the loop's overflow compaction (ATO-1028). Replaces the
+   * server's error in `loop_failed` and the returned decision; ignored
+   * when the step is retried, waited, cancelled, or a refused raised-cap
+   * truncation retry fails with its truncation instead.
+   */
+  contextExhausted?: Error;
 }
 
 export type TurnRecoveryDecision =
@@ -171,7 +179,7 @@ export function recoverTurnStep(
     };
     turn.truncationRetries += 1;
     if (retry.kind === "fit_window") {
-      deps.onContextWindowObserved?.(retry.contextWindow);
+      deps.onContextWindowObserved?.(retry.contextWindow, options.providerId);
     }
     // A cut reply is still tokens on the wire, so — like the
     // parse failure below — it breaks any run of empty
@@ -398,7 +406,7 @@ export function recoverTurnStep(
       });
   if (repack !== null) {
     turn.sizeRepackRetry = { stepIndex: i };
-    deps.onContextWindowObserved?.(repack.contextWindow);
+    deps.onContextWindowObserved?.(repack.contextWindow, options.providerId);
     turn.pendingNotice = composeSizeRejectionNotice(noticeForThisStep);
     deps.onEvent?.({
       type: "prompt_repacked",
@@ -607,6 +615,9 @@ export function recoverTurnStep(
     );
     runError = turn.truncationRetry.original;
     category = classifyFailure(runError);
+  } else if (context.contextExhausted !== undefined && !cancelled) {
+    // Category stays: dashboards keep counting the same failure class.
+    runError = context.contextExhausted;
   }
   // Same errno as the wait above, for the turn that fails instead
   // of parking (waiting disabled, budget spent, a refusal that

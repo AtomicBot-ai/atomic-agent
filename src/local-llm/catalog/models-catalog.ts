@@ -5,6 +5,7 @@
  */
 
 export type CuratedLocalModelId =
+  | "qwen-3.5-2b"
   | "qwen-3.5-4b"
   | "qwen-3.5-9b"
   | "qwen-3.5-35b"
@@ -80,13 +81,24 @@ export interface LocalModelDef {
    * and stalls in `ws` until `n_predict`. Prefer leaving this unset.
    */
   chatTemplateAsset?: string;
+  /**
+   * Place in the recommendation order, 1 = the first choice. Set only on
+   * widely used model families (Qwen, Gemma); `recommendedModelFor` picks
+   * the best-ranked entry the machine runs comfortably. An entry without
+   * a rank is still offered, just never auto-recommended. Models with few
+   * active weights (`-A3B`, `-A4B`) come before dense ones of their size,
+   * because a fast first answer matters most; no dense 27B+ entry may
+   * outrank one that fits the same memory (pinned by the tests).
+   */
+  recommendRank?: number;
   tag?: string;
   /**
    * Reduced-refusal ("abliterated" / uncensored) weights. Such entries
    * are opt-in only: the first-run picker pins them to the bottom of the
    * model list, renders their `tag` as a warning, and never picks one as
-   * the auto-recommendation (`recommendLocalModel`) — downloading one
-   * must always be a deliberate act, not the path of least resistance.
+   * the auto-recommendation (`recommendedModelFor`,
+   * `recommendLocalModel`) — downloading one must always be a deliberate
+   * act, not the path of least resistance.
    */
   uncensored?: boolean;
   /**
@@ -120,7 +132,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF/resolve/main/gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
     fileSizeGb: 4.22,
     sizeLabel: "4.2 GB",
-    description: "Compact multimodal reasoning (QAT)",
+    description: "Small and light Gemma, for 8 GB machines and up",
+    recommendRank: 10,
     maxContextLength: 131_072,
     contextLabel: "128K",
     minRamGb: 6,
@@ -140,7 +153,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/gemma-4-12B-it-qat-GGUF/resolve/main/gemma-4-12B-it-qat-UD-Q4_K_XL.gguf",
     fileSizeGb: 6.72,
     sizeLabel: "6.7 GB",
-    description: "Mid-size dense multimodal reasoning (QAT)",
+    description: "Mid-size Gemma, for 12 GB machines and up",
+    recommendRank: 9,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 8,
@@ -160,7 +174,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/gemma-4-26B-A4B-it-qat-GGUF/resolve/main/gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.gguf",
     fileSizeGb: 14.25,
     sizeLabel: "14.2 GB",
-    description: "Fast MoE with 256K context (QAT)",
+    description: "Big Gemma that stays quick for its size, 20 GB and up",
+    recommendRank: 2,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 16,
@@ -181,7 +196,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/gemma-4-31B-it-qat-GGUF/resolve/main/gemma-4-31B-it-qat-UD-Q4_K_XL.gguf",
     fileSizeGb: 17.29,
     sizeLabel: "17.3 GB",
-    description: "Top-tier dense reasoning (QAT)",
+    description: "Biggest Gemma, for 24 GB machines and up",
+    recommendRank: 6,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
@@ -202,7 +218,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.8-27B-GGUF/resolve/main/Qwen3.8-27B-UD-Q4_K_XL.gguf",
     fileSizeGb: 17.9,
     sizeLabel: "17.9 GB",
-    description: "Latest dense agentic reasoning",
+    description: "Newest big Qwen, for 28 GB machines and up",
+    recommendRank: 4,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
@@ -223,7 +240,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.6-27B-GGUF/resolve/main/Qwen3.6-27B-UD-Q4_K_XL.gguf",
     fileSizeGb: 17.6,
     sizeLabel: "17.6 GB",
-    description: "Next-gen dense reasoning",
+    description: "Big Qwen, older version, for 28 GB machines and up",
+    recommendRank: 5,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 20,
@@ -243,7 +261,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-GGUF/resolve/main/Qwen3.6-35B-A3B-UD-Q4_K_XL.gguf",
     fileSizeGb: 22.4,
     sizeLabel: "22.4 GB",
-    description: "Next-gen agentic coding MoE",
+    description: "Big Qwen that stays quick for its size, 36 GB and up",
+    recommendRank: 1,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 24,
@@ -255,6 +274,26 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     mmprojFilename: "mmproj-F16.gguf",
     mmprojFileSizeGb: 0.9,
   },
+  /* ATO-1041: the starter model the desktop fetches on its first launch
+     (not shipped in the installer, Nadya 25.10), so a first chat answers
+     without a key or a long download. Never auto-recommended: no
+     recommendRank, the picker's recommendation is unchanged. */
+  {
+    id: "qwen-3.5-2b",
+    name: "Qwen 3.5 2B GGUF",
+    filename: "Qwen3.5-2B-UD-Q4_K_XL.gguf",
+    huggingFaceUrl:
+      "https://huggingface.co/unsloth/Qwen3.5-2B-GGUF/resolve/main/Qwen3.5-2B-UD-Q4_K_XL.gguf",
+    fileSizeGb: 1.34,
+    sizeLabel: "1.3 GB",
+    description: "Tiny starter model, ready in a minute; any machine",
+    maxContextLength: 262_144,
+    contextLabel: "256K",
+    minRamGb: 4,
+    recommendedRamGb: 6,
+    family: "qwen",
+    supportsVision: false,
+  },
   {
     id: "qwen-3.5-4b",
     name: "Qwen 3.5 4B GGUF",
@@ -263,7 +302,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_K_M.gguf",
     fileSizeGb: 2.7,
     sizeLabel: "2.7 GB",
-    description: "Quality-size sweet spot",
+    description: "Small and quick to download, for 8 GB machines and up",
+    recommendRank: 8,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 6,
@@ -283,13 +323,13 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
     fileSizeGb: 5.3,
     sizeLabel: "5.3 GB",
-    description: "Balanced performance",
+    description: "Everyday mid-size Qwen, for 16 GB machines and up",
+    recommendRank: 7,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 10,
     recommendedRamGb: 16,
     family: "qwen",
-    tag: "Recommended",
     supportsVision: true,
     mmprojUrl:
       "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF/resolve/main/mmproj-F16.gguf",
@@ -304,7 +344,8 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/unsloth/Qwen3.5-35B-A3B-GGUF/resolve/main/Qwen3.5-35B-A3B-Q4_K_M.gguf",
     fileSizeGb: 22.0,
     sizeLabel: "22 GB",
-    description: "High quality reasoning",
+    description: "Older big Qwen, for 36 GB machines and up",
+    recommendRank: 3,
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 24,
@@ -325,7 +366,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
       "https://huggingface.co/AtomicChat/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF/resolve/main/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-AD-IQ4_NL.gguf",
     fileSizeGb: 19.65,
     sizeLabel: "19.7 GB",
-    description: "Hybrid Mamba2 MoE reasoning, imatrix-calibrated",
+    description: "Big NVIDIA model, text only, for 32 GB machines and up",
     maxContextLength: 262_144,
     contextLabel: "256K",
     minRamGb: 24,
@@ -349,7 +390,7 @@ export const LOCAL_MODELS_CATALOG: readonly LocalModelDef[] = [
     // `plain-instruct` and tool calls go through the generic GBNF array
     // grammar. Pinned by `models-catalog.test.ts`; reword only when a
     // native profile actually lands.
-    description: "Multimodal 30B MoE, generic tool calling",
+    description: "Big Meta model, generic tool calling, 32 GB and up",
     maxContextLength: 131_072,
     contextLabel: "128K",
     minRamGb: 20,
@@ -425,6 +466,9 @@ export function setCustomLocalModels(defs: readonly LocalModelDef[]): void {
 export function listLocalModels(): readonly LocalModelDef[] {
   return [...LOCAL_MODELS_CATALOG, ...customModels];
 }
+
+/** ATO-1041: what the desktop downloads on its first launch, before anything is chosen. */
+export const STARTER_LOCAL_MODEL_ID: CuratedLocalModelId = "qwen-3.5-2b";
 
 export function getLocalModelDef(id: LocalModelId): LocalModelDef {
   const found = listLocalModels().find((m) => m.id === id);

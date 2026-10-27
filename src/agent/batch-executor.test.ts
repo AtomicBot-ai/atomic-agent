@@ -891,19 +891,22 @@ describe("executeBatch", () => {
       { url: "u1" },
       okResult("os.web.fetch", "u1"),
     );
-    const run = (urls: string[]) =>
+    // Two model steps, so two step indices: siblings of one step are one
+    // round to the run rule (ATO-999), and it is the next step that is
+    // stopped.
+    const run = (urls: string[], stepIndex: number) =>
       executeBatch(
         toBatchInputs(
           urls.map((url) => ({ tool: "os.web.fetch", args: { url } })),
         ),
         registry,
-        { ...ctx(new AbortController().signal), tracker },
+        { ...ctx(new AbortController().signal), stepIndex, tracker },
       );
     // Every call in the batch is gated against the same recorded history,
     // so all three run and the spread ends at 4, past the cap of 3.
-    await run(["u2", "u3", "u4"]);
+    await run(["u2", "u3", "u4"], 1);
     expect(fn).toHaveBeenCalledTimes(3);
-    const out = await run(["u5"]);
+    const out = await run(["u5"], 2);
     expect(fn).toHaveBeenCalledTimes(3);
     // The signal quotes the spread (5, counting u5), not the cap, which
     // is why the forced reply does not call its count "the cap".

@@ -23,6 +23,7 @@ import { openAiToolCallAdapter } from "../../llm/provider/openai/openai-tool-cal
 import { hasStrictFunctionTools } from "../../llm/provider/adapters/tool-call-adapter.js";
 import type { ModelProfile } from "../../llm/model-profile.js";
 import type { StepEvent } from "../step-events.js";
+import { turnProgressWanted } from "./turn-progress-opt-in.js";
 import type { StreamParser, StreamParseEvent } from "../../llm/grammar/stream-parser.js";
 import { createStreamParser } from "../../llm/grammar/stream-parser.js";
 import { reasoningOpenEmittedByModel } from "../../llm/model-profile.js";
@@ -355,21 +356,23 @@ export async function runInitialCompletion(
 ): Promise<{ completion: CompletionResult }> {
   const { ctx, deps, prompt, slot, llmParams, thinkingOff } = args;
   const startedAt = Date.now();
+  // ATO-1027: only a session whose host asked (the desktop's stream).
+  const reportWait = deps.onEvent !== undefined && turnProgressWanted(ctx.session.id);
   const completion = deps.llmCompleteStream
     ? await consumeStream(
-        deps.llmCompleteStream(llmParams),
+        deps.llmCompleteStream(reportWait ? withPromptProgress(llmParams, ctx.stepIndex, deps.onEvent) : llmParams),
         ctx.stepIndex,
         deps.profile,
         deps.toolTransport,
         thinkingOff,
         deps.onEvent,
+        reportWait,
       )
     : await deps.llmComplete(llmParams);
   const durationMs = Date.now() - startedAt;
   // How much of the completion was thinking, in the budget's units, so
   // a trace shows a step that hit the reasoning bound (`reasoningTokens`
-  // at about the effective budget, `effectiveReasoningBudgetTokens`, not
-  // the configured one). Same extraction the reasoning event
+  // at about the configured budget). Same extraction the reasoning event
   // below uses, keyed off the link that served the completion.
   const reasoningTokens = estimateReasoningTokens(
     resolveReasoning(
@@ -589,6 +592,24 @@ export function buildLlmStreamParams(args: {
 
 
 /**
+ * The streamed request with a prompt-progress listener that reports as
+ * `prompt_progress` step events (ATO-1027). Unchanged when nothing
+ * listens to step events.
+ */
+function withPromptProgress(
+  params: LlmStreamParams,
+  stepIndex: number,
+  onEvent: ((event: StepEvent) => void) | undefined,
+): LlmStreamParams {
+  if (!onEvent) return params;
+  return {
+    ...params,
+    onPromptProgress: (progress) =>
+      onEvent({ type: "prompt_progress", stepIndex, ...progress }),
+  };
+}
+
+/**
  * Drain the SSE generator, feeding each token delta to the grammar-aware
  * stream parser and relaying its emissions as `StepEvent`s. The generator's
  * terminal return value carries the final `CompletionResult` (timings,
@@ -606,6 +627,8 @@ export async function consumeStream(
   primaryTransport: ToolCallTransport,
   thinkingOff: boolean,
   onEvent?: (event: StepEvent) => void,
+  /** Tell `first_token` (ATO-1027); only for a session that asked. */
+  reportFirstToken = false,
 ): Promise<CompletionResult> {
   // The parser's pre-opened state depends on which link SERVES the
   // stream, not on the configured primary: a native-tools primary that
@@ -669,6 +692,8 @@ export async function consumeStream(
   // log mentions and every later completion queues behind, for the life
   // of the process. This is the one abandon site the release exists for.
   let drained = false;
+  // The first output of any kind, told once (`first_token`, ATO-1027).
+  let firstToken = false;
   try {
     while (true) {
       const next = await stream.next();
@@ -700,6 +725,12 @@ export async function consumeStream(
       if (chunk.delta.length > 0) {
         accumulated += chunk.delta;
         emitParseEvents(getParser().push(chunk.delta));
+      }
+      // After the chunk's own deltas, so a host already knows whether
+      // the output began as reasoning or as the answer.
+      if (reportFirstToken && !firstToken && (chunk.delta.length > 0 || (chunk.reasoningDelta && chunk.reasoningDelta.length > 0))) {
+        firstToken = true;
+        onEvent?.({ type: "first_token", stepIndex });
       }
       if (chunk.done) {
         // Some servers close the iterator right after the done frame; keep
