@@ -98,6 +98,7 @@ export interface ToolGateSourceConfig {
 export function effectiveToolDescriptors(
   config: ToolGateSourceConfig = getConfig(),
   env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
 ): readonly ToolDescriptor[] {
   return filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
     browser: { enabled: config.browser.enabled },
@@ -127,7 +128,7 @@ export function effectiveToolDescriptors(
     image: { available: openRouterImageKey(config, env) !== undefined },
     video: { available: openRouterImageKey(config, env) !== undefined },
     screen: {
-      enabled: config.tools?.screen?.enabled === true && process.platform === "darwin",
+      enabled: config.tools?.screen?.enabled === true && platform === "darwin",
     },
   });
 }

@@ -50,7 +50,7 @@ export interface OsScreenCaptureOptions extends DangerousToolOptions {
 }
 
 /**
- * `os.screen.capture { region? }` — a JPEG of the primary display (or a
+ * `os.screen.capture { x?, y?, width?, height? }` — a JPEG of the primary display (or a
  * region of it, in screen points) saved under the temp folder, so the
  * working folder never fills with screenshots and the tool stays
  * read-only. It asks as `screen_capture` below approval level 3. Tool results are text, so the picture reaches a model
@@ -74,7 +74,7 @@ export function buildOsScreenCaptureTool(
       }
       let region: ScreenRegion | undefined;
       try {
-        region = parseRegion(rawArgs.region);
+        region = parseRegion(rawArgs.region ?? flatRegion(rawArgs));
       } catch (error) {
         return errorResult((error as Error).message);
       }
@@ -205,6 +205,17 @@ export function screencaptureArgs(path: string, region?: ScreenRegion): string[]
   }
   args.push(path);
   return args;
+}
+
+/**
+ * The region as the schema sends it: top-level `x`, `y`, `width`,
+ * `height` (all four or none). `region: {…}` is still read for a model
+ * that nests it. Strict mode sends an omitted one as `null`.
+ */
+function flatRegion(args: Record<string, unknown>): Record<string, unknown> | undefined {
+  const keys = ["x", "y", "width", "height"] as const;
+  if (keys.every((k) => args[k] === undefined || args[k] === null)) return undefined;
+  return { x: args.x, y: args.y, width: args.width, height: args.height };
 }
 
 export function parseRegion(raw: unknown): ScreenRegion | undefined {
