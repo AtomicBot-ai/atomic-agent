@@ -97,8 +97,8 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
  * build that opens a newer file relabels it on the first settings
  * toggle, and the version field is load-bearing — `version < 41` forces
  * `localModels.managed.autoUpdate` back on, `version < 22` overrides an
- * explicit `memory.*` opt-out, `version < 25` rewrites
- * `http.approvalMode`. Downgrading the label silently reverts choices
+ * explicit `memory.*` opt-out, `version < 79` rewrites a stored
+ * `http.approvalMode: "never"`. Downgrading the label silently reverts choices
  * the user made.
  *
  * For the same reason, keys this build does not know inside fixed blocks

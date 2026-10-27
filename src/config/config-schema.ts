@@ -1010,6 +1010,13 @@ export interface UserConfigFile {
 // (default `[]`, ATO-958). A blocked host is refused by every browser
 // tool; a non-empty allow-list makes other hosts ask (`browser_offsite`).
 // An older file has no block and takes the empty lists.
+// v79: `http.approvalMode` defaults to `"writes"` again (ATO-760): an
+// `os.http.request` that sends data (POST) asks first; GET stays silent.
+// v25 had made `"never"` the default, so a prompt-injected model could
+// POST files or keys out with no prompt. An older file holding `"never"`
+// carries the schema's value (first run writes the defaults, v25
+// rewrote `"writes"`), so it migrates to `"writes"`; `"always"` is kept.
+// From v79 an explicit `"never"` is honoured.
 // Unversioned, additive: `tools.shell.envPassthrough` (default
 // `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
 // `os.git.*` no longer inherit the agent's provider keys, bot tokens or
@@ -1022,7 +1029,7 @@ export interface UserConfigFile {
 // Unversioned, additive: `tools.screen.enabled` (default `false`,
 // ATO-525). Turns on the macOS `os.screen.*` tools; an older file has no
 // field and keeps them off.
-export const USER_CONFIG_VERSION = 78;
+export const USER_CONFIG_VERSION = 79;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1176,6 +1183,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   75,
   76,
   77,
+  78,
   USER_CONFIG_VERSION,
 ];
 
