@@ -3917,7 +3917,7 @@ function downloadingChipHtml(slot) {
     + ' aria-label="Downloading ' + esc(what) + '">' + ic('download') + '<span class="cval">Downloading ' + esc(what) + '</span></span>';
 }
 function setupChipHtml() {
-  return '<button class="cchip setupchip" data-act="onboarding:choose" title="No model is set up yet. Open setup"'
+  return '<button class="cchip setupchip" data-act="settings:llm" title="No model is set up yet. Open Settings › Models"'
     + ' aria-label="Set up a model">' + ic('plus') + '<span class="cval">Set up a model</span></button>';
 }
 /** Where · Provider · Model (· Fusion's seats), as the route draws them. */
