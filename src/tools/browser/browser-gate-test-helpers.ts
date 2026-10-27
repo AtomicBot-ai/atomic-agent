@@ -15,7 +15,12 @@ import type { ApprovalGate } from "../../approval/approval-gate.js";
  * browser-domain-gate.test.ts). Test-only: production never imports it.
  */
 
-export const GATE_CTX = {
+export const GATE_CTX: {
+  workingDir: string;
+  sessionId: string;
+  stepIndex: number;
+  signal: AbortSignal;
+} = {
   workingDir: "/tmp",
   sessionId: "s",
   stepIndex: 0,

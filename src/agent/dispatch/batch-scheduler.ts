@@ -392,7 +392,7 @@ export async function executeBatch(
             continue;
           }
           if (deniedBy !== null) {
-            const notRun = notRunAfterDenialResult(call, deniedBy, batchSize);
+            const notRun = notRunAfterDenialResult(call.call, deniedBy, batchSize);
             ctx.onCallStarted?.({ batchIndex: call.batchIndex, batchSize });
             slots[call.batchIndex] = {
               ...slots[call.batchIndex]!,
