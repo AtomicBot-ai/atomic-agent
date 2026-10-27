@@ -12,11 +12,12 @@ name: linux-repo
 # from the newest ten published stable releases of each product whichever one triggered it, so
 # any run converges on the same state; the smoke and the AUR push are for the product released.
 #
-# Secrets, in the environment `packages` (deployment tags v* and desktop-v* only):
+# Secrets. In the repository (release.yml's packages job reads them without an environment):
 # LINUX_PACKAGES_GPG_KEY and LINUX_PACKAGES_GPG_PASSPHRASE (the key in packaging/atomic-chat.asc,
-# shared with atc / eye-cli; it also signs the desktop's rpm, which arrives unsigned),
-# PACKAGES_S3_ACCESS_KEY_ID and PACKAGES_S3_SECRET_ACCESS_KEY (the Hetzner Object Storage bucket
-# named in scripts/linux-packaging.ts), AUR_SSH_PRIVATE_KEY (the AUR account that owns atc-bin).
+# shared with atc / eye-cli; it also signs the desktop's rpm, which arrives unsigned). In the
+# environment `packages` (deployment tags v* and desktop-v* only): PACKAGES_S3_ACCESS_KEY_ID and
+# PACKAGES_S3_SECRET_ACCESS_KEY (the Hetzner Object Storage bucket named in
+# scripts/linux-packaging.ts), AUR_SSH_PRIVATE_KEY (the AUR account that owns atc-bin).
 on:
   release:
     types: [published]

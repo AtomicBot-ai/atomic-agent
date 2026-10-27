@@ -199,7 +199,7 @@ release's deb. The deployment rule of the environment `packages` must admit
 
 Secrets: `LINUX_PACKAGES_GPG_KEY` (the armored private key) and
 `LINUX_PACKAGES_GPG_PASSPHRASE` in the repository; in the environment
-`packages` (deployment tags `v*` only) also `PACKAGES_S3_ACCESS_KEY_ID`,
+`packages` (deployment tags `v*` and `desktop-v*` only) also `PACKAGES_S3_ACCESS_KEY_ID`,
 `PACKAGES_S3_SECRET_ACCESS_KEY` and `AUR_SSH_PRIVATE_KEY` (the AUR account
 that owns `atc-bin`). Key rotation: a new key is published next to the old one
 with `--publish-keys OLD,NEW` for a release, so installed keyrings learn it
