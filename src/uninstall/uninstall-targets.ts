@@ -7,6 +7,8 @@ import {
   win32 as pathWin32,
 } from "node:path";
 
+import type { InstallSource } from "../update/install-source.js";
+
 /**
  * What a target is, so the UI can group and colour it without parsing
  * paths. `data` is everything the operator produced — the config, the
@@ -39,6 +41,14 @@ export interface UninstallPlanInput {
    * not. The caller stats it — this module stays pure.
    */
   readonly binaryPresent: boolean;
+  /**
+   * The Linux package that installed the binary, when one did
+   * (`src/update/install-source.ts`). The package manager owns the program
+   * half then: removing `/usr/lib/atomic-agent` by hand would leave dpkg's
+   * or rpm's database naming files that are gone, so the plan lists data
+   * only and the caller names the package manager's remove command.
+   */
+  readonly installSource?: InstallSource;
 }
 
 /**
@@ -113,10 +123,12 @@ export function planUninstallTargets(
 
   if (
     !isInstalledBinary(input.execPath, input.platform) ||
-    !input.binaryPresent
+    !input.binaryPresent ||
+    input.installSource !== undefined
   ) {
-    // A dev checkout is uninstalled with `git`; saying so is the whole
-    // point of returning data-only rather than guessing an install dir.
+    // A dev checkout is uninstalled with `git`, a package with the package
+    // manager; saying so is the whole point of returning data-only rather
+    // than guessing an install dir.
     return targets;
   }
 
