@@ -274,7 +274,7 @@ describe("local model configuration domain seams", () => {
   it.each([
     { raw: { webhooks: [], localModels: { managed: { port: 0 } } }, field: "webhooks" },
     { raw: { localModels: { customModels: "bad", managed: { modelId: "unknown" } } }, field: "localModels.customModels" },
-    { raw: { localModels: { managed: { modelId: "unknown", port: 0 } } }, field: "localModels.managed.modelId" },
+    { raw: { localModels: { managed: { modelId: 7, port: 0 } } }, field: "localModels.managed.modelId" },
     { raw: { localModels: { managed: { port: 0 }, embeddings: { port: 0 } } }, field: "localModels.managed.port" },
     { raw: { localModels: { embeddings: { port: 0, enabled: "bad" } } }, field: "localModels.embeddings.port" },
     { raw: { localModels: { embeddings: { enabled: "bad" }, download: { connections: 0 } } }, field: "localModels.embeddings.enabled" },
@@ -339,9 +339,10 @@ describe("local model configuration domain seams", () => {
       .toMatchObject({ field: "localModels.reasoningBudgetTokens" });
   });
 
-  it("still rejects an unknown engine, before and after the migration", () => {
+  it("ATO-1239: an engine name this build does not know reads as the default; a wrong type is still rejected", () => {
     for (const version of [76, 77]) {
-      expect(thrownError(() => schema.parseUserConfigFile({ version, localModels: { managed: { engine: "ollama" } } })))
+      expect(schema.parseUserConfigFile({ version, localModels: { managed: { engine: "ollama" } } }).localModels.managed.engine).toBe("atomic-core");
+      expect(thrownError(() => schema.parseUserConfigFile({ version, localModels: { managed: { engine: 7 } } })))
         .toMatchObject({ field: "localModels.managed.engine" });
     }
   });
