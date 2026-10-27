@@ -569,6 +569,7 @@ describe("formatLocalServerErrorForChat (ATO-707, ATO-737)", () => {
       [
         "Turn failed. The conversation no longer fits in the local model's context window.",
         "  Compact this chat or start a new one, or give the model a larger context size.",
+        "  Type /compact to shrink this chat, or /new to start over",
         "Details: llama-server returned http 400: request (5369 tokens) exceeds the available context size (4096 tokens)",
       ].join("\n"),
     );
@@ -580,6 +581,28 @@ describe("formatLocalServerErrorForChat (ATO-707, ATO-737)", () => {
     expect(text.split("\n")[0]).toBe("Turn failed. The local model server turned the request down as invalid.");
     expect(text).toContain("Try another model, or update the server.");
     expect(text).toContain("Details: llama-server returned http 400: tools param requires --jinja flag");
+  });
+
+  it("names /compact and /new when the local context is full (ATO-1208)", () => {
+    const err = llama400("exceed_context_size_error", "request (5369 tokens) exceeds the available context size (4096 tokens)");
+    const text = formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message);
+    expect(text).toContain("Type /compact to shrink this chat, or /new to start over");
+  });
+
+  it("keeps the /compact and /new line when the message already says the sentence (ATO-1208)", () => {
+    const err = llama400("exceed_context_size_error", "request (5369 tokens) exceeds the available context size (4096 tokens)");
+    const error = classifyLocalServerError(err)!;
+    const said = `The local server at 127.0.0.1:1234 turned the request down (400). ${error.message} ${error.advice}`;
+    expect(formatLocalServerErrorForChat(error, said)).toBe(
+      `Turn failed. ${said}\n  Type /compact to shrink this chat, or /new to start over`,
+    );
+  });
+
+  it("leaves /compact and /new out of an invalid request (ATO-1208)", () => {
+    const err = llama400("invalid_request_error", "tools param requires --jinja flag");
+    const text = formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message);
+    expect(text).not.toContain("/compact");
+    expect(text).not.toContain("/new");
   });
 
   it("does not repeat a message that already says it", () => {
