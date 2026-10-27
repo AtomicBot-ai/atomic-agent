@@ -32,6 +32,7 @@ import {
   checkForAppUpdate,
   runAppUpdate,
   canSelfUpdate,
+  detectInstallSource,
 } from "../update/index.js";
 import { clearTtyScreen } from "./clear-tty-screen.js";
 import {
@@ -539,6 +540,9 @@ export class ChatOrchestrator {
   async checkForUpdate(): Promise<void> {
     if (!this.runtime.config.update.checkOnStartup) return;
     if (!canSelfUpdate()) return;
+    // A deb, rpm or AUR install follows the system's updates; the offer
+    // would only run an installer that refuses (install-source.ts).
+    if (detectInstallSource()) return;
     try {
       const result = await checkForAppUpdate({
         repo: this.runtime.config.update.repo,

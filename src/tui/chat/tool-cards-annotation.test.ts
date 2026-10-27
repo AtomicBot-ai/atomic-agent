@@ -170,6 +170,15 @@ describe("toolCardsAnnotation", () => {
     ).toBe("edited 1 file, moved 3 files");
   });
 
+  it("counts an aliased move by its source, the same as the canonical call (ATO-899)", () => {
+    const aliased = card("os.fs.move", { paths: ["a.pdf"], destination: "Docs" });
+    const canonical = card("os.fs.move", { from: "a.pdf", to: "Docs/" });
+    expect(toolCardsAnnotation([aliased])).toBe(toolCardsAnnotation([canonical]));
+    // Same source file: one file moved, not one path plus one pathless call.
+    expect(toolCardsAnnotation([aliased, canonical])).toBe("moved 1 file");
+    expect(toolCardsAnnotationParts([aliased])).toEqual(toolCardsAnnotationParts([canonical]));
+  });
+
   it("files read-only fs tools under read / search and GitHub on its own", () => {
     expect(
       toolCardsAnnotation([

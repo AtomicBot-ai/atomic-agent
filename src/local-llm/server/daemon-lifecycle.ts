@@ -11,6 +11,7 @@ import type { DownloadFileOptions } from "../downloads/download-file.js";
 import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
+import { holdEmbeddingForLowMemory, type EmbeddingMemoryVerdict } from "./embedding-memory-gate.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
@@ -1765,6 +1766,9 @@ export async function getEmbeddingDaemonStatus(
  *     `{ chat: { pid }, embedding: { error } }` so the CLI can warn
  *     the operator. The runtime then falls back to FTS5-only recall
  *     for the duration of the session.
+ *   - On a machine with little memory (ATO-379, `embedding-memory-gate`)
+ *     the embedding daemon is not started: `{ skipped: true, lowMemory:
+ *     true }`, and recall runs on FTS5 as above.
  *   - If `embedding` options are omitted, only the chat daemon is
  *     started — observably identical to the legacy `startDaemon`
  *     code path.
@@ -1775,14 +1779,23 @@ export async function getEmbeddingDaemonStatus(
  */
 export interface StartBothResult {
   chat: DaemonStartResult;
-  embedding: { pid: number; port?: number } | { error: string } | { skipped: true };
+  /** `lowMemory`: held back on a machine with little memory (ATO-379); recall runs on keywords. */
+  embedding: { pid: number; port?: number } | { error: string } | { skipped: true; lowMemory?: true };
+}
+
+/** Seams for tests; production passes none. */
+export interface StartBothDeps {
+  startChat?: (opts: DaemonStartOptions) => Promise<DaemonStartResult>;
+  startEmbedding?: (opts: EmbeddingDaemonStartOptions) => Promise<{ pid: number; port?: number }>;
+  holdForLowMemory?: (dataDir: string) => Promise<EmbeddingMemoryVerdict>;
+  embeddingRunning?: (opts: EmbeddingDaemonStartOptions) => Promise<boolean>;
 }
 
 export async function startChatAndEmbeddingDaemons(opts: {
   chat: DaemonStartOptions;
   embedding?: EmbeddingDaemonStartOptions;
-}): Promise<StartBothResult> {
-  const chatResult = await startDaemon(opts.chat);
+}, deps: StartBothDeps = {}): Promise<StartBothResult> {
+  const chatResult = await (deps.startChat ?? startDaemon)(opts.chat);
   opts.chat.signal?.throwIfAborted();
   if (!opts.embedding) {
     return {
@@ -1790,8 +1803,21 @@ export async function startChatAndEmbeddingDaemons(opts: {
       embedding: { skipped: true },
     };
   }
+  // Decided after the chat model loaded, so free memory is read as it now
+  // stands. Not asked when the memory model already runs (Core's module
+  // reaches here running): its own memory would count against it. A status
+  // that cannot be read leaves the start as it was before the gate.
+  const embOpts = opts.embedding;
+  const running = await (deps.embeddingRunning ?? ((o: EmbeddingDaemonStartOptions) =>
+    getEmbeddingDaemonStatus(o.dataDir, o.port, o.modelId).then(s => s.running, () => true)))(embOpts);
+  if (!running) {
+    const memory = await (deps.holdForLowMemory ?? holdEmbeddingForLowMemory)(embOpts.dataDir);
+    if (!memory.ok) {
+      return { chat: chatResult, embedding: { skipped: true, lowMemory: true } };
+    }
+  }
   try {
-    const embResult = await startEmbeddingDaemon({ ...opts.embedding, signal: opts.chat.signal ?? opts.embedding.signal });
+    const embResult = await (deps.startEmbedding ?? startEmbeddingDaemon)({ ...opts.embedding, signal: opts.chat.signal ?? opts.embedding.signal });
     return {
       chat: chatResult,
       embedding: embResult,

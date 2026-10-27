@@ -1,9 +1,10 @@
 import {
   commitStagedInstall,
   discardStagedInstall,
+  enforceScanGate,
   stageSkillFromHub,
-  SkillHubInstallError,
   type InstallFromHubResult,
+  type ScanGateOptions,
   type StagedSkillInstall,
 } from "../hub/install-from-hub.js";
 import { ClawHubClient } from "./clawhub-client.js";
@@ -50,25 +51,22 @@ export async function stageSkill(
   return stageSkillFromHub({ identifier: options.identifier });
 }
 
-export interface InstallSkillRoutedOptions extends StageSkillOptions {
+export interface InstallSkillRoutedOptions
+  extends StageSkillOptions, ScanGateOptions {
   targetRoot: string;
   force?: boolean;
-  /** Allow installing despite a `dangerous` scan verdict. */
-  acknowledgeRisk?: boolean;
 }
 
-/** One-shot stage → block-on-dangerous → commit, used by the CLI. */
+/** One-shot stage → scan gate → commit, used by the CLI. */
 export async function installSkillRouted(
   options: InstallSkillRoutedOptions,
 ): Promise<InstallFromHubResult> {
   const staged = await stageSkill(options);
-  if (staged.scan.verdict === "dangerous" && !options.acknowledgeRisk) {
+  try {
+    await enforceScanGate(options.identifier, staged.scan, options);
+  } catch (err) {
     await discardStagedInstall(staged);
-    throw new SkillHubInstallError(
-      `install blocked: ${options.identifier} flagged dangerous by the security scan (use --acknowledge-risk to override)`,
-      "dangerous_blocked",
-      staged.scan,
-    );
+    throw err;
   }
   const result = await commitStagedInstall(staged, {
     targetRoot: options.targetRoot,

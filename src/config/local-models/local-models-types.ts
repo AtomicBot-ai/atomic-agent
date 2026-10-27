@@ -297,9 +297,9 @@ export interface UserLocalModelsConfig {
    * the sampler admits only the close sentinel, so the model is forced
    * to close the block and emit the call. `0` leaves the prelude
    * unbounded. The forced final step (`reply` / `finish`) is never
-   * cut. Range `0` or [64, 32768], but llama.cpp caps a grammar
-   * repetition at 1,999 characters, so the bound a model really gets
-   * is at most 499 tokens (`MAX_REASONING_BUDGET_TOKENS`, #600).
+   * cut. Range `0` or [64, 32768]. llama.cpp caps one grammar
+   * quantifier at 1,999 repetitions (#600); the prelude chains
+   * quantifiers under it, so the whole range is enforced (ATO-607).
    * Added in config v68; default `0` since v78 (was 1500).
    */
   reasoningBudgetTokens: number;
