@@ -3199,6 +3199,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       level?: string;
       detector?: string;
       count: number;
+      failure?: unknown;
     }> = [];
     let step = 0;
     const loop = new AgentLoop({
@@ -3223,6 +3224,7 @@ describe("AgentLoop end-to-end with mock LLM", () => {
             level: event.level,
             detector: event.detector,
             count: event.count,
+            ...(event.failure !== undefined ? { failure: event.failure } : {}),
           });
         }
       },
@@ -3244,6 +3246,8 @@ describe("AgentLoop end-to-end with mock LLM", () => {
       level: "breaker",
       detector: "wandering",
       count: 12,
+      // ATO-384: the breaker's stop carries the shared catalog entry.
+      failure: { cause: "loop_detected", action: "switch-model" },
     });
     const last = result.session.turns.at(-1);
     expect(last).toMatchObject({ kind: "assistant_reply" });

@@ -9,7 +9,12 @@ import {
   type ProviderWaitCause,
   type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
-import { classifyFailure } from "../llm/reliability/index.js";
+import {
+  classifyFailure,
+  classifyFailureCause,
+  isLocalEngineDown,
+  type FailureVerdict,
+} from "../llm/reliability/index.js";
 import { currentLlamaUrl, failureReasonFields } from "./failure-reason-frame.js";
 import { readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
@@ -575,6 +580,7 @@ export function buildStreamEventHook(
         const failedBefore = describeFailedLinks(inner.error);
         emitStreamError(sse, env, inner.error.message, inner.category, {
           ...billingCauseFrame(inner.error),
+          failure: failureFrame(classifyFailureCause(inner.error, inner.category)),
           /* ATO-708 / ATO-737: the held first frame needs the local-server
              code too, or the host never offers Reconnect. */
           ...failureReasonFields(inner.error, inner.error, llamaUrl()),
@@ -732,6 +738,14 @@ export function buildStreamEventHook(
           : event.error.message;
         emitStreamError(sse, env, message, classifyFailure(primary), {
           ...billingCauseFrame(primary),
+          /* ATO-384: the catalog entry for the story this frame tells —
+             the first link's, unless the turn ended on a local model
+             that is not running, which is what the host can act on. */
+          failure: failureFrame(
+            isLocalEngineDown(event.error)
+              ? classifyFailureCause(event.error, event.category)
+              : classifyFailureCause(primary),
+          ),
           // The chain fell over to the managed local link and its model
           // process is gone: the host still needs the code to offer a start.
           // A local server that answered 404/405/400 gets its own code.
@@ -743,6 +757,11 @@ export function buildStreamEventHook(
       const failedBefore = event.category === "cancelled" ? [] : describeFailedLinks(event.error);
       emitStreamError(sse, env, event.error.message, event.category, {
         ...ended,
+        /* ATO-384: cause → plain phrase → button, from the one shared
+           list (`failure-catalog.ts`). Extensions frame only. */
+        failure: failureFrame(
+          event.failure ?? classifyFailureCause(event.error, event.category),
+        ),
         /* ATO-772: the managed local model's process is gone, so the turn
            ended without the outage wait. `code` lets a host offer to start
            it (the desktop's "Start model") instead of reading the words.
@@ -837,6 +856,18 @@ function billingCauseFrame(
   return cause.kind === "billing"
     ? { cause: { kind: "billing", status: cause.status } }
     : {};
+}
+
+/**
+ * A failure-catalog entry as frames carry it: `{cause, phrase, action}`.
+ * A fresh plain object, so the frame never shares the catalog's own.
+ */
+function failureFrame(verdict: FailureVerdict): {
+  cause: FailureVerdict["cause"];
+  phrase: string;
+  action: FailureVerdict["action"];
+} {
+  return { cause: verdict.cause, phrase: verdict.phrase, action: verdict.action };
 }
 
 /**

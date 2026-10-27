@@ -1,3 +1,4 @@
+import { loopDetectorVerdict } from "../llm/reliability/failure-catalog.js";
 import { resolveModelMode } from "../llm/model-mode.js";
 import { prepareStepPrompt, refreshStepWorkspace } from "./step/step-inference.js";
 import type { StepContext, StepDependencies } from "./step/step-contract.js";
@@ -782,6 +783,7 @@ export class AgentLoop {
             stepIndex: i,
             level: "breaker",
             detector: breaker.detector,
+            failure: loopDetectorVerdict(breaker.detector),
           });
           this.deps.logger?.warn(
             "loop breaker tripped; forcing graceful reply",
