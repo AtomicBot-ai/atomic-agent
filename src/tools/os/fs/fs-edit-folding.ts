@@ -69,9 +69,20 @@ function escapedLineRuns(source: string, plain: string): LooseEditMatch[] {
   const most = body.split("\n").length;
   const spans: LooseEditMatch[] = [];
   for (let i = 0; i < lines.length && spans.length < 2; i += 1) {
+    // A run's first line resolves on its own to the start of `body`
+    // (unless it ends in a backslash, which escapes the line break).
+    const first = source.slice(lines[i]!.start, lines[i]!.end).replace(/\r$/, "");
+    if (!first.endsWith("\\") && !body.startsWith(unescapeText(first))) continue;
     for (let size = 1; size <= most && i + size <= lines.length; size += 1) {
       const start = lines[i]!.start;
       const lineEnd = lines[i + size - 1]!.end;
+      // An escape is two characters for one, so a run that resolves to
+      // `body` spans between body.length and twice that (plus a `\r` a
+      // line). Bounding by length keeps a failed edit of a large file
+      // linear instead of slicing every run up to `most` lines.
+      const span = lineEnd - start;
+      if (span > 2 * body.length + size) break;
+      if (span < body.length) continue;
       const block = source.slice(start, lineEnd).replace(/\r$/gm, "");
       if (!block.includes("\\") || unescapeText(block) !== body) continue;
       const end =
