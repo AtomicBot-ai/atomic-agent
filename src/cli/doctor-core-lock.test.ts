@@ -42,6 +42,12 @@ describe("doctor: leftover Atomic Core lock (ATO-1233)", () => {
     expect(f!.fix).toBeUndefined();
   });
 
+  it("a stopped Core's lock (not ready) is not called leftover", () => {
+    mkdirSync(lockDir(), { recursive: true });
+    writeFileSync(join(lockDir(), "instance.lock"), JSON.stringify({ state: "stopped", pid: 4242, data_folder: "/elsewhere" }));
+    expect(checkCoreLocks(ctx(false))).toEqual([]);
+  });
+
   it("no Core installed, nothing to say", () => {
     expect(checkCoreLocks(ctx(true))).toEqual([]);
   });

@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import type { DownloadFileOptions } from "../downloads/download-file.js";
 import { CoreUnavailableError, toCoreUnavailable } from "./core-errors.js";
 import { CORE_VERSION, activeCoreVersion, coreRoot, coreVersionDir, readCoreBackend, writeCoreJson, type CoreBackend } from "./core-state.js";
-import { connectCore, CoreRequestError, withCoreClient, type CoreControlClient } from "./core-client.js";
+import { connectCore, CoreChangedError, CoreRequestError, withCoreClient, type CoreControlClient } from "./core-client.js";
 import { installCore, isCoreInstalled, withCoreRetries } from "./core-install.js";
 
 interface Catalog {
@@ -25,6 +25,16 @@ export function isCoreBackendInstalled(dataDir: string, version = activeCoreVers
  * 404 there: not busy.
  */
 async function activeCoreIdle(dataDir: string): Promise<boolean> {
+  try {
+    return await activeCoreIdleOnce(dataDir);
+  } catch (err) {
+    // ATO-1233: Core restarted between the connect and the snapshot; ask the one running now.
+    if (!(err instanceof CoreChangedError)) throw err;
+    return activeCoreIdleOnce(dataDir);
+  }
+}
+
+async function activeCoreIdleOnce(dataDir: string): Promise<boolean> {
   const current = await connectCore(dataDir, activeCoreVersion(dataDir));
   if (!current) return true;
   if ((await current.snapshot()).sessions.length > 0) return false;
