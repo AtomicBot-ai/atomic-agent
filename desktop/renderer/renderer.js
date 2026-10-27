@@ -2299,7 +2299,8 @@ function renderSidebar() {
     (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML() + sidebarToggleHTML() + '</div>' : '')
     + '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
-    + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
+    // ATO-1032: the chord is shown on the row (drawn by CSS from data-kbd, so the row's text stays "New chat").
+    + '<button class="sb-new" data-act="session:new" data-kbd="' + esc(IS_MAC ? '⌘N' : kbd('⌘ N')) + '" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
     + sidebarNavHTML()
     // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
@@ -2506,9 +2507,11 @@ function chatRow(s) {
   // ATO-538: the rail paints this glyph (the title's first letter or emoji) with the dot as its badge.
   const glyph = railGlyph(s.t);
   // Studio: no chat is "open" while a Studio page is on screen.
+  // ATO-1032: how long ago the chat last moved ("5m", "2h", "3d"), where nothing is queued.
+  const age = queued ? '' : chatAgeShort(s.updatedAt);
   // ATO-1034: draggable onto a folder (chat-folders.js).
   return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '" draggable="true"'
-    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
+    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : age ? ' data-m="' + age + '" data-age="1"' : '')
     + (glyph ? ' data-g="' + esc(glyph) + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
@@ -2524,6 +2527,17 @@ function chatRow(s) {
       + ' aria-haspopup="menu" aria-expanded="' + (S.overlay === 'sesmenu' && SESMENU.id === s.id ? 'true' : 'false') + '"'
       + ' role="button" tabindex="0">' + ic('dots') + '</span>'
     + '</button>';
+}
+
+/** ATO-1032: a chat row's age, short: "now", "5m", "2h", "3d", "6w"; '' with no time. */
+function chatAgeShort(at) {
+  if (!(at > 0)) return '';
+  const m = Math.floor(Math.max(0, Date.now() - at) / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60); if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24); if (d < 7) return d + 'd';
+  return Math.floor(d / 7) + 'w';
 }
 
 /* ATO-165: the chat row's menu. `point` is where a right-click landed; null
@@ -2669,7 +2683,9 @@ function emptyChat() {
      suggestions stay: they are the cheapest way into a first turn. */
   return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
     + '<div class="ghost">'
-      + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
+      /* ATO-1032: one suggestion, as Codex, Jan and Ollama keep it: the
+         question above is the screen; three chips competed with it. */
+      + ['Summarise the files in this folder']
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
     + '</div></div>';
 }
@@ -4045,7 +4061,8 @@ function sendButton() {
     // the next turn only when the agent refuses it, which is a fact the
     // route answers and this button cannot know in advance.
     if (S.draft.trim() || attHasReady()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
-    return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
+    // ATO-1032: the chord as this platform presses it (⌘ . on a Mac said Ctrl+. before).
+    return '<button class="sendbtn stop" data-act="stop" title="' + kbdText('Stop (⌘ .)') + '">' + ic('stop') + '</button>';
   }
   return '<button class="sendbtn' + (S.draft.trim() || attHasReady() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
 }

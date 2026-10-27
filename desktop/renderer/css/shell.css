@@ -177,6 +177,12 @@
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .sesrow.on[data-m]::after{color:var(--blue)}
+/* ATO-1032: a chat's age is quieter than a queued count, and gives way to the "…" control on hover. */
+.sesrow[data-age]::after{font-family:var(--font-ui);color:var(--ink-3)}
+.sesrow[data-age]:hover::after,.sesrow[data-age].on::after,.sesrow[data-age]:focus-within::after{display:none}
+/* ATO-1032: New chat shows its chord, drawn from data-kbd so the row's text stays "New chat". */
+.sb-new[data-kbd]::after{content:attr(data-kbd);margin-left:auto;padding-left:8px;font:400 var(--fs-label)/1 var(--font-ui);color:var(--ink-3)}
+#sidebar.rail .sb-new::after{display:none}
 
 /* The dot. Empty ring = read, filled brand = finished and not read, pulsing
    brand = running; tone classes carry waiting-for-you (amber) and failed
@@ -287,6 +293,7 @@
   #sidebar:not(.drawer) .sb-footwrap{display:flex;justify-content:center}
   #sidebar:not(.drawer) .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
   #sidebar:not(.drawer) .sb-new{width:32px;height:32px;padding:0;justify-content:center;align-self:center}
+  #sidebar:not(.drawer) .sb-new::after{display:none}
   #sidebar:not(.drawer) .sesrow[data-g]::before{
     content:attr(data-g);display:flex;align-items:center;justify-content:center;width:24px;height:24px;
     border-radius:50%;background:var(--well);color:var(--ink-2);font:600 var(--fs-label)/1 var(--font-ui);
