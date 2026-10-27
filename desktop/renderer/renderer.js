@@ -9736,6 +9736,10 @@ function turnWaited() {
 /** ATO-380: a failed turn's row. `detail` keeps the agent's raw words under
     Details when the line is a short phrase; '' when the line is the reason. */
 function turnFailure(ev) {
+  /* ATO-1207: a local model whose context is full says so, with the agent's
+     words under Details, before any other wording of the same failure. */
+  const full = localContextFullLine(ev, selActiveProviderId());
+  if (full) return {text: esc(full), detail: String(ev.error || '')};
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
   /* ATO-391: the provider replied, with an error (a 404 for a model it does
@@ -9765,6 +9769,26 @@ function localWrongServerLine(ev, picked) {
   const host = localServerHost(id);
   return (host ?'The server at ' + host : 'The local server') + ' is not a model server, or no model is loaded there.'
     + ' Check the address in Settings › Models.';
+}
+/** ATO-1207: a local server that turned the request down because the
+    conversation outgrew the model's context window. A newer agent marks it
+    with `code: "local_context_exceeded"` and its words win; an older agent
+    only says it: llama.cpp's "exceeds the available context size" or its
+    `exceed_context_size_error` type, or the agent's own "no longer fits /
+    does not fit … model's context window" once compacting did not help.
+    Bare "context window" is too broad: a cut-off reply names "the model
+    server's context window" too. The sentence is the agent's for that code
+    (local-bad-request.ts). A 404/405 (localWrongServerLine) stays ahead; ''
+    on a cloud provider and for anything else. */
+function localContextFullLine(ev, picked) {
+  const words = /exceeds? the available context size|exceed_context_size_error|(?:no longer fits|does not fit)(?: in)? (?:this|the) (?:local )?model's context window/i;
+  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
+  if (!id || !waitIsLocalServer(id) || localWrongServerLine(ev, picked)) return '';
+  const p = (ev && ev.payload) || {};
+  const code = p.code || (ev && ev.code) || '';
+  if (code ? code !== 'local_context_exceeded' : !words.test(String((ev && ev.error) || ''))) return '';
+  return "The conversation no longer fits in the local model's context window."
+    + ' Compact this chat or start a new one, or give the model a larger context size.';
 }
 /** The host a llama-server entry talks to, or ''. Its address is `url`
     (its `baseUrl` is the embeddings server), and selProviders() leaves
