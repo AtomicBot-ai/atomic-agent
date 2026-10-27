@@ -117,6 +117,27 @@ export interface RefDescription {
   pageUrl: string;
 }
 
+export interface ScreenshotInput {
+  /** Shoot only this element (a ref from the latest snapshot). */
+  ref?: string;
+  /** The whole scrollable page instead of the viewport (capped in height). */
+  fullPage?: boolean;
+  /** Long side of the image in pixels; the backend never upscales. */
+  maxSide: number;
+}
+
+export interface ScreenshotResult {
+  buffer: Buffer;
+  width: number;
+  height: number;
+  mime: "image/jpeg";
+  /** Page the pixels came from, read right before the capture. */
+  url: string;
+  title: string;
+  /** A full-page shot was cut at the height cap (`screenshot-geometry.ts`). */
+  clipped: boolean;
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -153,4 +174,14 @@ export interface BrowserBackend {
    * fresh world read. This keeps the "one step, one effect" invariant.
    */
   scroll(input: ScrollInput): Promise<ScrollResult>;
+  /** JPEG of the active page, its viewport, the full page or one element. */
+  screenshot(input: ScreenshotInput): Promise<ScreenshotResult>;
+  /**
+   * Draw a small badge with the ref id (`e12`) over every element of
+   * the latest snapshot that is still on the page; returns how many were
+   * drawn. `hideRefLabels` removes them and must be safe to call when
+   * none are shown.
+   */
+  showRefLabels(): Promise<number>;
+  hideRefLabels(): Promise<void>;
 }
