@@ -14,6 +14,7 @@ import { describeArgumentError } from "../../tools/argument-error-hint.js";
 
 
 import { CancelledError } from "../../llm/index.js";
+import { ERROR_CODE_PATTERN } from "../tool-log-fields.js";
 import {
   runWithApprovalLedger,
   type ToolApprovalRecord,
@@ -469,13 +470,13 @@ export function toBatchInputs(
 }
 
 /**
- * A thrown error's errno-style code (`ENOENT`, `EACCES`), kept so the
+ * A thrown error's code-style code (`ENOENT`, `EACCES`), kept so the
  * log names what failed without parsing the message. Anything that does
  * not look like such a code is left out.
  */
 function errorCodeOf(cause: Error): { errorCode?: string } {
   const code = (cause as NodeJS.ErrnoException).code;
-  return typeof code === "string" && /^[A-Z][A-Z0-9_]{0,31}$/.test(code)
+  return typeof code === "string" && ERROR_CODE_PATTERN.test(code)
     ? { errorCode: code }
     : {};
 }

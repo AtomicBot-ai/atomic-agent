@@ -5,98 +5,115 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   candidateName,
   DEFAULT_CANDIDATE_LIMITS,
-  defaultCandidateRoots,
   findPathCandidates,
+  type CandidateRoot,
 } from "./path-candidates.js";
 
 describe("findPathCandidates", () => {
-  let home: string;
+  let base: string;
 
   beforeEach(async () => {
-    home = await mkdtemp(join(tmpdir(), "atomic-path-candidates-"));
+    base = await mkdtemp(join(tmpdir(), "atomic-path-candidates-"));
   });
 
   afterEach(async () => {
-    await rm(home, { recursive: true, force: true });
+    await rm(base, { recursive: true, force: true });
   });
 
-  const roots = () => defaultCandidateRoots(join(home, "Desktop", "Atomic Agent"), home);
-
-  // ATO-413: the model looked inside the working folder; the folder sat
-  // one level up, on the Desktop.
-  it("finds a folder that sits beside the working folder", async () => {
-    await mkdir(join(home, "Desktop", "Atomic Agent"), { recursive: true });
-    await mkdir(join(home, "Desktop", "backlinks_demo"));
-    const found = await findPathCandidates(
-      join(home, "Desktop", "Atomic Agent", "backlinks_demo"),
-      roots(),
-    );
-    expect(found).toEqual([
-      { path: join(home, "Desktop", "backlinks_demo"), kind: "folder" },
-    ]);
-  });
+  const at = (dir: string, depth = 3): CandidateRoot => ({ dir: join(base, dir), depth });
 
   it("matches the name ignoring case and reports files as files", async () => {
-    await mkdir(join(home, "Documents", "notes"), { recursive: true });
-    await writeFile(join(home, "Documents", "notes", "Report.PDF"), "x");
-    const found = await findPathCandidates(join(home, "report.pdf"), roots());
-    expect(found).toEqual([
-      { path: join(home, "Documents", "notes", "Report.PDF"), kind: "file" },
-    ]);
+    await mkdir(join(base, "docs", "notes"), { recursive: true });
+    await writeFile(join(base, "docs", "notes", "Report.PDF"), "x");
+    const search = await findPathCandidates(join(base, "report.pdf"), [at("docs")]);
+    expect(search).toEqual({
+      found: [{ path: join(base, "docs", "notes", "Report.PDF"), kind: "file" }],
+      complete: true,
+    });
+  });
+
+  it("compares names in NFC, so a decomposed name still matches", async () => {
+    await mkdir(join(base, "docs", "Café"), { recursive: true });
+    const { found } = await findPathCandidates(join(base, "café"), [at("docs")]);
+    expect(found.map((c) => c.kind)).toEqual(["folder"]);
   });
 
   it("lists shallow matches first and each place once", async () => {
-    await mkdir(join(home, "Downloads", "a", "b", "data"), { recursive: true });
-    await mkdir(join(home, "Desktop", "data"), { recursive: true });
-    const found = await findPathCandidates(join(home, "nowhere", "data"), roots());
+    await mkdir(join(base, "b", "x", "y", "data"), { recursive: true });
+    await mkdir(join(base, "a", "data"), { recursive: true });
+    const { found } = await findPathCandidates(join(base, "nowhere", "data"), [
+      at("b"),
+      at("a"),
+      at("a", 1),
+    ]);
     expect(found.map((c) => c.path)).toEqual([
-      join(home, "Desktop", "data"),
-      join(home, "Downloads", "a", "b", "data"),
+      join(base, "a", "data"),
+      join(base, "b", "x", "y", "data"),
     ]);
   });
 
   it("skips hidden folders, node_modules and Library", async () => {
     for (const parent of [".cache", "node_modules", "Library"]) {
-      await mkdir(join(home, "Documents", parent, "target"), { recursive: true });
+      await mkdir(join(base, "docs", parent, "target"), { recursive: true });
     }
-    expect(await findPathCandidates(join(home, "x", "target"), roots())).toEqual([]);
+    const { found } = await findPathCandidates(join(base, "target"), [at("docs")]);
+    expect(found).toEqual([]);
+  });
+
+  it("never lists or enters a blocked folder", async () => {
+    await mkdir(join(base, "home", "Desktop", "thing"), { recursive: true });
+    const blocked = [join(base, "home", "Desktop")];
+    const below = await findPathCandidates(join(base, "thing"), [at("home")], undefined, {
+      blocked,
+    });
+    expect(below.found).toEqual([]);
+    const asRoot = await findPathCandidates(
+      join(base, "thing"),
+      [at("home/Desktop")],
+      undefined,
+      { blocked },
+    );
+    expect(asRoot.found).toEqual([]);
+  });
+
+  it("skips a match the filter rejects", async () => {
+    await mkdir(join(base, "a", ".env"), { recursive: true });
+    const { found } = await findPathCandidates(join(base, ".env"), [at("a")], undefined, {
+      accept: () => false,
+    });
+    expect(found).toEqual([]);
   });
 
   it("stays within each root's depth", async () => {
-    await mkdir(join(home, "Documents", "a", "b", "c", "deep"), { recursive: true });
-    expect(await findPathCandidates(join(home, "deep"), roots())).toEqual([]);
+    await mkdir(join(base, "docs", "a", "b", "c", "deep"), { recursive: true });
+    const { found } = await findPathCandidates(join(base, "deep"), [at("docs")]);
+    expect(found).toEqual([]);
   });
 
   it("stops at maxResults", async () => {
     for (const dir of ["a", "b", "c", "d"]) {
-      await mkdir(join(home, "Desktop", dir, "same"), { recursive: true });
+      await mkdir(join(base, "desk", dir, "same"), { recursive: true });
     }
-    const found = await findPathCandidates(join(home, "same"), roots(), {
+    const { found } = await findPathCandidates(join(base, "same"), [at("desk")], {
       ...DEFAULT_CANDIDATE_LIMITS,
       maxResults: 3,
     });
     expect(found).toHaveLength(3);
   });
 
-  it("returns nothing, without throwing, for missing roots or a zero budget", async () => {
-    await mkdir(join(home, "Desktop", "thing"), { recursive: true });
+  it("never throws, and says when a budget cut the search short", async () => {
+    await mkdir(join(base, "desk", "thing"), { recursive: true });
     expect(
-      await findPathCandidates(join(home, "thing"), [
-        { dir: join(home, "does-not-exist"), depth: 3 },
-      ]),
-    ).toEqual([]);
-    expect(
-      await findPathCandidates(join(home, "thing"), roots(), {
-        ...DEFAULT_CANDIDATE_LIMITS,
-        timeBudgetMs: 0,
-      }),
-    ).toEqual([]);
-    expect(
-      await findPathCandidates(join(home, "thing"), roots(), {
-        ...DEFAULT_CANDIDATE_LIMITS,
-        maxEntries: 0,
-      }),
-    ).toEqual([]);
+      await findPathCandidates(join(base, "thing"), [at("does-not-exist")]),
+    ).toEqual({ found: [], complete: true });
+    for (const cut of [{ timeBudgetMs: 0 }, { maxEntries: 0 }]) {
+      expect(
+        await findPathCandidates(join(base, "thing"), [at("desk")], {
+          ...DEFAULT_CANDIDATE_LIMITS,
+          ...cut,
+        }),
+      ).toEqual({ found: [], complete: false });
+    }
   });
 });
 

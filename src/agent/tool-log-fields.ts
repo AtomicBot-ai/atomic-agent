@@ -20,14 +20,18 @@ const PATH_ARG_KEYS = ["path", "from"] as const;
  */
 const LOGGABLE_TOOL_PREFIX = "os.fs.";
 
-/** An errno-style code (`ENOENT`); any other `errorCode` value is not logged. */
-const ERRNO_CODE = /^[A-Z][A-Z0-9_]{0,31}$/;
+/**
+ * A code-style error code (`ENOENT`, `EACCES`). Dispatch keeps a thrown
+ * error's `code` only when it has this shape, and the log logs
+ * `errorCode` only when it does; anything else may be free text.
+ */
+export const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,31}$/;
 
 export interface ToolLogFields {
   path?: string;
   reason?: string;
   errorName?: string;
-  /** An errno-style code such as `ENOENT`; never a message. */
+  /** A code-style error code such as `ENOENT`; never a message. */
   errorCode?: string;
 }
 
@@ -54,7 +58,7 @@ export function toolLogFields(
     fields.errorName = result.details.errorName;
   }
   const code = result.details.errorCode;
-  if (typeof code === "string" && ERRNO_CODE.test(code)) {
+  if (typeof code === "string" && ERROR_CODE_PATTERN.test(code)) {
     fields.errorCode = code;
   }
   return fields;

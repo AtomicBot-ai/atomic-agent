@@ -137,7 +137,7 @@ export async function resolveSearchTarget(
     if (code === "ENOENT" || code === "ENOTDIR") {
       // `code` lets the tool swap in the "found it here" hint (ATO-413).
       throw Object.assign(new Error(`os.fs.grep: path does not exist: ${path}`), {
-        code: "ENOENT",
+        code,
       });
     }
     throw new Error(

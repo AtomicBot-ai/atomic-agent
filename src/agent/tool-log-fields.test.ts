@@ -79,7 +79,7 @@ describe("toolLogFields", () => {
     ).toEqual({});
   });
 
-  it("logs an errno-style error code and nothing else under that key", () => {
+  it("logs a code-style error code and nothing else under that key", () => {
     const missing = toolLogFields(
       { path: "backlinks_demo" },
       result({

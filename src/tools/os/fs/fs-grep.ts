@@ -62,7 +62,12 @@ export function buildOsFsGrepTool(
         target = await resolveSearchTarget(args.path, ctx.workingDir);
       } catch (err) {
         if (isMissingPathError(err)) {
-          return missingPathResult("os.fs.grep", args.path, ctx);
+          return missingPathResult(
+            "os.fs.grep",
+            args.path,
+            ctx,
+            (err as NodeJS.ErrnoException).code,
+          );
         }
         const reason = (err as Error).message;
         return compressToolResult({

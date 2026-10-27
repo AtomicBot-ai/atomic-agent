@@ -2,33 +2,39 @@ import type { Dirent } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
+import { isInside } from "../../../approval/fanout-scope.js";
+import type { CandidateRoot } from "./path-candidate-roots.js";
+
+export { candidateRoots, type CandidateRoot } from "./path-candidate-roots.js";
+
 /**
  * Where a missing file or folder might really be.
  *
  * A local model asked to work with `backlinks_demo` read
  * `~/Desktop/Atomic Agent/backlinks_demo`, got ENOENT and sent the same
  * path three more times until the no-progress detector stopped it; the
- * folder was at `~/Desktop/backlinks_demo` (ATO-413). A bare ENOENT gives
- * the model nothing to do next. This search looks for the last segment
- * of the missing path, by exact name ignoring case, in a few likely
- * places, so the error can say where it actually is.
+ * folder was at `~/Desktop/backlinks_demo` (ATO-413). This search looks
+ * for the last segment of the missing path, by exact name ignoring case
+ * (NFC-normalised), in the places `candidateRoots` picks, so the error
+ * can say where it actually is.
  *
  * Names only: it lists directories and compares entry names, it never
  * opens a file. It is bounded by wall clock and scanned entries, skips
- * hidden folders and known heavy trees, does not follow symlinked
- * folders, and never throws: on any trouble it returns what it found.
+ * hidden folders and known heavy trees, never descends into a folder the
+ * roots marked as blocked (macOS privacy-protected folders the session
+ * has not touched), does not follow symlinked folders, and never throws.
  */
-
-/** One directory to search and how many levels below it to look. */
-export interface CandidateRoot {
-  dir: string;
-  /** 1 = the root's direct children only. */
-  depth: number;
-}
 
 export interface PathCandidate {
   path: string;
   kind: "file" | "folder" | "other";
+}
+
+/** What a search found, and whether it ran to the end. */
+export interface CandidateSearch {
+  found: PathCandidate[];
+  /** False when the time or entry budget cut the search short. */
+  complete: boolean;
 }
 
 export interface PathCandidateLimits {
@@ -45,6 +51,13 @@ export const DEFAULT_CANDIDATE_LIMITS: PathCandidateLimits = {
   maxEntries: 20_000,
   maxResults: 6,
 };
+
+export interface CandidateFilter {
+  /** Folders never descended into, nor listed as a root. */
+  blocked?: readonly string[];
+  /** Whether a match may be reported; a rejected one is skipped. */
+  accept?: (candidate: PathCandidate) => boolean;
+}
 
 /** Folder names never descended into: big, generated, or system-owned. */
 const SKIPPED_DIRS = new Set(
@@ -65,24 +78,6 @@ const SKIPPED_DIRS = new Set(
   ].map((name) => name.toLowerCase()),
 );
 
-/**
- * The places a user usually means: the working folder, then Desktop,
- * Documents and Downloads, then the home folder itself (shallower, as it
- * holds the others and much more).
- */
-export function defaultCandidateRoots(
-  workingDir: string,
-  home: string,
-): CandidateRoot[] {
-  return [
-    { dir: workingDir, depth: 3 },
-    { dir: join(home, "Desktop"), depth: 3 },
-    { dir: join(home, "Documents"), depth: 3 },
-    { dir: join(home, "Downloads"), depth: 3 },
-    { dir: home, depth: 2 },
-  ];
-}
-
 /** The name to look for: the last segment of `missing`, or `null`. */
 export function candidateName(missing: string): string | null {
   const name = basename(missing.replace(/[\\/]+$/, ""));
@@ -90,105 +85,134 @@ export function candidateName(missing: string): string | null {
   return name;
 }
 
+/** The form two names are compared in. */
+export function nameKey(name: string): string {
+  return name.normalize("NFC").toLowerCase();
+}
+
 /**
- * Entries named like the last segment of `missing` (case-insensitive),
- * shallowest first, at most `limits.maxResults`. `missing` itself is
- * never returned.
+ * Entries named like the last segment of `missing`, shallowest first, at
+ * most `limits.maxResults`. `missing` itself is never returned.
  */
 export async function findPathCandidates(
   missing: string,
   roots: readonly CandidateRoot[],
   limits: PathCandidateLimits = DEFAULT_CANDIDATE_LIMITS,
-): Promise<PathCandidate[]> {
+  filter: CandidateFilter = {},
+): Promise<CandidateSearch> {
   const name = candidateName(missing);
-  if (name === null) return [];
+  if (name === null) return { found: [], complete: true };
   const found: PathCandidate[] = [];
-  const state = { stopped: false, scanned: 0 };
+  const state: WalkState = { stopped: false, cut: false, scanned: 0 };
   const deadline = Date.now() + limits.timeBudgetMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   const timeout = new Promise<void>((done) => {
-    timer = setTimeout(done, limits.timeBudgetMs);
+    timer = setTimeout(() => {
+      timedOut = true;
+      done();
+    }, limits.timeBudgetMs);
     timer.unref?.();
   });
-  const search = (async () => {
-    try {
-      await walkRoots(name, resolve(missing), roots, limits, deadline, state, found);
-    } catch {
-      // Best effort: whatever was found before the failure stands.
-    }
-  })();
+  const walk = new Walk(nameKey(name), resolve(missing), limits, deadline, state, found, filter);
+  const search = walk.run(roots).catch(() => {
+    // Best effort: whatever was found before the failure stands.
+  });
   try {
     await Promise.race([search, timeout]);
   } finally {
     state.stopped = true;
     if (timer !== undefined) clearTimeout(timer);
   }
-  return found.slice(0, limits.maxResults);
+  return {
+    found: found.slice(0, limits.maxResults),
+    complete: !state.cut && !(timedOut && found.length < limits.maxResults),
+  };
 }
 
 interface WalkState {
   stopped: boolean;
+  /** The time or entry budget ran out before the walk ended. */
+  cut: boolean;
   scanned: number;
 }
 
 /**
  * Breadth-first over every root at once, level by level, so a match one
- * level below Desktop is found before a deep one under the working
- * folder. A folder reached from two roots is listed once.
+ * level below the nearest folder is found before a deep one elsewhere.
+ * A folder reached from two roots is listed once.
  */
-async function walkRoots(
-  name: string,
-  missing: string,
-  roots: readonly CandidateRoot[],
-  limits: PathCandidateLimits,
-  deadline: number,
-  state: WalkState,
-  found: PathCandidate[],
-): Promise<void> {
-  const wanted = name.toLowerCase();
-  const visited = new Set<string>();
-  const seen = new Set<string>([missing]);
-  let level = roots.map((root) => ({
-    dir: resolve(root.dir),
-    left: root.depth,
-  }));
-  while (level.length > 0) {
-    const next: typeof level = [];
-    for (const { dir, left } of level) {
-      if (left <= 0 || visited.has(dir)) continue;
-      visited.add(dir);
-      if (shouldStop(state, limits, deadline, found)) return;
-      const entries = await listDir(dir);
-      if (state.stopped) return;
-      for (const entry of entries) {
-        state.scanned++;
-        const path = join(dir, entry.name);
-        if (entry.name.toLowerCase() === wanted && !seen.has(path)) {
-          seen.add(path);
-          found.push({ path, kind: kindOf(entry) });
-          if (found.length >= limits.maxResults) return;
-        }
-        if (entry.isDirectory() && !skipped(entry.name)) {
-          next.push({ dir: path, left: left - 1 });
+class Walk {
+  private readonly visited = new Set<string>();
+  private readonly seen: Set<string>;
+  private readonly blocked: string[];
+
+  constructor(
+    private readonly wanted: string,
+    missing: string,
+    private readonly limits: PathCandidateLimits,
+    private readonly deadline: number,
+    private readonly state: WalkState,
+    private readonly found: PathCandidate[],
+    private readonly filter: CandidateFilter,
+  ) {
+    this.seen = new Set([missing]);
+    this.blocked = (filter.blocked ?? []).map((dir) => resolve(dir));
+  }
+
+  async run(roots: readonly CandidateRoot[]): Promise<void> {
+    let level = roots
+      .map((root) => ({ dir: resolve(root.dir), left: root.depth }))
+      .filter(({ dir }) => !this.isBlocked(dir));
+    while (level.length > 0) {
+      const next: typeof level = [];
+      for (const { dir, left } of level) {
+        if (left <= 0 || this.visited.has(dir)) continue;
+        this.visited.add(dir);
+        if (this.shouldStop()) return;
+        const entries = await listDir(dir);
+        if (this.state.stopped) return;
+        for (const entry of entries) {
+          this.state.scanned++;
+          const path = join(dir, entry.name);
+          if (this.matches(entry, path) && this.full()) return;
+          if (entry.isDirectory() && !skipped(entry.name) && !this.isBlocked(path)) {
+            next.push({ dir: path, left: left - 1 });
+          }
         }
       }
+      level = next;
     }
-    level = next;
   }
-}
 
-function shouldStop(
-  state: WalkState,
-  limits: PathCandidateLimits,
-  deadline: number,
-  found: readonly PathCandidate[],
-): boolean {
-  return (
-    state.stopped ||
-    state.scanned >= limits.maxEntries ||
-    found.length >= limits.maxResults ||
-    Date.now() >= deadline
-  );
+  /** Record `entry` when it matches; true when it was recorded. */
+  private matches(entry: Dirent, path: string): boolean {
+    if (nameKey(entry.name) !== this.wanted || this.seen.has(path)) return false;
+    this.seen.add(path);
+    const candidate: PathCandidate = { path, kind: kindOf(entry) };
+    if (this.filter.accept !== undefined && !this.filter.accept(candidate)) {
+      return false;
+    }
+    this.found.push(candidate);
+    return true;
+  }
+
+  private full(): boolean {
+    return this.found.length >= this.limits.maxResults;
+  }
+
+  private shouldStop(): boolean {
+    if (this.state.stopped || this.full()) return true;
+    if (this.state.scanned >= this.limits.maxEntries || Date.now() >= this.deadline) {
+      this.state.cut = true;
+      return true;
+    }
+    return false;
+  }
+
+  private isBlocked(dir: string): boolean {
+    return this.blocked.some((blocked) => isInside(blocked, dir));
+  }
 }
 
 async function listDir(dir: string): Promise<Dirent[]> {
