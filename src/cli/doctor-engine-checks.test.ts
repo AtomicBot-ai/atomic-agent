@@ -75,7 +75,19 @@ describe("doctor engine checks (ATO-577)", () => {
     expect(by(fs, "engine")).toBeUndefined();
   });
 
-  it("no key is a warning, and a loopback openai-compatible server is not tested", () => {
+  it("no key is a warning; a provider kind doctor cannot test is not called keyless", async () => {
+    const noKey = await runEngineChecks(cfg({ active: "or", providers: [{ id: "or", kind: "openrouter" }] }), probes());
+    expect(by(noKey, "key")).toMatchObject({ status: "warn", message: expect.stringContaining("no API key") });
+    const cli = await runEngineChecks(cfg({ active: "cc", providers: [{ id: "cc", kind: "subscription-cli" }] }), probes());
+    expect(by(cli, "key")).toMatchObject({ status: "ok", message: expect.stringContaining("does not test") });
+  });
+
+  it("an own (custom) model is not called on disk", async () => {
+    const fs = await runEngineChecks(cfg({ modelId: "my-hf-model" }), probes({ modelDownloaded: () => null }));
+    expect(by(fs, "model")?.status).toBe("warn");
+  });
+
+  it("a loopback openai-compatible server is not tested", () => {
     expect(verifyTargetForEntry({ id: "c", kind: "openai-compatible", baseUrl: "http://127.0.0.1:1234/v1", apiKey: "k" })).toBeNull();
     expect(verifyTargetForEntry({ id: "c", kind: "openai-compatible", baseUrl: "https://api.example.com/v1", apiKey: "k" })?.baseUrl).toBeTruthy();
   });

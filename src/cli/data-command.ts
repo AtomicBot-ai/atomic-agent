@@ -37,14 +37,20 @@ function stamp(now: Date): string {
   return now.toISOString().replace(/[:.]/g, "-");
 }
 
-/** Move a directory, across disks too (rename fails with EXDEV there). */
-function moveDir(from: string, to: string): void {
+/**
+ * Move a directory, across disks too (rename fails with EXDEV there). Across
+ * disks the source is copied and then renamed aside on its own disk, never
+ * deleted half way: returns where it was kept, or null after a plain rename.
+ */
+function moveDir(from: string, to: string, keptAs: string): string | null {
   try {
     renameSync(from, to);
+    return null;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== "EXDEV") throw err;
     cpSync(from, to, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
-    rmSync(from, { recursive: true, force: true });
+    renameSync(from, keptAs);
+    return keptAs;
   }
 }
 
@@ -92,13 +98,27 @@ export async function dataCommand(args: string[], deps: DataCommandDeps = {}): P
       write(`${err instanceof Error ? err.message : String(err)}\n`);
       return 1;
     }
-    // A backup without models keeps the models already downloaded here.
-    if (!manifest.withModels && existsSync(join(real, "models")) && !existsSync(join(incoming, "models"))) {
-      renameSync(join(real, "models"), join(incoming, "models"));
-    }
+    // The live folder goes aside first: if that fails nothing has changed yet.
     const aside = `${real}.before-restore-${stamp(now)}`;
-    renameSync(real, aside);
-    renameSync(incoming, real);
+    try {
+      renameSync(real, aside);
+    } catch (err) {
+      rmSync(incoming, { recursive: true, force: true });
+      write(`could not move ${real} aside (${(err as Error).message}); close every Atomic Agent window and terminal, then try again\n`);
+      return 1;
+    }
+    try {
+      // A backup without models keeps the models already downloaded here.
+      if (!manifest.withModels && existsSync(join(aside, "models")) && !existsSync(join(incoming, "models"))) {
+        renameSync(join(aside, "models"), join(incoming, "models"));
+      }
+      renameSync(incoming, real);
+    } catch (err) {
+      if (existsSync(join(incoming, "models")) && !existsSync(join(aside, "models"))) renameSync(join(incoming, "models"), join(aside, "models"));
+      renameSync(aside, real);
+      write(`restore failed (${(err as Error).message}); the data folder is as it was, the unpacked backup is at ${incoming}\n`);
+      return 1;
+    }
     write(`restored ${stateDir} from ${file}\nthe folder it replaced is at ${aside}; delete it once everything looks right\n`);
     return 0;
   }
@@ -110,11 +130,12 @@ export async function dataCommand(args: string[], deps: DataCommandDeps = {}): P
     if (existsSync(target) && readdirSync(target).length > 0) { write(`${target} is not empty; pick a new or empty folder\n`); return 2; }
     if (existsSync(target)) rmSync(target, { recursive: true });
     mkdirSync(dirname(target), { recursive: true });
-    moveDir(real, target);
+    const kept = moveDir(real, target, `${real}.moved-${stamp(now)}`);
     // The old path stays the address both apps use: a link to the new place.
     if (existsSync(stateDir) || isDanglingLink(stateDir)) rmSync(stateDir, { force: true });
     symlinkSync(target, stateDir, process.platform === "win32" ? "junction" : "dir");
     write(`moved the data folder to ${target}\n${stateDir} now points there, so the terminal and the desktop app find it as before\n`);
+    if (kept) write(`the copy on the old disk is at ${kept}; delete it once everything looks right\n`);
     return 0;
   }
 

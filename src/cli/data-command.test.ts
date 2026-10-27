@@ -80,3 +80,17 @@ describe("atag data (ATO-579)", () => {
     expect(existsSync(join(root, aside, "config.json"))).toBe(true);
   });
 });
+
+describe("atag data, files that change during a backup", () => {
+  it("a file appended to while backing up does not abort the backup", async () => {
+    const big = join(state, "traces", "t.jsonl");
+    mkdirSync(join(state, "traces"));
+    writeFileSync(big, "x".repeat(1 << 20));
+    const growing = setInterval(() => { try { writeFileSync(big, "y", { flag: "a" }); } catch { /* gone */ } }, 1);
+    try {
+      expect(await run(["backup", join(root, "b.tar.gz")])).toBe(0);
+    } finally {
+      clearInterval(growing);
+    }
+  });
+});
