@@ -12,7 +12,9 @@
  *                 tool call; also covers the llama-server 4xx statuses
  *                 that reject THIS request as malformed or oversized
  *                 (400/413/422 and any other unlisted 4xx), which the
- *                 next provider would reject identically.
+ *                 next provider would reject identically. A refusal for
+ *                 size (context overflow, 413) travels as
+ *                 `RequestTooLargeError`, every other one as `GrammarError`.
  *  - `model`:     the completion itself is defective (truncated, empty,
  *                 or generated without a stop token). Retrying the same
  *                 prompt is unlikely to help, so the runtime does not.

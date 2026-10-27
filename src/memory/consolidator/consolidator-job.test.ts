@@ -30,13 +30,14 @@ interface HarnessOptions {
   requireSharedTag?: boolean;
   maxClustersPerTick?: number;
   cooldownMs?: number;
+  maxEntries?: number;
 }
 
 function makeHarness(opts: HarnessOptions = {}): Harness {
   const dir = mkdtempSync(join(tmpdir(), "atomic-consolidator-"));
   const memoryStore = new MemoryStore({
     dbFile: join(dir, "memory.sqlite"),
-    maxEntries: 100,
+    maxEntries: opts.maxEntries ?? 100,
   });
   const linkStore = new LinkStore({
     db: memoryStore.getDatabaseHandleForEmbeddings(),
@@ -368,6 +369,32 @@ describe("ConsolidatorJob (phase 5, scenario 5.A)", () => {
       clustersConsidered: 0,
       lessonsCreated: 0,
     });
+  });
+
+  it("still finds old eligible episodes when 200+ newer notes sit inside the cooldown (#903)", async () => {
+    h.dispose();
+    h = makeHarness({ cooldownMs: 3_600_000, maxEntries: 1000 });
+
+    const now = Date.now();
+    const old = now - 2 * 3_600_000;
+    const a = h.memoryStore.store({ content: "old note A", source: "agent" }, old);
+    const b = h.memoryStore.store({ content: "old note B", source: "agent" }, old);
+    const c = h.memoryStore.store({ content: "old note C", source: "agent" }, old);
+    h.linkStore.add({ fromId: a.id, toId: b.id, kind: "RELATES_TO" });
+    h.linkStore.add({ fromId: b.id, toId: c.id, kind: "RELATES_TO" });
+    // Fill the newest end of the table with notes still inside the
+    // cooldown. Before the fix the candidate window was the newest 200
+    // rows, so the three eligible episodes above never reached it.
+    for (let i = 0; i < 210; i += 1) {
+      h.memoryStore.store({ content: `fresh note ${i}`, source: "agent" }, now);
+    }
+
+    const result = await h.job.runOnce();
+    expect(result.outcome).toBe("ok");
+    expect(result.lessonsCreated).toBe(1);
+    expect(h.memoryStore.getConsolidatedInto(a.id)).not.toBeNull();
+    expect(h.memoryStore.getConsolidatedInto(b.id)).not.toBeNull();
+    expect(h.memoryStore.getConsolidatedInto(c.id)).not.toBeNull();
   });
 
   it("respects cooldownMs — episodes younger than cooldown are not eligible", async () => {

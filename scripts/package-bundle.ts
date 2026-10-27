@@ -230,6 +230,10 @@ async function main(): Promise<number> {
   // Grammars are required at runtime.
   await copyOptional(join(ROOT, "grammars"), join(stageDir, "grammars"));
 
+  // The license travels with the binary: the Linux packages (deb, rpm, the
+  // AUR PKGBUILD) install it from this very archive under /usr/share/licenses.
+  await copyOptional(join(ROOT, "LICENSE"), join(stageDir, "LICENSE"));
+
   // Default skills copied into stateDir on first runtime boot (see
   // seedStarterSkillsIfMissing); ship next to the SEA binary.
   await copyOptional(join(ROOT, "starter-skills"), join(stageDir, "starter-skills"));

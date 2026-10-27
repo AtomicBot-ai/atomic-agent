@@ -159,6 +159,30 @@ export function ToolCardsAnnotationLine({
 
 const PREVIEW_SUMMARY_LIMIT = 160;
 
+/**
+ * The "changed since you last read it" notice os.fs.write / edit / patch
+ * add to a result (ATO-659). On a failed edit it follows the error text,
+ * so a long path would push it past the one-line clip (ATO-914).
+ */
+const STALE_READ_NOTE = /^note: .*changed since you last read/;
+
+/**
+ * Split the stale-read notice off a summary so the collapsed card shows
+ * it on its own row, never clipped. The summary keeps its other lines.
+ */
+export function splitStaleReadNote(summary: string): {
+  rest: string;
+  notes: string[];
+} {
+  const notes: string[] = [];
+  const rest: string[] = [];
+  for (const line of splitLines(summary)) {
+    if (STALE_READ_NOTE.test(line.trim())) notes.push(line.trim());
+    else rest.push(line);
+  }
+  return { rest: rest.join("\n"), notes };
+}
+
 function SummaryLine({
   summary,
   color,
@@ -166,18 +190,28 @@ function SummaryLine({
   summary: string;
   color: string;
 }): ReactElement | null {
-  const trimmed = summary.trim();
-  if (trimmed.length === 0) return null;
-  const oneLine = trimmed.replace(/\s+/g, " ");
+  const { rest, notes } = splitStaleReadNote(summary);
+  const oneLine = rest.trim().replace(/\s+/g, " ");
+  if (oneLine.length === 0 && notes.length === 0) return null;
   const clipped =
     oneLine.length <= PREVIEW_SUMMARY_LIMIT
       ? oneLine
       : `${oneLine.slice(0, PREVIEW_SUMMARY_LIMIT - 1)}…`;
   return (
-    <Text color={color}>
-      {theme.glyphs.toolBoxBottomLeft}
-      {theme.glyphs.toolBoxHorizontal} {clipped}
-    </Text>
+    <>
+      {oneLine.length > 0 ? (
+        <Text color={color}>
+          {theme.glyphs.toolBoxBottomLeft}
+          {theme.glyphs.toolBoxHorizontal} {clipped}
+        </Text>
+      ) : null}
+      {notes.map((note, idx) => (
+        <Text key={`n-${idx}`} color={theme.colors.warn}>
+          {theme.glyphs.toolBoxBottomLeft}
+          {theme.glyphs.toolBoxHorizontal} {note}
+        </Text>
+      ))}
+    </>
   );
 }
 

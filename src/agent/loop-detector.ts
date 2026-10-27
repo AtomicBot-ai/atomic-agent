@@ -15,6 +15,7 @@ import {
   type ReadObservation,
 } from "./read-coverage.js";
 import { ProbeRuns, probeFamily } from "./wandering-spread.js";
+import { MutationEpochs, normalizeLoopPath, readTargetPath, samePathTarget } from "./progress/mutation-epochs.js";
 import { FileReadVersions } from "../tools/os/fs/fs-read-freshness.js";
 
 /**
@@ -57,6 +58,14 @@ interface HistoryEntry {
   resultHash?: string;
   /** True when the outcome was a loop veto (excluded from the streak). */
   vetoed?: boolean;
+  /** Step round the call was dispatched in (see `noteStep`). */
+  round?: number;
+  /**
+   * For an `os.fs.read`, the mutation epoch of its path at dispatch
+   * (`MutationEpochs`). Reads of different epochs never count against
+   * each other; `undefined` for every other call.
+   */
+  epoch?: number;
 }
 
 /**
@@ -148,6 +157,19 @@ export class ToolLoopTracker {
    * `fs-read-freshness.ts`). Per turn, like every other detector here.
    */
   readonly fileVersions = new FileReadVersions();
+  /**
+   * Write, edit, applied patch, move and restore attempts per path this
+   * turn (ATO-1000): a re-read after an attempt on its path, landed or
+   * failed, is a new question -- up to `MAX_FAILED_EPOCHS` failures in a
+   * row (`mutation-epochs.ts`).
+   */
+  private readonly mutations = new MutationEpochs();
+  /**
+   * The step round gates are running in, or `null` when no step was ever
+   * noted (a tracker driven call by call). See `noteStep`.
+   */
+  private stepRound: number | null = null;
+  private lastStepIndex: number | null = null;
 
   constructor(options: ToolLoopTrackerOptions = {}) {
     this.warningThreshold = Math.max(2, options.warningThreshold ?? 3);
@@ -196,7 +218,8 @@ export class ToolLoopTracker {
    */
   check(tool: string, args: unknown): LoopCheckVerdict {
     const argsHash = hashToolCall(tool, args);
-    const noProgress = getNoProgressStreak(this.history, tool, argsHash);
+    const epoch = this.readEpoch(tool, args);
+    const noProgress = getNoProgressStreak(this.history, tool, argsHash, epoch);
     if (noProgress.count >= this.criticalThreshold) {
       return {
         level: "critical",
@@ -231,7 +254,7 @@ export class ToolLoopTracker {
         };
       }
     }
-    const repeatCount = getRepeatCount(this.history, tool, argsHash);
+    const repeatCount = getRepeatCount(this.history, tool, argsHash, epoch);
     if (repeatCount >= this.warningThreshold) {
       return {
         level: "warn",
@@ -272,7 +295,7 @@ export class ToolLoopTracker {
     }
     const argsHash = hashToolCall(tool, args);
     const runSpread = this.probeRuns.spread(tool, argsHash);
-    if (runSpread >= this.wanderingEscalation) {
+    if (this.runRounds(tool, argsHash) >= this.wanderingEscalation) {
       return { escalated: true, spread: runSpread, rule: "run" };
     }
     const windowSpread = this.effectiveSpread(tool, argsHash);
@@ -291,7 +314,9 @@ export class ToolLoopTracker {
    */
   private wanderingWarning(tool: string, argsHash: string): number | null {
     const runSpread = this.probeRuns.spread(tool, argsHash);
-    if (runSpread >= this.wanderingThreshold) return runSpread;
+    if (this.runRounds(tool, argsHash) >= this.wanderingThreshold) {
+      return runSpread;
+    }
     const windowSpread = this.effectiveSpread(tool, argsHash);
     return windowSpread >= this.wanderingWindowWarning ? windowSpread : null;
   }
@@ -319,13 +344,16 @@ export class ToolLoopTracker {
    * Distinct count of completed (non-veto) `argsHash`es seen for `tool` in
    * the window, plus one when the prospective call introduces a new
    * signature (the current call is not yet in history at `check` time).
-   * Feeds the absolute ceiling only — see `wanderingStop`.
+   * Feeds the absolute ceiling only — see `wanderingStop`. Calls of the
+   * current step round are left out: siblings of one step are one fan-out
+   * (ATO-999), whether the batch ran in parallel or in emitted order.
    */
   private effectiveSpread(tool: string, currentArgsHash: string): number {
     const seen = new Set<string>();
     for (const record of this.history) {
       if (record.tool !== tool) continue;
       if (typeof record.resultHash !== "string" || !record.resultHash) continue;
+      if (this.stepRound !== null && record.round === this.stepRound) continue;
       seen.add(record.argsHash);
     }
     return seen.has(currentArgsHash) ? seen.size : seen.size + 1;
@@ -334,8 +362,67 @@ export class ToolLoopTracker {
   /** Push a pending history entry. Call at dispatch, AFTER `check`. */
   recordCall(tool: string, args: unknown): void {
     const argsHash = hashToolCall(tool, args);
-    this.history.push({ tool, argsHash });
+    const epoch = this.readEpoch(tool, args);
+    this.history.push({
+      tool,
+      argsHash,
+      ...(this.stepRound !== null ? { round: this.stepRound } : {}),
+      ...(epoch !== undefined ? { epoch } : {}),
+    });
     this.trimHistory();
+  }
+
+  /**
+   * Tell the tracker which model step the next gates belong to. Called by
+   * the loop gate with the step index; a change of index opens a new
+   * round. Calls of one round are one fan-out to the wandering detector
+   * (ATO-999): they neither widen each other's run by more than one
+   * round nor count toward the window ceiling against each other. A
+   * tracker that is never told keeps the per-call behaviour.
+   */
+  noteStep(stepIndex: number): void {
+    if (this.lastStepIndex === stepIndex) return;
+    this.lastStepIndex = stepIndex;
+    this.stepRound = (this.stepRound ?? 0) + 1;
+  }
+
+  /** Rounds the run of `tool` spans once this call joins it. */
+  private runRounds(tool: string, argsHash: string): number {
+    return this.probeRuns.rounds(
+      tool,
+      argsHash,
+      this.stepRound ?? undefined,
+    );
+  }
+
+  /** The mutation epoch an `os.fs.read` would be made in now. */
+  private readEpoch(tool: string, args: unknown): number | undefined {
+    const path = readTargetPath(tool, args);
+    return path === null ? undefined : this.mutations.epochFor(path);
+  }
+
+  /**
+   * A write, edit, applied patch, move or restore was attempted: open a
+   * new read epoch for its paths and forget the read-coverage no-progress
+   * count on them, so the re-read a failed edit calls for is neither
+   * vetoed nor warned about (ATO-1000). Coverage itself is kept: a second
+   * identical re-read with nothing attempted in between still warns. A
+   * path past `MAX_FAILED_EPOCHS` failures in a row opens nothing.
+   */
+  private noteMutationAttempt(
+    tool: string,
+    args: unknown,
+    landed: boolean,
+  ): void {
+    const touched = this.mutations.note(tool, args, landed);
+    if (touched === null) return;
+    for (const [path, entry] of this.readCoverage) {
+      if (entry.noProgress === 0) continue;
+      const key = normalizeLoopPath(path);
+      if (touched === "any" || touched.some((t) => samePathTarget(t, key))) {
+        entry.noProgress = 0;
+      }
+    }
   }
 
   /**
@@ -361,6 +448,7 @@ export class ToolLoopTracker {
       this.noteVeto(tool, args);
       return { repeat: false, count: 0, fingerprint: "" };
     }
+    this.noteMutationAttempt(tool, args, result.status === "ok");
     const resultHash = hashToolOutcome(tool, args, result);
     if (resultHash === undefined) {
       return { repeat: false, count: 0, fingerprint: "" };
@@ -369,7 +457,12 @@ export class ToolLoopTracker {
     // Wandering runs (issue #458). A call that landed either settles the
     // other tools' runs (it is the progress they were missing) or joins
     // its own. A vetoed call returned above: it never ran.
-    this.probeRuns.record(tool, hashToolCall(tool, args), result.status === "ok");
+    this.probeRuns.record(
+      tool,
+      hashToolCall(tool, args),
+      result.status === "ok",
+      this.stepRound ?? undefined,
+    );
     if (this.consecutiveVetoSignature !== null) {
       const sig = hashToolCall(tool, args);
       if (sig !== this.consecutiveVetoSignature) {
@@ -701,7 +794,14 @@ export class ToolLoopTracker {
     }
     // No pending entry (e.g. recordOutcome without a preceding
     // recordCall): append a finished entry so the streak still advances.
-    this.history.push({ tool, argsHash, ...patch });
+    const epoch = this.readEpoch(tool, args);
+    this.history.push({
+      tool,
+      argsHash,
+      ...(this.stepRound !== null ? { round: this.stepRound } : {}),
+      ...(epoch !== undefined ? { epoch } : {}),
+      ...patch,
+    });
     this.trimHistory();
   }
 
@@ -723,12 +823,14 @@ function getNoProgressStreak(
   history: readonly HistoryEntry[],
   tool: string,
   argsHash: string,
+  epoch?: number,
 ): { count: number; latestResultHash?: string } {
   let streak = 0;
   let latestResultHash: string | undefined;
   for (let i = history.length - 1; i >= 0; i -= 1) {
     const record = history[i]!;
     if (record.tool !== tool || record.argsHash !== argsHash) continue;
+    if (record.epoch !== epoch) continue;
     if (typeof record.resultHash !== "string" || !record.resultHash) continue;
     if (latestResultHash === undefined) {
       latestResultHash = record.resultHash;
@@ -743,15 +845,21 @@ function getNoProgressStreak(
     : { count: streak, latestResultHash };
 }
 
-/** Raw count of matching `(tool, argsHash)` entries in the window. */
+/**
+ * Raw count of matching `(tool, argsHash)` entries in the window. A read
+ * only matches reads of its own mutation epoch (`epoch`); every other
+ * call carries none, so `undefined === undefined` matches as before.
+ */
 function getRepeatCount(
   history: readonly HistoryEntry[],
   tool: string,
   argsHash: string,
+  epoch?: number,
 ): number {
   let count = 0;
   for (const record of history) {
-    if (record.tool === tool && record.argsHash === argsHash) count += 1;
+    if (record.tool !== tool || record.argsHash !== argsHash) continue;
+    if (record.epoch === epoch) count += 1;
   }
   return count;
 }

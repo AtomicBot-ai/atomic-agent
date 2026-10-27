@@ -74,6 +74,19 @@ describe("os.fs.diff", () => {
     ).rejects.toThrow(/must not set both/);
   });
 
+  it("ignores an empty text next to a path (default-filled field, ATO-891)", async () => {
+    await writeFile(join(dir, "a.txt"), "one\n", "utf8");
+    const result = await osFsDiffTool.run(
+      { aPath: "a.txt", aText: "", bPath: "", bText: "two\n" },
+      makeCtx(dir),
+    );
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("-one");
+    expect(result.summary).toContain("+two");
+    const empty = await osFsDiffTool.run({ aText: "", bText: "x\n" }, makeCtx(dir));
+    expect(empty.details.identical).toBe(false);
+  });
+
   it("refuses when neither path nor text is given for a side", async () => {
     await expect(
       osFsDiffTool.run({ aText: "x" }, makeCtx(dir)),

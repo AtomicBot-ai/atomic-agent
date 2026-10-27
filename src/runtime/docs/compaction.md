@@ -93,16 +93,29 @@ current volume. When the step's model profile has prefix reuse `none` (and
 applies to that step's route), the ratio is at most 0.35: every later step
 re-reads the whole prompt there, so a smaller kept tail is cheaper per step and
 postpones the next compaction. Summary reserve is bounded by the configured maximum, 20% of the
-history allowance, and half the target so small manual operations remain useful.
+history allowance, and half the target so small manual operations remain useful;
+when half the target holds 512 tokens the reserve is at least 512, so a mid-size
+allowance does not ask for a summary too short to carry the task. The summary
+call itself is a separate request with the whole window (minus its reasoning
+reserve, below), not the turn's reply reserve.
 The planner tries cuts at the end of a finished turn first (the agent's final
 reply, followed by a new user message), so a request and its answer stay on the
 same side of the checkpoint; a cut inside a turn is used only when none of those
 fits. Loading still accepts any safe cut, so older checkpoints stay valid.
 When no safe reduction with a fresh complete tail exists, the result is `noop`.
 It is also `noop`, without a model call, for a manual request when the history
-allowance leaves under 128 tokens for a summary ("the model's context window is too small"), and for a
-manual request whose summary reserve is bound by the already small history while
-the saved checkpoint summary takes 75% of it or more ("nothing to compact").
+allowance leaves under 128 tokens for a summary ("the model's context window
+(N tokens) is too small to compact this conversation; raise the context size"),
+and for a manual request whose summary reserve is bound by the already small
+history while the saved checkpoint summary takes 75% of it or more ("nothing to
+compact"). Automatic and overflow compaction still try every cut on such a
+window (the extractive fallback needs no model call); when none fits they report
+the same skip, and the runtime says so once per session with a warning log line
+and a `compaction_failed` event carrying a `noop` result and that message,
+instead of leaving trimming to drop turns without a word. On any route with a
+known window under 32k the prompt's reply reserve is smaller (see
+[prompt assembly](../../prompt/docs/assembly.md)), so a 16k model with the
+default tools now has history room to compact at all.
 
 The runtime summarizes the prior checkpoint plus newly covered **original**
 records, including rows previously hidden by the packer. If the complete request
