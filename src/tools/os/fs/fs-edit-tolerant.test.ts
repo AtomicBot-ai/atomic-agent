@@ -167,6 +167,14 @@ describe("findTolerantEditMatch, safety rules", () => {
     });
   });
 
+  it("misses quickly in a large file with escapes", () => {
+    const source = Array.from({ length: 20_000 }, (_, i) => `line ${i} has a \\n escape and text`).join("\n");
+    const oldString = Array.from({ length: 100 }, (_, i) => `nothing like ${i} here`).join("\n");
+    const began = performance.now();
+    expect(findTolerantEditMatch(source, oldString, "x").kind).toBe("none");
+    expect(performance.now() - began).toBeLessThan(1_500);
+  });
+
   it("refuses a span far longer than oldString", () => {
     expect(findTolerantEditMatch("a\n\n\n\n\n\nb\n", "a\nb", "c").kind).toBe("none");
   });
