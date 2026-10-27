@@ -110,6 +110,16 @@ posix("which calls touch the agent's secret files", () => {
     expect(findStateSecretReads("os.fs.list", { path: s.stateDir }, ctx(), s.secrets)).toEqual([]);
   });
 
+  it("moving a folder that holds a secret is a hit; moving a plain one is not", () => {
+    const models = join(s.stateDir, "models");
+    expect(findStateSecretReads("os.fs.move", { moves: [{ from: models, to: "./m" }] }, ctx(), s.secrets)).toEqual([
+      models,
+    ]);
+    expect(
+      findStateSecretReads("os.fs.move", { from: join(s.stateDir, "skills", "notes"), to: "./n" }, ctx(), s.secrets),
+    ).toEqual([]);
+  });
+
   it("sees the usual shell spellings of the path", () => {
     for (const args of [
       { cmd: "cat ~/.atomic-agent/.env" },
