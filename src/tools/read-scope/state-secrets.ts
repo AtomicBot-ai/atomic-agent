@@ -53,8 +53,12 @@ export interface StateSecrets {
   files: readonly string[];
 }
 
-/** Read tools that walk a directory's CONTENT, so naming a folder that holds a secret reads it. */
-const RECURSIVE_READ_TOOLS: ReadonlySet<string> = new Set(["os.fs.grep"]);
+/**
+ * Tools that take a directory's CONTENT, so naming a folder that holds a
+ * secret reads it: a search walks it, and a move hands every file in it
+ * to a path that is no longer a state path.
+ */
+const RECURSIVE_READ_TOOLS: ReadonlySet<string> = new Set(["os.fs.grep", "os.fs.move"]);
 
 interface CanonicalSecrets {
   /** Each secret file, lexically resolved and canonicalised. */
