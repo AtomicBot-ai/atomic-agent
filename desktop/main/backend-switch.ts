@@ -300,16 +300,29 @@ async function activate(
        ended in the log. A hybrid-recall flag it turns off reaches the agent at
        its next restart. */
     supersedeBringUp();
-    daemon = "stopping";
+    // Said and done only when a local server looks up (its pid is alive): a cloud → cloud pick stops nothing.
+    const hint = configFileHint();
+    const likelyUp = !!hint && managedDaemonPidAlive(hint);
+    if (likelyUp) {
+      daemon = "stopping";
+      daemonLine = "local-llm: the chat server stops in the background";
+    }
     const embeddingsAlreadyOff = !!v.embeddingsOff;
-    void withDaemonLock(async () => {
+    if (likelyUp) void withDaemonLock(async () => {
       if (!(await localDaemonRunning({ reapWedged: false }))) return;
       const s = await modelsStopChatOnly();
       if (!s.ok) {
         console.warn(`[desktop] local-llm: background stop after a cloud pick failed — ${s.error ?? "unknown error"}`);
         return;
       }
-      if (!s.embeddingKept && !embeddingsAlreadyOff) await setMemoryEmbeddingsEnabled(false);
+      if (!s.embeddingKept && !embeddingsAlreadyOff) {
+        // Hybrid recall went off with the embedding server: the agent reads the flag at its next start, owed now and paid once no turn runs.
+        const m = await setMemoryEmbeddingsEnabled(false);
+        if (m.changed) {
+          restartOwed = true;
+          setTimeout(lastTurnEnded, 0);
+        }
+      }
     }, () => undefined).catch((err) => {
       console.warn(`[desktop] local-llm: background stop after a cloud pick failed — ${err instanceof Error ? err.message : String(err)}`);
     });

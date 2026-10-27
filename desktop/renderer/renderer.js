@@ -5098,7 +5098,7 @@ function settingsAnchorStyle(el, width) {
   const left = Math.round(Math.max(pad, Math.min(r.right - w, vw - pad - w)));
   const below = vh - r.bottom - pad - 6, above = r.top - pad - 6;
   if (below >= 260 || below >= above) {
-    return 'position:fixed;left:' + left + 'px;top:' + Math.round(r.bottom + 6) + 'px;bottom:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, below)) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 0';
+    return 'position:fixed;left:' + left + 'px;top:' + Math.round(Math.min(r.bottom + 6, vh - pad - 160)) + 'px;bottom:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, Math.min(below, vh - pad * 2))) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 0';
   }
   return 'position:fixed;left:' + left + 'px;bottom:' + Math.round(vh - r.top + 6) + 'px;top:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, above)) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 100%';
 }
@@ -24705,7 +24705,7 @@ function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'l
 function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
 function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
 function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
-function llmLocalActive() { const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }
+function llmLocalActive() { if (LLMP.choosing) return false; const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }   // ATO-1234: a cloud pick on its way is the choice
 function llmLocalEmbActive() { const p = llmProvider(llmActiveEmbId()); return !!p && p.kind === 'llama-server'; }
 function llmLocalModels() { return (LIVE_CONFIG && LIVE_CONFIG.localModels) || {}; }
 function llmManaged() { return llmLocalModels().managed || {}; }
@@ -26377,7 +26377,7 @@ function llmRestartRefusal(held) {
 /* ATO-1234: what happened to the agent, said only when it did: a cloud pick is
    usually taken live now, and the local server stops behind it. */
 function llmSwitchTail(res) {
-  return (res.daemon === 'stopping' ? ' The local model stops in the background.' : '')
+  return (res.daemon === 'stopping' && !res.daemonLine ? ' The local model stops in the background.' : '')
     + (res.liveSwapped ? '' : res.restart ? ' The agent was restarted.' : '');
 }
 async function llmSwitchProvider(id) {
@@ -26388,10 +26388,12 @@ async function llmSwitchProvider(id) {
   // r5 item 10: Settings is an in-window overlay, so this locks the same
   // composer the selector does. The refusal keeps the tab's own llmReport
   // wording rather than the selector's toast.
-  const res = await swxRun('switching…', {providerId: id},
-    () => SWXBR.activateProvider(id, {background: true}),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false; LLMP.choosing = null;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: id},
+      () => SWXBR.activateProvider(id, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return false; }
   // U29: no model yet; the provider's setup ends on its model step.
   if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
@@ -26416,10 +26418,12 @@ async function llmSelectChatModel(pid, modelId) {
   if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return; }
   LLMP.busy = true; LLMP.choosing = {pid, modelId}; llmRepaint();   // ATO-1234: the pick shows at once
   // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId) — lane B's selectCloudModel is exactly that pair, plus the restart.
-  const res = await swxRun('switching…', {providerId: pid, model: modelId},
-    () => SWXBR.selectCloudModel(pid, modelId, {background: true}),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false; LLMP.choosing = null;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: pid, model: modelId},
+      () => SWXBR.selectCloudModel(pid, modelId, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return; }
   if (!res || !res.ok) {
     llmReport(res && res.needsKey && res.keyInvalid ? savedKeyLine(pid)
