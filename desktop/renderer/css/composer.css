@@ -18,15 +18,15 @@
    provider waiting · switch failed. Calm (S4): the same shape as a system
    row in the transcript — no chips; numbers in tabular figures. */
 .statusstrip{display:flex;align-items:center;gap:8px;min-height:28px;min-width:0;padding:0 8px;
-  font-size:12.5px;line-height:1.3;color:var(--ink-2)}
+  font-size:var(--fs-cap);line-height:1.3;color:var(--ink-2)}
 .statusstrip > *{flex:none}
 .statusstrip .ss-ic{display:grid;place-items:center;width:14px;height:14px;color:var(--ink-3)}
 .statusstrip .ss-ic svg{width:13px;height:13px}
 .statusstrip .ss-ic.warn{color:var(--amber-text)}
 .statusstrip .ss-ic.err{color:var(--critical)}
-.statusstrip .ann{height:auto;padding:0;background:none;border-radius:0;font-size:12.5px;font-weight:500;color:var(--ink)}
+.statusstrip .ann{height:auto;padding:0;background:none;border-radius:0;font-size:var(--fs-cap);font-weight:500;color:var(--ink)}
 .statusstrip .ss-grow{flex:1 1 auto;min-width:0}
-.statusstrip .readout{flex:0 1 auto;min-width:0;font-family:var(--font-ui);font-size:12px;line-height:18px;
+.statusstrip .readout{flex:0 1 auto;min-width:0;font-family:var(--font-ui);font-size:var(--fs-label);line-height:18px;
   color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .statusstrip .ss-text,.statusstrip .ss-why{flex:0 1 auto;min-width:0;white-space:nowrap;overflow:hidden;
   text-overflow:ellipsis;color:var(--ink-2)}
@@ -53,7 +53,7 @@
 .qtray{display:flex;flex-wrap:wrap;gap:6px;padding:0 4px;min-width:0}
 .qchip{display:inline-flex;align-items:center;gap:6px;height:30px;max-width:300px;min-width:0;
   padding:0 3px 0 11px;border-radius:var(--r-pill);box-shadow:inset 0 0 0 1.5px var(--bd-2);
-  font-size:12.5px;color:var(--ink-2)}
+  font-size:var(--fs-cap);color:var(--ink-2)}
 .qchip .qlb{flex:none;font-weight:600;color:var(--ink-2)}
 .qchip .qtx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ink)}
 .qchip .qx{width:24px;height:24px}
@@ -65,7 +65,7 @@
 .voicestrip{display:grid;gap:4px;min-width:0;padding:9px 10px 8px 14px;border-radius:var(--r-card);
   background:var(--lift);box-shadow:var(--sh-card)}
 .voicestrip[hidden]{display:none}
-.vsrow{display:flex;align-items:center;gap:10px;min-height:30px;min-width:0;font-size:14.5px;line-height:1.45;color:var(--ink)}
+.vsrow{display:flex;align-items:center;gap:10px;min-height:30px;min-width:0;font-size:var(--fs-body);line-height:1.45;color:var(--ink)}
 .vsdot{width:8px;height:8px;flex:none;border-radius:50%;background:var(--critical);opacity:.5}
 .vsdot.live{opacity:1;animation:pulse 1.6s var(--ease) infinite}
 /* Nine level bars. `--lv` (0…1) is the live level the audio tap reports;
@@ -89,40 +89,40 @@
 .vstext{flex:1;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;max-height:44px;overflow-y:auto}
 .vspart{color:var(--ink-3)}
 .vswait{color:var(--ink-2)}
-.vslabel{font-size:13px;color:var(--ink-2)}
+.vslabel{font-size:var(--fs-cap);color:var(--ink-2)}
 .vschip{display:inline-flex;align-items:center;gap:6px;height:30px;flex:none;padding:0 8px 0 10px;
-  border-radius:var(--r-pill);font:500 12.5px/1 var(--font-ui);color:var(--ink-2);white-space:nowrap;
+  border-radius:var(--r-pill);font:500 var(--fs-cap)/1 var(--font-ui);color:var(--ink-2);white-space:nowrap;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .vschip:hover{background:color-mix(in srgb, var(--ink) 7%, transparent);color:var(--ink)}
 .vschip svg{width:12px;height:12px;opacity:.6}
 .vschip.won{background:var(--success-tint);color:var(--success)}
 .vschip.won:hover{background:color-mix(in srgb, var(--success) 18%, transparent);color:var(--success)}
-.vsnote{font-size:11.5px;line-height:1.4;color:var(--ink-2)}
+.vsnote{font-size:var(--fs-label);line-height:1.4;color:var(--ink-2)}
 .vsico svg{width:13px;height:13px}
-.vserr{flex:1;min-width:0;font-size:13.5px;font-weight:600;line-height:1.4;color:var(--critical)}
+.vserr{flex:1;min-width:0;font-size:var(--fs-ui);font-weight:600;line-height:1.4;color:var(--critical)}
 .voicestrip .vsopen{flex:none}
 .voicestrip .vsx svg{width:13px;height:13px}
 
 /* The dictation-language menu is the popovers slice's surface; these are
    zero-specificity defaults so its own rules win wherever they exist. */
 :where(.vsmenu){margin-top:4px;padding:4px 0 2px;box-shadow:0 -1px 0 var(--divider);max-height:280px;overflow-y:auto}
-:where(.vsmhead){padding:8px 10px 2px;font-size:12px;font-weight:600;color:var(--ink-2)}
+:where(.vsmhead){padding:8px 10px 2px;font-size:var(--fs-label);font-weight:600;color:var(--ink-2)}
 :where(.vsmrow){display:flex;align-items:center;gap:6px;padding:0 4px 0 0;border-radius:12px}
 :where(.vsmrow:hover){background:var(--hover)}
 :where(.vsmrow.on){background:var(--brand-wash)}
 :where(.vsmpick){flex:1;min-width:0;display:flex;align-items:center;gap:10px;min-height:32px;padding:0 10px;
-  font-size:13px;color:var(--ink);text-align:left}
+  font-size:var(--fs-cap);color:var(--ink);text-align:left}
 :where(.vsmname){flex:none}
-:where(.vsmtag){font-size:11px}
-:where(.vsmnote){flex:1;min-width:0;font-size:11.5px;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+:where(.vsmtag){font-size:var(--fs-micro)}
+:where(.vsmnote){flex:1;min-width:0;font-size:var(--fs-label);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
 :where(.vsmbadge){flex:none;height:18px;display:inline-flex;align-items:center;padding:0 6px;border-radius:var(--r-badge);
-  font-size:11px;background:var(--brand-wash);color:var(--blue)}
+  font-size:var(--fs-micro);background:var(--brand-wash);color:var(--blue)}
 :where(.vsmadd){width:26px;height:26px;flex:none;display:grid;place-items:center;border-radius:50%;color:var(--ink-2)}
 :where(.vsmadd.on){color:var(--blue)}
 :where(.vsmadd:hover){background:var(--press);color:var(--ink)}
-:where(.vsmerr){padding:6px 10px;font-size:12px;color:var(--critical)}
-:where(.vsmfoot){padding:8px 10px 4px;font-size:11.5px;line-height:1.45;color:var(--ink-2)}
-:where(.vsmempty){padding:8px 10px;font-size:12.5px;color:var(--ink-2)}
+:where(.vsmerr){padding:6px 10px;font-size:var(--fs-label);color:var(--critical)}
+:where(.vsmfoot){padding:8px 10px 4px;font-size:var(--fs-label);line-height:1.45;color:var(--ink-2)}
+:where(.vsmempty){padding:8px 10px;font-size:var(--fs-cap);color:var(--ink-2)}
 
 /* ---- The composer card --------------------------------------------------
    Translucent lift over a blur — the only glass in the app — with the
@@ -179,7 +179,7 @@
 .composer .field{display:flex;align-items:flex-end;gap:4px;min-width:0}
 #entry{flex:1;min-width:0;height:36px;max-height:180px;padding:6px 8px 6px 0;border:0;outline:none;
   background:transparent;resize:none;overflow-y:auto;
-  font:400 15px/24px var(--font-ui);letter-spacing:-.01em;color:var(--ink)}
+  font:400 var(--fs-lead)/24px var(--font-ui);letter-spacing:-.01em;color:var(--ink)}
 #entry::placeholder{color:var(--ink-3)}
 
 /* Mic: a round icon in the full ink, so it reads as live (chat review Д24:
@@ -220,7 +220,7 @@
 .cfoot .cgrow{flex:1 1 auto;min-width:6px}
 .cfoot .cchip{display:inline-flex;align-items:center;gap:6px;height:30px;min-width:0;flex:none;
   padding:0 8px 0 10px;border-radius:var(--r-pill);background:transparent;color:var(--ink);
-  font:500 12.5px/1 var(--font-ui);white-space:nowrap;
+  font:500 var(--fs-cap)/1 var(--font-ui);white-space:nowrap;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .cfoot .cchip:hover,.cfoot .cchip.is-open{background:color-mix(in srgb, var(--ink) 7%, transparent)}
 .cfoot .cchip > svg{width:14px;height:14px;color:var(--ink-2)}
@@ -272,7 +272,7 @@
    works, green done, red failed, amber cancelled. No control of its own. */
 .fzlive{display:flex;flex-direction:column;gap:1px;min-width:0;padding:0 6px 4px}
 .fzlive .fzw{display:flex;align-items:center;gap:8px;min-width:0;min-height:20px;
-  font:400 11.5px/18px var(--font-mono);letter-spacing:0;color:var(--ink-2)}
+  font:400 var(--fs-label)/18px var(--font-mono);letter-spacing:0;color:var(--ink-2)}
 .fzlive .fzt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .fzlive .fzdot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--brand);animation:fzpulse 1.4s var(--ease) infinite}
 .fzlive .fzw.done .fzdot{background:var(--success);animation:none}
@@ -298,7 +298,7 @@
 .ctxring.crit .fg{stroke:var(--critical)}
 /* ATO-481: from 50% the figure sits beside the ring. */
 .cfoot .ctxbtn.haspct{width:auto;padding:0 8px 0 5px;gap:5px}
-.ctxpct{font:500 11.5px/1 var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-2)}
+.ctxpct{font:500 var(--fs-label)/1 var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-2)}
 .ctxbtn.warn .ctxpct{color:var(--amber-text)}
 .ctxbtn.crit .ctxpct{color:var(--critical)}
 
@@ -325,14 +325,14 @@
   text-align:left;cursor:pointer;transition:background var(--t-state) var(--ease)}
 .slashrow:hover{background:var(--hover)}
 .slashrow.on{background:var(--brand-wash)}
-.slashrow .cmd{font:400 13px/1 var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slashrow .cmd{font:400 var(--fs-cap)/1 var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slashrow .cmd b{font-weight:500;color:var(--blue)}
-.slashrow .ds{font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.slashrow .hint{font:400 11px/1 var(--font-mono);letter-spacing:0;color:var(--ink-3);white-space:nowrap}
+.slashrow .ds{font-size:var(--fs-cap);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.slashrow .hint{font:400 var(--fs-micro)/1 var(--font-mono);letter-spacing:0;color:var(--ink-3);white-space:nowrap}
 .slashrow.nomatch{display:flex;cursor:default}
 .slashrow.nomatch:hover{background:transparent}
-.slashrow.nomatch .cmd{font:500 13px/1 var(--font-ui);color:var(--amber-text)}
-.slashfoot{display:flex;align-items:center;gap:4px;margin-top:4px;padding:7px 10px 2px;box-shadow:0 -1px 0 var(--divider);font-size:12px;color:var(--ink-2)}
+.slashrow.nomatch .cmd{font:500 var(--fs-cap)/1 var(--font-ui);color:var(--amber-text)}
+.slashfoot{display:flex;align-items:center;gap:4px;margin-top:4px;padding:7px 10px 2px;box-shadow:0 -1px 0 var(--divider);font-size:var(--fs-label);color:var(--ink-2)}
 .slashfoot .grow{flex:1}
 /* ATO-431 (U-35): on an empty chat the list rose over the greeting's
    "Working in" line and cut it in half. While the list is open the empty

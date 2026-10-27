@@ -17,7 +17,7 @@
   background:var(--lift);box-shadow:var(--sh-pop)}
 .composerwrap > .attmenu[hidden]{display:none}
 .attmenurow{display:flex;align-items:center;gap:10px;height:32px;padding:0 10px;border-radius:var(--r-row);
-  background:transparent;color:var(--ink);font:500 13px/1 var(--font-ui);text-align:left}
+  background:transparent;color:var(--ink);font:500 var(--fs-cap)/1 var(--font-ui);text-align:left}
 .attmenurow svg{width:15px;height:15px;color:var(--ink-2)}
 .attmenurow:hover{background:var(--hover)}
 
@@ -36,8 +36,8 @@
   background:var(--paper);color:var(--ink-2)}
 .atticon svg{width:16px;height:16px}
 .attmeta{display:flex;flex-direction:column;gap:2px;min-width:0}
-.attname{font:500 12.5px/1.25 var(--font-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.attsub{font:400 11.5px/1.25 var(--font-ui);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+.attname{font:500 var(--fs-cap)/1.25 var(--font-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.attsub{font:400 var(--fs-label)/1.25 var(--font-ui);color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   font-variant-numeric:tabular-nums}
 .attchip.is-err{background:var(--critical-wash)}
 .attchip.is-err .atticon{color:var(--critical)}
@@ -66,7 +66,7 @@
 .composer.att-dragging{box-shadow:0 0 0 2px var(--brand),var(--sh-comp)}
 .composer.att-dragging .attdrop{position:absolute;inset:0;z-index:5;display:flex;align-items:center;justify-content:center;gap:8px;
   border-radius:inherit;pointer-events:none;
-  background:color-mix(in srgb, var(--brand) 12%, var(--lift));color:var(--ink);font:500 13.5px/1 var(--font-ui)}
+  background:color-mix(in srgb, var(--brand) 12%, var(--lift));color:var(--ink);font:500 var(--fs-ui)/1 var(--font-ui)}
 .composer.att-dragging .attdrop svg{width:16px;height:16px;color:var(--brand)}
 
 /* ---- Under a sent message ---------------------------------------------- */
