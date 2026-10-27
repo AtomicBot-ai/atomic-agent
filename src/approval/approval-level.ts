@@ -81,6 +81,20 @@ export type ApprovalCategory =
    * before money is spent; a local generation never asks.
    */
   | "paid_generation"
+  /**
+   * Driving the operator's real mouse and keyboard (`os.screen.click`,
+   * `os.screen.type`, `os.screen.key`, ATO-525). Level 4 beside `shell`:
+   * a click or a keystroke in an arbitrary app can do anything the
+   * operator could do there, so it never goes quiet below the rung where
+   * a shell command does.
+   */
+  | "screen_control"
+  /**
+   * A screenshot of the operator's screen (`os.screen.capture`): whatever
+   * is open, mail and chats included. Level 3 beside `http` — the lowest
+   * two levels ask before the picture is taken.
+   */
+  | "screen_capture"
   | "other";
 
 /**
@@ -93,9 +107,9 @@ export type ApprovalCategory =
  *  - level 3 (home): file writes anywhere under the home directory,
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
  *    is not part of the gate and stays on), paid cloud generation,
- *    browser navigation outside `browser.allowedDomains`.
+ *    browser navigation outside `browser.allowedDomains`, screenshots.
  *  - level 4 (operator): guarded shell commands, skill scripts,
- *    process kills, and network git (`os.git.{push,pull,fetch,clone}`
+ *    process kills, screen control (mouse and keyboard), and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
  *    through the shell, so the dedicated tools are never looser or
  *    stricter than the escape hatch. Browser clicks / Enter that
@@ -119,6 +133,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   http: 3,
   paid_generation: 3,
   browser_offsite: 3,
+  screen_capture: 3,
   shell: 4,
   script: 4,
   proc_kill: 4,
@@ -126,6 +141,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   git_remote: 4,
   fusion_fanout: 4,
   browser_commit: 4,
+  screen_control: 4,
   browser_nonweb: 5,
   browser_secret: 5,
   trust_config: 5,
@@ -206,6 +222,11 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   fs_read_outside: true,
   // "Stop asking about paid images this session" is the operator's call.
   paid_generation: true,
+  // "Let it drive the screen for this session" is a legitimate answer
+  // while the operator watches it work; every call still shows its preview.
+  screen_control: true,
+  // "Stop asking before screenshots this session" is the operator's call.
+  screen_capture: true,
   other: true,
 };
 
@@ -239,6 +260,8 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   email: "e-mail send",
   fs_read_outside: "read outside the working directory",
   paid_generation: "paid generation · cloud",
+  screen_control: "screen · click / type",
+  screen_capture: "screen · screenshot",
   other: "uncategorised",
 };
 

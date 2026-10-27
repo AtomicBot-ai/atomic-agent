@@ -32,6 +32,8 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "email",
   "fs_read_outside",
   "paid_generation",
+  "screen_control",
+  "screen_capture",
   "other",
 ];
 
@@ -85,6 +87,10 @@ describe("approval ladder", () => {
       fs_read_outside: 5,
       // Money leaves the operator's cloud account: the lowest two levels ask.
       paid_generation: 3,
+      // Mouse and keyboard in any app: the same rung as a shell command.
+      screen_control: 4,
+      // A picture of whatever is open: asks on the lowest two levels, like http.
+      screen_capture: 3,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
@@ -113,6 +119,12 @@ describe("approval ladder", () => {
     expect(formatApprovalCategory("trust_config")).toBe("agent trust config");
     expect(formatApprovalCategory("shell")).toBe("shell command");
     expect(formatApprovalCategory("git_remote")).toBe("git · remote");
+    expect(formatApprovalCategory("screen_control")).toBe(
+      "screen · click / type",
+    );
+    expect(formatApprovalCategory("screen_capture")).toBe(
+      "screen · screenshot",
+    );
     expect(formatApprovalCategory("fs_read_outside")).toBe(
       "read outside the working directory",
     );
@@ -141,6 +153,8 @@ describe("approval ladder", () => {
       "trust_config",
       "email",
       "fs_read_outside",
+      "screen_control",
+      "screen_capture",
       "other",
     ];
     for (const category of categories) {

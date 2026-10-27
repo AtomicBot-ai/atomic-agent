@@ -108,6 +108,9 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       config.git.remoteSync = true; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(true);
       expect(registry.list().slice(0, 2).map(tool => tool.name)).toEqual(["finish", "reply"]);
       expect(registry.has("tool.view")).toBe(true);
+      // Computer use is opt-in (`tools.screen.enabled`, default off): nothing registered.
+      expect(config.tools.screen.enabled).toBe(false);
+      expect(registry.has("os.screen.capture")).toBe(false); expect(registry.has("os.screen.click")).toBe(false);
       // No surface named: the web-search error keeps the desktop / .env advice.
       expect(wired.webSearchKeyHelp).toBeUndefined();
     } finally { shellJobs.endAll(); notesStore.close(); profileStore.close(); }
