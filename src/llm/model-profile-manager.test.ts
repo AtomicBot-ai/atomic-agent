@@ -430,3 +430,44 @@ describe("ModelProfileManager prefix reuse (F12)", () => {
     expect(mgr.getProfile().prefixReuse).toBe("none");
   });
 });
+
+describe("ModelProfileManager MCP tool names (ATO-1029)", () => {
+  // The agent loop reads this manager's grammar before the catalog's, so
+  // it must carry the live MCP names, and keep them across a hot-swap.
+  const RULE = 'mcp-server-tool ::= "\\"mcp.docs.search\\""';
+
+  it("patches the held grammar and keeps the rule across a rebuild", async () => {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+    });
+    expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-server-tool/m);
+    mgr.setMcpToolNameRule(RULE);
+    expect(mgr.getGrammar()).toContain(RULE);
+    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool \|/m);
+    await mgr.refresh();
+    expect(mgr.getProfile().id).toBe("qwen-think");
+    expect(mgr.getGrammar()).toContain(RULE);
+    expect(mgr.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-server-tool \|/m);
+    mgr.setMcpToolNameRule(null);
+    expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-server-tool/m);
+  });
+
+  it("keeps the native MCP tools out across a rebuild when MCP is off", async () => {
+    const stub = makeLlamaStub([QWEN3_PROPS]);
+    const mgr = new ModelProfileManager({
+      llama: stub.client as LlamaServerClient,
+      initialProfile: PLAIN_INSTRUCT_PROFILE,
+      initialGrammar: await buildGrammar(PLAIN_INSTRUCT_PROFILE),
+      initialModelId: null,
+    });
+    mgr.setMcpToolNameRule(null, false);
+    expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-native-tool/m);
+    await mgr.refresh();
+    expect(mgr.getProfile().id).toBe("qwen-think");
+    expect(mgr.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-native-tool/m);
+  });
+});

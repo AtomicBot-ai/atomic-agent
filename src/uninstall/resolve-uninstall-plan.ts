@@ -17,6 +17,10 @@ import {
   planUninstallTargets,
   type UninstallTarget,
 } from "./uninstall-targets.js";
+import {
+  detectInstallSource,
+  type InstallSource,
+} from "../update/install-source.js";
 
 export interface ResolvedUninstallPlan {
   readonly targets: readonly UninstallTarget[];
@@ -29,6 +33,12 @@ export interface ResolvedUninstallPlan {
   readonly devCheckout: boolean;
   /** `dirname(execPath)`, shown so the operator can check it themselves. */
   readonly installDir: string;
+  /**
+   * Set when a deb, rpm or AUR package installed the binary. The plan then
+   * holds data only; the program is removed with the package manager
+   * (`packageRemoveHint` in `src/update/install-source.ts`).
+   */
+  readonly installSource?: InstallSource;
   /**
    * Whether the desktop app shares the state directory, and whether an
    * old desktop directory was left behind. Read for warnings only: it
@@ -65,6 +75,11 @@ export interface ResolveUninstallPlanOptions {
   readonly keepBinary?: boolean;
   /** Environment for the desktop lookup. Defaults to `process.env`. */
   readonly env?: NodeJS.ProcessEnv;
+  /**
+   * The Linux package that installed `execPath`. Defaults to reading the
+   * package marker for the real process; tests pass it in.
+   */
+  readonly installSource?: InstallSource;
   /** File-system probes for the desktop lookup, injectable for tests. */
   readonly desktopProbe?: Pick<DetectDesktopSharingInput, "exists" | "readFile">;
 }
@@ -87,6 +102,8 @@ export async function resolveUninstallPlan(
   const binaryPresent =
     isInstalledBinary(execPath) &&
     (await exists(resolve(installDir, `atomic-agent${exeSuffix}`)));
+  const installSource =
+    options.installSource ?? detectInstallSource(platform, execPath);
 
   const all = planUninstallTargets({
     stateDir: options.stateDir,
@@ -94,6 +111,7 @@ export async function resolveUninstallPlan(
     homeDir,
     platform,
     binaryPresent,
+    ...(installSource ? { installSource } : {}),
   });
   const targets = all.filter((target) => {
     if (options.keepData && target.group === "data") return false;
@@ -106,6 +124,7 @@ export async function resolveUninstallPlan(
     measured: await measureUninstallPlan(targets),
     devCheckout: !binaryPresent,
     installDir,
+    ...(installSource ? { installSource } : {}),
     desktop: detectDesktopSharing({
       stateDir: options.stateDir,
       homeDir,

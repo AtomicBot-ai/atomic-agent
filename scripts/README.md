@@ -3,7 +3,7 @@
 Status: current
 Owner: scripts/
 
-Read [AGENTS.md](AGENTS.md) before script changes. [Bundling](docs/bundling.md) owns SEA/assets/signing/release details. [Document checker](check-docs.mjs) is offline and validates active documentation; its self-test uses temporary fixtures. TypeScript script checks use tsconfig.scripts.json; production lint excludes scripts. Do not invoke release/signing/upload scripts merely to check documentation.
+Read [AGENTS.md](AGENTS.md) before script changes. [Bundling](docs/bundling.md) owns SEA/assets/signing/release details, including the Linux deb/rpm/AUR packages ([linux-packages.ts](linux-packages.ts)), their apt/dnf repository ([linux-repo.ts](linux-repo.ts)), the pure naming/layout module ([linux-packaging.ts](linux-packaging.ts), tested by vitest from `scripts/`) and the container smoke ([smoke-linux-package.sh](smoke-linux-package.sh)). [Document checker](check-docs.mjs) is offline and validates active documentation; its self-test uses temporary fixtures. TypeScript script checks use tsconfig.scripts.json; production lint excludes scripts. Do not invoke release/signing/upload scripts merely to check documentation.
 
 [Test types](check-test-types.mjs) reject new diagnostics against the explicit ledger; [self-test](check-test-types.selftest.mjs) uses temporary fixtures. [Test runner](run-tests.mjs) shares the quarantine registry with CI; [registry self-test](run-tests.selftest.mjs) verifies exclusions and workflow checks. See [local verification](../docs/testing/local-ci.md).
 

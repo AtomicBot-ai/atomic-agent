@@ -96,7 +96,10 @@ function parseSide(
   side: string,
 ): { aPath?: string; aText?: string } {
   const hasPath = typeof rawPath === "string" && rawPath.length > 0;
-  const hasText = typeof rawText === "string";
+  // Next to a path, an empty text is a default-filled field (some models
+  // send every unused optional field as ""), not a second source. On its
+  // own it stays a real input: diffing against empty text.
+  const hasText = typeof rawText === "string" && !(hasPath && rawText === "");
   if (!hasPath && !hasText) {
     throw new Error(
       `os.fs.diff: side ${side} requires either \`${side}Path\` or \`${side}Text\``,
