@@ -105,6 +105,13 @@ export type ApprovalCategory =
    * two levels ask before the picture is taken.
    */
   | "screen_capture"
+  /**
+   * Restart the local model with a smaller window after it ran out of
+   * memory (ATO-334). Its own category so that answering it never
+   * stands for an MCP tool or any other uncategorised request, and the
+   * reverse; never granted for the session, like `email`.
+   */
+  | "local_model_restart"
   | "other";
 
 /**
@@ -160,6 +167,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   state_secret: 5,
   email: 5,
   fs_read_outside: 5,
+  local_model_restart: 5,
   other: 5,
 };
 
@@ -244,6 +252,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   screen_control: true,
   // "Stop asking before screenshots this session" is the operator's call.
   screen_capture: true,
+  // Each out-of-memory restart is asked about when it happens.
+  local_model_restart: false,
   other: true,
 };
 
@@ -280,6 +290,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   paid_generation: "paid generation · cloud",
   screen_control: "screen · click / type",
   screen_capture: "screen · screenshot",
+  local_model_restart: "local model · restart",
   other: "uncategorised",
 };
 

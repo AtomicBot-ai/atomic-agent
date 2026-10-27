@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { isGrantableCategory } from "../approval/approval-level.js";
 import type { ApprovalDecision } from "../approval/index.js";
 import {
   LOCAL_MODEL_RESTART_TOOL,
@@ -98,10 +99,14 @@ describe("createLocalOutOfMemoryPort (ATO-334)", () => {
         approvalId: "q1",
         sessionId: "s1",
         tool: LOCAL_MODEL_RESTART_TOOL,
+        // Its own category, never granted for the session: an answer here
+        // must not stand for an MCP tool's `other` request, nor the reverse.
+        category: "local_model_restart",
         reason: question.message,
       }),
       { signal },
     );
+    expect(isGrantableCategory("local_model_restart")).toBe(false);
   });
 
   it("a Deny is a cancel; a Deny saying pick_smaller_model is that", async () => {

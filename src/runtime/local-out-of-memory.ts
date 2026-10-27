@@ -108,7 +108,7 @@ export function createLocalOutOfMemoryPort(deps: LocalOutOfMemoryPortDeps): Loca
           approvalId: question.questionId,
           sessionId: question.sessionId,
           tool: LOCAL_MODEL_RESTART_TOOL,
-          category: "other",
+          category: "local_model_restart",
           reason: question.message,
           preview:
             `Allow: restart with a smaller window (${question.nextContextWindow} tokens). ` +

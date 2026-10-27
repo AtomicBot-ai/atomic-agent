@@ -35,17 +35,19 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "paid_generation",
   "screen_control",
   "screen_capture",
+  "local_model_restart",
   "other",
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config, state_secret, email and browser_secret", () => {
+  it("grants every category except trust_config, state_secret, email, browser_secret and local_model_restart", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
         category !== "trust_config" &&
           category !== "state_secret" &&
           category !== "email" &&
-          category !== "browser_secret",
+          category !== "browser_secret" &&
+          category !== "local_model_restart",
       );
     }
   });
@@ -103,6 +105,7 @@ describe("approval ladder", () => {
       screen_control: 4,
       // A picture of whatever is open: asks on the lowest two levels, like http.
       screen_capture: 3,
+      local_model_restart: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [

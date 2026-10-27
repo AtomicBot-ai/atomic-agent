@@ -2205,7 +2205,7 @@ export class LocalModelsOrchestrator {
           error: e,
         })
       ) {
-        return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal);
+        return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal, opts?.contextSize);
       }
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
       if (!this.reportCoreFailure(e)) {
@@ -2310,6 +2310,8 @@ export class LocalModelsOrchestrator {
     dataDir: string,
     failureMsg: string,
     signal?: AbortSignal,
+    /** A one-run window (out-of-memory restart) the retry keeps. */
+    contextSize?: number,
   ): Promise<boolean> {
     this.bus.emit({
       type: "runtime_info",
@@ -2385,6 +2387,7 @@ export class LocalModelsOrchestrator {
       signal,
       backendAlreadyChecked: true,
       cpuFallbackAttempted: true,
+      ...(contextSize !== undefined ? { contextSize } : {}),
     });
   }
 
