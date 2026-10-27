@@ -14,7 +14,7 @@ import {
   parseBoundedPositiveInt,
   parseNonNegativeInt,
   parseNonEmptyString,
-  emitConfigNotice,
+  emitConfigNoticeOnce,
 } from "../config-primitives.js";
 import { parseUrl } from "../config-values.js";
 import { parseCustomLocalModels } from "../custom-models-schema.js";
@@ -206,7 +206,7 @@ function lenientBackendVariant(raw: unknown, readDefaults: () => UserLocalModels
   if (isBackendVariantPreference(raw) || typeof raw !== "string" || raw.length === 0) {
     return parseBackendVariant(raw, "localModels.managed.backendVariant");
   }
-  emitConfigNotice(`[atomic-agent] localModels.managed.backendVariant ${JSON.stringify(raw)} is not known to this build; using ${JSON.stringify(readDefaults().managed.backendVariant)}`);
+  emitConfigNoticeOnce(`[atomic-agent] localModels.managed.backendVariant ${JSON.stringify(raw)} is not known to this build; using ${JSON.stringify(readDefaults().managed.backendVariant)}`);
   return readDefaults().managed.backendVariant;
 }
 
@@ -227,7 +227,7 @@ function parseOptionalManagedModelId(
      usual "pick a model", and the file keeps its value for the build that
      wrote it. */
   if (!isKnownLocalModelId(s) && !customModels.some((m) => m.id === s)) {
-    emitConfigNotice(
+    emitConfigNoticeOnce(
       `[atomic-agent] ${field} ${JSON.stringify(s)} is a model this build does not know (a newer app may have chosen it); no local model is selected here — update atomic-agent or pick one with \`models use\``,
     );
     return null;
@@ -278,7 +278,7 @@ function resolveManagedEngine(
     if (typeof raw !== "string" || raw.length === 0) {
       throw new ConfigValidationError("localModels.managed.engine", "expected llama-server|atomic-core");
     }
-    emitConfigNotice(`[atomic-agent] localModels.managed.engine ${JSON.stringify(raw)} is not known to this build; using its default engine`);
+    emitConfigNoticeOnce(`[atomic-agent] localModels.managed.engine ${JSON.stringify(raw)} is not known to this build; using its default engine`);
     return readDefaults().managed.engine ?? "atomic-core";
   }
   if (inputVersion < ATOMIC_CORE_DEFAULT_VERSION) return "atomic-core";

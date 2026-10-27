@@ -266,6 +266,10 @@ async function setOneKey(key: string, value: string): Promise<number> {
     process.stderr.write(`config set failed: ${key}: unknown managed local model id: ${JSON.stringify(value)} (see \`atomic-agent models list\`)\n`);
     return 1;
   }
+  if ((key === "localModels.managed.engine" || key === "localModels.managed.backendVariant") && readConfigPath(next, key) !== value) {
+    process.stderr.write(`config set failed: ${key}: ${JSON.stringify(value)} is not a value this build knows\n`);
+    return 1;
+  }
   // Store the *coerced* value the schema produced ("false" → false,
   // "40" → 40) rather than the raw string. Both reload identically, since
   // the schema coerces on every read, but a config file should hold

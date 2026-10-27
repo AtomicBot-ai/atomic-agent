@@ -198,6 +198,14 @@ export function setConfigNoticeSink(sink: ConfigNoticeSink | null): void {
   configNoticeSink = sink;
 }
 
+const noticesSaid = new Set<string>();
+/** The same line once per process: the config is parsed on every read. */
+export function emitConfigNoticeOnce(line: string): void {
+  if (noticesSaid.has(line)) return;
+  noticesSaid.add(line);
+  emitConfigNotice(line);
+}
+
 export function emitConfigNotice(line: string): void {
   if (configNoticeSink) {
     configNoticeSink(line);
