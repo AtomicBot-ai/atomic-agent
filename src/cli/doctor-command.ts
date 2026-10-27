@@ -1,20 +1,25 @@
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
-import { getUserConfigPath, resolveStateDir } from "../config/index.js";
+import { getUserConfigPath, loadConfig, resolveStateDir, type AtomicAgentConfig } from "../config/index.js";
 import { readRawConfigTree, writeRawUserConfigFileSync } from "../config/config-paths.js";
+import { runEngineChecks, type EngineProbes } from "./doctor-engine-checks.js";
 import { findOnPath, runDoctorChecks, type DoctorContext, type DoctorFinding } from "./doctor-checks.js";
 
 /**
  * ATO-577 — `atag doctor`: check config, its file mode and MCP commands;
  * `--fix` applies the bounded fixes after copying config.json into
  * `<stateDir>/doctor-backups/`; `--undo` puts the newest copy back.
- * First version: the engine and cloud provider keys are not checked yet.
+ * Once the config is valid, the local engine (installed, model on disk,
+ * memory, server and its port) or the active cloud provider's key is
+ * checked too (doctor-engine-checks.ts); those say the command that fixes them.
  */
 const HELP = [
   "Usage: atomic-agent doctor [--fix] [--undo] [--json]",
   "",
   "Check this install for problems the agent can name, and fix the bounded ones.",
+  "Checks config.json, its file mode, MCP commands, then the local engine",
+  "(installed, model on disk, memory, server, port) or the cloud key (one test token).",
   "",
   "Options:",
   "  --fix      Apply the fixes listed (config.json is backed up first)",
@@ -29,6 +34,9 @@ export interface DoctorCommandDeps {
   writeErr?: (text: string) => void;
   context?: Partial<DoctorContext>;
   now?: () => Date;
+  /** null skips the engine and key checks (tests of the config checks). */
+  engine?: EngineProbes | null;
+  loadConfig?: () => AtomicAgentConfig;
 }
 
 const MARK = { ok: "ok  ", warn: "warn", fail: "FAIL" } as const;
@@ -111,6 +119,16 @@ export async function doctorCommand(args: string[], deps: DoctorCommandDeps = {}
       say(`fixed  ${f.check}: ${f.fix!.describe}\n`);
     }
     findings = runDoctorChecks(ctx);
+  }
+
+  // The engine and the key are read from the loaded config, once, and only while config.json is valid.
+  if (deps.engine !== null && !findings.some((f) => f.check === "config" && f.status === "fail")) {
+    try {
+      const cfg = (deps.loadConfig ?? loadConfig)();
+      findings = [...findings, ...(await runEngineChecks(cfg, deps.engine ?? undefined))];
+    } catch (err) {
+      findings = [...findings, { check: "engine", status: "warn", message: `could not read the engine state: ${err instanceof Error ? err.message : String(err)}` }];
+    }
   }
 
   if (args.includes("--json")) {
