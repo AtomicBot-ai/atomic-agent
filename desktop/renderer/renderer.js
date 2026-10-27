@@ -5826,6 +5826,7 @@ function diagnosticsPane() {
       // ATO-535: where to write, opened in the browser by the [data-url] click handler (BR.openExternal).
       + '<a class="msglink" href="#" data-url="https://discord.gg/kXWDFSJpMW">Discord</a> or in a '
       + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
+    + doctorDataHTML(DOCD, {esc, ic})
     + diagLogHTML()
     + '</div>';
 }
@@ -6688,6 +6689,8 @@ function act(a) {
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
   // ATO-328: Save on the Exa key card or its Settings row. No close(): the card is in the chat, the row in Settings.
   if (k === 'exakey') { exaKeyAct(v); return; }
+  // ATO-577 / ATO-579: Diagnostics' Doctor and Data buttons (doctor-data.js).
+  if (k === 'doctor') { doctorDataAct(v, BR, () => location.reload()); return; }
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
@@ -13583,6 +13586,7 @@ function hfDiskFit(choice) {
 }
 // A new reading that could change a verdict repaints whatever shows one.
 DISK.onChange = () => render();
+DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
