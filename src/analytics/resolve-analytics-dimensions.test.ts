@@ -32,6 +32,25 @@ describe("analytics dimensions", () => {
     expect(resolveInstallChannel(dir, {})).toBe("curl_ps1");
   });
 
+  it("reports the package that installed the running binary over a stale marker", () => {
+    // An install.sh copy was replaced by the rpm; the per-user marker still
+    // says curl_sh, but the binary running is the package's.
+    writeFileSync(join(dir, "install-channel"), "curl_sh\n", "utf8");
+    const packaged = {
+      platform: "linux" as const,
+      execPath: "/usr/lib/atomic-agent/atomic-agent",
+      readFile: (path: string) =>
+        path === "/usr/lib/atomic-agent/install-source" ? "rpm\n" : undefined,
+    };
+    expect(resolveInstallChannel(dir, {}, packaged)).toBe("rpm");
+    expect(resolveInstallChannel(dir, {}, { ...packaged, readFile: () => undefined })).toBe(
+      "curl_sh",
+    );
+    expect(
+      resolveInstallChannel(dir, {}, { ...packaged, execPath: "/home/op/.local/bin/atomic-agent" }),
+    ).toBe("curl_sh");
+  });
+
   it("lets the env set by the desktop app win over the marker", () => {
     writeFileSync(join(dir, "install-channel"), "curl_sh\n", "utf8");
     expect(
