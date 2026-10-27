@@ -51,12 +51,17 @@ contents:
 
 # The glibc the binary requires (its GLIBC_ version references), so a package never installs where
 # the binary cannot start. The native addon also links libstdc++ (GLIBCXX_3.4.29, GCC 11); every
-# distribution with that glibc ships a newer one, so the version is not encoded.
+# distribution with that glibc ships a newer one, so the version is not encoded. The Node binary
+# also links libatomic, which minimal Debian and Fedora images do not carry (a desktop usually has
+# it through gcc, which is why install.sh never showed it). scripts/linux-packages.ts reads every
+# NEEDED library of the bundle's ELF files and fails on one this list does not cover
+# (DECLARED_LIBRARIES in scripts/linux-packaging.ts); libgcc_s comes with glibc on both families.
 overrides:
   deb:
     depends:
       - libc6 (>= ${GLIBC})
       - libstdc++6
+      - libatomic1
     recommends:
       - git
     suggests:
@@ -68,6 +73,7 @@ overrides:
     depends:
       - glibc >= ${GLIBC}
       - libstdc++
+      - libatomic
     recommends:
       - git
 

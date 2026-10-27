@@ -11,7 +11,7 @@ pkgdesc='Local-first AI agent for the terminal: browses, edits files, runs appro
 arch=('x86_64' 'aarch64')
 url='https://github.com/AtomicBot-ai/atomic-agent'
 license=('MIT')
-depends=('glibc')
+depends=('glibc' 'gcc-libs')
 optdepends=('git: git tools'
             'wmctrl: window control on X11'
             'xclip: clipboard on X11'

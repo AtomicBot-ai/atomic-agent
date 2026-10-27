@@ -37,6 +37,8 @@ import {
   GITHUB_REPO,
   glibcFloor,
   maxGlibc,
+  neededLibraries,
+  undeclaredLibraries,
   PACKAGE_FORMATS,
   PACKAGE_TARGETS,
   packageFileName,
@@ -99,10 +101,22 @@ function extractBundle(archive: string, target: PackageTarget, into: string): st
   return tree;
 }
 
-/** The newest glibc any ELF file of the tree requires; the binary itself must name one. */
+/**
+ * The newest glibc any ELF file of the tree requires; the binary itself must name one. Every
+ * library the files load must be one the package dependencies cover, or the package would install
+ * and then fail to start (libatomic on a minimal Debian 12, before it was declared).
+ */
 function treeGlibc(tree: string): string {
   const floors = ELF_FILES.filter((f) => existsSync(join(tree, f))).map((f) => {
-    const floor = glibcFloor(run("readelf", ["--version-info", "--wide", join(tree, f)]));
+    const file = join(tree, f);
+    const missing = undeclaredLibraries(neededLibraries(run("readelf", ["--dynamic", "--wide", file])));
+    if (missing.length > 0) {
+      fail(
+        `${f} needs ${missing.join(", ")}, which no package dependency covers: declare the package in ` +
+          "packaging/nfpm.yaml and PKGBUILD.in, then add the soname to DECLARED_LIBRARIES",
+      );
+    }
+    const floor = glibcFloor(run("readelf", ["--version-info", "--wide", file]));
     stdout.write(`  ${f}: glibc ${floor ?? "(none, static)"}\n`);
     return floor;
   });

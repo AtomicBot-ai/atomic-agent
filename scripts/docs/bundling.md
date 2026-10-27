@@ -141,7 +141,13 @@ manager, the TUI makes no update offer, `atomic-agent uninstall` lists data
 only, and the analytics install channel reports the package. `install.sh`
 warns when its copy shadows a package. Each package depends on the newest
 glibc any ELF in the tree requires, read with `readelf` (2.34 today, from
-`better_sqlite3.node`; the SEA binary itself needs 2.28). Packages are named
+`better_sqlite3.node`; the SEA binary itself needs 2.28), plus `libstdc++` and
+`libatomic` (the Node binary links `libatomic.so.1`, which minimal Debian and
+Fedora images lack; the first smoke on a draft caught it). The build reads
+every `NEEDED` library of those files and fails on one that
+`DECLARED_LIBRARIES` does not cover, so a new Node or addon dependency has to
+be declared in `nfpm.yaml` and `PKGBUILD.in` before a package is built.
+Packages are named
 `atomic-agent_<version>_<arch>.<deb|rpm>` (an underscore: no `atomic-agent-*`
 glob matches them) and get a `.sha256` each. The pure parts (names, layout,
 upload order) are in [linux-packaging.ts](../linux-packaging.ts) with
@@ -159,7 +165,11 @@ Fedora on arm64) the way the README's `<!-- install:apt -->` and
 loopback and signed with a throwaway key
 ([smoke-linux-package.sh](../smoke-linux-package.sh)). A red smoke means: do
 not publish the draft. A run by hand with `allow_unsigned` builds without the
-key (never for a tag).
+key (never for a tag). A run by hand names its draft after `package.json`;
+when a release of that version is already published the `release` job stops
+before uploading anything, because `gh release upload --clobber` onto a
+published release replaces the binaries people install (it did once, for
+v0.6.11, when the step still ignored a failed `gh release create`).
 
 **The repository** (`npm run linux:repo`, [linux-repo.ts](../linux-repo.ts))
 is the bucket `atomic-agent-packages` on Hetzner Object Storage in

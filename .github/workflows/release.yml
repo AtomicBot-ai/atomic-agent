@@ -401,9 +401,20 @@ jobs:
         run: |
           set -euo pipefail
           TAG="${{ steps.tag.outputs.tag }}"
+          # A published release is immutable here: uploading with --clobber onto one would silently
+          # replace the binaries people install (it did, once, for a manual run whose package.json
+          # version was already released). Only a draft takes assets; a missing release becomes one.
+          if draft=$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [ "$draft" != "true" ]; then
+              echo "::error::release $TAG is already published; refusing to replace its assets. Bump package.json or push a new tag."
+              exit 1
+            fi
+            echo "Draft $TAG exists; replacing its assets"
+          else
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes
+          fi
           cd release-assets
           ls -la
-          gh release create "$TAG" --draft --title "$TAG" --generate-notes 2>/dev/null || true
           for f in *; do
             if [[ -f "$f" ]]; then
               echo "Uploading: $f"

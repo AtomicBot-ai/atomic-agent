@@ -8,7 +8,10 @@ import {
   cacheControl,
   contentType,
   desktopPackageFileName,
+  DECLARED_LIBRARIES,
   glibcFloor,
+  neededLibraries,
+  undeclaredLibraries,
   INSTALL_DIR,
   isPackageFile,
   maxGlibc,
@@ -97,6 +100,54 @@ describe("package assets", () => {
     expect(nfpm).toContain(`dst: ${INSTALL_DIR}/install-source`);
     const pkgbuild = readFileSync("packaging/PKGBUILD.in", "utf8");
     expect(pkgbuild).toContain(`"\${pkgdir}${INSTALL_DIR}"`);
+  });
+});
+
+describe("neededLibraries", () => {
+  // readelf -d of the Node 25 Linux x64 binary (abridged).
+  const readelf = [
+    "Dynamic section at offset 0x5a3c8f0 contains 32 entries:",
+    "  Tag        Type                         Name/Value",
+    " 0x0000000000000001 (NEEDED)             Shared library: [libdl.so.2]",
+    " 0x0000000000000001 (NEEDED)             Shared library: [libatomic.so.1]",
+    " 0x000000000000000e (SONAME)             Library soname: [libnode.so.1]",
+    " 0x000000000000001d (RUNPATH)            Library runpath: [$ORIGIN]",
+  ].join("\n");
+
+  it("lists the NEEDED entries in order, nothing else", () => {
+    expect(neededLibraries(readelf)).toEqual(["libdl.so.2", "libatomic.so.1"]);
+    expect(neededLibraries("")).toEqual([]);
+  });
+
+  it("names the libraries no package dependency covers, the loader aside", () => {
+    expect(
+      undeclaredLibraries(["libc.so.6", "libstdc++.so.6", "libatomic.so.1", "ld-linux-x86-64.so.2"]),
+    ).toEqual([]);
+    expect(undeclaredLibraries(["libz.so.1", "libc.so.6", "libssl.so.3"])).toEqual([
+      "libz.so.1",
+      "libssl.so.3",
+    ]);
+  });
+
+  it("declares every library of the shipped binaries in nfpm.yaml and the PKGBUILD", () => {
+    // What the Node 25 SEA binary, better_sqlite3.node and ripgrep load (readelf -d of v0.6.11).
+    const shipped = [
+      "libatomic.so.1",
+      "libc.so.6",
+      "libdl.so.2",
+      "libgcc_s.so.1",
+      "libm.so.6",
+      "libpthread.so.0",
+      "libstdc++.so.6",
+    ];
+    expect(undeclaredLibraries(shipped)).toEqual([]);
+    const nfpm = readFileSync("packaging/nfpm.yaml", "utf8");
+    expect(nfpm).toContain("- libatomic1\n");
+    expect(nfpm).toContain("- libatomic\n");
+    expect(nfpm).toContain("- libstdc++6\n");
+    expect(nfpm).toContain("- libstdc++\n");
+    expect(readFileSync("packaging/PKGBUILD.in", "utf8")).toContain("depends=('glibc' 'gcc-libs')");
+    expect(DECLARED_LIBRARIES["libatomic.so.1"]).toBe("libatomic");
   });
 });
 

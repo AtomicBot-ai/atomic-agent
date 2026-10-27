@@ -210,6 +210,35 @@ export function glibcFloor(readelfVersions: string): string | undefined {
   return versions.reduce((max, v) => (newerVersion(v, max) ? v : max)).join(".");
 }
 
+/** The shared libraries an ELF file loads: the NEEDED entries of `readelf --dynamic`. */
+export function neededLibraries(readelfDynamic: string): string[] {
+  return [...readelfDynamic.matchAll(/\(NEEDED\)\s+Shared library: \[([^\]]+)\]/g)].map(
+    (m) => m[1]!,
+  );
+}
+
+/**
+ * The sonames the package dependencies cover (packaging/nfpm.yaml and PKGBUILD.in), by what ships
+ * them. A bundle that needs any other library must not become a package until the dependency is
+ * declared there and the soname added here: the smoke containers are minimal images with nothing
+ * beyond these, and so is a fresh server. libgcc_s comes with glibc on deb and rpm alike.
+ */
+export const DECLARED_LIBRARIES: Readonly<Record<string, string>> = {
+  "libc.so.6": "glibc",
+  "libm.so.6": "glibc",
+  "libdl.so.2": "glibc",
+  "libpthread.so.0": "glibc",
+  "librt.so.1": "glibc",
+  "libgcc_s.so.1": "libgcc",
+  "libstdc++.so.6": "libstdc++",
+  "libatomic.so.1": "libatomic",
+};
+
+/** The libraries of `needed` that no declared package dependency covers (the loader itself aside). */
+export function undeclaredLibraries(needed: readonly string[]): string[] {
+  return needed.filter((lib) => !(lib in DECLARED_LIBRARIES) && !lib.startsWith("ld-linux"));
+}
+
 /** The newest of several floors; `undefined` when none has one. */
 export function maxGlibc(floors: readonly (string | undefined)[]): string | undefined {
   const known = floors.filter((f): f is string => f !== undefined);
