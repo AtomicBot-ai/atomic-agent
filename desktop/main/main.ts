@@ -2038,6 +2038,7 @@ function wireIpc(client: AgentClient): void {
     },
     turnsInFlight: () => client.turnsInFlight,
     isRemote: () => client.isRemote,
+    relaunch: () => { app.relaunch(); app.exit(0); },
   });
   // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
   ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));

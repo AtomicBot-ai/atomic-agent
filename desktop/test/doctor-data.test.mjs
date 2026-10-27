@@ -26,6 +26,7 @@ function harness(over = {}) {
     startAgent: async () => { log.push('startAgent'); },
     turnsInFlight: () => 0,
     isRemote: () => over.remote ?? false,
+    relaunch: () => { log.push('relaunch'); },
   };
   registerDoctorDataIpc(deps);
   return { handlers, log, boxes };
@@ -50,12 +51,12 @@ test('a failing check still lists its findings (doctor exits 1)', async () => {
   assert.equal(r.findings[0].status, 'fail');
 });
 
-test('reset asks first, says the terminal shares the folder, then stops, runs and starts again', async () => {
+test('reset asks first, says the terminal shares the folder, then stops, runs and relaunches the app', async () => {
   const h = harness();
   const r = await h.handlers['data:reset']();
   assert.equal(r.ok, true);
-  assert.match(h.boxes[0].detail, new RegExp(SHARED_FOLDER_WARNING.slice(0, 30)));
-  assert.deepEqual(h.log, ['stopAgent', 'stopModels', 'run data reset --keep-models --yes', 'startAgent']);
+  assert.ok(h.boxes[0].detail.includes(SHARED_FOLDER_WARNING));
+  assert.deepEqual(h.log, ['stopAgent', 'stopModels', 'run data reset --keep-models --yes', 'relaunch']);
 });
 
 test('a cancelled reset touches nothing', async () => {

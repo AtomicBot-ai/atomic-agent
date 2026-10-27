@@ -8,7 +8,8 @@
    the terminal agent (~/.atomic-agent), so every step that replaces it asks
    first in a system dialog that says so. Restore, move and reset stop this
    app's agent and its model server, run, and start them again; nothing is
-   deleted (the CLI keeps the old folder aside and says where). Not while the
+   deleted (the CLI keeps the old folder aside and says where). After one of
+   them succeeds the app relaunches, so first run and seeding see the new folder. Not while the
    app runs on another computer's agent: these are that computer's files. */
 
 import type { BrowserWindow, Dialog, IpcMain, MessageBoxOptions } from "electron";
@@ -34,6 +35,8 @@ export interface DoctorDataDeps {
   startAgent: () => Promise<unknown>;
   turnsInFlight: () => number;
   isRemote: () => boolean;
+  /** Quit and start the app again: after a restore, move or reset the boot-time first-run and seeding steps must run anew. */
+  relaunch: () => void;
   today?: () => string;
 }
 
@@ -69,14 +72,17 @@ export function registerDoctorDataIpc(d: DoctorDataDeps): void {
   const confirm = async (message: string, detail: string, button: string): Promise<boolean> =>
     (await box({ type: "warning", message, detail: `${detail}\n\n${SHARED_FOLDER_WARNING}`, buttons: [button, "Cancel"], defaultId: 1, cancelId: 1 })) === 0;
 
-  /** Stop the agent and its model server, run, start them again: the start happens whatever the run said. */
+  /** Stop the agent and its model server and run; then relaunch the app when the folder changed, else start the agent again. */
   const offline = async (args: string[]): Promise<CliResult> => {
     await d.stopAgent();
     await d.stopModels();
+    let res: CliResult = { ok: false, stdout: "", stderr: "", error: "it did not run" };
     try {
-      return await d.run(args, LONG);
+      res = await d.run(args, LONG);
+      return res;
     } finally {
-      await d.startAgent();
+      if (res.ok) d.relaunch();
+      else await d.startAgent();
     }
   };
 

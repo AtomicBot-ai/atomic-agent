@@ -9,9 +9,9 @@
 
    Data: back up the shared folder to a .tar.gz, restore one, move the
    folder to another disk, reset keeping models. Main asks first in a
-   system dialog that says the terminal shares the folder; a restore,
-   move or reset reloads the window afterwards, since chats and settings
-   changed under it. */
+   system dialog that says the terminal shares the folder; after a restore,
+   move or reset main relaunches the app (the reload here is the fallback
+   when it has not yet). */
 
 const DOCD = {findings: null, busy: '', note: '', err: '', onChange: null};
 
