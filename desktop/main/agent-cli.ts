@@ -4426,6 +4426,8 @@ export function modelsUpdateStream(
      OPERATOR's ~/.atomic-agent — it writes the llama.cpp backend into whatever
      state dir the child resolves, which is exactly what item 9 exists to stop.
      The isolation lane's source scan is what caught it. */
+  // A cancel ends with code 1 on Windows (no signal): it keeps its cancel wording there too.
+  let cancelledByUs = false;
   const child = spawn(binary, ["models", "update"], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
@@ -4474,13 +4476,13 @@ export function modelsUpdateStream(
     };
     child.on("exit", (code) => {
       if (code === 0) return finish({ ok: true, stdout, stderr });
-      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? (code === null ? null : updateFailureCause(stderr)) ?? `models update exited with code ${code ?? "null"}` });
+      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? (code === null || cancelledByUs ? null : updateFailureCause(stderr)) ?? `models update exited with code ${code ?? "null"}` });
       const keptBackend = kept();
       finish({ ok: false, stdout, stderr, error: updateTimedOutError(timedOut, keptBackend) }, keptBackend);
     });
     child.on("error", (err) => finish({ ok: false, stdout, stderr, error: err.message }));
   });
-  return { done, cancel: () => child.kill("SIGTERM") };
+  return { done, cancel: () => { cancelledByUs = true; child.kill("SIGTERM"); } };
 }
 
 /**
