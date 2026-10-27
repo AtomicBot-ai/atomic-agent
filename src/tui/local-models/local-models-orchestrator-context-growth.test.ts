@@ -122,4 +122,29 @@ describe("LocalModelsOrchestrator: the grown local window (ATO-848)", () => {
     const chat = await startWith({ grownContext: { modelId: "gemma-4-12b", atLeast: 65_536 } });
     expect(chat.autoContextAtLeast).toBeUndefined();
   });
+
+  // ATO-334 x ATO-848: the out-of-memory restart's window is a fixed size.
+  it("an out-of-memory restart starts at its window, does not grow, and forgets the grown one", async () => {
+    prepareManagedInstall();
+    const orchestrator = new LocalModelsOrchestrator({ emit() {}, subscribe: () => () => {} });
+    vi.spyOn(orchestrator, "refresh").mockResolvedValue();
+    const internals = orchestrator as unknown as GrowthInternals & {
+      stopChatDaemonOnly(): Promise<boolean>;
+      outOfMemoryCeiling: { modelId: string; atMost: number } | null;
+    };
+    Object.assign(internals, { grownContext: { modelId: "qwen-3.5-4b", atLeast: 131_072 }, growthAttempt: 131_072 });
+    vi.spyOn(internals, "stopChatDaemonOnly").mockResolvedValue(true);
+    // The restart's start runs the backend check; nothing to install here.
+    vi.mocked(localLlm.maybeAutoUpdateBackend).mockResolvedValue({ action: "up_to_date" } as never);
+
+    await expect(orchestrator.restartWithContextSize(65_536)).resolves.toBe(true);
+
+    const chat = vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat;
+    expect(chat.contextSize).toBe(65_536);
+    expect(chat.growContext).toBeUndefined();
+    expect(chat.autoContextAtLeast).toBeUndefined();
+    expect(internals.grownContext).toBeNull();
+    expect(internals.growthAttempt).toBeNull();
+    expect(internals.outOfMemoryCeiling).toEqual({ modelId: "qwen-3.5-4b", atMost: 65_536 });
+  });
 });

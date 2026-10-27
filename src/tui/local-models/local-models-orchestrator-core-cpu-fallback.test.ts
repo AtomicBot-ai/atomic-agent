@@ -127,6 +127,18 @@ describe("LocalModelsOrchestrator Atomic Core CPU-build fallback", () => {
     expect(last?.message).toContain("the CPU build failed too");
   });
 
+  it("keeps a one-run window (out-of-memory restart) on the CPU retry", async () => {
+    prepareCoreInstall();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons)
+      .mockRejectedValueOnce(crash())
+      .mockResolvedValueOnce({ chat: { pid: 4242 }, embedding: { skipped: true } } as never);
+    const { orchestrator } = makeOrchestrator();
+    await expect(orchestrator.startDaemon({ backendAlreadyChecked: true, contextSize: 65_536 })).resolves.toBe(true);
+    const starts = vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls;
+    expect(starts).toHaveLength(2);
+    expect(starts[1]![0].chat.contextSize).toBe(65_536);
+  });
+
   it("undoes the swap when the CPU retry is cancelled by another model pick", async () => {
     prepareCoreInstall();
     const { orchestrator } = makeOrchestrator();

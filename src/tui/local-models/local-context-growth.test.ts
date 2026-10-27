@@ -2,7 +2,12 @@ import { describe, expect, it, vi } from "vitest";
 
 import { USER_CONFIG_DEFAULTS } from "../../config/config-schema.js";
 import type { LaunchRecord } from "../../local-llm/index.js";
-import { growLocalContext, planLocalContextGrowth, type LocalContextGrowthStep } from "./local-context-growth.js";
+import {
+  capLocalContextGrowth,
+  growLocalContext,
+  planLocalContextGrowth,
+  type LocalContextGrowthStep,
+} from "./local-context-growth.js";
 
 type Cfg = Parameters<typeof planLocalContextGrowth>[0];
 
@@ -122,5 +127,21 @@ describe("growLocalContext", () => {
     await expect(growLocalContext(d)).resolves.toBe(false);
     expect(d.restart).not.toHaveBeenCalled();
     expect(d.setAttempt).not.toHaveBeenCalled();
+  });
+});
+
+describe("capLocalContextGrowth (ATO-334 x ATO-848)", () => {
+  const step: LocalContextGrowthStep = { modelId: "m", from: 32_768, to: 131_072, promptTokens: 30_000 };
+
+  it("holds growth under the window an out-of-memory restart settled on", () => {
+    expect(capLocalContextGrowth(step, { modelId: "m", atMost: 65_536 })).toEqual({ ...step, to: 65_536 });
+    expect(capLocalContextGrowth({ ...step, from: 65_536 }, { modelId: "m", atMost: 65_536 })).toBeNull();
+  });
+
+  it("leaves other models, smaller steps and no ceiling alone", () => {
+    expect(capLocalContextGrowth(step, { modelId: "other", atMost: 65_536 })).toBe(step);
+    expect(capLocalContextGrowth({ ...step, to: 65_536 }, { modelId: "m", atMost: 65_536 })).toEqual({ ...step, to: 65_536 });
+    expect(capLocalContextGrowth(step, null)).toBe(step);
+    expect(capLocalContextGrowth(null, { modelId: "m", atMost: 65_536 })).toBeNull();
   });
 });

@@ -131,7 +131,7 @@ import {
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
-import { growLocalContext, planLocalContextGrowth } from "./local-context-growth.js";
+import { capLocalContextGrowth, growLocalContext, planLocalContextGrowth } from "./local-context-growth.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -305,6 +305,12 @@ export class LocalModelsOrchestrator {
   private grownContext: { modelId: string; atLeast: number } | null = null;
   /** The bigger window a growth restart is trying, read by that start only. */
   private growthAttempt: number | null = null;
+  /**
+   * The window an out-of-memory restart settled on (ATO-334): growth of
+   * that model stops there for the rest of this process, so a later
+   * plain start does not climb back into the window that ran out.
+   */
+  private outOfMemoryCeiling: { modelId: string; atMost: number } | null = null;
   private readonly operations = new ModelOperationQueue();
   private selectionRevision = 0;
   private closing = false;
@@ -2194,7 +2200,7 @@ export class LocalModelsOrchestrator {
         getConfig().localModels.managed.engine === "atomic-core" &&
         coreCpuFallbackApplies(dataDir, e)
       ) {
-        return await this.fallBackToCoreCpuBuildAndRetry(dataDir, msg, opts?.signal);
+        return await this.fallBackToCoreCpuBuildAndRetry(dataDir, msg, opts?.signal, opts?.contextSize);
       }
       if (
         !opts?.cpuFallbackAttempted &&
@@ -2233,6 +2239,8 @@ export class LocalModelsOrchestrator {
     dataDir: string,
     failureMsg: string,
     signal?: AbortSignal,
+    /** A one-run window (out-of-memory restart) the retry keeps. */
+    contextSize?: number,
   ): Promise<boolean> {
     this.bus.emit({ type: "runtime_info", line: `local-llm: ${CORE_CPU_FALLBACK_LINE}` });
     this.bus.emit({
@@ -2272,7 +2280,12 @@ export class LocalModelsOrchestrator {
       return false;
     }
     this.bus.emit({ type: "runtime_info", line: "local-llm: CPU build installed — retrying start…" });
-    const started = await this.startDaemonNow({ signal, backendAlreadyChecked: true, cpuFallbackAttempted: true });
+    const started = await this.startDaemonNow({
+      signal,
+      backendAlreadyChecked: true,
+      cpuFallbackAttempted: true,
+      ...(contextSize !== undefined ? { contextSize } : {}),
+    });
     if (!started) {
       // Undo the swap on a cancelled retry too (a model picked while it
       // loaded): left in place, the CPU build stays installed with
@@ -2531,7 +2544,7 @@ export class LocalModelsOrchestrator {
     if (this.closing || this.restartInFlight || this.isSwitching) return false;
     try {
       return await growLocalContext({
-        plan: () => planLocalContextGrowth(getConfig(), promptTokens),
+        plan: () => capLocalContextGrowth(planLocalContextGrowth(getConfig(), promptTokens), this.outOfMemoryCeiling),
         setAttempt: (atLeast) => { this.growthAttempt = atLeast; },
         commit: (step) => { this.grownContext = { modelId: step.modelId, atLeast: step.to }; },
         restart: () => this.restartDaemon(),
@@ -2556,6 +2569,8 @@ export class LocalModelsOrchestrator {
     // memory: a later restart or growth must not bring it back.
     this.grownContext = null;
     this.growthAttempt = null;
+    const modelId = getConfig().localModels.managed.modelId;
+    this.outOfMemoryCeiling = modelId ? { modelId, atMost: contextSize } : null;
     const inFlight = this.operations.run(async () => {
       const stopped = await this.stopChatDaemonOnly({
         stoppedLine: `local-llm: the model ran out of memory — restarting it with a context window of ${contextSize} tokens…`,

@@ -51,6 +51,18 @@ export function planLocalContextGrowth(
     : { modelId: record.modelId, from: record.contextSize, to, promptTokens };
 }
 
+/**
+ * Hold a growth step under the window an out-of-memory restart settled
+ * on for that model: `null` once the window is already there.
+ */
+export function capLocalContextGrowth(
+  step: LocalContextGrowthStep | null,
+  ceiling: { modelId: string; atMost: number } | null,
+): LocalContextGrowthStep | null {
+  if (!step || !ceiling || step.modelId !== ceiling.modelId || step.to <= ceiling.atMost) return step;
+  return step.from >= ceiling.atMost ? null : { ...step, to: ceiling.atMost };
+}
+
 /** What `growLocalContext` needs from the daemon's owner. */
 export interface LocalContextGrowthDeps {
   /** The step to take, if any (`planLocalContextGrowth`). */
