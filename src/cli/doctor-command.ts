@@ -93,6 +93,16 @@ export async function doctorCommand(args: string[], deps: DoctorCommandDeps = {}
     platform: process.platform,
     findOnPath: (c) => findOnPath(c),
     chmod: (p, m) => chmodSync(p, m),
+    pidAlive: (pid) => {
+      try {
+        process.kill(pid, 0);
+        return true;
+      } catch (err) {
+        // EPERM: it runs under another user, so it is alive.
+        return (err as NodeJS.ErrnoException).code === "EPERM";
+      }
+    },
+    now: deps.now ?? (() => new Date()),
     ...deps.context,
   };
   // With --json, stdout is the findings array alone; what --fix did goes to stderr.
