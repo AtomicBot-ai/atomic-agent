@@ -62,9 +62,19 @@ function thinMinimum(buf: Buffer, offset: number): MacosVersion | null {
  * Mach-O or declare nothing. Pure.
  */
 export function readMachOMinimumMacos(buf: Buffer, arch: string = process.arch): MacosVersion | null {
+  const offset = machOSliceOffset(buf, arch);
+  return offset === null ? null : thinMinimum(buf, offset);
+}
+
+/**
+ * Where the image for `arch` starts: 0 for a thin binary, the slice's
+ * file offset in a universal one (often megabytes in, past the first
+ * read), null when there is no such slice. Pure.
+ */
+export function machOSliceOffset(buf: Buffer, arch: string = process.arch): number | null {
   if (buf.length < 8) return null;
   const magic = buf.readUInt32BE(0);
-  if (magic !== FAT_MAGIC && magic !== FAT_MAGIC_64) return thinMinimum(buf, 0);
+  if (magic !== FAT_MAGIC && magic !== FAT_MAGIC_64) return 0;
   const wanted = arch === "x64" ? CPU_TYPE_X86_64 : CPU_TYPE_ARM64;
   const count = buf.readUInt32BE(4);
   const entry = magic === FAT_MAGIC_64 ? 32 : 20;
@@ -72,8 +82,7 @@ export function readMachOMinimumMacos(buf: Buffer, arch: string = process.arch):
     const at = 8 + i * entry;
     if (at + entry > buf.length) return null;
     if (buf.readUInt32BE(at) !== wanted) continue;
-    const offset = magic === FAT_MAGIC_64 ? Number(buf.readBigUInt64BE(at + 8)) : buf.readUInt32BE(at + 8);
-    return thinMinimum(buf, offset);
+    return magic === FAT_MAGIC_64 ? Number(buf.readBigUInt64BE(at + 8)) : buf.readUInt32BE(at + 8);
   }
   return null;
 }
@@ -107,13 +116,13 @@ export function macosTooOldMessage(required: MacosVersion | null, host: MacosVer
   );
 }
 
-/** First bytes of a file, or null when it cannot be read. */
-function readHead(path: string): Buffer | null {
+/** The bytes of a file from `position`, or null when it cannot be read. */
+function readHead(path: string, position = 0): Buffer | null {
   let fd: number | undefined;
   try {
     fd = openSync(path, "r");
     const buf = Buffer.alloc(HEADER_READ_BYTES);
-    const n = readSync(fd, buf, 0, buf.length, 0);
+    const n = readSync(fd, buf, 0, buf.length, position);
     return buf.subarray(0, n);
   } catch {
     return null;
@@ -146,7 +155,11 @@ export function assertBackendRunsOnThisMac(
   if ((opts.platform ?? process.platform) !== "darwin") return;
   const head = readHead(binPath);
   if (!head) return;
-  const required = readMachOMinimumMacos(head, opts.arch ?? process.arch);
+  const arch = opts.arch ?? process.arch;
+  // A universal binary's slice lies past the first read: read it there.
+  const offset = machOSliceOffset(head, arch);
+  const slice = offset !== null && offset + 32 > head.length ? readHead(binPath, offset) : null;
+  const required = slice ? readMachOMinimumMacos(slice, arch) : readMachOMinimumMacos(head, arch);
   const host = macosVersionFromDarwin(opts.darwinRelease ?? release());
   const message = macosTooOldMessage(required, host);
   if (message && required && host) throw new MacosTooOldError(message, required, host);

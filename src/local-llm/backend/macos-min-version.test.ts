@@ -118,6 +118,26 @@ describe("assertBackendRunsOnThisMac", () => {
     expect(() => assertBackendRunsOnThisMac(path, { platform: "darwin", darwinRelease: "24.6.0", arch: "arm64" })).toThrow(MacosTooOldError);
   });
 
+  it("reads a universal binary's slice where it lies, past the first 64 KiB", () => {
+    const x64 = Buffer.concat([thin({ minos: [13, 0] }), Buffer.alloc(0x20000)]);
+    const arm64 = thin({ minos: [26, 0] });
+    const head = Buffer.alloc(8 + 2 * 20);
+    head.writeUInt32BE(0xcafebabe, 0);
+    head.writeUInt32BE(2, 4);
+    const x64At = 0x1000;
+    const armAt = x64At + x64.length;
+    head.writeUInt32BE(0x01000007, 8);
+    head.writeUInt32BE(x64At, 16);
+    head.writeUInt32BE(x64.length, 20);
+    head.writeUInt32BE(0x0100000c, 28);
+    head.writeUInt32BE(armAt, 36);
+    head.writeUInt32BE(arm64.length, 40);
+    const bytes = Buffer.concat([head, Buffer.alloc(x64At - head.length), x64, arm64]);
+    const path = binary(bytes);
+    expect(() => assertBackendRunsOnThisMac(path, { platform: "darwin", darwinRelease: "24.6.0", arch: "arm64" })).toThrow(MacosTooOldError);
+    expect(() => assertBackendRunsOnThisMac(path, { platform: "darwin", darwinRelease: "24.6.0", arch: "x64" })).not.toThrow();
+  });
+
   it("lets a build run where it can, off macOS, and when nothing is readable", () => {
     const path = binary(thin({ minos: [14, 0] }));
     expect(() => assertBackendRunsOnThisMac(path, { platform: "darwin", darwinRelease: "24.6.0", arch: "arm64" })).not.toThrow();
