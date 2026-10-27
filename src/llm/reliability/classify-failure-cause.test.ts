@@ -19,6 +19,7 @@ import {
   TransportError,
 } from "./llm-failures.js";
 import { LocalEngineDownError } from "./local-engine-down.js";
+import { RequestTooLargeError, toRequestTooLargeError } from "./request-too-large.js";
 
 const URL = "https://api.fake.test/v1/chat/completions";
 const LLAMA = "http://127.0.0.1:8080/completion";
@@ -70,6 +71,20 @@ const SAMPLES: ReadonlyArray<
     ),
     "out_of_memory",
     "reduce-load",
+  ],
+  [
+    "a 413 size refusal that names no context",
+    toRequestTooLargeError(
+      new LlamaServerError("llama-server returned http 413: request entity too large", 413, LLAMA),
+    ),
+    "request_rejected",
+    "switch-model",
+  ],
+  [
+    "a size refusal about the context window, with no window named",
+    new RequestTooLargeError("The request does not fit the model's context window. llama-server returned http 400", null, undefined, true),
+    "context_too_long",
+    "new-chat-summary",
   ],
   [
     "a CUDA buffer that could not be allocated",
