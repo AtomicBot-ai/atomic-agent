@@ -75,6 +75,18 @@ export interface ScrubbedErrorEvent {
    */
   tool?: string;
   /**
+   * `ToolExecutionError.kind` when present. Restricted to the fixed
+   * `ToolExecutionErrorKind` enum (`unregistered`). For `unregistered`
+   * the name is the model's invention, so `tool` is NOT sent and
+   * {@link toolNameClass} stands in for it.
+   */
+  toolErrorKind?: string;
+  /**
+   * `ToolExecutionError.nameClass` for an unregistered tool, restricted
+   * to the fixed 3-value enum (`near_miss | mcp_like | other`).
+   */
+  toolNameClass?: string;
+  /**
    * Class of the host in `TransportError.url`, when present
    * (`localhost` / `private` / `known_cloud` / `other`). Neither the URL
    * nor the host name itself ever travels.
@@ -138,6 +150,12 @@ const KNOWN_TOOL_CALL_TRANSPORTS = new Set(["grammar", "native_tools"]);
 
 /** Mirror of `ModelFailureStage` in `src/llm/reliability/failure-category.ts` — a fixed 2-value enum, safe to allowlist verbatim. */
 const KNOWN_MODEL_FAILURE_STAGES = new Set(["initial", "repair"]);
+
+/** Mirror of `ToolExecutionErrorKind` in `src/llm/reliability/llm-failures.ts` — a fixed enum, safe to allowlist verbatim. */
+const KNOWN_TOOL_ERROR_KINDS = new Set(["unregistered"]);
+
+/** Mirror of `UnregisteredToolNameClass` in `src/llm/reliability/llm-failures.ts` — a fixed 3-value enum, safe to allowlist verbatim. */
+const KNOWN_TOOL_NAME_CLASSES = new Set(["near_miss", "mcp_like", "other"]);
 
 /**
  * Bounded identifier pattern for tool names (mirrors `MCP_TOOL_NAME_RE` in
@@ -318,6 +336,23 @@ export function extractSafeTool(err: unknown): string | undefined {
 }
 
 /**
+ * Read `ToolExecutionError.kind` and, for an unregistered tool, its
+ * `nameClass`, restricted to their fixed enums. Anything else is
+ * dropped rather than sent.
+ */
+export function extractSafeToolErrorKind(err: unknown): {
+  kind?: string;
+  nameClass?: string;
+} {
+  if (typeof err !== "object" || err === null) return {};
+  const { kind, nameClass } = err as { kind?: unknown; nameClass?: unknown };
+  if (typeof kind !== "string" || !KNOWN_TOOL_ERROR_KINDS.has(kind)) return {};
+  return typeof nameClass === "string" && KNOWN_TOOL_NAME_CLASSES.has(nameClass)
+    ? { kind, nameClass }
+    : { kind };
+}
+
+/**
  * Classify the host of `TransportError.url` (see `classifyTransportHost`):
  * `localhost` / `private` / `known_cloud` / `other`. The host itself never
  * travels — a custom endpoint's name can identify a company or a machine.
@@ -431,7 +466,10 @@ export function scrubError(
   const reason = extractSafeReason(err);
   const toolTransport = extractSafeToolTransport(err);
   const failureStage = extractSafeFailureStage(err);
-  const tool = extractSafeTool(err);
+  const toolErrorKind = extractSafeToolErrorKind(err);
+  // An unregistered name is whatever the model made up: never a tag.
+  const tool =
+    toolErrorKind.kind === "unregistered" ? undefined : extractSafeTool(err);
   const transportHost = extractSafeTransportHost(err);
   const upstreamErrorType = extractSafeUpstreamErrorType(err);
   const causeError = readCauseError(err);
@@ -454,6 +492,10 @@ export function scrubError(
   if (toolTransport !== undefined) event.toolTransport = toolTransport;
   if (failureStage !== undefined) event.failureStage = failureStage;
   if (tool !== undefined) event.tool = tool;
+  if (toolErrorKind.kind !== undefined) event.toolErrorKind = toolErrorKind.kind;
+  if (toolErrorKind.nameClass !== undefined) {
+    event.toolNameClass = toolErrorKind.nameClass;
+  }
   if (transportHost !== undefined) event.transportHost = transportHost;
   if (upstreamErrorType !== undefined) {
     event.upstreamErrorType = upstreamErrorType;
