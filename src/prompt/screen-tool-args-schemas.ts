@@ -44,6 +44,9 @@ export const SCREEN_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
       ["x", "y"],
     ),
   ],
-  ["os.screen.type", obj({ text: { type: "string" } }, ["text"])],
+  [
+    "os.screen.type",
+    obj({ text: { type: "string" }, via: { type: "string", enum: ["keys", "paste"] } }, ["text"]),
+  ],
   ["os.screen.key", obj({ keys: { type: "string" } }, ["keys"])],
 ];

@@ -72,6 +72,12 @@ export type ApprovalCategory =
    * a shell command does.
    */
   | "screen_control"
+  /**
+   * A screenshot of the operator's screen (`os.screen.capture`): whatever
+   * is open, mail and chats included. Level 3 beside `http` — the lowest
+   * two levels ask before the picture is taken.
+   */
+  | "screen_capture"
   | "other";
 
 /**
@@ -83,7 +89,8 @@ export type ApprovalCategory =
  *    session working directory (realpath containment).
  *  - level 3 (home): file writes anywhere under the home directory,
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
- *    is not part of the gate and stays on), paid cloud generation.
+ *    is not part of the gate and stays on), paid cloud generation,
+ *    screenshots.
  *  - level 4 (operator): guarded shell commands, skill scripts,
  *    process kills, screen control (mouse and keyboard), and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
@@ -107,6 +114,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fs_trash: 3,
   http: 3,
   paid_generation: 3,
+  screen_capture: 3,
   shell: 4,
   script: 4,
   proc_kill: 4,
@@ -190,6 +198,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // "Let it drive the screen for this session" is a legitimate answer
   // while the operator watches it work; every call still shows its preview.
   screen_control: true,
+  // "Stop asking before screenshots this session" is the operator's call.
+  screen_capture: true,
   other: true,
 };
 
@@ -221,6 +231,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   fs_read_outside: "read outside the working directory",
   paid_generation: "paid generation · cloud",
   screen_control: "screen · click / type",
+  screen_capture: "screen · screenshot",
   other: "uncategorised",
 };
 

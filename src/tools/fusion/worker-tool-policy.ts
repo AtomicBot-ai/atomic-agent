@@ -10,7 +10,8 @@ import type { ToolRole } from "../tool-roles.js";
  * and the process bounded), may not end the operator's session, may not
  * file durable tasks the operator never asked for, and may not write
  * long-term memory, because its context is the orchestrator's
- * instruction, not the operator's history. Every read tool, browser,
+ * instruction, not the operator's history, and may not drive the
+ * operator's screen. Every read tool, browser,
  * os, skill and MCP tool stays visible.
  *
  * `fusion.delegate` is listed before it exists: PR 5 registers it, and
@@ -35,6 +36,12 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "memory.profile.remove",
   "memory.notes.store",
   "memory.notes.forget",
+  // A worker has no screen of its own to watch and nobody approves its
+  // input: the operator's desktop stays with the orchestrator's turn.
+  "os.screen.capture",
+  "os.screen.click",
+  "os.screen.type",
+  "os.screen.key",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */

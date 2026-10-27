@@ -15,13 +15,13 @@ export {
   SCREENSHOT_DIR,
   parseRegion,
   screencaptureArgs,
+  screenshotDir,
 } from "./screen-capture.js";
 export type { OsScreenCaptureOptions, ScreenRegion } from "./screen-capture.js";
 export {
   buildOsScreenClickTool,
   buildOsScreenKeyTool,
   buildOsScreenTypeTool,
-  looksLikeSecret,
   OS_SCREEN_CLICK_TOOL,
   OS_SCREEN_KEY_TOOL,
   OS_SCREEN_TYPE_TOOL,
@@ -47,12 +47,20 @@ export {
   screenRecordingMessage,
 } from "./screen-host.js";
 export type {
+  ScreenApp,
   ScreenCommandResult,
   ScreenDeps,
   ScreenProbe,
   ScreenRunner,
 } from "./screen-host.js";
-export { buildScreenInvocation, SCREEN_PAYLOAD_ENV } from "./screen-jxa.js";
+export { buildScreenInvocation, SCREEN_PAYLOAD_ENV, screenChildEnv } from "./screen-jxa.js";
+export {
+  hostBundleIds,
+  PROTECTED_BUNDLE_IDS,
+  protectedAppReason,
+  protectedBundleIds,
+  refusedChordReason,
+} from "./screen-protected.js";
 export type { ScreenOp } from "./screen-jxa.js";
 
 /** The four names, in catalog order — mirrored by `GATED_TOOLS.screen`. */
@@ -96,7 +104,7 @@ export function registerOsScreenTools(
     deps,
     geometry,
   };
-  registry.register(buildOsScreenCaptureTool({ deps, geometry }));
+  registry.register(buildOsScreenCaptureTool(input));
   registry.register(buildOsScreenClickTool(input));
   registry.register(buildOsScreenTypeTool(input));
   registry.register(buildOsScreenKeyTool(input));

@@ -17,12 +17,20 @@ export interface FakeHost {
   ops: () => Record<string, unknown>[];
 }
 
+type App = { name: string; bundleId: string } | null;
+
 export interface FakeHostOptions {
   accessibility?: boolean | null;
   screenRecording?: boolean | null;
-  frontmost?: { name: string; bundleId: string } | null;
-  /** Frontmost app the ACTION run reports (simulates a switch after approval). */
-  frontmostAtAction?: { name: string; bundleId: string } | null;
+  frontmost?: App;
+  /** What a probe with a point reports as the window owner there (default: the frontmost app). */
+  ownerAtPoint?: App;
+  /**
+   * Fields the ACTION run reports, verbatim (default `{ done: true }`).
+   * The fixture decides nothing: refusals belong to the JXA source and
+   * the TypeScript flow, and are tested there, not imitated here.
+   */
+  actionReport?: Record<string, unknown>;
   screen?: { width: number; height: number; scale: number };
   /** `sips -g` answers, in order; the last one repeats. */
   pixelSizes?: { width: number; height: number }[];
@@ -34,12 +42,12 @@ export interface FakeHostOptions {
 
 /**
  * A host that never touches the real machine: osascript answers with a
- * canned probe, screencapture and sips with canned exits and sizes.
+ * canned report, screencapture and sips with canned exits and sizes.
  */
 export function fakeHost(options: FakeHostOptions = {}): FakeHost {
   const calls: RecordedCall[] = [];
   const sizes = [...(options.pixelSizes ?? [{ width: 2880, height: 1800 }])];
-  const front = options.frontmost === undefined
+  const front: App = options.frontmost === undefined
     ? { name: "Safari", bundleId: "com.apple.Safari" }
     : options.frontmost;
   const run = async (
@@ -51,20 +59,17 @@ export function fakeHost(options: FakeHostOptions = {}): FakeHost {
     const op = raw === undefined ? undefined : (JSON.parse(raw) as Record<string, unknown>);
     calls.push({ command, args, ...(opts.env ? { env: opts.env } : {}), ...(op ? { op } : {}) });
     if (command === "osascript") {
-      const acting = op?.op !== "probe";
-      const accessibility = options.accessibility === undefined ? true : options.accessibility;
-      const frontmost = acting && options.frontmostAtAction !== undefined ? options.frontmostAtAction : front;
       const report: Record<string, unknown> = {
-        accessibility,
+        accessibility: options.accessibility === undefined ? true : options.accessibility,
         screenRecording: options.screenRecording === undefined ? true : options.screenRecording,
-        frontmost,
+        frontmost: front,
         screen: options.screen ?? { width: 1440, height: 900, scale: 2 },
         done: false,
       };
-      if (acting) {
-        if (accessibility !== true) report.error = "accessibility";
-        else if (op?.expectBundleId && op.expectBundleId !== frontmost?.bundleId) report.error = "frontmost-changed";
-        else report.done = true;
+      if (op?.op === "probe") {
+        if (op.point) report.ownerAtPoint = options.ownerAtPoint === undefined ? front : options.ownerAtPoint;
+      } else {
+        Object.assign(report, options.actionReport ?? { done: true });
       }
       return { exitCode: 0, stdout: JSON.stringify(report), stderr: "" };
     }
@@ -81,10 +86,11 @@ export function fakeHost(options: FakeHostOptions = {}): FakeHost {
   const deps: ScreenDeps = {
     run,
     platform: options.platform ?? "darwin",
-    env: options.env ?? { TERM_PROGRAM: "Apple_Terminal" },
+    env: options.env ?? { TERM_PROGRAM: "Apple_Terminal", PATH: "/usr/bin", OPENROUTER_API_KEY: "sk-or-secret" },
     fileSize: async () => options.fileSize ?? 123_456,
     ensureDir: async () => undefined,
     now: () => new Date(2026, 9, 25, 14, 22, 33, 417),
+    tmpDir: "/tmp/t",
   };
   return {
     deps,

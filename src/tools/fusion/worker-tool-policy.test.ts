@@ -23,7 +23,7 @@ describe("worker tool policy", () => {
     expect(isWorkerVisibleTool("fusion.delegate")).toBe(false);
   });
 
-  it("hides exactly the delegation, session-ending, scheduling and memory-writing tools", () => {
+  it("hides exactly the delegation, session-ending, scheduling, memory-writing and screen tools", () => {
     expect([...WORKER_EXCLUDED_TOOLS].sort()).toEqual(
       [
         "finish",
@@ -32,6 +32,10 @@ describe("worker tool policy", () => {
         "memory.notes.store",
         "memory.profile.remove",
         "memory.profile.set",
+        "os.screen.capture",
+        "os.screen.click",
+        "os.screen.key",
+        "os.screen.type",
         "tasks.cancel",
         "tasks.cron",
         "tasks.schedule",

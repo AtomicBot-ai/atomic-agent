@@ -165,8 +165,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // os.screen.* — one shared desktop (ATO-525). All four in one serial
   // class, so a batched click → capture runs in the order emitted and a
   // screenshot is never taken while a click is still in flight (distinct
-  // groups run concurrently). The capture itself never asks (see
-  // `APPROVAL_CATEGORIES_BY_TOOL`).
+  // groups run concurrently).
   "os.screen.capture": "approval_gated",
   "os.screen.click": "approval_gated",
   "os.screen.type": "approval_gated",
@@ -376,9 +375,8 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.proc.kill": ["proc_kill"],
     "os.http.request": ["http"],
     "os.email.send": ["email"],
-    // No prompt: a screenshot asks nothing, so it always runs unattended;
-    // it is gated only to share the input tools' serial order.
-    "os.screen.capture": [],
+    // A screenshot asks below level 3 (`screen_capture`).
+    "os.screen.capture": ["screen_capture"],
     "os.screen.click": ["screen_control"],
     "os.screen.type": ["screen_control"],
     "os.screen.key": ["screen_control"],

@@ -1,4 +1,9 @@
-import { join, relative } from "node:path";
+import { join } from "node:path";
+import {
+  ApprovalDeniedError,
+  requireApproval,
+  type DangerousToolOptions,
+} from "../../../approval/dangerous-tool.js";
 import {
   compressToolResult,
   type CompressedToolResult,
@@ -16,11 +21,18 @@ import {
   screenRecordingMessage,
   type ScreenDeps,
 } from "./screen-host.js";
+import { screenChildEnv } from "./screen-jxa.js";
 
 export const OS_SCREEN_CAPTURE_TOOL = "os.screen.capture";
 
-/** Folder (under the working directory) the screenshots are saved in. */
-export const SCREENSHOT_DIR = ".atomic-screens";
+/** Folder under `os.tmpdir()` the screenshots are saved in, one subfolder per session. */
+export const SCREENSHOT_DIR = "atomic-agent-screens";
+
+/** `<tmp>/atomic-agent-screens/<session>`: outside the working folder, inside the read roots. */
+export function screenshotDir(tmpDir: string, sessionId: string): string {
+  const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, "_") || "default";
+  return join(tmpDir, SCREENSHOT_DIR, safe === "." || safe === ".." ? "default" : safe);
+}
 
 /** The whole message must reach the model: it says what to do next. */
 const SCREEN_RESULT_OPTIONS = { maxSummaryLength: 1_200, maxTailLines: 40 } as const;
@@ -32,15 +44,16 @@ export interface ScreenRegion {
   height: number;
 }
 
-export interface OsScreenCaptureOptions {
+export interface OsScreenCaptureOptions extends DangerousToolOptions {
   deps: ScreenDeps;
   geometry: ScreenGeometryStore;
 }
 
 /**
- * `os.screen.capture { region? }` — a JPEG of the main screen (or a
- * region of it, in screen points) saved under `.atomic-screens/` in the
- * working folder. Tool results are text, so the picture reaches a model
+ * `os.screen.capture { region? }` — a JPEG of the primary display (or a
+ * region of it, in screen points) saved under the temp folder, so the
+ * working folder never fills with screenshots and the tool stays
+ * read-only. It asks as `screen_capture` below approval level 3. Tool results are text, so the picture reaches a model
  * the way every other image does: by path, through `vision.describe`
  * (or `reply.attachments` to show it to the user). The result carries
  * the scale that maps the image's pixels back to screen points, and
@@ -53,7 +66,7 @@ export function buildOsScreenCaptureTool(
   return {
     name: OS_SCREEN_CAPTURE_TOOL,
     description:
-      "Take a screenshot of the main screen (macOS). Saves a JPEG in the working folder and returns its path, size and the pixel-to-point scale; look at it with vision.describe, then click with os.screen.click using the image's pixel coordinates.",
+      "Take a screenshot of the primary display (macOS). Saves a JPEG in the temp folder and returns its path, size and the pixel-to-point scale; look at it with vision.describe, then click with os.screen.click using the image's pixel coordinates. May ask the user first.",
     readonly: true,
     async run(rawArgs, ctx) {
       if (deps.platform !== "darwin") {
@@ -68,6 +81,8 @@ export function buildOsScreenCaptureTool(
       try {
         return await capture(options, region, ctx);
       } catch (error) {
+        // A denial is the user's decision: it propagates like every gated tool's.
+        if (error instanceof ApprovalDeniedError) throw error;
         return errorResult(`screenshot failed: ${(error as Error).message}`);
       }
     },
@@ -75,10 +90,11 @@ export function buildOsScreenCaptureTool(
 }
 
 async function capture(
-  { deps, geometry }: OsScreenCaptureOptions,
+  options: OsScreenCaptureOptions,
   region: ScreenRegion | undefined,
   ctx: { workingDir: string; sessionId: string; signal: AbortSignal },
 ): Promise<CompressedToolResult> {
+  const { deps, geometry } = options;
   const probe = await runScreenOp(deps, { op: "probe" }, ctx);
   if (probe.screenRecording === false) {
     return errorResult(screenRecordingMessage(deps.env), {
@@ -92,17 +108,34 @@ async function capture(
     area.y + area.height > probe.screen.height + 0.5
   ) {
     return errorResult(
-      `region ${describeRegion(area)} does not fit the main screen (${probe.screen.width}x${probe.screen.height} points)`,
+      `region ${describeRegion(area)} does not fit the primary display (${probe.screen.width}x${probe.screen.height} points)`,
     );
   }
 
-  const dir = join(ctx.workingDir, SCREENSHOT_DIR);
+  const front = probe.frontmost?.name ?? "unknown";
+  const what = region ? `region ${describeRegion(area)} of the primary display` : "the primary display";
+  await requireApproval(
+    options,
+    {
+      sessionId: ctx.sessionId,
+      tool: OS_SCREEN_CAPTURE_TOOL,
+      category: "screen_capture",
+      reason: `take a screenshot of ${what}`,
+      preview: `${OS_SCREEN_CAPTURE_TOOL}: screenshot of ${what}\nfrontmost app: ${front}`,
+      affectedResources: ["screen"],
+    },
+    ctx.signal,
+  );
+
+  const env = screenChildEnv(deps.env);
+  const dir = screenshotDir(deps.tmpDir, ctx.sessionId);
   await deps.ensureDir(dir);
   const path = join(dir, `screen-${stamp(deps.now())}.jpg`);
   const shot = await deps.run("screencapture", screencaptureArgs(path, region), {
     cwd: ctx.workingDir,
     signal: ctx.signal,
     timeoutMs: 20_000,
+    env,
   });
   const bytes = shot.exitCode === 0 ? await deps.fileSize(path).catch(() => 0) : 0;
   if (bytes === 0) {
@@ -113,26 +146,26 @@ async function capture(
     });
   }
 
-  const size = await readPixelSize(deps, path, ctx);
+  const size = await readPixelSize(deps, path, ctx, env);
   const fit = fitWithin(size.width, size.height);
   if (fit.resize) {
     const resized = await deps.run("sips", ["-Z", String(SCREENSHOT_MAX_SIDE), path], {
       cwd: ctx.workingDir,
       signal: ctx.signal,
       timeoutMs: 20_000,
+      env,
     });
     if (resized.exitCode !== 0) {
       return errorResult(`downscaling the screenshot failed: ${resized.stderr.trim()}`);
     }
   }
-  const image = fit.resize ? await readPixelSize(deps, path, ctx) : size;
+  const image = fit.resize ? await readPixelSize(deps, path, ctx, env) : size;
   const mapped = captureGeometry(area, image);
   geometry.set(ctx.sessionId, mapped);
 
-  const shown = relative(ctx.workingDir, path);
-  const front = probe.frontmost?.name ?? "unknown";
+  const shown = path;
   const lines = [
-    `saved ${shown} (${image.width}x${image.height} px) of ${region ? `region ${describeRegion(area)}` : "the main screen"}` +
+    `saved ${shown} (${image.width}x${image.height} px) of ${what}` +
       ` (${probe.screen.width}x${probe.screen.height} points); frontmost app: ${front}.`,
     `scale ${mapped.scale.toFixed(4)} image px per screen point${region ? `, origin ${area.x},${area.y}` : ""}.`,
     `Look at it with vision.describe { "path": "${shown}" }. Give os.screen.click the image's pixel x,y as they are; this capture's scale and origin are remembered.`,
@@ -164,7 +197,7 @@ async function capture(
   );
 }
 
-/** `screencapture -x -t jpg [-R x,y,w,h] <path>`: silent, JPEG, main display. */
+/** `screencapture -x -t jpg [-R x,y,w,h] <path>`: silent, JPEG, primary display. */
 export function screencaptureArgs(path: string, region?: ScreenRegion): string[] {
   const args = ["-x", "-t", "jpg"];
   if (region) {
@@ -195,11 +228,13 @@ async function readPixelSize(
   deps: ScreenDeps,
   path: string,
   ctx: { workingDir: string; signal: AbortSignal },
+  env: NodeJS.ProcessEnv,
 ): Promise<{ width: number; height: number }> {
   const result = await deps.run("sips", ["-g", "pixelWidth", "-g", "pixelHeight", path], {
     cwd: ctx.workingDir,
     signal: ctx.signal,
     timeoutMs: 10_000,
+    env,
   });
   const width = Number(/pixelWidth:\s*(\d+)/.exec(result.stdout)?.[1]);
   const height = Number(/pixelHeight:\s*(\d+)/.exec(result.stdout)?.[1]);

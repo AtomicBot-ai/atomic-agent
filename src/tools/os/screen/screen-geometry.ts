@@ -6,7 +6,7 @@
  * long side is capped for the vision model), so the model's `x, y` are
  * image pixels: `point = origin + pixel / scale`, where `scale` is image
  * pixels per screen point and `origin` is the top-left of the captured
- * region in points (0,0 for the whole main screen).
+ * region in points (0,0 for the whole primary display).
  */
 export interface CaptureGeometry {
   originX: number;

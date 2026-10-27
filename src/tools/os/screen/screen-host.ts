@@ -1,5 +1,5 @@
 import { mkdir, stat } from "node:fs/promises";
-import { platform } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
 
@@ -32,6 +32,8 @@ export interface ScreenDeps {
   fileSize: (path: string) => Promise<number>;
   ensureDir: (path: string) => Promise<void>;
   now: () => Date;
+  /** Base for screenshots (`os.tmpdir()`): already a read root, never the working folder. */
+  tmpDir: string;
 }
 
 export const defaultScreenRunner: ScreenRunner = (command, args, options) =>
@@ -54,7 +56,13 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
         await mkdir(path, { recursive: true });
       }),
     now: overrides.now ?? (() => new Date()),
+    tmpDir: overrides.tmpDir ?? tmpdir(),
   };
+}
+
+export interface ScreenApp {
+  name: string | null;
+  bundleId: string | null;
 }
 
 /** What one JXA run reports about the host before (and after) acting. */
@@ -63,10 +71,14 @@ export interface ScreenProbe {
   accessibility: boolean | null;
   /** `CGPreflightScreenCaptureAccess`; `null` when it could not be asked. */
   screenRecording: boolean | null;
-  frontmost: { name: string | null; bundleId: string | null } | null;
-  /** Main display in points, and its pixels per point. */
+  frontmost: ScreenApp | null;
+  /** Owner of the topmost on-screen window under the probed / clicked point. */
+  ownerAtPoint?: ScreenApp | null;
+  /** Primary display in points, and its pixels per point. */
   screen: { width: number; height: number; scale: number };
   done: boolean;
+  /** How `type` delivered the text: `keys`, `paste` or `keys+paste`. */
+  via?: string;
   error?: string;
 }
 
@@ -106,23 +118,27 @@ export function parseScreenProbe(stdout: string): ScreenProbe {
   const height = Number(screen.height);
   const scale = Number(screen.scale);
   if (!(width > 0) || !(height > 0)) {
-    throw new Error("osascript reported no main screen");
+    throw new Error("osascript reported no primary display");
   }
-  const front = obj.frontmost as Record<string, unknown> | null | undefined;
   return {
     accessibility: typeof obj.accessibility === "boolean" ? obj.accessibility : null,
     screenRecording:
       typeof obj.screenRecording === "boolean" ? obj.screenRecording : null,
-    frontmost:
-      front && typeof front === "object"
-        ? {
-            name: typeof front.name === "string" ? front.name : null,
-            bundleId: typeof front.bundleId === "string" ? front.bundleId : null,
-          }
-        : null,
+    frontmost: parseApp(obj.frontmost),
+    ...("ownerAtPoint" in obj ? { ownerAtPoint: parseApp(obj.ownerAtPoint) } : {}),
     screen: { width, height, scale: scale > 0 ? scale : 1 },
     done: obj.done === true,
+    ...(typeof obj.via === "string" ? { via: obj.via } : {}),
     ...(typeof obj.error === "string" ? { error: obj.error } : {}),
+  };
+}
+
+function parseApp(raw: unknown): ScreenApp | null {
+  if (!raw || typeof raw !== "object") return null;
+  const app = raw as Record<string, unknown>;
+  return {
+    name: typeof app.name === "string" ? app.name : null,
+    bundleId: typeof app.bundleId === "string" ? app.bundleId : null,
   };
 }
 
@@ -160,7 +176,7 @@ export function accessibilityMessage(env: NodeJS.ProcessEnv): string {
 export function screenRecordingMessage(env: NodeJS.ProcessEnv): string {
   const host = hostAppName(env);
   return (
-    `macOS has not given ${host} Screen Recording permission, so the screenshot would show no windows. ` +
+    `macOS has not given ${host} Screen Recording permission (or the capture came back empty), so the screenshot would show no windows. ` +
     `Ask the user to open System Settings → Privacy & Security → Screen & System Audio Recording ` +
     `(Screen Recording on older macOS), turn on ${host}, and restart it. ` +
     "Do not retry until the user says it is done."
