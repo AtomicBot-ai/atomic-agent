@@ -1,14 +1,22 @@
 import { describe, expect, it } from "vitest";
+import type { ApprovalGate } from "../../../approval/approval-gate.js";
+import { ApprovalDeniedError } from "../../../approval/dangerous-tool.js";
 import { buildOsScreenCaptureTool, parseRegion, screencaptureArgs } from "./screen-capture.js";
 import { ScreenGeometryStore } from "./screen-geometry.js";
 import { parseScreenProbe } from "./screen-host.js";
 import { fakeHost, screenCtx, type FakeHostOptions } from "./screen-host.fixture.js";
 
-function capture(host: FakeHostOptions = {}) {
+function capture(host: FakeHostOptions = {}, approved = true) {
   const fake = fakeHost(host);
   const geometry = new ScreenGeometryStore();
-  const tool = buildOsScreenCaptureTool({ deps: fake.deps, geometry });
-  return { fake, geometry, tool };
+  const prompts: Array<Record<string, unknown>> = [];
+  const request = async (req: Record<string, unknown>) => {
+    prompts.push(req);
+    return approved ? { approved: true } : { approved: false, reason: "no" };
+  };
+  const approvals = { request } as unknown as ApprovalGate;
+  const tool = buildOsScreenCaptureTool({ approvals, approvalRequired: true, deps: fake.deps, geometry });
+  return { fake, geometry, tool, prompts };
 }
 
 describe("os.screen.capture", () => {
@@ -18,7 +26,7 @@ describe("os.screen.capture", () => {
     });
     const result = await tool.run({}, screenCtx());
     expect(result.status).toBe("ok");
-    const path = "/work/.atomic-screens/screen-20261025-142233-417.jpg";
+    const path = "/tmp/t/atomic-agent-screens/s1/screen-20261025-142233-417.jpg";
     expect(fake.calls.map((call) => [call.command, ...call.args.filter((arg) => !arg.includes("ObjC"))])).toEqual([
       ["osascript", "-l", "JavaScript", "-e"],
       ["screencapture", "-x", "-t", "jpg", path],
@@ -30,7 +38,21 @@ describe("os.screen.capture", () => {
     expect(result.details.scale).toBeCloseTo(1280 / 1440, 6);
     expect(geometry.get("s1")?.scale).toBeCloseTo(1280 / 1440, 6);
     expect(result.summary).toContain("vision.describe");
-    expect(result.summary).toContain(".atomic-screens/screen-20261025-142233-417.jpg");
+    expect(result.summary).toContain("atomic-agent-screens/s1/screen-20261025-142233-417.jpg");
+  });
+
+  it("asks as screen_capture after the probe and before anything is captured", async () => {
+    const { prompts, tool } = capture();
+    await tool.run({}, screenCtx());
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ tool: "os.screen.capture", category: "screen_capture" });
+    expect(String(prompts[0]!.preview)).toContain("frontmost app: Safari");
+  });
+
+  it("takes no picture when the screenshot is not approved", async () => {
+    const { fake, tool } = capture({}, false);
+    await expect(tool.run({}, screenCtx())).rejects.toBeInstanceOf(ApprovalDeniedError);
+    expect(fake.calls.map((call) => call.command)).toEqual(["osascript"]);
   });
 
   it("keeps a small region at full resolution and records its origin", async () => {
@@ -104,6 +126,6 @@ describe("capture helpers", () => {
       done: false,
     });
     expect(() => parseScreenProbe("execution error: -1743")).toThrow(/unexpected osascript output/);
-    expect(() => parseScreenProbe("{}")).toThrow(/no main screen/);
+    expect(() => parseScreenProbe("{}")).toThrow(/no primary display/);
   });
 });

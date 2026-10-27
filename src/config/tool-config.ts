@@ -94,9 +94,9 @@ export interface UserToolsConfig {
   screen: {
     /**
      * Computer use on macOS (ATO-525): `os.screen.capture` takes
-     * screenshots and `os.screen.{click,type,key}` drive the real mouse
-     * and keyboard, each input asking as `screen_control` below
-     * approval level 4. Default `false`: opt-in, and read at start, so
+     * screenshots (asking as `screen_capture` below approval level 3)
+     * and `os.screen.{click,type,key}` drive the real mouse and
+     * keyboard, each input asking as `screen_control` below level 4. Default `false`: opt-in, and read at start, so
      * turning it on takes a restart. macOS also asks for Screen
      * Recording and Accessibility permission for the host app.
      */

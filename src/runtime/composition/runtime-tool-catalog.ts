@@ -108,8 +108,9 @@ export function registerRuntimeCoreTools(input: {
     ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
   });
   // Computer use (ATO-525): screenshot, click, type, key — macOS only and
-  // opt-in (`tools.screen.enabled`, default off). Every input action asks
-  // as `screen_control`; the descriptors follow the same gate below.
+  // opt-in (`tools.screen.enabled`, default off). A screenshot asks as
+  // `screen_capture`, every input action as `screen_control`; the
+  // descriptors follow the same gate below.
   registerOsScreenTools(toolRegistry, {
     ...dangerous,
     enabled: config.tools.screen.enabled,
