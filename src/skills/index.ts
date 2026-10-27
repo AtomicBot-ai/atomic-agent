@@ -61,6 +61,12 @@ export type {
   InstallSkillResult,
 } from "./skill-installer.js";
 
+export { installLocalSkill } from "./install-local-skill.js";
+export type {
+  InstallLocalSkillOptions,
+  InstallLocalSkillResult,
+} from "./install-local-skill.js";
+
 export {
   browseHub,
   browseTap,
@@ -68,6 +74,7 @@ export {
   DEFAULT_TAPS,
   filterHubEntries,
   discardStagedInstall,
+  enforceScanGate,
   formatSkillIdentifier,
   GithubSkillClient,
   GithubSkillError,
@@ -75,6 +82,7 @@ export {
   looksLikeHubIdentifier,
   parseSkillIdentifier,
   parseTapRepo,
+  scanSkillDir,
   scanSkillFiles,
   searchHub,
   SkillHubInstallError,
@@ -89,6 +97,7 @@ export type {
   InstallFromHubOptions,
   InstallFromHubResult,
   RemoteSkillManifestRef,
+  ScanGateOptions,
   ScannableFile,
   SkillHubClient,
   SkillIdentifier,

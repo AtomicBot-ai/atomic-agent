@@ -58,6 +58,12 @@ export const FAILURE_CATALOG = {
     phrase: "The local model isn't running.",
     action: "none",
   },
+  // Same sentence as `LOCAL_SERVER_NOT_FOUND_MESSAGE`; the host's
+  // Reconnect button keys on the frame's `code`, not on this action.
+  local_server_not_found: {
+    phrase: "This address isn't a model server, or the model isn't loaded there.",
+    action: "none",
+  },
   model_loading: {
     phrase: "The model is still loading. Try again in a moment.",
     action: "retry",

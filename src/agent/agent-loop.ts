@@ -1,10 +1,9 @@
 import { loopDetectorVerdict } from "../llm/reliability/failure-catalog.js";
-import { readContextLengthFromRejection } from "../llm/reliability/request-size-rejection.js";
 import { resolveModelMode } from "../llm/model-mode.js";
 import { prepareStepPrompt, refreshStepWorkspace } from "./step/step-inference.js";
 import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { contextCompactionRejection } from "./turn/compaction-recovery.js";
+import { contextWindowExhaustedError, isConversationSizeRefusal, planOverflowCompaction } from "./turn/overflow-compaction.js";
 import { createTurnLoopState } from "./turn/turn-state.js";
 import { recoverTurnStep, abortableSleep } from "./turn/turn-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
@@ -137,7 +136,20 @@ export class AgentLoop {
     const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes } = policies;
     let { fusionState, reviewStall } = policies;
     const turn = createTurnLoopState();
+    // One overflow compaction per turn (ATO-1028): a refused request is
+    // compacted and retried once, never in a loop.
     let overflowCompactionAttempted = false;
+    let overflowCompacted = false;
+    // The window the last built prompt was packed to.
+    let lastPromptWindow: number | null = null;
+    // After an overflow, the window the server proved (in estimate units):
+    // the rest of the turn's automatic compaction triggers against it, so
+    // history is compacted before the next refusal rather than after.
+    let overflowWindow: number | null = null;
+    const compactionPlanInput = (input: BuildPromptInput): BuildPromptInput =>
+      overflowWindow !== null && (lastPromptWindow === null || lastPromptWindow > overflowWindow)
+        ? { ...input, contextWindow: overflowWindow, profileWindowApplies: false }
+        : input;
     const { legSteps, stepCeiling, durationCeilingMs, taskStartedAt } =
       prepareTurnBudgets(options);
     // Provider-outage parking. A transport failure means "this link is
@@ -509,6 +521,7 @@ export class AgentLoop {
               this.deps.onEvent?.({ type: "llm_event", event });
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
+                lastPromptWindow = event.prompt.contextWindow;
                 if (event.prompt.cloudContext && state.cloudContext !== event.prompt.cloudContext) {
                   state = { ...state, cloudContext: event.prompt.cloudContext };
                   stepContext.session = state;
@@ -546,7 +559,7 @@ export class AgentLoop {
         refreshStepWorkspace(stepContext, stepDeps);
         if (this.deps.compaction) {
           compactionInput = prepareStepPrompt(stepContext, stepDeps).promptInput;
-          let maintenance = this.deps.compaction.beforeStep(compactionInput, {
+          let maintenance = this.deps.compaction.beforeStep(compactionPlanInput(compactionInput), {
             signal: requestDeadline.signal,
             ...(options.providerId ? { providerId: options.providerId } : {}),
             ...(options.ephemeral ? { ephemeral: true } : {}),
@@ -566,7 +579,7 @@ export class AgentLoop {
             stepContext.session = state;
             if (!late.length) break;
             compactionInput = prepareStepPrompt(stepContext, stepDeps).promptInput;
-            maintenance = this.deps.compaction.beforeStep(compactionInput, {
+            maintenance = this.deps.compaction.beforeStep(compactionPlanInput(compactionInput), {
               signal: requestDeadline.signal,
               ...(options.providerId ? { providerId: options.providerId } : {}),
               ...(options.ephemeral ? { ephemeral: true } : {}),
@@ -896,34 +909,71 @@ export class AgentLoop {
       } catch (err) {
         // A refused inference has executed no tools. Spend at most one compaction
         // retry, before recovery emits a terminal failure or touches step counters.
-        const sizeRejection = contextCompactionRejection(err);
-        if (sizeRejection !== null &&
-            !requestDeadline.signal.aborted && !overflowCompactionAttempted &&
-            this.deps.compaction && compactionInput) {
+        const overflow = planOverflowCompaction({
+          error: err, attempted: overflowCompactionAttempted, aborted: requestDeadline.signal.aborted,
+          canCompact: this.deps.compaction !== undefined && compactionInput !== undefined,
+          promptTokens: turn.lastPromptTokens, believedWindow: lastPromptWindow,
+        });
+        if (overflow !== null && this.deps.compaction && compactionInput) {
           overflowCompactionAttempted = true;
-          const observed = readContextLengthFromRejection(sizeRejection);
-          if (observed) this.deps.onContextWindowObserved?.(observed);
+          const logFields = {
+            sessionId: state.id, stepIndex: i, promptTokens: turn.lastPromptTokens,
+            believedWindow: lastPromptWindow, serverWindow: overflow.serverWindow,
+            serverPromptTokens: overflow.serverPromptTokens,
+            compactionWindow: overflow.compactionWindow, source: overflow.source,
+          };
+          this.deps.logger?.warn("model server refused the request as too large for its context window; compacting history and retrying the step once", logFields);
           const before = state.compaction;
-          state = await (this.deps.compaction.beforeStep({ ...compactionInput, session: state,
-            ...(observed ? { contextWindow: observed, profileWindowApplies: false } : {}),
-          }, {
-            signal: requestDeadline.signal, requested: "overflow",
-            ...(options.providerId ? { providerId: options.providerId } : {}),
-            ...(options.ephemeral ? { ephemeral: true } : {}),
-          }) ?? Promise.resolve(state));
+          try {
+            state = await (this.deps.compaction.beforeStep({ ...compactionInput, session: state,
+              ...(overflow.compactionWindow !== null ? { contextWindow: overflow.compactionWindow, profileWindowApplies: false } : {}),
+            }, {
+              signal: requestDeadline.signal, requested: "overflow",
+              ...(options.providerId ? { providerId: options.providerId } : {}),
+              ...(options.ephemeral ? { ephemeral: true } : {}),
+            }) ?? Promise.resolve(state));
+          } catch (compactionError) {
+            this.deps.logger?.warn("overflow compaction failed", { ...logFields,
+              error: compactionError instanceof Error ? compactionError.message : String(compactionError) });
+          }
           if (state.compaction !== before) {
+            overflowCompacted = true;
+            overflowWindow = overflow.compactionWindow;
+            // Learned only once the retry is certain: a learned window
+            // would otherwise disarm the native-tools repack below.
+            // Filed under the link that refused (a Fusion worker, a sticky
+            // fallback), never under the active provider's model.
+            if (overflow.learnedWindow !== null) {
+              this.deps.onContextWindowObserved?.(overflow.learnedWindow, options.providerId ?? this.deps.contextProviderId?.(state.id));
+            }
+            const shownWindow = overflow.serverWindow ?? overflow.compactionWindow;
+            if (shownWindow !== null) {
+              this.deps.onEvent?.({ type: "prompt_repacked", stepIndex: i, contextWindow: shownWindow,
+                source: overflow.serverWindow !== null ? "provider" : "estimate", promptTokens: turn.lastPromptTokens });
+            }
+            this.deps.logger?.info("overflow compaction freed room; retrying the step", logFields);
             requestDeadline.dispose();
             turn.sizeRepackRetry = { stepIndex: i };
             turn.pendingNotice = noticeForThisStep;
             i -= 1;
             continue;
           }
+          this.deps.logger?.warn("overflow compaction could not free room", logFields);
         }
+        // Still too large after the turn's one overflow compaction (or none
+        // could free room): if the step fails, it fails with plain words, in
+        // the one `loop_failed` recovery emits. Not when the turn was
+        // stopped or ran out of time mid-compaction, and not when the
+        // refusal blames the reply reserve rather than the conversation.
+        const contextExhausted = overflowCompactionAttempted && !requestDeadline.signal.aborted &&
+          !options.signal.aborted && isConversationSizeRefusal(err)
+          ? contextWindowExhaustedError({ cause: err, compacted: overflowCompacted }) : undefined;
         const decision = recoverTurnStep(err, {
           state, options, stepIndex: i, finalizationStep, noticeForThisStep,
           effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
           durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
           ...(stepModelMode !== undefined ? { modelMode: stepModelMode } : {}),
+          ...(contextExhausted !== undefined ? { contextExhausted } : {}),
         }, this.deps, turn);
         if (decision.kind === "wait") {
           const nextRetryMs = decision.nextRetryMs;
@@ -948,6 +998,11 @@ export class AgentLoop {
         if (decision.kind === "retry_same") { i -= 1; continue; }
         if (decision.kind === "retry_next") continue;
         if (decision.kind === "stop") break;
+        if (contextExhausted !== undefined && decision.runError === contextExhausted) {
+          this.deps.logger?.warn("conversation does not fit the model's context window after overflow compaction; ending the turn", {
+            sessionId: state.id, stepIndex: i, compacted: overflowCompacted, promptTokens: turn.lastPromptTokens,
+          });
+        }
         return finalizeFailedAgentTurn({
           state, options, cancelled: decision.cancelled, category: decision.category,
           runError: decision.runError, creditRefused: decision.creditRefused,

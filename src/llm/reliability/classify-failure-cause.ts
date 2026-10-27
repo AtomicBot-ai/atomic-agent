@@ -14,6 +14,11 @@ import type { LlmFailureCategory } from "./failure-category.js";
 import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js";
 import { isLocalEngineDown } from "./local-engine-down.js";
 import {
+  LOCAL_CONTEXT_EXCEEDED_CODE,
+  LOCAL_REQUEST_INVALID_CODE,
+  classifyLocalServerError,
+} from "./local-server-error.js";
+import {
   classifyProviderWaitCause,
   type ProviderWaitCause,
 } from "./provider-wait-cause.js";
@@ -81,6 +86,17 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
 
   const modelError = chain.find((l): l is ModelError => l instanceof ModelError);
   if (modelError !== undefined) return modelCause(modelError);
+
+  // A local server's typed HTTP answer already has a code
+  // (`local-server-error.ts`, ATO-707/708); the catalog follows it so a
+  // 400 is never read as a grammar bug and the frame's `code` and
+  // `failure` tell one story.
+  const local = classifyLocalServerError(err);
+  if (local !== null) {
+    if (local.code === LOCAL_CONTEXT_EXCEEDED_CODE) return "context_too_long";
+    if (local.code === LOCAL_REQUEST_INVALID_CODE) return "request_rejected";
+    return "local_server_not_found";
+  }
 
   if (
     (isRequestSizeRejection(err) && requestSizeRejectionNamesContext(err)) ||

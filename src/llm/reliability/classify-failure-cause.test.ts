@@ -111,6 +111,27 @@ const SAMPLES: ReadonlyArray<
     "context_too_long",
     "new-chat-summary",
   ],
+  [
+    "a llama.cpp route that answers 404 (not a model server)",
+    stepFailure(new LlamaServerError("llama-server returned http 404: Not Found", 404, LLAMA)),
+    "local_server_not_found",
+    "none",
+  ],
+  [
+    "a typed local 400 that is not about size",
+    stepFailure(
+      new LlamaServerError(
+        "llama-server returned http 400: invalid_request_error",
+        400,
+        LLAMA,
+        false,
+        undefined,
+        { body: { type: "invalid_request_error" } },
+      ),
+    ),
+    "request_rejected",
+    "switch-model",
+  ],
   ["a 429 rate limit", stepFailure(http(429, "slow down")), "rate_limited", "retry"],
   ["an empty completion", new ModelError("empty", "model returned empty content"), "empty_response", "retry"],
   [
