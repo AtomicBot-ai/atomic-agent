@@ -14,6 +14,7 @@ import {
   parseBoundedPositiveInt,
   parseNonNegativeInt,
   parseNonEmptyString,
+  emitConfigNoticeOnce,
 } from "../config-primitives.js";
 import { parseUrl } from "../config-values.js";
 import { parseCustomLocalModels } from "../custom-models-schema.js";
@@ -120,10 +121,10 @@ export function parseLocalCompletionCap(raw: unknown, field: string): number {
 /**
  * `localModels.reasoningBudgetTokens` — the think-block bound of a local
  * reasoning model, in tokens. `0` means unbounded; anything else is an
- * integer in [64, 32768]. Values above 499 parse, but the grammar
- * clamps the bound to 1,999 characters (499 tokens): llama.cpp rejects or
- * ignores a larger `{0,N}` repetition (#600). The 32768 ceiling predates
- * that cap and is kept so existing config files stay valid. The default
+ * integer in [64, 32768]. Until ATO-607 the grammar clamped the bound to
+ * 1,999 characters (499 tokens), because llama.cpp rejects or ignores a
+ * larger `{0,N}` repetition (#600); the prelude now chains repetitions
+ * under that limit, so the whole range is enforced. The default
  * is `0` since v78 (see `resolveReasoningBudgetTokens` for the migration).
  */
 export function parseReasoningBudgetTokens(
@@ -200,6 +201,15 @@ export function parseTensorSplit(raw: unknown, field: string): number[] {
   return result;
 }
 
+/** ATO-1239: a variant string a newer build added reads as the default here, with a notice; a non-string still fails. */
+function lenientBackendVariant(raw: unknown, readDefaults: () => UserLocalModelsConfig): BackendVariantPreference {
+  if (isBackendVariantPreference(raw) || typeof raw !== "string" || raw.length === 0) {
+    return parseBackendVariant(raw, "localModels.managed.backendVariant");
+  }
+  emitConfigNoticeOnce(`[atomic-agent] localModels.managed.backendVariant ${JSON.stringify(raw)} is not known to this build; using ${JSON.stringify(readDefaults().managed.backendVariant)}`);
+  return readDefaults().managed.backendVariant;
+}
+
 function parseOptionalManagedModelId(
   raw: unknown,
   field: string,
@@ -211,11 +221,16 @@ function parseOptionalManagedModelId(
   // against that array rather than the module registry: a config that
   // adds a model and selects it in one write has to validate before
   // anything has had the chance to publish it.
+  /* ATO-1239: the state dir is shared, and a newer build (the desktop app)
+     may select a catalogue model this build does not know. That is not a
+     broken file: the model is left unselected here, which leads to the
+     usual "pick a model", and the file keeps its value for the build that
+     wrote it. */
   if (!isKnownLocalModelId(s) && !customModels.some((m) => m.id === s)) {
-    throw new ConfigValidationError(
-      field,
-      `unknown managed local model id: ${JSON.stringify(s)}`,
+    emitConfigNoticeOnce(
+      `[atomic-agent] ${field} ${JSON.stringify(s)} is a model this build does not know (a newer app may have chosen it); no local model is selected here — update atomic-agent or pick one with \`models use\``,
     );
+    return null;
   }
   return s;
 }
@@ -259,7 +274,12 @@ function resolveManagedEngine(
   readDefaults: () => UserLocalModelsConfig,
 ): "llama-server" | "atomic-core" {
   if (raw !== undefined && raw !== "llama-server" && raw !== "atomic-core") {
-    throw new ConfigValidationError("localModels.managed.engine", "expected llama-server|atomic-core");
+    // ATO-1239: a string is an engine a newer build knows; it runs on the default here. Anything else is a broken file.
+    if (typeof raw !== "string" || raw.length === 0) {
+      throw new ConfigValidationError("localModels.managed.engine", "expected llama-server|atomic-core");
+    }
+    emitConfigNoticeOnce(`[atomic-agent] localModels.managed.engine ${JSON.stringify(raw)} is not known to this build; using its default engine`);
+    return readDefaults().managed.engine ?? "atomic-core";
   }
   if (inputVersion < ATOMIC_CORE_DEFAULT_VERSION) return "atomic-core";
   return raw ?? readDefaults().managed.engine ?? "atomic-core";
@@ -362,10 +382,10 @@ export function prepareLocalModelsInputs(
       rawManaged.device ?? readDefaults().managed.device,
       "localModels.managed.device",
     ),
-    backendVariant: parseBackendVariant(
+    backendVariant: lenientBackendVariant(
       rawManaged.backendVariant ??
         readDefaults().managed.backendVariant,
-      "localModels.managed.backendVariant",
+      readDefaults,
     ),
     contextSize: parseNonNegativeInt(
       rawManaged.contextSize ??

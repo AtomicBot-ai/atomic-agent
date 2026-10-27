@@ -27,6 +27,8 @@ describe("atomic-agent update", () => {
   const runInstaller = vi.fn();
   const check = vi.fn();
   const canSelfUpdate = vi.fn();
+  const detectInstallSource = vi.fn();
+  const detectShadowedPackage = vi.fn();
 
   beforeEach(() => {
     stdoutChunks = [];
@@ -42,16 +44,22 @@ describe("atomic-agent update", () => {
     runInstaller.mockReset();
     check.mockReset();
     canSelfUpdate.mockReset();
+    detectInstallSource.mockReset();
+    detectShadowedPackage.mockReset();
     deps = {
       checkForAppUpdate: check,
       runAppUpdate: runInstaller,
       canSelfUpdate,
+      detectInstallSource,
+      detectShadowedPackage,
       getRepo: () => "AtomicBot-ai/atomic-agent",
       isTTY: () => false,
       confirm: async () => true,
     };
     check.mockResolvedValue(makeResult());
     canSelfUpdate.mockReturnValue(true);
+    detectInstallSource.mockReturnValue(undefined);
+    detectShadowedPackage.mockReturnValue(undefined);
     runInstaller.mockResolvedValue({ ok: true, installDir: "/tmp/install" });
   });
 
@@ -123,6 +131,44 @@ describe("atomic-agent update", () => {
     canSelfUpdate.mockReturnValue(false);
     expect(await updateCommand([], deps)).toBe(1);
     expect(stderr()).toMatch(/installed binary/);
+    expect(runInstaller).not.toHaveBeenCalled();
+  });
+
+  it("defers a packaged install to the package manager before asking GitHub", async () => {
+    detectInstallSource.mockReturnValue("deb");
+    expect(await updateCommand([], deps)).toBe(1);
+    expect(stderr()).toMatch(/the deb package/);
+    expect(stderr()).toMatch(/apt/);
+    expect(check).not.toHaveBeenCalled();
+    expect(runInstaller).not.toHaveBeenCalled();
+    // A pinned version is an install too.
+    expect(await updateCommand(["--version", "v0.3.2"], deps)).toBe(1);
+    expect(runInstaller).not.toHaveBeenCalled();
+  });
+
+  it("says which copy it updates when a package sits beside an install.sh copy", async () => {
+    detectShadowedPackage.mockReturnValue("deb");
+    expect(await updateCommand([], deps)).toBe(0);
+    expect(stderr()).toMatch(/^note: the deb package also installed atomic-agent/);
+    expect(stderr()).toMatch(/this updates only/);
+    expect(runInstaller).toHaveBeenCalledTimes(1);
+    // A packaged binary never sees the note: the refusal covers it.
+    stderrChunks.length = 0;
+    detectInstallSource.mockReturnValue("deb");
+    expect(await updateCommand([], deps)).toBe(1);
+    expect(stderr()).not.toMatch(/note:/);
+  });
+
+  it("keeps --check quiet about a package beside this copy", async () => {
+    detectShadowedPackage.mockReturnValue("aur");
+    expect(await updateCommand(["--check"], deps)).toBe(0);
+    expect(stderr()).toBe("");
+  });
+
+  it("still answers --check on a packaged install", async () => {
+    detectInstallSource.mockReturnValue("rpm");
+    expect(await updateCommand(["--check"], deps)).toBe(0);
+    expect(stdout()).toMatch(/update available: 0\.3\.1 → 0\.3\.2/);
     expect(runInstaller).not.toHaveBeenCalled();
   });
 

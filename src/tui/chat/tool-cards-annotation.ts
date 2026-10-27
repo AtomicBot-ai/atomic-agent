@@ -1,3 +1,4 @@
+import { canonicalArgs } from "../../tools/argument-aliases.js";
 import type { ToolCardEntry } from "../tui-state.js";
 
 type AnnotatedCard = Pick<ToolCardEntry, "tool" | "args" | "status">;
@@ -224,7 +225,9 @@ function pathsOf(card: AnnotatedCard): string[] {
     const patch = args["patch"];
     if (typeof patch === "string") raw.push(...patchTargets(patch));
   } else if (card.tool === "os.fs.move") {
-    const moves = Array.isArray(args["moves"]) ? (args["moves"] as unknown[]) : [args];
+    // As the tool read them: `{paths, destination}` ran as from/to or moves.
+    const read = canonicalArgs(card.tool, args);
+    const moves = Array.isArray(read["moves"]) ? (read["moves"] as unknown[]) : [read];
     for (const move of moves) {
       if (typeof move === "object" && move !== null) {
         raw.push((move as Record<string, unknown>)["from"]);

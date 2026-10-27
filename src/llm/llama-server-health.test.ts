@@ -395,3 +395,18 @@ describe("llama-server answered 404/405 (ATO-870)", () => {
     ).toBe(formatLlamaWrongServerHint(URL_8090, 404));
   });
 });
+
+describe("formatLlamaWrongServerHint: recheck and the old port (ATO-708, ATO-873)", () => {
+  it("names the recheck command", () => {
+    expect(formatLlamaWrongServerHint("http://127.0.0.1:8090", 404)).toContain(
+      "  recheck it:          atomic-agent models check",
+    );
+  });
+
+  it("points an address on the old 8080 default at 9931, and only that one", () => {
+    const old = formatLlamaWrongServerHint("http://127.0.0.1:8080", 404);
+    expect(old.split("\n").at(-1)).toContain("A current llama-server listens on 9931");
+    expect(formatLlamaWrongServerHint("http://127.0.0.1:9931", 404)).not.toContain("old default");
+    expect(formatLlamaWrongServerHint("http://127.0.0.1:8090", 405)).not.toContain("9931");
+  });
+});
