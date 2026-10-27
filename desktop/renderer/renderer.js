@@ -2509,9 +2509,10 @@ function chatRow(s) {
   // Studio: no chat is "open" while a Studio page is on screen.
   // ATO-1032: how long ago the chat last moved ("5m", "2h", "3d"), where nothing is queued.
   const age = queued ? '' : chatAgeShort(s.updatedAt);
+  if (age) ensureChatAgeTick();
   // ATO-1034: draggable onto a folder (chat-folders.js).
   return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '" draggable="true"'
-    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : age ? ' data-m="' + age + '" data-age="1"' : '')
+    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : age ? ' data-m="' + age + '" data-age="1" data-at="' + Number(s.updatedAt) + '"' : '')
     + (glyph ? ' data-g="' + esc(glyph) + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
@@ -2527,6 +2528,21 @@ function chatRow(s) {
       + ' aria-haspopup="menu" aria-expanded="' + (S.overlay === 'sesmenu' && SESMENU.id === s.id ? 'true' : 'false') + '"'
       + ' role="button" tabindex="0">' + ic('dots') + '</span>'
     + '</button>';
+}
+
+/* ATO-1032: the ages move on while nothing re-renders the sidebar, so a
+   minute tick rewrites them in place (no re-render: scroll and focus stay). */
+let CHAT_AGE_TICK = 0;
+function ensureChatAgeTick() {
+  if (CHAT_AGE_TICK || typeof setInterval !== 'function') return;
+  CHAT_AGE_TICK = setInterval(refreshChatAges, 60000);
+}
+
+function refreshChatAges(root) {
+  for (const el of (root || document).querySelectorAll('.sesrow[data-age][data-at]')) {
+    const age = chatAgeShort(Number(el.dataset.at));
+    if (age && el.dataset.m !== age) el.dataset.m = age;
+  }
 }
 
 /** ATO-1032: a chat row's age, short: "now", "5m", "2h", "3d", "6w"; '' with no time. */
