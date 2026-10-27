@@ -2,7 +2,8 @@
 (async () => {
   const BR = window.atomic;
   const $ = (id) => document.getElementById(id);
-  const say = (text, tone) => { const m = $('msg'); m.textContent = text || ''; m.className = 'msg' + (tone ? ' ' + tone : ''); };
+  // ATO-1240: the body scrolls; a line said is brought into view above the pinned buttons.
+  const say = (text, tone) => { const m = $('msg'); m.textContent = text || ''; m.className = 'msg' + (tone ? ' ' + tone : ''); if (text && m.scrollIntoView) m.scrollIntoView({block: 'nearest'}); };
   const now = BR && BR.remoteGet ? await BR.remoteGet() : null;
   if (now && now.url) { $('url').value = now.url; say('Connected to ' + now.url + (now.connected ? '' : ' (not answering)'), now.connected ? 'ok' : 'bad'); }
   else say('This app runs its own agent on this computer.');
