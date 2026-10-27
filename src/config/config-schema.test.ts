@@ -950,13 +950,12 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/localModels.mode/);
   });
 
-  it("rejects unknown localModels.managed.modelId", () => {
-    expect(() =>
-      parseUserConfigFile({
-        version: USER_CONFIG_VERSION,
-        localModels: { managed: { modelId: "glm-4.7-flash-30b" } },
-      }),
-    ).toThrow(/localModels.managed.modelId/);
+  it("ATO-1239: an unknown localModels.managed.modelId (a newer app's model) reads as no model selected", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { modelId: "glm-4.7-flash-30b" } },
+    });
+    expect(parsed.localModels.managed.modelId).toBeNull();
   });
 
   it("defaults localModels.managed.device to 'auto'", () => {
@@ -984,11 +983,16 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.backendVariant).toBe("cpu");
   });
 
-  it("rejects an unknown localModels.managed.backendVariant", () => {
+  it("ATO-1239: an unknown localModels.managed.backendVariant reads as the default; a wrong type is rejected", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { backendVariant: "opencl" } },
+    });
+    expect(parsed.localModels.managed.backendVariant).toBe("auto");
     expect(() =>
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
-        localModels: { managed: { backendVariant: "opencl" } },
+        localModels: { managed: { backendVariant: 7 } },
       }),
     ).toThrow(/localModels.managed.backendVariant/);
   });

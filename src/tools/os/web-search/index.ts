@@ -7,3 +7,4 @@ export type {
   WebSearchResult,
 } from "./web-search-provider.js";
 export { WebSearchBlockedError } from "./web-search-errors.js";
+export type { WebSearchKeyHelp } from "./web-search-errors.js";

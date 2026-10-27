@@ -86,7 +86,12 @@ export function parseMoveArgs(rawArgs: Record<string, unknown>): MoveArgs {
   const from = rawArgs.from;
   const to = rawArgs.to;
   const overwrite = rawArgs.overwrite === true;
-  if (given(rawMoves)) {
+  // An empty `moves` beside `from`/`to` is a strict provider filling an
+  // unused field, not a second form: `{from, to, moves: []}` is a plain
+  // move. Alone, it is still the "non-empty array" error below.
+  const emptyFiller =
+    Array.isArray(rawMoves) && rawMoves.length === 0 && (given(from) || given(to));
+  if (given(rawMoves) && !emptyFiller) {
     if (given(from) || given(to)) {
       throw new Error(
         "os.fs.move: pass either `from` and `to`, or `moves` — not both",

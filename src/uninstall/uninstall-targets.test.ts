@@ -73,6 +73,25 @@ describe("planUninstallTargets", () => {
     expect(targets.every((t) => t.group === "data")).toBe(true);
   });
 
+  it("plans data only when a Linux package owns the program", () => {
+    // The package manager removes /usr/lib/atomic-agent; rm -rf by hand
+    // would leave dpkg or rpm naming files that are gone.
+    const targets = planUninstallTargets(
+      input({
+        platform: "linux",
+        execPath: "/usr/lib/atomic-agent/atomic-agent",
+        homeDir: "/home/op",
+        stateDir: "/home/op/.atomic-agent",
+        installSource: "deb",
+      }),
+    );
+    expect(targets.every((t) => t.group === "data")).toBe(true);
+    expect(targets.map((t) => t.path)).toEqual([
+      "/home/op/.atomic-agent",
+      "/home/op/Documents/atomic-agent-debug",
+    ]);
+  });
+
   it("honours a relocated state dir", () => {
     const [first] = planUninstallTargets(input({ stateDir: "/opt/aa-state" }));
     expect(first?.path).toBe("/opt/aa-state");
