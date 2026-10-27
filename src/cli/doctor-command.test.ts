@@ -13,7 +13,7 @@ const cfgPath = (): string => join(dir, "config.json");
 const save = (tree: unknown): void => { writeFileSync(cfgPath(), JSON.stringify(tree, null, 2)); chmodSync(cfgPath(), 0o600); };
 const read = (): Record<string, any> => JSON.parse(readFileSync(cfgPath(), "utf8"));
 const run = (args: string[], findOnPath = (_: string) => true) =>
-  doctorCommand(args, { stateDir: dir, write, context: { findOnPath } });
+  doctorCommand(args, { stateDir: dir, write, engine: null, context: { findOnPath } });
 
 function withBrokenActiveProvider(): Record<string, any> {
   const tree = structuredClone(USER_CONFIG_DEFAULTS) as Record<string, any>;
@@ -100,7 +100,7 @@ describe("atag doctor --json", () => {
   it("--fix --json prints only the findings on stdout", async () => {
     save(withBrokenActiveProvider());
     let err = "";
-    await doctorCommand(["--fix", "--json"], { stateDir: dir, write, writeErr: (t) => { err += t; }, context: { findOnPath: () => true } });
+    await doctorCommand(["--fix", "--json"], { stateDir: dir, write, engine: null, writeErr: (t) => { err += t; }, context: { findOnPath: () => true } });
     expect(Array.isArray(JSON.parse(out))).toBe(true);
     expect(err).toMatch(/backed up config.json/);
   });

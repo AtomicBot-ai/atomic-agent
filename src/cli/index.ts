@@ -20,6 +20,7 @@ import { importCommand } from "./import-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
+import { dataCommand } from "./data-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { getAppVersion } from "../version.js";
@@ -127,6 +128,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "doctor",
     summary: "Check config, its file mode and MCP commands; --fix repairs (with backup), --undo",
     run: doctorCommand,
+  },
+  {
+    name: "data",
+    summary: "Back up, restore, move or reset the data folder (shared with the desktop app)",
+    run: dataCommand,
   },
   {
     name: "update",
