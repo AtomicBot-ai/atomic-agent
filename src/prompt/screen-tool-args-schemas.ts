@@ -24,12 +24,9 @@ function obj(
 export const SCREEN_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
   [
     "os.screen.capture",
-    obj({
-      region: obj(
-        { x: numberSchema, y: numberSchema, width: numberSchema, height: numberSchema },
-        ["x", "y", "width", "height"],
-      ),
-    }),
+    // The region is flat (all four or none): no strict-converted schema
+    // nests an object (openai-tool-call-adapter.test.ts pins it).
+    obj({ x: numberSchema, y: numberSchema, width: numberSchema, height: numberSchema }),
   ],
   [
     "os.screen.click",

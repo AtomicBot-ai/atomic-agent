@@ -57,7 +57,7 @@ describe("os.screen.capture", () => {
 
   it("keeps a small region at full resolution and records its origin", async () => {
     const { fake, geometry, tool } = capture({ pixelSizes: [{ width: 800, height: 600 }] });
-    const result = await tool.run({ region: { x: 100, y: 50, width: 400, height: 300 } }, screenCtx());
+    const result = await tool.run({ x: 100, y: 50, width: 400, height: 300 }, screenCtx());
     expect(result.status).toBe("ok");
     expect(fake.calls.some((call) => call.command === "sips" && call.args[0] === "-Z")).toBe(false);
     expect(fake.calls[1]?.args).toContain("100,50,400,300");
