@@ -34,6 +34,7 @@ import {
   SkillHubInstallError,
   type HubSkillEntry,
   type ScanGateOptions,
+  type SkillScanResult,
 } from "../skills/index.js";
 import {
   createInstallConfirm,
@@ -199,12 +200,21 @@ async function handleInstall(args: string[]): Promise<number> {
     );
     return 0;
   } catch (err) {
-    return reportInstallError(err, gate);
+    return reportInstallError(err, gate, source);
   }
 }
 
-/** Print an install failure (with scan findings when the gate refused). */
-function reportInstallError(err: unknown, gate: ScanGateOptions): number {
+/**
+ * Print an install failure. When the scan gate refused, the findings come
+ * first and a one-line summary is the LAST stderr line: the desktop app
+ * runs this command without a TTY and reads only that last line (it marks
+ * a skill `blocked` on "flagged dangerous by the security scan").
+ */
+function reportInstallError(
+  err: unknown,
+  gate: ScanGateOptions,
+  identifier: string,
+): number {
   if (err instanceof SkillHubInstallError && err.scan) {
     if (err.code === "needs_confirmation" && gate.confirm) {
       // The findings were shown with the question; the operator said no.
@@ -212,17 +222,26 @@ function reportInstallError(err: unknown, gate: ScanGateOptions): number {
       return 1;
     }
     process.stderr.write(formatScanFindings(err.scan));
-    process.stderr.write(`${err.message}\n`);
     process.stderr.write(
-      err.code === "needs_confirmation"
-        ? "re-run with --yes to install anyway\n"
-        : "re-run with --acknowledge-risk to install anyway\n",
+      `${scanRefusalLine(err.code, err.scan, identifier)}\n`,
     );
     return 1;
   }
   const message = err instanceof Error ? err.message : String(err);
   process.stderr.write(`${message}\n`);
   return 1;
+}
+
+function scanRefusalLine(
+  code: SkillHubInstallError["code"],
+  scan: SkillScanResult,
+  identifier: string,
+): string {
+  if (code === "needs_confirmation") {
+    const n = scan.findings.length;
+    return `install needs confirmation: ${identifier} was flagged caution by the security scan (${n} ${n === 1 ? "finding" : "findings"}); re-run with --yes to install anyway`;
+  }
+  return `install blocked: ${identifier} flagged dangerous by the security scan (${summarizeScan(scan)}; use --acknowledge-risk to override)`;
 }
 
 async function handleHubInstall(
@@ -243,7 +262,7 @@ async function handleHubInstall(
     );
     return 0;
   } catch (err) {
-    return reportInstallError(err, gate);
+    return reportInstallError(err, gate, identifier);
   }
 }
 
@@ -268,7 +287,7 @@ async function handleClawHubInstall(
     );
     return 0;
   } catch (err) {
-    return reportInstallError(err, gate);
+    return reportInstallError(err, gate, identifier);
   }
 }
 
