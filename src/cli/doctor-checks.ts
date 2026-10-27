@@ -3,6 +3,7 @@ import { delimiter, isAbsolute, join } from "node:path";
 
 import { ConfigValidationError, parseUserConfigFile } from "../config/index.js";
 import { readRawConfigTree } from "../config/config-paths.js";
+import { checkCoreLocks } from "./doctor-core-lock.js";
 
 /**
  * ATO-577 — `atag doctor`: a registry of checks, each of which can find one
@@ -36,6 +37,9 @@ export interface DoctorContext {
   /** PATH lookup for a bare command; injectable for tests. */
   findOnPath: (command: string) => boolean;
   chmod: (path: string, mode: number) => void;
+  /** Whether a process id is running; injectable for tests. */
+  pidAlive: (pid: number) => boolean;
+  now: () => Date;
 }
 
 type Tree = Record<string, unknown>;
@@ -140,6 +144,7 @@ export const DOCTOR_CHECKS: ReadonlyArray<(ctx: DoctorContext) => DoctorFinding[
   checkConfig,
   checkConfigMode,
   checkMcpCommands,
+  checkCoreLocks,
 ];
 
 export function runDoctorChecks(ctx: DoctorContext): DoctorFinding[] {
