@@ -25,6 +25,21 @@ test("a chat row's age reads short", () => {
   assert.equal(c.age(now - 15 * 86400000), "2w");
 });
 
+test("the ages move on without a re-render", () => {
+  const now = Date.now();
+  const row = { dataset: { at: String(now - 10 * 1000), m: "now" } };
+  const root = { querySelectorAll: (sel) => (sel === ".sesrow[data-age][data-at]" ? [row] : []) };
+  const c = vm.createContext({ Date, Number, root });
+  vm.runInContext(fn("chatAgeShort") + fn("refreshChatAges") + "globalThis.refresh = refreshChatAges;", c);
+  c.refresh(root);
+  assert.equal(row.dataset.m, "now");
+  row.dataset.at = String(now - 31 * 60000);
+  c.refresh(root);
+  assert.equal(row.dataset.m, "31m");
+  assert.match(fn("chatRow"), /data-at="' \+ Number\(s\.updatedAt\)/);
+  assert.match(fn("chatRow"), /if \(age\) ensureChatAgeTick\(\);/);
+});
+
 test("the row carries the age only where nothing is queued", () => {
   const row = fn("chatRow");
   assert.match(row, /const age = queued \? '' : chatAgeShort\(s\.updatedAt\);/);
