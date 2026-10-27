@@ -64,4 +64,20 @@ describe("/api/project-trust", () => {
     expect((await status()).question).toBeNull();
     expect(harness.runtime.skillRegistry.list().some(s => s.manifest.name === "one")).toBe(false);
   });
+
+  it("changes a past answer for everything the folder ships with scope all", async () => {
+    projectSkill("one"); writeFileSync(join(harness.workingDir, "AGENTS.md"), "RULE");
+    const shown = await status();
+    expect((await answer({ answer: "decline", questionId: shown.questionId })).status).toBe(200);
+    expect((await answer({ answer: "trust", scope: "everything" })).status).toBe(400);
+    const trusted = await answer({ answer: "trust", scope: "all" });
+    expect(trusted.status).toBe(200);
+    const after = (await trusted.json()) as Status;
+    expect(after.trusted).toEqual({ skills: ["one"], instructions: ["AGENTS.md"] });
+    expect(harness.runtime.skillRegistry.list().some(s => s.manifest.name === "one")).toBe(true);
+    const revoked = (await (await answer({ answer: "decline", scope: "all" })).json()) as Status;
+    expect(revoked.trusted).toEqual({ skills: [], instructions: [] });
+    expect(revoked.question).toBeNull();
+    expect(harness.runtime.skillRegistry.list().some(s => s.manifest.name === "one")).toBe(false);
+  });
 });

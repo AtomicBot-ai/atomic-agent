@@ -29,6 +29,8 @@ atomic-agent skill project off --workspace /path/repo  # revoke: decline everyth
 
 `POST /api/project-trust` with `{ answer: "trust" | "decline", questionId, workingDir? | sessionId? }` records the answer for exactly the pending items of that question, refreshes the local skill catalog and returns the new status. When the folder changed since the question was read, it answers `409` with `error.code: "question_changed"` and the fresh `status`, and records nothing. Cloud sessions reread the answer on their next step.
 
+`POST /api/project-trust` with `{ answer, scope: "all" }` (no `questionId`) is the settings switch for a past choice: it trusts or declines everything the folder ships now, like `skill project on|off --workspace`.
+
 ## Code
 
 [project-trust.ts](../project-trust.ts) holds the lookup and the local registry gate, [workspace-skills.ts](../workspace-skills.ts) marks pending and declined project skills, [project instructions](../../runtime/project-instructions.ts) take an `allow` filter, and [runtime project-trust.ts](../../runtime/project-trust.ts) builds the question and records answers through [policy commands](../../config/skill-policy-commands.ts).
