@@ -1277,6 +1277,20 @@ function reduceStepEvent(
           `${event.refused && event.refused.length > 0 ? `; ${event.refused.length} refused by the turn policy` : ""})`,
         color: "yellow",
       });
+    case "answer_continued":
+      // ATO-1031: the reply hit the length limit and the step asked for
+      // the rest once. Without the line, the second wait looks like a hang.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line:
+          event.outcome === "completed"
+            ? "» the reply hit the length limit — continued it once"
+            : event.outcome === "cut_again"
+              ? "» the reply hit the length limit twice — showing what arrived"
+              : "» the reply hit the length limit — continuing it failed, retrying the step",
+        color: "yellow",
+      });
     case "batch_wave_split":
       // Issue #111: an oversized pure-read batch ran in bounded waves.
       // Nothing was dropped — every call executed — so the feed line
