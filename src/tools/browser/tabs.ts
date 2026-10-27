@@ -2,7 +2,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import { listingResultCaps } from "../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, TabsInput } from "./browser-backend.js";
-import { isSafeUrl } from "./navigate.js";
+import { isSafeUrl, refuseScriptUrl } from "./navigate.js";
 import {
   requireApproval,
   type DangerousToolOptions,
@@ -54,6 +54,7 @@ export function buildBrowserTabsTool(
       }
 
       if (action === "new" && input.url !== undefined) {
+        refuseScriptUrl("browser.tabs", input.url);
         const refused = await gateBrowserUrl(options, policy, "browser.tabs", input.url, ctx);
         if (refused) return refused;
       }
