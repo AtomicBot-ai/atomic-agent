@@ -103,3 +103,12 @@ export function describeShellTimeoutDefault(defaultTimeoutMs: number): string {
   }
   return "By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.";
 }
+
+/**
+ * The first line of a `background: true` result: the command was
+ * started and is still running — a dev server, a watcher — and how to
+ * read its output later or stop it.
+ */
+export function formatShellBackgroundNotice(jobId: number): string {
+  return `started in the background as job ${jobId} (kept: it survives the end of this turn and stops when the session ends) — output so far below; os.shell.run {"wait": ${jobId}, "timeoutMs": 2000} reads newer output, {"kill": ${jobId}} stops it, {"jobs": true} lists jobs`;
+}

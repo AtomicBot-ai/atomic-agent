@@ -1,4 +1,5 @@
 import type { SkillRecord } from "../../skills/skill-loader.js";
+import { untrustedSkillReason, type ProjectItemTrust } from "../../skills/project-trust.js";
 import type { SkillSummaryRow } from "./skills-panel-state.js";
 
 /**
@@ -24,11 +25,14 @@ export function toSkillSummaryRow(
  * (`SkillRegistry.listAll()`) directly into UI rows in one pass.
  */
 export function toSkillSummaryRows(
-  entries: ReadonlyArray<{ record: SkillRecord; disabled: boolean }>,
+  entries: ReadonlyArray<{ record: SkillRecord; disabled: boolean; trust?: ProjectItemTrust }>,
 ): SkillSummaryRow[] {
-  return entries.map(({ record, disabled }) =>
-    toSkillSummaryRow(record, disabled),
-  );
+  return entries.map(({ record, disabled, trust }) => {
+    // A project skill of a folder nobody trusted is off for the model; say why.
+    const reason = trust ? untrustedSkillReason(trust) : null;
+    if (!reason) return toSkillSummaryRow(record, disabled);
+    return { ...toSkillSummaryRow(record, true), disabledReasons: [...(disabled ? ["disabled"] : []), reason] };
+  });
 }
 
 /** Hard cap on the description preview rendered in the list view. */

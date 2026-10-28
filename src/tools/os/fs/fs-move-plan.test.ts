@@ -39,6 +39,11 @@ describe("parseMoveArgs", () => {
       "os.fs.move: moves[1] needs a non-empty `from` and `to`",
     );
     expect(() => parseMoveArgs({ moves: [] })).toThrow("`moves` must be a non-empty array");
+    // A strict provider fills the unused `moves` with []: a plain move, not "both".
+    expect(parseMoveArgs({ from: "a", to: "b", moves: [] })).toEqual({
+      moves: [{ from: "a", to: "b" }],
+      overwrite: false,
+    });
     expect(() => parseMoveArgs({ to: "b" })).toThrow("`from` must be a non-empty string");
     expect(() => parseMoveArgs({ from: "a" })).toThrow("`to` must be a non-empty string");
     expect(parseMoveArgs({ from: "a", to: "b", overwrite: "yes" }).overwrite).toBe(false);

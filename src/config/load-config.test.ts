@@ -261,6 +261,7 @@ describe("loadConfig", () => {
           maxJobs: 5,
           envPassthrough: ["GITHUB_TOKEN"],
         },
+        screen: { enabled: false },
       },
     });
     const config = loadConfig();

@@ -1,4 +1,5 @@
 import type { ToolDescriptor } from "./stable-prefix.js";
+import { SCREEN_TOOL_DESCRIPTORS } from "./screen-tool-descriptors.js";
 
 /** Second half of `DEFAULT_TOOL_DESCRIPTORS` (order is load-bearing). */
 export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
@@ -46,6 +47,7 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     argsSchema: "{ to: string, subject: string, text: string }",
     tier: "rare",
   },
+  ...SCREEN_TOOL_DESCRIPTORS,
   {
     name: "skill.view",
     summary: "Load an installed skill body (SKILL.md) into the session tail.",

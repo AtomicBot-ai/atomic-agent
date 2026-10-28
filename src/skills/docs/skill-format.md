@@ -56,7 +56,7 @@ Atomic Agent ships with 17 starter skills that are auto-installed into the globa
 ## CLI
 
 ```sh
-atomic-agent skill install <path|owner/repo[/path]|@owner/slug> [--force] [--acknowledge-risk]
+atomic-agent skill install <path|owner/repo[/path]|@owner/slug> [--force] [--yes] [--acknowledge-risk]
                                         # install from a local folder, a GitHub tap, or ClawHub (@owner/slug)
 atomic-agent skill uninstall <name>     # remove an installed global skill
 atomic-agent skill list                 # list installed skills (project + global) with enabled/disabled state
@@ -68,7 +68,19 @@ atomic-agent skill search <query>       # search ClawHub + configured taps
 atomic-agent skill tap list|add <owner/repo>|remove <owner/repo>   # manage hub taps
 ```
 
-Local installation is `SKILL.md` validation plus `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`).
+Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`).
+
+### Install security scan
+
+Every install runs the heuristic scanner (`src/skills/hub/skill-security-scanner.ts`) before anything is copied: local folders (CLI, `POST /api/skills/install`, sidecar `skill_install`), GitHub taps and ClawHub. A local folder is first copied (symlinks as links, never followed) into a private temp folder; that copy is scanned and that same copy is installed, so the folder cannot change between the scan and the copy. Hub and ClawHub installs scan the extracted files on disk. Every regular file is read, whatever its name, because a script can source any other file of the skill; text is read as UTF-8 or UTF-16 (with or without a BOM). Files are never skipped for size: up to 4 MiB a file is scanned whole; a bigger one has its first and last 512 KiB scanned and adds an `oversized-file` finding. A binary file adds `unscanned-binary`. Both are `dangerous` for something that runs (under `scripts/` or `bin/`, a script extension, or a `#!` line) and `caution` for docs and data. Past 64 MiB for one skill, an unreadable file and a symlink that points outside the skill are `dangerous` `unscanned-file` findings; a symlink inside the skill adds nothing, its target is scanned as its own file. PowerShell download-and-run (`irm … | iex`, `iex (New-Object Net.WebClient).DownloadString(…)`) is `dangerous` like `curl | sh`. ClawHub's own verdict is merged in: `malicious` is `dangerous`, `suspicious` and `unknown` (no scan result) are `caution`.
+
+The verdict gates the install (`enforceScanGate`):
+
+- `ok` installs.
+- `caution` needs an explicit yes. The CLI asks `[y/N]` in a terminal; `--yes` answers it for scripts; without a terminal and without `--yes` the install is refused. The HTTP route answers 428 `needs_confirmation` with the findings and a `scanId`, and installs on a retry with `confirm: "<scanId>"`; the sidecar fails the request unless `confirm` is the id its error named. The id is a hash of the verdict and findings, so a yes covers only the findings that were shown: if the folder changed, the retry is refused with the new id. The TUI shows its confirm modal.
+- `dangerous` is refused unless `--acknowledge-risk` (HTTP/sidecar `acknowledgeRisk: "<scanId>"`); `--yes` and `confirm` do not override it.
+
+The scan is a tripwire, not a sandbox: a clean verdict does not prove a skill is safe.
 
 ## Agent tools
 

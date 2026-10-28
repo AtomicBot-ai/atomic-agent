@@ -16,12 +16,26 @@ export interface ProjectInstructionOptions {
   contextWindow?: number | null;
   /** Test seam: the home directory, which is never treated as a project tree. */
   homeDir?: string;
+  /**
+   * Which discovered instruction files may load, by workspace-relative path
+   * (ATO-298 soft trust). A file it rejects is never read, and an import of
+   * it from another file is skipped too. Absent, every file may load.
+   */
+  allow?: (relPath: string) => boolean;
+  /** Cache key for `allow`: two calls with the same key must allow the same files. */
+  allowKey?: string;
 }
 export interface ProjectInstructionsResult {
   instructions: ProjectInstruction[];
   diagnostics: string[];
   /** Files and directories whose stat signature decides whether a cached result is still current. */
   watched: string[];
+  /**
+   * Every instruction file discovery found at the top level (not imports),
+   * workspace-relative with forward slashes, whether or not `allow` let it
+   * load. This is what a trust question counts. Capped at {@link MAX_FOUND}.
+   */
+  found: string[];
 }
 export const DEFAULT_INSTRUCTION_BYTES = 48 * 1024;
 const DEFAULT_INSTRUCTION_FILES = 64;
@@ -33,6 +47,8 @@ const BYTES_PER_TOKEN = 3;
 const MIN_TRUNCATED_BYTES = 256;
 const truncatedMarker = "\n[... truncated: project instruction budget reached]";
 const maxWatched = 2048;
+/** Bound on `found`, so a huge monorepo cannot grow a trust record without limit. */
+export const MAX_FOUND = 1024;
 const rootNames = ["AGENTS.md", "AGENT.md", "CLAUDE.md", ".claude/CLAUDE.md"];
 /** Rules written for other tools: root only, lowest priority, never expanded for imports. */
 const foreignRootNames = ["GEMINI.md", ".cursorrules", ".github/copilot-instructions.md"];
@@ -89,12 +105,13 @@ export function loadProjectInstructions(workingDir: string, signal?: AbortSignal
   signal?.throwIfAborted();
   const diagnostics = new Diagnostics();
   const watched = new Set<string>([resolve(workingDir)]);
+  const found: string[] = [];
   try {
-    return { instructions: loadInstructions(workingDir, diagnostics, signal, options, watched), diagnostics: diagnostics.lines(), watched: [...watched] };
+    return { instructions: loadInstructions(workingDir, diagnostics, signal, options, watched, found), diagnostics: diagnostics.lines(), watched: [...watched], found };
   } catch (error) {
     if (signal?.aborted) throw signal.reason ?? error;
     diagnostics.add(`Project instructions unavailable: ${error instanceof Error ? error.message : String(error)}`);
-    return { instructions: [], diagnostics: diagnostics.lines(), watched: [...watched] };
+    return { instructions: [], diagnostics: diagnostics.lines(), watched: [...watched], found: [] };
   }
 }
 
@@ -111,9 +128,11 @@ export function createProjectInstructionsCache(cacheOptions: { ttlMs?: number; n
   const entries = new Map<string, { result: ProjectInstructionsResult; signature: string; scannedAt: number }>();
   return (workingDir: string, signal?: AbortSignal, options: ProjectInstructionOptions = {}): ProjectInstructionsResult => {
     signal?.throwIfAborted();
-    const key = `${resolve(workingDir)}\0${instructionByteBudget(options)}\0${options.maxFiles ?? ""}`;
+    const key = `${resolve(workingDir)}\0${instructionByteBudget(options)}\0${options.maxFiles ?? ""}\0${options.allow ? options.allowKey ?? "?" : ""}`;
     const cached = entries.get(key);
-    if (cached && now() - cached.scannedAt < ttlMs && statSignature(cached.result.watched) === cached.signature) return cached.result;
+    // An `allow` without a key cannot be compared, so it is never served from the cache.
+    const cacheable = !options.allow || options.allowKey !== undefined;
+    if (cacheable && cached && now() - cached.scannedAt < ttlMs && statSignature(cached.result.watched) === cached.signature) return cached.result;
     const result = load(workingDir, signal, options);
     entries.delete(key);
     entries.set(key, { result, signature: statSignature(result.watched), scannedAt: now() });
@@ -139,7 +158,7 @@ function gitFailure(result: GitResult): string {
   return (result.error?.message ?? result.stderr ?? "").trim().split("\n")[0] ?? "";
 }
 
-function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: AbortSignal | undefined, options: ProjectInstructionOptions, watched: Set<string>): ProjectInstruction[] {
+function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: AbortSignal | undefined, options: ProjectInstructionOptions, watched: Set<string>, found: string[]): ProjectInstruction[] {
   const root = realpathSync(workingDir);
   const runGit = options.runGit ?? runGitInWorkspace;
   const maxFiles = options.maxFiles ?? DEFAULT_INSTRUCTION_FILES;
@@ -176,6 +195,17 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
   paths.push(...[...rootNames, ...foreignRootNames].filter(p => existsSync(join(root, p))));
   paths.push(...listCursorRules(root, diagnostics));
   paths = [...new Set(paths)].filter(p => !p.split(/[\\/]/).some(part => excluded.has(part)));
+  // Trust is decided per discovered file before anything is read; withheld
+  // files take no file slot and leave no diagnostic in the model's context.
+  const allow = options.allow;
+  const discovered = [...new Set(paths.map(slashed))].sort((a, b) => a.split("/").length - b.split("/").length || a.localeCompare(b));
+  found.push(...discovered.slice(0, MAX_FOUND));
+  if (allow) paths = paths.filter(p => allow(slashed(p)));
+  // An import of a discovered file that is not allowed would load it through the back door.
+  // Letter case is folded where the file system ignores it, so `@agents.md` is `AGENTS.md`.
+  const fold = (p: string) => process.platform === "darwin" || process.platform === "win32" ? p.toLowerCase() : p;
+  const blocked = new Set(allow ? discovered.filter(p => !allow(p)).map(fold) : []);
+  const withheld = (relPath: string) => blocked.has(fold(relPath));
   if (paths.length > maxFiles) {
     // Shallower scopes are the most general rules; keep those.
     paths.sort((a, b) => a.split(/[\\/]/).length - b.split(/[\\/]/).length || a.localeCompare(b));
@@ -207,7 +237,7 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
       if (depth > 4 || scanned > 8 * maxBytes || !isWithinWorkspace(root, path)) return;
       let actual: string;
       try { actual = realpathSync(path); } catch { return; }
-      if (!isWithinWorkspace(root, actual) || (depth > 0 && isSensitive(rel(actual)))) return;
+      if (!isWithinWorkspace(root, actual) || (depth > 0 && (isSensitive(rel(actual)) || withheld(rel(actual))))) return;
       if ((visitedDepth.get(actual) ?? Infinity) <= depth) { if (depth > 0 && contents.has(actual)) candidates.add(rel(actual)); return; }
       visitedDepth.set(actual, depth);
       let file: { path: string; content: string } | null;
@@ -257,6 +287,7 @@ function loadInstructions(workingDir: string, diagnostics: Diagnostics, signal: 
     if (seen.has(key)) return;
     if (depth > 4) { diagnostics.add("Skipped instruction imports beyond four hops", rel(actual)); return; }
     if (depth > 0 && isSensitive(rel(actual))) { diagnostics.add("Skipped sensitive instruction import", rel(actual)); return; }
+    if (depth > 0 && withheld(rel(actual))) return;
     let file: { path: string; content: string } | null;
     try {
       if (!statSync(actual).isFile()) { diagnostics.add("Skipped non-file instruction", rel(actual)); return; }

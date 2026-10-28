@@ -40,7 +40,7 @@ import { replyTool } from "../tools/conversation/reply.js";
 import { openAiToolCallAdapter } from "../llm/provider/openai/openai-tool-call-adapter.js";
 import { reviewStallToolSet } from "./review-stall.js";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { MAX_REASONING_BUDGET_TOKENS, effectiveReasoningBudgetTokens } from "../llm/reasoning-budget.js";
+import { effectiveReasoningBudgetTokens } from "../llm/reasoning-budget.js";
 import { ApprovalGate, requireApproval } from "../approval/index.js";
 import type { ApprovalRequest } from "../approval/index.js";
 import {
@@ -1120,8 +1120,9 @@ describe("executeStep batch handling", () => {
     "for thinking profiles strips and re-appends the <think> open tag, " +
       "and caps the repair completion at REPAIR_MAX_TOKENS plus the reasoning budget",
     async () => {
-      // An explicit budget above the llama.cpp cap, so the expected cap
-      // does not depend on the config default.
+      // An explicit budget past llama.cpp's 1,999-repeat quantifier limit
+      // (enforced in full since ATO-607), so the expected cap does not
+      // depend on the config default.
       const BUDGET = 1500;
       const previousStateDir = process.env.ATOMIC_AGENT_STATE_DIR;
       const stateDir = mkdtempSync(join(tmpdir(), "repair-think-"));
@@ -1227,7 +1228,7 @@ describe("executeStep batch handling", () => {
         expect(maxTokensSeen[1]).toBe(
           REPAIR_MAX_TOKENS + effectiveReasoningBudgetTokens(BUDGET),
         );
-        expect(maxTokensSeen[1]).toBe(REPAIR_MAX_TOKENS + MAX_REASONING_BUDGET_TOKENS);
+        expect(maxTokensSeen[1]).toBe(REPAIR_MAX_TOKENS + BUDGET);
         expect(REPAIR_MAX_TOKENS).toBeLessThanOrEqual(1024);
       } finally {
         if (previousStateDir === undefined) delete process.env.ATOMIC_AGENT_STATE_DIR;
@@ -4385,15 +4386,20 @@ describe("truncated completions", () => {
     // ("explicit finish_reason: length: executions = 0"): a cut reply
     // dispatches nothing — the agent loop re-asks with a different
     // request instead. Kept here so the truncation detail travels too.
+    // The cut reply's one continuation (ATO-1031) fails here, so the
+    // step ends with the original truncation, as before it existed.
     const session = createEmptySessionState({
       id: "s-trunc-closed",
       workingDir: "/w",
     });
+    let calls = 0;
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
         slotManager: new SlotManager(2),
         async llmComplete() {
+          calls += 1;
+          if (calls > 1) throw new Error("continuation unavailable");
           return nativeCompletion({
             stop: false,
             truncated: true,
@@ -4426,6 +4432,7 @@ describe("truncated completions", () => {
       reason: "truncated",
       truncation: { cause: "reply_cap" },
     });
+    expect(calls).toBe(2);
   });
 
   it("native_tools: a cut short of the cap inside a known window is the provider's output limit", async () => {
@@ -4500,11 +4507,16 @@ describe("truncated completions", () => {
       id: "s-trunc-cut",
       workingDir: "/w",
     });
+    // The continuation of the cut reply (ATO-1031) fails, so the step
+    // still ends with the truncation and its cause.
+    let calls = 0;
     await expect(
       executeStep(ctxFor(session), {
         registry: makeNativeRegistry(),
         slotManager: new SlotManager(2),
         async llmComplete() {
+          calls += 1;
+          if (calls > 1) throw new Error("continuation unavailable");
           return nativeCompletion({
             stop: false,
             truncated: true,
@@ -4544,6 +4556,7 @@ describe("truncated completions", () => {
         requestedMaxTokens: 16_384,
       },
     });
+    expect(calls).toBe(2);
   });
 
   it("native_tools: a reply cut inside its reasoning is a truncation against the step's own cap", async () => {

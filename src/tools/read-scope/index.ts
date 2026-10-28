@@ -38,6 +38,11 @@ export {
   widenedReadRoot,
 } from "./read-scope-approval.js";
 export type { ReadOutsidePrompt } from "./read-scope-approval.js";
+export {
+  findShellStateSecrets,
+  findStateSecretReads,
+} from "./state-secrets.js";
+export type { StateSecrets } from "./state-secrets.js";
 export { confineReads, confineWorkerReads } from "./confine-reads.js";
 export type { ConfineReadsOptions } from "./confine-reads.js";
 // The worker-era name of the targets map, kept so fusion code reads the same.
