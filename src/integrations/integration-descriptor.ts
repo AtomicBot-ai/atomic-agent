@@ -124,6 +124,13 @@ export interface IntegrationStatusContext {
   verifiedIdentities?: ReadonlyMap<string, string>;
   /** Why the last `verify` failed, per integration id. */
   verifyErrors?: ReadonlyMap<string, string>;
+  /**
+   * The loaded config, read-only, for an integration whose usefulness
+   * depends on a setting outside its own fields: an Exa key does nothing
+   * while web search reads another variable or never asks Exa. Absent in
+   * tests that do not need it.
+   */
+  config?: Readonly<Record<string, unknown>>;
 }
 
 /**

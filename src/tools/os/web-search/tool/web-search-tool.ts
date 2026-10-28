@@ -6,6 +6,7 @@ import { runCommand as defaultRunCommand } from "../../../../sandbox/command-run
 import type { ToolDefinition } from "../../../tool-registry.js";
 import type { HostLookup } from "../../web/web-fetch-ssrf-guard.js";
 import { runWebSearchWithFallback } from "../providers/index.js";
+import { buildFallbackKeyHint } from "../providers/search-failure-report.js";
 import {
   createPersistentProviderCooldown,
   createProviderCooldown,
@@ -15,7 +16,6 @@ import {
   createSearchCache,
 } from "../transport/search-cache.js";
 import {
-  EXA_GET_KEY_URL,
   WebSearchUnavailableError,
   type WebSearchKeyHelp,
 } from "../web-search-errors.js";
@@ -153,9 +153,9 @@ export function buildOsWebSearchTool(
             output:
               renderNotes(outcome.degraded) +
               renderKeyHint(
-                options.keyHelp === "integrations-hub" &&
-                  outcome.keyRequired?.reason === "rate_limited" &&
-                  firstTime(keyHintedSessions, ctx.sessionId),
+                buildFallbackKeyHint(options.keyHelp, outcome.keyRequired),
+                keyHintedSessions,
+                ctx.sessionId,
               ) +
               renderResults(outcome.results),
             details: {
@@ -240,21 +240,19 @@ function renderNotes(degraded: readonly string[]): string {
   return `${degraded.map((note) => `[search] ${note}`).join("\n")}\n\n`;
 }
 
-/** True the first time `id` is seen, recording it. */
-function firstTime(seen: Set<string>, id: string): boolean {
-  if (seen.has(id)) return false;
-  seen.add(id);
-  return true;
-}
-
 /**
- * The terminal UI's one-line hint when a fallback answered because keyless
- * Exa ran out (ATO-345): the search worked, but the user can fix the cause
- * in `/integrations`. The URL is the one `keyRequired.getKeyUrl` carries.
+ * The fallback key hint as a note line (ATO-345), once per session: it
+ * repeats on every search while Exa is parked, and one line is enough for
+ * the model to pass on.
  */
-function renderKeyHint(show: boolean): string {
-  if (!show) return "";
-  return `[search] Free Exa searches ran out. Tell the user: open /integrations and add an Exa key (${EXA_GET_KEY_URL}).\n\n`;
+function renderKeyHint(
+  hint: string | undefined,
+  hintedSessions: Set<string>,
+  sessionId: string,
+): string {
+  if (hint === undefined || hintedSessions.has(sessionId)) return "";
+  hintedSessions.add(sessionId);
+  return `[search] ${hint}\n\n`;
 }
 
 function renderResults(results: readonly WebSearchResult[]): string {
