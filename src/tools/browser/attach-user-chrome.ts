@@ -24,11 +24,24 @@ import {
  */
 export const REMOTE_DEBUGGING_PAGE = "chrome://inspect/#remote-debugging";
 
+/**
+ * Why a re-attach failed. Said so the model hands the step to the user
+ * and stops, rather than retrying or reaching Chrome another way.
+ */
+export const USER_CHROME_RESTARTED =
+  "Chrome was closed or restarted and remote debugging is not on in it now. Ask the user to turn it on; do not call the browser again until they say it is on, and do not control Chrome through os.shell.run";
+
 export interface FindUserChromeCdpUrlInput {
   cdpUrl: string | null;
   userDataDir: string | null;
   /** How long to wait for the user to turn remote debugging on. */
   waitMs: number;
+  /**
+   * Attaching again after the browser went away (quit or restart,
+   * ATO-1260): when remote debugging is not on, fail at once with the
+   * steps instead of opening the settings page and waiting.
+   */
+  reconnect?: boolean;
   pollMs?: number;
   /** Open the user's Chrome on the remote-debugging page; `false` when none is installed. */
   openRemoteDebuggingPage: () => boolean;
@@ -60,6 +73,7 @@ export async function findUserChromeCdpUrl(
     return { cdpUrl: found.wsUrl, browser: found.browser, openedSettings: false };
   } catch (error) {
     if (!(error instanceof UserChromeNotReadyError)) throw error;
+    if (input.reconnect) throw new UserChromeNotReadyError(USER_CHROME_RESTARTED);
   }
   if (!input.openRemoteDebuggingPage()) {
     throw new UserChromeNotReadyError(
