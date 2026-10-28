@@ -4,6 +4,7 @@ import {
   answerProjectTrust,
   inspectProjectTrust,
   ProjectTrustConflictError,
+  setProjectTrust,
   type ProjectTrustAnswer,
 } from "../runtime/project-trust.js";
 import { openaiError } from "./openai-errors.js";
@@ -20,6 +21,7 @@ interface AnswerBody {
   sessionId?: unknown;
   answer?: unknown;
   questionId?: unknown;
+  scope?: unknown;
 }
 
 /**
@@ -60,7 +62,10 @@ export function createProjectTrustStatusHandler(): HttpHandler {
  * "trust" | "decline", questionId }` — record the operator's answer for
  * exactly the items that question listed. A `questionId` that no longer
  * matches (a new skill or file appeared) answers `409` with the fresh
- * status and records nothing. The local skill catalog is refreshed; cloud
+ * status and records nothing. With `scope: "all"` (no `questionId`) the
+ * answer covers everything the folder ships now, including items answered
+ * earlier: the settings switch that changes a past choice, like `skill
+ * project on|off --workspace`. The local skill catalog is refreshed; cloud
  * sessions reread the answer on their next step.
  */
 export function createProjectTrustAnswerHandler(): HttpHandler {
@@ -77,14 +82,21 @@ export function createProjectTrustAnswerHandler(): HttpHandler {
       sendError(res, 400, openaiError('answer must be "trust" or "decline"'));
       return;
     }
-    if (typeof body.questionId !== "string" || !body.questionId) {
+    const all = body.scope === "all";
+    if (body.scope !== undefined && !all) {
+      sendError(res, 400, openaiError('scope must be "all" when given'));
+      return;
+    }
+    if (!all && (typeof body.questionId !== "string" || !body.questionId)) {
       sendError(res, 400, openaiError("questionId is required"));
       return;
     }
     const folder = resolveFolder(ctx, body.workingDir, body.sessionId);
     if ("status" in folder) { sendError(res, folder.status, openaiError(folder.message)); return; }
     try {
-      const status = answerProjectTrust(ctx.runtime.config, folder.dir, body.answer as ProjectTrustAnswer, body.questionId);
+      const status = all
+        ? setProjectTrust(ctx.runtime.config, folder.dir, body.answer === "trust")
+        : answerProjectTrust(ctx.runtime.config, folder.dir, body.answer as ProjectTrustAnswer, body.questionId as string);
       await ctx.runtime.refreshSkills();
       sendJson(res, 200, status);
     } catch (err) {
