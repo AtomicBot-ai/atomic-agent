@@ -65,6 +65,9 @@ test("missing, and a folder", async () => {
   assert.deepEqual(await filePreview(join(home, "nothing.txt"), roots, home, P), { ok: false, reason: "missing" });
   mkdirSync(join(home, "dir"));
   assert.deepEqual(await filePreview(join(home, "dir"), roots, home, P), { ok: false, reason: "dir" });
+  // a relative path or a folder outside the roots says nothing about whether it exists
+  assert.deepEqual(await filePreview(".", roots, home, P), { ok: false, reason: "missing" });
+  assert.deepEqual(await filePreview(outside, roots, home, P), { ok: false, reason: "outside" });
 });
 
 test("a large text file is cut, at a line and a whole character", async () => {

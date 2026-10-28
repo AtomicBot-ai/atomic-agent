@@ -25,7 +25,7 @@
 import { open, stat } from "node:fs/promises";
 
 import { IMAGE_DATA_URL_MAX_BYTES, imageTarget, sniffImageMime } from "./image-data-url.js";
-import { expandHome, pathFor, type Platform } from "./platform.js";
+import { expandHome, isAbsoluteOn, isUnder, pathFor, type Platform } from "./platform.js";
 
 export const PREVIEW_TEXT_MAX_BYTES = 512 * 1024;
 export const PREVIEW_PDF_MAX_BYTES = 32 * 1024 * 1024;
@@ -119,12 +119,18 @@ export async function filePreview(
   const pdfMax = limits.pdf ?? PREVIEW_PDF_MAX_BYTES;
   const target = await imageTarget(raw, roots, home, platform);
   if (!target.ok) {
-    /* imageTarget says "missing" for a folder too (it passed the roots check
-       as written, so this stat stays inside them); the window opens a folder
-       in the file manager as before. */
+    /* imageTarget says "missing" for a folder too; the window opens a folder
+       in the file manager as before. The stat runs only on an absolute path
+       that lies inside a root as written, so a relative or outside path
+       cannot be used to learn whether a folder exists. */
     if (target.reason === "missing" && typeof raw === "string") {
-      const st = await stat(expandHome(platform, raw, home)).catch(() => null);
-      if (st && st.isDirectory()) return { ok: false, reason: "dir" };
+      const expanded = raw === "~" ? home : expandHome(platform, raw, home);
+      const P = pathFor(platform);
+      const lexical = isAbsoluteOn(platform, expanded) ? P.resolve(expanded) : "";
+      if (lexical && roots.some((r) => r && isUnder(platform, P.resolve(r), lexical))) {
+        const st = await stat(lexical).catch(() => null);
+        if (st && st.isDirectory()) return { ok: false, reason: "dir" };
+      }
     }
     return { ok: false, reason: target.reason };
   }
