@@ -1,4 +1,5 @@
 import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
+import { canonicalArgs } from "./argument-aliases.js";
 
 /**
  * What a tool's argument error should also say: which keys arrived,
@@ -45,6 +46,10 @@ const ARGUMENT_ERROR_WORDING =
  * edit in the same batch changed it) still names a field in backticks,
  * and a key report under it sent the model looking for a wrong key that
  * did not exist (ATO-323).
+ *
+ * The keys are judged as the tool read them: a call whose alias the
+ * registry rewrote (`argument-aliases.ts`) already carries a note saying
+ * so, and must not also be told those keys are wrong.
  */
 export function describeArgumentError(input: {
   tool: string;
@@ -52,13 +57,14 @@ export function describeArgumentError(input: {
   message: string;
 }): ArgumentErrorHint | null {
   if (!ARGUMENT_ERROR_WORDING.test(input.message)) return null;
-  const receivedKeys = Object.keys(input.args);
+  const args = canonicalArgs(input.tool, input.args);
+  const receivedKeys = Object.keys(args);
   const expectedKeys = expectedKeysFor(input.tool);
   const expectedSet = new Set(expectedKeys);
   if (
     expectedKeys.length > 0 &&
     receivedKeys.every((key) => expectedSet.has(key)) &&
-    requiredKeysFor(input.tool).every((key) => input.args[key] !== undefined)
+    requiredKeysFor(input.tool).every((key) => args[key] !== undefined)
   ) {
     return null;
   }

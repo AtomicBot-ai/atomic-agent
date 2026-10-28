@@ -1,6 +1,7 @@
 export {
   LOCAL_MODELS_CATALOG,
   DEFAULT_LLAMACPP_MODEL_ID,
+  STARTER_LOCAL_MODEL_ID,
   getLocalModelDef,
   isKnownLocalModelId,
   listLocalModels,
@@ -15,6 +16,10 @@ export {
   type EmbeddingModelId,
   type EmbeddingModelDef,
 } from "./catalog/models-catalog.js";
+export {
+  recommendedModelFor,
+  type RecommendedModelOptions,
+} from "./catalog/recommended-model.js";
 
 export {
   isWindowsArm64,
@@ -37,6 +42,15 @@ export {
   fallBackToCpuBackend,
   shouldFallBackToCpuBackend,
 } from "./backend/cpu-backend-fallback.js";
+export {
+  CORE_CPU_FALLBACK_LINE,
+  CORE_CPU_RECORDED_LINE,
+  coreCpuFallbackApplies,
+  fallBackToCoreCpuBuild,
+  revertCoreCpuFallback,
+  shouldFallBackToCoreCpuBuild,
+  type CoreCpuSwap,
+} from "./backend/core-cpu-backend-fallback.js";
 
 export {
   resolveBackendDir,
@@ -237,6 +251,13 @@ export {
   type ThroughputSample,
 } from "./server/daemon-lifecycle.js";
 export {
+  checkEmbeddingMemory,
+  claimLowMemoryEmbeddingNote,
+  holdEmbeddingForLowMemory,
+  LOW_MEMORY_EMBEDDING_NOTE,
+  type EmbeddingMemoryVerdict,
+} from "./server/embedding-memory-gate.js";
+export {
   readManagedEngineLiveness,
   type ManagedEngineLiveness,
 } from "./server/engine-liveness.js";
@@ -264,8 +285,20 @@ export {
   type SwaFullDecision,
   type SwaFullPreference,
 } from "./server/swa-full.js";
+export {
+  CONTEXT_GROWTH_TRIGGER_SHARE,
+  CONTEXT_SIZE_MODEL_MAX,
+  decideContextGrowth,
+  GPU_AUTO_MAX_CONTEXT,
+  GPU_AUTO_MAX_SLOTS,
+  GPU_AUTO_START_CONTEXT,
+  GPU_GROWING_MAX_SLOTS,
+  resolveDedicatedGpuAutoContext,
+  type ContextGrowthInput,
+  type DedicatedGpuAutoContext,
+} from "./server/context-growth.js";
 export { readLogTail, type LogTailResult } from "./server/log-tail.js";
-export { describeServerFault, type ServerFault } from "./server/server-fault.js";
+export { describeServerFault, type ServerFault, type ServerFaultKind } from "./server/server-fault.js";
 export {
   assertPortFree,
   fetchServedModelIds,

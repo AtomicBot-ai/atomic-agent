@@ -42,12 +42,13 @@ export {
   userConfigFileSha256Sync,
   setConfigNoticeSink,
   getDotenvPath,
+  getStateSecretPaths,
   getTrustConfigPaths,
   getUserConfigPath,
   readUserConfigFileSync,
   writeUserConfigFileSync,
 } from "./config-file.js";
-export { loadConfig } from "./load-config.js";
+export { loadConfig, resolveStateDir } from "./load-config.js";
 export { getConfig, resetConfigCache } from "./config-cache.js";
 export {
   formatDotenvReadWarning,

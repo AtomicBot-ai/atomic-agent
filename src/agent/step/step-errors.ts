@@ -1,6 +1,7 @@
 import type { StepContext } from "./step-contract.js";
 import { LlmFailure, classifyFailure, CancelledError, LlamaServerError, TransportError, GrammarError, OpenAiHttpError, isRequestSizeRejection, humanizeOpenAiHttpError, ToolExecutionError } from "../../llm/index.js";
 import { ToolCallParseError } from "../../llm/grammar/tool-call-grammar.js";
+import { isLlamaSizeRefusal, toRequestTooLargeError } from "../../llm/reliability/request-too-large.js";
 
 
 /** Validation failure for a multi-call batch (forbidden tool / oversized / unknown). */
@@ -51,13 +52,16 @@ export function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
     // `grammar`, and it is reached before the abort/network branches),
     // and an aborted step has already been claimed by the
     // `ctx.signal.aborted` check above — so nothing is laundered here.
-    // Only `transport` becomes a `TransportError`; every other answer
-    // keeps the historical `GrammarError`.
+    // Only `transport` becomes a `TransportError`. A request refused for
+    // its size (context overflow, 413) keeps the same `grammar` category
+    // but is named for what it is (ATO-422); every other answer keeps the
+    // historical `GrammarError`.
     if (classifyFailure(err) === "transport") {
       return new TransportError(err.message, err.status, err.url, {
         cause: err,
       });
     }
+    if (isLlamaSizeRefusal(err)) return toRequestTooLargeError(err);
     return new GrammarError(err.message, "", { cause: err });
   }
   // Cloud provider failures — any status — are provider-boundary

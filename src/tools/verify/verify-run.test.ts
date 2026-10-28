@@ -141,3 +141,55 @@ describe("parseVerifyRunArgs, page with start", () => {
     expect(() => parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "x" } })).toThrow("page with `start` needs `url`");
   });
 });
+
+describe("parseVerifyRunArgs, empty-string defaults (ATO-891)", () => {
+  it("does not count an empty path or url as the second side of a page", () => {
+    expect(parseVerifyRunArgs({ kind: "page", path: "", url: "http://127.0.0.1:8766/" })).toMatchObject({ path: undefined, url: "http://127.0.0.1:8766/" });
+    expect(parseVerifyRunArgs({ kind: "page", path: "index.html", url: "" })).toMatchObject({ path: "index.html", url: undefined });
+  });
+
+  it("does not count an empty path or url as the second side of a request", () => {
+    const args = parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000, url: "" }, requests: [{ path: "/", url: "" }, { path: "", url: "http://127.0.0.1:3000/health" }] });
+    expect(args.ready).toMatchObject({ port: 3000, url: undefined });
+    expect(args.requests).toMatchObject([{ path: "/", url: undefined }, { path: undefined, url: "http://127.0.0.1:3000/health" }]);
+  });
+
+  it("keeps a lone empty request path, which means the service root", () => {
+    const args = parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 }, requests: [{ path: "" }] });
+    expect(args.requests).toMatchObject([{ path: "", url: undefined }]);
+    expect(() => parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 }, requests: [{ path: "", url: "" }] })).toThrow("requests[0] needs exactly one of `path` or `url`");
+  });
+
+  it("falls back to the page url when ready.url is empty", () => {
+    expect(parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "x" }, ready: { url: "" } }).ready).toMatchObject({ url: "http://127.0.0.1:8766/" });
+  });
+
+  it("still refuses a real double form and a missing one", () => {
+    expect(() => parseVerifyRunArgs({ kind: "page", path: "index.html", url: "http://127.0.0.1:8766/" })).toThrow("page needs exactly one of `path` or `url`");
+    expect(() => parseVerifyRunArgs({ kind: "page", path: "", url: "" })).toThrow("page needs exactly one of `path` or `url`");
+    expect(() => parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 }, requests: [{ path: "/", url: "http://x/" }] })).toThrow("requests[0] needs exactly one of `path` or `url`");
+  });
+});
+
+describe("parseVerifyRunArgs, zero-filled ready.port and start", () => {
+  it("treats ready.port 0 as absent on a page with start: readiness falls back to the page url", () => {
+    const args = parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "python3", args: ["-m", "http.server", "8766"] }, ready: { port: 0, url: "" } });
+    expect(args.ready).toMatchObject({ port: undefined, url: "http://127.0.0.1:8766/" });
+  });
+
+  it("treats ready.port 0 as absent on a service", () => {
+    expect(parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 0, url: "http://127.0.0.1:3000/health" } }).ready).toMatchObject({ port: undefined, url: "http://127.0.0.1:3000/health" });
+    expect(() => parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 0, url: "" } })).toThrow("service needs `ready.port` or `ready.url`");
+    expect(parseVerifyRunArgs({ kind: "service", start: { cmd: "node" }, ready: { port: 3000 } }).ready).toMatchObject({ port: 3000 });
+  });
+
+  it("treats a start with an empty cmd as absent on a path-only page", () => {
+    const args = parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "", args: [] }, ready: { port: 0, url: "" } });
+    expect(args).toMatchObject({ path: "index.html", url: undefined });
+    expect(args.start).toBeUndefined();
+    expect(parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "   " } }).start).toBeUndefined();
+    expect(() => parseVerifyRunArgs({ kind: "page", path: "index.html", start: { cmd: "python3" } })).toThrow("page with `start` needs `url`");
+    expect(() => parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { args: ["x"] } })).toThrow("start.cmd");
+    expect(() => parseVerifyRunArgs({ kind: "page", url: "http://127.0.0.1:8766/", start: { cmd: "", args: ["-m", "http.server"] } })).toThrow("start.cmd");
+  });
+});

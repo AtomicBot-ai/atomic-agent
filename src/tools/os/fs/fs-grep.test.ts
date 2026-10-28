@@ -400,7 +400,9 @@ describe("os.fs.grep", () => {
     });
     const result = await tool.run(
       { pattern: "foo", path: join(FIXTURE_ROOT, "no-such-file.txt") },
-      makeCtx(),
+      // A worker session: the missing-path answer then searches nowhere,
+      // so this test never lists folders outside its fixture.
+      { ...makeCtx(), sessionId: "s-w-grep-missing" },
     );
     expect(result.status).toBe("error");
     expect(result.summary).toContain("does not exist");

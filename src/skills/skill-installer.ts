@@ -7,6 +7,12 @@ export interface InstallSkillOptions {
   sourceDir: string;
   targetRoot: string;
   force?: boolean;
+  /**
+   * Copy symlinks exactly as written instead of rewriting relative links
+   * to absolute paths into `sourceDir`. Used when `sourceDir` is a
+   * temporary staging copy that is deleted after the install.
+   */
+  verbatimSymlinks?: boolean;
 }
 
 export interface InstallSkillResult {
@@ -28,15 +34,25 @@ export class SkillInstallError extends Error {
   }
 }
 
+export interface PreparedSkillInstall {
+  sourceDir: string;
+  manifest: SkillManifest;
+  installedAt: string;
+  /** An entry with the same name exists (only allowed with `force`). */
+  exists: boolean;
+}
+
 /**
- * Install a skill by copying its directory into the target skills root.
- * We parse and validate the manifest first so we never leave a broken
- * skill on disk. `force: true` overwrites an existing entry with the
- * same name.
+ * Every check `installSkill` makes before touching the target, with no
+ * side effects except creating the target root: source dir, SKILL.md,
+ * manifest validity and the `already_installed` conflict. Exposed so a
+ * caller that gates the install (security scan) can fail on these first
+ * instead of asking the operator to confirm findings for an install that
+ * could never succeed.
  */
-export async function installSkill(
+export async function prepareSkillInstall(
   options: InstallSkillOptions,
-): Promise<InstallSkillResult> {
+): Promise<PreparedSkillInstall> {
   const sourceDir = resolve(options.sourceDir);
   const sourceInfo = await stat(sourceDir).catch(() => null);
   if (!sourceInfo?.isDirectory()) {
@@ -67,17 +83,34 @@ export async function installSkill(
   const targetRoot = resolve(options.targetRoot);
   await mkdir(targetRoot, { recursive: true });
   const installedAt = join(targetRoot, manifest.name);
-  const exists = await stat(installedAt).catch(() => null);
+  const exists = (await stat(installedAt).catch(() => null)) !== null;
   if (exists && !options.force) {
     throw new SkillInstallError(
       `skill "${manifest.name}" already installed at ${installedAt} (use --force to overwrite)`,
       "already_installed",
     );
   }
+  return { sourceDir, manifest, installedAt, exists };
+}
+
+/**
+ * Install a skill by copying its directory into the target skills root.
+ * We parse and validate the manifest first so we never leave a broken
+ * skill on disk. `force: true` overwrites an existing entry with the
+ * same name.
+ */
+export async function installSkill(
+  options: InstallSkillOptions,
+): Promise<InstallSkillResult> {
+  const { sourceDir, manifest, installedAt, exists } =
+    await prepareSkillInstall(options);
   if (exists) {
     await rm(installedAt, { recursive: true, force: true });
   }
-  await cp(sourceDir, installedAt, { recursive: true });
+  await cp(sourceDir, installedAt, {
+    recursive: true,
+    ...(options.verbatimSymlinks ? { verbatimSymlinks: true } : {}),
+  });
   return { manifest, installedAt };
 }
 

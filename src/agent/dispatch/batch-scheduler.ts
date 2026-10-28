@@ -1,4 +1,5 @@
 import type { BatchLoopSignal, BatchCallInput, BatchExecutionContext, BatchExecutionResult, BatchCallResult } from "./batch-contract.js";
+import { refuseUnregisteredTool } from "../policies/unknown-tool.js";
 import { refuseBeforeDispatch, skillAlreadyLoadedResult, runFinalStepGate, runPlanModeGate, runFusionOrchestratorGate, runSyncLoopGate, observeReadCoverage } from "./batch-gates.js";
 
 
@@ -14,6 +15,7 @@ import { describeArgumentError } from "../../tools/argument-error-hint.js";
 
 
 import { CancelledError } from "../../llm/index.js";
+import { ERROR_CODE_PATTERN } from "../tool-log-fields.js";
 import {
   runWithApprovalLedger,
   type ToolApprovalRecord,
@@ -133,6 +135,18 @@ export async function executeBatch(
         result: final.vetoResult,
         durationMs: 0,
       });
+      continue;
+    }
+    // A name the registry does not hold gets an error result naming the
+    // closest real tools instead of ending the turn (`unknown-tool.ts`).
+    // Like the plan-mode refusal below, it never spends a slot in the
+    // loop tracker; the step's unknown-tool streak bounds a model that
+    // keeps guessing.
+    const unregistered = refuseUnregisteredTool(input.call.tool, registry, ctx.toolSet);
+    if (unregistered !== null) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = { ...slots[input.batchIndex]!, compressed: unregistered, durationMs: 0 };
+      ctx.onCallFinished?.({ batchIndex: input.batchIndex, batchSize, result: unregistered, durationMs: 0 });
       continue;
     }
     // Plan mode next: a call that is not going to run should not spend
@@ -271,6 +285,7 @@ export async function executeBatch(
         output: hint?.message ?? cause.message,
         details: {
           errorName: cause.name,
+          ...errorCodeOf(cause),
           ...(hint !== null
             ? {
                 receivedKeys: hint.receivedKeys,
@@ -392,7 +407,7 @@ export async function executeBatch(
             continue;
           }
           if (deniedBy !== null) {
-            const notRun = notRunAfterDenialResult(call, deniedBy, batchSize);
+            const notRun = notRunAfterDenialResult(call.call, deniedBy, batchSize);
             ctx.onCallStarted?.({ batchIndex: call.batchIndex, batchSize });
             slots[call.batchIndex] = {
               ...slots[call.batchIndex]!,
@@ -519,4 +534,16 @@ export function toBatchInputs(
     call,
     resourceClass: resourceClassFor(call.tool),
   }));
+}
+
+/**
+ * A thrown error's code-style code (`ENOENT`, `EACCES`), kept so the
+ * log names what failed without parsing the message. Anything that does
+ * not look like such a code is left out.
+ */
+function errorCodeOf(cause: Error): { errorCode?: string } {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return typeof code === "string" && ERROR_CODE_PATTERN.test(code)
+    ? { errorCode: code }
+    : {};
 }

@@ -160,6 +160,27 @@ export interface CompletionRequest {
    * they rely on `grammar` instead.
    */
   responseFormat?: ResponseFormatJsonSchema;
+  /**
+   * How far the server got through the prompt before the first token
+   * (ATO-1027): on a local model the first message can spend minutes
+   * here with nothing to show. llama-server only — when set, a stream
+   * asks for `return_progress` and calls this for each `prompt_progress`
+   * frame instead of yielding it. Never serialized; every other provider
+   * ignores it.
+   */
+  onPromptProgress?: (progress: PromptProgress) => void;
+}
+
+/**
+ * One llama.cpp `prompt_progress` frame: prompt tokens evaluated so far
+ * (`processed`, the cached ones included) out of `total`, of which
+ * `cached` came from the KV cache, and the evaluation time so far.
+ */
+export interface PromptProgress {
+  processed: number;
+  total: number;
+  cached: number;
+  elapsedMs: number;
 }
 
 /**

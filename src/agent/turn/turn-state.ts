@@ -31,6 +31,12 @@ export interface TurnLoopState {
   outageAttempts: number;
   /** Retried a step after an outage and have not yet seen it succeed. */
   awaitingRecovery: boolean;
+  /**
+   * Restarts of the local model after it ran out of memory with no step
+   * completed in between (ATO-334). Bounded by
+   * `OUT_OF_MEMORY_MAX_RESTARTS`; a completed step resets it.
+   */
+  oomRestarts: number;
   // Truncation retry. A reply the server cut short is not a verdict on
   // the step either, but unlike an outage, replaying the same request
   // is pointless, so the retry changes it: a notice asking for a
@@ -100,6 +106,7 @@ export function createTurnLoopState(): TurnLoopState {
     outageWaitedMs: 0,
     outageAttempts: 0,
     awaitingRecovery: false,
+    oomRestarts: 0,
     truncationRetry: null,
     truncationRetries: 0,
     sizeRepackRetry: null,

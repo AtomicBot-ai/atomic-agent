@@ -1014,8 +1014,9 @@ export interface UserConfigFile {
 // explicit `llama-server` in a v77+ file is honoured. Other fields, external
 // mode included, are untouched.
 // v78: `localModels.reasoningBudgetTokens` defaults to `0` (no bound, as
-// before v68). llama.cpp clamps the grammar bound to 499 tokens, so the
-// old 1500 default cut thinking models off mid-thought. An older file
+// before v68). llama.cpp's repeat limit then clamped the grammar bound to
+// 499 tokens (until ATO-607), so the old 1500 default cut thinking models
+// off mid-thought. An older file
 // holding exactly 1500 (written by the schema, not the operator) migrates
 // to `0`; any other value is a deliberate choice and is kept.
 // Unversioned, additive: `browser.blockedDomains` / `browser.allowedDomains`
@@ -1027,6 +1028,13 @@ export interface UserConfigFile {
 // `"user-chrome"` attaches to the user's own Chrome through its
 // DevToolsActivePort file; `cdpUrl` must be a loopback URL. An older
 // file takes the defaults and keeps launching the agent's own Chrome.
+// v79: `http.approvalMode` defaults to `"writes"` again (ATO-760): an
+// `os.http.request` that sends data (POST) asks first; GET stays silent.
+// v25 had made `"never"` the default, so a prompt-injected model could
+// POST files or keys out with no prompt. An older file holding `"never"`
+// carries the schema's value (first run writes the defaults, v25
+// rewrote `"writes"`), so it migrates to `"writes"`; `"always"` is kept.
+// From v79 an explicit `"never"` is honoured.
 // Unversioned, additive: `tools.shell.envPassthrough` (default
 // `["GITHUB_TOKEN", "NOTION_API_KEY"]`, ATO-347). `os.shell.run` and
 // `os.git.*` no longer inherit the agent's provider keys, bot tokens or
@@ -1036,7 +1044,16 @@ export interface UserConfigFile {
 // `notion` skills working. An older file has no field and takes the
 // default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
 // other inherited key; the fix is one line in config.
-export const USER_CONFIG_VERSION = 78;
+// Unversioned, additive: `tools.screen.enabled` (default `false`,
+// ATO-525). Turns on the macOS `os.screen.*` tools; an older file has no
+// field and keeps them off.
+// Unversioned, additive: `localModels.managed.coreBackendVariant`
+// (`auto` | `cpu`, default `auto`, ATO-372/373) — the build Atomic Core
+// installs on Windows x64. Its own key, not `backendVariant`: the
+// llama-server engine's older rescue wrote `"cpu"` there on any health
+// timeout, and such a file must keep Core's GPU build. An older file has
+// no field and takes `auto`, Core's recommendation, as before.
+export const USER_CONFIG_VERSION = 79;
 
 /**
  * Config versions that `parseUserConfigFile` still accepts on input.
@@ -1190,6 +1207,7 @@ const SUPPORTED_INPUT_VERSIONS: readonly number[] = [
   75,
   76,
   77,
+  78,
   USER_CONFIG_VERSION,
 ];
 
@@ -1451,6 +1469,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const tools = (obj.tools as Record<string, unknown> | undefined) ?? {};
   const toolsShell = (tools.shell as Record<string, unknown> | undefined) ?? {};
   const browser = (obj.browser as Record<string, unknown> | undefined) ?? {};
+  const toolsScreen = (tools.screen as Record<string, unknown> | undefined) ?? {};
   const webSearch = (web.search as Record<string, unknown> | undefined) ?? {};
   const webFetch = (web.fetch as Record<string, unknown> | undefined) ?? {};
   const webSearchInputs = prepareWebSearchInputs(
@@ -1562,7 +1581,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       ),
     },
     projects: parseProjectsConfig(projects, () => USER_CONFIG_DEFAULTS.projects),
-    tools: parseToolsConfig(toolsShell, () => USER_CONFIG_DEFAULTS.tools),
+    tools: parseToolsConfig(toolsShell, () => USER_CONFIG_DEFAULTS.tools, toolsScreen),
     browser: parseBrowserConfig(browser, () => USER_CONFIG_DEFAULTS.browser),
     sessions: parseSessionConfig(sessionsRetention, () => USER_CONFIG_DEFAULTS.sessions),
     tracing: parseTracingConfig(mergedTrace, () => USER_CONFIG_DEFAULTS.tracing),
