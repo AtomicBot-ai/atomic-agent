@@ -2116,10 +2116,17 @@ for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) 
    on there (liveRebuild). A turn that failed or was stopped stays here for a
    while (`ended`), as the store may not have it. */
 const LIVE_TURNS = new Map();
+/** ATO-483: the transcript line for a `provider_switched` frame, '' when it names no switch. */
+function providerSwitchedLine(p) {
+  if (!p || typeof p !== 'object') return '';
+  if (typeof p.notice === 'string' && p.notice.trim()) return p.notice.trim();
+  if (typeof p.from !== 'string' || typeof p.to !== 'string' || !p.from || !p.to) return '';
+  return p.from + ' failed, answered with ' + p.to + (typeof p.to_model === 'string' && p.to_model ? ' (' + p.to_model + ')' : '') + '.';
+}
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
 /* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
@@ -10365,6 +10372,19 @@ function onChatEvent(ev) {
     // Item 38: not for a kept frame drawn when its chat is opened, long after it came.
     if (!LIVE_REPLAY) appSay('Provider answered again after ' + Math.round((Number((ev.payload || {}).waited_ms) || 0) / 1000) + ' s');
     if (item) tpOnProviderRecovered(Number((ev.payload || {}).waited_ms) || 0);
+    render();
+    return;
+  }
+  /* ATO-483: the person's fallback provider answered instead of the one they
+     picked. The agent words it ("OpenRouter is rate-limited, answered with
+     Gemini (gemini-2.5-flash)."); one line in the transcript, before the
+     reply, so a switch is never silent. An agent without a `notice` (none
+     sends this frame yet) is worded here from the ids. */
+  if (ev.kind === 'provider_switched') {
+    const p = ev.payload || {};
+    const line = providerSwitchedLine(p);
+    if (line && item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(line)});
+    if (line && !LIVE_REPLAY) appSay(line);
     render();
     return;
   }

@@ -7875,7 +7875,8 @@ async function settingsTestPartC(
   const llmBlock = cfg0.llm ?? { activeTextProvider: "local-llama", providers: [{ id: "local-llama", kind: "llama-server" }] };
   const providers = llmBlock.providers ?? [];
   const configured = new Set(providers.map((p) => p.id));
-  const appendLocal = llmBlock.fallback?.appendLocal ?? true;
+  // ATO-349: the default is the bundled core's (off from that change on, on before it), so ask the pane rather than assume.
+  const appendLocal = llmBlock.fallback?.appendLocal ?? fb.fallback.appendLocal;
   const requested = llmBlock.fallback?.chain?.length ? llmBlock.fallback.chain : [activeText];
   const filtered = requested.filter((id) => configured.has(id));
   const withPrimary = filtered[0] === activeText ? filtered : [activeText, ...filtered.filter((id) => id !== activeText)];
