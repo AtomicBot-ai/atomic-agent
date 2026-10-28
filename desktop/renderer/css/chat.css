@@ -158,7 +158,7 @@
    Same rules as the blocks above: inline-blocks spanning the line, one line of
    markup each, white-space set back to normal inside, colours from the theme. */
 .prose h1.mdh,.prose h2.mdh{margin-top:8px}
-.prose h4.mdh{font-size:14.5px;color:var(--ink-2)}
+.prose h4.mdh{font-size:var(--fs-body);color:var(--ink-2)}
 /* tables: a quiet frame with Copy (TSV) and Markdown; the bar is always there, so nothing moves when it shows */
 .prose .mdtblx{display:inline-block;width:100%;vertical-align:top;margin:4px 0;white-space:normal;
   border-radius:var(--r-well);box-shadow:inset 0 0 0 1px var(--divider);overflow:hidden}
@@ -174,14 +174,14 @@
 /* checklists */
 .prose .mdlist li.mdtask{list-style:none;position:relative;margin-left:-20px;padding-left:24px}
 .prose .mdchk{position:absolute;left:0;top:.3em;width:15px;height:15px;border-radius:4px;box-sizing:border-box;
-  box-shadow:inset 0 0 0 1.5px var(--bd-2);font:700 10px/15px var(--font-ui);text-align:center;color:var(--on-strong)}
+  box-shadow:inset 0 0 0 1.5px var(--bd-2);font:700 var(--fs-micro)/15px var(--font-ui);text-align:center;color:var(--on-strong)}
 .prose .mdtask.done .mdchk{background:var(--success);box-shadow:none}
 .prose .mdtask.done > .mdtask-t{color:var(--ink-2)}
 /* steps: numbered items that each lead with a bold name */
 .prose .mdlist.mdsteps{list-style:none;padding-left:0;counter-reset:mdstep}
 .prose .mdsteps > li{counter-increment:mdstep;position:relative;padding-left:32px;margin:0 0 6px;min-height:22px}
 .prose .mdsteps > li::before{content:counter(mdstep);position:absolute;left:0;top:1px;width:22px;height:22px;border-radius:50%;
-  background:var(--accent-wash);color:var(--accent-text);font:600 12px/22px var(--font-ui);text-align:center}
+  background:var(--accent-wash);color:var(--accent-text);font:600 var(--fs-label)/22px var(--font-ui);text-align:center}
 .prose .mdsteps > li:not(:last-child)::after{content:'';position:absolute;left:11px;top:27px;bottom:-4px;width:1px;background:var(--divider)}
 /* key / value fields */
 .prose .mdkv{display:inline-grid;width:100%;vertical-align:top;box-sizing:border-box;grid-template-columns:minmax(72px,max-content) 1fr;
@@ -193,7 +193,7 @@
 /* callouts: > [!NOTE], **Warning:** … */
 .prose .mdcallout{display:inline-block;width:100%;vertical-align:top;box-sizing:border-box;margin:4px 0;padding:8px 12px 8px 13px;
   border-radius:var(--r-well);white-space:normal;background:var(--panel-2);box-shadow:inset 3px 0 0 var(--mdc, var(--blue))}
-.prose .mdcallout-t{font:600 12.5px/18px var(--font-ui);color:var(--mdc, var(--blue))}
+.prose .mdcallout-t{font:600 var(--fs-label)/18px var(--font-ui);color:var(--mdc, var(--blue))}
 .prose .mdcallout-b{white-space:pre-wrap;color:var(--ink)}
 .prose .mdcallout.mdc-tip{--mdc:var(--success);background:var(--success-wash)}
 .prose .mdcallout.mdc-important{--mdc:var(--reasoning)}
@@ -202,7 +202,7 @@
 /* Pros / Cons, side by side (stacked when the column is narrow) */
 .prose .mdcmp{display:inline-grid;width:100%;vertical-align:top;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin:4px 0;white-space:normal}
 .prose .mdcmp-c{padding:8px 12px;border-radius:var(--r-well);box-shadow:inset 0 0 0 1px var(--divider);min-width:0}
-.prose .mdcmp-t{font:600 12.5px/18px var(--font-ui);margin-bottom:2px}
+.prose .mdcmp-t{font:600 var(--fs-label)/18px var(--font-ui);margin-bottom:2px}
 .prose .mdcmp-c.pro .mdcmp-t{color:var(--success)}
 .prose .mdcmp-c.con .mdcmp-t{color:var(--danger)}
 .prose .mdcmp-c.pro .mdcmp-t::before{content:'✓ '}
@@ -213,15 +213,15 @@
   vertical-align:top;border-radius:var(--r-well);background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--bd);
   color:var(--ink);text-decoration:none;white-space:normal;transition:background var(--t-state) var(--ease)}
 .prose .msglink.mdcard:hover{background:var(--hover);color:var(--ink)}
-.prose .mdcard-ic{flex:none;width:26px;height:26px;border-radius:7px;background:var(--lift);color:var(--blue);font:600 13px/26px var(--font-ui);text-align:center}
+.prose .mdcard-ic{flex:none;width:26px;height:26px;border-radius:7px;background:var(--lift);color:var(--blue);font:600 var(--fs-cap)/26px var(--font-ui);text-align:center}
 .prose .mdcard-tx{display:flex;flex-direction:column;min-width:0}
-.prose .mdcard-t{font:600 13px/18px var(--font-ui);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.prose .mdcard-h{font:400 11.5px/16px var(--font-ui);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prose .mdcard-t{font:600 var(--fs-cap)/18px var(--font-ui);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prose .mdcard-h{font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* a path alone on its line: the file chip, drawn as a card with its folder under the name */
 .prose .mdsolo .filechip{display:inline-grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;height:auto;padding:7px 12px 7px 9px;
-  border-radius:var(--r-well);text-align:left;font-size:13px;line-height:18px}
+  border-radius:var(--r-well);text-align:left;font-size:var(--fs-cap);line-height:18px}
 .prose .mdsolo .filechip svg{grid-row:1 / span 2;width:18px;height:18px}
-.prose .mdsolo .filechip::after{content:attr(title);grid-column:2;font:400 11.5px/16px var(--font-ui);color:var(--ink-3);
+.prose .mdsolo .filechip::after{content:attr(title);grid-column:2;font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .prose.usr .mdcode{background:var(--glass-18)}
 
