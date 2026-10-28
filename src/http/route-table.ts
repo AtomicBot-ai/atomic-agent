@@ -5,6 +5,7 @@ import { createChatCompletionsHandler } from "./openai-chat-completions.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
 import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
+import { createModelTiersHandler } from "./route-model-tiers.js";
 import { createModelsHandler } from "./route-models.js";
 import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
@@ -103,6 +104,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/capabilities",
       handler: createCapabilitiesHandler(),
     },
+    // ATO-32: the Cheap / Balanced / Best picks (presets/model-tiers.ts).
+    { method: "GET", path: "/api/model-tiers", handler: createModelTiersHandler() },
     { method: "POST", path: "/api/sessions/{id}/compact", handler: createSessionCompactionHandler(true) },
     { method: "GET", path: "/api/sessions/{id}/compaction", handler: createSessionCompactionHandler(false) },
     { method: "GET", path: "/api/config", handler: createGetConfigHandler() },
