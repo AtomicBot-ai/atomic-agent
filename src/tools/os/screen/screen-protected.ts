@@ -44,10 +44,16 @@ export const BLOCKED_BUNDLE_IDS: readonly string[] = [
   "com.1password.1password",
   "com.agilebits.onepassword7",
   "com.bitwarden.desktop",
-  // Apps that run scripts which post input themselves.
+  // Apps that run scripts which post input themselves, and launchers that run commands typed into them.
   "com.apple.ScriptEditor2",
   "com.apple.Automator",
   "com.apple.shortcuts",
+  "org.hammerspoon.Hammerspoon",
+  "com.stairways.keyboardmaestro", // .editor, .engine
+  "com.runningwithcrayons.Alfred",
+  "com.runningwithcrayons.Alfred-Preferences",
+  "com.raycast.macos",
+  "at.obdev.LaunchBar",
 ];
 
 /** Web browsers: screenshots only. */
@@ -81,6 +87,14 @@ export const BROWSER_BUNDLE_IDS: readonly string[] = [
   "org.torproject.torbrowser",
   "ru.yandex.desktop.yandex-browser",
   "com.naver.Whale",
+  "net.waterfox.waterfox",
+  "net.mullvad.mullvadbrowser",
+  "io.gitlab.librewolf-community",
+  "one.ablaze.floorp",
+  "com.sigmaos.sigmaos.macos",
+  "net.imput.helium",
+  "ai.perplexity.comet",
+  "com.openai.atlas",
 ];
 
 /** Terminals and IDEs: clicks only. */
@@ -89,6 +103,11 @@ export const TERMINAL_BUNDLE_IDS: readonly string[] = [
   "com.googlecode.iterm2",
   "dev.warp.Warp-Stable",
   "dev.warp.Warp",
+  "dev.warp.Warp-Preview",
+  "org.tabby",
+  "com.raphaelamorim.rio",
+  "dev.commandline.waveterm",
+  "com.termius-dmg.mac",
   "com.mitchellh.ghostty",
   "net.kovidgoyal.kitty",
   "org.alacritty",
@@ -104,8 +123,16 @@ export const TERMINAL_BUNDLE_IDS: readonly string[] = [
   "com.jetbrains", // every JetBrains IDE: com.jetbrains.intellij, .pycharm, .WebStorm, …
   "com.google.android.studio",
   "com.apple.dt.Xcode",
+  "com.sublimetext.3",
   "com.sublimetext.4",
   "com.panic.Nova",
+  "org.vim.MacVim",
+  "org.gnu.Emacs",
+  "com.barebones.bbedit",
+  "com.macromates.TextMate",
+  "com.rstudio.desktop",
+  "dev.kiro.desktop",
+  "com.google.antigravity",
 ];
 
 /** `TERM_PROGRAM` values → the bundle id of the terminal that set them. */
@@ -203,6 +230,8 @@ export function refusedChordReason(chord: KeyChord): string | null {
   }
   if (cmd && chord.keyCode === KEY_SPACE) return `${chord.label} opens Spotlight`;
   if ((mods & CTRL) !== 0 && chord.keyCode === KEY_SPACE) return `${chord.label} switches input source or opens a launcher`;
+  // Alfred's and Raycast's default hotkey: a launcher runs what is typed into it.
+  if ((mods & ALT) !== 0 && chord.keyCode === KEY_SPACE) return `${chord.label} opens a launcher`;
   if ((mods & CTRL) !== 0 && ARROWS.has(chord.keyCode)) return `${chord.label} switches spaces or opens Mission Control`;
   if (cmd && (mods & ALT) !== 0 && chord.keyCode === KEY_ESCAPE) return `${chord.label} opens Force Quit`;
   return null;
