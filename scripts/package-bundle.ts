@@ -197,11 +197,20 @@ async function archiveZip(sourceDir: string, destFile: string): Promise<void> {
     : ["-r", destFile, "."];
   const cwd = isWindowsHost ? ROOT : sourceDir;
   await new Promise<void>((resolveZip, reject) => {
-    const child = spawn(command, args, { cwd, stdio: "inherit" });
+    // Not `stdio: "inherit"`: on Windows CI a process left behind by
+    // powershell kept the runner's own stdout open, so the step never ended
+    // after "bundle ready" (ATO-897). With pipes only our own pipe can be
+    // held, the output is forwarded, and we settle on "exit", not "close".
+    const child = spawn(command, args, { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    child.stdout?.on("data", (chunk: Buffer) => stdout.write(chunk));
+    child.stderr?.on("data", (chunk: Buffer) => stderr.write(chunk));
     child.once("error", reject);
-    child.once("exit", (code) =>
-      code === 0 ? resolveZip() : reject(new Error(`${command} exited with code ${code}`)),
-    );
+    child.once("exit", (code) => {
+      child.stdout?.destroy();
+      child.stderr?.destroy();
+      if (code === 0) resolveZip();
+      else reject(new Error(`${command} exited with code ${code}`));
+    });
   });
 }
 
@@ -220,6 +229,10 @@ async function main(): Promise<number> {
 
   // Grammars are required at runtime.
   await copyOptional(join(ROOT, "grammars"), join(stageDir, "grammars"));
+
+  // The license travels with the binary: the Linux packages (deb, rpm, the
+  // AUR PKGBUILD) install it from this very archive under /usr/share/licenses.
+  await copyOptional(join(ROOT, "LICENSE"), join(stageDir, "LICENSE"));
 
   // Default skills copied into stateDir on first runtime boot (see
   // seedStarterSkillsIfMissing); ship next to the SEA binary.
@@ -272,7 +285,7 @@ async function main(): Promise<number> {
     "  - External llama.cpp server reachable via HTTP, or use `atomic-agent models`",
     "    for managed local models.",
     "  - Point the runtime at the server (if external), e.g.",
-    "      atomic-agent config set localModels.url http://127.0.0.1:8080",
+    "      atomic-agent config set localModels.url http://127.0.0.1:9931",
     "  - Install Google Chrome or Microsoft Edge (stable channel). Playwright",
     "    browsers are NOT bundled; playwright-core attaches to the system",
     "    browser via --channel=chrome|msedge.",

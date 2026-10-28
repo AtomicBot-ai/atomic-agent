@@ -4,11 +4,13 @@ import type { RouteDefinition } from "./http-server.js";
 import { createChatCompletionsHandler } from "./openai-chat-completions.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
+import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
 import { createModelsHandler } from "./route-models.js";
 import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
   createGetConfigHandler,
   createPatchConfigHandler,
+  createPutConfigHandler,
 } from "./route-config.js";
 import {
   createGetSkillHandler,
@@ -16,6 +18,10 @@ import {
   createListSkillsHandler,
   createUninstallSkillHandler,
 } from "./route-skills.js";
+import {
+  createProjectTrustAnswerHandler,
+  createProjectTrustStatusHandler,
+} from "./route-project-trust.js";
 import {
   createAckUndeliveredSteersHandler,
   createDeleteSessionHandler,
@@ -44,6 +50,13 @@ import {
   createRestartMcpServerHandler,
   createSetMcpServerEnabledHandler,
 } from "./route-mcp.js";
+import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
+import { createSetActiveLlmHandler } from "./route-llm-active.js";
+import { createLocalModelsTextHandler } from "./route-local-models.js";
+import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
+import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
+import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
+import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
 /**
  * Build the full atomic-agent HTTP route table. All handlers are
@@ -57,6 +70,9 @@ export function buildRouteTable(): RouteDefinition[] {
   // state, and the live switches cannot be read back as the mode that
   // set them (see route-coding-mode.ts `inferMode`).
   const codingMode = createCodingModeHandlers();
+  // Same reason: the last pairing window's outcome is per-process state
+  // the GET reads back after the POST opened it.
+  const telegramPairing = createTelegramPairingHandlers();
   return [
     {
       method: "GET",
@@ -70,6 +86,9 @@ export function buildRouteTable(): RouteDefinition[] {
       handler: createModelsHandler(),
       requiresAuth: false,
     },
+    // ATO-1128: the phone panel's page; it holds no data and asks for the key (route-panel.ts).
+    { method: "GET", path: "/panel", handler: createPanelPageHandler(), requiresAuth: false },
+    { method: "GET", path: "/panel/app.js", handler: createPanelScriptHandler(), requiresAuth: false },
     {
       method: "POST",
       path: "/v1/chat/completions",
@@ -93,6 +112,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/config",
       handler: createPatchConfigHandler(),
     },
+    // ATO-1022: the desktop's whole-file write, without an `atag config set` process.
+    { method: "PUT", path: "/api/config", handler: createPutConfigHandler() },
     { method: "GET", path: "/api/skills", handler: createListSkillsHandler() },
     {
       method: "GET",
@@ -109,6 +130,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/skills/uninstall",
       handler: createUninstallSkillHandler(),
     },
+    { method: "GET", path: "/api/project-trust", handler: createProjectTrustStatusHandler() },
+    { method: "POST", path: "/api/project-trust", handler: createProjectTrustAnswerHandler() },
     {
       method: "POST",
       path: "/api/mcp/servers/{name}/restart",
@@ -144,6 +167,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/sessions/{id}",
       handler: createRenameSessionHandler(),
     },
+    // ATO-731: one chat's folder, changed without restarting serve.
+    { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",
@@ -175,6 +200,21 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "GET", path: "/api/coding-mode", handler: codingMode.get },
     { method: "POST", path: "/api/coding-mode", handler: codingMode.set },
     { method: "POST", path: "/api/context-preview", handler: createContextPreviewHandler() },
+    // ATO-873: the desktop's Reconnect button after a local server answered 404/405.
+    { method: "POST", path: "/api/local-model/recheck", handler: createLocalModelRecheckHandler() },
+    // ATO-1021: the desktop's model pick, swapped live instead of restarting serve.
+    { method: "POST", path: "/api/llm/active", handler: createSetActiveLlmHandler() },
+    // ATO-1127: this machine's local models, for a desktop connected from another computer.
+    { method: "GET", path: "/api/local-models/list", handler: createLocalModelsTextHandler("list") },
+    { method: "GET", path: "/api/local-models/status", handler: createLocalModelsTextHandler("status") },
+    // ATO-1024: the desktop starts serve first and attaches the embedding server once it is up.
+    { method: "POST", path: "/api/memory/embeddings/reconnect", handler: createReconnectMemoryEmbeddingsHandler() },
+    // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
+    { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
+    { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },
+    { method: "DELETE", path: "/api/telegram/pairing", handler: telegramPairing.cancel },
+    // ATO-758: the channel's state, and another poller of the same bot when that is what holds it off.
+    { method: "GET", path: "/api/telegram/channel", handler: createTelegramChannelHandler() },
     { method: "POST", path: "/api/tasks", handler: createCreateTaskHandler() },
     { method: "GET", path: "/api/tasks", handler: createListTasksHandler() },
     { method: "GET", path: "/api/tasks/{id}", handler: createGetTaskHandler() },

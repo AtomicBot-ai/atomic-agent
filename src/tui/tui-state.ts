@@ -1,3 +1,4 @@
+import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
 import {
   clampApprovalLevel,
   type ApprovalLevel,
@@ -402,6 +403,12 @@ export interface TuiState {
    */
   approvalPathDraft: string | null;
   /**
+   * The page of the full command the approval prompt is showing, or
+   * `null` for the usual excerpt (ATO-876). Keyed by `approvalId` so a
+   * page left over from an earlier prompt can never apply to a new one.
+   */
+  approvalPreviewPage: { approvalId: string; page: number } | null;
+  /**
    * Whether the composer currently holds a text selection. Lifted out of
    * the editor for exactly one reason: Ctrl+C means "copy" while text is
    * selected and "stop / quit" otherwise, and the two handlers live in
@@ -600,6 +607,11 @@ export interface TuiState {
    * offer was dismissed / accepted). Drives the {@link UpdateModal}.
    */
   updatePrompt: { current: string; latest: string } | null;
+  /**
+   * Startup question about the opened folder's untrusted project skills
+   * and instruction files (ATO-298). Drives the ProjectTrustModal.
+   */
+  projectTrustPrompt: ProjectTrustPrompt | null;
   /**
    * Persistent "a newer release exists" fact behind the status-bar
    * banner. Set alongside {@link updatePrompt} and — unlike the prompt —
@@ -869,6 +881,7 @@ export function createInitialTuiState(
     reasoning: [],
     pendingApproval: null,
     approvalPathDraft: null,
+    approvalPreviewPage: null,
     composerHasSelection: false,
     composerNotice: null,
     providerOutage: null,
@@ -925,6 +938,7 @@ export function createInitialTuiState(
     themePickerOriginal: "",
     aborting: false,
     updatePrompt: null,
+    projectTrustPrompt: null,
     updateBanner: null,
     updateStatus: "idle",
     ringBufferSize,

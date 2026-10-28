@@ -43,11 +43,11 @@ import { getConfig } from "../config/index.js";
 import { LOCAL_PROVIDER_KIND } from "../config/llm-run-mode-config.js";
 import type { RunModeName } from "../config/llm-run-mode-config.js";
 import {
+  entryHasNoChatModel,
   resolveLlmConfig,
   type LlmProviderConfigEntry,
   type ResolvedLlmConfig,
 } from "../llm/provider/registry/index.js";
-import { providerKeyStatus } from "../llm/provider/provider-key.js";
 import {
   describeRunMode,
   resolveRunMode,
@@ -57,10 +57,10 @@ import {
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { SESSION_LLM_METADATA_KEY } from "../session/index.js";
 import {
-  restoreProviderDefaultChatModelInConfig,
-  setActiveTextProviderInConfig,
-  setProviderDefaultChatModelInConfig,
-} from "../config/llm-provider-commands.js";
+  MODEL_PIN_IGNORED_KINDS,
+  missingApiKey,
+  switchActiveLlm,
+} from "./model-switch.js";
 
 /** What a channel hands `/model` about the chat it arrived in. */
 export interface ModelCommandChat {
@@ -71,8 +71,9 @@ export interface ModelCommandChat {
   code: (text: string) => string;
 }
 
-/**
- * Provider kinds whose factory never reads `entry.defaultChatModel`, so
+/*
+ * MODEL_PIN_IGNORED_KINDS (model-switch.ts, shared with `POST /api/llm/active`):
+ * provider kinds whose factory never reads `entry.defaultChatModel`, so
  * pinning a model on them changes no inference at all.
  *
  * `llama-server` is the only one (see `register-built-in-providers.ts`:
@@ -88,7 +89,6 @@ export interface ModelCommandChat {
  * and `ensureInlineModels` both refuse non-cloud kinds. So neither can
  * this command.
  */
-const MODEL_PIN_IGNORED_KINDS = new Set([LOCAL_PROVIDER_KIND]);
 
 /**
  * Run `/model` and return the message to post.
@@ -144,49 +144,15 @@ async function runModelCommandInner(
   const busy = busyRefusal(chat);
   if (busy) return busy;
 
-  const previousActiveId = resolved.activeTextProvider;
-  const previousModelPin = resolved.providers.find(
-    (p) => p.id === target.providerId,
-  )?.defaultChatModel;
   const modeBefore = currentRunMode(config, resolved).effective;
-  let pinned = false;
-  let activated = false;
-  try {
-    if (target.modelId !== null) {
-      setProviderDefaultChatModelInConfig(target.providerId, target.modelId);
-      pinned = true;
-    }
-    // Same order the TUI's `selectChatModel` uses: write the model,
-    // rebuild the provider from the now-current config, then make it
-    // active. A provider the registry has never built (added to the
-    // config after boot) needs the full merge instead of a replace.
-    if (chat.runtime.providerRegistry.listIds().includes(target.providerId)) {
-      await chat.runtime.reloadLlmProvider(target.providerId);
-    } else {
-      await chat.runtime.reloadLlmProviders();
-    }
-    await chat.runtime.providerRegistry.setActive(target.providerId);
-    activated = true;
-    setActiveTextProviderInConfig(target.providerId);
-  } catch (err) {
-    // "Could not switch" has to mean nothing switched. The model pin is
-    // written first because rebuilding the provider reads it back off
-    // disk, so a rebuild that then fails would otherwise leave the
-    // config naming a model that was refused — and a later bare
-    // `/model` would report it as the provider's model. Undo both legs
-    // (config pin, in-memory active provider) before answering; each
-    // undo swallows its own failure so a rollback error cannot mask the
-    // real one.
-    await rollback(chat, {
-      providerId: target.providerId,
-      previousActiveId,
-      previousModelPin,
-      pinned,
-      activated,
-    });
-    return `Could not switch to ${chat.code(target.providerId)}: ${
-      err instanceof Error ? err.message : String(err)
-    }`;
+  // Same legs, order and rollback as the desktop's `POST /api/llm/active`
+  // (model-switch.ts): "Could not switch" has to mean nothing switched.
+  const outcome = await switchActiveLlm(chat.runtime, {
+    providerId: target.providerId,
+    modelId: target.modelId,
+  });
+  if (!outcome.ok) {
+    return `Could not switch to ${chat.code(target.providerId)}: ${outcome.error}`;
   }
 
   // Stamp the chat's session now rather than waiting for `executeTurn`
@@ -327,46 +293,6 @@ function busyRefusal(chat: ModelCommandChat): string | null {
   return `A turn is in progress on ${where}. The provider is shared, so switching now would change what those turns run on at their next step — try /model again when they finish, or /cancel.`;
 }
 
-/**
- * Undo whichever legs of a switch landed before it failed. Every step
- * swallows its own error: this runs inside a `catch` whose job is to
- * report the *original* failure, and a rollback that throws would
- * replace it with a less useful one.
- */
-async function rollback(
-  chat: ModelCommandChat,
-  state: {
-    providerId: string;
-    previousActiveId: string;
-    previousModelPin: string | undefined;
-    pinned: boolean;
-    activated: boolean;
-  },
-): Promise<void> {
-  if (state.pinned) {
-    try {
-      restoreProviderDefaultChatModelInConfig(
-        state.providerId,
-        state.previousModelPin,
-      );
-      // The registry may have been rebuilt from the rejected pin; put
-      // its copy back in step with the config too.
-      if (chat.runtime.providerRegistry.listIds().includes(state.providerId)) {
-        await chat.runtime.reloadLlmProvider(state.providerId);
-      }
-    } catch {
-      // Reported failure stands; nothing better to say here.
-    }
-  }
-  if (state.activated && state.previousActiveId !== state.providerId) {
-    try {
-      await chat.runtime.providerRegistry.setActive(state.previousActiveId);
-    } catch {
-      // As above.
-    }
-  }
-}
-
 type ResolvedTarget =
   | { ok: true; providerId: string; modelId: string | null }
   | { ok: false; message: string };
@@ -468,6 +394,18 @@ function resolveTarget(
       message: `Usage: ${code("/model <provider> <model-id>")}.`,
     };
   }
+  // Checked here, before anything is written, so the refusal reads as a
+  // usage answer; `ProviderRegistry.swapActive` refuses the same entry
+  // for every other caller.
+  if (modelId === null && entryHasNoChatModel(entry)) {
+    return {
+      ok: false,
+      message: [
+        `${code(entry.id)} is a ${code(entry.kind)} provider with no chat model, so it cannot be the active text provider.`,
+        `Pin a chat model first (${code(`/model ${entry.id} <model-id>`)}) or keep using it for embeddings only.`,
+      ].join(" "),
+    };
+  }
   if (modelId !== null && MODEL_PIN_IGNORED_KINDS.has(entry.kind)) {
     return {
       ok: false,
@@ -516,38 +454,6 @@ function matchProvider(
     return { kind: "ambiguous", ids: prefixed.map((p) => p.id) };
   }
   return { kind: "none" };
-}
-
-/**
- * Why `providerId` cannot authenticate, or `null` when it can (or does
- * not need to).
- *
- * The rule is `providerKeyStatus` (`src/llm/provider/provider-key.ts`),
- * the one the fallback chain and the TUI's first-run check read, and a
- * switch is refused only when it says `missing`. That covers the case a
- * kind check alone misses: the known-service presets (Groq, Nous,
- * Anthropic and friends) are all stored as `kind: "openai-compatible"`
- * with their own `apiKeyEnvVar` (`providers-wizard-build-entry.ts`), and
- * an entry that *declares* an env var has said it needs a key. A local
- * server (LM Studio, Ollama, anything on this machine) never needs one,
- * even though the wizard saves it with an env var too, and a bare keyless
- * compat entry elsewhere is left alone.
- *
- * `apiKeyEnvVar` lives on the user-config entry rather than on
- * `LlmProviderConfigEntry`, so it is read off the file entry here.
- */
-function missingApiKey(
-  entry: LlmProviderConfigEntry,
-  config: AtomicAgentConfig,
-): { envVar: string | null } | null {
-  const envVar = config.llm?.providers.find(
-    (e) => e.id === entry.id,
-  )?.apiKeyEnvVar;
-  const status = providerKeyStatus({
-    ...entry,
-    ...(envVar !== undefined ? { apiKeyEnvVar: envVar } : {}),
-  });
-  return status.state === "missing" ? { envVar: status.envVar } : null;
 }
 
 /**

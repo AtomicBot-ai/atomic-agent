@@ -19,6 +19,8 @@ import {
   runAtomicMailAction,
 } from "./integrations-orchestrator-atomic-mail.js";
 import {
+  EXA_API_KEY_ENV,
+  EXA_INTEGRATION_ID,
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
   IntegrationSecretError,
@@ -399,6 +401,16 @@ export class IntegrationsOrchestrator {
         this.refresh();
         return;
       }
+      if (integrationId === EXA_INTEGRATION_ID) {
+        // Nothing to restart: the write above already set process.env,
+        // and the Exa provider reads its key on every search (ATO-345).
+        this.bus.emit({
+          type: "integrations_action_settled",
+          message: exaSavedMessage(value !== null),
+        });
+        this.refresh();
+        return;
+      }
       if (integrationId === "composio") {
         await this.applyComposio(value !== null);
       }
@@ -474,4 +486,18 @@ export class IntegrationsOrchestrator {
     }
     await this.runtime.refreshMcp?.();
   }
+}
+
+/**
+ * What the hub says after an Exa key change. The row always writes
+ * `EXA_API_KEY`, so an agent configured to read another variable is told
+ * the key will not be used, instead of being left to wonder.
+ */
+export function exaSavedMessage(saved: boolean): string {
+  if (!saved) return "Exa key cleared. Web search is back on Exa's free searches.";
+  const envVar = getConfig().web.search.exa.apiKeyEnv;
+  if (envVar !== EXA_API_KEY_ENV) {
+    return `Exa key saved as ${EXA_API_KEY_ENV}, but web search reads ${envVar} (web.search.exa.apiKeyEnv). Set that variable, or reset the setting.`;
+  }
+  return "Exa key saved. The next web search uses it, no restart needed.";
 }

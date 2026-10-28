@@ -379,10 +379,14 @@
       job: null, jobError: null, armed: false,
       result: null, playError: false, videoSrc: '',
       gallery: [], galleryTotal: 0, galleryFilter: 'all', galleryError: null, thumbs: {},
+      galleryHasMore: false, galleryLoading: false,
+      pinnedMore: [], pinnedLoading: false, pinnedPartial: false, pinnedReady: false,   // pinned clips beyond the loaded pages (Pinned tab)
       delArmed: null,
       pickerOpen: false, pickerQuery: '', libraryOpen: false, library: [], libThumbs: {},
       outDir: null, busy: false, notice: null,
       focusPath: null,   // "Open in Studio" waiting for the gallery's first page
+      recent: typeof g.studioRecentLoad === 'function' ? g.studioRecentLoad(KIND) : [], recentOpen: false,   // ATO-809: prompts sent before (recent-prompts.js)
+      improve: typeof g.studioImproveBlank === 'function' ? g.studioImproveBlank() : null,   // ATO-809: Improve prompt (improve-prompt.js)
     };
     let priceTimer = null, estTimer = null;
 
@@ -424,16 +428,52 @@
       paint(); refreshQuote();
     }
 
-    async function loadGallery() {
+    /* The gallery is read by page; "Load more" (more = true) asks for the next one.
+       A fresh first page wins over a "Load more" still on its way. */
+    const PAGE = 60;
+    let gallerySeq = 0;
+    async function loadGallery(more) {
       const br = BR();
-      if (!br) return;
-      const res = await br.gallery(KIND, { offset: 0, limit: 60 });
+      if (!br || (more && S.galleryLoading)) return;
+      const seq = more ? gallerySeq : ++gallerySeq;
+      S.galleryLoading = true;
+      if (more) paint('gallery');
+      const res = await Promise.resolve(br.gallery(KIND, { offset: more ? S.gallery.length : 0, limit: PAGE })).catch(() => null);
+      if (seq !== gallerySeq) return;
+      S.galleryLoading = false;
       if (!res || !res.ok) { S.galleryError = errorText(res && res.error); paint('gallery'); return; }
-      S.gallery = res.data.items || []; S.galleryTotal = res.data.total || S.gallery.length; S.galleryError = null;
+      const got = res.data.items || [];
+      S.gallery = more ? S.gallery.concat(got.filter((x) => !S.gallery.some((y) => y.id === x.id))) : got;
+      S.galleryTotal = res.data.total || S.gallery.length; S.galleryError = null;
+      S.galleryHasMore = !!res.data.hasMore;
+      if (more) S.pinnedMore = S.pinnedMore.filter((x) => !S.gallery.some((y) => y.id === x.id));
+      else { pinnedSeq++; S.pinnedMore = []; S.pinnedPartial = false; S.pinnedReady = false; S.pinnedLoading = false; if (S.galleryFilter === 'pinned') loadPinned(); }
       if (S.focusPath) { const p = S.focusPath; S.focusPath = null; showResult(S.gallery.find((x) => x.path === p) || fromChatItem(p)); }
       paint('gallery');
-      for (const it of S.gallery) loadThumb(it);
+      for (const it of got) loadThumb(it);
     }
+
+    /* The Pinned tab: Core has no pinned filter, so read the pages not loaded yet
+       with the Images page's simgFindPinned (images-logic.js, loaded first; same cap). */
+    let pinnedSeq = 0;
+    function loadPinned() {
+      const br = BR();
+      const find = g.simgFindPinned;
+      if (!br || typeof find !== 'function' || !S.galleryHasMore) { S.pinnedLoading = false; S.pinnedReady = true; return; }
+      const seq = ++pinnedSeq;
+      S.pinnedLoading = true;
+      paint('gallery');
+      find((offset, limit) => br.gallery(KIND, { offset, limit }), S.gallery.length).then((r) => {
+        if (seq !== pinnedSeq) return;
+        S.pinnedLoading = false;
+        S.pinnedMore = r.items.filter((x) => !S.gallery.some((y) => y.id === x.id));
+        S.pinnedPartial = !r.complete;
+        S.pinnedReady = r.ok;   // a failed page is tried again on the next visit to the tab
+        paint('gallery');
+        for (const it of S.pinnedMore) loadThumb(it);
+      }, () => { if (seq === pinnedSeq) { S.pinnedLoading = false; paint('gallery'); } });
+    }
+    const findClip = (id) => S.gallery.find((x) => x.id === id) || S.pinnedMore.find((x) => x.id === id);
 
     /* Posters the window rendered or gave up on this session (CONTRACT.md "Video posters"). */
     const posterTried = {};
@@ -627,7 +667,32 @@
       if (!r || !r.ok) { S.jobError = r ? r.error : { code: 'FAILED', message: 'Could not start the clip.' }; paint(); return; }
       S.job = Object.assign({}, r.data.job, { id: r.data.jobId || r.data.job.id, startedAt: Date.now(), label: summaryLine(m) });
       S.result = null;
+      if (typeof g.studioRecentRemember === 'function' && req.prompt) { S.recent = g.studioRecentRemember(KIND, S.recent, req.prompt); S.recentOpen = false; }
       paint();
+    }
+
+    /* ATO-809: Improve prompt. Whether a chat model can answer is asked each time the page shows (Settings may have changed it). */
+    function checkImprove() {
+      if (!S.improve || typeof g.studioImproveCheck !== 'function') return;
+      g.studioImproveCheck(BR(), S.improve).then(() => { if (S.shown && S.root) paint('form'); });
+    }
+
+    async function improve() {
+      const st = S.improve;
+      if (!st || typeof g.studioImproveRun !== 'function' || g.studioImproveWhy(S.form.prompt, st)) return;
+      const sent = S.form.prompt;
+      const run = g.studioImproveRun(BR(), KIND, sent, st);
+      paint('form');
+      const next = await run;
+      // Typed into the box meanwhile: keep that text (studioImproveLands).
+      if (next !== null && g.studioImproveLands(st, sent, S.form.prompt)) {
+        S.form.prompt = next; S.notice = null; saveForm(); paint('foot');
+        /* paint('form') keeps a focused textarea's own value, so a box clicked
+           into while waiting would show the old text over the new prompt. */
+        const ta = S.root && S.root.querySelector('[data-vfield="prompt"]');
+        if (ta) ta.value = next;
+      }
+      paint('form');
     }
 
     async function stop() {
@@ -770,6 +835,7 @@
       const r = await br.pin(KIND, id, on);
       if (r && r.ok && r.data) {
         S.gallery = S.gallery.map((x) => (x.id === id ? r.data : x));
+        S.pinnedMore = S.pinnedMore.map((x) => (x.id === id ? r.data : x));
         if (S.result && S.result.id === id) S.result = r.data;
         paint('gallery');
       }
@@ -783,6 +849,7 @@
       const r = await br.galleryDelete(KIND, [id]);
       if (r && r.ok) {
         S.gallery = S.gallery.filter((x) => x.id !== id);
+        S.pinnedMore = S.pinnedMore.filter((x) => x.id !== id);
         S.galleryTotal = Math.max(0, S.galleryTotal - 1);
         if (S.result && S.result.id === id) S.result = null;
       } else S.galleryError = errorText(r && r.error);
@@ -828,6 +895,20 @@
         case 'pick-library': openLibrary(); break;
         case 'lib-item': { const it = S.library.find((x) => x.id === v); S.libraryOpen = false; if (it) setFirstFrameFromPath(it.path, it.path.split('/').pop(), 'from your images'); break; }
         case 'clear-frame': f.firstFrame = null; saveForm(); paint('form'); paint('foot'); break;
+        case 'recent': S.recentOpen = !S.recentOpen; paint('form'); break;
+        case 'recent-use': {
+          const t = S.recent[Number(v)];
+          S.recentOpen = false;
+          if (typeof t === 'string') { f.prompt = t; S.notice = null; saveForm(); }
+          paint('form'); paint('foot');
+          const ta = S.root && S.root.querySelector('[data-vfield="prompt"]');
+          if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+          break;
+        }
+        case 'improve': improve(); break;
+        case 'improve-undo':
+          if (S.improve && S.improve.undo !== null) { f.prompt = S.improve.undo; S.improve.undo = null; S.improve.err = ''; saveForm(); paint('form'); paint('foot'); }
+          break;
         case 'generate': generate(); break;
         case 'stop': stop(); break;
         case 'dismiss': S.jobError = null; S.notice = null; paint('stage'); paint('foot'); break;
@@ -836,9 +917,10 @@
         case 'copy-path': S.result && copyPath(S.result.path); break;
         case 'restore': S.result && restore(S.result); break;
         case 'send': S.result && sendToChat(S.result); break;
-        case 'filter': S.galleryFilter = v; paint('gallery'); break;
-        case 'open-item': { const it = S.gallery.find((x) => x.id === v); if (it) showResult(it); break; }
-        case 'pin': { const it = S.gallery.find((x) => x.id === v); if (it) pin(v, !it.pinned); break; }
+        case 'filter': S.galleryFilter = v; if (v === 'pinned' && !S.pinnedReady && !S.pinnedLoading) loadPinned(); paint('gallery'); break;
+        case 'more': loadGallery(true); break;
+        case 'open-item': { const it = findClip(v); if (it) showResult(it); break; }
+        case 'pin': { const it = findClip(v); if (it) pin(v, !it.pinned); break; }
         case 'del': del(v); break;
         case 'out-dir': chooseDir(); break;
         case 'retry-catalog': loadCatalog(); break;
@@ -861,7 +943,14 @@
       });
       root.addEventListener('input', (ev) => {
         const t = ev.target;
-        if (t.matches('[data-vfield="prompt"]')) { S.form.prompt = t.value; S.notice = null; saveForm(); paint('foot'); }
+        if (t.matches('[data-vfield="prompt"]')) {
+          S.form.prompt = t.value; S.notice = null; saveForm(); paint('foot');
+          if (S.improve) {
+            S.improve.undo = null;
+            if (typeof g.studioImproveSync === 'function') g.studioImproveSync(root.querySelector('.st-improve'), S.form.prompt, S.improve);
+            const u = root.querySelector('.st-improve-undo'); if (u) u.remove();
+          }
+        }
         else if (t.matches('[data-vfield="negative"]')) { S.form.negativePrompt = t.value; saveForm(); }
         else if (t.matches('[data-vfield="pickerq"]')) { S.pickerQuery = t.value; paint('picker-list'); }
       });
@@ -910,6 +999,10 @@
       let h = '';
       h += '<label class="studio-lbl" for="sv-prompt">Prompt</label>'
         + '<textarea id="sv-prompt" class="studio-ta" data-vfield="prompt" rows="4" placeholder="' + (f.mode === 'image' ? 'What happens next (optional)' : 'A fox closes a book and smiles at the camera. Slow push-in.') + '">' + escHtml(f.prompt) + '</textarea>';
+      if (typeof g.studioRecentHTML === 'function') {
+        h += g.studioRecentHTML(S.recent, S.recentOpen, (v, a) => 'data-vact="' + v + '"' + (a ? ' data-v="' + escHtml(a) + '"' : ''),
+          typeof g.studioImproveHTML === 'function' ? g.studioImproveHTML(f.prompt, S.improve, (v) => 'data-vact="' + v + '"') : '');
+      }
       if (m && m.negativePrompt) {
         h += '<label class="studio-lbl" for="sv-neg">Leave out</label>'
           + '<input id="sv-neg" class="studio-input" data-vfield="negative" placeholder="blur, text, watermark" value="' + escHtml(f.negativePrompt) + '">';
@@ -1134,7 +1227,8 @@
     }
 
     function viewGallery() {
-      const pinned = S.gallery.filter((x) => x.pinned);
+      /* Loaded pages first; pinnedMore holds only older clips, so newest-first holds. */
+      const pinned = S.gallery.filter((x) => x.pinned).concat(S.pinnedMore.filter((x) => x.pinned));
       const items = S.galleryFilter === 'pinned' ? pinned : S.gallery;
       let h = '<div class="studio-gal-h"><h4>Clips</h4><span class="ct">' + S.galleryTotal + (S.galleryTotal === 1 ? ' clip' : ' clips') + '</span><span class="studio-sp"></span>'
         + '<div class="studio-seg">' + segBtn('filter', 'all', 'All', S.galleryFilter !== 'pinned') + segBtn('filter', 'pinned', 'Pinned' + (pinned.length ? ' · ' + pinned.length : ''), S.galleryFilter === 'pinned') + '</div></div>';
@@ -1155,8 +1249,12 @@
             : '<button class="studio-iconbtn" data-vact="del" data-v="' + escHtml(it.id) + '" aria-label="Delete">' + icon('trash') + '</button>')
           + '</span></div>';
       }
-      if (!items.length && !running()) h += '<div class="studio-video-ds">' + (S.galleryFilter === 'pinned' ? 'Nothing pinned yet.' : 'No clips yet.') + '</div>';
-      return h + '</div>';
+      const onPinned = S.galleryFilter === 'pinned';
+      if (!items.length && !running()) h += '<div class="studio-video-ds">' + (!onPinned ? 'No clips yet.' : S.pinnedLoading ? 'Looking for pinned clips…' : S.pinnedPartial ? 'Nothing pinned among the newest clips. Load more under All to find older ones.' : 'Nothing pinned yet.') + '</div>';
+      h += '</div>';
+      if (onPinned && items.length && S.pinnedPartial && !S.pinnedLoading) h += '<div class="studio-video-ds">Older pinned clips may be missing here. Load more under All to find them.</div>';
+      if (!onPinned && S.galleryHasMore) h += '<button class="loadmore" data-vact="more"' + (S.galleryLoading ? ' disabled' : '') + '>Load more</button>';
+      return h;
     }
 
     function shell() {
@@ -1219,6 +1317,7 @@
         paint();
         if (!S.catalog) loadCatalog();
         loadGallery(); loadOutDir(); recoverJob();
+        checkImprove();
       },
       onEvent(ev) {
         const job = ev && ev.job ? ev.job : ev;
@@ -1229,6 +1328,7 @@
         if (S.root) paint();
         if (S.job && BR()) BR().job(KIND, S.job.id).then((r) => { if (r && r.ok && r.data) onJob(r.data); });
         loadGallery();
+        checkImprove();
       },
       onHide() { S.shown = false; S.pickerOpen = false; S.libraryOpen = false; },
       focusFile,

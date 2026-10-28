@@ -128,6 +128,25 @@ describe("describeLlamaHealthFailure", () => {
     expect(managedPortsOf({})).toEqual([]);
   });
 
+  it("names both default ports when nothing answers on a local default port", () => {
+    const refused = result({ kind: "unknown", error: "fetch failed" });
+    for (const url of ["http://127.0.0.1:8080", "http://127.0.0.1:9931"]) {
+      expect(describeLlamaHealthFailure(refused, url)).toBe(
+        `local-llm /health failed at ${url}: fetch failed. ` +
+          "A current llama-server listens on port 9931 by default. " +
+          "Older builds and the Docker images use 8080.",
+      );
+    }
+  });
+
+  it("leaves the port note off when the server did answer", () => {
+    const line = describeLlamaHealthFailure(
+      result({ kind: "unknown", status: 500, error: "http 500" }),
+      "http://127.0.0.1:9931",
+    );
+    expect(line).toBe("local-llm /health failed at http://127.0.0.1:9931: http 500");
+  });
+
   it("falls back to the raw error with the probed URL", () => {
     const line = describeLlamaHealthFailure(
       result({ kind: "unknown", error: "fetch failed" }),

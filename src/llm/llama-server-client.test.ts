@@ -16,7 +16,7 @@ import { scrubError } from "../error-reporting/error-scrubber.js";
 type Handler = (url: string, init: RequestInit) => Promise<Response>;
 
 function createMockFetch(handler: Handler): typeof fetch {
-  return ((input: RequestInfo | URL, init?: RequestInit) => {
+  return ((input: string | URL | Request, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input.toString();
     return handler(url, init ?? {});
   }) as typeof fetch;
@@ -795,6 +795,86 @@ describe("LlamaServerClient.completeStream", () => {
     const result = await client.complete({ prompt: "x" });
     expect(result.reasoningContent).toBe("the plan");
   });
+
+  // ATO-329: llama-server reports a reply cut at `n_predict` only in
+  // `stop_type`, with `truncated: false` (that flag is the context
+  // overflow). Seen live: 16,384 tokens of a looping file write ended
+  // `stop: true, truncated: false` and went on to a grammar error.
+  it("reads a streamed stop_type limit as a reply cut at the cap", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async () =>
+        sseResponse([
+          'data: {"content":"{\\"tool\\":","stop":false}\n\n',
+          'data: {"content":"","stop":true,"stop_type":"limit","truncated":false,"timings":{"predicted_n":16384}}\n\n',
+        ]),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "x", maxTokens: 16_384 });
+    let final = null;
+    while (true) {
+      const next = await iterator.next();
+      if (next.done) {
+        final = next.value;
+        break;
+      }
+    }
+    expect(final!.truncated).toBe(true);
+    expect(final!.stopType).toBe("limit");
+    expect(final!.finishReason).toBe("length");
+    expect(final!.timing.predictedTokens).toBe(16_384);
+  });
+
+  it("reads stopped_limit from an older unary response the same way", async () => {
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: "partial",
+              stop: true,
+              stopped_limit: true,
+              truncated: false,
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    });
+    const result = await client.complete({ prompt: "x" });
+    expect(result.truncated).toBe(true);
+    expect(result.stopType).toBe("limit");
+    expect(result.finishReason).toBe("length");
+  });
+
+  it("keeps a context overflow and a normal stop as they were", async () => {
+    const bodies = [
+      { content: "x", stop: true, stop_type: "limit", truncated: true },
+      { content: "x", stop: true, stop_type: "eos", truncated: true },
+      { content: "x", stop: true, stop_type: "eos", truncated: false },
+    ];
+    let call = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(JSON.stringify(bodies[call++]), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+      ),
+    });
+    const overflowAtLimit = await client.complete({ prompt: "x" });
+    expect(overflowAtLimit.truncated).toBe(true);
+    expect(overflowAtLimit.finishReason).toBeUndefined();
+    const overflowAtEos = await client.complete({ prompt: "x" });
+    expect(overflowAtEos.truncated).toBe(true);
+    expect(overflowAtEos.finishReason).toBeUndefined();
+    const healthy = await client.complete({ prompt: "x" });
+    expect(healthy.truncated).toBe(false);
+    expect(healthy.stopType).toBe("eos");
+    expect(healthy.finishReason).toBeUndefined();
+  });
 });
 
 /**
@@ -926,6 +1006,112 @@ describe("LlamaServerClient.completeStream transport release", () => {
       done: true,
       value: undefined,
     });
+  });
+
+  // ATO-331 / ATO-414: a local model stuck closing `}]"}]` would stream it
+  // until the reply cap ran out. The client cuts it once the tail loops.
+  it("aborts a reply that loops and reports it as a repetition stop", async () => {
+    const encoder = new TextEncoder();
+    let signal: AbortSignal | undefined;
+    let cancelled = false;
+    let sent = 0;
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(async (_url, init) => {
+        signal = init.signal ?? undefined;
+        return new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                encoder.encode(
+                  'data: {"content":"{\\"text\\":\\"Use direct verbs","stop":false}\n\n',
+                ),
+              );
+            },
+            // One chunk round and round, never a stop: the stream only
+            // ends if the client closes it.
+            pull(controller) {
+              sent += 1;
+              controller.enqueue(
+                encoder.encode('data: {"content":"}]\\"}]","stop":false}\n\n'),
+              );
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        );
+      }),
+    });
+
+    const iterator = client.completeStream({ prompt: "hi" });
+    let final: CompletionResult | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) {
+        final = next.value;
+        break;
+      }
+    }
+    expect(final!.truncated).toBe(true);
+    expect(final!.stop).toBe(false);
+    expect(final!.earlyStop).toEqual({
+      reason: "repetition",
+      channel: "content",
+      periodChars: 5,
+    });
+    expect(final!.content.startsWith('{"text":"Use direct verbs')).toBe(true);
+    // Cut within a few hundred characters, not at the cap.
+    expect(final!.content.length).toBeLessThan(400);
+    expect(sent).toBeLessThan(100);
+    expect(signal?.aborted).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cancelled).toBe(true);
+  });
+
+  it("does not cut a long reply whose lines differ", async () => {
+    const encoder = new TextEncoder();
+    const rows = Array.from(
+      { length: 200 },
+      (_, i) => `| ${i} | item ${i} | ${(i * 37) % 101} |\n`,
+    );
+    const client = new LlamaServerClient({
+      baseUrl: "http://127.0.0.1:9999",
+      fetchImpl: createMockFetch(
+        async () =>
+          new Response(
+            new ReadableStream<Uint8Array>({
+              start(controller) {
+                for (const row of rows) {
+                  controller.enqueue(
+                    encoder.encode(
+                      `data: ${JSON.stringify({ content: row, stop: false })}\n\n`,
+                    ),
+                  );
+                }
+                controller.enqueue(
+                  encoder.encode('data: {"content":"","stop":true}\n\n'),
+                );
+                controller.close();
+              },
+            }),
+            { status: 200, headers: { "content-type": "text/event-stream" } },
+          ),
+      ),
+    });
+    const iterator = client.completeStream({ prompt: "hi" });
+    let final: CompletionResult | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) {
+        final = next.value;
+        break;
+      }
+    }
+    expect(final!.earlyStop).toBeUndefined();
+    expect(final!.truncated).toBe(false);
+    expect(final!.content).toBe(rows.join(""));
   });
 });
 

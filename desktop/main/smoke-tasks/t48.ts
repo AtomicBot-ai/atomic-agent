@@ -63,6 +63,7 @@ export async function checks48(js: Js, check: Check): Promise<void> {
   await layout(js, check);
   await routeNeeds(js, check);
   await fitBadges(js, check);
+  await memoryCard(js, check);
   await reasoning(js, check);
   await ollama(js, check);
   await advanced(js, check);
@@ -194,6 +195,67 @@ async function routeNeeds(js: Js, check: Check): Promise<void> {
       && empty.act === "llm:needs:local" && /Download a model/.test(String(empty.line)) && eafter.mode === "local" && eafter.open === false
       && /needs a model on/.test(String(eafter.msg)) && show(eafter.calls) === "[]" && eafter.logGrew === 0,
     show({ keyless, kafter, empty, eafter }),
+  );
+}
+
+/* ATO-900 item 5: a click on the memory model says what it did on its own card:
+   Starting… while it runs, Running and selected after, Failed with the reason
+   and Retry when it did not go through. */
+async function memoryCard(js: Js, check: Check): Promise<void> {
+  const r = await js<Record<string, any>>(String.raw`(() => {
+    const keep = {cfg: LIVE_CONFIG, local: LLMP.local, emb: LLMP.emb, daemon: LLMP.embDaemon, act: LLMP.embAct, status: LLMP.status, served: LLMP.served, engf: ENGF.f};
+    try {
+      LIVE_CONFIG = Object.assign({}, keep.cfg || {}, {llm: {activeTextProvider: 'local-llama', activeEmbeddingProvider: 'local-llama',
+        providers: [{id: 'local-llama', kind: 'llama-server'}]}, localModels: {mode: 'managed', managed: {modelId: 'smoke-t48'}, embeddings: {enabled: true, modelId: 'smoke-mem'}}});
+      LLMP.local = []; LLMP.served = null; ENGF.f = null;
+      LLMP.status = {mode: 'managed', daemonRunning: true, daemonPid: 4848, health: 'ok'};
+      LLMP.emb = [{id: 'smoke-mem', size: '300 MB', downloaded: true, active: true}, {id: 'smoke-mem-other', size: '120 MB', downloaded: true, active: false}];
+      const read = (id) => {
+        const box = document.createElement('div'); box.className = 'llm-pane'; box.innerHTML = llmLocalHTML();
+        const row = box.querySelector('[data-llm-row="local-embedding:' + id + '"]');
+        if (!row) return null;
+        const st = row.querySelector('.llm-memst');
+        const line = row.querySelector('.llm-memline');
+        return {state: st ? st.dataset.memcard : null, word: st ? st.textContent.trim() : null, spin: !!(st && st.querySelector('.tk-spin')),
+          radio: !!row.querySelector('.tk-radio.on'), line: line ? line.textContent.trim() : null, status: line ? line.getAttribute('role') : null,
+          acts: [...row.querySelectorAll('.llm-rowact')].map((a) => a.textContent.trim() + '=' + a.dataset.act),
+          pill: ((row.querySelector('.llm-effect') || {}).textContent || null)};
+      };
+      const out = {};
+      LLMP.embDaemon = {running: true, health: 'ok'}; LLMP.embAct = null;
+      out.running = read('smoke-mem'); out.other = read('smoke-mem-other');
+      LLMP.embAct = {id: 'smoke-mem-other', busy: true, error: null};
+      out.starting = read('smoke-mem-other');
+      LLMP.embAct = {id: 'smoke-mem-other', busy: false, error: 'Couldn’t start the memory model: port busy'};
+      out.failed = read('smoke-mem-other');
+      LLMP.embAct = null; LLMP.embDaemon = {running: false, health: 'down'};
+      out.stopped = read('smoke-mem');
+      ENGF.f = {why: 'The Atomic Chat engine could not be downloaded.', at: 1};
+      out.engine = read('smoke-mem');
+      return out;
+    } finally {
+      LIVE_CONFIG = keep.cfg; LLMP.local = keep.local; LLMP.emb = keep.emb; LLMP.embDaemon = keep.daemon; LLMP.embAct = keep.act;
+      LLMP.status = keep.status; LLMP.served = keep.served; ENGF.f = keep.engf;
+    }
+  })()`);
+  check(
+    "T48 (ATO-900): the memory model in use reads Running with the selected radio; one nobody picked adds nothing to its Use",
+    r["running"]?.state === "running" && r["running"]?.word === "Running" && r["running"]?.radio === true && r["running"]?.status === "status"
+      && r["other"]?.state === null && r["other"]?.radio === false && r["other"]?.pill === "Use",
+    show({ running: r["running"], other: r["other"] }),
+  );
+  check(
+    "T48 (ATO-900): a click shows Starting… with a spinner on the card itself, then Failed with the reason and Retry beside the pill",
+    r["starting"]?.state === "starting" && r["starting"]?.spin === true && r["starting"]?.pill === null && !r["starting"]?.acts.some((a: string) => /^Remove=/.test(a))
+      && r["failed"]?.state === "failed" && /port busy/.test(String(r["failed"]?.line))
+      && r["failed"]?.acts.some((a: string) => /^Retry=llm:embRetry:\d+$/.test(a)) && r["failed"]?.acts[0]?.startsWith("Remove="),
+    show({ starting: r["starting"], failed: r["failed"] }),
+  );
+  check(
+    "T48 (ATO-900): picked with its server down the card says Not running (the row's Start); a broken engine says so with Download again",
+    r["stopped"]?.state === "stopped" && r["stopped"]?.radio === true && r["stopped"]?.pill === "Start"
+      && r["engine"]?.state === "engine" && r["engine"]?.acts.includes("Download again=engf:retry"),
+    show({ stopped: r["stopped"], engine: r["engine"] }),
   );
 }
 

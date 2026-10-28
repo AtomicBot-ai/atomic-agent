@@ -45,7 +45,7 @@ describe("configCommand", () => {
     expect(code).toBe(0);
     const parsed = JSON.parse(stdout);
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
-    expect(parsed.localModels.url).toBe("http://127.0.0.1:8080");
+    expect(parsed.localModels.url).toBe("http://127.0.0.1:9931");
     expect(parsed.agent.maxSteps).toBe(25);
   });
 
@@ -93,6 +93,22 @@ describe("configCommand", () => {
     );
     expect(onDisk).toEqual(parseUserConfigFile(payload));
     expect(stdout).toContain("wrote ");
+  });
+
+  it("ATO-1239: a model id a newer app wrote reads, but a typed unknown id is refused", async () => {
+    await configCommand(["get"]);
+    const path = join(stateDir, "config.json");
+    const tree = JSON.parse(readFileSync(path, "utf8"));
+    tree.localModels = { ...tree.localModels, managed: { ...tree.localModels?.managed, modelId: "qwen-9.9-from-the-future" } };
+    writeFileSync(path, JSON.stringify(tree));
+    resetConfigCache();
+    stdout = "";
+    // Before ATO-1239 this read threw ConfigValidationError and every command failed.
+    expect(await configCommand(["get"])).toBe(0);
+    const before = readFileSync(path, "utf8");
+    expect(await configCommand(["set", "localModels.managed.modelId", "qwen-typo"])).toBe(1);
+    expect(stderr).toMatch(/unknown managed local model id: "qwen-typo"/);
+    expect(readFileSync(path, "utf8")).toBe(before);
   });
 
   it("set rejects malformed JSON without touching the file", async () => {

@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 /**
  * Seed a minimal `<stateDir>/config.json` so the spawned agent talks to
- * the caller's llama-server instead of the hard-coded 127.0.0.1:8080
+ * the caller's llama-server instead of the hard-coded 127.0.0.1:9931
  * default. Only emits the file when `ATOMIC_AGENT_EVAL_LLAMA_URL` is
  * set — otherwise the agent keeps its existing behaviour (and will
  * still time out loudly if the default port is not reachable, which is

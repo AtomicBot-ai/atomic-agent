@@ -24,6 +24,8 @@ const verifyRunReadonly = buildVerifyRunTool({
       executablePath: null,
       noSandbox: false,
       launchTimeoutMs: 1_000,
+      blockedDomains: [],
+      allowedDomains: [],
     },
   },
 }).readonly;

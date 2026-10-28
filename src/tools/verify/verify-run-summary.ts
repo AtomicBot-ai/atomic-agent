@@ -47,6 +47,7 @@ export function renderVerifyRunSummary(r: VerifyRunResult): string {
   const passing = checks.filter((c) => c.ok);
   const head = `verify.run ${r.kind}: ${r.ok ? "ok" : "FAILED"}${r.isolated ? "" : " (ran in place — not isolated)"}`;
   const lines: string[] = [head, ...failing.map(checkLine), outcomeLine(r)];
+  if (r.hint !== undefined) lines.push(`note: ${r.hint}`);
   lines.push(...listLines("uncaught errors", r.errors));
   lines.push(...listLines("console errors", r.consoleErrors));
   lines.push(...listLines("missing selectors", r.missingSelectors));

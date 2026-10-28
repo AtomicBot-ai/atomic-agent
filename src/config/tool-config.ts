@@ -42,6 +42,15 @@ export interface RuntimeToolsConfig {
     jobMaxMs: number;
     /** Detached jobs running per session; the next detach evicts the oldest. */
     maxJobs: number;
+    /**
+     * Secret-looking variables a shell command still inherits from the
+     * agent's environment; every other one is stripped (ATO-347).
+     */
+    envPassthrough: string[];
+  };
+  screen: {
+    /** Registers `os.screen.*` (macOS only). Mirrors `UserToolsConfig.screen`. */
+    enabled: boolean;
   };
 }
 
@@ -70,6 +79,28 @@ export interface UserToolsConfig {
      * positive integer.
      */
     maxJobs: number;
+    /**
+     * Variables an `os.shell.run` command inherits from the agent's
+     * environment even though they look like secrets. Without this, a
+     * command gets the agent's environment minus anything named like a
+     * KEY, TOKEN, SECRET or PASSWORD and the known provider keys (see
+     * `src/sandbox/command-env.ts`). Default `GITHUB_TOKEN` and
+     * `NOTION_API_KEY`: the bundled `github` and `notion` skills read
+     * them through the shell (`gh`, `printenv`). `[]` strips those too.
+     * Matched without regard to case.
+     */
+    envPassthrough: string[];
+  };
+  screen: {
+    /**
+     * Computer use on macOS (ATO-525): `os.screen.capture` takes
+     * screenshots (asking as `screen_capture` below approval level 3)
+     * and `os.screen.{click,type,key}` drive the real mouse and
+     * keyboard, each input asking as `screen_control` below level 4. Default `false`: opt-in, and read at start, so
+     * turning it on takes a restart. macOS also asks for Screen
+     * Recording and Accessibility permission for the host app.
+     */
+    enabled: boolean;
   };
 }
 
@@ -86,13 +117,27 @@ export function createToolsDefaults(): UserToolsConfig {
       // Three concurrent jobs is a server, a watcher and a build; more
       // is a model that has stopped waiting for anything.
       maxJobs: 3,
+      // Only the two tokens the bundled skills read through the shell
+      // (`gh` in `github`, `printenv` in `notion`), both pasted by the
+      // operator for that purpose. Provider keys and bot tokens are not
+      // here, so a command the model runs never sees them (ATO-347).
+      envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
     },
+    // Off until the operator asks for it: a model that can click and
+    // type anywhere is not a default.
+    screen: { enabled: false },
   };
 }
 
+/**
+ * `raw` is the `tools.shell` block (the historical signature);
+ * `rawScreen` the `tools.screen` block. A file without either takes the
+ * defaults — `tools.screen` is unversioned and additive.
+ */
 export function parseToolsConfig(
   raw: Record<string, unknown>,
   readDefaults: () => UserToolsConfig,
+  rawScreen: Record<string, unknown> = {},
 ): UserToolsConfig {
   return {
     shell: {
@@ -110,6 +155,21 @@ export function parseToolsConfig(
       maxJobs: parsePositiveInt(
         raw.maxJobs ?? readDefaults().shell.maxJobs,
         "tools.shell.maxJobs",
+      ),
+      // A copy, so a caller mutating the parsed list cannot reach the
+      // defaults. A file without the field (every pre-ATO-347 file)
+      // takes the default.
+      envPassthrough: [
+        ...(parseStringArrayOrNull(
+          raw.envPassthrough ?? readDefaults().shell.envPassthrough,
+          "tools.shell.envPassthrough",
+        ) ?? []),
+      ],
+    },
+    screen: {
+      enabled: parseBool(
+        rawScreen.enabled ?? readDefaults().screen.enabled,
+        "tools.screen.enabled",
       ),
     },
   };

@@ -23,9 +23,9 @@
 
 import { curatedMetaIds } from "../model-catalog.js";
 import {
-  APPROVAL_CATEGORIES, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
+  APPROVAL_CATEGORIES, BACKEND_FAIL_REASONS, ENGINE_FAILURE_STAGES, ENGINE_FAULTS, ENGINE_RECOVERY_VIA, LOCAL_ENGINES, cleanAppVersion, cleanLocale, cleanQuant, CODING_MODES, CONFIGURED_PROVIDERS, DAEMON_EFFECTS,
   DOWNLOAD_FAIL_REASONS, DOWNLOAD_TRIGGERS, ERROR_CATEGORIES, FIT, GONE_REASONS, IMPORT_PARTS, IMPORT_SOURCES,
-  NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
+  NODE_SIGNALS, ONBOARDING_STEPS, PROVIDER_PRESETS, RAM_BUCKETS, RESTART_TRIGGERS, RUN_MODES, SETTINGS_PANES, SLASH_COMMANDS,
   SUPERVISOR_KINDS, SWITCH_REFUSALS, uiActionOk, UI_VIA,
 } from "./catalog-values.js";
 
@@ -79,7 +79,7 @@ const downloadProps: Record<string, PropSpec> = {
 
 export const EVENTS: Record<string, EventSpec> = {
   /* ---- lifecycle and health ---- */
-  app_opened: { owner: "main", props: { launch_kind: en(["cold", "reopen"]), fresh_state: bool, prev_session_crashed: bool } },
+  app_opened: { owner: "main", props: { launch_kind: en(["cold", "reopen"]), fresh_state: bool, prev_session_crashed: bool, prev_session_end: en(["clean", "os_shutdown", "crashed", "killed"]), in_applications: bool } },
   app_ready: { owner: "main", props: { ms_to_window: int({ nullable: true }), ms_to_agent: int({ nullable: true }), backend_up_at_launch: bool } },
   agent_start_failed: {
     owner: "main",
@@ -90,7 +90,7 @@ export const EVENTS: Record<string, EventSpec> = {
       ms,
     },
   },
-  agent_restarted: { owner: "main", props: { trigger: en(["manual", "switch", "auto", "other"]) } },
+  agent_restarted: { owner: "main", props: { trigger: en(RESTART_TRIGGERS) } },
   window_crashed: {
     owner: "main",
     props: {
@@ -175,7 +175,24 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   local_backend_started: {
     owner: "main",
-    props: { via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }), engine: en(LOCAL_ENGINES, { nullable: true }) },
+    props: {
+      via: en(["launch", "swap"]), result: en(DAEMON_EFFECTS), model_id: en(modelIds(), { fallback: "hf_custom" }), ms: int({ nullable: true }), engine: en(LOCAL_ENGINES, { nullable: true }),
+      // ATO-278: why a start failed, as a code (start_failed only, else null); never the error or log text.
+      reason: en(BACKEND_FAIL_REASONS, { nullable: true }),
+    },
+  },
+  /* ATO-278: the managed local server the app had brought up died mid-session
+     (the engine watchdog, main/daemon-supervisor.ts, saw it down; once per
+     death, not again for a restart of it that fails). `reason` is a code for
+     the server log's failure line, `up_ms` how long it had been up. */
+  local_backend_crashed: {
+    owner: "main",
+    props: {
+      reason: en(BACKEND_FAIL_REASONS),
+      model_id: en(modelIds(), { fallback: "hf_custom" }),
+      up_ms: int({ nullable: true }),
+      engine: en(LOCAL_ENGINES, { nullable: true }),
+    },
   },
   /* The window put up the local engine's recovery card (main/engine-failure.ts):
      the engine did not download, verify or start. The failure itself is the
@@ -211,6 +228,15 @@ export const EVENTS: Record<string, EventSpec> = {
       ms,
     },
   },
+  /* ATO-1021: every switch that moved the running agent, and how — live (POST /api/llm/active) or by a restart. */
+  model_switched: {
+    owner: "main",
+    props: {
+      live: bool,
+      restart: bool,
+      ms,
+    },
+  },
   fusion_configured: {
     owner: "main",
     props: {
@@ -224,7 +250,7 @@ export const EVENTS: Record<string, EventSpec> = {
   chat_turn_ui: {
     owner: "main",
     props: {
-      outcome: en(["completed", "failed", "cancelled"]),
+      outcome: en(["completed", "stopped_early", "failed", "cancelled"]),
       ms_to_first_token: int({ nullable: true }),
       ms_total: ms,
       queue_wait_ms: ms,
@@ -233,6 +259,7 @@ export const EVENTS: Record<string, EventSpec> = {
       tool_calls: int(),
       tools_used: { kind: "tools" },
       error_category: en(ERROR_CATEGORIES, { nullable: true }),
+      http_status: { kind: "int", min: 100, max: 599, nullable: true },
       coding_mode: en(CODING_MODES, { nullable: true }),
     },
   },
@@ -243,7 +270,7 @@ export const EVENTS: Record<string, EventSpec> = {
   approval_answered: {
     owner: "ui",
     props: {
-      choice: en(["allow_once", "deny", "abort", "deny_with_text"]),
+      choice: en(["allow_once", "allow_in_chat", "deny", "abort", "deny_with_text"]),
       category: en(APPROVAL_CATEGORIES),
       level: int({ max: 9, nullable: true }),
       input: en(["click", "key"]),

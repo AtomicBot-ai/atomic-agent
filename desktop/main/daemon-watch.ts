@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 import { backendInstalled, localDaemonRunning, managedEngineNow, modelsStop, onDaemonLifecycle, portAnswer, startsInFlight } from "./agent-cli.js";
 import type { AgentLogLevel } from "./agent-output.js";
+import { localBackendCrashed, readServerFaultWith } from "./analytics/index.js";
 import {
   bringUpAtLaunch,
   bringUpInFlight,
@@ -23,6 +24,7 @@ import {
 } from "./daemon-supervisor.js";
 import { isLoopbackOnPort, managedDataDir } from "./local-llama-key.js";
 import { resolveRunMode, type RunModeConfig, type RunModeProvider } from "./run-mode.js";
+import { describeFaultIn } from "./server-fault-line.js";
 import { DESKTOP_STATE_DIR } from "./state-dir.js";
 
 /**
@@ -136,12 +138,8 @@ function describeFault(): string | null {
   try {
     const cfg = readConfig();
     const dir = managedDataDir(cfg?.localModels?.managed?.dataDirOverride ?? null);
-    const raw = readFileSync(join(dir, "llama-server.log"), "utf8");
-    const lines = raw.slice(-16_384).split("\n").map((l) => l.trim()).filter(Boolean).slice(-80);
-    const hit = [...lines].reverse().find((l) =>
-      /out of memory|failed to (load|allocate|initiali[sz]e)|error loading model|couldn'?t bind|address already in use|abort|segmentation fault/i.test(l),
-    );
-    return hit ? (hit.length > 160 ? `${hit.slice(0, 157)}…` : hit) : null;
+    // ATO-278: this run's lines only (after the last launch marker), never an earlier run's fault.
+    return describeFaultIn(readFileSync(join(dir, "llama-server.log"), "utf8"));
   } catch {
     return null;
   }
@@ -275,7 +273,11 @@ const deps: DaemonSupervisorDeps = {
   notify: (n) => host.notify(n),
   say: (line) => host.say(line),
   describeFault,
+  // ATO-278: a mid-session death, to analytics as a code (analytics/setup localBackendCrashed); the log line stays here.
+  died: ({ fault, upMs }) => localBackendCrashed(readConfig()?.localModels?.managed?.modelId, fault, upMs),
 };
+// ATO-278: a failed start's `reason` reads the same log line (analytics/setup localBackendStarted).
+readServerFaultWith(describeFault);
 
 /** The one supervisor the app runs. */
 export const daemonWatch = new DaemonSupervisor(deps);
@@ -324,27 +326,33 @@ export function onAgentFrame(ev: { kind?: unknown; payload?: unknown }): void {
  * (startLocalDaemonAtBoot, beside serve's own start) brought it up only after
  * the chat model had loaded — tens of seconds after serve had looked. So
  * semantic search was off for every session begun on the local route. It is
- * started first now, alone (it is small, and up in seconds), before serve
- * starts: only when the route needs the local server and the file wants
- * embeddings (backend-switch pairEmbeddingServer), in the daemon's turn, and
- * never holding the agent back past `limitMs`.
+ * started first now, alone (it is small, and up in seconds): only when the
+ * file wants embeddings (backend-switch pairEmbeddingServer), in the daemon's
+ * turn. ATO-378: on a cloud chat route too, since memory search uses the local
+ * embedding model whatever the chat route; `models start-embedding` starts
+ * nothing when the model is not downloaded.
+ *
+ * ATO-1024: it no longer holds the agent back. main.ts starts `atag serve`
+ * beside it and, once this answers `up`, has the running
+ * agent attach the server live (POST /api/memory/embeddings/reconnect) instead
+ * of the start waiting up to 20 s for it. Queued in the daemon's turn at once,
+ * so it still comes ahead of the launch's chat model start. `up` is whether
+ * the embedding server answers now (paired just now, or already running).
  */
-export async function pairEmbeddingsBeforeServe(limitMs = 20_000): Promise<void> {
-  if (!routeNeedsDaemon(readConfig())) return;
+export async function pairEmbeddingsAtLaunch(opts: { restarts?: boolean } = {}): Promise<{ up: boolean; paired: boolean; line?: string } | null> {
   /* Atomic Core with its backend not on disk yet: an embedding start would
      install it first, inside its 60 s cap, ahead of the launch's own install
      with its bar (main.ts startLocalDaemonAtBoot). Skipped; the embedding
      server is paired after the chat model's first start. */
-  if (managedEngineNow() === "atomic-core" && !backendInstalled()) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (managedEngineNow() === "atomic-core" && !backendInstalled()) return null;
   const mark = stopsMark();
-  const pair = inDaemonTurn(() => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark }), (): { paired: boolean; line?: string } => ({ paired: false }));
-  const r = await Promise.race([
-    pair.catch(() => null),
-    new Promise<null>((res) => { timer = setTimeout(() => res(null), limitMs); }),
-  ]);
-  if (timer) clearTimeout(timer);
-  if (r?.line) host.say(`[desktop] ${r.line}`);
+  const pair = inDaemonTurn(
+    () => pairEmbeddingServer({ stillWanted: () => stopsMark() === mark, restarts: opts.restarts ?? true }),
+    (): { paired: boolean; line?: string; up?: boolean } => ({ paired: false }),
+  );
+  const r = await pair.catch(() => null);
+  if (!r) return null;
+  return { up: r.up === true, paired: r.paired, ...(r.line ? { line: r.line } : {}) };
 }
 
 /* ---------------------------------------------------------------

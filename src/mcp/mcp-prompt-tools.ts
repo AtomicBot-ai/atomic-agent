@@ -182,6 +182,7 @@ export function buildMcpPromptListTool(manager: McpManager): ToolDefinition {
 export function buildMcpPromptGetTool(manager: McpManager): ToolDefinition {
   return {
     name: "mcp.prompt.get",
+    untrustedOutput: "an MCP prompt",
     description:
       "Render a prompt template from an MCP server. Args: `server` (string, required), `name` (string, required), optional `arguments` (object of string values for the template parameters). Returns the concatenated rendered message text.",
     readonly: true,

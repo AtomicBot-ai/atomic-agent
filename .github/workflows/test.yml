@@ -25,10 +25,14 @@ on:
   push:
     branches: [main]
 
-# A new push to the same PR supersedes the previous run.
+# A new push to the same PR supersedes the previous run. Pushes to main are
+# never cancelled: two merges seconds apart can start their runs out of order,
+# and cancelling would leave the newest main commit unchecked (ATO-400). Each
+# main push gets its own group (keyed by commit), because a shared group would
+# still keep only one pending run and silently drop the rest.
 concurrency:
-  group: test-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: test-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:

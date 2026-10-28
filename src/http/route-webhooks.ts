@@ -6,6 +6,7 @@ import {
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
+import { secretEquals } from "./secret-equal.js";
 import { renderWebhookTemplate } from "./webhook-template.js";
 import type { WebhookConfig } from "../config/index.js";
 import { TaskValidationError } from "../tasks/index.js";
@@ -28,7 +29,8 @@ import { TaskValidationError } from "../tasks/index.js";
  * Responses:
  *  - 202 `{ taskId }` on success
  *  - 404 when the webhook name is unknown or `tasks.enabled` is false
- *  - 401 on bad/missing secret header (only when the config declares one)
+ *  - 401 on bad/missing secret header (only when the config declares one;
+ *    compared in constant time, see `secretEquals`)
  *  - 400 on invalid JSON body, unknown template fields, or schedule validation
  */
 export function createWebhookHandler(): HttpHandler {
@@ -57,7 +59,7 @@ export function createWebhookHandler(): HttpHandler {
     }
     if (webhook.secret) {
       const provided = getHeader(req, "x-webhook-secret");
-      if (provided !== webhook.secret) {
+      if (!secretEquals(provided, webhook.secret)) {
         sendError(
           res,
           401,

@@ -72,10 +72,10 @@ send `ui` events.
 
 | Group | Main process | Renderer |
 |---|---|---|
-| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
+| Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
 | Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out), `custom_endpoint_tested` |
-| Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `engine_recovery_shown`, `backend_switched`, `fusion_configured` | |
-| Chat | `chat_turn_ui` | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
+| Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`, `engine_recovery_shown`, `backend_switched`, `model_switched`, `fusion_configured` | |
+| Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
 | Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
 | App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
 
@@ -96,8 +96,16 @@ Notes on specific properties:
   `userData/updates.json` just before it quit to install.
 - `quant`: an upper-cased GGUF tag (`Q4_K_M`, `IQ3_XXS`, `F16`, `BF16`,
   `MXFP4`), else `unknown`. `locale`: `en` or `en-US` shaped, else dropped.
+- `app_opened.prev_session_end` (ATO-1030, cold launches): `clean`, or why the last
+  session did not quit cleanly: `os_shutdown` (Windows `session-end`, macOS/Linux
+  `powerMonitor` shutdown), `crashed` (a crashed process or an uncaught error was
+  seen first), `killed` (nothing seen: Force Quit, End task, power loss, a frozen
+  window closed by force).
 - `backend_switched`: only for an explicit switch (`cli:switchBackend`,
   `cli:enterFusion`) or when the effective run mode actually changed.
+- `model_switched` (ATO-1021): every switch that moved the running agent,
+  `live` when it took the route through `POST /api/llm/active`, `restart` when
+  `atag serve` was restarted for it; `ms` from the click to the answer.
 - `model_configured` and `analytics_disabled` are runtime events in the
   agent's schema; the shell sends them because the bundled agent does not
   under `atag serve`. `model_configured.provider` is `llama.cpp` for the
@@ -124,6 +132,24 @@ Notes on specific properties:
   load_failed / missing_lib / crash / unknown, or null when the log names
   none. The line itself, the restart's error text and its reason are never
   sent.
+- `local_backend_started.reason` (ATO-278): why the start failed, on
+  `result: start_failed` only (null otherwise), as a code: oom / port_in_use /
+  load_failed / missing_lib / crash (read from the one line that names a
+  failure in the start's error text, its stderr tail, or the server log's
+  current run, after the last launch marker), timeout (the app's own time
+  limit on `models start`, nothing else), exited_after_ready (the server came
+  up, then stopped answering while the start waited on it), or other. The
+  error text, the stderr and the log line are never sent.
+- `local_backend_crashed` (ATO-278): the managed local server the app had
+  brought up died mid-session, as the engine watchdog saw it. Sent once per
+  death, as the watchdog's recovery begins, and not again while a restart of
+  it keeps failing (those are `local_backend_supervised`); never for a server
+  that had not come up since its last start (a failed start after Studio
+  hands the memory back). `reason` is the
+  same code list as above, from the server log's failure line (other when it
+  names none); `model_id` as on `local_backend_started`; `up_ms` how long the
+  server had been up; `engine` as above. Only seen while the watchdog runs:
+  `localModels.managed.autoRestart` on and a route that needs the server.
 - `llama_runtime_updated.trigger`: `setup` (the first-run runtime phase),
   `settings` (Settings' engine install or update, and Download again), or
   `launch` (the launch installing Atomic Core's backend before it starts the

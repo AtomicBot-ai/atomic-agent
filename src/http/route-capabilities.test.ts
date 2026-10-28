@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
+import { recordProjectTrust } from "../config/skill-policy-commands.js";
 
 describe("GET /api/capabilities", () => {
   let harness: Harness | null = null;
@@ -47,6 +48,20 @@ describe("GET /api/capabilities", () => {
     expect(
       (await fetchCapabilities(harness.baseUrl)).agent.approvalRequired,
     ).toBe(true);
+  });
+
+  it("advertises the approval decisions the resolve route accepts", async () => {
+    // ATO-473: the desktop draws "Allow in this chat" only when listed.
+    harness = await startTestHarness();
+    const res = await fetch(`${harness.baseUrl}/api/capabilities`);
+    const body = (await res.json()) as {
+      agent: { approvalDecisions: string[] };
+    };
+    expect(body.agent.approvalDecisions).toEqual([
+      "allow-once",
+      "allow-in-chat",
+      "deny",
+    ]);
   });
 
   it("lists only the tools the agent is offered under the current config", async () => {
@@ -143,6 +158,7 @@ describe("GET /api/capabilities skill truncation", () => {
       ].join("\n"),
       "utf8",
     );
+    recordProjectTrust(harness.workingDir, "trusted", { skills: ["late"], instructions: [] });
     await harness.runtime.refreshSkills();
 
     expect((await fetchSkills(harness.baseUrl)).skillsOmitted).toBe(before + 1);

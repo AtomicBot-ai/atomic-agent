@@ -8,9 +8,16 @@ import { Menu, shell, type MenuItemConstructorOptions } from "electron";
  * command palette cannot drift apart: both dispatch the same id, one
  * through IPC and one in-process.
  */
-export function buildMenu(send: (command: string) => void): void {
-  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(send, process.platform)));
+export function buildMenu(send: (command: string) => void, toggles: MenuToggles = NO_TOGGLES): void {
+  Menu.setApplicationMenu(Menu.buildFromTemplate(menuTemplate(send, process.platform, toggles)));
 }
+
+/** ATO-598: the Agent menu's two checkboxes, as main has them now. */
+export interface MenuToggles {
+  keepRunning: boolean;
+  startAtLogin: boolean;
+}
+const NO_TOGGLES: MenuToggles = { keepRunning: false, startAtLogin: false };
 
 /**
  * The template, per platform. macOS keeps its app menu (About, Settings,
@@ -19,7 +26,11 @@ export function buildMenu(send: (command: string) => void): void {
  * and Privacy under Edit, Run Setup Again under File, About under Help, and
  * Exit at the bottom of File. Their Window menu drops the macOS-only roles.
  */
-export function menuTemplate(send: (command: string) => void, platform: NodeJS.Platform): MenuItemConstructorOptions[] {
+export function menuTemplate(
+  send: (command: string) => void,
+  platform: NodeJS.Platform,
+  toggles: MenuToggles = NO_TOGGLES,
+): MenuItemConstructorOptions[] {
   const mac = platform === "darwin";
   /* Option-chords become Shift-chords off macOS: on Windows AltGr IS
      Ctrl+Alt, so Ctrl+Alt+E would swallow the euro sign (and Ctrl+Alt+0 the
@@ -90,12 +101,23 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
         item("Skills", "room:skills", "CommandOrControl+3"),
         item("Memory", "settings:memory", "CommandOrControl+4"),
         sep,
-        item("Toggle Sidebar", "toggle:sidebar", "CommandOrControl+0"),
+        /* ATO-900: ⌘\\ (Ctrl+\\), the sidebar chord of VS Code and Cursor.
+           ⌘0 is Actual Size, as in every Mac app and browser. */
+        item("Toggle Sidebar", "toggle:sidebar", "CommandOrControl+\\"),
         item("Toggle Inspector", "toggle:inspector", alt("0")),
         item("Toggle Console", "toggle:console", "Shift+CommandOrControl+Y"),
         sep,
         item("Expand All Tool Cards", "cards:expand", alt("E")),
         item("Collapse All Tool Cards", "cards:collapse", alt("K")),
+        sep,
+        /* ATO-544: page zoom, so text can be made larger (WCAG 1.4.4).
+           ATO-900: Actual Size is ⌘0 (Ctrl+0), the chord every Mac app and
+           browser gives it. ⌘= is the visible Zoom In because ⌘+ needs Shift
+           on most layouts; the hidden twins take ⌘+ and the numpad keys. */
+        ...zoomItems(),
+        sep,
+        // ATO-1046: each new reply read aloud with the system's voices (renderer tts.js).
+        item("Read Replies Aloud", "tts:auto"),
         sep,
         { label: "Appearance", submenu: [
           item("System", "theme:system"),
@@ -137,9 +159,15 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
     {
       label: "Agent",
       submenu: [
-        sep,
-        sep,
         item("Restart Agent Runtime", "agent:restart"),
+        // ATO-1127: run chats on an agent on another computer or a VPS (main.ts openRemoteConnect).
+        item("Connect to Another Computer…", "remote:open"),
+        sep,
+        /* ATO-598: main's own (main.ts handles `bg:*`); off by default. On
+           macOS the app already stays in the Dock, so the first one only adds
+           the menu bar icon there. */
+        { label: "Keep Running After the Window Closes", type: "checkbox", checked: toggles.keepRunning, click: () => send("bg:keepRunning") },
+        { label: "Start at Login", type: "checkbox", checked: toggles.startAtLogin, click: () => send("bg:startAtLogin") },
       ],
     },
     mac
@@ -165,4 +193,19 @@ export function menuTemplate(send: (command: string) => void, platform: NodeJS.P
 
   if (!mac) template.shift();
   return template;
+}
+
+/** View › Actual Size / Zoom In / Zoom Out (ATO-544), plus hidden twins for the other keys that mean the same. */
+export function zoomItems(): MenuItemConstructorOptions[] {
+  const hidden = (role: "zoomIn" | "zoomOut" | "resetZoom", accelerator: string): MenuItemConstructorOptions =>
+    ({ role, accelerator, visible: false, acceleratorWorksWhenHidden: true });
+  return [
+    { role: "resetZoom", label: "Actual Size", accelerator: "CommandOrControl+0" },
+    { role: "zoomIn", label: "Zoom In", accelerator: "CommandOrControl+=" },
+    { role: "zoomOut", label: "Zoom Out", accelerator: "CommandOrControl+-" },
+    hidden("zoomIn", "CommandOrControl+Plus"),
+    hidden("zoomIn", "CommandOrControl+numadd"),
+    hidden("zoomOut", "CommandOrControl+numsub"),
+    hidden("resetZoom", "CommandOrControl+num0"),
+  ];
 }

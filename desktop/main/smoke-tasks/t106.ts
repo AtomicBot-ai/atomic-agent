@@ -213,11 +213,14 @@ export async function checks106(js: Js, check: Check): Promise<void> {
       padEnter: shortcutKey({key: 'Enter', code: 'NumpadEnter'}),
       padComma: shortcutKey({key: ',', code: 'NumpadDecimal'}),
       padDelete: shortcutKey({key: 'Delete', code: 'NumpadDecimal'}),
+      // ATO-900: the sidebar chord is ⌘\\; a layout that types a letter on that key still reaches it.
+      ruBackslash: shortcutKey({key: 'ё', code: 'Backslash'}),
     })`);
     check(
       "T106 (ATO-226): a shortcut is read by the physical key when the layout types a non-Latin character, and as typed on a Latin layout",
       keys["ru"] === "k" && keys["ruShift"] === "K" && keys["ruPeriod"] === "." && keys["ruDigit"] === "1"
-        && keys["azerty"] === ":" && keys["padEnter"] === "Enter" && keys["padComma"] === "." && keys["padDelete"] === "Delete",
+        && keys["azerty"] === ":" && keys["padEnter"] === "Enter" && keys["padComma"] === "." && keys["padDelete"] === "Delete"
+        && keys["ruBackslash"] === "\\",
       show(keys),
     );
 

@@ -6,6 +6,7 @@ import "./node-env-bootstrap.js";
 import { isSea } from "node:sea";
 import { argv } from "node:process";
 import { exitAfterFlush } from "./exit-after-flush.js";
+import { ensureUtf8Console } from "./windows-console-utf8.js";
 import { runAgentCommand } from "./run-agent.js";
 import { debugReplCommand } from "./debug-repl.js";
 import { skillCommand } from "./skill.js";
@@ -18,6 +19,8 @@ import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
+import { doctorCommand } from "./doctor-command.js";
+import { dataCommand } from "./data-command.js";
 import { tuiCommand } from "../tui/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { getAppVersion } from "../version.js";
@@ -122,6 +125,16 @@ const COMMANDS: CommandDescriptor[] = [
     run: importCommand,
   },
   {
+    name: "doctor",
+    summary: "Check config, its file mode and MCP commands; --fix repairs (with backup), --undo",
+    run: doctorCommand,
+  },
+  {
+    name: "data",
+    summary: "Back up, restore, move or reset the data folder (shared with the desktop app)",
+    run: dataCommand,
+  },
+  {
     name: "update",
     summary:
       "Self-update the installed binary from GitHub Releases (--check to probe only)",
@@ -197,6 +210,8 @@ function userArgsFromArgv(): string[] {
 installTransportDeadlines();
 
 async function main(): Promise<number> {
+  // Windows only: UTF-8 console code page for this run, restored on exit.
+  ensureUtf8Console();
   const [command, ...rest] = userArgsFromArgv();
   if (command === "-h" || command === "--help") {
     printHelp();

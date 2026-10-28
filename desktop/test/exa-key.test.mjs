@@ -132,6 +132,9 @@ function fixture(over = {}) {
     esc, ic:h.ic, nid:() => 'n' + (++id), summariseArgs:() => '', reasonStepAt:() => 1, CATEGORY_LABEL:{},
     item:(m) => '<row ' + m.id + '>', groupCard:(run) => '<group ' + run.map((m) => m.id).join(',') + '>',
     systemRun:() => '', exaKeyRefresh(){}, URL,
+    // ATO-464 turn folds are covered in turn-summary tests; here no turn folds, so rows render as before.
+    turnFoldsOf:() => new Map(), TURN_OPEN:new Set(), STEPS:{always:false}, toolState:() => 'ok',
+    turnSumHTML:() => '', turnSumMs:() => 0, dur:() => '',
   }, over));
   vm.runInContext(exaSource, c);
   for (const name of ['sessionTurnsToLog', 'renderItems', 'exaKeyBusy', 'exaKeyState', 'exaKeyTurnHTML', 'exaKeySave', 'exaKeyAct', 'toolSettle']) {

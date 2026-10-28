@@ -48,7 +48,7 @@ describe("loadConfig", () => {
     expect(existsSync(path)).toBe(true);
     const written = JSON.parse(readFileSync(path, "utf8"));
     expect(written.version).toBe(USER_CONFIG_VERSION);
-    expect(config.localModels.url).toBe("http://127.0.0.1:8080");
+    expect(config.localModels.url).toBe("http://127.0.0.1:9931");
     expect(config.localModels.completionMaxTokens).toBe(16_384);
     expect(config.log.level).toBe("info");
     expect(config.agent.approvalLevel).toBe(1);
@@ -255,7 +255,13 @@ describe("loadConfig", () => {
         approvalLevel: 5,
       },
       tools: {
-        shell: { defaultTimeoutMs: 1_800_000, jobMaxMs: 7_200_000, maxJobs: 5 },
+        shell: {
+          defaultTimeoutMs: 1_800_000,
+          jobMaxMs: 7_200_000,
+          maxJobs: 5,
+          envPassthrough: ["GITHUB_TOKEN"],
+        },
+        screen: { enabled: false },
       },
     });
     const config = loadConfig();
@@ -268,6 +274,7 @@ describe("loadConfig", () => {
       defaultTimeoutMs: 1_800_000,
       jobMaxMs: 7_200_000,
       maxJobs: 5,
+      envPassthrough: ["GITHUB_TOKEN"],
     });
   });
 

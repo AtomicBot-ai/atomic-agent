@@ -291,6 +291,9 @@ export function createTraceRecorder(
           modelId: completion.modelId,
           stop: completion.stop,
           truncated: completion.truncated,
+          ...(completion.stopType !== undefined
+            ? { stopType: completion.stopType }
+            : {}),
           ...(completion.generationId !== undefined
             ? { generationId: completion.generationId }
             : {}),
@@ -334,6 +337,19 @@ export function createTraceRecorder(
           stepIndex: inner.stepIndex,
           attempt: inner.attempt,
           reason: inner.reason,
+        });
+        return;
+      case "answer_continued":
+        push({
+          type: "answer_continued",
+          seq: nextSeq(),
+          sessionId,
+          ts: now(),
+          turnIndex: currentTurnIndex,
+          stepIndex: inner.stepIndex,
+          cause: inner.cause,
+          partialChars: inner.partialChars,
+          outcome: inner.outcome,
         });
         return;
       case "batch_trimmed":
@@ -668,6 +684,7 @@ export function createTraceRecorder(
             ...(event.requestedMaxTokens !== undefined
               ? { requestedMaxTokens: event.requestedMaxTokens }
               : {}),
+            ...(event.repetitive === true ? { repetitive: true } : {}),
             retry: event.retry.kind,
             retryValue:
               event.retry.kind === "fit_window"

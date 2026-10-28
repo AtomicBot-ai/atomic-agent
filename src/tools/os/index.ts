@@ -22,7 +22,7 @@ import {
 } from "./archive/index.js";
 import { buildOsHttpRequestTool } from "./web/http-request.js";
 import { buildOsWebFetchTool } from "./web/web-fetch.js";
-import { buildOsWebSearchTool } from "./web-search/index.js";
+import { buildOsWebSearchTool, type WebSearchKeyHelp } from "./web-search/index.js";
 import { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 import { osWindowListTool, osWindowFocusTool } from "./window.js";
 import { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
@@ -76,9 +76,12 @@ export {
 export { buildOsHttpRequestTool } from "./web/http-request.js";
 export { buildOsWebFetchTool } from "./web/web-fetch.js";
 export { buildOsWebSearchTool } from "./web-search/index.js";
+export type { WebSearchKeyHelp } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
+export { OS_SCREEN_TOOL_NAMES, registerOsScreenTools } from "./screen/index.js";
+export type { RegisterOsScreenToolsOptions } from "./screen/index.js";
 export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 export { osFsHashTool } from "./fs/fs-hash.js";
 export { osFsDiffTool } from "./fs/fs-diff.js";
@@ -168,6 +171,8 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * (embedders, tests) leaves only the F36 warn-and-save path.
    */
   resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /** The agent's reply before the turn's user message, for the same refusal (ATO-860). */
+  resolvePreviousReply?: (sessionId: string) => string | undefined;
   /** A fan-out's declared inputs per worker session (`fs-declared-inputs.ts`); omitted declares nothing. */
   declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
   /**
@@ -184,6 +189,12 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * the tool keeps a private one whose jobs die only at the ceiling.
    */
   shellJobs?: ShellJobRegistry;
+  /**
+   * Where the user adds an Exa key, for the advice in an `os.web.search`
+   * error (ATO-345). The terminal UI passes `integrations-hub`; omitted
+   * keeps the desktop / `.env` advice.
+   */
+  webSearchKeyHelp?: WebSearchKeyHelp;
 }
 
 export function registerOsTools(
@@ -195,6 +206,7 @@ export function registerOsTools(
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
       defaultTimeoutMs: options.config.tools.shell.defaultTimeoutMs,
+      envPassthrough: options.config.tools.shell.envPassthrough,
       ...(options.shellPolicy === undefined
         ? {}
         : { shellPolicy: options.shellPolicy }),
@@ -215,6 +227,9 @@ export function registerOsTools(
     ...(options.resolveOriginalRequest === undefined
       ? {}
       : { resolveOriginalRequest: options.resolveOriginalRequest }),
+    ...(options.resolvePreviousReply === undefined
+      ? {}
+      : { resolvePreviousReply: options.resolvePreviousReply }),
     ...(options.declaredInputs === undefined
       ? {}
       : { declaredInputs: options.declaredInputs }),
@@ -253,6 +268,9 @@ export function registerOsTools(
     buildOsWebSearchTool({
       config: options.config,
       stateDir: options.stateDir,
+      ...(options.webSearchKeyHelp === undefined
+        ? {}
+        : { keyHelp: options.webSearchKeyHelp }),
     }),
   );
   registry.register(buildOsWebFetchTool({ config: options.config }));

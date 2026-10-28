@@ -96,6 +96,28 @@ describe("handleLlmPanelKey", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
+  it("stops only the local chat server on a cloud pick, keeping memory search (ATO-376)", () => {
+    const base = seededState();
+    const state = {
+      ...base,
+      llmPanel: { ...base.llmPanel, mode: "cloud" as const, cloudCursor: 1 },
+    };
+    const onStop = vi.fn();
+    const onChatStop = vi.fn();
+    handleLlmPanelKey("", emptyKey({ return: true }), {
+      state,
+      dispatch: () => {},
+      callbacks: callbacks({
+        onProvidersSelectChatModel: vi.fn(),
+        onLocalModelsDaemonStopRequested: onStop,
+        onLocalModelsChatStopForCloudRequested: onChatStop,
+      }),
+    });
+    expect(onChatStop).toHaveBeenCalledTimes(1);
+    // The full stop also turns memory search off; it stays on `s` / Stop.
+    expect(onStop).not.toHaveBeenCalled();
+  });
+
   it("selects directly on an openai-compatible model row, no modal detour", () => {
     // The inline Cloud-pane list renders `/v1/models` entries as
     // first-class rows, so Enter switches the model through the same

@@ -24,6 +24,7 @@ import {
   modelsStart,
   modelsStartEmbedding,
   modelsStop,
+  modelsStopChatOnly,
   stopEmbeddingServer,
   modelsUse,
   providerHasKey,
@@ -84,6 +85,8 @@ import { quitMayStopModel } from "./model-sessions.js";
 
 export type DaemonEffect =
   | "untouched"
+  /** ATO-1234: a provider or model pick stops the local chat server in the background, in the daemon's turn; the pick does not wait for it. */
+  | "stopping"
   | "stopped"
   | "stop-failed"
   | "started"
@@ -105,10 +108,14 @@ export interface SwitchResult {
   daemon?: DaemonEffect;
   /** The TUI's runtime_info line for the daemon effect, when there is one. */
   daemonLine?: string;
+  /** ATO-377: the Cloud switch stopped only the chat server; the embedding one and memory.embeddings.enabled stay. */
+  embeddingKept?: boolean;
   /** main.ts restarts `atag serve` when true (restartAfterSwitch says when it does not). */
   restart?: boolean;
   /** Set by main.ts's applySwitch: the switch landed, but `atag serve` was not restarted under the turns still running — it restarts once the last one ends. */
   restartHeld?: boolean;
+  /** ATO-1021, set by main.ts's applySwitch: the running agent took the new route live (`POST /api/llm/active`), no restart. */
+  liveSwapped?: boolean;
   /** activateCloud: no cloud provider configured — open the add wizard. */
   needsProvider?: boolean;
   /** The chosen provider has no key — open its configure step, as the TUI does. */
@@ -234,14 +241,15 @@ function earlyDaemonLook(): { running: Promise<boolean>; still: () => boolean } 
  * only a successful stop is followed by write 2 (memory.embeddings.enabled
  * = false), which is the order the TUI's stopDaemon does it.
  */
-export function activateProvider(id: string, opts: { leaveFusion?: boolean } = {}): Promise<SwitchResult> {
+export function activateProvider(id: string, opts: { leaveFusion?: boolean; stopInBackground?: boolean } = {}): Promise<SwitchResult> {
+  // ATO-1234: Settings › Models' Use passes stopInBackground: it answers once the file names the pick; the local server stops behind it.
   return activate(() => id, opts);
 }
 
 /** activateProvider for the provider `pick` names in the file as read, or `pick`'s refusal. */
 async function activate(
   pick: (cfg: UserConfigShape) => string | SwitchResult,
-  opts: { leaveFusion?: boolean; earlyLook?: boolean },
+  opts: { leaveFusion?: boolean; earlyLook?: boolean; stopInBackground?: boolean },
 ): Promise<SwitchResult> {
   /* The status beside the write: the Cloud switch's only (switchBackend), and
      only when a stop looks needed — a refused switch, the wizard's local-llama
@@ -284,14 +292,56 @@ async function activate(
   let restart = w.changed;
   let daemon: DaemonEffect = "untouched";
   let daemonLine: string | undefined;
-  if (cloud && !keepFusion) {
+  let embeddingKept = false;
+  if (cloud && !keepFusion && opts.stopInBackground) {
+    /* ATO-1234: the stop (a `models status`, a `models stop --chat-only`, up to
+       seconds on a big model) used to hold the pick. It runs in the daemon's
+       turn, so a local start asked for next waits for it, and says how it
+       ended in the log. A hybrid-recall flag it turns off reaches the agent at
+       its next restart. */
+    supersedeBringUp();
+    // Said and done only when a local server looks up (its pid is alive): a cloud → cloud pick stops nothing.
+    const hint = configFileHint();
+    const likelyUp = !!hint && managedDaemonPidAlive(hint);
+    if (likelyUp) {
+      daemon = "stopping";
+      daemonLine = "local-llm: the chat server stops in the background";
+    }
+    const embeddingsAlreadyOff = !!v.embeddingsOff;
+    if (likelyUp) void withDaemonLock(async () => {
+      if (!(await localDaemonRunning({ reapWedged: false }))) return;
+      const s = await modelsStopChatOnly();
+      if (!s.ok) {
+        console.warn(`[desktop] local-llm: background stop after a cloud pick failed — ${s.error ?? "unknown error"}`);
+        return;
+      }
+      if (!s.embeddingKept && !embeddingsAlreadyOff) {
+        // Hybrid recall went off with the embedding server: the agent reads the flag at its next start, owed now and paid once no turn runs.
+        const m = await setMemoryEmbeddingsEnabled(false);
+        if (m.changed) {
+          restartOwed = true;
+          setTimeout(lastTurnEnded, 0);
+        }
+      }
+    }, () => undefined).catch((err) => {
+      console.warn(`[desktop] local-llm: background stop after a cloud pick failed — ${err instanceof Error ? err.message : String(err)}`);
+    });
+  } else if (cloud && !keepFusion) {
     // A stop never waits out a load (item 11): a bring-up on its way is ended, its start killed.
     supersedeBringUp();
     // A stop decision: whatever is still there, answering or not (item 31), is stopped and said so.
     const up = early && early.still() ? await early.running : await localDaemonRunning({ reapWedged: false });
     if (up) {
-      const s = await modelsStop();
-      if (s.ok) {
+      /* ATO-377: only the chat server goes; the embedding one stays for memory
+         search and its flag is not written (the TUI's stopChatForCloudSelection).
+         An agent without `--chat-only`, or a file with no embedding model to
+         keep, stops both, and the flag goes off as before. */
+      const s = await modelsStopChatOnly();
+      if (s.ok && s.embeddingKept) {
+        daemon = "stopped";
+        embeddingKept = true;
+        daemonLine = "local-llm: chat server stopped, memory search stays on";
+      } else if (s.ok) {
         daemon = "stopped";
         daemonLine = "local-llm: daemons stopped — hybrid recall off (embedding switch unchanged)";
         /* The file as this activation wrote it has the flag off already, and no
@@ -314,6 +364,7 @@ async function activate(
     transport: transportFor(id),
     daemon,
     daemonLine,
+    ...(embeddingKept ? { embeddingKept } : {}),
     restart,
   };
 }
@@ -421,7 +472,7 @@ export async function switchBackend(kind: "cloud" | "local"): Promise<SwitchResu
  * nothing is written; then the model, then the activation (which also
  * stops the local daemons).
  */
-export async function selectCloudModel(providerId: string, modelId: string): Promise<SwitchResult> {
+export async function selectCloudModel(providerId: string, modelId: string, opts: { stopInBackground?: boolean } = {}): Promise<SwitchResult> {
   if (!modelId.trim()) return { ok: false, error: "chat model id is empty" };
   const read = await readWholeConfig();
   if (!read.ok || !read.config) return { ok: false, error: read.error };
@@ -433,7 +484,7 @@ export async function selectCloudModel(providerId: string, modelId: string): Pro
   const modelChanged = entry.defaultChatModel !== modelId.trim();
   const w = await setProviderModel(providerId, modelId.trim());
   if (!w.ok) return { ok: false, error: w.error };
-  const res = await activateProvider(providerId);
+  const res = await activateProvider(providerId, opts);
   if (!res.ok) return res;
   return { ...res, model: modelId.trim(), restart: res.restart || modelChanged };
 }
@@ -462,7 +513,8 @@ export type BringUp = {
   /** ATO-126: the embedding server was started, or hybrid recall switched back on, for it: `atag serve` wires it only as it boots. */
   paired?: boolean;
 };
-type Paired = { paired: boolean; line?: string };
+/** `up` (ATO-1024): the embedding server answers now, whoever started it. */
+type Paired = { paired: boolean; line?: string; up?: boolean };
 
 /**
  * ATO-126 — the embedding server beside the chat one.
@@ -476,14 +528,15 @@ type Paired = { paired: boolean; line?: string };
  * model running the embedding server never started — an embedding model
  * enabled or downloaded later, one that had stopped, all stayed off. The TUI
  * pairs them in-process (ensureEmbeddingPaired); the CLI now can too (`models
- * start-embedding`, agent side). A Cloud switch also writes
- * `memory.embeddings.enabled = false` as it stops both servers (the TUI's
- * stopDaemon order), and nothing here put it back on the way back to local,
- * where the TUI latches it on once its server runs. `atag serve` reads both
+ * start-embedding`, agent side). A Cloud switch used to write
+ * `memory.embeddings.enabled = false` as it stopped both servers; it now stops
+ * only the chat one and leaves the flag (ATO-377), and still writes it off
+ * with an older agent that stops both. Nothing here put it back on the way
+ * back to local, where the TUI latches it on once its server runs. `atag serve` reads both
  * only as it boots.
  *
  * Asked in the daemon's turn, once the chat server is up (and at launch before
- * it, daemon-watch pairEmbeddingsBeforeServe): when the file wants embeddings
+ * it, daemon-watch pairEmbeddingsAtLaunch): when the file wants embeddings
  * and their server is not up, it is started alone; once it is up, hybrid
  * recall is switched back on. `startOut` is the `models start` that
  * just ran, which already tried the embedding side: its failure is not tried
@@ -533,7 +586,7 @@ export async function pairEmbeddingServer(opts: {
       : "local-llm: embedding server up — semantic search comes on with the agent's next start";
   }
   const m = await setMemoryEmbeddingsEnabled(true);
-  return { paired: started || m.changed, line };
+  return { paired: started || m.changed, line, up: true };
 }
 
 /* ---- the managed daemon: starts one at a time, stops at once (item 11) ----
@@ -903,6 +956,12 @@ export interface SwitchAgent {
   turnsInFlight(): number;
   /** Stop `atag serve` and start it again, on the config as the file has it then. */
   restart(): Promise<void>;
+  /**
+   * ATO-1021: move the running agent onto the file's route live, without a
+   * restart. Answers false when it could not (an older agent, a turn that
+   * started meanwhile, a refused switch): the restart then runs as before.
+   */
+  liveSwap?(res: SwitchResult): Promise<boolean | "busy">;
 }
 let switchAgent: SwitchAgent | null = null;
 let restartOwed = false;
@@ -945,7 +1004,9 @@ export async function restartAfterSwitch(
   wanted: boolean,
   /** Backlog 35: superseded by a stop, with the file on another route than serve booted on and no newer switch on its way (main.ts). */
   drifted = false,
-): Promise<{ restart: boolean; restartHeld?: true }> {
+  /** ATO-1021: main.ts judged the move one the agent can take live (a cloud pick on a cloud route, nothing else moved). */
+  live = false,
+): Promise<{ restart: boolean; restartHeld?: true; liveSwapped?: true }> {
   // One at a time: from the last look at `restarting` to restartNow setting it, nothing is awaited.
   while (restarting) await restarting;
   const agent = switchAgent;
@@ -954,6 +1015,36 @@ export async function restartAfterSwitch(
   if (agent.turnsInFlight() > 0) {
     restartOwed = true;
     return mine ? { restart: false, restartHeld: true } : { restart: false };
+  }
+  /* ATO-1021: a cloud model pick swapped live costs well under a second where
+     the restart cost 3-8 s (and queued the next message behind it). Only for
+     this switch's own move, never to pay a restart an earlier one owes. */
+  if (live && mine && !drifted && !restartOwed && agent.liveSwap) {
+    /* Held in `restarting` like a restart, so the next switch and a turn
+       asked for meanwhile (agent:chat) wait it out — and released only once
+       this decided: a swap not taken hands the slot straight to its restart. */
+    let release!: () => void;
+    const held = new Promise<void>((r) => { release = r; });
+    restarting = held;
+    const swapped = await agent.liveSwap(res).catch(() => false as const);
+    if (swapped === true || turnsClosed) {
+      if (restarting === held) restarting = null;
+      release();
+      return swapped === true ? { restart: false, liveSwapped: true } : { restart: false };
+    }
+    if (swapped === "busy") {
+      /* The agent answered 409: a turn the window does not stream (Telegram,
+         a scheduled task) holds the provider. A restart now would cut it, so
+         it is held like one for the window's own turns. */
+      if (restarting === held) restarting = null;
+      release();
+      restartOwed = true;
+      return { restart: false, restartHeld: true };
+    }
+    const restarted = restartNow(agent);
+    release();
+    await restarted;
+    return { restart: true };
   }
   await restartNow(agent);
   return { restart: true };
@@ -1027,7 +1118,8 @@ async function afterRunModeWrite(res: {
   }
   else if (plan === "background") bringUpBehindSwap(modelId);
   // The seats no longer need it (a seat moved to the cloud): a start on its way is moot, and what it spawned goes.
-  else if (!opts.daemonByCaller && supersedeBringUp()) await modelsStop();
+  // ATO-377: its chat server only; the embedding one stays for memory search (an older agent stops both).
+  else if (!opts.daemonByCaller && supersedeBringUp()) await modelsStopChatOnly();
   return {
     ok: true,
     providerId: leg,

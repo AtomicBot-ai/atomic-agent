@@ -1,10 +1,11 @@
 import { estimateUsageCostUsd } from "../llm/provider/usage-cost.js";
 import { resolveServerTemplatePolicy } from "../llm/server-template-policy.js";
 import { createContextCompaction, logCompactionOutcome } from "./context-compaction.js";
+import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
@@ -45,6 +46,7 @@ import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
+import { ToolOutputSpill } from "../tools/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -54,6 +56,7 @@ import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { readLocalEngineState } from "./local-engine-state.js";
+import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
@@ -283,9 +286,14 @@ export async function createAgentRuntime(
     jobMaxMs: config.tools.shell.jobMaxMs,
     maxJobs: config.tools.shell.maxJobs,
   });
-  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs);
+  // Full outputs of clipped local tool results, one temp folder per
+  // session (ATO-663): removed with the session, and folders left by
+  // sessions that are gone (fusion workers are never stored) swept here.
+  const toolOutputSpill = new ToolOutputSpill();
+  toolOutputSpill.sweepStale();
+  installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs, toolOutputSpill);
 
-  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous);
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill);
 
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
@@ -296,13 +304,23 @@ export async function createAgentRuntime(
   // call a tool on the session (the controller runs one turn per
   // session), so a read always finds its own turn's request.
   const turnRequests = new Map<string, string>();
+  // The agent's reply just before the message that started the turn (a
+  // worker's: its parent's), for the same guard: a plain yes to
+  // "Replace sales.csv?" replaces that file (ATO-860). Kept beside
+  // `turnRequests`, set and cleared with it.
+  const turnPreviousReplies = new Map<string, string>();
   // The files a fan-out's contract declared as inputs, per worker
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
   const declaredInputs = new DeclaredInputsRegistry();
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
+    resolvePreviousReply: (id) => turnPreviousReplies.get(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
+    // Only the terminal UI has an `/integrations` screen that saves an Exa
+    // key into this process; every other entry point keeps the desktop /
+    // `.env` advice (ATO-345).
+    ...(options.analyticsSurface === "tui" ? { webSearchKeyHelp: "integrations-hub" as const } : {}),
   });
 
   // Vision provider wiring is deferred until after `profileManager` is
@@ -345,6 +363,7 @@ export async function createAgentRuntime(
   const mcpCatalog = await connectRuntimeMcpCatalog({
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode,
+    ...mcpGrammarHookFor(profileManager),
   });
   const { mcpManager, getGrammar, effectiveToolDescriptors } = mcpCatalog;
 
@@ -368,7 +387,7 @@ export async function createAgentRuntime(
   });
 
   const promptPreviewDeps = {
-    prepareWorkspace: createWorkspaceLoader(config),
+    prepareWorkspace: createWorkspaceLoader(config, logger),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,
@@ -388,8 +407,11 @@ export async function createAgentRuntime(
   const compactionRoute = (id: string, pin?: string) => {
     const providerId = pin ?? fallbackChain.standingOverrideFor(id) ?? providerRegistry.activeText.id;
     const slice = resolveActiveLlmSlice(providerId);
+    // The entry's explicit output ceiling: a summary call's reasoning reserve stays under it.
+    const outputCap = resolveLlmConfig(getConfig()).providers.find((p) => p.id === slice.provider.id)?.maxOutputTokens;
     return {
       providerId, transport: slice.transport, local: slice.isLlamaServer,
+      ...(outputCap !== undefined ? { maxOutputTokens: outputCap } : {}),
       ...(slice.isLlamaServer ? { prefixReuse: connectedLocal.getLiveProfile().prefixReuse ?? "partial" } : {}),
       contextWindow: slice.isLlamaServer ? (connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow(providerId)) : resolveCatalogContextWindow(providerId),
       serverTemplate: resolveServerTemplatePolicy(getConfig().localModels, connectedLocal.getLiveProfile()).useServerTemplate,
@@ -430,6 +452,11 @@ export async function createAgentRuntime(
       emitAgentLoopEventFor(event.sessionId, event);
     },
   });
+
+  // Who can restart the managed model after it ran out of memory
+  // (ATO-334): the TUI registers itself; a headless `serve` leaves it
+  // empty, because the desktop owns the model there.
+  let localModelRestarter: LocalModelRestarter | null = null;
 
   // Plan mode. Session state, deliberately not config: it is a stance
   // for the next few turns, not a setting, and a "look but do not touch"
@@ -486,6 +513,15 @@ export async function createAgentRuntime(
       const config = getConfig();
       return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
     },
+    // A managed local model that ran out of memory is restarted with a
+    // smaller window instead of waited on (ATO-334). Read live, like the
+    // engine state above.
+    localOutOfMemory: createLocalOutOfMemoryPort({
+      readConfig: () => getConfig(),
+      activeTextProvider: () => resolveLlmConfig(getConfig()).activeTextProvider,
+      approvals,
+      restarter: () => localModelRestarter,
+    }),
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
@@ -613,8 +649,10 @@ export async function createAgentRuntime(
   let swarmForShutdown: SwarmRegistry | null = null;
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
+  // In-flight `/enhance` passes; shutdown aborts them beside naming.
+  const pendingPromptEnhances = new Set<AbortController>();
   const lifecycle = createRuntimeLifecycle({
-    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, turnsInFlight, compaction,
+    sessionStore, logger, steeringInbox, shellJobs, reflectionRunner, pendingSessionNamings, pendingPromptEnhances, turnsInFlight, compaction,
     browserBackend, mcpManager, profileStore, notesStore, lessonStore, procedureStore,
     embeddingBackfill: memoryEmbeddings,
     get scheduler() { return scheduler; },
@@ -640,7 +678,7 @@ export async function createAgentRuntime(
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
-    sessions: { sessionStore, turnContext, turnRequests },
+    sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter },
@@ -712,6 +750,26 @@ export async function createAgentRuntime(
     compactSession: compaction.compactSession,
     getSessionCompaction: compaction.getSessionCompaction,
     cancelSessionCompaction: compaction.cancelSessionCompaction,
+    enhancePrompt: (draft: string, enhanceOptions?: { sessionId?: string; signal?: AbortSignal }) => {
+      if (lifecycle.isShutdown()) return Promise.resolve({ ok: false as const, reason: "shutting down" });
+      const partition = promptEnhancePartition(enhanceOptions?.sessionId);
+      return enhancePrompt(draft, {
+        complete: (params) => llmComplete(params),
+        slotId: () => slotManager.sideCallSlotId(),
+        // Same wire-shape rule as session naming: a cloud link answers a
+        // bare prompt with an empty `content`. Resolved through the
+        // partition's own standing override, like compaction's route.
+        toolTransport: resolveActiveLlmSlice(fallbackChain.standingOverrideFor(partition) ?? undefined).transport,
+        pending: pendingPromptEnhances,
+        serverTemplate: getConfig().localModels.useServerTemplate !== "off",
+        ...(enhanceOptions?.sessionId ? { sessionId: enhanceOptions.sessionId } : {}),
+        ...(enhanceOptions?.signal ? { signal: enhanceOptions.signal } : {}),
+        onError: (err: unknown) =>
+          logger.debug("prompt enhance failed", {
+            error: err instanceof Error ? err.message : String(err),
+          }),
+      });
+    },
     refreshSkills,
     refreshMcp,
     reloadLlmProviders,
@@ -726,6 +784,9 @@ export async function createAgentRuntime(
     reportOnboardingStep,
     reportModelConfigured,
     reportLocalEngineFailed,
+    setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {
+      localModelRestarter = restarter;
+    },
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
     getPlanMode: () => planMode,

@@ -8,6 +8,7 @@ import { readFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../../llm/fallback/failed-links.js";
 import { readErrnoCode } from "../../llm/errno-code.js";
 import { readProviderErrorVerdict } from "../../llm/reliability/provider-error-verdict.js";
+import { classifyFailureCause } from "../../llm/reliability/classify-failure-cause.js";
 import { classifyProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-rejection-recovery.js";
 import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
@@ -20,6 +21,7 @@ import type { TurnLoopState } from "./turn-state.js";
 export type TurnRecoveryDependencies = Pick<
   AgentLoopDependencies,
   "contextWindow" | "onContextWindowObserved" | "onEvent" | "logger" | "metrics" | "localEngineState"
+  | "localOutOfMemory"
 >;
 
 export interface TurnRecoveryContext {
@@ -37,6 +39,14 @@ export interface TurnRecoveryContext {
   recoveryStepAvailable: (stepIndex: number) => boolean;
   /** The model mode serving the step; absent (legacy wiring) reads as `local`. */
   modelMode?: "local" | "cloud";
+  /**
+   * The plain error the turn ends with when it fails on a context-size
+   * refusal after the loop's overflow compaction (ATO-1028). Replaces the
+   * server's error in `loop_failed` and the returned decision; ignored
+   * when the step is retried, waited, cancelled, or a refused raised-cap
+   * truncation retry fails with its truncation instead.
+   */
+  contextExhausted?: Error;
 }
 
 export type TurnRecoveryDecision =
@@ -44,6 +54,12 @@ export type TurnRecoveryDecision =
   | { kind: "retry_next" }
   | { kind: "stop" }
   | { kind: "wait"; nextRetryMs: number }
+  /**
+   * The managed local model ran out of memory (ATO-334): the loop runs
+   * `recoverFromOutOfMemory`, which asks or restarts, instead of waiting.
+   * `contextWindow` is the window the failing run was started with.
+   */
+  | { kind: "local_out_of_memory"; contextWindow: number; cause: Error }
   | { kind: "failure"; cancelled: boolean; category: LlmFailureCategory; runError: Error; creditRefused: boolean };
 
 export function recoverTurnStep(
@@ -171,7 +187,7 @@ export function recoverTurnStep(
     };
     turn.truncationRetries += 1;
     if (retry.kind === "fit_window") {
-      deps.onContextWindowObserved?.(retry.contextWindow);
+      deps.onContextWindowObserved?.(retry.contextWindow, options.providerId);
     }
     // A cut reply is still tokens on the wire, so — like the
     // parse failure below — it breaks any run of empty
@@ -195,6 +211,7 @@ export function recoverTurnStep(
       ...(detail.requestedMaxTokens !== undefined
         ? { requestedMaxTokens: detail.requestedMaxTokens }
         : {}),
+      ...(detail.repetitive === true ? { repetitive: true as const } : {}),
       retry,
     });
     deps.logger?.warn("completion truncated; retrying the step", {
@@ -205,6 +222,7 @@ export function recoverTurnStep(
       promptTokens: detail.promptTokens,
       // `null` in the log: the request carried no cap at all.
       requestedMaxTokens: detail.requestedMaxTokens ?? null,
+      repetitive: detail.repetitive === true,
       retry: retry.kind,
       attempt: stepTruncationAttempts + 1,
       ...(retryCap !== undefined
@@ -396,7 +414,7 @@ export function recoverTurnStep(
       });
   if (repack !== null) {
     turn.sizeRepackRetry = { stepIndex: i };
-    deps.onContextWindowObserved?.(repack.contextWindow);
+    deps.onContextWindowObserved?.(repack.contextWindow, options.providerId);
     turn.pendingNotice = composeSizeRejectionNotice(noticeForThisStep);
     deps.onEvent?.({
       type: "prompt_repacked",
@@ -461,6 +479,32 @@ export function recoverTurnStep(
     );
     runError = null;
     return { kind: "stop" };
+  }
+  // A local model that ran out of memory keeps its socket and answers
+  // every request with a server error, which reads as an outage that
+  // ends by itself. It does not: the same request fails the same way
+  // for the whole wait budget (ATO-334). The runtime reads the model's
+  // own log (`localOutOfMemory.detect`); the loop then restarts the
+  // model with a smaller context window, asking first when someone is
+  // there to answer, and retries the step.
+  if (
+    category === "transport" &&
+    !cancelled &&
+    !creditRefused &&
+    deps.localOutOfMemory !== undefined &&
+    isServerErrorAnswer(err)
+  ) {
+    const outOfMemory = deps.localOutOfMemory.detect(readFailingLink(err));
+    if (outOfMemory !== null) {
+      deps.logger?.warn("local model ran out of memory; not waiting for it", {
+        sessionId: state.id,
+        stepIndex: i,
+        contextWindow: outOfMemory.contextWindow,
+        restarts: turn.oomRestarts,
+        error: runError.message,
+      });
+      return { kind: "local_out_of_memory", contextWindow: outOfMemory.contextWindow, cause: runError };
+    }
   }
   // The provider is not answering. Park the turn instead of
   // killing it: nothing of this step has been committed (a
@@ -605,7 +649,28 @@ export function recoverTurnStep(
     );
     runError = turn.truncationRetry.original;
     category = classifyFailure(runError);
+  } else if (context.contextExhausted !== undefined && !cancelled) {
+    // Category stays: dashboards keep counting the same failure class.
+    runError = context.contextExhausted;
   }
+  return reportTurnFailure(runError, { category, cancelled, creditRefused }, { state, stepIndex: i }, deps, turn);
+}
+
+/**
+ * The end of a step that failed for good: log it, tell the surfaces
+ * (`loop_failed`, which every one of them renders) and count it. Shared
+ * with the out-of-memory recovery, whose verdict arrives after the
+ * restart or the question it ran.
+ */
+export function reportTurnFailure(
+  runError: Error,
+  outcome: { category: LlmFailureCategory; cancelled: boolean; creditRefused: boolean },
+  where: { state: SessionState; stepIndex: number },
+  deps: Pick<TurnRecoveryDependencies, "logger" | "onEvent" | "metrics">,
+  turn: Pick<TurnLoopState, "outageWaitedMs" | "outageAttempts">,
+): Extract<TurnRecoveryDecision, { kind: "failure" }> {
+  const { category, cancelled, creditRefused } = outcome;
+  const { state, stepIndex: i } = where;
   // Same errno as the wait above, for the turn that fails instead
   // of parking (waiting disabled, budget spent, a refusal that
   // will not fix itself). Read off `runError`, which the swap just
@@ -628,6 +693,7 @@ export function recoverTurnStep(
     error: runError,
     category,
     outage: { waitedMs: turn.outageWaitedMs, attempts: turn.outageAttempts },
+    failure: classifyFailureCause(runError, category),
   });
   deps.metrics?.recordLlmFailure({
     sessionId: state.id,
@@ -674,6 +740,16 @@ function isWaitableOutage(err: unknown): boolean {
   }
   if (err.status === null) return true;
   return err.status >= 500 || err.status === 408 || err.status === 429;
+}
+
+/**
+ * A server answered, and with a server error. What an out-of-memory
+ * llama-server answers every request with; a refused connection or a
+ * 4xx is something else and keeps its own handling.
+ */
+function isServerErrorAnswer(err: unknown): boolean {
+  if (!(err instanceof TransportError) && !(err instanceof LlamaServerError)) return false;
+  return err.status !== null && err.status >= 500;
 }
 
 /**

@@ -100,6 +100,42 @@ export function inCliStandIn(): boolean {
   return cliStandIns.getStore() !== undefined;
 }
 
+/* ---------------------------------------------------------------
+   ATO-1127 (Nadya 26.10) — connected to an agent on another computer,
+   Settings › Models shows THAT computer's models. `models list` and
+   `models status` are read from it (GET /api/local-models/*: the same text
+   the CLI prints, so every parser here stays as it is); every other models
+   command (pull, start, stop, use, remove, update) belongs to that computer
+   and is refused here in words, instead of quietly acting on this one. The
+   pulls and the engine update spawn the binary themselves, so they check
+   `remoteModels` too. `models search` (cloud catalogs) is not a local model.
+   --------------------------------------------------------------- */
+export interface RemoteModels {
+  text(view: "list" | "status"): Promise<string | null>;
+}
+let remoteModels: RemoteModels | null = null;
+/** main.ts: the remote agent's models while connected to one, null otherwise. */
+export function useRemoteModels(route: RemoteModels | null): void {
+  remoteModels = route;
+}
+/** Said for a models command while the app runs chats on another computer. */
+export const REMOTE_MODELS_HERE =
+  "This app is connected to an agent on another computer: its models are managed there (atag models … on that computer).";
+
+async function remoteModelsCall(route: RemoteModels, args: string[]): Promise<CliResult> {
+  const view = args[1] === "list" || args[1] === "status" ? args[1] : null;
+  if (!view || args.length > 2) return { ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE };
+  const text = await route.text(view);
+  return text === null
+    ? { ok: false, stdout: "", stderr: "", error: "The agent on the other computer did not say which models it has (it may be older than this app)." }
+    : { ok: true, stdout: text, stderr: "" };
+}
+
+/** ATO-577/579: `atag doctor` and `atag data`, whose stdout counts even when they exit non-zero. */
+export function atagRun(args: string[], timeout: number): Promise<CliResult> {
+  return cli(args, timeout);
+}
+
 async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: AbortSignal, input?: string): Promise<CliResult> {
   /* ATO-416: anything but a read, run inside a config-lock hold, may have
      changed config.json under the hash that hold last read (a leaf
@@ -110,6 +146,8 @@ async function cli(args: string[], timeout = 30_000, cwd?: string, signal?: Abor
   if (cas && !(args[0] === "config" && args[1] === "get")) cas.sha = undefined;
   const standIn = cliStandIns.getStore();
   if (standIn) return standIn.cli(args, input);
+  // `models search` reads a cloud provider's catalog, not this computer's models: it stays here.
+  if (remoteModels && args[0] === "models" && args[1] !== "search") return remoteModelsCall(remoteModels, args);
   const binary = resolveBinary();
   if (!binary) return { ok: false, stdout: "", stderr: "", error: "no atomic-agent binary found" };
   try {
@@ -298,6 +336,42 @@ export function configBytesSha256(raw: string | Buffer | null): string {
   return createHash("sha256").update(raw ?? "").digest("hex");
 }
 
+/* ---------------------------------------------------------------
+   ATO-1022 — the config through the running agent.
+
+   Every read and whole-file write above was an `atag` process (a cold Node
+   start, 150-400 ms each), and a model pick made five to nine of them in a
+   row. While `atag serve` is up, main hands this module its two config
+   routes (main.ts, on connect): `GET /api/config` answers the same
+   `{sha256, config}` pair `config get --with-sha256` prints, and
+   `PUT /api/config` is `config set - [--expect-sha256]` with the same
+   validation and the same refusal when the file moved. Either answering
+   null (an older agent, an agent going down) sends that call through the
+   CLI as before. A stand-in (the smoke) is always the CLI's.
+   --------------------------------------------------------------- */
+export interface ConfigRoute {
+  read(): Promise<{ sha256: string; config: unknown } | null>;
+  write(json: string, expectSha256: string | null): Promise<
+    { ok: true } | { ok: false; conflicted: boolean; error: string } | null
+  >;
+}
+let configRoute: ConfigRoute | null = null;
+let configRouteBin: string | undefined;
+/** main.ts: the running agent's config routes, or null while there is none. */
+export function useConfigRoute(route: ConfigRoute | null): void {
+  configRoute = route;
+  configRouteBin = process.env.ATOMIC_AGENT_BIN;
+}
+/**
+ * The route, while the CLI still names the agent it belongs to. A check that
+ * points the CLI at another binary or state dir (smoke T18, T34, T44 put a
+ * recording shim in ATOMIC_AGENT_BIN) means its calls to go there, never to
+ * the app's own running agent.
+ */
+function liveConfigRoute(): ConfigRoute | null {
+  return configRoute && process.env.ATOMIC_AGENT_BIN === configRouteBin ? configRoute : null;
+}
+
 /**
  * The read with its hash, in ONE agent process, so the two describe the
  * same file. The agent's spelling lives here and nowhere else: today
@@ -310,6 +384,11 @@ let shaReadUnsupported = false;
 export async function readConfigWithSha(): Promise<{ ok: boolean; config?: unknown; sha256: string | null; error?: string }> {
   // A stand-in (the suite) is always asked the new way, and what it answers never teaches the real agent's flag.
   const standIn = inCliStandIn();
+  const route = standIn ? null : liveConfigRoute();
+  if (route) {
+    const viaAgent = await route.read();
+    if (viaAgent) return { ok: true, config: viaAgent.config, sha256: viaAgent.sha256 };
+  }
   if (standIn || !shaReadUnsupported) {
     const res = await cli(["config", "get", "--with-sha256"]);
     if (res.ok) {
@@ -419,6 +498,8 @@ export interface CatalogModel {
   /** The vision projector a pull fetches with the weights, in GB. */
   mmprojSizeGb?: number;
   vision?: boolean;
+  /** Recommendation order, 1 first (catalogue `recommendRank`). */
+  recommendRank?: number;
   tag?: string;
   uncensored?: boolean;
 }
@@ -458,6 +539,7 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
             sizeGb: meta.sizeGb,
             ...(meta.mmprojSizeGb ? { mmprojSizeGb: meta.mmprojSizeGb } : {}),
             vision: meta.vision,
+            ...(meta.recommendRank ? { recommendRank: meta.recommendRank } : {}),
             ...(meta.tag ? { tag: meta.tag } : {}),
             ...(meta.uncensored ? { uncensored: true } : {}),
           }
@@ -501,6 +583,7 @@ export function modelsPull(
   id: string,
   onLine: (line: string) => void,
 ): { done: Promise<CliResult>; cancel: () => void } {
+  if (remoteModels) return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE }), cancel: () => {} };
   const binary = resolveBinary();
   // Item 7A: 96 — see modelsUse above (huggingface-model-def.ts:25).
   if (!binary || !/^[\w.-]{1,96}$/.test(id)) {
@@ -597,6 +680,8 @@ export interface ProviderEntry {
   headers?: Record<string, string>;
   defaultChatModel?: string;
   model?: string;
+  /** The provider's output cap (src/config/llm-config.ts), when the entry sets one. */
+  maxOutputTokens?: number;
   subscriptionCli?: { cli?: string };
   modelMode?: ModelMode;
   modelModes?: Record<string, ModelMode>;
@@ -691,6 +776,20 @@ async function writeWholeConfig(config: unknown): Promise<CliResult> {
      has a hash nobody has read. */
   const cas = casHolds.getStore();
   const expect = cas?.sha;
+  const route = inCliStandIn() ? null : liveConfigRoute();
+  if (route) {
+    const viaAgent = await route.write(json, expect ?? null);
+    if (viaAgent) {
+      // As cli() does for a write: the file this changed has a hash nobody has read.
+      if (cas) cas.sha = undefined;
+      if (viaAgent.ok) return { ok: true, stdout: "", stderr: "" };
+      if (expect && viaAgent.conflicted) {
+        if (cas) cas.conflicted = true;
+        return { ok: false, stdout: "", stderr: viaAgent.error, exitCode: 3, error: CONFIG_CHANGED_ELSEWHERE };
+      }
+      return { ok: false, stdout: "", stderr: viaAgent.error, error: explainConfigWriteFailure(viaAgent.error) };
+    }
+  }
   /* ATO-132: the file goes in on stdin (`config set -`), never as an
      argument. It carries the providers' API keys, and any process on the
      machine can read another's command line for as long as it runs. */
@@ -809,6 +908,8 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
     return { ok: false, stdout: "", stderr: "", error: current.error ?? "could not read the config" };
   }
   const config = current.config as { llm?: { providers?: ProviderEntry[] } };
+  // ATO-1022: what the file holds, to skip a write that would change nothing (a re-pick of the same model).
+  const before = JSON.stringify(config);
   const llm = (config.llm ??= {});
   const providers = (llm.providers ??= []);
   const at = providers.findIndex((p) => p.id === entry.id);
@@ -824,6 +925,9 @@ async function upsertProviderNow(entry: ProviderEntry): Promise<CliResult> {
     clean.modelMode ??= defaultProviderModelMode(clean);
     providers.push(clean);
   }
+  // The coherence repair writeWholeConfig makes counts as a change too.
+  normaliseLlmBlock(config);
+  if (JSON.stringify(config) === before) return { ok: true, stdout: "", stderr: "" };
   return writeWholeConfig(config);
 }
 
@@ -1326,7 +1430,7 @@ function sameIds(a: readonly SearchedModel[], b: readonly SearchedModel[]): bool
    --------------------------------------------------------------- */
 
 /** Where a kind's OpenAI-compatible chat endpoint lives. */
-function chatCompletionsUrl(kind: string, baseUrl?: string): string | null {
+export function chatCompletionsUrl(kind: string, baseUrl?: string): string | null {
   // The agent's own normalizeOpenAiBaseUrl rule: strip a trailing `/v1`
   // so the path is never doubled.
   const root = (u: string) => u.replace(/\/+$/, "").replace(/\/v1$/, "");
@@ -1958,6 +2062,7 @@ export function modelWindow(providerId: string, kind: string, model: string): Pr
      setMemoryEmbeddingsEnabled← src/tui/persist-embedding-hybrid-recall.ts persistMemoryEmbeddingsEnabled
      providerHasKey            ← src/config/resolve-llm-api-key.ts + provider-auth-mode.ts usesExternalCliAuth
      localDaemonRunning/modelsStop ← `atag models status|stop`
+     modelsStopChatOnly        ← `atag models stop --chat-only` (the TUI's stopChatForCloudSelection)
 
    Every write is the whole-file form (`atag config set '<json>'`) because
    `llm.*` has no dotted spelling on 0.5.4. `atag config get` returns the
@@ -2015,10 +2120,10 @@ export async function readWholeConfig(): Promise<{ ok: boolean; config?: UserCon
 }
 
 /** persist-llm-provider.ts localLlamaUrlFromFile. */
-function localLlamaUrlFromFile(cfg: UserConfigShape): string {
+export function localLlamaUrlFromFile(cfg: UserConfigShape): string {
   const lm = cfg.localModels ?? {};
   if (lm.mode === "managed") return `http://127.0.0.1:${lm.managed?.port ?? 19091}`;
-  return lm.url ?? "http://127.0.0.1:8080";
+  return lm.url ?? "http://127.0.0.1:9931";
 }
 
 /**
@@ -2340,6 +2445,27 @@ export async function modelsStop(opts: { repair?: boolean } = {}): Promise<CliRe
   else stopsAskedFor++;
   if (!opts.repair) tell("stopping");
   return cli(["models", "stop"], 30_000);
+}
+
+/** What an agent with `models stop --chat-only` (ATO-376) prints when it kept the embedding model. */
+const CHAT_ONLY_STOP_KEPT = /^stopped chat model; embedding model kept/m;
+
+/**
+ * ATO-376/377: the Cloud switch's stop. `atag models stop --chat-only` stops
+ * the chat daemon and keeps the embedding daemon, so memory search keeps its
+ * meaning-based half on the cloud route; the agent keeps it only when the file
+ * wants embeddings and the model is on disk. `embeddingKept` says it did. An
+ * older agent ignores the flag and stops both, printing `stopped`: then
+ * `embeddingKept` is false and the caller goes on as after `models stop`.
+ * Told as a stop on purpose, as modelsStop is.
+ */
+export async function modelsStopChatOnly(): Promise<CliResult & { embeddingKept: boolean }> {
+  const h = cliStandIns.getStore();
+  if (h) h.stops++;
+  else stopsAskedFor++;
+  tell("stopping");
+  const res = await cli(["models", "stop", "--chat-only"], 30_000);
+  return { ...res, embeddingKept: res.ok && CHAT_ONLY_STOP_KEPT.test(res.stdout) };
 }
 let stopsAskedFor = 0;
 /** ATO-157: how many `models stop` this process has asked for, whoever asked (a stop moves no other mark). */
@@ -2971,20 +3097,32 @@ export async function skillBrowse(
  * that comes back as `blocked` so the tab shows the TUI's confirm with
  * the CLI's line as its one finding. Success is the CLI's own
  * `installed <name> (v…) from <id> — <scan summary>` line.
+ *
+ * A `caution` verdict, with no terminal to ask on, exits with
+ * `install needs confirmation: <id> — <scan summary>` (PR #869): that comes
+ * back as `blocked` too, with `caution`, and the tab's confirm says so.
+ * Confirmed, the install runs again with `--yes` (`confirmCaution`), which
+ * approves a caution verdict only: if the skill changed and now scans
+ * dangerous, the CLI still refuses it (src/cli/skill.ts).
  */
 export async function skillInstall(
   identifier: string,
   acknowledgeRisk: boolean,
   cwd?: string,
-): Promise<{ ok: boolean; line?: string; blocked?: boolean; message?: string; error?: string }> {
+  confirmCaution = false,
+): Promise<{ ok: boolean; line?: string; blocked?: boolean; caution?: boolean; message?: string; error?: string }> {
   const id = identifier.trim();
   if (!/^@?[\w.-]+(?:\/[\w.-]+){1,4}$/.test(id)) return { ok: false, error: `not a hub identifier: ${identifier}` };
   const args = ["skill", "install", id];
   if (acknowledgeRisk) args.push("--acknowledge-risk");
+  else if (confirmCaution) args.push("--yes");
   const res = await cli(args, 180_000, cwd);
   if (res.ok) return { ok: true, line: res.stdout.trim().split("\n").pop() ?? "" };
   const message = (res.stderr.trim() || res.error || "install failed").split("\n").pop() ?? "";
   if (/flagged dangerous by the security scan/.test(res.stderr)) return { ok: false, blocked: true, message };
+  // The verdict line, not the CLI's "re-run with --yes" hint printed after it.
+  const caution = /^.*install needs confirmation:.*$/m.exec(res.stderr);
+  if (caution) return { ok: false, blocked: true, caution: true, message: caution[0].trim() };
   return { ok: false, error: message };
 }
 
@@ -3084,6 +3222,8 @@ export interface EmbeddingCatalogModel {
 export async function modelsListEmbeddings(): Promise<{
   ok: boolean; models?: EmbeddingCatalogModel[]; daemon?: { running: boolean; pid: number | null; port: number | null; health: string }; error?: string;
 }> {
+  // Remote agent: its embedding models are not listed over the network yet; an empty list, not an error line.
+  if (remoteModels) return { ok: true, models: [] };
   const res = await cli(["models", "list-embeddings"], 45_000);
   if (!res.ok) return { ok: false, error: res.error };
   const models: EmbeddingCatalogModel[] = [];
@@ -3428,6 +3568,7 @@ export function modelsPullEmbedding(
   id: string,
   onLine: (line: string) => void,
 ): { done: Promise<CliResult>; cancel: () => void } {
+  if (remoteModels) return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE }), cancel: () => {} };
   const binary = resolveBinary();
   if (!binary || !MODEL_ID_RE.test(id)) {
     return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: "cannot start the download" }), cancel: () => {} };
@@ -4248,10 +4389,31 @@ export function noLocalModelsHere(stderr: string): string | null {
   return stderr.match(NO_LOCAL_MODELS_HERE)?.[0].trim() ?? null;
 }
 
+/* ATO-1233: what the agent said when `models update` failed, in place of
+   "exited with code 1": the last line of stderr that reads like a reason
+   (an error, a refusal, "ownership changed"), else its last line. Log
+   prefixes and timestamps are dropped; at most 300 characters. Null when
+   stderr is empty. A killed child (code null, a cancel) keeps its old
+   words, which the window reads as a cancel. */
+export function updateFailureCause(stderr: string): string | null {
+  const lines = stderr.split(/\r?\n/)
+    .map((l) => l.replace(/^\[atomic-agent\]\s*/, "").replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+(ERROR|WARN|INFO)\s+/, "").replace(/^(error|Error):\s*/, "").trim())
+    .filter((l) => l.length > 0 && !/^\d{1,3}%|^current:|^latest:|^downloading/i.test(l));
+  if (!lines.length) return null;
+  const reason = [...lines].reverse().find((l) => /error|fail|cannot|can't|could not|changed|refus|denied|not (installed|available|found)|no space|stop /i.test(l)) ?? lines[lines.length - 1]!;
+  return reason.length > 300 ? `${reason.slice(0, 297)}...` : reason;
+}
+
 export function modelsUpdateStream(
   onLine: (line: string) => void,
   limits: { firstProgressMs?: number; stallMs?: number } = {},
 ): { done: Promise<CliResult & { sawProgress: boolean; upToDate: boolean; timedOut: boolean; keptBackend: boolean }>; cancel: () => void } {
+  if (remoteModels) {
+    return {
+      done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE, sawProgress: false, upToDate: false, timedOut: false, keptBackend: false }),
+      cancel: () => {},
+    };
+  }
   const binary = resolveBinary();
   if (!binary) {
     return {
@@ -4264,6 +4426,8 @@ export function modelsUpdateStream(
      OPERATOR's ~/.atomic-agent — it writes the llama.cpp backend into whatever
      state dir the child resolves, which is exactly what item 9 exists to stop.
      The isolation lane's source scan is what caught it. */
+  // A cancel ends with code 1 on Windows (no signal): it keeps its cancel wording there too.
+  let cancelledByUs = false;
   const child = spawn(binary, ["models", "update"], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
@@ -4312,13 +4476,13 @@ export function modelsUpdateStream(
     };
     child.on("exit", (code) => {
       if (code === 0) return finish({ ok: true, stdout, stderr });
-      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? `models update exited with code ${code ?? "null"}` });
+      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? (code === null || cancelledByUs ? null : updateFailureCause(stderr)) ?? `models update exited with code ${code ?? "null"}` });
       const keptBackend = kept();
       finish({ ok: false, stdout, stderr, error: updateTimedOutError(timedOut, keptBackend) }, keptBackend);
     });
     child.on("error", (err) => finish({ ok: false, stdout, stderr, error: err.message }));
   });
-  return { done, cancel: () => child.kill("SIGTERM") };
+  return { done, cancel: () => { cancelledByUs = true; child.kill("SIGTERM"); } };
 }
 
 /**

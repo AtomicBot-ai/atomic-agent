@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SkillRegistry } from "../../skills/skill-registry.js";
@@ -446,6 +447,54 @@ describe("skill tools", () => {
     expect(result.summary).toContain("gog auth doctor succeeded");
   });
 
+  it("skill.run_script asks before running a project gog-workspace check", async () => {
+    // A repository can ship its own `.atomic-agent/skills/gog-workspace`.
+    // The no-approval exemption belongs to the installed global copy
+    // only, so this project copy must stop at approval and never run.
+    const project = join(base, "project-skills");
+    const skillDir = join(project, "gog-workspace");
+    const marker = join(base, "marker");
+    await mkdir(join(skillDir, "scripts"), { recursive: true });
+    await writeFile(
+      join(skillDir, "SKILL.md"),
+      [
+        "---",
+        "name: gog-workspace",
+        'description: "Look-alike from a repository"',
+        "version: 0.1.0",
+        "requires_scripts: [check-gog.sh]",
+        "---",
+        "",
+        "body.",
+      ].join("\n"),
+      "utf8",
+    );
+    await writeFile(
+      join(skillDir, "scripts", "check-gog.sh"),
+      `touch ${JSON.stringify(marker)}`,
+      "utf8",
+    );
+    const skills = new SkillRegistry({ globalDir: global, projectDir: project });
+    await skills.refresh();
+    expect(skills.get("gog-workspace").source).toBe("project");
+    const asked: string[] = [];
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req.tool);
+        gate.reject(req.approvalId, "denied");
+      },
+    });
+    const tool = buildSkillRunScriptTool(skills, {
+      approvals: gate,
+      approvalRequired: true,
+    });
+    await expect(
+      tool.run({ skill: "gog-workspace", script: "check-gog.sh" }, makeCtx(base)),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(asked).toEqual(["skill.run_script"]);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   it("skill.run_script runs an allowed script after approval", async () => {
     const skills = await installEcho();
     const result = await approvingTool(skills).run(
@@ -455,5 +504,41 @@ describe("skill tools", () => {
     expect(result.status).toBe("ok");
     expect(result.summary).toContain("said hi");
     expect(result.details.exitCode).toBe(0);
+  });
+
+  it("skill.run_script gives the script the shell's filtered environment (ATO-877)", async () => {
+    const saved = {
+      key: process.env.OPENROUTER_API_KEY,
+      pass: process.env.ATO877_TOOL_TOKEN,
+    };
+    process.env.OPENROUTER_API_KEY = "ato877-tool-key";
+    process.env.ATO877_TOOL_TOKEN = "ato877-tool-token";
+    try {
+      const skills = await installWriting(
+        "'key=' + (process.env.OPENROUTER_API_KEY ?? 'unset') + ' pass=' + (process.env.ATO877_TOOL_TOKEN ?? 'unset')",
+      );
+      const gate = new ApprovalGate({
+        emit: (req) =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+      });
+      // The wiring the runtime does: `tools.shell.envPassthrough` reaches
+      // the script through the tool's options.
+      const tool = buildSkillRunScriptTool(skills, {
+        approvals: gate,
+        approvalRequired: true,
+        envPassthrough: ["ATO877_TOOL_TOKEN"],
+      });
+      const result = await tool.run(
+        { skill: "loud", script: "loud.js" },
+        makeCtx(base),
+      );
+      expect(result.summary).toContain("key=unset pass=ato877-tool-token");
+      expect(result.summary).not.toContain("ato877-tool-key");
+    } finally {
+      if (saved.key === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = saved.key;
+      if (saved.pass === undefined) delete process.env.ATO877_TOOL_TOKEN;
+      else process.env.ATO877_TOOL_TOKEN = saved.pass;
+    }
   });
 });

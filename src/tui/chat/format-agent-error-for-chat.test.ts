@@ -7,13 +7,18 @@ import { AgentLoop } from "../../agent/agent-loop.js";
 import { buildDefaultToolRegistry } from "../../tools/index.js";
 import { SlotManager } from "../../llm/slot-manager.js";
 import { createEmptySessionState } from "../../session/session-state.js";
-import { LlamaServerError } from "../../llm/llama-server-client.js";
+import { LlamaServerError, readLlamaErrorBody } from "../../llm/llama-server-client.js";
+import { classifyLocalServerError } from "../../llm/reliability/index.js";
 import type {
   CapabilitiesSummary,
   SkillCatalogEntry,
   ToolDescriptor,
 } from "../../prompt/stable-prefix.js";
-import { formatAgentErrorForChat, formatLocalEngineDownForChat } from "./format-agent-error-for-chat.js";
+import {
+  formatAgentErrorForChat,
+  formatLocalEngineDownForChat,
+  formatLocalServerErrorForChat,
+} from "./format-agent-error-for-chat.js";
 
 const TRANSPORT = "Turn failed: couldn't get a reply from the provider.";
 const MODEL = "Turn failed: the model didn't give a usable answer.";
@@ -370,6 +375,36 @@ describe("formatAgentErrorForChat", () => {
     );
   });
 
+  it("says wrong server or no model for a llama 404/405 on a local provider (ATO-870)", () => {
+    for (const status of [404, 405]) {
+      const text = formatAgentErrorForChat(
+        "transport",
+        `llama-server returned http ${status}`,
+        { activeProviderIsLocal: true, llamaUrl: "http://127.0.0.1:8090" },
+      );
+      expect(text).toBe(
+        [
+          TRANSPORT,
+          `Details: llama-server returned http ${status}`,
+          `http://127.0.0.1:8090 answered ${status}: this is not llama-server, or no model is loaded there`,
+          "  recheck it:          atomic-agent models check",
+          "  check the address:   atomic-agent config set localModels.url <url>",
+          "  or in the TUI:       LLM tab › External llama.cpp",
+        ].join("\n"),
+      );
+    }
+  });
+
+  it("keeps the start hint for a refused connection on a local provider", () => {
+    const text = formatAgentErrorForChat(
+      "transport",
+      "connect ECONNREFUSED 127.0.0.1:8090",
+      { activeProviderIsLocal: true, llamaUrl: "http://127.0.0.1:8090" },
+    );
+    expect(text).toContain("llama-server is not reachable at http://127.0.0.1:8090");
+    expect(text).toContain("atomic-agent models start");
+  });
+
   it("keeps the hint away from non-transport failures", () => {
     expect(
       formatAgentErrorForChat("model", "empty completion", {
@@ -476,23 +511,26 @@ describe("formatAgentErrorForChat — llama failures through the real pipeline",
     );
   }
 
-  it("carries the unreachable hint for a llama 404 on a local provider", async () => {
+  it("carries the wrong-server hint for a llama 404 on a local provider", async () => {
     // The one failure where "check your llama URL" is exactly the right
     // advice — a wrong `localModels.url`, or a server that is not a
-    // llama-server — was the one failure that never got it.
+    // llama-server — was the one failure that never got it. Something
+    // answered, so "start it" would be wrong advice (ATO-870).
     const text = await chatTextForLlamaStatus(404);
     expect(text.split("\n")[0]).toBe(TRANSPORT);
     expect(text).toContain(
-      "llama-server is not reachable at http://127.0.0.1:19091",
+      "http://127.0.0.1:19091 answered 404: this is not llama-server, or no model is loaded there",
     );
+    expect(text).not.toContain("models start");
   });
 
-  it("carries the unreachable hint for a llama 405 on a local provider", async () => {
+  it("carries the wrong-server hint for a llama 405 on a local provider", async () => {
     const text = await chatTextForLlamaStatus(405);
     expect(text.split("\n")[0]).toBe(TRANSPORT);
     expect(text).toContain(
-      "llama-server is not reachable at http://127.0.0.1:19091",
+      "http://127.0.0.1:19091 answered 405: this is not llama-server, or no model is loaded there",
     );
+    expect(text).not.toContain("models start");
   });
 
   it("keeps a llama 400 as a grammar failure with no URL advice", async () => {
@@ -509,5 +547,69 @@ describe("formatLocalEngineDownForChat (ATO-772)", () => {
     expect(formatLocalEngineDownForChat()).toBe(
       "Turn failed. The local model isn't running.\n  Start it with: atomic-agent models start",
     );
+  });
+});
+
+describe("formatLocalServerErrorForChat (ATO-707, ATO-737)", () => {
+  function llama400(type: string, detail: string): LlamaServerError {
+    const body = readLlamaErrorBody(JSON.stringify({ error: { code: 400, message: detail, type } }));
+    return new LlamaServerError(
+      `llama-server returned http 400: ${detail}`,
+      400,
+      "http://127.0.0.1:9931/v1/chat/completions",
+      false,
+      undefined,
+      body !== undefined ? { body } : undefined,
+    );
+  }
+
+  it("says the context is full, what to do, and keeps the server's words under Details", () => {
+    const err = llama400("exceed_context_size_error", "request (5369 tokens) exceeds the available context size (4096 tokens)");
+    expect(formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message)).toBe(
+      [
+        "Turn failed. The conversation no longer fits in the local model's context window.",
+        "  Compact this chat or start a new one, or give the model a larger context size.",
+        "  Type /compact to shrink this chat, or /new to start over",
+        "Details: llama-server returned http 400: request (5369 tokens) exceeds the available context size (4096 tokens)",
+      ].join("\n"),
+    );
+  });
+
+  it("says the request was turned down as invalid", () => {
+    const err = llama400("invalid_request_error", "tools param requires --jinja flag");
+    const text = formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message);
+    expect(text.split("\n")[0]).toBe("Turn failed. The local model server turned the request down as invalid.");
+    expect(text).toContain("Try another model, or update the server.");
+    expect(text).toContain("Details: llama-server returned http 400: tools param requires --jinja flag");
+  });
+
+  it("names /compact and /new when the local context is full (ATO-1208)", () => {
+    const err = llama400("exceed_context_size_error", "request (5369 tokens) exceeds the available context size (4096 tokens)");
+    const text = formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message);
+    expect(text).toContain("Type /compact to shrink this chat, or /new to start over");
+  });
+
+  it("keeps the /compact and /new line when the message already says the sentence (ATO-1208)", () => {
+    const err = llama400("exceed_context_size_error", "request (5369 tokens) exceeds the available context size (4096 tokens)");
+    const error = classifyLocalServerError(err)!;
+    const said = `The local server at 127.0.0.1:1234 turned the request down (400). ${error.message} ${error.advice}`;
+    expect(formatLocalServerErrorForChat(error, said)).toBe(
+      `Turn failed. ${said}\n  Type /compact to shrink this chat, or /new to start over`,
+    );
+  });
+
+  it("leaves /compact and /new out of an invalid request (ATO-1208)", () => {
+    const err = llama400("invalid_request_error", "tools param requires --jinja flag");
+    const text = formatLocalServerErrorForChat(classifyLocalServerError(err)!, err.message);
+    expect(text).not.toContain("/compact");
+    expect(text).not.toContain("/new");
+  });
+
+  it("does not repeat a message that already says it", () => {
+    const err = llama400("invalid_request_error", "x");
+    const said =
+      "The local server at 127.0.0.1:1234 turned the request down (400). " +
+      "The local model server turned the request down as invalid. Try another model.";
+    expect(formatLocalServerErrorForChat(classifyLocalServerError(err)!, said)).toBe(`Turn failed. ${said}`);
   });
 });

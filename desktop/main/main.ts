@@ -5,15 +5,17 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Notification, shell, systemPreferences} from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
+import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
 import { randomUUID } from "node:crypto";
-import { homedir, tmpdir, totalmem } from "node:os";
+import { freemem, homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
 import { appendFileSync, existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";   // item 5: the attachment strip stats what a turn wrote, nothing else
@@ -26,7 +28,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -35,6 +37,7 @@ import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 import { buildMenu } from "./menu.js";
+import { spellcheckEnabled, wireEditContextMenu } from "./edit-context-menu.js";
 import { logTail, redactSecrets, scrubText } from "./report-redact.js";
 import { agentLogTag, lineLevel, worthQuoting, type AgentLogLevel } from "./agent-output.js";
 import {
@@ -62,6 +65,8 @@ import {
   traceTools,
   // Lane B — backend switch
   chatModelsList,
+  keyNamesAvailable,
+  providerIsUsable,
   configSetWhole,
   explainConfigWriteFailure,
   managedDataDir,
@@ -96,7 +101,11 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
-import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";   // #680: the chosen folder survives a relaunch
+import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
+import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
+import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
+import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
+import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
   activateProvider,
   agentStarting,
@@ -138,7 +147,7 @@ import {
   daemonWatchState,
   hostDaemonWatch,
   onAgentFrame,
-  pairEmbeddingsBeforeServe,
+  pairEmbeddingsAtLaunch,
   resumeChatAfterStudio,
   updateBegins,
   yieldChatToStudio,
@@ -205,6 +214,9 @@ import {
   detectImportAgents,
   importAgentDir,
   IMPORT_DOMAINS,
+  useConfigRoute,
+  useRemoteModels,
+  atagRun,
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -229,12 +241,14 @@ import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverla
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
+import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
+import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
 import { buildStampLabel, readBuildStamp, type BuildStamp } from "./build-stamp.js";
 
 const DEV = process.argv.includes("--dev");
@@ -728,7 +742,7 @@ function parsePullProgress(
 // pins its provider at boot, so a switch whose write found the file already
 // naming that provider (the TUI or a hand edit moved the file while this
 // window was open) still has to restart when serve is behind the file.
-interface BootRoute { provider: string; model: string | null; key: string }
+interface BootRoute { provider: string; model: string | null; key: string; mode: string }
 let bootRoute: Promise<BootRoute | null> = Promise.resolve(null);
 /** The route a config names, as `atag serve` would boot on it. */
 function routeOf(cfg: UserConfigShape | undefined): BootRoute {
@@ -745,7 +759,7 @@ function routeOf(cfg: UserConfigShape | undefined): BootRoute {
     ? [rm.orchestratorProviderId, rm.orchestratorModel, rm.workerProviderId, rm.workerModel, rm.workers]
     : [];
   const key = JSON.stringify([provider, provider === "local-llama" ? null : model, rm.effective, ...seats]);
-  return { provider, model, key };
+  return { provider, model, key, mode: rm.effective };
 }
 async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null> {
   try {
@@ -754,6 +768,34 @@ async function snapshotBootRoute(client: AgentClient): Promise<BootRoute | null>
   } catch {
     return null;
   }
+}
+
+/**
+ * ATO-1024: the embedding server the launch paired beside serve's start, attached
+ * by the running agent once it is up. An agent that was still booting when the
+ * server came up found it itself, and this is a no-op there; one that has no
+ * route keeps keyword recall until its next start, as before.
+ */
+async function attachEmbeddingsLive(client: AgentClient, waitMs = 120_000): Promise<void> {
+  if (client.status.state !== "connected") {
+    const connected = await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => { client.off("status", onStatus); resolve(false); }, waitMs);
+      // Only "connected" ends the wait: a stopped or error state on the way up (a retry, a restart) is not the answer.
+      function onStatus(status: { state?: string }): void {
+        if (status.state !== "connected") return;
+        clearTimeout(timer);
+        client.off("status", onStatus);
+        resolve(true);
+      }
+      client.on("status", onStatus);
+    });
+    if (!connected) {
+      console.error("[desktop] local-llm: the agent did not come up in time to attach the embedding server; memory search uses words until its next start");
+      return;
+    }
+  }
+  const r = await client.reconnectEmbeddings();
+  if (r?.changed && r.health === "ok") console.error("[desktop] local-llm: memory search attached to the embedding server — semantic search on");
 }
 
 function send(channel: string, payload?: unknown): void {
@@ -874,7 +916,9 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       sandbox: true,
       webviewTag: false,
-      spellcheck: false,
+      // ATO-668: on for text fields (edit-context-menu.ts spellcheckEnabled);
+      // fields of keys, URLs and paths opt out with spellcheck="false".
+      spellcheck: spellcheckEnabled(process.platform),
       /* Backlog 03: the first-run latch rides in with the window, so the
          renderer opens the wizard before its first paint instead of after a
          round trip (preload.ts freshAtBoot) — on a fresh install the chat
@@ -890,6 +934,7 @@ function createWindow(): BrowserWindow {
     },
   });
   if (freshHere) FRESH_WINDOW.id = window.webContents.id;
+  wireEditContextMenu(window.webContents);
   /* ATO-765: a crashed page is loaded again (render-recovery.ts). Registered
      before the error reporting so its report can say whether it recovered. */
   const recovery = new RenderRecovery();
@@ -1154,6 +1199,7 @@ function wireUpdater(): void {
   ipcMain.handle("updates:dismiss", () => updater.dismiss());
   ipcMain.handle("updates:skip", () => updater.skip());
   ipcMain.handle("updates:setAuto", (_event, on: unknown) => updater.setAutoCheck(on === true));
+  ipcMain.handle("updates:setBeta", (_event, on: unknown) => updater.setBeta(on === true));
 }
 
 /**
@@ -1267,8 +1313,9 @@ function wireIpc(client: AgentClient): void {
 
   ipcMain.handle("agent:status", () => client.status);
   ipcMain.handle("agent:start", () => client.start());
-  ipcMain.handle("agent:restart", async () => {
-    A.agentRestarting("manual");
+  // ATO-274: the window names setup finishing and the Telegram tab's Restart agent (ATO-900); every other restart from it is the person's own.
+  ipcMain.handle("agent:restart", async (_event, reason: unknown) => {
+    A.agentRestarting(A.restartTriggerFromWindow(reason));
     await client.stop();
     return client.start();
   });
@@ -1290,6 +1337,24 @@ function wireIpc(client: AgentClient): void {
     return value;
   };
   ipcMain.handle("agent:skills", (_event, sessionId: unknown) => wrap(() => client.skills(skillSession(sessionId))));
+  // ATO-1250: the project-trust question (renderer/project-trust.js). Every field is checked here; the agent checks them again.
+  ipcMain.handle("agent:projectTrust", async (_event, sessionId: unknown) => {
+    try { return await client.projectTrust(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:projectTrustAnswer", async (_event, raw: unknown) => {
+    const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    if (body.answer !== "trust" && body.answer !== "decline") return { ok: false, error: "answer must be trust or decline" };
+    const out: ProjectTrustAnswerBody = { answer: body.answer };
+    try {
+      const sessionId = skillSession(body.sessionId);
+      if (sessionId) out.sessionId = sessionId;
+    } catch (err) { return { ok: false, error: String(err) }; }
+    if (!out.sessionId && typeof body.workingDir === "string" && body.workingDir.length < 4096) out.workingDir = body.workingDir;
+    if (body.scope === "all") out.scope = "all";
+    else if (typeof body.questionId === "string" && body.questionId.length <= 128) out.questionId = body.questionId;
+    else return { ok: false, error: "questionId required" };
+    return client.answerProjectTrust(out);
+  });
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());
@@ -1409,7 +1474,9 @@ function wireIpc(client: AgentClient): void {
       });
       appUpdater()?.turnsChanged();
     }
-    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined);
+    // ATO-731: a new chat opens in the folder the window shows; an existing one keeps its own.
+    // A remote agent opens new chats in its own folder: this computer's path means nothing there.
+    void client.chat(turnId, clean, typeof sessionId === "string" ? sessionId : undefined, client.isRemote ? undefined : client.status.workingDir);
     return { ok: true, turnId };
   }
 
@@ -1473,17 +1540,18 @@ function wireIpc(client: AgentClient): void {
       reason?: string;
     };
     if (typeof approvalId !== "string") return { ok: false, error: "approvalId required" };
-    if (decision !== "allow-once" && decision !== "deny") {
-      return { ok: false, error: "decision must be allow-once or deny" };
+    const known = APPROVAL_DECISIONS.find((d) => d === decision);
+    if (!known) {
+      return { ok: false, error: "decision must be allow-once, allow-in-chat or deny" };
     }
     try {
-      return { ok: true, data: await client.resolveApproval(approvalId, decision, reason) };
+      return { ok: true, data: await client.resolveApproval(approvalId, known, reason) };
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
 
-  ipcMain.handle("app:chooseWorkspace", async () => {
+  ipcMain.handle("app:chooseWorkspace", async (_event, sessionId: unknown) => {
     if (!win) return null;
     const picked = await dialog.showOpenDialog(win, {
       properties: ["openDirectory", "createDirectory"],
@@ -1492,6 +1560,20 @@ function wireIpc(client: AgentClient): void {
     });
     if (picked.canceled || !picked.filePaths[0]) return null;
     const dir = picked.filePaths[0];
+    /* ATO-731 (Nadya 26.10): each chat keeps its own folder and the agent is
+       not restarted. The chat on screen moves there (refused only while that
+       chat runs a turn), and every new chat opens there (agent:chat sends
+       working_dir). An agent without the route takes the old way below. */
+    const sid = typeof sessionId === "string" && sessionId ? sessionId : null;
+    const moved = client.status.state === "connected" ? await client.setSessionWorkingDir(sid, dir) : { supported: false as const };
+    if (moved.supported) {
+      if (moved.busy) return { busy: true, elsewhere: false };
+      if (moved.error) return { error: moved.error };
+      A.workspaceChosen(dir);
+      client.status.workingDir = dir;
+      writeWorkspace(app.getPath("userData"), dir);
+      return { dir, live: true };
+    }
     /* ATO-733: a turn may have begun while the picker was open; the restart
        below would cut it. The window says so and the folder stays as it was
        (workspace-busy.ts); the folder and its analytics change only when the
@@ -1512,6 +1594,7 @@ function wireIpc(client: AgentClient): void {
     client.status.workingDir = dir;
     // #680: and the next launch starts here too, not back in the home folder.
     writeWorkspace(app.getPath("userData"), dir);
+    A.agentRestarting("workspace_change");   // ATO-274
     await client.stop();
     void client.start();
     return dir;
@@ -1539,8 +1622,13 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
+    return startModelPull(id, (opts as { trigger?: unknown } | undefined)?.trigger);
+  });
+  /* The weights download, for the window's pull and for the launch's starter
+     model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
+     download card follows either (dlAdopt). `onDone` hears how it ended. */
+  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void) {
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
-    const trigger = (opts as { trigger?: unknown } | undefined)?.trigger;   // analytics label only
     const running = downloadRunning();
     // A refusal for the download already running is the window following it (dlAdopt), not a failure.
     if (running) { if (running.id !== id) A.downloadRefusedBusy(id, trigger); return { ok: false, error: DOWNLOAD_BUSY, running }; }
@@ -1557,9 +1645,53 @@ function wireIpc(client: AgentClient): void {
       pull = null;
       A.downloadFinished(id, res);
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+      onDone?.(res);
     });
     return { ok: true, started: true };
-  });
+  }
+
+  /* ATO-1041: the first launch with nothing to answer on fetches the starter
+     model, then routes to it (starter-model.ts). The window hears
+     `app:starterModel` ({ id, phase: downloading | ready | failed }) and the
+     usual `cli:pull` frames. */
+  /* The last thing said about the starter, for a window that loads after it was said (app:starterGet). */
+  let starterLast: Record<string, unknown> | null = null;
+  const starterSay = (ev: Record<string, unknown>) => { starterLast = ev; send("app:starterModel", ev); };
+  ipcMain.handle("app:starterGet", () => starterLast);
+  const starterState = async () => {
+    const [list, read] = await Promise.all([chatModelsList(), readWholeConfig()]);
+    const names = keyNamesAvailable();
+    return {
+      chatModels: list.ok && list.models ? list.models : null,
+      cloudReady: (read.config?.llm?.providers ?? []).some((p) => p.kind !== "llama-server" && providerIsUsable(p, names)),
+      localMode: (read.config?.localModels as { mode?: string } | undefined)?.mode ?? null,
+      activeProvider: read.config?.llm?.activeTextProvider ?? null,
+    };
+  };
+  const starterFile = () => join(app.getPath("userData"), "starter.json");
+  fetchStarterModel = async () => {
+    if (SMOKE || FIRST_RUN_PROBE || quitting) return;
+    const now = await starterState();
+    const verdict = starterVerdict({ ...now, offeredBefore: existsSync(starterFile()) });
+    if (!verdict.fetch) return;
+    const id = STARTER_MODEL_ID;
+    const r = startModelPull(id, "first_run", (res) => {
+      if (!res.ok || quitting) { starterSay({ id, phase: "failed", error: res.error ?? null }); return; }
+      // Chosen something else meanwhile (a key, another model): the starter stays on disk, the choice stands.
+      void starterState().then((after) => {
+        if (!starterStillWanted(after)) { starterSay({ id, phase: "done" }); return; }
+        return switched(() => selectLocalModel(id)).then((sw) => {
+          const ok = !!(sw && (sw as { ok?: boolean }).ok);
+          starterSay({ id, phase: ok ? "ready" : "failed", error: ok ? null : ((sw as { error?: string }).error ?? null) });
+        });
+      }).catch(() => undefined);
+    });
+    if (r.ok) {
+      // Offered once: a removed or failed starter is not fetched again on the next launch.
+      try { writeFileSync(starterFile(), `${JSON.stringify({ id, at: Date.now() })}\n`); } catch { /* fetched again next launch */ }
+      starterSay({ id, phase: "downloading" });
+    }
+  };
   /* r5 item 7 (setup wizard) — the llama.cpp runtime phase, streamed.
      `atag models pull` never fetches the backend, so the TUI's first
      phase row can only be driven by `models update`. It rides the same
@@ -1876,12 +2008,76 @@ function wireIpc(client: AgentClient): void {
   // ATO-165: the row's right-click menu is the window's own now (renderer chatMenuHTML),
   // the same menu as the row's "…" control, so there is no native one to pop up here.
   ipcMain.handle("app:prefsGet", () => ({ ok: true, data: readPrefs() }));
+  /* ATO-1127: the "Connect to another computer" window. Set checks the address
+     and the key first (probeRemoteAgent) and saves only what answered; the
+     agent is then let go of and the remote one connected. Clear goes back to
+     this computer's own agent. */
+  ipcMain.handle("app:remoteGet", () => {
+    const r = readRemoteAgent(app.getPath("userData"), keyBox());
+    return { url: r?.url ?? null, connected: client.isRemote && client.status.state === "connected" };
+  });
+  ipcMain.handle("app:remoteSet", async (_event, payload: unknown) => {
+    const { url, token } = (payload ?? {}) as { url?: unknown; token?: unknown };
+    const clean = typeof url === "string" ? cleanRemoteUrl(url) : null;
+    if (!clean) return { ok: false, error: "Type an address like http://192.168.1.20:8787 (no path)." };
+    if (typeof token !== "string" || token.trim().length === 0) return { ok: false, error: "Type the agent's API key." };
+    const probe = await probeRemoteAgent(clean, token.trim());
+    if (!probe.ok) return probe;
+    if (!writeRemoteAgent(app.getPath("userData"), keyBox(), { url: clean, token: token.trim() })) {
+      return { ok: false, error: "This system has no keychain to keep the key safely, so it was not saved." };
+    }
+    A.agentRestarting("other");
+    await client.stop();
+    client.setRemote({ url: clean, token: token.trim() });
+    const status = await client.start();
+    return status.state === "connected" ? { ok: true } : { ok: false, error: status.error ?? "Could not connect." };
+  });
+  ipcMain.handle("app:remoteClear", async () => {
+    writeRemoteAgent(app.getPath("userData"), keyBox(), null);
+    if (!client.isRemote) return { ok: true };
+    await client.stop();
+    client.setRemote(null);
+    await client.start();
+    void startLocalDaemonAtBoot();
+    return { ok: true };
+  });
+  // ATO-577 / ATO-579: Settings › Diagnostics' Doctor and Data rows (main/doctor-data.ts).
+  registerDoctorDataIpc({
+    ipcMain,
+    dialog,
+    window: () => win,
+    stateDir: DESKTOP_STATE_DIR,
+    run: (args, timeoutMs) => atagRun(args, timeoutMs),
+    stopModels: () => modelsStop(),
+    stopAgent: () => client.stop(),
+    startAgent: async () => {
+      if (quitting) return;
+      await client.start();
+      void startLocalDaemonAtBoot();
+    },
+    turnsInFlight: () => client.turnsInFlight,
+    isRemote: () => client.isRemote,
+    relaunch: () => { app.relaunch(); app.exit(0); },
+  });
+  // ATO-1030: Settings › Diagnostics' graphics acceleration row; a change takes effect at the next launch.
+  ipcMain.handle("app:gpuGet", () => ({ ok: true, activeNow: !GPU_OFF_THIS_RUN, next: readGpuState(app.getPath("userData")).off }));
+  ipcMain.handle("app:gpuSet", (_event, on: unknown) => {
+    if (typeof on !== "boolean") return { ok: false, error: "on must be a boolean" };
+    const userData = app.getPath("userData");
+    const state = setHardwareAcceleration(readGpuState(userData), on);
+    writeGpuState(userData, state);
+    return { ok: true, activeNow: !GPU_OFF_THIS_RUN, next: state.off };
+  });
   ipcMain.handle("app:prefsSet", (_event, prefs: unknown) => writePrefs(prefs));
+  // ATO-1034: chat folders, in the shared state dir so the terminal sees the same ones.
+  ipcMain.handle("app:foldersGet", () => ({ ok: true, data: readChatFolders(DESKTOP_STATE_DIR) }));
+  ipcMain.handle("app:foldersSet", (_event, value: unknown) => writeChatFolders(DESKTOP_STATE_DIR, value));
 
   // --- Lane B — backend switch ---
   // The write is only half of a switch: `atag serve` pins its provider at
-  // boot and has no reload route on 0.5.4, so a result that says
-  // `restart` is followed by the same stop+start `agent:restart` does.
+  // boot, so a result that says `restart` is followed by the same
+  // stop+start `agent:restart` does — unless the agent can take a cloud
+  // model pick live (ATO-1021, `liveSwap` below).
   /* Backlog 18 (its second review): whether and when the restart comes is
      backend-switch's call (restartAfterSwitch) — never under a turn in flight,
      never for a superseded result. It is handed this client: the turns it
@@ -1902,6 +2098,32 @@ function wireIpc(client: AgentClient): void {
          at once. So main puts back the last mode the window set first, and the
          turns waiting for this restart (agent:chat) go after it. */
       if (lastCodingMode && !quitting && client.status.state === "connected") await client.codingMode(lastCodingMode);
+    },
+    /* ATO-1021: the route as the file now names it, taken live by the running
+       agent. Only a single-mode cloud route: a local one moves a daemon, and
+       Fusion's seats are read at boot. The route serve is on is then this one,
+       so the next switch is judged against it. */
+    liveSwap: async (res) => {
+      if (quitting || client.status.state !== "connected" || !res.providerId) return false;
+      let cfg: UserConfigShape | undefined;
+      try {
+        cfg = ((await client.config()) as { config?: UserConfigShape }).config;
+      } catch {
+        return false;
+      }
+      const next = routeOf(cfg);
+      // Any llama-server entry, not only local-llama: a local route has a model profile serve sets up at boot.
+      const kind = (cfg?.llm?.providers ?? []).find((p) => p.id === next.provider)?.kind;
+      if (next.provider !== res.providerId || kind === "llama-server" || next.mode === "fusion") return false;
+      // No model: the file already names it, and a pin would rewrite the file under the window's next write.
+      const swap = await client.setActiveLlm(next.provider, null);
+      if (swap.busy) return "busy";
+      if (!swap.ok) {
+        console.warn(`[desktop] model switch: live swap not taken (${swap.error ?? "unknown"}), restarting the agent`);
+        return false;
+      }
+      bootRoute = Promise.resolve(next);
+      return true;
     },
   });
   // A restart held back for the turns runs as the last one ends — on a live agent; a dead one is started afresh by whoever starts it.
@@ -1940,8 +2162,17 @@ function wireIpc(client: AgentClient): void {
       const read = await readWholeConfig();
       drifted = read.ok && !!read.config && switchesOnTheirWay <= 1 && routeOf(read.config).key !== boot.key;
     }
-    const { restart, restartHeld } = await restartAfterSwitch(res, wanted || drifted, drifted);
-    return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), status: client.status };
+    /* ATO-1021: a cloud pick on an agent already on a single-mode cloud route,
+       with no daemon stopped or started, is swapped live instead of restarted. */
+    /* ATO-1234: Settings › Models' Use (daemon "stopping": the local server
+       stops in the background) is taken live from a local route too — the
+       agent drops nothing it needs to reach a cloud provider. The reverse,
+       cloud → local, still restarts: a local route has a model profile serve
+       sets up at boot. */
+    const live = !!boot && !drifted && res.transport === "native_tools" && boot.mode !== "fusion"
+      && ((res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" || res.daemon === "stopping");
+    const { restart, restartHeld, liveSwapped } = await restartAfterSwitch(res, wanted || drifted, drifted, live);
+    return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), ...(liveSwapped ? { liveSwapped } : {}), status: client.status };
   };
   /* Backlog 35: the switches between their IPC call and applySwitch's answer.
      Not a generation count: a newer switch can end without a restart (no key,
@@ -1964,14 +2195,16 @@ function wireIpc(client: AgentClient): void {
     if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
     return switched(() => switchBackend(kind), { explicit: true });
   });
-  ipcMain.handle("cli:activateProvider", async (_event, id: unknown) => {
+  ipcMain.handle("cli:activateProvider", async (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return switched(() => activateProvider(id));
+    // ATO-1234: Settings › Models' Use asks for the local server to stop in the background.
+    const background = !!opts && typeof opts === "object" && (opts as { background?: unknown }).background === true;
+    return switched(() => activateProvider(id, { stopInBackground: background }));
   });
   ipcMain.handle("cli:selectCloudModel", async (_event, payload: unknown) => {
     const { id, model } = (payload ?? {}) as { id?: unknown; model?: unknown };
     if (typeof id !== "string" || typeof model !== "string") return { ok: false, error: "id and model are required" };
-    return switched(() => selectCloudModel(id, model));
+    return switched(() => selectCloudModel(id, model, { stopInBackground: (payload as { background?: unknown }).background === true }));
   });
   ipcMain.handle("cli:selectLocalModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
@@ -2156,6 +2389,21 @@ function wireIpc(client: AgentClient): void {
   const imageRoots = (): string[] => imageRootsFor(process.platform, homedir(), DESKTOP_STATE_DIR, tmpdir());
   ipcMain.handle("app:imageDataUrl", (_event, p: unknown) =>
     imageDataUrl(p, imageRoots(), homedir(), process.platform));
+  /* ATO-1053: the file preview panel. The window hands a path and gets back
+     what it may show (file-preview.ts): only inside the picture roots plus
+     the agent's working folder, links resolved, the file opened once, text
+     capped, nothing run. Open and Reveal go through the same check, and Open
+     still never runs a file (openWithoutRunning). */
+  const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
+  ipcMain.handle("app:filePreview", (_event, p: unknown) =>
+    filePreview(p, previewRoots(), homedir(), process.platform));
+  ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
+    const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
+    if (!t.ok) return { ok: false, reason: t.reason };
+    if (action === "reveal") { shell.showItemInFolder(t.real); return { ok: true }; }
+    if (action === "open") return openWithoutRunning(t.real);
+    return { ok: false, reason: "unknown" };
+  });
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
@@ -2444,9 +2692,9 @@ function wireIpc(client: AgentClient): void {
     return hubCache.refresh(q, hubConfigKey(DESKTOP_STATE_DIR), () => skillBrowse(q, client.status.workingDir));
   });
   ipcMain.handle("cli:skillInstall", (_event, payload: unknown) => {
-    const { identifier, acknowledgeRisk } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown };
+    const { identifier, acknowledgeRisk, confirmCaution } = (payload ?? {}) as { identifier?: unknown; acknowledgeRisk?: unknown; confirmCaution?: unknown };
     if (typeof identifier !== "string" || !identifier.trim()) return { ok: false, error: "identifier required" };
-    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir).then((res) => (A.skillInstalled(res, acknowledgeRisk === true), res));
+    return skillInstall(identifier, acknowledgeRisk === true, client.status.workingDir, confirmCaution === true).then((res) => (A.skillInstalled(res, acknowledgeRisk === true), res));
   });
   ipcMain.handle("app:clawhubSkillDetail", (_event, payload: unknown) => {
     const { apiBase, slug, owner } = (payload ?? {}) as { apiBase?: unknown; slug?: unknown; owner?: unknown };
@@ -2688,7 +2936,7 @@ function wireIpc(client: AgentClient): void {
     if (r.via !== "launch") send("cli:daemon", r);
     // A Core that would not start at launch is told too: the window offers the way out, not a log line.
     noteEngine(r, { via: r.via });
-    if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null);   // the launch's own is timed in startLocalDaemonAtBoot
+    if (r.via === "swap") A.localBackendStarted("swap", r.daemon, r.modelId, null, r);   // the launch's own is timed in startLocalDaemonAtBoot
   });
   ipcMain.handle("cli:fusionWorkers", async (_event, workers: unknown) => {
     if (typeof workers !== "number") return { ok: false, error: "workers must be a number" };
@@ -2761,7 +3009,8 @@ function wireIpc(client: AgentClient): void {
     };
     return importFromTui(flags, {
       stopAgent: () => client.stop(),
-      startAgent: () => client.start(),
+      // ATO-274: the database arm's restart is the import's, not a manual one.
+      startAgent: () => { A.agentRestarting("import"); return client.start(); },
     }).then((res) => (A.tuiImportDone({ ...flags }, res), res));
   });
 
@@ -2940,11 +3189,13 @@ function wireIpc(client: AgentClient): void {
     /* ATO-763: the report waits a moment for the agent's last stderr lines
        (the pipe can close after the exit), then sends only their category. */
     const exitedAt = Date.now();
+    // ATO-424: the machine's free memory at the exit itself, not 300 ms later.
+    const exitFreeMem = freemem();
     setTimeout(() => {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS));
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
@@ -2980,20 +3231,37 @@ function wireIpc(client: AgentClient): void {
   client.on("status", (status: { state?: string }) => {
     if (status.state === "connected") bootRoute = snapshotBootRoute(client);
     else if (status.state === "stopped" || status.state === "error") bootRoute = Promise.resolve(null);
+    /* ATO-1022: while `atag serve` is up, config reads and whole-file writes
+       go through it instead of an `atag config` process each; down, the CLI. */
+    if (status.state === "connected") {
+      useConfigRoute({ read: () => client.configWithSha(), write: (json, expect) => client.putConfig(json, expect) });
+    } else {
+      useConfigRoute(null);
+    }
+    // ATO-1127: on another computer's agent, Settings › Models reads that computer's models,
+    // also while it is not answering (then it says so) — never this computer's models instead.
+    useRemoteModels(client.isRemote ? { text: (view) => client.localModelsText(view) } : null);
   });
 }
 
 /** Item 6 (sidebar): what `window.__sidebar()` hands back. */
 /* ATO-165: the sidebar's section headers — "Pinned" first while a pinned
    chat is on the list, then Chats, then Tasks when the agent holds any. */
-function sidebarHeadersExpected(sb: { pinnedRows?: number; tasks: unknown[] }): string {
-  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
+function sidebarHeadersExpected(sb: { pinnedRows?: number; folders?: number; tasks: unknown[] }): string {
+  // ATO-1034: "Folders" sits between Pinned and Chats while there is a folder.
+  return JSON.stringify([...((sb.pinnedRows ?? 0) > 0 ? ["Pinned"] : []), ...((sb.folders ?? 0) > 0 ? ["Folders"] : []), "Chats", ...(sb.tasks.length > 0 ? ["Tasks"] : [])]);
 }
+/** ATO-457: the standing section rows under New chat (renderer sidebar-nav.js). */
+const SIDEBAR_NAV_EXPECTED = JSON.stringify(["Tasks", "Skills"]);
 type Sb = {
   headers: string[];
   pinnedRows?: number;
+  /** ATO-1034: how many chat folders the sidebar draws. */
+  folders?: number;
   navrows: number;
   skillsRow: boolean;
+  /** ATO-457: the standing section rows under New chat, by label. */
+  nav?: string[];
   subtitles: number;
   onRows: number;
   counter: string;
@@ -3040,17 +3308,20 @@ async function smokeTest(): Promise<void> {
   const tuiSnapshot = TUI_BASELINE ?? snapshotTuiState();
 
   await new Promise((r) => setTimeout(r, 1500));
-  // Item 6: the sidebar is two headed lists, so there are no nav rows left to
-  // count. This is still the "render() finished without a TDZ ReferenceError"
-  // canary that the .navrow count used to be.
+  // Item 6: the sidebar is two headed lists, so there are no old .navrow rows
+  // left to count. This is still the "render() finished without a TDZ
+  // ReferenceError" canary that the .navrow count used to be. ATO-457: the
+  // Tasks and Skills section rows under New chat are the owner's standing
+  // entries for ⌘ 2 / ⌘ 3, asserted by label.
   const sb0 = await js<Sb | null>("window.__sidebar ? window.__sidebar() : null");
   check(
     "renderer painted",
     // Calm (S1): Chats first; Tasks is drawn only when the agent holds tasks.
     !!sb0 && sb0.navrows === 0
       && JSON.stringify(sb0.headers) === sidebarHeadersExpected(sb0)
-      && sb0.subtitles === 0 && !sb0.skillsRow,
-    sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}` : "no __sidebar hook",
+      && sb0.subtitles === 0 && !sb0.skillsRow
+      && JSON.stringify(sb0.nav) === SIDEBAR_NAV_EXPECTED,
+    sb0 ? `headers ${JSON.stringify(sb0.headers)}, navrows ${sb0.navrows}, "N turns" lines ${sb0.subtitles}, skills row ${sb0.skillsRow}, section rows ${JSON.stringify(sb0.nav)}` : "no __sidebar hook",
   );
   // Calm (S1): the toolbar names the open chat; nothing is open at boot, and
   // chat review Д15 took the "New chat" it said then away (the sidebar's New
@@ -3875,7 +4146,10 @@ async function smokeTest(): Promise<void> {
     // item 4: a reopened session carries the trace's durations for every card
     // (the TUI shows 0ms here; the desktop shows the agent's number). A trace can
     // legitimately say 0ms, so the only ms > 0 assertion is on the os.fs.list
-    // turn this run itself made. Known-data check (api-7a8e32e75a4f9298 →
+    // turn this run itself made. ATO-827: and even there a call can finish
+    // inside a millisecond ("2ms, 0ms"), so every card must carry the trace's
+    // own number (0 included) and at least one of them must be above 0. A card
+    // with no trace duration still fails: its source is not "trace". Known-data check (api-7a8e32e75a4f9298 →
     // 9,8,10,71,111,434,17,56,86,668,15) is a manual step, not a smoke assertion.
     // Reopened here, before the fold checks, so those run on a transcript that
     // is known to carry cards instead of inheriting the tool turn's outcome.
@@ -3890,14 +4164,69 @@ async function smokeTest(): Promise<void> {
       `${traced.length}/${reopened.length} cards from the trace in ${sid}`,
     );
     const listed = reopened.filter((c) => c.name === "os.fs.list");
+    const isTimed = (c: (typeof reopened)[number]): boolean => c.source === "trace" && Number.isFinite(c.ms) && c.ms >= 0;
+    const listedTimed = listed.length > 0 && listed.every(isTimed) && listed.some((c) => c.ms > 0);
     check(
       "reopened os.fs.list turn is timed",
-      listed.length > 0 && listed.every((c) => c.ms > 0),
-      listed.map((c) => c.ms + "ms").join(", ") || "no os.fs.list card",
+      listedTimed,
+      listed.map((c) => c.ms + "ms" + (c.source === "trace" ? "" : ` (${c.source ?? "no source"})`)).join(", ") || "no os.fs.list card",
     );
-    if (traced.length !== reopened.length || !listed.every((c) => c.ms > 0)) {
+    if (traced.length !== reopened.length || !listedTimed) {
       process.stdout.write(`DIAG reopened=${JSON.stringify(reopened)}\n`);
     }
+    // ATO-464: the reopened tool turn is finished, so its steps are one quiet
+    // line ("Used 1 tool · 434 ms"), unless Always show steps is on. A click
+    // on that line (the real button) opens the steps under it, the line
+    // staying where it was. Every turn is opened here so the checks below
+    // read the cards themselves.
+    type Sum = { id: string; open: boolean; text: string };
+    const always = await js<boolean>("window.__stepsAlways()");
+    const sums = await js<Sum[]>("window.__turnSums()");
+    check(
+      "a finished turn's steps fold into one summary line",
+      always || (sums.length > 0 && sums.every((x) => !x.open && /^(Used \d+ tools?|Reasoned in \d+ steps?)( \u00b7 \d+ failed)?( \u00b7 (\d+ ms|\d\.\d s|\d+ s|\d+ min \d+ s|\d+ h \d+ min))?$/.test(x.text))),
+      always ? "Always show steps is on: nothing folds" : JSON.stringify(sums),
+    );
+    type SumClick = { open: boolean; headBefore: number; headAfter: number; scrollBefore: number; scrollAfter: number; cardsBefore: number; cardsAfter: number } | null;
+    for (const [n, x] of sums.entries()) {
+      const opened = await js<SumClick>(`window.__clickTurnSum(${JSON.stringify(x.id)})`);
+      if (n === 0) {
+        check(
+          "clicking the summary line opens the turn's steps in place",
+          !!opened && opened.open && opened.cardsAfter > opened.cardsBefore && Math.abs(opened.headAfter - opened.headBefore) <= 1,
+          JSON.stringify(opened),
+        );
+      }
+    }
+
+    // ATO-464: Settings › General › Always show steps, pressed as a person
+    // presses it: on, no finished turn folds; pressed again, it is as it was.
+    const stepsSwitch = await js<{ found: boolean; on: boolean; foldsOn: number; off: boolean; foldsOff: number }>(`(async () => {
+      const tick = (ms) => new Promise((r) => setTimeout(r, ms));
+      const keep = {settings: S.settings, pane: S.settingsPane, always: STEPS.always};
+      const press = () => { const b = document.querySelector('#settings [data-act="steps:always"]'); if (b) b.click(); return !!b; };
+      const folds = () => (renderItems().match(/data-turnsum=/g) || []).length;
+      try {
+        if (keep.always) stepsAlwaysSet(false);
+        window.__settingsOpen('general'); await tick(250);
+        const found = press(); await tick(50);
+        const on = STEPS.always, foldsOn = folds();
+        press(); await tick(50);
+        const off = !STEPS.always, foldsOff = folds();
+        return {found, on, foldsOn, off, foldsOff};
+      } finally {
+        stepsAlwaysSet(keep.always);
+        window.__settingsClose();
+        if (keep.settings) { S.settings = keep.settings; S.settingsPane = keep.pane; }
+        render();
+      }
+    })()`);
+    check(
+      "Always show steps keeps finished turns open, and turning it off folds them again",
+      stepsSwitch.found && stepsSwitch.on && stepsSwitch.foldsOn === 0 && stepsSwitch.off && stepsSwitch.foldsOff > 0 && (always || stepsSwitch.foldsOff === sums.length),
+      JSON.stringify(stepsSwitch),
+    );
+
     // Every finished duration cell reads in words (ATO-237: "850 ms", "4.9 s", "1 min 42 s") or is empty.
     const cells = await js<string[]>("window.__overflow().durations");
     check(
@@ -4924,10 +5253,11 @@ async function sidebarTest(
     let sb = await js<Sb>("window.__sidebar()");
     check(
       // Calm (S1): Chats first, Tasks under it and only when there are tasks.
-      "sidebar is Pinned when anything is pinned, Chats, then Tasks when there are any, with no nav rows",
+      "sidebar is Tasks and Skills rows, Pinned when anything is pinned, Chats, then Tasks when there are any",
       JSON.stringify(sb.headers) === sidebarHeadersExpected(sb)
-        && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0,
-      `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}`,
+        && sb.navrows === 0 && !sb.skillsRow && sb.subtitles === 0
+        && JSON.stringify(sb.nav) === SIDEBAR_NAV_EXPECTED,
+      `headers ${JSON.stringify(sb.headers)}, navrows ${sb.navrows}, skills row ${sb.skillsRow}, "N turns" lines ${sb.subtitles}, section rows ${JSON.stringify(sb.nav)}`,
     );
     // Review fix: `subtitles === 0` above can only catch a reintroduced `.t2`
     // class. This measures the row the user asked for — 30 px, one text line,
@@ -5550,6 +5880,14 @@ async function settingsTest(
   // Skills count suffix: N = every installed skill incl. disabled, from `atag skill list`.
   let skillCount: number | null = null;
   for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
+  // ATO-1250: the folder-trust route answers (or, on an agent from before it, is reported as absent and nothing shows),
+  // and a question, when there is one, is about a folder and carries the id an answer must echo.
+  const trust = await js<{ supported?: boolean; ok?: boolean; status?: { workingDir?: string; question?: string | null; questionId?: string | null }; error?: string }>("window.atomic.projectTrust()");
+  check(
+    "folder trust: GET /api/project-trust answers or is absent",
+    trust.supported === false || (trust.ok === true && !!trust.status?.workingDir && (trust.status.question == null) === (trust.status.questionId == null)),
+    trust.supported === false ? "agent without the route" : `ok=${String(trust.ok)} dir=${trust.status?.workingDir ?? "?"} question=${JSON.stringify(trust.status?.question ?? null)} ${trust.error ?? ""}`,
+  );
   const skillsCli = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.atomic.skillList()");
   // The nav row a person reads: the label alone (Calm S5: no count badge; the pane's own tabs carry the counts, Д43).
   const skillsLabel = await js<{ act: string; label: string; count: string | null }>(
@@ -5611,7 +5949,7 @@ async function settingsTest(
   // The create form's preview (form path: tkPreview → app:taskPreview) is the agent's own cron-parser port.
   const preview = await js<{ cron: number; every: number; at: number; bad: string; shown: boolean }>(
     "(async () => { const cron = await window.__taskPreviewForm({kind:'cron', cronExpression:'0 * * * *', message:'x'});"
-    + " const shown = window.__settingsBody().includes('Next firings') && document.querySelectorAll('#settings .setbody #tk-preview .set-firings li').length === 5;"
+    + " const shown = window.__settingsBody().includes('Next runs') && document.querySelectorAll('#settings .setbody #tk-preview .set-firings li').length === 5;"
     + " const every = await window.__taskPreviewForm({kind:'interval', intervalSeconds:'300', message:'x'});"
     + " const at = await window.__taskPreviewForm({kind:'at', atIsoOrMs:'2030-01-01T09:00:00Z', message:'x'});"
     + " const bad = await window.__taskPreviewForm({kind:'cron', cronExpression:'not a cron', message:'x'});"
@@ -7477,7 +7815,7 @@ async function settingsTestPartC(
   // ---- LLM: External pane + the probe ----
   const ext = await js<LlmPane>("window.__llmOpen('external')");
   const extBody = await js<string>("window.__settingsBody()");
-  const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:8080";
+  const extUrl = cfg0.localModels?.url ?? "http://127.0.0.1:9931";
   const extActive = cfg0.localModels?.mode === "external" && activeText === "local-llama";
   // The row as drawn: the "Server address" label, the URL, its status chip, and the action pill (the TUI's sentence as its tooltip).
   const extRow = await js<{ label: string; url: string; status: string; effect: string; title: string } | null>(
@@ -7591,6 +7929,12 @@ async function settingsTestPartC(
   const tgPlain = tgLabel.act === "settings:connections" && tgLabel.label === "Connections" && !tgLabel.count && tgLabel.sub === "Telegram";
   const envHas = envPresent(["TELEGRAM_BOT_TOKEN"]).length > 0;
   const dotenvHas = stateDir ? dotenvKeys(stateDir).keys.includes("TELEGRAM_BOT_TOKEN") : false;
+  /* ATO-859: the pairing card pairs in the app (a Pair button under the steps), or, on an agent
+     without /api/telegram/pairing, says to update it (TG_PAIRING_NOTE). Never the old "use atag tui" line. */
+  const tgPairOffer = (body: string) =>
+    (body.includes("Press Pair for a one-time code, then send /start and the code to your bot in Telegram.")
+      || body.includes("This agent cannot pair from the app. Update Atomic Agent, or quit the app, run `atag tui`, open Integrations › Telegram and press p."))
+    && !body.includes("Pairing needs the live channel");
   if (!envHas && !dotenvHas) {
     // The card's one action: the "Paste a bot token" button (Calm S5: its Enter keycap moved to the tooltip).
     const tgCta = await js<{ label: string; key: string } | null>(
@@ -7619,7 +7963,7 @@ async function settingsTestPartC(
       "telegram tab: a token is present → one status in words, no config keys or .env, plain tab label",
       tg.hasToken === true && tgView.status === wantStatus && tgView.titles.includes("Bot token")
         && !/telegram\.enabled|ownerUserId|TELEGRAM_BOT_TOKEN|\.env\b|\bunknown\b/.test(tgBody)
-        && tgBody.includes("Pairing needs the live channel") === (tg.owner === null) && tgPlain,
+        && tgBody.includes("One last step") === (tg.owner === null) && (tg.owner !== null || tgPairOffer(tgBody)) && tgPlain,
       `hasToken=${String(tg.hasToken)} owner=${String(tg.owner)} enabled=${String(tg.enabled)} label=${JSON.stringify(tgLabel)} view=${JSON.stringify(tgView)}`,
     );
   }
@@ -7648,8 +7992,9 @@ async function settingsTestPartC(
         hasToken: saved.state.hasToken === true,
         enabled: enabledNow === true,
         confirmCard: afterBody.includes("One last step — confirm it's you"),
-        pairingLine: afterBody.includes("Pairing needs the live channel — open the Telegram tab in `atag tui` to pair"),
-        restartButton: afterBody.includes("Restart Agent Runtime"),
+        pairingLine: tgPairOffer(afterBody),
+        // ATO-900 item 6: the restart line has its own Restart agent button and says the app stays open.
+        restartButton: afterBody.includes("Restart agent") && afterBody.includes("The app stays open."),
       };
       check(
         "telegram tab: the token lands in .env quoted, 0600, other keys kept, and the connect chain enables telegram",
@@ -7712,7 +8057,8 @@ async function settingsTestPartC(
   // Release fix 49 (Д52): the limit field says what it limits ("Limit" before).
   // ATO-531: Overwrite carries an amber "Can replace your data" tag and says what it replaces.
   const impDrawn = impView.title === "Hermes → Atomic Agent"
-    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Overwrite Can replace your data", "Sessions to import"])
+    // ATO-1034 (folders): "Put imported chats into folders" sits before Overwrite.
+    && same(impView.labels, ["Source", "Source folder", "Sessions", "Cron jobs", "Secrets", "Put imported chats into folders", "Overwrite Can replace your data", "Sessions to import"])
     && same(impView.source, ["Hermes"]) && impView.dir === imp.form.sourceDir && impView.limit === imp.form.limit
     && same(impView.switches, { sessions: imp.form.sessions, cron: imp.form.cron, secrets: imp.form.secrets, overwrite: imp.form.overwrite });
   check(
@@ -7918,9 +8264,13 @@ async function uiTest(
   await js<number>("window.__pushUser('a short one')");
   await js<number>("window.__pushTool('read_file', {path:'a.txt'}, 'ok', false)");
   await js<number>("window.__pushAssistant('done')");
+  // ATO-464: that turn is finished, so its call folded into a summary line; open it
+  // (the real button) so the row checks below read the card itself.
+  await js<unknown>("window.__turnSums().filter((x) => !x.open).forEach((x) => window.__clickTurnSum(x.id))");
   type Shape = { k: string; glyphs: number; gutter: number | null; end: boolean; endLast: boolean; strip: boolean; left: number };
   const shape = await js<Shape[]>("window.__turnShape()");
-  const tail = shape.slice(-3);
+  // A finished turn's summary line (ATO-464) sits above its steps; the row checks read the rows under it.
+  const tail = shape.filter((t) => t.k !== "turnsum").slice(-3);
   check(
     // Two things, both positive: no row carries a `.avatar` or a `.gutter` (the
     // user's `›` and the assistant's per-message mark), and every row that still
@@ -8023,10 +8373,13 @@ async function uiTest(
   const chatsHead = heads.heads.find((h) => h.list === "chats");
   const tasksShown = !!tasksHead && tasksHead.act !== null;
   check("item 4: no plus on the head row", heads.headPlus === false, JSON.stringify(heads.headPlus));
+  /* ATO-1034 (folders): the Chats header's one control is New folder
+     (`fnew:`), never a second way to start a chat. */
   check(
     "calm: New chat is a labelled button, and the Chats header has no plus",
     !!heads.newChat && heads.newChat.act === "session:new" && heads.newChat.visible
-      && /New chat/.test(heads.newChat.text) && !!chatsHead && chatsHead.buttons === 0,
+      && /New chat/.test(heads.newChat.text) && !!chatsHead
+      && (chatsHead.buttons === 0 || (chatsHead.buttons === 1 && chatsHead.act === "fnew:")),
     JSON.stringify({ newChat: heads.newChat, chats: chatsHead }),
   );
   check(
@@ -8593,17 +8946,21 @@ async function isolationAndSwitchTest(
      Pure, no agent involved. The exact file `atag config get` writes into an
      empty directory: localModels.mode external at the schema's own default
      url, no llm block, tui.onboarding all null. decideOnboarding
-     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there. */
-  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+     (src/tui/onboarding/needs-onboarding.ts) returns needed:true there.
+     ATO-834: the default is 9931 now; an install from before carries the
+     old 8080 default nobody chose, and must reach the wizard too. */
+  const freshCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9931", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
+  const legacyCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
   const configuredCfg = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:9999", managed: { modelId: null } }, llm: {}, tui: { onboarding: {} } });
   const managedInExternal = JSON.stringify({ localModels: { mode: "external", url: "http://127.0.0.1:8080", managed: { modelId: "qwen-3.5-4b" } }, llm: {}, tui: { onboarding: {} } });
   const needFresh = await js<boolean>(`window.__needsOnboarding(${freshCfg})`);
+  const needLegacy = await js<boolean>(`window.__needsOnboarding(${legacyCfg})`);
   const needConfigured = await js<boolean>(`window.__needsOnboarding(${configuredCfg})`);
   const needManaged = await js<boolean>(`window.__needsOnboarding(${managedInExternal})`);
   check(
     "state dir: a fresh directory would reach the wizard",
-    needFresh === true && needConfigured === false && needManaged === false,
-    `default url → ${needFresh}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
+    needFresh === true && needLegacy === true && needConfigured === false && needManaged === false,
+    `default url → ${needFresh}; old 8080 default → ${needLegacy}; a real url → ${needConfigured}; managed id in external mode → ${needManaged}`,
   );
 
   // ---- item 9: the import offer reports names, never values ----
@@ -9318,12 +9675,15 @@ async function backendSwitchTest(
       !daemonAfterCloud || toCloud?.daemon === "stop-failed",
       `daemon=${toCloud?.daemon} running=${daemonAfterCloud}`,
     );
-    // Write 2 of activateProvider: a successful stop is followed by
-    // memory.embeddings.enabled=false (the TUI's stopDaemon order).
+    // ATO-377: a stop that kept the embedding server leaves memory.embeddings.enabled
+    // as it was; a stop of both (an agent without `models stop --chat-only`, or no
+    // embedding model to keep) is followed by write 2 of activateProvider, the flag off.
     check(
-      "backend: hybrid recall off after the daemon stop",
-      toCloud?.daemon !== "stopped" || afterCloud?.memory?.embeddings?.enabled === false,
-      `daemon=${toCloud?.daemon} memory.embeddings.enabled=${afterCloud?.memory?.embeddings?.enabled}`,
+      "backend: hybrid recall kept with the embedding server, off after a stop of both",
+      toCloud?.daemon !== "stopped" || (toCloud.embeddingKept
+        ? afterCloud?.memory?.embeddings?.enabled === afterLocal?.memory?.embeddings?.enabled
+        : afterCloud?.memory?.embeddings?.enabled === false),
+      `daemon=${toCloud?.daemon} embeddingKept=${toCloud?.embeddingKept === true} memory.embeddings.enabled=${afterLocal?.memory?.embeddings?.enabled} → ${afterCloud?.memory?.embeddings?.enabled}`,
     );
     /* These lines used to be pushed into the TRANSCRIPT, so the
        conversation filled up with a commentary on the user's own clicks.
@@ -9505,6 +9865,9 @@ async function installEngineAtLaunch(): Promise<boolean> {
  * and the active model is on disk; a running daemon, an external or cloud
  * route, or a model not yet downloaded leaves everything as it is.
  */
+/** ATO-1041: set by wireIpc (it needs the pull slot and the switch path); run once the launch start settled. */
+let fetchStarterModel: (() => Promise<void>) | null = null;
+
 async function startLocalDaemonAtBoot(): Promise<void> {
   let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
   try {
@@ -9529,7 +9892,7 @@ async function startLocalDaemonAtBoot(): Promise<void> {
        waiting out the load. It says how it went through onBackgroundBringUp. */
     const bringUpAt = Date.now();
     const up = await bringUpAtLaunch(target.modelId);
-    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt);
+    A.localBackendStarted("launch", up.daemon, target.modelId, Date.now() - bringUpAt, up);
     backendUp = up.daemon === "started" || up.daemon === "untouched" || up.daemon === "restarted";
   } catch (err) {
     console.error(`[desktop] local daemon check failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -9601,6 +9964,16 @@ async function pruneIncompleteProvidersAtBoot(): Promise<void> {
     if (r.removed.length) console.log(`[config] removed unfinished provider entries: ${r.removed.join(", ")}`);
   } catch {
     // see above
+  }
+}
+
+/** app.isInApplicationsFolder() off macOS is never asked; null when it throws. */
+function inApplicationsFolder(): boolean | null {
+  if (process.platform !== "darwin") return null;
+  try {
+    return app.isInApplicationsFolder();
+  } catch {
+    return null;
   }
 }
 
@@ -9761,6 +10134,22 @@ A.configureSetup({ stateDir: DESKTOP_STATE_DIR });
 A.beginSession();
 wireProcessErrorReporting();
 
+/* ATO-1030: a GPU process that crashed twice in a short while turned hardware
+   acceleration off for the launches after it (gpu-fallback.ts). Electron only
+   honours this before the app is ready. A smoke run keeps the default. */
+const GPU_OFF_THIS_RUN = !SMOKE && readGpuState(app.getPath("userData")).off !== null;
+if (GPU_OFF_THIS_RUN) {
+  app.disableHardwareAcceleration();
+  console.error("[desktop] hardware acceleration is off for this run (Settings › Diagnostics turns it back on)");
+}
+app.on("child-process-gone", (_event, details) => {
+  if (details.type !== "GPU" || details.reason === "clean-exit" || SMOKE) return;
+  const userData = app.getPath("userData");
+  const { state, turnedOff } = noteGpuCrash(readGpuState(userData), Date.now());
+  writeGpuState(userData, state);
+  if (turnedOff) console.error("[desktop] the graphics process crashed again: hardware acceleration is off from the next launch");
+});
+
 
 /** Core checks follow the app update cadence; they never install or stop a model. */
 function watchCoreUpdates(): void {
@@ -9797,6 +10186,23 @@ function watchCoreUpdates(): void {
 }
 
 void app.whenReady().then(async () => {
+  // ATO-1030: macOS and Linux say so before the OS shuts down (Windows: the window's `session-end`).
+  powerMonitor.on("shutdown", () => A.noteSessionTrouble("os_shutdown"));
+  /* ATO-370: a mac app run from the DMG or Downloads cannot update itself.
+     Ask before anything starts: Move relaunches the app from /Applications,
+     so nothing of this launch should be running by then. Not now asks again
+     on the next launch (move-to-applications.ts). */
+  if (shouldOfferMove({
+    platform: process.platform, packaged: app.isPackaged, smoke: SMOKE || FIRST_RUN_PROBE, dev: DEV,
+    inApplications: inApplicationsFolder(),
+  })) {
+    const moved = offerMove({
+      ask: () => dialog.showMessageBoxSync(MOVE_PROMPT),
+      move: () => app.moveToApplicationsFolder(),
+      log: (line) => console.error(line),
+    });
+    if (moved === "moved") return;
+  }
   /* r5 item 9 — the ~/.atomic-agent baseline, taken HERE: no AgentClient
      exists yet, no `atag` subprocess has been spawned, and nothing has been
      written. Anything the app touches from this line on shows as drift. */
@@ -9826,11 +10232,14 @@ void app.whenReady().then(async () => {
     homedir(),
   );
   agent = new AgentClient(workspace);
+  // ATO-1127: an agent on another computer, when one was saved (remote-agent.ts).
+  if (!SMOKE && !FIRST_RUN_PROBE) agent.setRemote(readRemoteAgent(app.getPath("userData"), keyBox()));
   win = createWindow();
   // Item 2 (voice input): the third teardown path — this window going away
   // while the app stays alive on macOS.
   win.on("closed", () => voice.kill());
-  buildMenu((command) => send("app:menu", command));
+  rebuildMenu();
+  if (!SMOKE && !FIRST_RUN_PROBE) void syncTray();
   wireIpc(agent);
   wireUpdater();
   watchCoreUpdates();
@@ -9872,32 +10281,121 @@ void app.whenReady().then(async () => {
         else if (r.reason && !/already installed|not a packaged app/.test(r.reason)) console.error(`[desktop] local-llm: Atomic Core not placed (${r.reason})`);
       })
       .catch(() => undefined);
-    /* ATO-126: the embedding server before `atag serve` boots, which is the
-       only moment serve looks for it (a smoke run starts no model server). */
-    const embeddingsFirst = () => (SMOKE ? undefined : pairEmbeddingsBeforeServe().catch(() => undefined));
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(embeddingsFirst).then(() => {
+    /* ATO-126 / ATO-1024: the embedding server is paired beside `atag serve`'s
+       start, no longer before it. serve looks for it only at boot, which held
+       the start back for up to 20 s; now, once the server answers, the running
+       agent attaches it live (attachEmbeddingsLive). Queued in the daemon's
+       turn before the launch's chat model start, as before. A smoke run starts
+       no model server. */
+    const pairBeside = (): Promise<unknown> => (SMOKE ? Promise.resolve() : pairEmbeddingsAtLaunch()
+      .then((r) => {
+        // A start that failed says so now; one that came up is said once the agent has attached it (attachEmbeddingsLive).
+        if (r?.line && !r.up) console.error(`[desktop] ${r.line}`);
+        if (r?.up && agent) return attachEmbeddingsLive(agent);
+        return undefined;
+      })
+      .catch(() => undefined));
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(() => {
+      // ATO-1127: a remote agent runs its own models; this computer starts none for it.
+      const remote = !!agent?.isRemote;
+      if (!remote) void pairBeside();
       void agent?.start();
-      A.appOpened("cold", DESKTOP_STATE_WAS_FRESH);   // after start()'s synchronous orphan reap
+      A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
-      else void startLocalDaemonAtBoot();
+      else if (!remote) void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).catch(() => undefined);
+      else A.launchBackendSettled(true);
     });
   });
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      win = createWindow();
-      win.on("closed", () => voice.kill());
-      A.appOpened("reopen", false);
-    }
+    if (BrowserWindow.getAllWindows().length === 0) openWindowAgain();
   });
 });
+
+/** The window again, once it was closed: the Dock (activate), the tray icon (ATO-598). */
+function openWindowAgain(): void {
+  if (win && !win.isDestroyed()) {
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+    return;
+  }
+  win = createWindow();
+  win.on("closed", () => voice.kill());
+  A.appOpened("reopen", false);
+}
+
+/* ---- ATO-598: keep running in the tray, start at login (background-mode.ts) ---- */
+const loginHost = (): LoginItemHost => ({
+  platform: process.platform,
+  execPath: process.execPath,
+  getLoginItemSettings: () => app.getLoginItemSettings(),
+  setLoginItemSettings: (s) => app.setLoginItemSettings(s),
+});
+let tray: Tray | null = null;
+
+/** The menu bar, with the Agent menu's two checkboxes as they are now; `bg:*` commands are main's own. */
+function rebuildMenu(): void {
+  const userData = app.getPath("userData");
+  buildMenu((command) => {
+    if (command === "bg:keepRunning") {
+      writeBackgroundPrefs(userData, { keepRunning: !readBackgroundPrefs(userData).keepRunning });
+      void syncTray();
+      rebuildMenu();
+      return;
+    }
+    if (command === "remote:open") { openRemoteConnect(); return; }
+    if (command === "bg:startAtLogin") {
+      // A dev or unpackaged run would register the bare Electron binary, not the app.
+      if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
+      const host = loginHost();
+      if (!setStartAtLogin(host, !startsAtLogin(host))) console.error("[desktop] start at login: the system did not take the change");
+      rebuildMenu();
+      return;
+    }
+    send("app:menu", command);
+  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()) });
+}
+
+/** The tray icon while Keep Running is on, none while it is off. */
+async function syncTray(): Promise<void> {
+  const userData = app.getPath("userData");
+  if (!readBackgroundPrefs(userData).keepRunning) {
+    tray?.destroy();
+    tray = null;
+    return;
+  }
+  if (tray) return;
+  /* The app's own icon, shipped as resources/tray.png (electron-builder.cjs);
+     the executable's icon is the fallback. getFileIcon on Linux often answers
+     a blank image, and a blank tray icon cannot be clicked. */
+  const bundled = app.isPackaged ? join(process.resourcesPath, "tray.png") : "";
+  const icon = bundled && existsSync(bundled)
+    ? nativeImage.createFromPath(bundled)
+    : await app.getFileIcon(process.execPath, { size: "small" }).catch(() => nativeImage.createEmpty());
+  // Turned off, or made by another call, while the icon was read.
+  if (tray || !readBackgroundPrefs(userData).keepRunning) return;
+  // No image to show: no tray, so window-all-closed quits as before rather than leave an app nobody can reach.
+  if (icon.isEmpty()) { console.error("[desktop] keep running: no tray icon on this system, closing the window still quits"); return; }
+  tray = new Tray(icon.resize({ width: 16, height: 16 }));
+  tray.setToolTip("Atomic Agent");
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Open Atomic Agent", click: () => openWindowAgain() },
+    { type: "separator" },
+    { label: "Quit Atomic Agent", click: () => app.quit() },
+  ]));
+  // Windows and Linux: a click on the icon opens the window; macOS opens the menu.
+  if (process.platform !== "darwin") tray.on("click", () => openWindowAgain());
+}
 
 app.on("window-all-closed", () => {
   // Item 2 (voice input): a helper that outlives its window keeps the
   // system microphone indicator lit, which is worse for trust than any bug
   // in the transcript.
   voice.kill();
-  if (process.platform !== "darwin") app.quit();
+  // ATO-598: unless Keep Running is on, closing the last window quits off macOS;
+  // and with no tray icon to come back through, it quits anyway.
+  if (quitsOnLastWindow(process.platform, readBackgroundPrefs(app.getPath("userData"))) || (process.platform !== "darwin" && !tray)) app.quit();
 });
 
 /* Item 30: the quit's own shutdown — the agent's stop, then the model
@@ -9917,10 +10415,13 @@ app.on("before-quit", (event) => {
   /* Off macOS the last window closing is the quit: asked then, a Cancel would
      leave the app running with no window, so it is not asked. Nor is the quit
      an update's install makes (ATO-229): the person asked for it, the agent is
-     stopped for it already, and a Cancel would leave the install half done. */
+     stopped for it already, and a Cancel would leave the install half done.
+     ATO-598: with Keep Running on, the app lives in the tray with no window,
+     and its Quit is a choice like the Dock's: asked there too. */
   const windowUp = !!win && !win.isDestroyed();
   const installing = appUpdater()?.state().phase === "installing";
-  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin")) {
+  const inTray = tray !== null && readBackgroundPrefs(app.getPath("userData")).keepRunning;
+  if (!SMOKE && !FIRST_RUN_PROBE && !quitShutdown && !queuedQuitAsked && !installing && (windowUp || process.platform === "darwin" || inTray)) {
     const n = queuedMessageCount();
     if (n > 0) {
       const opts = {
@@ -11388,9 +11889,11 @@ async function onboardingTest(
        returns immediately during the gap between Enter and that step — and
        Enter here starts async work (the stamp write, then the close). The
        race is invisible on a quiet machine and cost a red run on a busy one.
-       If it genuinely never closes, this still fails, just after 10s. */
+       ATO-827: the close waits for two `atag config get` in a row (obSettle),
+       and on a loaded machine that took longer than 20 s, so the wait is 45 s.
+       If it genuinely never closes, this still fails, just later. */
     let nothing = await settled();
-    for (let i = 0; i < 40 && nothing.open; i += 1) {
+    for (let i = 0; i < 180 && nothing.open; i += 1) {
       await new Promise((r) => setTimeout(r, 250));
       nothing = await js<ObState>("window.__ob()");
     }
@@ -12208,8 +12711,13 @@ async function chromeTest(
   type SbToggle = {
     on: boolean; pressed: string; title: string; state: string; rail: boolean;
     narrow: boolean; expanded: boolean; width: number; bg: string; fg: string; accentText: string;
-    /* review fix (item 2): the control is disabled on a narrow window. */
-    disabled: boolean;
+    /* review fix (item 2): the control was disabled on a narrow window; since
+       ATO-538 it stays live there and opens the sidebar as a drawer. */
+    disabled: boolean; drawer?: boolean;
+  };
+  type RailFit = {
+    width: number; over: string[]; labels: string[];
+    cells: Array<{ w: number; h: number; centre: number }>; studio: boolean; chats: number;
   };
   type SetBtn = {
     text: string; act: string; title: string; aria: string | null;
@@ -12223,6 +12731,7 @@ async function chromeTest(
     dangerColor?: string | null; right?: number; btnRight?: number | null;
     anchorRight?: number | null; insideBubble?: number;
     btnLeft?: number | null; anchorLeft?: number | null; dot?: boolean; dotLive?: boolean;
+    acted?: boolean;
   };
 
   /* r5 review fix — the two writes this lane makes to the WINDOW itself, put
@@ -12241,18 +12750,30 @@ async function chromeTest(
     check(
       "item 2: the sidebar button is on while the sidebar is open",
       sbt.on && sbt.pressed === "true" && sbt.state === "open" && !sbt.rail
-        && sbt.title === "Hide sidebar (⌘ 0)" && sbt.width === 260,
+        && sbt.title === "Hide sidebar (⌘ \\)" && sbt.width === 260,
       JSON.stringify(sbt),
     );
     // __rail() drives the real act('toggle:sidebar'), the same verb the button
-    // and ⌘0 reach.
+    // and ⌘\ reach (ATO-900: ⌘0 is View › Actual Size).
     await js<unknown>("window.__rail()");
     const railed = await js<SbToggle>("window.__sbToggle()");
     check(
       "item 2: collapsing the sidebar turns the button off",
       !railed.on && railed.pressed === "false" && railed.state === "rail" && railed.rail
-        && railed.width === 52 && railed.title === "Show sidebar (⌘ 0)",
+        && railed.width === 52 && railed.title === "Show sidebar (⌘ \\)",
       JSON.stringify(railed),
+    );
+    /* ATO-900: the owner's build showed the rail's chats ragged and the word
+       "Studio" running past its edge. Nothing inside the 52px box may stick
+       out of it, no text label may stay on screen, and every row cell (New
+       chat, Tasks, Skills, Studio, the chats) is one 32px cell on the centre. */
+    const railFitHolds = (f: RailFit) => f.width === 52 && f.over.length === 0 && f.labels.length === 0
+      && f.cells.length > 0 && f.cells.every((c) => c.w === 32 && c.h === 32 && Math.abs(c.centre - 26) <= 1);
+    const railFit = await js<RailFit>("window.__railFit()");
+    check(
+      "ATO-900: the collapsed rail draws icons and glyph discs only, nothing past its edge, one cell size on one centre",
+      railFitHolds(railFit),
+      JSON.stringify(railFit),
     );
     // --- item 3 and item 8 in the rail, while it is collapsed ---------------
     const railBtn = await js<SetBtn | null>("window.__settingsBtn()");
@@ -12292,25 +12813,39 @@ async function chromeTest(
       check(
         "item 2: the glow tracks the responsive rail, not just the class",
         !narrow.on && narrow.narrow && !narrow.expanded && narrow.state === "open"
-          && !narrow.rail && narrow.width === 52
-          && narrow.disabled && narrow.title === "The sidebar is a rail on a narrow window",
+          && !narrow.rail && narrow.width === 52 && !narrow.drawer
+          && !narrow.disabled && narrow.title === "Show sidebar (⌘ \\)",
         JSON.stringify(narrow),
       );
-      /* r5 review fix — the control used to stay live and do nothing here: the
-         media query pins 52px whatever `.rail` says, so a click flipped the
-         flag with no visual change and aria-pressed read "false" either way.
-         The button is disabled (asserted above) and the chord, which does not
-         go through the button, refuses in words instead of flipping a dead
-         flag. Restores the toasts it reads. */
+      /* ATO-538 (U-106): between the 940px minimum and 1000px the button used
+         to be disabled and the chord refused with a toast, so the chat list could
+         not be opened at all. Now the chord (the same verb as the button)
+         opens the full sidebar as a drawer over the content, lights the
+         button, leaves the kept collapse alone, and closes it again. */
       await js<unknown>("window.__clearToasts()");
-      const chord = await js<{ toasts: Array<[string, string, string]>; state: string }>(
-        "(function(){window.__rail();return {toasts:window.__toasts(),state:window.__sbToggle().state};})()",
-      );
+      await js<unknown>("window.__rail()");
+      const opened = await js<SbToggle>("window.__sbToggle()");
+      const toastsAfter = await js<Array<[string, string, string]>>("window.__toasts()");
       check(
-        "item 2: the ⌘ 0 chord refuses on a narrow window instead of flipping a dead flag",
-        chord.state === "open" && chord.toasts.length === 1
-          && chord.toasts[0]![0] === "The sidebar is a rail on a narrow window",
-        JSON.stringify(chord),
+        "item 2: on a narrow window ⌘ \\ opens the sidebar as a drawer",
+        opened.drawer === true && opened.on && opened.pressed === "true" && opened.width === 260
+          && opened.state === "open" && !opened.rail && opened.title === "Hide sidebar (⌘ \\)"
+          && toastsAfter.length === 0,
+        JSON.stringify([opened, toastsAfter]),
+      );
+      await js<unknown>("window.__rail()");
+      const shut = await js<SbToggle>("window.__sbToggle()");
+      check(
+        "item 2: ⌘ \\ again closes the drawer back to the rail",
+        !shut.drawer && !shut.on && shut.width === 52 && shut.state === "open",
+        JSON.stringify(shut),
+      );
+      // ATO-900: the narrow window's rail (no class, the media query) holds the same shape.
+      const narrowFit = await js<RailFit>("window.__railFit()");
+      check(
+        "ATO-900: the narrow window's rail draws icons and glyph discs only, nothing past its edge",
+        railFitHolds(narrowFit),
+        JSON.stringify(narrowFit),
       );
       await js<unknown>("window.__clearToasts()");
       /* r5 review fix (item 8 coverage) — styles.css duplicates the four rail
@@ -12510,7 +13045,7 @@ async function chromeTest(
       // its menu offers Mark as unread.
       await js<unknown>(`window.__openSession(${JSON.stringify(target.id)})`);
       await wait(1200);
-      type Ctl = { present: boolean; vis: string; railDisplay: string; dot: string; label: string | null; verb: string | null };
+      type Ctl = { present: boolean; vis: string; railDisplay: string; glyph?: string; dataGlyph?: string; dot: string; label: string | null; verb: string | null };
       const readRow = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
       check(
         "item 3: a read row's menu offers Mark as unread, and the open chat's row shows its \"…\"",
@@ -12599,9 +13134,12 @@ async function chromeTest(
       );
       await js<unknown>("window.__rail()");
       const inRail = await js<Ctl>(`window.__unreadCtl(${JSON.stringify(target.id)})`);
+      // ATO-538: the rail row is not an anonymous dot any more: it paints its
+      // title's glyph, the dot riding it as a badge, and still hides the "…".
       check(
-        "item 3: the collapsed rail keeps only the dot",
-        inRail.present && inRail.railDisplay === "none",
+        "item 3: the collapsed rail keeps the row's glyph and dot, not its \"…\"",
+        inRail.present && inRail.railDisplay === "none"
+          && (inRail.dataGlyph === "" || inRail.glyph === inRail.dataGlyph),
         JSON.stringify(inRail),
       );
       await js<unknown>("window.__rail()");
@@ -12689,10 +13227,19 @@ async function chromeTest(
 
     const asstActs = await js<Acts | null>("window.__msgActs('assistant')");
     const userActs = await js<Acts | null>("window.__msgActs('user')");
+    /* ATO-861: the last reply of a turn without tools also carries "Ask
+       again" before its copy; a turn that drew a tool card or an approval
+       shows the muted hint there instead (ATO-862). The fixture prompt needs
+       no tool, but a model that reaches for one anyway is not this check's
+       failure, so the expectation follows what the transcript drew. */
+    // ATO-1046: Read aloud follows copy where the system has voices.
+    const speak = !!asstActs && Array.isArray(asstActs.order) && asstActs.order[asstActs.order.length - 1] === "speak";
+    const asstOrder = (asstActs && !asstActs.acted ? '["resend","copy"' : '["hint","copy"') + (speak ? ',"speak"]' : "]");
+    const asstTitles = (asstActs && !asstActs.acted ? '["Ask again","Copy message"' : '["Repeating this turn could create or delete files a second time","Copy message"') + (speak ? ',"Read aloud"]' : "]");
     check(
-      "item 4: every message carries a copy control at its end, and only a user message carries retry",
-      !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === '["copy"]'
-        && JSON.stringify(asstActs.titles) === '["Copy message"]'
+      "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
+      !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
+        && JSON.stringify(asstActs.titles) === asstTitles
         && !!userActs && userActs.present && JSON.stringify(userActs.order) === '["resend","copy"]'
         && JSON.stringify(userActs.titles) === '["Send this message again","Copy message"]',
       `assistant ${JSON.stringify(asstActs)}; user ${JSON.stringify(userActs)}`,
@@ -12747,8 +13294,14 @@ async function chromeTest(
        text sits on white — and hardcoding either here means editing this
        check every time the palette moves. What must hold is that the control
        reads as red in both themes, and that the two are not the same red. */
-    const retryDark = await js<string>("(() => { window.__theme('dark'); return window.__msgActs('user').dangerColor; })()");
-    const retryLight = await js<string>("(() => { window.__theme('light'); return window.__msgActs('user').dangerColor; })()");
+    /* ATO-1023: the row now survives the render (morph), so its colour
+       transition (--t-state) runs on a theme change: read it once it settled. */
+    await js<void>("window.__theme('dark')");
+    await new Promise((r) => setTimeout(r, 400));
+    const retryDark = await js<string>("window.__msgActs('user').dangerColor");
+    await js<void>("window.__theme('light')");
+    await new Promise((r) => setTimeout(r, 400));
+    const retryLight = await js<string>("window.__msgActs('user').dangerColor");
     const readsRed = (c: string): boolean => {
       const m = /rgba?\((\d+), (\d+), (\d+)/.exec(c);
       return !!m && Number(m[1]) > 150 && Number(m[1]) > Number(m[2]) * 2 && Number(m[1]) > Number(m[3]) * 2;
@@ -12765,7 +13318,9 @@ async function chromeTest(
     );
     check(
       "item 4: a streaming reply carries no actions, and a finished one does",
-      !!streamed && streamed.streaming.buttons === 0 && streamed.finished.buttons === 1
+      !!streamed && streamed.streaming.buttons === 0
+        // Two either way: Ask again or the muted hint (ATO-862), then copy; a third, Read aloud, where there are voices (ATO-1046).
+        && (streamed.finished.buttons === 2 || streamed.finished.buttons === 3)
         && streamed.offMessages === 0,
       `${JSON.stringify(streamed)} (offMessages is a guard, not coverage: msgActs is called from the two message branches of item() only)`,
     );
@@ -12781,6 +13336,50 @@ async function chromeTest(
       `streaming ${JSON.stringify(streamed?.streaming)} vs finished ${JSON.stringify(streamed?.finished)}`
       + " (22px row + 8px margin since chat review Д17, present from the first frame of the reply, so the buttons"
       + " appear inside a box that was already there; nothing is added below it)",
+    );
+    // ATO-863: "Ask again" under the last reply only when its turn used no tools.
+    type ReplyRetry = {
+      plain: string[] | null; tool: string[] | null; earlier: string[] | null; steered: string[] | null;
+      busy: string[] | null; placeholder: string[] | null; stopped: string[] | null; approval: { id: string } | null;
+      approvalActed: boolean;
+      toolClick: { found: boolean; resends: number; logSame: boolean; focusable: boolean | null };
+      toolTip: { content: string | null; opacity: string | null; events: string | null; hover: string | null };
+    };
+    const rr = await js<ReplyRetry>("window.__replyRetry()");
+    const again = '["resend:rr-u:Ask again","copy"]';
+    check(
+      "item 4: the last reply of a turn without tools offers Ask again (data-resend on its question), left of copy",
+      JSON.stringify(rr.plain) === again && JSON.stringify(rr.earlier) === again && JSON.stringify(rr.steered) === again,
+      JSON.stringify({ plain: rr.plain, earlier: rr.earlier, steered: rr.steered }),
+    );
+    check(
+      "item 4: no Ask again after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
+      JSON.stringify(rr.tool) === '["hint:true:Repeating this turn could create or delete files a second time","copy"]' && JSON.stringify(rr.busy) === '["copy"]'
+        && JSON.stringify(rr.placeholder) === '["copy"]' && JSON.stringify(rr.stopped) === '["copy"]' && rr.approval === null,
+      JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, stopped: rr.stopped, approval: rr.approval }),
+    );
+    /* ATO-862: where a turn that acted would have had Ask again, a greyed
+       retry icon explains why there is none. It carries no data-resend or
+       data-act (lastActs would read it as resend or '?'), is skipped by Tab,
+       and a real click on it sends nothing. An approval counts as acting too. */
+    check(
+      "item 4: a turn that acted shows the muted retry hint, which sends nothing when clicked",
+      rr.toolClick.found && rr.toolClick.resends === 0 && rr.toolClick.logSame && rr.toolClick.focusable === false
+        && rr.approvalActed === true,
+      JSON.stringify({ toolClick: rr.toolClick, approvalActed: rr.approvalActed }),
+    );
+    /* ATO-900: the hint's sentence showed on no hover in a real build. It is
+       now a CSS tooltip (the button's ::after, from data-tip): data-tip
+       is its content, it is hidden at rest and takes no pointer events, and
+       the hover rule opens it. :hover cannot be driven from script, so that
+       rule is read as text, as the row's own reveal rule is above. */
+    check(
+      "item 4: the muted retry hint carries its sentence as a tooltip that opens on hover",
+      // Chromium reports the content resolved or as the attr() itself; rr.tool above pins data-tip's text.
+      (rr.toolTip.content === '"Repeating this turn could create or delete files a second time"' || rr.toolTip.content === "attr(data-tip)")
+        && rr.toolTip.opacity === "0" && rr.toolTip.events === "none"
+        && !!rr.toolTip.hover && /opacity:\s*1/.test(rr.toolTip.hover),
+      JSON.stringify(rr.toolTip),
     );
 
     // Copy really reaches the pasteboard, and copies the text — not the markup
@@ -12975,19 +13574,21 @@ async function chromeTest(
 
     // Retry while a turn runs must not masquerade as a steer.
     const busyRetry = await js<{
-      before: number; after: number; draft: string; entry: string; focused: boolean;
+      inert: boolean; before: number; after: number; draft: string; entry: string; focused: boolean;
       send: string | null; sendTitle: string | null; draftTokens: number;
       toasts: Array<[string, string, string]>;
     } | null>(
       "window.__retryWhileBusy()",
     );
     check(
+      /* ATO-901: the bubble's retry is inert while a turn runs; a resend that
+         still lands mid-turn (Try again) parks the text and says so in plain words. */
       "item 4: retry refuses to masquerade as a steer while a turn runs",
-      !!busyRetry && busyRetry.after === busyRetry.before
+      !!busyRetry && busyRetry.inert && busyRetry.after === busyRetry.before
         && busyRetry.entry === "Reply with exactly: chrome lane ready"
         && busyRetry.focused
-        && busyRetry.toasts.some((t) => t[0] === "A turn is already running"
-            && t[1] === "the message is in the composer — Enter folds it into this turn" && t[2] === "bad"),
+        && busyRetry.toasts.some((t) => t[0] === "The agent is still answering"
+            && t[1] === "Your message is in the box: press Enter to add it to this answer, or wait." && t[2] === "bad"),
       JSON.stringify(busyRetry),
     );
     // Review fix: the toast promises "Enter folds it into this turn", and the
@@ -13273,4 +13874,42 @@ async function r5SeamTest(
     after.opened === true && after.open === false,
     `openedAfterClose=${after.opened} wizardOpen=${after.open}`,
   );
+}
+
+/* ---- ATO-1127: connect to an agent on another computer ---- */
+
+/** The system keychain behind the saved remote key (Electron safeStorage). */
+function keyBox(): KeyBox {
+  return {
+    available: () => safeStorage.isEncryptionAvailable(),
+    seal: (plain) => safeStorage.encryptString(plain).toString("base64"),
+    open: (sealed) => safeStorage.decryptString(Buffer.from(sealed, "base64")),
+  };
+}
+
+let remoteWindow: BrowserWindow | null = null;
+/** Agent › Connect to Another Computer…: a small window over the main one (renderer/remote-connect.html). */
+function openRemoteConnect(): void {
+  if (remoteWindow && !remoteWindow.isDestroyed()) { remoteWindow.focus(); return; }
+  /* ATO-1240: tall enough for the http note and an error line, never taller
+     than the screen it opens on; resizable, with the buttons pinned (the
+     page scrolls its body). */
+  const workHeight = screen.getDisplayMatching(win && !win.isDestroyed() ? win.getBounds() : { x: 0, y: 0, width: 1, height: 1 }).workArea.height;
+  remoteWindow = new BrowserWindow({
+    width: 480,
+    height: Math.max(300, Math.min(460, workHeight - 40)),
+    minHeight: 260,
+    resizable: true,
+    minimizable: false,
+    title: "Connect to another computer",
+    ...(win && !win.isDestroyed() ? { parent: win, modal: true } : {}),
+    webPreferences: {
+      preload: join(__dirname, "..", "preload", "preload.js"),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  remoteWindow.on("closed", () => { remoteWindow = null; });
+  void remoteWindow.loadFile(join(__dirname, "..", "renderer", "remote-connect.html"));
 }

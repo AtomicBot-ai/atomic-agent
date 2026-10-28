@@ -15,6 +15,13 @@
  * daemon is a waitable outage, so the agent loop parks the step
  * (`provider_waiting`) and replays it once the server answers again.
  *
+ * A daemon that ran out of memory and stayed up is not this watcher's
+ * either: it is alive, and every request fails with a server error. The
+ * turn that hits it restarts it with half the context window, through
+ * `LocalModelsOrchestrator.restartWithContextSize` (ATO-334); that start
+ * reaches `noteStarted` like any other, so the crash-loop count is not
+ * charged for it.
+ *
  * Crash-loop guard: a daemon that dies — or a restart that fails —
  * within `QUICK_DEATH_MS` of its start counts as a quick death; at the
  * `MAX_QUICK_DEATHS`th in a row the supervisor stops, says why (the

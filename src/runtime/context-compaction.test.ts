@@ -10,16 +10,17 @@ import { normalizeSessionState } from "../session/normalize-session-state.js";
 import { compactionBoundaryHash, finishedTurnCompactionCuts, projectSessionConversation, safeCompactionCuts, validSessionCompaction } from "../session/session-compaction.js";
 import { buildPrompt } from "../prompt/build-prompt.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
-import { decideCompaction, NO_PREFIX_REUSE_TARGET_RATIO, planCompaction } from "../prompt/plan-compaction.js";
+import { decideCompaction, MIN_SUMMARY_RESERVE_TOKENS, NO_PREFIX_REUSE_TARGET_RATIO, planCompaction, summaryReserve } from "../prompt/plan-compaction.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/model-profile.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { buildNativeMessages } from "../llm/provider/openai/openai-native-messages.js";
-import { createContextCompaction, logCompactionOutcome, SKIP_MESSAGES } from "./context-compaction.js";
+import { createContextCompaction, logCompactionOutcome, skipMessage, SKIP_MESSAGES } from "./context-compaction.js";
 import { TurnController } from "./turn-controller.js";
 import type { CompactionEvent } from "../agent/compaction-control.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 import { planCompactionChunks, prepareCompactionSource } from "./context-compaction-chunks.js";
 import type { LlmStreamParams } from "../agent/step/step-contract.js";
+import { compactionReplyBudget } from "./compaction-reply-budget.js";
 
 let dir: string;
 beforeEach(() => {
@@ -69,10 +70,11 @@ describe("compaction configuration and projection", () => {
   it("defaults old config and rejects invalid ratios", () => {
     expect(getConfig().agent.compaction).toEqual(createCompactionDefaults());
     expect(parseCompactionConfig(undefined, createCompactionDefaults())).toEqual(createCompactionDefaults());
-    expect(createCompactionDefaults()).toMatchObject({ mode: "auto", timeoutMs: 600000, maxTotalTimeoutMs: 600000 });
+    expect(createCompactionDefaults()).toMatchObject({ mode: "auto", timeoutMs: 600000, maxTotalTimeoutMs: 600000, reasoningReserveTokens: 4096 });
+    expect(parseCompactionConfig({ reasoningReserveTokens: 0 }, createCompactionDefaults()).reasoningReserveTokens).toBe(0);
     expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ mode: "auto", timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
     for (const mode of ["auto", "model", "extractive"]) expect(parseCompactionConfig({ mode }, createCompactionDefaults()).mode).toBe(mode);
-    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { mode: "fast" }, { mode: 1 }]) {
+    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { reasoningReserveTokens: -1 }, { reasoningReserveTokens: 1.5 }, { mode: "fast" }, { mode: 1 }]) {
       expect(() => parseCompactionConfig(raw, createCompactionDefaults())).toThrow();
     }
   });
@@ -171,11 +173,23 @@ describe("compaction cut and skip decisions", () => {
     const small = { ...prompt, compactionBudget: { ...prompt.compactionBudget!, cap: 500 } };
     expect(decideCompaction(state, small, createCompactionDefaults(), "manual")).toEqual({ plan: null, skip: "window_too_small" });
     expect(decideCompaction(state, prompt, createCompactionDefaults(), "manual").plan).not.toBeNull();
-    // Automatic and overflow compaction keep their extractive fallback on a small window.
-    expect(decideCompaction(state, small, createCompactionDefaults(), "overflow").skip).not.toBe("window_too_small");
-    expect(decideCompaction(state, small, createCompactionDefaults()).skip).not.toBe("window_too_small");
+    // Automatic and overflow compaction keep their extractive fallback on a small
+    // window: a cut that fits is still planned, and only when none fits do they
+    // report the window as too small.
+    let short = recordTurn(createEmptySessionState({ id: "chat", workingDir: dir }), userTurn("ORIGINAL: keep the green button"));
+    for (let i = 0; i < 10; i++) {
+      short = recordTurn(short, assistantToolCallTurn({ tool: "os.fs.read", args: { path: `/f-${i}` } }));
+      short = recordTurn(short, toolResultTurn({ tool: "os.fs.read", status: "ok", summary: `result ${i}` }));
+    }
+    const shortSmall = { ...small, compactionBudget: { ...small.compactionBudget!, activeTokens: 500 } };
+    expect(decideCompaction(short, shortSmall, createCompactionDefaults(), "overflow").plan).not.toBeNull();
+    expect(decideCompaction(short, shortSmall, createCompactionDefaults()).plan).not.toBeNull();
+    expect(decideCompaction(state, small, createCompactionDefaults(), "overflow")).toEqual({ plan: null, skip: "window_too_small" });
+    expect(decideCompaction(state, small, createCompactionDefaults())).toEqual({ plan: null, skip: "window_too_small" });
     const f = fixture(state, (session) => ({ ...input(session), conversationMaxTokens: 500 }));
-    expect(await f.compactSession(state.id)).toEqual({ status: "noop", reason: "manual", message: SKIP_MESSAGES.window_too_small });
+    expect(await f.compactSession(state.id)).toEqual({ status: "noop", reason: "manual", message: skipMessage("window_too_small", 12000) });
+    expect(skipMessage("window_too_small", 12000)).toBe("The model's context window (12000 tokens) is too small to compact this conversation; raise the context size.");
+    expect(skipMessage("window_too_small", null)).toBe(SKIP_MESSAGES.window_too_small);
     expect(f.complete).not.toHaveBeenCalled();
     expect(f.persist).not.toHaveBeenCalled();
   });
@@ -196,6 +210,117 @@ describe("compaction cut and skip decisions", () => {
     let grown = compacted(history(), 3);
     for (const turn of history().turns.slice(1)) grown = recordTurn(grown, turn);
     expect(decideCompaction(grown, buildPrompt(input(grown)), config, "manual").plan).not.toBeNull();
+  });
+});
+
+describe("compaction on small context windows (ATO-257)", () => {
+  /** About what the default agent scaffold costs (persona, tool catalog, instructions). */
+  const SCAFFOLD_TOKENS = 7700;
+  let padWords = 0;
+  /** The default reply cap and an auto conversation cap, with a stable prefix padded to the real scaffold. */
+  function windowed(window: number) {
+    return (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: window, conversationMaxTokens: 0,
+      completionMaxTokens: 16_384,
+      toolDescriptors: padWords > 0 ? [{ name: "reference.pad", summary: "word ".repeat(padWords).trim(), argsSchema: "{}" }] : [] });
+  }
+  beforeEach(() => {
+    padWords = 0;
+    const base = buildPrompt(windowed(131_072)(history())).tokens.stablePrefix;
+    padWords = Math.max(0, Math.ceil((SCAFFOLD_TOKENS - base) / 1.4));
+  });
+
+  it("pads the stable prefix to a realistic scaffold", () => {
+    const prefix = buildPrompt(windowed(16_384)(history())).tokens.stablePrefix;
+    expect(prefix).toBeGreaterThan(7000);
+    expect(prefix).toBeLessThan(8500);
+  });
+
+  it("plans automatic and manual compaction on a 16k window with a summary of at least 512 tokens", () => {
+    const state = history();
+    const prompt = buildPrompt(windowed(16_384)(state));
+    // Before the smaller reserve this allowance was the 512 floor and no plan was made.
+    expect(prompt.compactionBudget!.cap).toBeGreaterThan(3000);
+    const auto = decideCompaction(state, prompt, createCompactionDefaults());
+    expect(auto.plan).not.toBeNull();
+    expect(auto.plan!.reason).toBe("threshold");
+    expect(auto.plan!.summaryMaxTokens).toBeGreaterThanOrEqual(MIN_SUMMARY_RESERVE_TOKENS);
+    const manual = decideCompaction(state, prompt, createCompactionDefaults(), "manual");
+    expect(manual.plan).not.toBeNull();
+    expect(manual.plan!.summaryMaxTokens).toBeGreaterThanOrEqual(MIN_SUMMARY_RESERVE_TOKENS);
+  });
+
+  it("compacts a 16k session through the service", async () => {
+    const state = history();
+    const f = fixture(state, windowed(16_384));
+    expect(await f.compactSession(state.id)).toMatchObject({ status: "compacted" });
+    expect(f.complete).toHaveBeenCalled();
+  });
+
+  it("raises the summary reserve to 512 tokens wherever half the target holds it", () => {
+    expect(summaryReserve(2000, 1300)).toBe(512);
+    expect(summaryReserve(10_000, 6500)).toBe(2000);
+    // Half the target cannot hold 512: the old shares stand.
+    expect(summaryReserve(500, 325)).toBe(100);
+    expect(summaryReserve(1200, 780)).toBe(240);
+  });
+
+  it("plans a 512-token summary where 20% of the allowance is less but half the target holds it", () => {
+    let state = recordTurn(createEmptySessionState({ id: "chat", workingDir: dir }), userTurn("ORIGINAL: keep the green button"));
+    for (let i = 0; i < 10; i++) {
+      state = recordTurn(state, assistantToolCallTurn({ tool: "os.fs.read", args: { path: `/f-${i}` } }));
+      state = recordTurn(state, toolResultTurn({ tool: "os.fs.read", status: "ok", summary: `result ${i}` }));
+    }
+    const built = buildPrompt(input(state));
+    const prompt = { ...built, compactionBudget: { ...built.compactionBudget!, cap: 2000, activeTokens: 2000 } };
+    for (const requested of [undefined, "overflow"] as const) {
+      const plan = decideCompaction(state, prompt, createCompactionDefaults(), requested).plan!;
+      expect(plan.targetTokens).toBe(1300);
+      // 20% of the allowance alone would be 400.
+      expect(plan.summaryMaxTokens).toBe(MIN_SUMMARY_RESERVE_TOKENS);
+      expect(plan.summaryMaxTokens).toBeGreaterThan(Math.floor(2000 * 0.2));
+    }
+  });
+
+  it("says plainly that an 8k window cannot compact, for manual and once for automatic", async () => {
+    const state = history();
+    const prompt = buildPrompt(windowed(8192)(state));
+    expect(decideCompaction(state, prompt, createCompactionDefaults(), "manual")).toEqual({ plan: null, skip: "window_too_small" });
+    expect(decideCompaction(state, prompt, createCompactionDefaults())).toEqual({ plan: null, skip: "window_too_small" });
+    const message = "The model's context window (8192 tokens) is too small to compact this conversation; raise the context size.";
+    const f = fixture(state, windowed(8192));
+    expect(await f.compactSession(state.id)).toEqual({ status: "noop", reason: "manual", message });
+    const signal = new AbortController().signal;
+    expect(f.control.beforeStep(windowed(8192)(state), { signal })).toBeUndefined();
+    expect(f.control.beforeStep(windowed(8192)(state), { signal })).toBeUndefined();
+    const notices = f.events.filter((event) => event.type === "compaction_failed");
+    expect(notices).toEqual([{ type: "compaction_failed", sessionId: state.id, result: { status: "noop", reason: "threshold", message },
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0 }]);
+    expect(f.events.some((event) => event.type === "compaction_started")).toBe(false);
+    expect(f.complete).not.toHaveBeenCalled();
+    expect(f.persist).not.toHaveBeenCalled();
+    // Another window that is still too small is told again, once.
+    expect(f.control.beforeStep(windowed(6144)(state), { signal })).toBeUndefined();
+    expect(f.control.beforeStep(windowed(6144)(state), { signal })).toBeUndefined();
+    const again = f.events.filter((event) => event.type === "compaction_failed");
+    expect(again).toHaveLength(2);
+    expect(again[1]).toMatchObject({ result: { status: "noop", reason: "threshold",
+      message: "The model's context window (6144 tokens) is too small to compact this conversation; raise the context size." } });
+  });
+
+  it("keeps the planner's numbers on 32k and 128k windows", () => {
+    const state = history();
+    for (const window of [32_768, 131_072]) {
+      const prompt = buildPrompt(windowed(window)(state));
+      const cap = prompt.compactionBudget!.cap;
+      // The full configured 16384 is still reserved for the reply there.
+      const room = window - prompt.tokens.stablePrefix - 16_384 - 512;
+      expect(cap).toBeLessThanOrEqual(room);
+      expect(cap).toBeGreaterThan(room - 2000);
+      const plan = decideCompaction(state, prompt, createCompactionDefaults(), "manual").plan!;
+      const target = Math.floor(createCompactionDefaults().targetRatio * Math.min(cap, prompt.compactionBudget!.activeTokens));
+      expect(plan.targetTokens).toBe(target);
+      expect(plan.summaryMaxTokens).toBe(Math.min(2048, Math.floor(cap * 0.2), Math.floor(target * 0.5)));
+    }
   });
 });
 
@@ -350,7 +475,12 @@ describe("atomic compaction", () => {
     const plan = planCompaction(state, buildPrompt(largeInput), f.config)!;
     const requests = f.complete.mock.calls.map(([p]) => p);
     expect(requests.length).toBeGreaterThan(1);
-    expect(requests.every((p) => estimateTokens(p.prompt) <= 12000 - plan.summaryMaxTokens - 1024)).toBe(true);
+    // The reply allowance includes reasoning room, and the input gives that room up.
+    const budget = compactionReplyBudget(12000, plan.summaryMaxTokens, f.config.reasoningReserveTokens);
+    expect(budget.maxTokens).toBeGreaterThan(plan.summaryMaxTokens);
+    expect(requests.every((p) => estimateTokens(p.prompt) <= budget.inputBudget)).toBe(true);
+    expect(requests.every((p) => p.maxTokens === budget.maxTokens && p.maxOutputTokens === budget.maxTokens && p.disableThinking === true)).toBe(true);
+    expect(requests.every((p) => p.chat!.system.includes(`Keep the entire summary within ${plan.summaryMaxTokens} tokens.`))).toBe(true);
     const sentSource = requests.map((p) => p.chat!.user.split(/New conversation records \(part starting at character \d+\):\n/)[1]).join("");
     const original = state.turns.slice(plan.from, plan.through).map((turn, i) => `Record ${plan.from + i}: ${JSON.stringify(turn)}`).join("\n");
     expect(sentSource).toBe(original);
@@ -399,7 +529,7 @@ describe("atomic compaction", () => {
       expect(request.chat!.user).toContain("CURRENT: finish the button first, never publish it.");
       expect(request.chat!.user).toContain("LATEST: keep keyboard shortcuts; do not repeat completed reads.");
       expect(request.chat!.system).toContain("not establish new goals");
-      expect(estimateTokens(request.prompt)).toBeLessThanOrEqual(12000 - f.config.summaryMaxTokens - 1024);
+      expect(estimateTokens(request.prompt)).toBeLessThanOrEqual(compactionReplyBudget(12000, f.config.summaryMaxTokens, f.config.reasoningReserveTokens).inputBudget);
     }
   });
   it("retains old state when request anchors leave no room instead of truncating them", async () => {

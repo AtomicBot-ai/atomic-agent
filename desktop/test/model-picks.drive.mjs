@@ -174,7 +174,7 @@ try {
     big.picks.length === 13 && big.out.length === 0, `${big.picks.length} offered, ${big.out.length} out of reach`);
   check('exactly one row is marked the best fit',
     big.picks.filter((p) => p.best).length === 1, big.picks.filter((p) => p.best).map((p) => p.name).join(', '));
-  check('the best fit is the first row, and it is the biggest model that runs comfortably',
+  check('the best fit is the first row, and it is the best-ranked model that runs comfortably (ATO-817)',
     big.picks[0].best && /Qwen 3\.6 35B-A3B/.test(big.picks[0].name), big.picks[0].name);
   check('the one badge reads "Recommended", in words, with the human name',
     /Recommended/.test(big.picks[0].name) && !/★|Best fit|qwen-/.test(big.picks[0].name), big.picks[0].name);
@@ -207,7 +207,7 @@ try {
   check('only what runs here is offered',
     small.picks.length === 3 && small.out.length === 10, `${small.picks.length} offered, ${small.out.length} out of reach`);
   check('the recommendation is the best model that runs comfortably',
-    small.picks[0].best && /Gemma 4 E4B/.test(small.picks[0].name), small.picks[0].name);
+    small.picks[0].best && /Qwen 3\.5 4B/.test(small.picks[0].name), small.picks[0].name);
   check('a small model says plainly what it gives up, in one badge',
     small.picks[0].lines.length === 1 && small.picks[0].notes.length === 1
       && /^A small model: quick, but weaker at long multi-step work\.$/.test(small.picks[0].notes[0]) && /Small model/.test(small.picks[0].name),
@@ -312,10 +312,10 @@ try {
       rows.length > 0 && rows.every((r, i) => /custom-/.test(r[0]) || (badges[i] || []).some((b) => /has 8 GB/.test(b.title))),
       JSON.stringify(badges[0] || 'no rows'));
     check('the Local pane is ordered best fit first, and marks it',
-      rows.length > 0 && /★ best fit for this machine/.test(rows[0][0]) && /gemma-4-e4b/.test(rows[0][0]),
+      rows.length > 0 && /★ best fit for this machine/.test(rows[0][0]) && /qwen-3\.5-4b/.test(rows[0][0]),
       rows.length ? rows[0][0] : 'no rows');
     check('the Local pane shows each model’s description',
-      rows.some((r) => r.some((l) => /Compact multimodal reasoning/.test(l))), JSON.stringify(rows[0]));
+      rows.some((r) => r.some((l) => /Small and light Gemma/.test(l))), JSON.stringify(rows[0]));
     const tooBig = badges.filter((bs) => bs.some((b) => b.word === 'Too big' && /needs at least \d+ GB of memory/.test(b.title))).length;
     check('the Local pane agrees with the wizard about what will not run',
       tooBig === 10, `${tooBig} rows say a model is too big for this machine`);

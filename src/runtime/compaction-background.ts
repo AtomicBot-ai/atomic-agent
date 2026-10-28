@@ -12,6 +12,7 @@ import type { CompactionRouteFacts } from "./compaction-mode.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 import { renderRollingSource, ROLLING_JOB_MAX_SOURCE_TOKENS, ROLLING_MIN_SOURCE_TOKENS, ROLLING_SUMMARY_SHARE } from "./compaction-rolling.js";
 import { modelSummaryFailure, summarizeWithModel, type ModelSummaryRoute, type ModelSummaryTally } from "./context-compaction-model.js";
+import { compactionReplyBudget } from "./compaction-reply-budget.js";
 
 /** Quiet time after a turn ends before a job starts; the turn's own save lands first. */
 export const BACKGROUND_IDLE_DELAY_MS = 2_000;
@@ -111,7 +112,8 @@ export function createBackgroundCompaction(deps: BackgroundCompactionDependencie
     const from = rolling?.coveredThrough ?? plan.from;
     const maxTokens = Math.floor(plan.summaryMaxTokens * ROLLING_SUMMARY_SHARE);
     const window = Math.min(route.contextWindow ?? Infinity, prompt.contextWindow ?? prompt.conversationCapEffective);
-    const sourceCap = Math.min(ROLLING_JOB_MAX_SOURCE_TOKENS, Math.floor((window - maxTokens - 1024) / 2));
+    // Half of the input room the summary call will have once its reasoning reserve is set aside.
+    const sourceCap = Math.min(ROLLING_JOB_MAX_SOURCE_TOKENS, Math.floor(compactionReplyBudget(window, maxTokens, config.reasoningReserveTokens, route.maxOutputTokens).inputBudget / 2));
     if (maxTokens < 64 || sourceCap < 512) return false;
     const source = renderRollingSource(state.turns, from, plan.through, sourceCap);
     if (!source || estimateTokens(source.text) < ROLLING_MIN_SOURCE_TOKENS) return false;

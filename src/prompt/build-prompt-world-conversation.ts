@@ -10,13 +10,19 @@ import {
   type ConversationTurn,
   type RenderTurnOptions,
 } from "../session/conversation-turn.js";
+import { neutraliseControlMarkers } from "../tools/control-marker-guard.js";
 
 export function renderWorldSnapshotSection(session: SessionState): string {
   const snap = session.worldSnapshot;
   if (!snap || snap.kind === "none") return "(no world snapshot available)";
-  return [`kind: ${snap.kind}`, `digest: ${snap.digest}`, ``, snap.text].join(
-    "\n",
-  );
+  // The snapshot is the page's own text: fake chat-template tokens on a
+  // web page must not reach the model as control markup.
+  return [
+    `kind: ${snap.kind}`,
+    `digest: ${snap.digest}`,
+    ``,
+    neutraliseControlMarkers(snap.text),
+  ].join("\n");
 }
 
 type PackedTurns = {

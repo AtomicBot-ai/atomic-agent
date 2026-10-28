@@ -1,6 +1,7 @@
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
+import { LocalOutOfMemoryError } from "../llm/index.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -309,6 +310,68 @@ describe("reduceTuiState", () => {
     ]);
     expect(next.pendingApproval).toBeNull();
     expect(next.status).toBe("running");
+  });
+
+  describe("full command view (ATO-876)", () => {
+    const script = Array.from({ length: 30 }, (_, i) => `echo line-${i + 1}`);
+    const request = {
+      approvalId: "a-1",
+      sessionId: "s-1",
+      tool: "os.shell.exec",
+      category: "shell" as const,
+      reason: "dangerous shell command",
+      preview: script.join("\n"),
+    };
+    const raised = (): TuiState =>
+      apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: "s-1" },
+        { type: "approval_requested", request },
+      ]);
+
+    it("pages through the whole command and back to the excerpt", () => {
+      let state = raised();
+      expect(state.approvalPreviewPage).toBeNull();
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toEqual({ approvalId: "a-1", page: 0 });
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toEqual({ approvalId: "a-1", page: 1 });
+      state = reduceTuiState(state, { type: "approval_preview_paged" });
+      expect(state.approvalPreviewPage).toBeNull();
+    });
+
+    it("has nothing to page when the preview fits", () => {
+      const state = apply(createInitialTuiState(fakeSession()), [
+        { type: "session_created", sessionId: "s-1" },
+        {
+          type: "approval_requested",
+          request: { ...request, preview: "echo hi\nrm -rf out" },
+        },
+        { type: "approval_preview_paged" },
+      ]);
+      expect(state.approvalPreviewPage).toBeNull();
+    });
+
+    it("starts a new prompt on its excerpt and forgets the page on resolve", () => {
+      const paged = reduceTuiState(raised(), { type: "approval_preview_paged" });
+      const resolved = reduceTuiState(paged, {
+        type: "approval_resolved",
+        approvalId: "a-1",
+        approved: false,
+      });
+      expect(resolved.approvalPreviewPage).toBeNull();
+      const next = reduceTuiState(paged, {
+        type: "approval_requested",
+        request: { ...request, approvalId: "a-2" },
+      });
+      expect(next.approvalPreviewPage).toBeNull();
+    });
+
+    it("does nothing with no prompt up", () => {
+      const initial = createInitialTuiState(fakeSession());
+      expect(reduceTuiState(initial, { type: "approval_preview_paged" })).toBe(
+        initial,
+      );
+    });
   });
 
   it("should ignore resolve for unknown approvalId", () => {
@@ -1497,6 +1560,26 @@ describe("truncated completion", () => {
     expect(next.feed.at(-1)?.color).toBe("yellow");
   });
 
+  it("says the model looped when a repetitive reply is retried (ATO-414)", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), {
+      type: "agent_event",
+      event: {
+        type: "completion_truncated",
+        stepIndex: 1,
+        cause: "unknown",
+        completionTokens: 0,
+        promptTokens: 0,
+        requestedMaxTokens: 16_384,
+        repetitive: true,
+        retry: { kind: "same_cap", maxTokens: 16_384 },
+      } as never,
+    });
+    const line = next.feed.at(-1)?.line ?? "";
+    expect(line).toContain("kept repeating the same text");
+    expect(line).toContain("step 2");
+    expect(line).not.toContain("\u2014");
+  });
+
   it("says no cap was sent when the provider stopped at its own limit", () => {
     const next = reduceTuiState(createInitialTuiState(fakeSession()), {
       type: "agent_event",
@@ -2488,6 +2571,17 @@ describe("context compaction activity", () => {
     expect(end.status).toBe(initial.status);
     expect(JSON.stringify(end.messages)).toContain(status === "failed" ? "test failure" : "cancelled");
   });
+  it("shows a skipped compaction as skipped, with its message, not as a failure", () => {
+    const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
+    const message = "The model's context window (8192 tokens) is too small to compact this conversation; raise the context size.";
+    const end = reduceTuiState(initial, { type: "agent_event", event: { type: "compaction_failed", sessionId: "s1",
+      result: { status: "noop", reason: "threshold", message }, usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 }, calls: 0,
+    } });
+    const text = JSON.stringify(end.messages);
+    expect(text).toContain(`Context compaction skipped: ${message}`);
+    expect(text).not.toContain("Context compaction failed");
+    expect(end.status).toBe(initial.status);
+  });
   it("does not clear an automatic operation when a manual request returns busy", () => {
     const initial = createInitialTuiState(fakeSession({ sessionId: "s1" }));
     const state = reduceTuiState(initial, started("s1"));
@@ -2515,4 +2609,84 @@ it("shows a waiting message immediately and consumes the runtime echo only once"
   expect(state.messages.filter(m=>m.role==="user")).toHaveLength(2);
   const unchanged = reduceTuiState(state,{type:"message_waiting_for_model",sessionId:"other",text:"not here"});
   expect(unchanged).toBe(state);
+});
+
+describe("reduceTuiState composer_draft_replaced", () => {
+  it("puts the rewrite in the composer while it still holds the draft", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("Fix the login bug.");
+    expect(state.composerNotice).toContain("Review it");
+  });
+
+  it("says so when the rewrite matches the draft", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "Fix the login bug." },
+      { type: "composer_draft_replaced", expected: "Fix the login bug.", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("Fix the login bug.");
+    expect(state.composerNotice).toContain("already reads clearly");
+  });
+
+  it("says the draft was sent when the composer is empty", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login" },
+      { type: "input_changed", value: "" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("");
+    expect(state.composerNotice).toContain("sent or cleared");
+  });
+
+  it("keeps an edit made while the rewrite ran", () => {
+    const state = apply(createInitialTuiState(fakeSession()), [
+      { type: "input_changed", value: "fix login, and the logout" },
+      { type: "composer_draft_replaced", expected: "fix login", value: "Fix the login bug." },
+    ]);
+    expect(state.inputValue).toBe("fix login, and the logout");
+    expect(state.composerNotice).toContain("not applied");
+  });
+});
+
+describe("reduceTuiState: local model out of memory (ATO-334)", () => {
+  const oom = (phase: "asking" | "restarting" | "restarted" | "stopped", message: string): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "local_model_out_of_memory",
+      phase,
+      contextWindow: 262_144,
+      nextContextWindow: 131_072,
+      attempt: 1,
+      maxAttempts: 3,
+      message,
+    },
+  });
+
+  it("posts one chat note, when the model is back", () => {
+    const note = "The model ran out of memory, restarted it with a context window of 131072 tokens.";
+    const next = apply(createInitialTuiState(fakeSession()), [
+      oom("asking", "Restart it with a smaller window (131072 tokens)?"),
+      oom("restarting", "Restarting the model with a context window of 131072 tokens."),
+      oom("restarted", note),
+    ]);
+    const before = createInitialTuiState(fakeSession()).messages.length;
+    expect(next.messages).toHaveLength(before + 1);
+    expect(next.messages.at(-1)?.text).toBe(note);
+    expect(next.feed.at(-1)?.line).toContain("out of memory");
+  });
+
+  it("a stop shows the plain sentence, not the transport wording", () => {
+    const sentence = "The model ran out of memory 3 times in a row, even with a context window of 32768 tokens. Pick a smaller model.";
+    const next = apply(createInitialTuiState(fakeSession()), [{
+      type: "agent_event",
+      event: {
+        type: "loop_failed",
+        error: new LocalOutOfMemoryError(sentence, 32_768, null),
+        category: "transport",
+      },
+    }]);
+    expect(next.messages.at(-1)?.text).toContain(sentence);
+  });
 });

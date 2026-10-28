@@ -154,7 +154,10 @@ function simgvForm(IM) {
     ? ' <button class="st-link" ' + SIMGV_A('pop:model') + '>' + (whyTab ? 'Pick a model that can' : 'Pick one') + '</button>.' : '';
   const parts = [];
   parts.push('<div><label class="st-lbl" for="sti-prompt">Prompt' + (f.mode === 'upscale' ? ' <span class="r">optional</span>' : '') + '</label>'
-    + '<textarea class="st-ta" id="sti-prompt" rows="4" placeholder="Describe the picture. Subject, place, light, style.">' + esc(f.prompt || '') + '</textarea></div>');
+    + '<textarea class="st-ta" id="sti-prompt" rows="4" placeholder="Describe the picture. Subject, place, light, style.">' + esc(f.prompt || '') + '</textarea>'
+    // ATO-809: Improve prompt (studio/improve-prompt.js) and the last prompts sent from this page (studio/recent-prompts.js).
+    + (typeof studioRecentHTML === 'function' ? studioRecentHTML(IM.recent, IM.recentOpen, (v, a) => SIMGV_A(a ? v + ':' + a : v),
+      typeof studioImproveHTML === 'function' ? studioImproveHTML(f.prompt, IM.improve, (v) => SIMGV_A(v)) : '') : '') + '</div>');
   parts.push('<div><div class="st-lbl">Mode</div><div class="st-modes" role="tablist">'
     + tabs.map((t) => '<button class="st-mode' + (f.mode === t.id ? ' on' : '') + (t.ok ? '' : ' off') + '" role="tab" aria-selected="' + (f.mode === t.id) + '" '
       + SIMGV_A((t.ok ? 'mode:' : 'modewhy:') + t.id) + (t.ok ? '' : ' aria-disabled="true"') + (t.why ? ' title="' + esc(t.why) + '"' : '') + '>' + esc(t.label) + '</button>').join('')

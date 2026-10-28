@@ -103,6 +103,9 @@ export function createMcpToolDefinition(
     name: meta.qualifiedName,
     description:
       meta.description || `MCP tool ${meta.rawName} on ${meta.server}`,
+    // Third-party text: the registry frames it and neutralises fake
+    // chat-template tokens before the model reads it.
+    untrustedOutput: `MCP server ${meta.server}`,
     // MCP tools are arbitrary third-party code — even when the server
     // advertises `readOnlyHint`, we cannot trust the wire flag for
     // batch-safety. The runtime's batching decision is owned by the

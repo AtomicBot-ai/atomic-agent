@@ -39,6 +39,7 @@ import {
   type McpServerConfig,
   type McpToolMeta,
 } from "./mcp-types.js";
+import { isMcpToolEnabled } from "./mcp-tool-filter.js";
 
 /**
  * Callback signature for sampling requests forwarded from the server.
@@ -226,6 +227,8 @@ export class McpClient {
       annotations?: Record<string, unknown>;
     }>) {
       if (!MCP_TOOL_NAME_RE.test(t.name)) continue;
+      // Turned off by the operator (`enabledTools` / `disabledTools`).
+      if (!isMcpToolEnabled(this.config, t.name)) continue;
       const qualifiedName = qualifyMcpToolName(this.config.name, t.name);
       // Sanity: the qualified name must round-trip through
       // splitMcpToolName cleanly. If not, drop — this is the same

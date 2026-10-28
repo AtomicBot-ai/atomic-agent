@@ -33,6 +33,7 @@ export type TraceEvent =
   | TraceLlmCompletion
   | TraceToolInvocation
   | TraceParseRetry
+  | TraceAnswerContinued
   | TraceBatchTrimmed
   | TraceBatchApprovalBarriers
   | TraceLoopDetected
@@ -164,8 +165,7 @@ export interface TraceLlmCompletion extends TraceEventBase {
    * Reasoning the completion carried, in `localModels.reasoningBudgetTokens`
    * units (four characters per token — an estimate from the text, not
    * the server's count). A step cut by the budget shows about the
-   * effective budget (at most 499, the llama.cpp grammar cap), not the
-   * configured one.
+   * configured budget.
    * Absent on traces recorded before F49.
    */
   reasoningTokens?: number;
@@ -173,6 +173,12 @@ export interface TraceLlmCompletion extends TraceEventBase {
   modelId: string | null;
   stop: boolean;
   truncated: boolean;
+  /**
+   * llama-server's `stop_type` (`limit` is the reply cap or a context
+   * overflow, `eos`/`word` a normal stop). Absent for other providers
+   * and on traces recorded before it was kept.
+   */
+  stopType?: string;
   /** The provider's generation id, when it sent one. */
   generationId?: string;
 }
@@ -208,6 +214,27 @@ export interface TraceParseRetry extends TraceEventBase {
   stepIndex: number;
   attempt: number;
   reason: string;
+}
+
+/**
+ * The step's answer was cut at its length limit and the step asked the
+ * model once for the rest (ATO-1031). `outcome`: `completed` (joined
+ * into one reply), `cut_again` (the rest was cut too; the reply says
+ * so) or `abandoned` (the step fell back to the truncation error).
+ * `partialChars` is the length of the cut answer, never its text.
+ */
+export interface TraceAnswerContinued extends TraceEventBase {
+  type: "answer_continued";
+  turnIndex: number;
+  stepIndex: number;
+  cause:
+    | "reply_cap"
+    | "context_window"
+    | "output_limit"
+    | "provider_limit"
+    | "unknown";
+  partialChars: number;
+  outcome: "completed" | "cut_again" | "abandoned";
 }
 
 /**
@@ -361,6 +388,12 @@ export interface TraceCompletionTruncated extends TraceEventBase {
   promptTokens: number;
   /** The cap the cut request carried; absent when it carried none. */
   requestedMaxTokens?: number;
+  /**
+   * The cut reply was a loop: one block repeated back to back, either
+   * found in the cut reply or caught while it streamed (the stream was
+   * then aborted). Absent when it did not loop.
+   */
+  repetitive?: true;
   retry: "raise_cap" | "same_cap" | "fit_window";
   retryValue: number;
 }

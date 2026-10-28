@@ -32,6 +32,13 @@ export const ENGINE_RECOVERY_VIA = ["launch", "swap", "update", "start", "switch
 export const SUPERVISOR_KINDS = ["restarting", "restarted", "restart_failed", "gave_up"] as const;
 /** `local_backend_supervised.fault`: the server log's failure line as a code (classify.ts engineFault); the line itself is never sent. */
 export const ENGINE_FAULTS = ["oom", "port_in_use", "load_failed", "missing_lib", "crash", "unknown"] as const;
+/**
+ * ATO-278: why the local model server did not start (`local_backend_started.reason`, start_failed only) or
+ * died mid-session (`local_backend_crashed.reason`), as a code (classify.ts backendFailReason). The ENGINE_FAULTS
+ * codes read from the error or the server log's failure line, plus the app's own time limit (`timeout`), a server
+ * that came up and stopped answering while the start waited on it (`exited_after_ready`), and `other`. The text is never sent.
+ */
+export const BACKEND_FAIL_REASONS = ["oom", "port_in_use", "load_failed", "missing_lib", "crash", "timeout", "exited_after_ready", "other"] as const;
 export const CODING_MODES = ["default", "plan", "auto", "bypass", "other"] as const;
 export const FIT = ["comfortable", "tight", "over"] as const;
 /** `model_picked.host_ram_gb`: ≤12 → 8, ≤24 → 16, ≤48 → 32, else 64 (renderer/analytics.js ramBucket). */
@@ -72,7 +79,7 @@ export const SWITCH_REFUSALS = [
 export const DOWNLOAD_FAIL_REASONS = [
   "offline", "busy", "exited", "disk_full", "http_error", "no_progress", "other",
 ] as const;
-export const DOWNLOAD_TRIGGERS = ["onboarding", "settings", "selector", "other"] as const;
+export const DOWNLOAD_TRIGGERS = ["onboarding", "settings", "selector", "first_run", "other"] as const;
 export const UI_VIA = ["click", "menu", "shortcut", "palette", "slash", "other"] as const;
 
 /* ---- string shapes ---- */
@@ -116,4 +123,18 @@ export function cleanAppVersion(v: string): string | undefined {
 export const LOCALE_RE = /^[a-z]{2,3}(-[A-Z]{2})?$/;
 export function cleanLocale(l: string): string | undefined {
   return LOCALE_RE.test(l) ? l : undefined;
+}
+
+/**
+ * `agent_restarted.trigger` (ATO-274). `manual` is the person's own restart
+ * (Settings, the palette); finishing setup, a new workspace folder and a
+ * data import restart the agent too and are told apart, so `manual` can be
+ * read as "something felt stuck". `telegram` is the Telegram tab's Restart
+ * agent, which applies a token, owner or on/off change (ATO-900 item 6).
+ */
+export const RESTART_TRIGGERS = ["manual", "switch", "auto", "other", "setup_finished", "workspace_change", "import", "telegram"] as const;
+export type RestartTrigger = (typeof RESTART_TRIGGERS)[number];
+/** The window's `agent:restart` says why only for setup and the Telegram tab; anything else it sends is a manual restart. */
+export function restartTriggerFromWindow(reason: unknown): RestartTrigger {
+  return reason === "setup_finished" || reason === "telegram" ? reason : "manual";
 }

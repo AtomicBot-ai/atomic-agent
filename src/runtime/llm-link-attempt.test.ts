@@ -152,3 +152,24 @@ describe("grammar request fields on a llama-server link", () => {
     expect(seen[0]?.cachePrompt).toBe(false);
   });
 });
+
+describe("a thinking profile's lifted reply cap (ATO-1031)", () => {
+  it("reaches a grammar link as its maxTokens when the request names no cap", async () => {
+    const seen: CompletionRequest[] = [];
+    const { deps } = grammarLink(seen);
+    await completeOnLink(deps, { ...base, slotId: -1, localReplyCap: 32_768 }, "local");
+    await completeOnLink(
+      deps,
+      { ...base, slotId: -1, localReplyCap: 32_768, maxTokens: 4_096 },
+      "local",
+    );
+    expect(seen.map((r) => r.maxTokens)).toEqual([32_768, 4_096]);
+  });
+
+  it("never reaches a native-tools link", async () => {
+    const { requests, provider } = recording("native_tools");
+    const deps = { resolveSlice: () => ({ provider, transport: "native_tools" as const }) };
+    await completeOnLink(deps, { ...params, localReplyCap: 32_768 }, "native_tools");
+    expect(requests[0]).not.toHaveProperty("maxTokens");
+  });
+});

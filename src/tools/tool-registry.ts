@@ -1,7 +1,22 @@
+import { statSync } from "node:fs";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { fullToolResult } from "../compressor/result-compressor.js";
+import { readArgumentAliases, withAliasNote } from "./argument-aliases.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
+import { resolveUserPath } from "./os/expand-home.js";
+import { markUntrustedResult } from "./untrusted-tool-output.js";
+import {
+  maskErrorSecrets,
+  maskResultSecrets,
+  UNMASKED_TOOLS,
+} from "./tool-output-secrets.js";
+import {
+  knownSecretsFromEnv,
+  type KnownSecret,
+} from "../error-reporting/secret-detector.js";
 import type { ToolRole } from "./tool-roles.js";
+import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
+import type { ToolOutputSpill } from "./tool-output-spill.js";
 
 export interface ToolContext {
   workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
@@ -43,12 +58,25 @@ export interface ToolContext {
    * to the provider serving the step, not the one active at boot.
    */
   providerId?: string;
+  /**
+   * What `os.fs.read` last saw of each file this turn, so `os.fs.write`,
+   * `os.fs.edit` and `os.fs.patch` can say when their target changed
+   * since (`fs-read-freshness.ts`, ATO-659). Absent ⇒ no notice.
+   */
+  fileVersions?: FileReadVersions;
 }
 
 export interface ToolDefinition {
   name: string;
   description: string;
   readonly: boolean;
+  /**
+   * Set when the result carries text from outside (a web page, an MCP
+   * server): a short label naming the source. The registry then
+   * neutralises chat-template markers in the summary and frames it as
+   * data, not instructions (`untrusted-tool-output.ts`).
+   */
+  untrustedOutput?: string;
   run: (
     args: Record<string, unknown>,
     ctx: ToolContext,
@@ -67,8 +95,32 @@ export class ToolNotFoundError extends Error {
  * care of dispatch. Individual tools live in their own files and are
  * registered explicitly (no dynamic discovery).
  */
+export interface ToolRegistryOptions {
+  /**
+   * Saves the complete output of a clipped local result to a file and
+   * puts the path in the summary (`tool-output-spill.ts`, ATO-663).
+   * Absent ⇒ local results stay as the tool returned them.
+   */
+  outputSpill?: Pick<ToolOutputSpill, "spill">;
+  /**
+   * Exact secret values to mask in every tool result, read on each call
+   * so a key added mid-session is covered (`tool-output-secrets.ts`,
+   * ATO-1077). Shape-based masking applies regardless. Absent ⇒ the
+   * secret-looking variables of `process.env`, which carries the agent's
+   * `.env`.
+   */
+  knownSecrets?: () => readonly KnownSecret[];
+}
+
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
+  private readonly outputSpill: Pick<ToolOutputSpill, "spill"> | undefined;
+  private readonly knownSecrets: () => readonly KnownSecret[];
+
+  constructor(options: ToolRegistryOptions = {}) {
+    this.outputSpill = options.outputSpill;
+    this.knownSecrets = options.knownSecrets ?? (() => knownSecretsFromEnv());
+  }
 
   register(definition: ToolDefinition): void {
     this.tools.set(definition.name, definition);
@@ -104,11 +156,55 @@ export class ToolRegistry {
     ctx: ToolContext,
   ): Promise<CompressedToolResult> {
     const tool = this.get(name);
-    // Models sometimes emit a JSON value one level over-encoded (a
-    // number as "200000", an array as "[\"a.png\"]"). Unwrap those
-    // before dispatch; anything that cannot be coerced is passed
-    // through untouched so the tool reports its own error.
-    const result = await tool.run(coerceToolArgs(name, args), ctx);
-    return ctx.modelMode === "cloud" ? fullToolResult(result) : result;
+    // An alias shape the tool reads (`argument-aliases.ts`: `os.fs.move`
+    // `{paths, destination}`) is rewritten here, before any wrapper
+    // (read scope) sees the call, and the result's last line says how
+    // it was read.
+    const aliased = readArgumentAliases(name, args, {
+      isFile: (path) => isExistingFile(path, ctx.workingDir),
+    });
+    const masks = !UNMASKED_TOOLS.has(name);
+    let result: CompressedToolResult;
+    try {
+      // Models sometimes emit a JSON value one level over-encoded (a
+      // number as "200000", an array as "[\"a.png\"]"). Unwrap those
+      // before dispatch; anything that cannot be coerced is passed
+      // through untouched so the tool reports its own error.
+      result = await tool.run(coerceToolArgs(name, aliased?.args ?? args), ctx);
+    } catch (err) {
+      // Same error object (its class matters to callers), one more line.
+      // A message that cannot be set (a getter-only DOMException) is left
+      // as it is: the error itself must reach the caller unchanged.
+      if (aliased !== null && err instanceof Error && !ctx.signal.aborted) {
+        try {
+          err.message = `${err.message}\n${aliased.note}`;
+        } catch {
+          // keep `err` as thrown
+        }
+      }
+      throw masks ? maskErrorSecrets(err, this.knownSecrets()) : err;
+    }
+    if (aliased !== null) result = withAliasNote(result, aliased.note);
+    // Secrets are masked first, so the cloud promotion, the spill file
+    // and the untrusted framing below all see the marker, never the key.
+    if (masks) result = maskResultSecrets(result, this.knownSecrets());
+    const shown =
+      ctx.modelMode === "cloud"
+        ? fullToolResult(result)
+        : this.outputSpill
+          ? await this.outputSpill.spill(name, ctx.sessionId, result)
+          : result;
+    return tool.untrustedOutput === undefined
+      ? shown
+      : markUntrustedResult(shown, tool.untrustedOutput);
+  }
+}
+
+/** `path` (resolved against `workingDir`) is an existing file; any failure is no. */
+function isExistingFile(path: string, workingDir: string): boolean {
+  try {
+    return statSync(resolveUserPath(path, workingDir)).isFile();
+  } catch {
+    return false;
   }
 }

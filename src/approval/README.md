@@ -12,6 +12,7 @@ This area owns approval policy and routing. Read [AGENTS.md](AGENTS.md) before c
 - [approval-router.ts](approval-router.ts)
 - [dangerous-tool.ts](dangerous-tool.ts)
 - [read-scope-grants.ts](read-scope-grants.ts)
+- [approval-preview.ts](approval-preview.ts): fits a long preview onto a size-limited surface (TUI modal, Telegram message) by whole lines, with an explicit "+N more lines" note instead of a silent cut, and pages the whole preview (`pagePreview`) for a surface that shows all of it before the decision.
 
 ## Ownership and dependencies
 

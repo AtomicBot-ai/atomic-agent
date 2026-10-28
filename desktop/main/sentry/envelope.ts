@@ -62,7 +62,7 @@ export interface EnvelopeEvent {
   installId: string;
   tags: Record<string, string>;
   /** `error` for exceptions, `warning` for a crash/exit seen only as tags. */
-  level?: "error" | "warning";
+  level?: "error" | "warning" | "info";
 }
 
 export function buildEnvelope(dsn: ParsedDsn, ev: EnvelopeEvent): { eventId: string; body: string } {

@@ -6,7 +6,7 @@ import { join } from "node:path";
  * stateDir. Only pins the handful of knobs eval needs:
  *
  *   - `llama.url`      so the agent hits the real llama-server instead
- *                      of the 127.0.0.1:8080 USER_CONFIG_DEFAULT.
+ *                      of the 127.0.0.1:9931 USER_CONFIG_DEFAULT.
  *   - `agent.approvalRequired: false` matches `--no-approval` on the CLI.
  *   - `tracing.trace.enabled: true` so `collectTraceMetrics` has input.
  *

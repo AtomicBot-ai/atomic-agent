@@ -15,12 +15,14 @@ import {
   DIFF_SUMMARY_MAX_LINES,
   renderUnifiedDiff,
 } from "./fs-edit-diff.js";
+import { nearestFragment } from "./fs-edit-match.js";
 import {
-  findLooseEditMatch,
-  matchLineEndings,
-  nearestFragment,
-  type LooseEditMatch,
-} from "./fs-edit-match.js";
+  findTolerantEditMatch,
+  tolerantAmbiguityMessage,
+  tolerantMatchNote,
+  type TolerantEdit,
+} from "./fs-edit-tolerant.js";
+import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
 import { withParseWarning } from "./fs-parse-check.js";
 import {
   guardReplacedFile,
@@ -31,7 +33,13 @@ import {
   requireFsApproval,
   type FsDangerousToolOptions,
 } from "./fs-require-approval.js";
-import type { ToolDefinition } from "../../tool-registry.js";
+import {
+  changedSinceRead,
+  recordOwnWrite,
+  withStaleReadError,
+  withStaleReadNotice,
+} from "./fs-read-freshness.js";
+import type { ToolContext, ToolDefinition } from "../../tool-registry.js";
 
 export function buildOsFsEditTool(
   options: FsDangerousToolOptions,
@@ -44,158 +52,177 @@ export function buildOsFsEditTool(
     async run(rawArgs, ctx) {
       const args = parseArgs(rawArgs);
       const absolute = resolveUserPath(args.path, ctx.workingDir);
-      const info = await stat(absolute);
-      if (!info.isFile()) {
-        throw new Error(`os.fs.edit: ${absolute} is not a regular file`);
-      }
-      const original = await readFile(absolute, "utf8");
-      const exact = countOccurrences(original, args.oldString);
-      // No exact hit: a unique whole-line match that differs only by
-      // blank lines or trailing whitespace is applied and said so;
-      // anything else is refused with the nearest fragment to copy
-      // (ATO-785, `fs-edit-match.ts`). Never an ambiguous match.
-      const loose: LooseEditMatch | null =
-        exact === 0 ? resolveLooseMatch(original, args.oldString) : null;
-      const occurrences = exact === 0 ? 1 : exact;
-      if (occurrences > 1 && !args.replaceAll) {
-        throw new Error(
-          `os.fs.edit: \`oldString\` is not unique (found ${occurrences} occurrences). Provide more surrounding context to make it unique, or set \`replaceAll=true\`.`,
+      // Asked before the file is read for the edit: did it change since
+      // the model last read it (ATO-659)? Either way the edit proceeds;
+      // the answer only adds a notice to the result or the error.
+      const changed = await changedSinceRead(ctx.fileVersions, absolute);
+      try {
+        return withStaleReadNotice(
+          await editFile(options, args, absolute, ctx),
+          changed,
         );
+      } catch (err) {
+        throw withStaleReadError(err, changed, "os.fs.edit");
       }
-
-      const updated =
-        loose !== null
-          ? original.slice(0, loose.start) +
-            matchLineEndings(
-              args.newString,
-              original.slice(loose.start, loose.end),
-            ) +
-            original.slice(loose.end)
-          : args.replaceAll
-            ? replaceAll(original, args.oldString, args.newString)
-            : replaceOnce(original, args.oldString, args.newString);
-      const diff = renderUnifiedDiff(original, updated, absolute);
-      const preview = clampDiffPreview(diff);
-      await requireFsApproval(
-        options,
-        {
-          kind: "write",
-          paths: [absolute],
-          sessionId: ctx.sessionId,
-          tool: "os.fs.edit",
-          reason: `edit ${occurrences} occurrence${occurrences > 1 ? "s" : ""} in ${absolute}`,
-          preview,
-          affectedResources: [absolute],
-          workingDir: ctx.workingDir,
-          trustConfigPaths: options.trustConfigPaths,
-        },
-        ctx.signal,
-      );
-
-      await atomicWrite(absolute, updated);
-
-      // An edit that cut a user's file down by 80 % or more — the blind
-      // `replaceAll` that ate a dataset — saves what it replaced and says
-      // so (`fs-replace-guard.ts`); an ordinary edit is silent here.
-      const guard = await guardReplacedFile({
-        store: options.restore,
-        sessionId: ctx.sessionId,
-        workingDir: ctx.workingDir,
-        absolute,
-        display: args.path,
-        tool: "os.fs.edit",
-        change: "shrink",
-        prior: priorFromText(original),
-        after: updated,
-      });
-
-      const replacedOccurrences =
-        args.replaceAll && loose === null ? occurrences : 1;
-      // Judged after the write landed, against the file as it was before:
-      // an edit that turns a parsing file into a broken one — the classic
-      // blind `replaceAll` — is told so, with the count, so the model
-      // undoes it instead of stacking another edit on top.
-      const parseWarning = checkChangedFile({
-        absolute,
-        workingDir: ctx.workingDir,
-        change: "edit",
-        before: original,
-        after: updated,
-        replacedOccurrences,
-      });
-
-      return withReplaceNotes(
-        withParseWarning(
-          withLooseMatchNote(
-            // The diff is already clipped, by `renderUnifiedDiff`, to a
-            // length chosen for diffs. Left to its defaults the compressor
-            // would undo that considered cap with one that knows nothing
-            // about them — 12 tail lines and 385 chars — so we pass the
-            // renderer's own bounds instead (see `fs-edit-diff.ts`).
-            compressToolResult(
-              {
-                tool: "os.fs.edit",
-                status: "ok",
-                output:
-                  diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
-                details: {
-                  path: absolute,
-                  replacedOccurrences,
-                  replaceAll: args.replaceAll,
-                  sizeBefore: Buffer.byteLength(original, "utf8"),
-                  sizeAfter: Buffer.byteLength(updated, "utf8"),
-                },
-              },
-              {
-                maxSummaryLength: DIFF_SUMMARY_MAX_CHARS,
-                maxTailLines: DIFF_SUMMARY_MAX_LINES,
-              },
-            ),
-            loose !== null,
-          ),
-          parseWarning,
-        ),
-        [guard],
-      );
     },
   };
 }
 
-/** First line of a result whose edit landed on a whitespace-tolerant match. */
-export const LOOSE_MATCH_NOTE =
-  "note: oldString was not found exactly; it matched one place once blank lines and trailing spaces were ignored, and the edit was applied there. Check the diff.";
+async function editFile(
+  options: FsDangerousToolOptions,
+  args: ReturnType<typeof parseArgs>,
+  absolute: string,
+  ctx: ToolContext,
+): Promise<CompressedToolResult> {
+  const info = await stat(absolute);
+  if (!info.isFile()) {
+    throw new Error(`os.fs.edit: ${absolute} is not a regular file`);
+  }
+  const original = await readFile(absolute, "utf8");
+  const exact = countOccurrences(original, args.oldString);
+  // No exact hit: the tolerant chain (ATO-785, ATO-692) applies one
+  // unique match and names its level; else the error quotes the nearest
+  // fragment. With `replaceAll` it still replaces only that one span.
+  const loose =
+    exact === 0 ? resolveTolerantMatch(original, args.oldString, args.newString) : null;
+  const occurrences = exact === 0 ? 1 : exact;
+  if (occurrences > 1 && !args.replaceAll) {
+    throw new Error(
+      `os.fs.edit: \`oldString\` is not unique (found ${occurrences} occurrences). Provide more surrounding context to make it unique, or set \`replaceAll=true\`.`,
+    );
+  }
 
-/**
- * Prefix the note after compression, the way a parse warning is, so a
- * long diff's tail clipping can never drop it.
- */
+  const updated =
+    loose !== null
+      ? original.slice(0, loose.match.start) +
+        loose.replacement +
+        original.slice(loose.match.end)
+      : args.replaceAll
+        ? replaceAll(original, args.oldString, args.newString)
+        : replaceOnce(original, args.oldString, args.newString);
+  // A `[redacted:…]` marker copied out of masked tool output must not
+  // land over the real secret (ATO-1077).
+  refuseMaskedSecretWrite("os.fs.edit", args.path, original, updated);
+  const diff = renderUnifiedDiff(original, updated, absolute);
+  const preview = clampDiffPreview(diff);
+  await requireFsApproval(
+    options,
+    {
+      kind: "write",
+      paths: [absolute],
+      sessionId: ctx.sessionId,
+      tool: "os.fs.edit",
+      reason: `edit ${occurrences} occurrence${occurrences > 1 ? "s" : ""} in ${absolute}`,
+      preview,
+      affectedResources: [absolute],
+      workingDir: ctx.workingDir,
+      trustConfigPaths: options.trustConfigPaths,
+    },
+    ctx.signal,
+  );
+
+  await atomicWrite(absolute, updated);
+  await recordOwnWrite(ctx.fileVersions, absolute);
+
+  // An edit that cut a user's file down by 80 % or more — the blind
+  // `replaceAll` that ate a dataset — saves what it replaced and says
+  // so (`fs-replace-guard.ts`); an ordinary edit is silent here.
+  const guard = await guardReplacedFile({
+    store: options.restore,
+    sessionId: ctx.sessionId,
+    workingDir: ctx.workingDir,
+    absolute,
+    display: args.path,
+    tool: "os.fs.edit",
+    change: "shrink",
+    prior: priorFromText(original),
+    after: updated,
+  });
+
+  const replacedOccurrences =
+    args.replaceAll && loose === null ? occurrences : 1;
+  // Judged after the write landed, against the file as it was before:
+  // an edit that turns a parsing file into a broken one — the classic
+  // blind `replaceAll` — is told so, with the count, so the model
+  // undoes it instead of stacking another edit on top.
+  const parseWarning = checkChangedFile({
+    absolute,
+    workingDir: ctx.workingDir,
+    change: "edit",
+    before: original,
+    after: updated,
+    replacedOccurrences,
+  });
+
+  return withReplaceNotes(
+    withParseWarning(
+      withLooseMatchNote(
+        // The diff is already clipped, by `renderUnifiedDiff`, to a
+        // length chosen for diffs. Left to its defaults the compressor
+        // would undo that considered cap with one that knows nothing
+        // about them — 12 tail lines and 385 chars — so we pass the
+        // renderer's own bounds instead (see `fs-edit-diff.ts`).
+        compressToolResult(
+          {
+            tool: "os.fs.edit",
+            status: "ok",
+            output:
+              diff.length > 0 ? diff : `(no textual diff — file rewritten)`,
+            details: {
+              path: absolute,
+              replacedOccurrences,
+              replaceAll: args.replaceAll,
+              sizeBefore: Buffer.byteLength(original, "utf8"),
+              sizeAfter: Buffer.byteLength(updated, "utf8"),
+            },
+          },
+          {
+            maxSummaryLength: DIFF_SUMMARY_MAX_CHARS,
+            maxTailLines: DIFF_SUMMARY_MAX_LINES,
+          },
+        ),
+        loose,
+      ),
+      parseWarning,
+    ),
+    [guard],
+  );
+}
+
+/** First line of a result whose edit landed on the blank-line/trailing-space level. */
+export const LOOSE_MATCH_NOTE = tolerantMatchNote("whitespace");
+
+/** The level's note, prefixed after compression so tail clipping can never drop it. */
 function withLooseMatchNote(
   result: CompressedToolResult,
-  loose: boolean,
+  loose: TolerantEdit | null,
 ): CompressedToolResult {
-  if (!loose) return result;
+  if (loose === null) return result;
+  const note = tolerantMatchNote(loose.level, loose.reindented);
   return retainToolOutput(
     result,
     {
       ...result,
-      summary: `${LOOSE_MATCH_NOTE}\n${result.summary}`,
-      details: { ...result.details, matchedBy: "whitespace" },
+      summary: `${note}\n${result.summary}`,
+      details: { ...result.details, matchedBy: loose.level },
     },
-    { prefix: `${LOOSE_MATCH_NOTE}\n` },
+    { prefix: `${note}\n` },
   );
 }
 
 /**
- * The whitespace-tolerant match, or an error that tells the model what
- * to send instead of the same edit again.
+ * The tolerant match with its replacement text, or an error that tells
+ * the model what to send instead of the same edit again.
  */
-function resolveLooseMatch(original: string, oldString: string): LooseEditMatch {
-  const lookup = findLooseEditMatch(original, oldString);
-  if (lookup.kind === "unique") return lookup.match;
+function resolveTolerantMatch(
+  original: string,
+  oldString: string,
+  newString: string,
+): TolerantEdit {
+  const lookup = findTolerantEditMatch(original, oldString, newString);
+  if (lookup.kind === "unique") return lookup;
   if (lookup.kind === "ambiguous") {
-    throw new Error(
-      `os.fs.edit: \`oldString\` was not found exactly, and ignoring blank lines and trailing spaces it matches ${lookup.count} places, so nothing was changed. Include more surrounding lines, copied exactly from the file.`,
-    );
+    throw new Error(tolerantAmbiguityMessage(lookup.level, lookup.count));
   }
   const fragment = nearestFragment(original, oldString);
   // The quote of the file goes on its own line: the first line of an

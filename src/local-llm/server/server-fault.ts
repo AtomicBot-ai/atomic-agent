@@ -15,7 +15,15 @@
  * is what every caller did before.
  */
 
+/**
+ * Which recognised fault it is, for callers that act on it rather than
+ * print it: an out-of-memory turn restarts the model with a smaller
+ * context window instead of waiting the outage out (ATO-334).
+ */
+export type ServerFaultKind = "out_of_memory" | "port_in_use" | "decode_failed";
+
 export interface ServerFault {
+  readonly kind: ServerFaultKind;
   /** What the operator should read. One line, already actionable. */
   readonly summary: string;
   /** How many times the signature appears in the tail that was read. */
@@ -23,9 +31,19 @@ export interface ServerFault {
 }
 
 interface FaultPattern {
+  readonly kind: ServerFaultKind;
   readonly needle: string;
   readonly describe: (count: number) => string;
 }
+
+/**
+ * What to do about memory, in the words of the person at the chat, not
+ * of the config file: the context window is what grows with the
+ * conversation and what a restart can shrink, and a model whose weights
+ * alone do not fit needs replacing, not tuning.
+ */
+const OUT_OF_MEMORY_REMEDY =
+  "Restart the model with a smaller context window; if it still does not fit, pick a smaller model.";
 
 /**
  * Ordered: the first match wins, so the most specific cause is the one
@@ -35,25 +53,28 @@ interface FaultPattern {
  */
 const PATTERNS: readonly FaultPattern[] = [
   {
+    kind: "out_of_memory",
     needle: "kIOGPUCommandBufferCallbackErrorOutOfMemory",
     describe: (n) =>
       `the GPU ran out of memory ${n} time${n === 1 ? "" : "s"} — the server kept its socket and failed every request. ` +
-      `Lower \`localModels.managed.contextSize\` (it is sized automatically from the model's trained context, ` +
-      `which on a large model is far more than the machine can hold), or set \`localModels.managed.swaFull\` to "off".`,
+      OUT_OF_MEMORY_REMEDY,
   },
   {
+    kind: "out_of_memory",
     needle: "out of memory",
     describe: (n) =>
       `the backend reported out of memory ${n} time${n === 1 ? "" : "s"} — the server kept its socket and failed requests. ` +
-      `Lower \`localModels.managed.contextSize\`.`,
+      OUT_OF_MEMORY_REMEDY,
   },
   {
+    kind: "port_in_use",
     needle: "couldn't bind HTTP server socket",
     describe: () =>
       `the server could not take its port — another llama-server already has it. ` +
       `Stop the other one, or change \`localModels.url\`.`,
   },
   {
+    kind: "decode_failed",
     needle: "failed to decode",
     describe: (n) =>
       `the model failed to decode ${n} time${n === 1 ? "" : "s"} — the server answered but produced no tokens. ` +
@@ -109,7 +130,7 @@ export function describeServerFault(logText: string): ServerFault | null {
       at = haystack.indexOf(needle, at + needle.length);
     }
     if (count > 0) {
-      return { summary: pattern.describe(count), occurrences: count };
+      return { kind: pattern.kind, summary: pattern.describe(count), occurrences: count };
     }
   }
   return null;

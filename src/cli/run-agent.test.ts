@@ -16,7 +16,10 @@ import type { CompletionResult } from "../llm/llama-server-client.js";
 import { resetConfigCache } from "../config/index.js";
 
 import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { LocalEngineDownError } from "../llm/reliability/index.js";
+import { GrammarError, LocalEngineDownError, TransportError } from "../llm/reliability/index.js";
+import { OpenAiHttpError, humanizeOpenAiHttpError } from "../llm/provider/openai/openai-http.js";
+import { parseProviderErrorBody } from "../llm/provider/openai/parse-provider-error-body.js";
+import { LlamaServerError, readLlamaErrorBody } from "../llm/llama-server-client.js";
 import {
   formatAgentEvent,
   formatCliApprovalPrompt,
@@ -165,12 +168,134 @@ describe("formatAgentEvent llama hint", () => {
   });
 });
 
+describe("formatAgentEvent when llama-server answered 404/405 (ATO-870)", () => {
+  const ctx = () => ({
+    llamaHint: HINT,
+    llamaUrl: "http://127.0.0.1:8080",
+    hintShown: { value: false },
+  });
+
+  for (const status of [404, 405]) {
+    it(`says wrong server or no model loaded for a ${status}, not start it`, () => {
+      const line = formatAgentEvent(
+        transportError(`llama-server returned http ${status}`),
+        ctx(),
+      );
+      expect(line).toContain(`! [transport] llama-server returned http ${status}`);
+      expect(line).toContain(
+        `http://127.0.0.1:8080 answered ${status}: this is not llama-server, or no model is loaded there`,
+      );
+      expect(line).toContain("config set localModels.url");
+      expect(line).not.toContain("models start");
+      expect(line).not.toContain("not reachable");
+    });
+  }
+
+  it("decorates loop_failed for a 404 the same way", () => {
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new Error("llama-server returned http 404"),
+        category: "transport" as never,
+      },
+      ctx(),
+    );
+    expect(line).toContain("answered 404: this is not llama-server");
+    expect(line).not.toContain("models start");
+  });
+
+  it("keeps the start hint for a refused connection", () => {
+    const line = formatAgentEvent(
+      transportError("connect ECONNREFUSED 127.0.0.1:8080"),
+      ctx(),
+    );
+    expect(line).toContain("llama-server is not reachable");
+    expect(line).toContain("atomic-agent models start");
+  });
+
+  it("stays out of the way for a 404 on a cloud route", () => {
+    const line = formatAgentEvent(
+      transportError("llama-server returned http 404"),
+      { llamaHint: null, llamaUrl: null, hintShown: { value: false } },
+    );
+    expect(line).toBe("  ! [transport] llama-server returned http 404");
+  });
+});
+
+describe("formatAgentEvent for a local server's typed 400 (ATO-707, ATO-737)", () => {
+  it("says the context is full and what to do", () => {
+    const body = readLlamaErrorBody(
+      JSON.stringify({ error: { code: 400, message: "request exceeds the available context size", type: "exceed_context_size_error" } }),
+    );
+    const raw = new LlamaServerError(
+      "llama-server returned http 400: request exceeds the available context size",
+      400,
+      "http://127.0.0.1:9931/v1/chat/completions",
+      false,
+      undefined,
+      body !== undefined ? { body } : undefined,
+    );
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new GrammarError(raw.message, "", { cause: raw }),
+        category: "grammar" as never,
+      },
+      { llamaHint: HINT, hintShown: { value: false } },
+    );
+    expect(line).toBe(
+      "» loop failed [grammar]: llama-server returned http 400: request exceeds the available context size\n" +
+        "    The conversation no longer fits in the local model's context window. " +
+        "Compact this chat or start a new one, or give the model a larger context size.",
+    );
+  });
+});
+
+describe("formatAgentEvent for a local OpenAI-compatible server's typed 400", () => {
+  it("does not repeat a sentence the message already says", () => {
+    const body = JSON.stringify({ error: { message: "Unknown role: tool", type: "invalid_request_error" } });
+    const raw = new OpenAiHttpError(
+      `openai provider 400: ${body}`,
+      400,
+      "http://127.0.0.1:1234/v1/chat/completions",
+      false,
+      null,
+      "lmstudio",
+      undefined,
+      { body: parseProviderErrorBody(body) },
+    );
+    const said = humanizeOpenAiHttpError(raw);
+    const line = formatAgentEvent(
+      {
+        type: "loop_failed",
+        error: new TransportError(said, 400, raw.url, { cause: raw }),
+        category: "transport" as never,
+      },
+      { llamaHint: HINT, hintShown: { value: false } },
+    );
+    expect(line).toBe(`» loop failed [transport]: ${said}`);
+    expect(line?.split("turned the request down as invalid")).toHaveLength(2);
+  });
+});
+
 describe("formatLlamaUnreachableHint", () => {
   it("names the URL, the start command and the config key", () => {
     const hint = formatLlamaUnreachableHint("http://10.0.0.4:9090");
     expect(hint).toContain("http://10.0.0.4:9090");
     expect(hint).toContain("atomic-agent models start");
     expect(hint).toContain("localModels.url");
+    expect(hint).not.toContain("9931");
+  });
+
+  it("names both llama-server default ports when the local default does not answer", () => {
+    // llama.cpp moved its default port from 8080 to 9931; older installs
+    // carry 8080 in config.json while a fresh llama-server sits on 9931.
+    for (const url of ["http://127.0.0.1:8080", "http://127.0.0.1:9931"]) {
+      const hint = formatLlamaUnreachableHint(url);
+      expect(hint).toContain(`llama-server is not reachable at ${url}`);
+      expect(hint).toContain("port 9931 by default");
+      expect(hint).toContain("Docker images use 8080");
+    }
   });
 });
 
@@ -254,7 +379,9 @@ vi.mock("../runtime/bootstrap.js", async (importOriginal) => {
   };
 });
 
-const { runAgentCommand } = await import("./run-agent.js");
+const { runAgentCommand, STDIN_LINE_PER_TURN_NOTICE } = await import(
+  "./run-agent.js"
+);
 
 describe("runAgentCommand exit codes", () => {
   let stateDir: string;
@@ -411,6 +538,29 @@ describe("runAgentCommand exit codes", () => {
     }
     expect(turnMessages).toEqual(["the task", "continue", "and wrap up"]);
     expect(stderr).toContain('"turnCount": 3');
+  }, 60_000);
+
+  it("warns once on stderr when a piped second line becomes its own turn (ATO-910)", async () => {
+    turnMessages.length = 0;
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "ok" } });
+    feedStdin(["first line of a prompt\n", "second line\n", "third line\n"]);
+    const code = await runAgentCommand(["--cwd", workingDir, "--no-approval"]);
+    expect(code).toBe(0);
+    // The per-line turn design stays: three lines, three turns.
+    expect(turnMessages).toEqual([
+      "first line of a prompt",
+      "second line",
+      "third line",
+    ]);
+    expect(stderr.split(STDIN_LINE_PER_TURN_NOTICE)).toHaveLength(2);
+  }, 60_000);
+
+  it("prints no line-per-turn notice for a single piped line (ATO-910)", async () => {
+    model.emits = JSON.stringify({ tool: "reply", args: { text: "ok" } });
+    feedStdin(["one line only\n"]);
+    const code = await runAgentCommand(["--cwd", workingDir, "--no-approval"]);
+    expect(code).toBe(0);
+    expect(stderr).not.toContain("each line is sent as a separate turn");
   }, 60_000);
 
   describe("approval answers come from the same stdin queue (ATO-802)", () => {

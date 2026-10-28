@@ -51,6 +51,18 @@ export interface McpServerConfig {
    * Ignored for HTTP / SSE transports.
    */
   env?: Record<string, string>;
+  /**
+   * Raw tool names to offer from this server. Absent: every tool the
+   * server lists. Present (even empty): only these. See
+   * `mcp-tool-filter.ts`.
+   */
+  enabledTools?: string[];
+  /**
+   * Raw tool names never offered from this server, applied on top of
+   * `enabledTools`. Lets an operator keep a server's read tools and
+   * drop the rest without listing every tool they keep.
+   */
+  disabledTools?: string[];
 }
 
 /**

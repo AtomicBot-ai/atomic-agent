@@ -14,8 +14,12 @@
  *                          for this build").
  *   ATAG_UPDATE_CHANNEL    `stable` by default; `canary` later. The channel
  *                          names the files electron-builder writes and the
- *                          app reads: `<channel>-mac.yml` (macOS) and
- *                          `<channel>.yml` (Windows).
+ *                          app reads: `<channel>-mac.yml` (macOS),
+ *                          `<channel>.yml` (Windows) and
+ *                          `<channel>-linux*.yml` (the AppImage, ATO-573).
+ *                          A person who turns on "Get beta versions" reads
+ *                          `beta*` instead (ATO-575; a feed without them
+ *                          falls back to the build's channel).
  *
  * ATO-241, which build this is (every team build is 0.0.1):
  *
@@ -68,6 +72,11 @@ const config = {
     {
       "from": "LICENSE",
       "to": "LICENSE.txt"
+    },
+    /* ATO-598: the tray / menu bar icon (main.ts syncTray). */
+    {
+      "from": "build/icons/32x32.png",
+      "to": "tray.png"
     },
     {
       "from": "THIRD-PARTY-NOTICES.txt",
@@ -257,8 +266,8 @@ config.extraMetadata = {
 
 /* null, not left out: with no publish key electron-builder guesses a GitHub
    publisher whenever GH_TOKEN / GITHUB_TOKEN is in the environment, and would
-   write an app-update.yml nobody chose. Only macOS and Windows read it (the
-   app's updater is off on Linux). */
+   write an app-update.yml nobody chose. macOS, Windows and the Linux AppImage
+   read it (ATO-573); a .deb ignores it. */
 config.publish = feedUrl ? [{ provider: "generic", url: feedUrl, channel }] : null;
 
 module.exports = config;

@@ -8,6 +8,7 @@ import type { ModelProfile } from "../llm/model-profile.js";
 import type { ModelProfileManager } from "../llm/model-profile-manager.js";
 import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
+import type { FailureVerdict } from "../llm/reliability/failure-catalog.js";
 import type { ProviderWaitCause, ProviderWaitFailure } from "../llm/reliability/provider-wait-cause.js";
 import type { LlmFailureCategory, TruncationCause } from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
@@ -29,6 +30,53 @@ import type { ReviewStallSignal } from "./review-stall.js";
 
 /** See `AgentLoopDependencies.localEngineState`. */
 export type LocalEngineState = "alive" | "dead" | "unknown";
+
+/**
+ * The answers to "the local model ran out of memory" (ATO-334): restart
+ * it with half the context window, stop so the person can pick a smaller
+ * model, or stop.
+ */
+export type LocalOutOfMemoryChoice = "restart_smaller" | "pick_smaller_model" | "cancel";
+
+/** The question put to the person when the local model ran out of memory. */
+export interface LocalOutOfMemoryQuestion {
+  /** Answered through the approval surface under this id (`POST /api/approval/resolve`). */
+  questionId: string;
+  sessionId: string;
+  /** The window the model ran out of memory with. */
+  contextWindow: number;
+  /** The window a restart would use. */
+  nextContextWindow: number;
+  /** The sentence to show. */
+  message: string;
+}
+
+/**
+ * The runtime's half of recovering from a managed local model that ran
+ * out of memory (`AgentLoopDependencies.localOutOfMemory`). Recovery reads
+ * no files and starts no processes itself.
+ */
+export interface LocalOutOfMemoryPort {
+  /**
+   * The managed local model behind `providerId` has logged out of memory
+   * in its current run: the context window that run was started with
+   * (`0` when it is not known). `null` for every other link, an external
+   * server, or a run with no such fault.
+   */
+  detect(providerId: string | undefined): { contextWindow: number } | null;
+  /**
+   * Something in this process can restart the model (the TUI that owns
+   * it). `false` in a headless `serve`, where the desktop owns the model.
+   */
+  canRestart(): boolean;
+  /** Ask the person. Only called for a turn that has one to ask. */
+  ask(question: LocalOutOfMemoryQuestion, signal: AbortSignal): Promise<LocalOutOfMemoryChoice>;
+  /**
+   * Stop the model and start it again with `contextWindow`, for this run
+   * only (the config is not written). Resolves `true` once it answers.
+   */
+  restart(contextWindow: number, signal: AbortSignal): Promise<boolean>;
+}
 
 export interface AgentLoopDependencies {
   prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: import("../session/workspace-context.js").WorkspacePrepareOptions) => import("../session/workspace-context.js").SessionWorkspace;
@@ -107,8 +155,11 @@ export interface AgentLoopDependencies {
    * tokens. Bootstrap records it per provider/model so the next prompt
    * is packed to fit (`contextWindow` above then returns it). Absent in
    * test / legacy wiring, where a window truncation ends the turn.
+   * `providerId` names the link that revealed it when the turn was not
+   * served by the active provider (a pinned Fusion worker, a sticky
+   * fallback), so its window is not filed under the active model.
    */
-  onContextWindowObserved?: (contextWindow: number) => void;
+  onContextWindowObserved?: (contextWindow: number, providerId?: string) => void;
   /**
    * A completion just succeeded with prompt + reply tokens above the
    * window the runtime believes in. Whatever taught it that window was
@@ -129,6 +180,14 @@ export interface AgentLoopDependencies {
    * say. Absent (embedders, tests) means `unknown` for every link.
    */
   localEngineState?: (providerId: string | undefined) => LocalEngineState;
+  /**
+   * The managed local model ran out of memory (ATO-334). A server error
+   * from it is then not an outage to wait out: the turn restarts the
+   * model with half the context window (asking first when
+   * `RunTurnOptions.localOutOfMemory` is `ask`) and retries the step.
+   * Absent (embedders, tests): a server error keeps the ordinary wait.
+   */
+  localOutOfMemory?: LocalOutOfMemoryPort;
   /** Defaults to `grammar` when omitted (test / legacy wiring). */
   toolTransport?: ToolCallTransport;
   toolCallAdapter?: ToolCallAdapter | null;
@@ -507,6 +566,14 @@ export interface RunTurnOptions {
    * byte-identical to before roles existed.
    */
   toolRole?: ToolRole;
+  /**
+   * What the turn does when the managed local model runs out of memory
+   * (ATO-334): `ask` the person first (a chat they are watching), or
+   * restart it with a smaller window on its own (`auto`, the default: a
+   * scheduled task, a Telegram or Discord chat, a headless run, where
+   * there is nobody to answer).
+   */
+  localOutOfMemory?: "ask" | "auto";
 }
 
 /** Why a `runTurn` invocation returned. */
@@ -584,6 +651,28 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * The managed local model ran out of memory (ATO-334). `asking`:
+       * the person is asked (`questionId` is answered through the
+       * approval surface, `options` are the answers); `restarting`: the
+       * model is being restarted with `nextContextWindow`; `restarted`:
+       * it is back and the step is retried; `stopped`: the turn ends
+       * with `message`. `message` is the sentence for the chat.
+       */
+      type: "local_model_out_of_memory";
+      phase: "asking" | "restarting" | "restarted" | "stopped";
+      /** The window the model ran out of memory with; `0` when unknown. */
+      contextWindow: number;
+      /** The window a restart uses; `null` when none is left to try. */
+      nextContextWindow: number | null;
+      /** Restarts this turn, counting this one. */
+      attempt: number;
+      maxAttempts: number;
+      message: string;
+      questionId?: string;
+      options?: readonly LocalOutOfMemoryChoice[];
+    }
+  | {
+      /**
        * The provider's error body says the account cannot pay
        * (`credit_balance_exhausted`, `insufficient_credits`, a 402
        * naming credit). The turn stops where it is, resumable after a
@@ -599,11 +688,14 @@ export type AgentLoopEvent =
   | {
       /**
        * The provider refused the request for step `stepIndex` as too
-       * large for its context window; the window was learned
-       * (`source: "provider"` from the body's own number, `"estimate"`
-       * from the prompt estimate) and the same step is being retried
-       * with the conversation packed to it. Fired once per step; a
-       * second refusal fails the turn with the provider's sentence.
+       * large for its context window, and the same step is being
+       * retried with the conversation fitted to `contextWindow`
+       * (`source: "provider"`: the number the server named;
+       * `"estimate"`: most of the refused prompt's estimate). Either the
+       * native-tools repack (which also remembers the window) or the
+       * turn's one overflow compaction (which remembers only a window
+       * the server named) fired it. Once per step; a second refusal
+       * fails the turn.
        */
       type: "prompt_repacked";
       stepIndex: number;
@@ -628,6 +720,8 @@ export type AgentLoopEvent =
       promptTokens: number;
       /** The cap the cut request carried; absent when it carried none. */
       requestedMaxTokens?: number;
+      /** The cut reply was a loop (`TruncationDetail.repetitive`). */
+      repetitive?: true;
       retry: TruncationRetry;
     }
   | {
@@ -777,6 +871,12 @@ export type AgentLoopEvent =
       stepIndex: number;
       /** Graduated severity from the `ToolLoopTracker`. */
       level?: "warn" | "critical" | "breaker";
+      /**
+       * `breaker` only: the shared failure-catalog entry for the stop
+       * (`same_call_repeated` / `loop_detected`), so a host words it and
+       * picks its button from the same list as `loop_failed` (ATO-384).
+       */
+      failure?: FailureVerdict;
       /** Which sub-detector fired. */
       detector?:
         | "generic_repeat"
@@ -809,12 +909,17 @@ export type AgentLoopEvent =
    * consumers never need to classify the error themselves.
    * `outage` is the provider-outage wait the turn had spent when it
    * failed (zero when it never parked); error reporting tags it.
+   * `failure` is the shared failure-catalog entry (ATO-384): a stable
+   * `cause` id, a plain `phrase` to show, and the `action` button that
+   * helps. Set by the agent loop on every failure; optional only so an
+   * older emitter stays valid.
    */
   | {
       type: "loop_failed";
       error: Error;
       category: LlmFailureCategory;
       outage?: { waitedMs: number; attempts: number };
+      failure?: FailureVerdict;
     }
   /**
    * The provider fallback chain changed the active provider for this

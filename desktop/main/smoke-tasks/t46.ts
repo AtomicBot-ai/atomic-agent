@@ -516,7 +516,9 @@ async function replyPaths(js: Js, check: Check): Promise<void> {
       const keep = openReplyPath; let used = 0;
       openReplyPath = (p) => { used++; return keep(p); };
       LAST_OPEN_PATH = null; OPEN_PATH_DRYRUN = true;
-      try { chip.click(); } finally { OPEN_PATH_DRYRUN = false; openReplyPath = keep; }
+      // ATO-1053: the click opens the preview panel; its Open is the reply opener.
+      try { chip.click(); const o = document.querySelector('#fpreview .fp-head [data-fp="open"]'); if (o) o.click(); }
+      finally { OPEN_PATH_DRYRUN = false; openReplyPath = keep; if (typeof filePreviewClose === 'function') filePreviewClose(); }
       return {used, opened: LAST_OPEN_PATH};
     })()`);
     check("T46 Д23: clicking the chip opens its file through main's own check", click.used === 1 && click.opened === real.docx, q(click));

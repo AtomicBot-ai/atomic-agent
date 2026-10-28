@@ -15,12 +15,12 @@
    and the modes popover's version note. Their base look stays unscoped;
    the first-run layout below is scoped to #onboarding. */
 .ob-wiz{display:flex;flex-direction:column;gap:10px;width:100%;min-width:0}
-.ob-kicker{font:600 12.5px/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none}
-.ob-wiz .ob-h{display:flex;align-items:center;gap:10px;min-width:0;font-size:15px;font-weight:600;letter-spacing:-.015em;color:var(--ink)}
-.ob-help{font-size:12.5px;line-height:1.45;color:var(--ink-2);max-width:62ch}
-.ob-err{color:var(--critical);white-space:pre-wrap;max-width:62ch;font-size:12.5px;line-height:1.45}
+.ob-kicker{font:600 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none}
+.ob-wiz .ob-h{display:flex;align-items:center;gap:10px;min-width:0;font-size:var(--fs-lead);font-weight:600;letter-spacing:-.015em;color:var(--ink)}
+.ob-help{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2);max-width:62ch}
+.ob-err{color:var(--critical);white-space:pre-wrap;max-width:62ch;font-size:var(--fs-cap);line-height:1.45}
 .ob-inp{width:100%;min-width:0;height:38px;padding:0 15px;border-radius:var(--r-pill);border:1px solid transparent;
-  background:var(--well);color:var(--ink);font:400 14px/1 var(--font-ui);outline:none;
+  background:var(--well);color:var(--ink);font:400 var(--fs-ui)/1 var(--font-ui);outline:none;
   transition:background var(--t-state) var(--ease),border-color var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
 .ob-inp::placeholder{color:var(--ink-3)}
 .ob-inp:hover:not(:disabled){border-color:var(--bd)}
@@ -38,15 +38,15 @@
 .prow.on + .prow{box-shadow:none}
 .prow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .prow .col{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
-.prow .nm{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.prow .ep{font:400 12px/1.4 var(--font-mono);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .nm{font-size:var(--fs-ui);font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .ep{font:400 var(--fs-label)/1.4 var(--font-mono);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Calm (S6): a provider's one line of what it is, in the UI face. */
-.prow .ds{font:400 12.5px/1.4 var(--font-ui);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prow .ds{font:400 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .prow .ann{flex:none}
 /* r2: the picked model's tick, at the right end of its row. */
 .prow-tick{flex:none;display:grid;place-items:center;width:22px;height:22px;color:var(--brand)}
 .prow-tick svg{width:15px;height:15px;stroke-width:2.2}
-.prow-more{font:600 12.5px/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;margin:16px 0 8px 10px}
+.prow-more{font:600 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;margin:16px 0 8px 10px}
 
 /* ---------------- the layer ----------------
    `--ob-col` is the step column's one width: every card, field, notice and
@@ -104,7 +104,7 @@
 #onboarding .ob-lock{display:flex;align-items:center;gap:12px;min-width:0}
 #onboarding .ob-lock .ob-mark{display:flex;flex:none}
 #onboarding .ob-lock .ob-mark svg{width:30px;height:30px}
-#onboarding .ob-lock .ob-wm{font:600 17px/1.2 var(--font-ui);letter-spacing:-.02em;color:var(--on-strong);white-space:nowrap}
+#onboarding .ob-lock .ob-wm{font:600 var(--fs-sub)/1.2 var(--font-ui);letter-spacing:-.02em;color:var(--on-strong);white-space:nowrap}
 #onboarding .ob-statement{margin:auto 0 0;max-width:14ch;font:600 26px/1.18 var(--font-ui);letter-spacing:-.035em;color:var(--on-strong)}
 /* The phases are a progress list, not controls: no pill and no fill behind
    the current one — those read as two buttons nobody could press (Danya,
@@ -112,11 +112,11 @@
    track joins the numbers. */
 #onboarding .ob-stepmarks{display:grid;gap:14px;margin:0;padding:0;list-style:none}
 #onboarding .ob-stepmark{position:relative;display:flex;align-items:center;gap:12px;height:26px;padding:0;border-radius:0;
-  background:none;font:500 14px/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted);cursor:default}
+  background:none;font:500 var(--fs-ui)/1 var(--font-ui);letter-spacing:0;text-transform:none;color:var(--indigo-muted);cursor:default}
 #onboarding .ob-stepmark + .ob-stepmark::before{content:"";position:absolute;left:12.25px;top:-12px;width:1.5px;height:10px;
   border-radius:1px;background:var(--glass)}
 #onboarding .ob-stepmark .n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex:none;
-  font:500 11.5px/1 var(--font-mono);box-shadow:inset 0 0 0 1.5px var(--glass)}
+  font:500 var(--fs-label)/1 var(--font-mono);box-shadow:inset 0 0 0 1.5px var(--glass)}
 #onboarding .ob-stepmark .n svg{width:13px;height:13px;stroke-width:2.2}
 #onboarding .ob-stepmark.on{color:var(--on-strong);font-weight:600}
 #onboarding .ob-stepmark.on .n{background:var(--on-strong);color:var(--indigo);box-shadow:none}
@@ -139,11 +139,11 @@
 /* The wizard carries its own action bar, held to the column's width like
    every other step's; so is its content, below. */
 #onboarding .ob-body > .ob-wiz{max-width:none}
-#onboarding .ob-explain{font-size:15.5px;line-height:1.5;color:var(--ink-2);max-width:60ch;white-space:pre-line}
+#onboarding .ob-explain{font-size:var(--fs-lead);line-height:1.5;color:var(--ink-2);max-width:60ch;white-space:pre-line}
 #onboarding .ob-body > .ob-explain:first-child{margin:-4px 0 8px}
-#onboarding .ob-h{font:600 15px/1.35 var(--font-ui);letter-spacing:-.01em;color:var(--ink)}
-#onboarding .ob-h.ob-sec{font-size:12.5px;letter-spacing:0;color:var(--ink-2);margin:2px 0 -6px 2px}
-#onboarding .ob-h.ob-ready{display:flex;align-items:center;gap:10px;font-size:17px;letter-spacing:-.015em}
+#onboarding .ob-h{font:600 var(--fs-lead)/1.35 var(--font-ui);letter-spacing:-.01em;color:var(--ink)}
+#onboarding .ob-h.ob-sec{font-size:var(--fs-cap);letter-spacing:0;color:var(--ink-2);margin:2px 0 -6px 2px}
+#onboarding .ob-h.ob-ready{display:flex;align-items:center;gap:10px;font-size:var(--fs-sub);letter-spacing:-.015em}
 #onboarding .ob-ok{color:var(--success)}
 #onboarding .ob-mono{font-family:var(--font-mono);letter-spacing:0}
 
@@ -168,8 +168,8 @@
 #onboarding .ob-list:not(.ob-routes) .ob-row.on + .ob-row{box-shadow:none}
 #onboarding .ob-row:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 #onboarding .ob-rbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-#onboarding .ob-row .t{display:block;font-size:14px;font-weight:600;line-height:1.35;color:var(--ink)}
-#onboarding .ob-row .d{display:block;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+#onboarding .ob-row .t{display:block;font-size:var(--fs-ui);font-weight:600;line-height:1.35;color:var(--ink)}
+#onboarding .ob-row .d{display:block;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 #onboarding .ob-row > .kc{margin-left:auto}
 /* Calm (S6): the selected row's tick, where the provider list draws its own. */
 #onboarding .ob-tick{flex:none;display:grid;place-items:center;width:22px;height:22px;margin-left:auto;color:var(--brand)}
@@ -188,8 +188,8 @@
 #onboarding .ob-routes .ob-row:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
 #onboarding .ob-routes .ob-row.on{background:var(--lift);box-shadow:0 0 0 2px var(--brand),var(--sh-card)}
 #onboarding .ob-routes .ob-row:focus-visible{outline-offset:3px}
-#onboarding .ob-routes .ob-row .t{font-size:16px;letter-spacing:-.02em}
-#onboarding .ob-routes .ob-row .d{font-size:13px}
+#onboarding .ob-routes .ob-row .t{font-size:var(--fs-sub);letter-spacing:-.02em}
+#onboarding .ob-routes .ob-row .d{font-size:var(--fs-cap)}
 
 /* ---------------- the local model list (ON-03, ON-04) ---------------- */
 #onboarding .ob-models{flex:0 1 auto;min-height:140px;max-height:none;overflow-y:auto;overscroll-behavior:contain}
@@ -201,16 +201,16 @@
    facts are paler than --ink-2 and still well over 4.5:1 in both themes. */
 #onboarding .ob-models .ob-row{align-items:center;min-height:60px;padding:10px 12px}
 #onboarding .ob-models .ob-row .t{display:flex;align-items:center;gap:8px;min-width:0;min-height:22px;
-  font-size:15px;font-weight:650;letter-spacing:-.012em;white-space:nowrap}
+  font-size:var(--fs-lead);font-weight:650;letter-spacing:-.012em;white-space:nowrap}
 #onboarding .ob-models .ob-row .ob-nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
-#onboarding .ob-models .ob-row .d{font-size:12px;line-height:1.4;color:color-mix(in srgb,var(--ink-2) 55%,var(--ink-3))}
+#onboarding .ob-models .ob-row .d{font-size:var(--fs-label);line-height:1.4;color:color-mix(in srgb,var(--ink-2) 55%,var(--ink-3))}
 #onboarding .ob-models .ob-row .d > span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#onboarding .ob-row .t .ob-mono{font-size:13.5px;font-weight:500}
+#onboarding .ob-row .t .ob-mono{font-size:var(--fs-ui);font-weight:500}
 /* Badges say something; they are not controls, so they are rounded
    rectangles (--r-badge), not pills (Danya, 01.10). A caution's whole
    sentence is its tooltip. */
 #onboarding .ob-badge{display:inline-flex;align-items:center;flex:none;height:20px;padding:0 7px;
-  border-radius:var(--r-badge);font:500 11.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;
+  border-radius:var(--r-badge);font:500 var(--fs-label)/1 var(--font-ui);letter-spacing:0;white-space:nowrap;
   background:var(--brand-wash);color:var(--blue)}
 #onboarding .ob-badge[title]{cursor:help}
 #onboarding .ob-badge-best{background:var(--indigo);color:var(--on-indigo)}
@@ -233,7 +233,7 @@
    control, a full-width row that says how many and unfolds them. */
 #onboarding .ob-outtoggle{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;margin-top:4px;padding:8px 12px;
   border:0;border-radius:var(--r-row);background:transparent;box-shadow:0 -1px 0 var(--divider);
-  font:600 13.5px/1.35 var(--font-ui);color:var(--ink);text-align:left;cursor:pointer;
+  font:600 var(--fs-ui)/1.35 var(--font-ui);color:var(--ink);text-align:left;cursor:pointer;
   transition:background var(--t-state) var(--ease)}
 #onboarding .ob-outtoggle:hover{background:var(--hover)}
 #onboarding .ob-outtoggle:active{background:var(--press)}
@@ -245,14 +245,14 @@
 #onboarding .ob-out{display:grid;grid-template-columns:18px minmax(0,1fr);column-gap:10px;align-items:center;
   padding:6px 8px;border:0;color:var(--ink-2);cursor:default}
 #onboarding .ob-out > .logo,#onboarding .ob-out > .tk-ico{grid-row:1 / span 3;align-self:start;margin-top:1px}
-#onboarding .ob-out .t{font:500 13px/1.35 var(--font-ui);color:var(--ink-2)}
-#onboarding .ob-out .ob-desc,#onboarding .ob-out .ob-fit{display:block;font-size:12.5px;line-height:1.4;color:var(--ink-2)}
+#onboarding .ob-out .t{font:500 var(--fs-cap)/1.35 var(--font-ui);color:var(--ink-2)}
+#onboarding .ob-out .ob-desc,#onboarding .ob-out .ob-fit{display:block;font-size:var(--fs-cap);line-height:1.4;color:var(--ink-2)}
 
 /* ---------------- fields ---------------- */
-#onboarding .ob-lbl{display:block;margin:4px 0 -6px 2px;font:600 13px/1.4 var(--font-ui);color:var(--ink)}
+#onboarding .ob-lbl{display:block;margin:4px 0 -6px 2px;font:600 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink)}
 #onboarding .ob-lbl .ob-explain{display:inline;font-size:inherit;line-height:inherit;font-weight:500;color:var(--ink-2);white-space:normal}
 #onboarding .ob-inp{height:52px;max-width:var(--ob-col);padding:0 18px;border:0;background:var(--lift);
-  box-shadow:inset 0 0 0 1px var(--bd-2);font-size:14.5px}
+  box-shadow:inset 0 0 0 1px var(--bd-2);font-size:var(--fs-body)}
 #onboarding .ob-inp:hover:not(:disabled){box-shadow:inset 0 0 0 1px var(--ink-3)}
 #onboarding .ob-inp:focus{background:var(--lift);box-shadow:inset 0 0 0 1.5px var(--brand),var(--focus-ring)}
 #onboarding .ob-field{display:flex;align-items:center;gap:10px;width:100%;max-width:var(--ob-col);height:52px;padding:0 8px 0 18px;
@@ -269,11 +269,11 @@
 #onboarding .ob-field > .kc{margin-right:10px}
 #onboarding .ob-field .ob-inp,#onboarding .ob-field .ob-inp:hover:not(:disabled),#onboarding .ob-field .ob-inp:focus{
   flex:1;height:100%;max-width:none;padding:0;border:0;border-radius:0;background:transparent;box-shadow:none}
-#onboarding .ob-field .ob-inp{font:400 14.5px/1 var(--font-mono);color:var(--ink)}
+#onboarding .ob-field .ob-inp{font:400 var(--fs-body)/1 var(--font-mono);color:var(--ink)}
 #onboarding .ob-field.ob-search .ob-inp{font-family:var(--font-ui)}
 #onboarding .ob-field .ob-inp:focus-visible{outline:none}
 #onboarding .ob-offer.ob-offer-inline{display:inline-flex;align-items:center;flex:none;width:auto;height:32px;margin:0;padding:0 14px;
-  border:0;border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font:600 12.5px/1 var(--font-ui);cursor:pointer;
+  border:0;border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font:600 var(--fs-cap)/1 var(--font-ui);cursor:pointer;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 #onboarding .ob-offer.ob-offer-inline:hover{background:var(--press);color:var(--ink)}
 #onboarding .ob-offer.ob-routehint{align-self:flex-start}
@@ -281,16 +281,16 @@
 /* ATO-161: the request for a key, in ink — nothing has failed. */
 #onboarding .ob-help.wiz-ask{color:var(--ink)}
 #onboarding .ob-help.is-warn{color:var(--amber-text)}
-#onboarding .ob-explain.ob-examples{font-size:13px;line-height:1.5}
+#onboarding .ob-explain.ob-examples{font-size:var(--fs-cap);line-height:1.5}
 
 /* Errors: a red notice under the control that caused it; a surface error
    sits above the action bar in the same shape. */
 #onboarding .ob-err{display:flex;align-items:flex-start;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
-  background:color-mix(in srgb,var(--critical) 8%,var(--lift));color:var(--ink);font-size:13px;line-height:1.5;white-space:pre-wrap}
+  background:color-mix(in srgb,var(--critical) 8%,var(--lift));color:var(--ink);font-size:var(--fs-cap);line-height:1.5;white-space:pre-wrap}
 #onboarding .ob-err > svg{width:16px;height:16px;flex:none;margin-top:2px;color:var(--critical)}
 #onboarding .ob-err > span{min-width:0}
 #onboarding .ob-note{display:flex;align-items:center;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
-  font-size:13px;line-height:1.45;color:var(--ink);white-space:normal}
+  font-size:var(--fs-cap);line-height:1.45;color:var(--ink);white-space:normal}
 #onboarding .ob-note > svg{width:16px;height:16px;flex:none}
 #onboarding .ob-note.is-blue{background:color-mix(in srgb,var(--brand) 9%,var(--lift))}
 #onboarding .ob-note.is-blue > svg{color:var(--blue)}
@@ -308,7 +308,7 @@
   scrollbar-gutter:stable;max-width:calc(var(--ob-col) + 32px)}
 #onboarding .ob-wiz > .ob-foot{margin-top:auto}
 #onboarding .ob-wizlist .prows{padding:6px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
-#onboarding .prow .nm{font-size:14.5px}
+#onboarding .prow .nm{font-size:var(--fs-body)}
 #onboarding .prow .ann.lit{height:22px}
 #onboarding [data-wizmodel] .ann.lit{background:var(--brand-wash);color:var(--blue)}
 #onboarding .prow-more{margin:14px 0 8px 10px}
@@ -316,23 +316,23 @@
 #onboarding .ob-wiz .ob-h{gap:14px;font:600 34px/1.15 var(--font-ui);letter-spacing:-.04em;color:var(--ink)}
 #onboarding .ob-wiz .ob-h .logo,#onboarding .ob-wiz .ob-h .tk-ico{width:44px;height:44px}
 #onboarding .ob-wiz .ob-h .tk-ico svg{width:20px;height:20px}
-#onboarding .ob-wiz .ob-flabel{margin:6px 0 -4px 2px;font:600 13px/1.4 var(--font-ui);color:var(--ink);letter-spacing:0;text-transform:none}
+#onboarding .ob-wiz .ob-flabel{margin:6px 0 -4px 2px;font:600 var(--fs-cap)/1.4 var(--font-ui);color:var(--ink);letter-spacing:0;text-transform:none}
 #onboarding .ob-wiz .ob-field{margin-top:10px}
-#onboarding .ob-wiz .ob-err{padding:0 0 0 4px;background:transparent;color:var(--critical);font-size:12.5px}
+#onboarding .ob-wiz .ob-err{padding:0 0 0 4px;background:transparent;color:var(--critical);font-size:var(--fs-cap)}
 #onboarding .ob-wiz .ob-err > svg{width:14px;height:14px;margin-top:2px}
 #onboarding .ob-wiz .ob-err.is-warn,#onboarding .ob-wiz .ob-err.is-warn > svg{color:var(--amber-text)}
 /* Calm (S6, U14): the provider's own words, one click away under the plain line. */
-#onboarding .ob-errmore{margin:-6px 0 0 28px;font-size:12px;line-height:1.45;color:var(--ink-2)}
+#onboarding .ob-errmore{margin:-6px 0 0 28px;font-size:var(--fs-label);line-height:1.45;color:var(--ink-2)}
 #onboarding .ob-errmore > summary{width:max-content;cursor:pointer;color:var(--ink-2)}
 #onboarding .ob-errmore > summary:hover{color:var(--ink)}
-#onboarding .ob-errmore > span{display:block;margin-top:4px;white-space:pre-wrap;font-family:var(--font-mono);font-size:11.5px}
+#onboarding .ob-errmore > span{display:block;margin-top:4px;white-space:pre-wrap;font-family:var(--font-mono);font-size:var(--fs-label)}
 
 /* ---------------- the action bar and the hint strip ---------------- */
 #onboarding .ob-foot{flex:none;display:flex;align-items:center;gap:10px;padding-top:16px;border:0}
 #onboarding .ob-foot .grow{flex:1}
 /* ATO-507: a plain reason beside the primary ("Needs 19.7 GB, 12.1 GB free on this disk."). */
-#onboarding .ob-foot .ob-foot-note{font-size:13px;color:var(--ink-2);text-align:right;line-height:1.35}
-#onboarding .ob-foot .btn{height:44px;padding:0 22px;font-size:14.5px}
+#onboarding .ob-foot .ob-foot-note{font-size:var(--fs-cap);color:var(--ink-2);text-align:right;line-height:1.35}
+#onboarding .ob-foot .btn{height:44px;padding:0 22px;font-size:var(--fs-body)}
 #onboarding .ob-foot .btn svg{width:16px;height:16px}
 #onboarding .ob-foot .btn-p{min-width:112px}
 #onboarding .ob-foot .btn .tk-spin{width:14px;height:14px}
@@ -374,14 +374,14 @@
 #onboarding .ob-phase{display:grid;grid-template-columns:24px max-content minmax(48px,1fr) 23ch;align-items:center;gap:12px;white-space:nowrap}
 #onboarding .ob-phase .tk-ico{width:24px;height:24px}
 #onboarding .ob-phase .tk-ico svg{width:13px;height:13px}
-#onboarding .ob-phase .pl{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:14px;font-weight:600;color:var(--ink)}
+#onboarding .ob-phase .pl{min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:var(--fs-ui);font-weight:600;color:var(--ink)}
 #onboarding .ob-phase .pb{height:8px;min-width:0}
 #onboarding .ob-phase .pb i{font-style:normal;color:var(--brand);background:currentColor}
 #onboarding .ob-phase.waiting .pb i{color:var(--ink-3)}
 #onboarding .ob-phase.done .pb{visibility:hidden}
-#onboarding .ob-phase .pt{min-width:0;text-align:right;white-space:pre;font:400 12px/1 var(--font-mono);
+#onboarding .ob-phase .pt{min-width:0;text-align:right;white-space:pre;font:400 var(--fs-label)/1 var(--font-mono);
   font-variant-numeric:tabular-nums;color:var(--ink-2)}
-#onboarding .ob-rate{margin:0;font:400 12px/1.4 var(--font-mono);color:var(--ink-2)}
+#onboarding .ob-rate{margin:0;font:400 var(--fs-label)/1.4 var(--font-mono);color:var(--ink-2)}
 #onboarding .ob-dlprog > .ob-err{padding:0;background:transparent;color:var(--critical)}
 /* Calm (S1, U5): the strip's Cancel, drawn under the progress card while
    setup covers the window. Outside .ob-dlprog, so samples never rebuild it. */
@@ -396,8 +396,8 @@
 #onboarding .ob-offer:not(.ob-offer-inline):active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
 #onboarding .ob-offer:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 #onboarding .ob-offer .ob-rbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-#onboarding .ob-offer .t{font-size:14.5px;font-weight:600;color:var(--ink)}
-#onboarding .ob-offer .d{font-size:13px;line-height:1.45;color:var(--ink-2)}
+#onboarding .ob-offer .t{font-size:var(--fs-body);font-weight:600;color:var(--ink)}
+#onboarding .ob-offer .d{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 #onboarding .ob-offer > .kc{margin-left:auto}
 
 /* ---------------- the import (ON-20…23) ---------------- */
@@ -407,36 +407,36 @@
 #onboarding .ob-row .box svg{width:12px;height:12px;stroke-width:2.6}
 #onboarding .ob-row .box.on{background:var(--brand);box-shadow:none}
 #onboarding .ob-row.ob-check:hover .box:not(.on){box-shadow:inset 0 0 0 1.5px var(--brand)}
-#onboarding .ob-check .d{font:400 12px/1.45 var(--font-mono)}
-#onboarding .ob-models > .ob-explain{padding:10px 12px;font-size:13.5px}
+#onboarding .ob-check .d{font:400 var(--fs-label)/1.45 var(--font-mono)}
+#onboarding .ob-models > .ob-explain{padding:10px 12px;font-size:var(--fs-ui)}
 /* r2: the local list while `atag models list` is out — a spinner, centred. */
 #onboarding .ob-loading{display:grid;place-items:center;min-height:140px}
 #onboarding .ob-loading .tk-spin{width:22px;height:22px}
-#onboarding .ob-explain.ob-help{font-size:12.5px;line-height:1.45;max-width:62ch;padding-left:4px}
+#onboarding .ob-explain.ob-help{font-size:var(--fs-cap);line-height:1.45;max-width:62ch;padding-left:4px}
 #onboarding .prow > .tk-ico{width:30px;height:30px}
-#onboarding .ob-h.ob-lede{font:400 15.5px/1.5 var(--font-ui);letter-spacing:0;color:var(--ink-2)}
+#onboarding .ob-h.ob-lede{font:400 var(--fs-lead)/1.5 var(--font-ui);letter-spacing:0;color:var(--ink-2)}
 #onboarding .ob-out > :not(.logo):not(.tk-ico){grid-column:2}
 #onboarding .ob-applogo svg{width:100%;height:100%}
 #onboarding .ob-list.is-busy{opacity:.7}
 #onboarding .ob-scanstrip{display:flex;align-items:center;gap:10px;max-width:var(--ob-col);padding:10px 14px;border-radius:18px;
-  background:color-mix(in srgb,var(--amber) 13%,var(--lift));font-size:13px;color:var(--ink)}
+  background:color-mix(in srgb,var(--amber) 13%,var(--lift));font-size:var(--fs-cap);color:var(--ink)}
 #onboarding .ob-scanstrip .tk-spin{border-color:var(--amber-wash);border-top-color:var(--amber)}
 #onboarding .ob-scanstrip .ob-scan-k{font-weight:700}
-#onboarding .ob-scanstrip .readout{font:400 12px/1 var(--font-mono);color:var(--ink);min-width:0}
-#onboarding .ob-scanstrip .ob-help{padding:0;font-size:13px;color:var(--ink-2)}
+#onboarding .ob-scanstrip .readout{font:400 var(--fs-label)/1 var(--font-mono);color:var(--ink);min-width:0}
+#onboarding .ob-scanstrip .ob-help{padding:0;font-size:var(--fs-cap);color:var(--ink-2)}
 #onboarding .ob-summary{display:grid;gap:8px;max-width:var(--ob-col);padding:16px 18px;border-radius:var(--r-card);
-  background:var(--lift);box-shadow:var(--sh-card);white-space:normal;font-size:14px;color:var(--ink-2)}
+  background:var(--lift);box-shadow:var(--sh-card);white-space:normal;font-size:var(--fs-ui);color:var(--ink-2)}
 #onboarding .ob-sumrow{display:grid;grid-template-columns:130px minmax(0,1fr);gap:12px}
 #onboarding .ob-sumrow .k{font-weight:600;color:var(--ink)}
 #onboarding .ob-sumrow .v.is-warn{color:var(--amber-text)}
 #onboarding .ob-failures{display:flex;flex-wrap:wrap;gap:8px}
 #onboarding .ob-failtbl{max-width:var(--ob-col);padding:4px 6px 8px;border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card)}
-#onboarding .ob-failtbl td:first-child{font:500 12px/1 var(--font-mono)}
+#onboarding .ob-failtbl td:first-child{font:500 var(--fs-label)/1 var(--font-mono)}
 
 /* Hugging Face file pick (ON-06). */
-#onboarding .ob-repo{display:flex;align-items:center;gap:10px;font:500 14px/1.3 var(--font-mono);letter-spacing:0;color:var(--ink)}
-#onboarding .ob-file .t{font:500 13px/1.35 var(--font-mono)}
-#onboarding .ob-file .ob-size{margin-left:auto;font:400 12px/1 var(--font-mono);color:var(--ink-2);white-space:nowrap}
+#onboarding .ob-repo{display:flex;align-items:center;gap:10px;font:500 var(--fs-ui)/1.3 var(--font-mono);letter-spacing:0;color:var(--ink)}
+#onboarding .ob-file .t{font:500 var(--fs-cap)/1.35 var(--font-mono)}
+#onboarding .ob-file .ob-size{margin-left:auto;font:400 var(--fs-label)/1 var(--font-mono);color:var(--ink-2);white-space:nowrap}
 
 /* A list that scrolls must say so. macOS hides its overlay scrollbar until
    something moves, so the long lists ended in a row sliced in half with no
@@ -470,7 +470,7 @@
   #onboarding .ob-stepmarks{margin-top:auto}
   #onboarding .ob{padding-top:30px}
   #onboarding .ob-title,#onboarding .ob-wiz .ob-h{font-size:28px}
-  #onboarding .ob-explain{font-size:14.5px}
+  #onboarding .ob-explain{font-size:var(--fs-body)}
   #onboarding .ob-body{gap:12px}
   #onboarding .ob-routes .ob-row{padding:11px 16px}
   .ob-introc .ob-word{font-size:52px}

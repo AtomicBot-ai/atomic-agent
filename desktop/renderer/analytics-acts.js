@@ -46,6 +46,8 @@ const ANX_ACTS = (() => {
       clear:L, dump:L, report:L, 'help.report':L, tools:L, restart:L, quit:L, about:L, update:L,
       workspace:{choose:L}, analytics:L, steer:L, onboarding:{choose:L, openNow:L}, voice:{add:L, dismiss:L, lang:L, pick:L, reset:L, settings:L},
       session:{new:L, switch:L, id:L}, ses:L, pin:L, unpin:L, unread:L, read:L, del:L, delask:L, sesmenu:L, rename:L,
+      // ATO-1034: chat folders; the folder and chat ids after the verb are cut off.
+      tts:{auto:L}, ftoggle:L, fnew:L, frename:L, fdel:L, fpick:L, fput:L, fautosort:L,
       more:{chats:L, tasks:L}, task:L, toastx:L, 'turn':{continue:L}, sessmodel:{apply:L},
       copy:{reply:L, session:L}, agent:{restart:L, update:L}, jump:{appr:L}, diag:{llmlogs:L, check:L, startModel:L},
       dl:{cancel:L}, dlc:{cloud:L, dismiss:L, fold:L, keep:L, retry:L, switch:L, unfold:L},
@@ -76,15 +78,15 @@ const ANX_ACTS = (() => {
         neighbor:L, open:L, page:UPDOWN, refresh:L},
       tasks:{auto:L, back:L, cancel:L, cancelConfirm:L, cancelKeep:L, clearSearch:L, detail:L,
         filter:set(taskFilters), kind:{cron:L, interval:L, at:L}, new:L, open:L, page:UPDOWN,
-        refresh:L, run:L, search:L, submit:L},
+        refresh:L, run:L, search:L, submit:L, ask:L, manual:L, plain:L, example:L},
       llm:{mode:Object.assign(set(llmModes), {next:L, prev:L}), add:L, autoUpdate:L, back:L, backend:L,
         cancel:L, cancelPull:L, configure:L, confirm:L, daemon:L, device:L, edit:L, embToggle:L,
         embedding:L, enter:L, external:{cancel:L, save:L, edit:L}, filter:L, logs:L, logsRefresh:L,
         pricing:L, refresh:L, remove:L, removeAt:L, restartModel:L, row:L, select:L, steer:{y:L, n:L}, tune:L,
         fb:{add:L, local:L, move:L, pick:L, pickCancel:L, remove:L, select:L},
         hf:{add:L, back:L, cancel:L, clear:L, close:L, look:L, mirror:L, row:L}},
-      telegram:{advanced:L, clearOwner:L, clearToken:L, enable:L, disable:L, pair:L, refresh:L,
-        restart:L, start:L, stop:L, token:L, tokenCancel:L, tokenSave:L},
+      telegram:{advanced:L, clearOwner:L, clearToken:L, enable:L, disable:L, pair:L, pairCancel:L,
+        pairReplace:L, pairStart:L, refresh:L, restart:L, start:L, stop:L, token:L, tokenCancel:L, tokenSave:L},
       // Settings › Connections › Composio (renderer.js composioAct); never the key.
       composio:{check:L, enable:L, key:L, keyCancel:L, keySave:L, refresh:L, removeKey:L, restart:L},
       // ATO-328: Save on the Exa key card (chat) or its Settings row; never the key.

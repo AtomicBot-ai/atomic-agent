@@ -16,6 +16,8 @@ const C = require("../out/main/analytics/classify.js");
 const T = require("../out/main/analytics/chat-turns.js");
 const E = require("../out/main/analytics/environment.js");
 const S = require("../out/main/sentry/scrub.js");
+const CV = require("../out/main/analytics/catalog-values.js");
+const SU = require("../out/main/analytics/setup.js");
 
 /* ---- validator ---- */
 
@@ -30,9 +32,21 @@ test("the renderer may only send UI-owned events", () => {
   assert.ok(V.validateEvent("slash_command_used", { command: "help" }, "ui"));
 });
 
+test("the window names only setup finishing and the Telegram tab; anything else it sends is a manual restart (ATO-274, ATO-900)", () => {
+  assert.equal(CV.restartTriggerFromWindow("setup_finished"), "setup_finished");
+  assert.equal(CV.restartTriggerFromWindow("telegram"), "telegram");
+  assert.equal(CV.restartTriggerFromWindow(undefined), "manual");
+  assert.equal(CV.restartTriggerFromWindow("import"), "manual");
+  assert.equal(CV.restartTriggerFromWindow({}), "manual");
+});
+
 test("enum values outside the list become `other`, or the prop's fallback, or are dropped", () => {
   assert.deepEqual(V.validateEvent("message_action", { action: "nope" }, "ui").props, {});
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "weird" }, "main").props, { trigger: "other" });
+  // ATO-274: setup, a workspace change and an import are not manual restarts.
+  for (const trigger of ["setup_finished", "workspace_change", "import", "telegram"]) {
+    assert.deepEqual(V.validateEvent("agent_restarted", { trigger }, "main").props, { trigger });
+  }
   // ATO-767: the automatic restart after an unexpected exit keeps its own trigger.
   assert.deepEqual(V.validateEvent("agent_restarted", { trigger: "auto" }, "main").props, { trigger: "auto" });
   assert.deepEqual(V.validateEvent("slash_command_used", { command: "/rm -rf" }, "ui").props, { command: "unknown" });
@@ -208,6 +222,60 @@ test("ATO-773: local_backend_supervised carries kind, counts and a fault code on
   assert.equal(V.validateEvent("local_backend_supervised", { kind: "restarting" }, "ui"), null);
 });
 
+test("ATO-278: why a start failed, or a server died, becomes a code, never text", () => {
+  assert.equal(C.backendFailReason("the agent did not answer `atag models start` within 300s — it may be busy or starting up. Try again.", "", null), "timeout");
+  assert.equal(C.backendFailReason("the model server stopped answering while it was starting — it was not started; start it again", "", "Segmentation fault: 11"), "exited_after_ready");
+  assert.equal(C.backendFailReason("`atag models start` failed without saying why (exit 1)", "", "ggml_metal_buffer: failed to allocate buffer: out of memory"), "oom");
+  assert.equal(C.backendFailReason("llama_model_load: error loading model: /Users/someone/models/x/x.gguf", null, null), "load_failed");
+  assert.equal(C.backendFailReason("couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 19091", null, null), "port_in_use");
+  assert.equal(C.backendFailReason("dyld: Library not loaded: @rpath/libggml-metal.dylib", null, null), "missing_lib");
+  assert.equal(C.backendFailReason(null, null, "Segmentation fault: 11"), "crash");
+  assert.equal(C.backendFailReason("something nobody has seen before", "nor this", "nor this line"), "other");
+  assert.equal(C.backendFailReason(null, null, null), "other");
+});
+
+test("ATO-278: only the stderr line that names a failure is classified, and timeout is the app's own limit only", () => {
+  // A loaded library note is not a missing library: the out-of-memory line after it is the cause.
+  const stderr = "load_backend: loaded CUDA backend from C:\\atomic\\ggml-cuda.dll\nggml_backend_cuda_buffer_type_alloc_buffer: allocating 9000 MiB on device 0: cudaMalloc failed: out of memory";
+  assert.equal(C.backendFailReason("`atag models start` failed without saying why (exit 1)", stderr, null), "oom");
+  assert.equal(C.backendFailReason("`atag models start` failed (exit 1)", "load_backend: loaded Metal backend from libggml-metal.dylib", null), "other");
+  // A backend check's "timeout" in the stderr is not the start timing out.
+  assert.equal(C.backendFailReason("`atag models start` failed (exit 1)", "backend update check failed: timeout", null), "other");
+  assert.equal(C.backendFailReason("the start timed out somewhere else", "", null), "other");
+});
+
+test("ATO-278: a start's reason is read only for start_failed, from the bring-up's answer and the log line", () => {
+  const oomLog = () => "cudaMalloc failed: out of memory";
+  assert.equal(SU.startFailReason("start_failed", { daemon: "start-failed", error: "the agent did not answer `atag models start` within 300s" }, () => null), "timeout");
+  assert.equal(SU.startFailReason("start_failed", { daemon: "start-failed", error: "`atag models start` failed (exit 1)" }, oomLog), "oom");
+  assert.equal(SU.startFailReason("start_failed", undefined, () => null), "other");
+  for (const effect of ["started", "restarted", "stop_failed", "untouched"]) {
+    assert.equal(SU.startFailReason(effect, { error: "out of memory" }, oomLog), null, effect);
+  }
+});
+
+test("ATO-278: main.ts hands the bring-up's answer to local_backend_started at both call sites", () => {
+  const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
+  assert.match(main, /A\.localBackendStarted\("swap", r\.daemon, r\.modelId, null, r\)/);
+  assert.match(main, /A\.localBackendStarted\("launch", up\.daemon, target\.modelId, Date\.now\(\) - bringUpAt, up\)/);
+});
+
+test("ATO-278: local_backend_started carries a reason code; local_backend_crashed carries code, model, uptime and engine only", () => {
+  const base = { via: "swap", result: "start_failed", model_id: "hf_custom", ms: null, engine: "atomic-core" };
+  assert.equal(V.validateEvent("local_backend_started", { ...base, reason: "oom" }, "main").props.reason, "oom");
+  assert.equal(V.validateEvent("local_backend_started", { ...base, result: "started", reason: null }, "main").props.reason, null);
+  // Text that slipped through is never sent as text.
+  assert.equal(V.validateEvent("local_backend_started", { ...base, reason: "/Users/someone/models out of memory" }, "main").props.reason, "other");
+  const crashed = V.validateEvent("local_backend_crashed", {
+    reason: "crash", model_id: "someone/private-model", up_ms: 12_000, engine: "llama-server",
+    fault: "Segmentation fault at /Users/someone/llama-server", error: "spawn /Users/someone ENOENT",
+  }, "main");
+  assert.deepEqual(crashed.props, { reason: "crash", model_id: "hf_custom", up_ms: 12_000, engine: "llama-server" });
+  assert.ok(!JSON.stringify(crashed.props).includes("/Users"));
+  assert.equal(V.validateEvent("local_backend_crashed", { reason: "a raw log line" }, "main").props.reason, "other");
+  assert.equal(V.validateEvent("local_backend_crashed", { reason: "crash" }, "ui"), null);
+});
+
 /* ---- chat turns ---- */
 
 test("a turn's summary: first token, tools, steers, approvals, failure category", () => {
@@ -230,8 +298,38 @@ test("a turn's summary: first token, tools, steers, approvals, failure category"
   assert.equal(out.length, 1);
   assert.deepEqual(out[0], {
     outcome: "failed", ms_to_first_token: 250, ms_total: 400, queue_wait_ms: 40, steer_count: 1,
-    approvals_asked: 1, tool_calls: 2, tools_used: ["os.shell.run", "mcp"], error_category: "transport", coding_mode: "plan",
+    approvals_asked: 1, tool_calls: 2, tools_used: ["os.shell.run", "mcp"], error_category: "transport", http_status: null,
+    coding_mode: "plan",
   });
+});
+
+test("a turn the agent stopped early (finish reason length) is stopped_early, not completed (ATO-275)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  t.begin("t4");
+  t.observe({ turnId: "t4", kind: "delta", text: "partial" });
+  t.observe({ turnId: "t4", kind: "finish", reason: "length" });
+  t.observe({ turnId: "t4", kind: "done" });
+  t.begin("t5");
+  t.observe({ turnId: "t5", kind: "finish", reason: "stop" });
+  t.observe({ turnId: "t5", kind: "done" });
+  assert.equal(out[0].outcome, "stopped_early");
+  assert.equal(out[0].error_category, null);
+  assert.equal(out[1].outcome, "completed");
+  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "stopped_early" }, "main").props.outcome, "stopped_early");
+});
+
+test("the desktop's own HTTP and network failures are transport, with the status (ATO-275)", () => {
+  const out = [];
+  const t = new T.ChatTurnTracker((s) => out.push(s));
+  t.begin("t6");
+  t.observe({ turnId: "t6", kind: "error", error: "HTTP 503", transport: true, httpStatus: 503 });
+  t.begin("t7");
+  t.observe({ turnId: "t7", kind: "error", error: "fetch failed", transport: true });
+  t.begin("t8");
+  t.observe({ turnId: "t8", kind: "error", error: "not connected" });
+  assert.deepEqual(out.map((s) => [s.error_category, s.http_status]), [["transport", 503], ["transport", null], [null, null]]);
+  assert.equal(V.validateEvent("chat_turn_ui", { outcome: "failed", http_status: 503 }, "main").props.http_status, 503);
 });
 
 test("a redelivered approval request is counted once (ATO-203)", () => {
@@ -284,4 +382,9 @@ test("messages are dropped unless allowlisted; type names are kept when identifi
   assert.equal(S.safeType("TypeError"), "TypeError");
   assert.equal(S.safeType("Error: /Users/alice"), "Error");
   assert.ok(S.sanitizeStack(Array.from({ length: 50 }, (_, i) => `    at f${i} (/a/b.js:${i + 1}:1)`).join("\n")).length <= S.MAX_FRAMES);
+});
+
+test("app_opened carries whether the mac app runs from Applications (ATO-370)", () => {
+  assert.deepEqual(V.validateEvent("app_opened", { launch_kind: "cold", in_applications: false }, "main").props,
+    { launch_kind: "cold", in_applications: false });
 });

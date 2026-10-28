@@ -6,7 +6,10 @@ import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import vm from 'node:vm';
-const ts = createRequire(import.meta.url)('typescript');
+const require = createRequire(import.meta.url);
+const ts = require('typescript');
+// ATO-669: palRows ranks through fuzzy-match.js, loaded before renderer.js.
+const {fuzzyRank, fuzzyFilter} = require('../renderer/fuzzy-match.js');
 const source = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('renderer.js', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
 const functions = new Map(ast.statements.filter(ts.isFunctionDeclaration).map((n) => [n.name.text, n.getText(ast)]));
@@ -24,8 +27,9 @@ function fixture(chatCount, q = 'report') {
     TASKS: [{t: 'Report digest', when: 'daily'}],
     SKILLS: [{t: 'report-writer', s: 'workspace'}],
     SK: {workingDir: null},
-    chatStatusWord: () => 'read', chatDot: () => ['empty', ''], taskDot: () => ['empty', ''],
+    chatStatusWord: () => 'read', folderPaletteWord: () => '', chatDot: () => ['empty', ''], taskDot: () => ['empty', ''],
     ANX: {via() {}}, act: (a) => acted.push(a), refreshPalette: () => { repaints++; },
+    fuzzyRank, fuzzyFilter,
     String, Array,
   });
   vm.runInContext(consts.get('PAL_CHATS_SHOWN'), c);
@@ -82,4 +86,21 @@ test('six or fewer matches show them all, with no "1 more chats" row', () => {
 
 test('an empty query still draws the grouped commands, with no chats', () => {
   assert.equal(fixture(20, '').c.palRows(), null);
+});
+
+// ATO-669: a fuzzy query ranks fuzzily but folds the chats exactly as before.
+test('a subsequence query ("wkly") still shows five chats, then "N more chats"', () => {
+  const {c} = fixture(20, 'wkly');
+  const rows = c.palRows();
+  eq(kinds(rows), ['session', 'session', 'session', 'session', 'session', 'more']);
+  assert.equal(rows[5].t, '15 more chats');
+  eq(rows.slice(0, 5).map((r) => r.act), ['ses:c0', 'ses:c1', 'ses:c2', 'ses:c3', 'ses:c4']);
+});
+
+test('a typo in a command, task or skill name still finds it', () => {
+  const {c} = fixture(0, 'rpeort');
+  eq(c.palRows().map((r) => r.t), ['Report digest', 'report-writer']);
+  c.PAL[0][1].push(['cpu', 'Models', 'Settings', '/llm', 'settings:models']);
+  c.S.q = 'mdl';
+  assert.equal(c.palRows()[0].act, 'settings:models');
 });

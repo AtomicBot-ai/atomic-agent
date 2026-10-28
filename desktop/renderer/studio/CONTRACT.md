@@ -83,14 +83,16 @@ Every call resolves (never rejects) to
 | `localState()` | `{ downloads: LocalDownload[], engine: LocalEngine \| null }` running now (after a window reload) |
 | `onLocal(cb)` | subscribe; returns unsubscribe. `cb(event: LocalEvent)` on every change |
 | `gpuShare()` | `GpuShareState \| null` now (see "Memory shared with the chat model") |
+| `improveReady()` | `{ready, why}`: whether "Improve prompt" can ask a chat model now; `why` is the button's tooltip when not (see "Improve prompt") |
+| `improvePrompt(kind, prompt)` | `{prompt}`: one rewrite of `prompt` for the `'image'` or `'video'` page; errors `INVALID_REQUEST` (empty), `NO_CHAT_MODEL`, `IMPROVE_FAILED` |
 | `onGpuShare(cb)` | subscribe; returns unsubscribe. `cb(state: GpuShareState)` on every change |
 
 `gallery`, `pin`, `galleryDelete` ids: image `<jobId>-<NN>`, video the job id.
 Core's listing has no pinned filter (`?offset&limit&includeArchived` only), so
-the Images page's Pinned tab reads the pages it has not loaded yet with
-`gallery` (200 a page, at most 10 pages) and keeps the pinned items it finds
-beside the loaded ones; past the cap it says older pinned images may be
-missing.
+the Pinned tab of the Images and Video pages reads the pages it has not
+loaded yet with `gallery` (200 a page, at most 10 pages) and keeps the pinned
+items it finds beside the loaded ones; past the cap it says older pinned ones
+may be missing.
 
 ### Paths
 
@@ -492,6 +494,39 @@ Not bridge calls; the pages use them instead of reaching into renderer.js.
 | `STUDIO.openSettings(section)` | Settings › Models on Cloud providers; `'openrouter'` opens OpenRouter's setup when no OpenRouter provider exists yet |
 | `STUDIO.openFile(path)` | "Open in Studio" under a reply's pictures and clips: the gallery's item when Studio made it, otherwise the file on its own as "From chat" (Save as… / Show in Finder through `BR.imageSaveAs` / `imageReveal` for pictures, `BR.replySaveAs` / `replyReveal` for clips, home folder only) |
 | `STUDIO.dataUrlToBytes(url)` | `{type, bytes}`; `fetch()` of a `data:` URL is refused by the window's `connect-src 'none'` |
+
+## Recent prompts (studio/recent-prompts.js)
+
+Not a bridge call. Each page keeps the last 12 prompts it sent (after
+`generateImage` / `generateVideo` resolved `ok`), newest first, in
+localStorage under `atag.studio.recent.image` / `atag.studio.recent.video`.
+A prompt sent again moves up (same text ignoring case and spacing); blanks are
+not kept. Under the prompt box a **Recent** chip opens the list; a click puts
+that prompt back in the box. Before the first prompt the chip is greyed and
+"Your recent prompts show here" stands in for the list. Rules are pure
+(`studioRecentAdd`, `studioRecentParse`), tested in
+`test/studio-recent-prompts.test.mjs`.
+
+## Improve prompt (studio/improve-prompt.js)
+
+A button in the same row as **Recent**, always shown with the prompt box. It
+is greyed (`aria-disabled`, reason in its tooltip) while the box is empty, a
+rewrite runs, or `improveReady()` says no chat model can answer; the page asks
+`improveReady()` each time it shows. A click sends the prompt to
+`improvePrompt`, puts the answer in the box and offers **Undo** until the box
+is edited. The box stays editable meanwhile; if it was edited before the answer
+came, the typed text stays and the answer is dropped (`studioImproveLands`). Main (main/studio-improve-prompt.ts) asks the active text provider
+(Fusion: its orchestrator) once on its OpenAI-compatible chat endpoint with
+that entry's `defaultChatModel ?? model`, or a local llama-server on its URL;
+no chat session is made and the key never reaches the window. Subscription
+CLI providers cannot answer; the local chat model cannot while a local
+generation has it paused. The request leaves room for a thinking pass
+(1024 tokens for the prompt plus a 3072 reserve, never above the entry's
+`maxOutputTokens`). A llama-server, Atomic Core or an OpenAI-compatible server
+on this machine or the local network is also asked not to think
+(`chat_template_kwargs: {enable_thinking: false}`); a public cloud host never
+gets that field. A reply that only thought says so: "The model spent its whole
+answer thinking. Try again or pick a model without thinking."
 
 ## Not in this foundation
 

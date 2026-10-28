@@ -46,3 +46,24 @@ test("uptime is a bucket", () => {
   assert.equal(R.uptimeBucket(null), null);
   assert.equal(R.uptimeBucket(-1), null);
 });
+
+// ATO-424 / ATO-761: Sentry carried no memory figure, and Windows exit codes only as numbers.
+test("free memory at the exit is a bucket, never the figure", () => {
+  const MB = 1_048_576;
+  assert.equal(R.freeMemoryBucket(100 * MB), "lt_512m");
+  assert.equal(R.freeMemoryBucket(700 * MB), "lt_1g");
+  assert.equal(R.freeMemoryBucket(1500 * MB), "lt_2g");
+  assert.equal(R.freeMemoryBucket(3000 * MB), "lt_4g");
+  assert.equal(R.freeMemoryBucket(8192 * MB), "gte_4g");
+  assert.equal(R.freeMemoryBucket(null), null);
+  assert.equal(R.freeMemoryBucket(-1), null);
+});
+
+test("the Windows status codes seen in Sentry get a word", () => {
+  assert.equal(R.windowsExitStatus(3221225626), "insufficient_resources");
+  assert.equal(R.windowsExitStatus(0xc0000017), "no_memory");
+  assert.equal(R.windowsExitStatus(0xc00000fd), "stack_overflow");
+  assert.equal(R.windowsExitStatus(1073807364), "killed_from_outside");
+  assert.equal(R.windowsExitStatus(1), null);
+  assert.equal(R.windowsExitStatus(null), null);
+});

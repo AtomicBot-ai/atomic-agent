@@ -34,6 +34,12 @@ import {
   type SpawnDownloadWorkerResult,
   type StopDownloadWorkerResult,
   EMBEDDING_MODELS_CATALOG,
+  CORE_CPU_FALLBACK_LINE,
+  CORE_CPU_RECORDED_LINE,
+  coreCpuFallbackApplies,
+  fallBackToCoreCpuBuild,
+  revertCoreCpuFallback,
+  type CoreCpuSwap,
   fallBackToCpuBackend,
   getConfiguredBackendVariant,
   getDaemonStatus,
@@ -74,6 +80,9 @@ import {
   resolveHuggingFaceGgufChoices,
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
+  claimLowMemoryEmbeddingNote,
+  holdEmbeddingForLowMemory,
+  LOW_MEMORY_EMBEDDING_NOTE,
   startChatAndEmbeddingDaemons,
   startEmbeddingDaemon,
   stopChatAndEmbeddingDaemons,
@@ -120,7 +129,9 @@ import {
   resolveRunMode,
 } from "../../llm/run-mode/index.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
+import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
+import { capLocalContextGrowth, growLocalContext, planLocalContextGrowth } from "./local-context-growth.js";
 import type { TuiEventBus } from "../tui-app.js";
 
 /**
@@ -229,6 +240,13 @@ export class LocalModelsOrchestrator {
   private activeTimer: ReturnType<typeof setInterval> | null = null;
   private supervised = false;
   /**
+   * The chat daemon was stopped for a cloud route and the embedding
+   * daemon kept (`stopChatForCloudSelection`). Ownership of the chat side
+   * is dropped so the supervisor does not bring it back, but the kept
+   * embedding daemon is still ours to tear down at exit.
+   */
+  private embeddingKeptForCloud = false;
+  /**
    * True while a daemon the TUI owns is running; used by `shutdown()`.
    * Taking ownership — a start, or adopting a running daemon, by any
    * path — is also what arms the supervisor: its timer must run from
@@ -278,6 +296,21 @@ export class LocalModelsOrchestrator {
    * `llama-server` process nothing can stop afterwards.
    */
   private restartInFlight: Promise<boolean> | null = null;
+  /**
+   * The auto window this process grew the model to (`growContextForPrompt`),
+   * recorded only once a start at that size came up: later starts of the
+   * same model begin there instead of back at the small start window.
+   * Another model starts small again.
+   */
+  private grownContext: { modelId: string; atLeast: number } | null = null;
+  /** The bigger window a growth restart is trying, read by that start only. */
+  private growthAttempt: number | null = null;
+  /**
+   * The window an out-of-memory restart settled on (ATO-334): growth of
+   * that model stops there for the rest of this process, so a later
+   * plain start does not climb back into the window that ran out.
+   */
+  private outOfMemoryCeiling: { modelId: string; atMost: number } | null = null;
   private readonly operations = new ModelOperationQueue();
   private selectionRevision = 0;
   private closing = false;
@@ -440,8 +473,9 @@ export class LocalModelsOrchestrator {
     // do not wait for it, the host process exits before the kill lands and
     // llama-server is orphaned in the background.
     let retired = false;
-    if (this.daemonSupervised) {
+    if (this.daemonSupervised || this.embeddingKeptForCloud) {
       this.daemonSupervised = false;
+      this.embeddingKeptForCloud = false;
       const cfg = getConfig();
       // `stopOnExit: false` keeps the model warm between sessions (the
       // operator owns teardown via `models stop`). With it on, only the
@@ -1905,7 +1939,16 @@ export class LocalModelsOrchestrator {
    * anonymous budget, and two passes racing on the same
    * `backend.next` staging dir.
    */
-  async startDaemon(opts?: { backendAlreadyChecked?: boolean; cpuFallbackAttempted?: boolean }): Promise<boolean> {
+  async startDaemon(opts?: {
+    backendAlreadyChecked?: boolean;
+    cpuFallbackAttempted?: boolean;
+    /**
+     * `--ctx-size` for this start only, in place of
+     * `localModels.managed.contextSize` (the out-of-memory restart,
+     * ATO-334). Never written to the config.
+     */
+    contextSize?: number;
+  }): Promise<boolean> {
     return this.operations.run(async signal => {
       this.chatReadyError = "The model did not start. Choose a ready model and retry the message.";
       const started = await this.startDaemonNow({ ...opts, signal });
@@ -1922,6 +1965,8 @@ export class LocalModelsOrchestrator {
      * start that fails even on the CPU build cannot recurse forever.
      */
     cpuFallbackAttempted?: boolean;
+    /** See `startDaemon`. */
+    contextSize?: number;
   }): Promise<boolean> {
     if (this.closing) return false;
     // Re-read after the backend step: a computer without an Atomic Core
@@ -2014,11 +2059,15 @@ export class LocalModelsOrchestrator {
       const binPath = resolveServerBinPath(dataDir, binaryName, getConfig().localModels.managed.engine);
       // Under Atomic Core its llama-server needs the environment Core runs it with.
       const spawn = managedDeviceSource(dataDir, getConfig().localModels.managed.engine)?.spawn;
-      const device = await resolveManagedDevice(
-        binPath,
-        cfg.localModels.managed.device,
-        { multiGpu, ...(spawn ? { spawn } : {}) },
-      );
+      // The CPU-build retry runs on the CPU: a device picked for (or
+      // configured against) the crashing GPU build means nothing to it.
+      const device = opts?.cpuFallbackAttempted
+        ? "cpu"
+        : await resolveManagedDevice(
+            binPath,
+            cfg.localModels.managed.device,
+            { multiGpu, ...(spawn ? { spawn } : {}) },
+          );
       this.bus.emit({
         type: "runtime_info",
         line: `local-llm: device ${describeDeviceChoice(cfg.localModels.managed.device, device, multiGpu)}`,
@@ -2039,10 +2088,14 @@ export class LocalModelsOrchestrator {
       // `restartDaemon` comes back through here, and nothing about the
       // role is captured at boot.
       const resolvedLlm = resolveLlmConfig(cfg);
-      const localLegRole = resolveLocalLegRole(
-        resolvedLlm,
-        resolveRunMode(resolvedLlm, { managedModelId: mid }),
-      );
+      const runMode = resolveRunMode(resolvedLlm, { managedModelId: mid });
+      const localLegRole = resolveLocalLegRole(resolvedLlm, runMode);
+      // ATO-848: only a plain local chat route has someone to grow the
+      // window between turns (`growContextForPrompt`); a Fusion leg is
+      // served by turns this path never sees, so it gets the fixed window.
+      // A one-run window (`opts.contextSize`, the out-of-memory restart)
+      // is a fixed size and does not grow either.
+      const growContext = activeTextProviderIsLlamaServer(resolvedLlm) && runMode.effective !== "fusion" && opts?.contextSize === undefined;
       const clearance = this.portClearanceDeps();
       opts?.signal?.throwIfAborted();
       const chatClear = await clearChatPort(cfg, mid, clearance);
@@ -2066,6 +2119,10 @@ export class LocalModelsOrchestrator {
         clearance,
       );
       opts?.signal?.throwIfAborted();
+      const grown = this.grownContext;
+      const contextAtLeast = growContext
+        ? (this.growthAttempt ?? (grown !== null && grown.modelId === mid ? grown.atLeast : null))
+        : null;
       const result = await this.trackCoreStart(opts?.signal, signal => startChatAndEmbeddingDaemons({
         chat: {
           engine: cfg.localModels.managed.engine,
@@ -2077,12 +2134,15 @@ export class LocalModelsOrchestrator {
           port: chatClear.port,
           chatTemplateFile: tpl,
           mmprojFile,
-          contextSize: cfg.localModels.managed.contextSize,
+          contextSize: opts?.contextSize ?? cfg.localModels.managed.contextSize,
+          ...(growContext ? { growContext: true } : {}),
+          ...(contextAtLeast !== null ? { autoContextAtLeast: contextAtLeast } : {}),
           parallel: cfg.localModels.managed.parallel,
           localLegRole,
           swaFull: cfg.localModels.managed.swaFull,
           ...(device ? { device } : {}),
-          ...(multiGpu ? { tensorSplit } : {}),
+          // No multi-GPU split on the CPU-build retry.
+          ...(multiGpu && device !== "cpu" ? { tensorSplit } : {}),
         },
         embedding: embClear.options
           ? { ...embClear.options, signal, engine: cfg.localModels.managed.engine, ...(device ? { device } : {}) }
@@ -2134,15 +2194,24 @@ export class LocalModelsOrchestrator {
         return false;
       }
       const msg = e instanceof Error ? e.message : String(e);
+      // ATO-344/372: Atomic Core's GPU build crashed loading the model.
       if (
         !opts?.cpuFallbackAttempted &&
+        getConfig().localModels.managed.engine === "atomic-core" &&
+        coreCpuFallbackApplies(dataDir, e)
+      ) {
+        return await this.fallBackToCoreCpuBuildAndRetry(dataDir, msg, opts?.signal, opts?.contextSize);
+      }
+      if (
+        !opts?.cpuFallbackAttempted &&
+        getConfig().localModels.managed.engine !== "atomic-core" &&
         shouldFallBackToCpuBackend({
           installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
           configuredVariant: getConfiguredBackendVariant(),
           error: e,
         })
       ) {
-        return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal);
+        return await this.fallBackToCpuBackendAndRetry(dataDir, msg, opts?.signal, opts?.contextSize);
       }
       this.bus.emit({ type: "local_models_daemon_error_set", message: msg });
       if (!this.reportCoreFailure(e)) {
@@ -2159,6 +2228,89 @@ export class LocalModelsOrchestrator {
   }
 
   /**
+   * Atomic Core's twin of the rescue below (ATO-344/372): Core's GPU build
+   * crashed loading the model, so install Core's CPU build and retry the
+   * start once on device cpu. `coreBackendVariant = "cpu"` is recorded
+   * only when that retry serves the model; when it does not, the swap is
+   * undone (`revertCoreCpuFallback`) and the original failure is the one
+   * shown, since the GPU build was not the cause.
+   */
+  private async fallBackToCoreCpuBuildAndRetry(
+    dataDir: string,
+    failureMsg: string,
+    signal?: AbortSignal,
+    /** A one-run window (out-of-memory restart) the retry keeps. */
+    contextSize?: number,
+  ): Promise<boolean> {
+    this.bus.emit({ type: "runtime_info", line: `local-llm: ${CORE_CPU_FALLBACK_LINE}` });
+    this.bus.emit({
+      type: "local_models_pull_started",
+      pull: {
+        kind: "backend",
+        modelId: "_backend",
+        label: "Atomic Core CPU build",
+        percent: 0,
+        transferredBytes: 0,
+        totalBytes: 0,
+        error: null,
+      },
+    });
+    let swap: CoreCpuSwap;
+    try {
+      swap = await fallBackToCoreCpuBuild(dataDir, {
+        // A deadline, as for every backend download here.
+        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+        onProgress: (percent: number, transferred: number, total: number) => {
+          this.bus.emit({
+            type: "local_models_pull_progress",
+            kind: "backend",
+            percent,
+            transferredBytes: transferred,
+            totalBytes: total,
+          });
+        },
+      });
+      this.bus.emit({ type: "local_models_pull_finished", kind: "backend" });
+    } catch (dlErr) {
+      const msg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+      const combined = `${failureMsg} (the CPU build could not be installed: ${msg})`;
+      this.bus.emit({ type: "local_models_pull_failed", kind: "backend", error: msg });
+      this.bus.emit({ type: "local_models_daemon_error_set", message: combined });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: start failed — ${combined}` });
+      return false;
+    }
+    this.bus.emit({ type: "runtime_info", line: "local-llm: CPU build installed — retrying start…" });
+    const started = await this.startDaemonNow({
+      signal,
+      backendAlreadyChecked: true,
+      cpuFallbackAttempted: true,
+      ...(contextSize !== undefined ? { contextSize } : {}),
+    });
+    if (!started) {
+      // Undo the swap on a cancelled retry too (a model picked while it
+      // loaded): left in place, the CPU build stays installed with
+      // nothing recorded, and no later start rescues it back.
+      revertCoreCpuFallback(dataDir, swap);
+      if (signal?.aborted) return false;
+      const combined = `${failureMsg} (the CPU build failed too, so the GPU build stays selected)`;
+      this.bus.emit({ type: "local_models_daemon_error_set", message: combined });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: start failed — ${combined}` });
+      return false;
+    }
+    try {
+      persistUserLocalModelsConfig({ managed: { coreBackendVariant: "cpu" } });
+      this.bus.emit({ type: "runtime_info", line: `local-llm: ${CORE_CPU_RECORDED_LINE}` });
+    } catch (persistErr) {
+      const msg = persistErr instanceof Error ? persistErr.message : String(persistErr);
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: could not persist coreBackendVariant — ${msg}; the CPU build is used for this session only`,
+      });
+    }
+    return true;
+  }
+
+  /**
    * Windows iGPU-only rescue: the installed GPU llama.cpp build spawned
    * but never became healthy (the compute backend cannot load a model on
    * this machine — e.g. Vulkan on an AMD APU), so swap in the CPU build
@@ -2171,6 +2323,8 @@ export class LocalModelsOrchestrator {
     dataDir: string,
     failureMsg: string,
     signal?: AbortSignal,
+    /** A one-run window (out-of-memory restart) the retry keeps. */
+    contextSize?: number,
   ): Promise<boolean> {
     this.bus.emit({
       type: "runtime_info",
@@ -2246,6 +2400,7 @@ export class LocalModelsOrchestrator {
       signal,
       backendAlreadyChecked: true,
       cpuFallbackAttempted: true,
+      ...(contextSize !== undefined ? { contextSize } : {}),
     });
   }
 
@@ -2374,6 +2529,60 @@ export class LocalModelsOrchestrator {
     return inFlight;
   }
 
+  /**
+   * ATO-848: before a turn, grow the auto window of a daemon on a GPU
+   * with memory of its own when the conversation's last prompt
+   * (`session.contextUsage.tokens`) has filled three quarters of the
+   * prompt's room — one doubling, held to what fits the card
+   * (`decideContextGrowth`), through the ordinary restart. A no-op for a
+   * pinned context, unified memory, CPU, external mode and while a model
+   * change or restart is running. Never throws: a failed growth leaves
+   * the turn to run on the window it has.
+   */
+  async growContextForPrompt(promptTokens: number | null | undefined): Promise<boolean> {
+    if (typeof promptTokens !== "number" || !(promptTokens > 0)) return false;
+    if (this.closing || this.restartInFlight || this.isSwitching) return false;
+    try {
+      return await growLocalContext({
+        plan: () => capLocalContextGrowth(planLocalContextGrowth(getConfig(), promptTokens), this.outOfMemoryCeiling),
+        setAttempt: (atLeast) => { this.growthAttempt = atLeast; },
+        commit: (step) => { this.grownContext = { modelId: step.modelId, atLeast: step.to }; },
+        restart: () => this.restartDaemon(),
+        startAgain: () => this.startDaemon(),
+        emit: (line) => this.bus.emit({ type: "runtime_info", line }),
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The model ran out of memory (ATO-334): bring it back with
+   * `contextSize` for this run only. The config keeps its value, so the
+   * next start sizes the window as before. Same single-flight slot and
+   * stop-first order as the other restarts; registered with the runtime
+   * as its `setLocalModelRestarter`.
+   */
+  restartWithContextSize(contextSize: number): Promise<boolean> {
+    if (this.restartInFlight) return this.restartInFlight;
+    // The window grown between turns (ATO-848) is what ran out of
+    // memory: a later restart or growth must not bring it back.
+    this.grownContext = null;
+    this.growthAttempt = null;
+    const modelId = getConfig().localModels.managed.modelId;
+    this.outOfMemoryCeiling = modelId ? { modelId, atMost: contextSize } : null;
+    const inFlight = this.operations.run(async () => {
+      const stopped = await this.stopChatDaemonOnly({
+        stoppedLine: `local-llm: the model ran out of memory — restarting it with a context window of ${contextSize} tokens…`,
+      });
+      return stopped ? await this.startDaemon({ contextSize }) : false;
+    }, false).finally(() => {
+      this.restartInFlight = null;
+    });
+    this.restartInFlight = inFlight;
+    return inFlight;
+  }
+
   async restartDaemon(): Promise<boolean> {
     if (this.restartInFlight) {
       this.bus.emit({
@@ -2397,6 +2606,41 @@ export class LocalModelsOrchestrator {
     });
     this.restartInFlight = inFlight;
     return inFlight;
+  }
+
+  /**
+   * The chat route moved to a cloud model (ATO-376): stop only the chat
+   * daemon and keep the embedding daemon, so memory search keeps its
+   * meaning-based half. `memory.embeddings.enabled` is left alone.
+   *
+   * Falls back to the full `stopDaemon` when there is nothing worth
+   * keeping (embeddings off, no catalog model, GGUF not on disk) or the
+   * chat daemon is not up yet, since a start in flight must be cancelled
+   * as before. Ownership of the chat side is dropped so the supervisor
+   * does not restart it on the cloud route. The `s` key and Stop keep
+   * calling `stopDaemon`.
+   */
+  async stopChatForCloudSelection(): Promise<void> {
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
+    if (!chat.running || !this.buildEmbeddingStartOptions(cfg, dataDir)) {
+      return this.stopDaemon();
+    }
+    // Ownership goes before the kill: a supervisor tick that sees the chat
+    // pid dead while the stop is still refreshing would otherwise restart
+    // the chat daemon on the cloud route. A failed stop gives it back.
+    const owned = this.daemonSupervised;
+    this.daemonSupervised = false;
+    if (owned) this.embeddingKeptForCloud = true;
+    const stopped = await this.stopChatDaemonOnly({
+      stoppedLine: "local-llm: chat server stopped, memory search stays on",
+    });
+    if (stopped) return;
+    if (owned) {
+      this.embeddingKeptForCloud = false;
+      this.daemonSupervised = true;
+    }
   }
 
   /**
@@ -2511,7 +2755,7 @@ export class LocalModelsOrchestrator {
    * degrades to FTS5 when it is unreachable, flag or no flag.
    */
   private reportEmbeddingStartOutcome(
-    embedding: { pid: number } | { error: string } | { skipped: true },
+    embedding: { pid: number } | { error: string } | { skipped: true; lowMemory?: true },
     requested: EmbeddingDaemonStartOptions | undefined,
   ): void {
     if ("pid" in embedding) {
@@ -2526,6 +2770,9 @@ export class LocalModelsOrchestrator {
         type: "runtime_info",
         line: `local-llm: embedding daemon failed — hybrid recall unavailable until it starts, FTS5 recall still works (${embedding.error})`,
       });
+    } else if ("lowMemory" in embedding) {
+      // Held back, not failed: the opt-in stays as it is (issue #465).
+      this.noteLowMemoryEmbedding();
     } else if (!requested) {
       // skipped is also returned when no embedding was requested;
       // only emit a hint when the operator has enabled embeddings but
@@ -2538,6 +2785,12 @@ export class LocalModelsOrchestrator {
         });
       }
     }
+  }
+
+  /** ATO-379: the memory model was held back for low memory; one short note per process. */
+  private noteLowMemoryEmbedding(): void {
+    if (!claimLowMemoryEmbeddingNote()) return;
+    this.bus.emit({ type: "runtime_info", line: `local-llm: ${LOW_MEMORY_EMBEDDING_NOTE}` });
   }
 
   /**
@@ -2613,6 +2866,13 @@ export class LocalModelsOrchestrator {
     }
 
     if (embStatus.running && !opts?.hotSwap) return;
+
+    // ATO-379: not started on a machine with little memory; recall stays on
+    // keywords. Transient, so the opt-in is not touched (issue #465).
+    if (!embStatus.running && !(await holdEmbeddingForLowMemory(dataDir)).ok) {
+      this.noteLowMemoryEmbedding();
+      return;
+    }
 
     if (embStatus.running && opts?.hotSwap) {
       this.bus.emit({

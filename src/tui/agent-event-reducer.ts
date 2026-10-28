@@ -1,7 +1,12 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
 import { describeFailedAttempts } from "../llm/fallback/index.js";
-import { isLocalEngineDown } from "../llm/reliability/index.js";
+import {
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  classifyLocalServerError,
+  isLocalEngineDown,
+  isLocalOutOfMemory,
+} from "../llm/reliability/index.js";
 import {
   contextUsageFromPrompt,
   EMPTY_CONTEXT_USAGE,
@@ -10,7 +15,11 @@ import {
   formatBackgroundApprovalNotice,
   formatBackgroundProviderWaitNotice,
 } from "./detached-turns.js";
-import { formatAgentErrorForChat, formatLocalEngineDownForChat } from "./chat/format-agent-error-for-chat.js";
+import {
+  formatAgentErrorForChat,
+  formatLocalEngineDownForChat,
+  formatLocalServerErrorForChat,
+} from "./chat/format-agent-error-for-chat.js";
 import { formatProviderFalloverNotice } from "./format-provider-fallover.js";
 import {
   formatProviderGaveUpLine,
@@ -24,6 +33,7 @@ import {
   fusionWorkerLineColor,
 } from "./format-fusion-worker-line.js";
 import { reduceFusionLiveWorkers } from "./fusion-live-workers.js";
+import { nextApprovalPreviewPage } from "./approval-preview-pages.js";
 import {
   appendChatMessage,
   appendFeed,
@@ -272,6 +282,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // A redirect re-prompts for the new target; the previous
         // prompt's draft must not leak into it.
         approvalPathDraft: null,
+        approvalPreviewPage: null,
       };
     case "approval_resolved":
       if (state.pendingApproval?.approvalId !== action.approvalId) return state;
@@ -279,6 +290,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...state,
         pendingApproval: null,
         approvalPathDraft: null,
+        approvalPreviewPage: null,
         // Resolving the visible turn's request resumes that turn:
         // `running`. Resolving a background turn's request resumes a
         // turn this transcript is not showing — the visible status
@@ -296,6 +308,20 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       return { ...state, approvalPathDraft: action.value };
     case "approval_path_edit_closed":
       return { ...state, approvalPathDraft: null };
+    case "approval_preview_paged": {
+      const request = state.pendingApproval;
+      if (!request) return state;
+      const current =
+        state.approvalPreviewPage?.approvalId === request.approvalId
+          ? state.approvalPreviewPage.page
+          : null;
+      const next = nextApprovalPreviewPage(request, current);
+      return {
+        ...state,
+        approvalPreviewPage:
+          next === null ? null : { approvalId: request.approvalId, page: next },
+      };
+    }
       return { ...state, pendingApproval: null, status: "running" };
     case "composer_notice":
       if (state.composerNotice === action.text) return state;
@@ -349,6 +375,26 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         inputHistoryDraft: null,
       };
     }
+    case "composer_draft_replaced":
+      if (state.inputValue !== action.expected) {
+        return {
+          ...state,
+          composerNotice:
+            state.inputValue.trim().length === 0
+              ? "Enhanced prompt not applied: the draft was sent or cleared while it ran."
+              : "Enhanced prompt not applied: the draft changed while it ran.",
+        };
+      }
+      return {
+        ...state,
+        inputValue: action.value,
+        inputHistoryCursor: null,
+        inputHistoryDraft: null,
+        composerNotice:
+          action.value === action.expected
+            ? "The prompt already reads clearly; nothing changed."
+            : "Enhanced prompt is in the composer. Review it, then press Enter to send.",
+      };
     case "message_waiting_for_model":
       if (action.sessionId !== state.session.sessionId) return state;
       return { ...appendUserMessage(state, action.text), pendingModelMessage: { sessionId: action.sessionId, text: action.text } };
@@ -437,6 +483,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       };
     case "update_dismissed":
       return { ...state, updatePrompt: null };
+    case "project_trust_asked":
+      return { ...state, projectTrustPrompt: action.prompt };
+    case "project_trust_closed":
+      return { ...state, projectTrustPrompt: null };
     case "update_started":
       return appendFeed(
         { ...state, updatePrompt: null, updateStatus: "running" },
@@ -695,7 +745,21 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-772: the managed local model's process is gone and the turn
       // ended without the outage wait: say so, and the command that fixes it.
       const engineDown = isLocalEngineDown(event.error);
-      const chatError = engineDown ? formatLocalEngineDownForChat() : formatAgentErrorForChat(
+      // ATO-707 / ATO-737: a local server's typed 400 (context full, or a
+      // request it would not take) in plain words. Its 404/405 keeps the
+      // wrong-server hint below, which names the recheck command.
+      const localServer = engineDown ? null : classifyLocalServerError(event.error);
+      const badRequest =
+        localServer !== null && localServer.code !== LOCAL_SERVER_NOT_FOUND_CODE ? localServer : null;
+      // ATO-334: the out-of-memory sentence is already plain and says
+      // what to do; the transport wording around it would not.
+      const chatError = isLocalOutOfMemory(event.error)
+        ? event.error.message
+        : engineDown
+        ? formatLocalEngineDownForChat()
+        : badRequest !== null
+          ? formatLocalServerErrorForChat(badRequest, event.error.message)
+          : formatAgentErrorForChat(
         event.category,
         event.error.message,
         {
@@ -799,7 +863,7 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       return appendFeed(state, {
         kind: "runtime_info",
         stepIndex: null,
-        line: `» the model rejected the request as too large — window learned as ~${event.contextWindow} tokens (${
+        line: `» the model rejected the request as too large — window ~${event.contextWindow} tokens (${
           event.source === "provider" ? "from its reply" : "estimated"
         }), trimming the conversation to fit and retrying step ${event.stepIndex + 1}`,
         color: "yellow",
@@ -814,6 +878,20 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         line: `» "${event.provider}" is out of credit (${event.code}) — task paused; top up, then say continue`,
         color: "yellow",
       });
+    case "local_model_out_of_memory": {
+      // ATO-334. The question itself is the approval prompt; the chat
+      // gets one note, when the model is back with the smaller window.
+      // A stop is told by the turn's failure line that follows.
+      const feed = appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» local model out of memory (${event.phase}): ${event.message}`,
+        color: event.phase === "restarted" ? "green" : "yellow",
+      });
+      return event.phase === "restarted"
+        ? appendChatMessage(feed, { role: "system", text: event.message })
+        : feed;
+    }
     case "provider_recovered": {
       // Closes the wait notice `provider_waiting` posted — only when one
       // was posted, so a recovery the chat never heard about stays in
@@ -848,8 +926,12 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         event.requestedMaxTokens !== undefined
           ? `cap ${event.requestedMaxTokens}`
           : "no cap sent";
+      // A loop the stream watcher cut has no meaningful token count or
+      // cap to report: say what happened instead.
       const line =
-        event.retry.kind === "raise_cap"
+        event.repetitive === true && event.retry.kind === "same_cap"
+          ? `» The model kept repeating the same text, so its reply was stopped. Retrying step ${event.stepIndex + 1} and asking it not to repeat`
+          : event.retry.kind === "raise_cap"
           ? `» ${cut} (${cap}) — retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap`
           : event.retry.kind === "same_cap"
             ? `» ${cut} (${cap}). Retrying step ${event.stepIndex + 1} with a ${event.retry.maxTokens}-token cap and asking for a shorter reply`
@@ -960,6 +1042,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
     case "compaction_failed":
       return appendChatMessage(state, { role: "system", text: event.result.status === "cancelled"
         ? "Context compaction cancelled."
+        // A planned skip (e.g. a window too small to compact): nothing failed.
+        : event.result.status === "noop"
+        ? `Context compaction skipped: ${event.result.message ?? "no safe, useful reduction is available."}`
         : `Context compaction failed: ${(event.result.message ?? "unknown error").replace(/[.!?]+$/, "")}. Existing context retained; history trimming remains available.`,
       });
     case "history_trimmed":
@@ -1192,6 +1277,20 @@ function reduceStepEvent(
           `${event.refused && event.refused.length > 0 ? `; ${event.refused.length} refused by the turn policy` : ""})`,
         color: "yellow",
       });
+    case "answer_continued":
+      // ATO-1031: the reply hit the length limit and the step asked for
+      // the rest once. Without the line, the second wait looks like a hang.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line:
+          event.outcome === "completed"
+            ? "» the reply hit the length limit — continued it once"
+            : event.outcome === "cut_again"
+              ? "» the reply hit the length limit twice — showing what arrived"
+              : "» the reply hit the length limit — continuing it failed, retrying the step",
+        color: "yellow",
+      });
     case "batch_wave_split":
       // Issue #111: an oversized pure-read batch ran in bounded waves.
       // Nothing was dropped — every call executed — so the feed line
@@ -1253,6 +1352,12 @@ function reduceStepEvent(
       // Raw plumbing: the whole completion object, the unparsed text.
       // The trace recorder wants them; the chat feed would drown in
       // them. Listed so the exhaustiveness check holds.
+      return state;
+    case "first_token":
+    case "prompt_progress":
+      // ATO-1027: the wait before the first token, for an HTTP host's
+      // status line. The TUI's own streaming tail already shows output
+      // the moment it starts. Listed so the exhaustiveness check holds.
       return state;
     default: {
       const unhandled: never = event;

@@ -1,12 +1,19 @@
-import { formatLlamaUnreachableHint } from "../../llm/llama-server-health.js";
-import { LOCAL_ENGINE_DOWN_MESSAGE, LOCAL_ENGINE_START_HINT, looksLikeMidStreamDrop } from "../../llm/reliability/index.js";
+import { formatLlamaTransportHint } from "../../llm/llama-server-health.js";
+import {
+  LOCAL_ENGINE_DOWN_MESSAGE,
+  LOCAL_CONTEXT_EXCEEDED_CODE,
+  LOCAL_ENGINE_START_HINT,
+  looksLikeMidStreamDrop,
+  type LocalServerError,
+} from "../../llm/reliability/index.js";
 
 const MAX_CHARS = 480;
 
 /**
  * Where the failed turn was pointed, so a transport failure can say what
  * to actually do about it. The CLI has printed
- * `formatLlamaUnreachableHint` for years; the TUI dropped the same
+ * `formatLlamaUnreachableHint` for years (and `formatLlamaWrongServerHint`
+ * when llama-server answered 404/405); the TUI dropped the same
  * failure as a bare `fetch failed` — this closes that gap. Gated on the
  * active provider being local because for a cloud provider the llama
  * hint would be advice about the wrong server.
@@ -154,8 +161,11 @@ export function formatAgentErrorForChat(
     // below is only an explanation. Stacking both would bury the fix
     // under five lines. The `terminated` case that prompted this — a
     // cloud provider dropping mid-stream — never reaches the local arm.
+    //
+    // A llama-server that ANSWERED 404/405 is up, so the start command
+    // would be wrong there: it gets the wrong-server line instead (ATO-870).
     if (local?.activeProviderIsLocal) {
-      return `${base}\n${formatLlamaUnreachableHint(local.llamaUrl)}`;
+      return `${base}\n${formatLlamaTransportHint(local.llamaUrl, collapsed)}`;
     }
     // Matched on `collapsed`, never on `body`: `body` has been capped at
     // MAX_CHARS, so a drop phrase that sits past that cap survives in
@@ -191,6 +201,35 @@ export function formatAgentErrorForChat(
  */
 export function formatLocalEngineDownForChat(): string {
   return `Turn failed. ${LOCAL_ENGINE_DOWN_MESSAGE}\n  ${LOCAL_ENGINE_START_HINT}`;
+}
+
+/** What the TUI adds under a full local context: the two commands that fix it. */
+const CONTEXT_EXCEEDED_COMMAND_HINT = "  Type /compact to shrink this chat, or /new to start over";
+
+/**
+ * A turn a local model server turned down with a typed 400 (ATO-707,
+ * ATO-737): the plain sentence and what to do, then the server's own
+ * words on the `Details:` line, capped like every other failure body.
+ * `message` is the failed turn's error message.
+ * Keeps the `Turn failed` prefix. A 404/405 keeps the wrong-server hint
+ * of `formatAgentErrorForChat`, which already says the same and names
+ * the recheck command.
+ */
+export function formatLocalServerErrorForChat(
+  error: LocalServerError,
+  message: string,
+): string {
+  const collapsed = message.trim().replace(/\s+/g, " ");
+  const capped = collapsed.length > MAX_CHARS ? `${collapsed.slice(0, MAX_CHARS)}…` : collapsed;
+  // The shared advice has no commands in it (every surface shows it);
+  // the TUI names its own two for a full context (ATO-1208).
+  const commandHint = error.code === LOCAL_CONTEXT_EXCEEDED_CODE ? [CONTEXT_EXCEEDED_COMMAND_HINT] : [];
+  // An OpenAI-compatible server's error already reads in these words
+  // (`humanizeOpenAiHttpError`); saying them twice helps nobody.
+  if (collapsed.includes(error.message)) return [`Turn failed. ${capped}`, ...commandHint].join("\n");
+  const lines = [`Turn failed. ${error.message}`, `  ${error.advice}`, ...commandHint];
+  if (capped.length > 0) lines.push(`Details: ${capped}`);
+  return lines.join("\n");
 }
 
 /**

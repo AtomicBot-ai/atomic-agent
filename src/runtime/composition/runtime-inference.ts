@@ -182,8 +182,8 @@ export function createRuntimeModelContext(
   const observedContextWindows = new LearnedContextWindows();
   const activeModelKey = (providerId?: string): string =>
     `${providerId ?? resolveLlmConfig(getConfig()).activeTextProvider}/${resolveActiveModelName(providerId)}`;
-  const observeContextWindow = (contextWindow: number): void => {
-    observedContextWindows.observe(activeModelKey(), contextWindow);
+  const observeContextWindow = (contextWindow: number, providerId?: string): void => {
+    observedContextWindows.observe(activeModelKey(providerId), contextWindow);
   };
   const raiseContextWindowTo = (tokens: number): void => {
     observedContextWindows.raise(activeModelKey(), tokens);

@@ -46,7 +46,7 @@ describe("turn recovery decisions and shared state", () => {
     const second = createTurnLoopState();
     first.truncationRetry = { stepIndex: 1, attempts: 1, original: new Error("cut") };
     first.reason = "cancelled";
-    expect(Object.keys(second)).toHaveLength(18);
+    expect(Object.keys(second)).toHaveLength(19);
     expect(second.truncationRetry).toBeNull();
     expect(second.reason).toBe("max_steps");
     expect(second.lastBoundaryIndex).toBe(-1);
@@ -82,7 +82,7 @@ describe("turn recovery decisions and shared state", () => {
     const events: AgentLoopEvent[] = [];
     const result = recoverTurnStep(error, context({ finalizationStep: true, options: { maxSteps: 4, signal: controller.signal } }), { onEvent: (event) => events.push(event) }, turn);
     expect(result).toEqual({ kind: "failure", cancelled: true, category: "cancelled", runError: error, creditRefused: false });
-    expect(events).toEqual([{ type: "loop_failed", error, category: "cancelled", outage: { waitedMs: 0, attempts: 0 } }]);
+    expect(events).toEqual([{ type: "loop_failed", error, category: "cancelled", outage: { waitedMs: 0, attempts: 0 }, failure: { cause: "cancelled", phrase: "You stopped this turn.", action: "none" } }]);
     expect(turn.stepsTaken).toBe(0);
     expect(turn.parseRecoveries).toBe(0);
     expect(turn.outageAttempts).toBe(0);
@@ -96,7 +96,7 @@ describe("turn recovery decisions and shared state", () => {
     const error = new TransportError("fetch failed", null, "http://127.0.0.1:8080/v1");
     const result = recoverTurnStep(error, context(), { onEvent: (event) => events.push(event) }, turn);
     expect(result).toMatchObject({ kind: "failure", category: "transport" });
-    expect(events).toEqual([{ type: "loop_failed", error, category: "transport", outage: { waitedMs: 12_000, attempts: 3 } }]);
+    expect(events).toEqual([{ type: "loop_failed", error, category: "transport", outage: { waitedMs: 12_000, attempts: 3 }, failure: expect.objectContaining({ cause: "offline", action: "retry" }) }]);
   });
 
   it("does not relabel an unclassified programming error as cancelled", async () => {
@@ -152,6 +152,22 @@ describe("turn recovery decisions and shared state", () => {
     expect(turn.stepsTaken).toBe(0);
     const rejected = recoverTurnStep(providerRefusal(400, "max_tokens is too large: 16384"), context(), {}, turn);
     expect(rejected).toEqual({ kind: "failure", cancelled: false, category: "model", runError: error, creditRefused: false });
+  });
+
+  it("retries a reply the stream cut for looping at the same cap, and says it looped (ATO-331)", async () => {
+    const turn = createTurnLoopState();
+    const events: AgentLoopEvent[] = [];
+    const deps: TurnRecoveryDependencies = { onEvent: (event) => events.push(event) };
+    const looped = new ModelError("truncated", "model kept repeating", {
+      transport: "grammar", stage: "initial",
+      truncation: { cause: "unknown", completionTokens: 0, promptTokens: 0, requestedMaxTokens: 8_192, repetitive: true },
+    });
+    expect(recoverTurnStep(looped, context(), deps, turn)).toEqual({ kind: "retry_same" });
+    expect(turn.truncationRetry?.maxTokens).toBe(8_192);
+    expect(turn.pendingNotice).toContain("repeating the same text");
+    expect(events.filter((event) => event.type === "completion_truncated")).toEqual([
+      expect.objectContaining({ repetitive: true, retry: { kind: "same_cap", maxTokens: 8_192 } }),
+    ]);
   });
 
   it("a cloud step is retried twice under the same cap, then the third cut fails the turn", async () => {

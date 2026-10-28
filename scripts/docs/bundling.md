@@ -129,6 +129,98 @@ on notarised macOS app builds.
 Mach-O binaries are not stapled; Gatekeeper uses an online ticket on
 first launch.
 
+## Linux packages and the repository
+
+The deb and rpm (`npm run linux:packages -- build`, [linux-packages.ts](../linux-packages.ts),
+[nfpm.yaml](../../packaging/nfpm.yaml)) and the AUR PKGBUILD (`pkgbuild`,
+[PKGBUILD.in](../../packaging/PKGBUILD.in)) carry the Linux bundles above
+unchanged: `atomic-agent-linux-<x64|arm64>.tar.gz` is extracted whole under
+`/usr/lib/atomic-agent` (the SEA binary and the asset directories the runtime
+resolves next to it cannot go under `/usr/bin`), and `/usr/bin/atomic-agent`
+and `/usr/bin/atag` are symlinks into it. Node resolves `process.execPath`
+through `/proc/self/exe`, so the runtime finds grammars, starter-skills,
+vendor/rg and node_modules exactly as under `~/.local/bin`. A package also
+leaves `/usr/lib/atomic-agent/install-source` holding `deb`, `rpm` or `aur`:
+[install-source.ts](../../src/update/install-source.ts) reads it, and with the
+binary at that path `atomic-agent update` refuses and names the package
+manager, the TUI makes no update offer, `atomic-agent uninstall` lists data
+only, and the analytics install channel reports the package. `install.sh`
+warns when its copy shadows a package. Each package depends on the newest
+glibc any ELF in the tree requires, read with `readelf` (2.34 today, from
+`better_sqlite3.node`; the SEA binary itself needs 2.28), plus `libstdc++` and
+`libatomic` (the Node binary links `libatomic.so.1`, which minimal Debian and
+Fedora images lack; the first smoke on a draft caught it). The build reads
+every `NEEDED` library of those files and fails on one that
+`DECLARED_LIBRARIES` does not cover, so a new Node or addon dependency has to
+be declared in `nfpm.yaml` and `PKGBUILD.in` before a package is built.
+Packages are named
+`atomic-agent_<version>_<arch>.<deb|rpm>` (an underscore: no `atomic-agent-*`
+glob matches them) and get a `.sha256` each. The pure parts (names, layout,
+upload order) are in [linux-packaging.ts](../linux-packaging.ts) with
+[its tests](../linux-packaging.test.ts).
+
+In [release.yml](../../.github/workflows/release.yml) the `packages` job runs
+after `build` on the uploaded Linux bundles (nfpm pinned by checksum; the rpm
+signed with the packages key, which must be the key in
+[packaging/atomic-chat.asc](../../packaging/atomic-chat.asc), shared with atc /
+eye-cli), the draft release gets the packages next to the bundles, and
+`smoke-packages` installs each one from the draft in clean containers (Debian
+12, Ubuntu 24.04, Fedora, Rocky 9, Arch via the PKGBUILD; Debian 12 and
+Fedora on arm64) the way the README's `<!-- install:apt -->` and
+`<!-- install:dnf -->` blocks say, against a repository of the draft served on
+loopback and signed with a throwaway key
+([smoke-linux-package.sh](../smoke-linux-package.sh)). A red smoke means: do
+not publish the draft. A run by hand with `allow_unsigned` builds without the
+key (never for a tag). A run by hand names its draft after `package.json`;
+when a release of that version is already published the `release` job stops
+before uploading anything, because `gh release upload --clobber` onto a
+published release replaces the binaries people install (it did once, for
+v0.6.11, when the step still ignored a failed `gh release create`).
+
+**The repository** (`npm run linux:repo`, [linux-repo.ts](../linux-repo.ts))
+is the bucket `atomic-agent-packages` on Hetzner Object Storage in
+Falkenstein, served at `https://atomic-agent-packages.fsn1.your-objectstorage.com`
+(its own bucket, apart from atc's; Hetzner terminates HTTPS only on its own
+host). The bucket is private and every object is uploaded `public-read`.
+GitHub Releases are the source of truth: on every published stable release
+[linux-repo.yml](../../.github/workflows/linux-repo.yml) (fired by
+`release: published` when the draft is published on GitHub, or by hand on a
+tag) rebuilds the repository from scratch out of the newest ten stable
+releases that carry packages, each package checked against its `.sha256`,
+signs `InRelease`/`Release.gpg` and `repomd.xml.asc`, publishes the key as
+`atomic-chat.asc` and `atomic-chat.gpg`, mirrors it (packages first, then
+indexes, then what points at them; deletions last; packages cached a year,
+everything else `no-cache`), and installs from the live repository in Debian
+and Fedora. Its `aur` job renders the PKGBUILD from the release's `.sha256`
+digests and pushes `atomic-agent-bin` to the AUR for the latest release only,
+skipping a version the AUR already has. Both steps are idempotent.
+
+**The desktop app** is the repository's second product
+(`PRODUCTS` in [linux-packaging.ts](../linux-packaging.ts)). Its deb and rpm
+(`Atomic-Agent-<version>-<arch>.<deb|rpm>`, package `atomic-agent-desktop`,
+under `/opt/Atomic Agent`, its own copy of the agent inside) are built by
+electron-builder in the desktop workflow on the desktop branches and uploaded
+with `SHA256SUMS.txt` to a `desktop-vX.Y.Z` release by hand. Publishing that
+release runs the same linux-repo.yml: `release` names the product, `fetch`
+keeps a window of ten per product and checks the desktop's packages against
+`SHA256SUMS.txt`, `build` signs any rpm that arrived unsigned with `rpmsign`
+(electron-builder signs none, and the `.repo` file has `gpgcheck=1`),
+`smoke-repo` installs `atomic-agent-desktop` and checks its libraries with
+`ldd` and its bundled agent
+([smoke-linux-desktop-package.sh](../smoke-linux-desktop-package.sh)), and
+`aur` pushes `atomic-agent-desktop-bin` from
+[PKGBUILD-desktop.in](../../packaging/PKGBUILD-desktop.in), which repacks the
+release's deb. The deployment rule of the environment `packages` must admit
+`desktop-v*` tags as well as `v*`.
+
+Secrets: `LINUX_PACKAGES_GPG_KEY` (the armored private key) and
+`LINUX_PACKAGES_GPG_PASSPHRASE` in the repository; in the environment
+`packages` (deployment tags `v*` and `desktop-v*` only) also `PACKAGES_S3_ACCESS_KEY_ID`,
+`PACKAGES_S3_SECRET_ACCESS_KEY` and `AUR_SSH_PRIVATE_KEY` (the AUR account
+that owns `atc-bin`). Key rotation: a new key is published next to the old one
+with `--publish-keys OLD,NEW` for a release, so installed keyrings learn it
+before it signs alone.
+
 ## Install (macOS / Linux, curl)
 
 From a published release (or `latest`):

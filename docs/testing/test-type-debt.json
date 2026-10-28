@@ -40,6 +40,7 @@
     "src/agent/agent-loop-lesson-lifecycle.test.ts",
     "src/agent/agent-loop-link-evidence.test.ts",
     "src/agent/agent-loop-local-gate.test.ts",
+    "src/agent/agent-loop-overflow-compaction.test.ts",
     "src/agent/agent-loop-pause-digest.test.ts",
     "src/agent/agent-loop-profile-clip.test.ts",
     "src/agent/agent-loop-progress-note.test.ts",
@@ -63,6 +64,7 @@
     "src/agent/dispatch/batch-contract.ts",
     "src/agent/dispatch/batch-gates.test.ts",
     "src/agent/dispatch/batch-gates.ts",
+    "src/agent/dispatch/batch-scheduler-file-versions.test.ts",
     "src/agent/dispatch/batch-scheduler.ts",
     "src/agent/empty-completion-recovery.ts",
     "src/agent/fusion-orchestrator-mode.test.ts",
@@ -71,6 +73,7 @@
     "src/agent/history-trim-warning.ts",
     "src/agent/index.ts",
     "src/agent/link-evidence.ts",
+    "src/agent/loop-detector-progress.test.ts",
     "src/agent/loop-detector.test.ts",
     "src/agent/loop-detector.ts",
     "src/agent/native-tool-call-execution-integrity.test.ts",
@@ -98,6 +101,8 @@
     "src/agent/progress/loop-fingerprints.ts",
     "src/agent/progress/loop-notices.test.ts",
     "src/agent/progress/loop-notices.ts",
+    "src/agent/progress/mutation-epochs.test.ts",
+    "src/agent/progress/mutation-epochs.ts",
     "src/agent/progress/read-coverage.test.ts",
     "src/agent/progress/read-coverage.ts",
     "src/agent/progress/test-command-key.test.ts",
@@ -124,13 +129,21 @@
     "src/agent/step/step-batch-policy.ts",
     "src/agent/step/step-commit.ts",
     "src/agent/step/step-contract.ts",
+    "src/agent/step/step-errors.test.ts",
     "src/agent/step/step-errors.ts",
     "src/agent/step/step-evidence.ts",
+    "src/agent/step/step-inference-first-token.test.ts",
     "src/agent/step/step-inference.test.ts",
     "src/agent/step/step-inference.ts",
+    "src/agent/step/step-json-repair.test.ts",
+    "src/agent/step/step-json-repair.ts",
+    "src/agent/step/step-parsing.test.ts",
     "src/agent/step/step-parsing.ts",
     "src/agent/step/step-reasoning.ts",
+    "src/agent/step/turn-progress-opt-in.ts",
     "src/agent/test-command-key.ts",
+    "src/agent/tool-log-fields.test.ts",
+    "src/agent/tool-log-fields.ts",
     "src/agent/tool-name-resolution.test.ts",
     "src/agent/tool-name-resolution.ts",
     "src/agent/tool-resource-class.test.ts",
@@ -139,6 +152,8 @@
     "src/agent/turn/compaction-recovery.ts",
     "src/agent/turn/empty-completion-recovery.test.ts",
     "src/agent/turn/empty-completion-recovery.ts",
+    "src/agent/turn/overflow-compaction.test.ts",
+    "src/agent/turn/overflow-compaction.ts",
     "src/agent/turn/parse-failure-recovery.test.ts",
     "src/agent/turn/parse-failure-recovery.ts",
     "src/agent/turn/pause-digest.test.ts",
@@ -154,6 +169,7 @@
     "src/agent/turn/turn-memory-context.ts",
     "src/agent/turn/turn-preparation.test.ts",
     "src/agent/turn/turn-preparation.ts",
+    "src/agent/turn/turn-recovery-local-engine.test.ts",
     "src/agent/turn/turn-recovery.test.ts",
     "src/agent/turn/turn-recovery.ts",
     "src/agent/turn/turn-state.ts",
@@ -168,6 +184,7 @@
     "src/analytics/analytics-local-engine.test.ts",
     "src/analytics/analytics-state-store.test.ts",
     "src/analytics/analytics-state-store.ts",
+    "src/analytics/analytics-video.test.ts",
     "src/analytics/index.ts",
     "src/analytics/posthog-config.ts",
     "src/analytics/read-analytics-kill-switch.ts",
@@ -193,6 +210,8 @@
     "src/approval/approval-ledger.ts",
     "src/approval/approval-level.test.ts",
     "src/approval/approval-level.ts",
+    "src/approval/approval-preview.test.ts",
+    "src/approval/approval-preview.ts",
     "src/approval/approval-router.test.ts",
     "src/approval/approval-router.ts",
     "src/approval/coding-mode.ts",
@@ -269,6 +288,8 @@
     "src/channels/telegram/outbound-attachments.ts",
     "src/channels/telegram/outbound-sender.test.ts",
     "src/channels/telegram/outbound-sender.ts",
+    "src/channels/telegram/pairing-copy.test.ts",
+    "src/channels/telegram/pairing-copy.ts",
     "src/channels/telegram/pairing-mode.test.ts",
     "src/channels/telegram/pairing-mode.ts",
     "src/channels/telegram/task-report-message.test.ts",
@@ -288,6 +309,7 @@
     "src/channels/telegram/telegram-reconnect.ts",
     "src/channels/telegram/telegram-session-pointer.test.ts",
     "src/channels/telegram/telegram-session-pointer.ts",
+    "src/channels/telegram/telegram-settings.test.ts",
     "src/channels/telegram/telegram-settings.ts",
     "src/channels/telegram/welcome-message.test.ts",
     "src/channels/telegram/welcome-message.ts",
@@ -309,6 +331,8 @@
     "src/cli/index.ts",
     "src/cli/memory-command.test.ts",
     "src/cli/memory-command.ts",
+    "src/cli/models-check.test.ts",
+    "src/cli/models-check.ts",
     "src/cli/models-command.test.ts",
     "src/cli/models-command.ts",
     "src/cli/models-downloads.test.ts",
@@ -324,6 +348,7 @@
     "src/cli/pull-progress.ts",
     "src/cli/run-agent.test.ts",
     "src/cli/run-agent.ts",
+    "src/cli/serve-args.test.ts",
     "src/cli/serve-args.ts",
     "src/cli/serve-command.test.ts",
     "src/cli/serve-command.ts",
@@ -334,8 +359,12 @@
     "src/cli/serve-reaper.test.ts",
     "src/cli/serve-reaper.ts",
     "src/cli/skill-browse.test.ts",
+    "src/cli/skill-install-confirm.test.ts",
+    "src/cli/skill-install-confirm.ts",
     "src/cli/skill.test.ts",
     "src/cli/skill.ts",
+    "src/cli/stdin-line-queue.test.ts",
+    "src/cli/stdin-line-queue.ts",
     "src/cli/task-command.test.ts",
     "src/cli/task-command.ts",
     "src/cli/trace-command.test.ts",
@@ -343,10 +372,13 @@
     "src/cli/trace-file-io.ts",
     "src/cli/trace-formatter.test.ts",
     "src/cli/trace-formatter.ts",
+    "src/cli/uninstall-command-desktop.test.ts",
     "src/cli/uninstall-command.test.ts",
     "src/cli/uninstall-command.ts",
     "src/cli/update-command.test.ts",
     "src/cli/update-command.ts",
+    "src/cli/windows-console-utf8.test.ts",
+    "src/cli/windows-console-utf8.ts",
     "src/composio/build-composio-server-config.test.ts",
     "src/composio/build-composio-server-config.ts",
     "src/composio/composio-api.test.ts",
@@ -373,6 +405,7 @@
     "src/config/agent/agent-types.ts",
     "src/config/agent/compaction-config.ts",
     "src/config/agents-md-defaults.test.ts",
+    "src/config/carry-unknown-config-keys.ts",
     "src/config/channel-config.test.ts",
     "src/config/channel-config.ts",
     "src/config/config-cache.ts",
@@ -384,6 +417,8 @@
     "src/config/config-resource.test.ts",
     "src/config/config-schema.test.ts",
     "src/config/config-schema.ts",
+    "src/config/config-shape.test.ts",
+    "src/config/config-shape.ts",
     "src/config/config-validation-error.ts",
     "src/config/config-values.ts",
     "src/config/custom-models-schema.test.ts",
@@ -454,6 +489,8 @@
     "src/error-reporting/error-scrubber.test.ts",
     "src/error-reporting/error-scrubber.ts",
     "src/error-reporting/index.ts",
+    "src/error-reporting/llm-failure-tags.test.ts",
+    "src/error-reporting/llm-failure-tags.ts",
     "src/error-reporting/sentry-client.test.ts",
     "src/error-reporting/sentry-client.ts",
     "src/error-reporting/sentry-config.test.ts",
@@ -474,6 +511,7 @@
     "src/http/approval-bus.ts",
     "src/http/client-disconnect.test.ts",
     "src/http/completion-registry.ts",
+    "src/http/failure-reason-frame.ts",
     "src/http/http-server.test.ts",
     "src/http/http-server.ts",
     "src/http/index.ts",
@@ -500,9 +538,13 @@
     "src/http/route-context-preview.ts",
     "src/http/route-health.test.ts",
     "src/http/route-health.ts",
+    "src/http/route-local-model-recheck.test.ts",
+    "src/http/route-local-model-recheck.ts",
     "src/http/route-mcp.test.ts",
     "src/http/route-mcp.ts",
     "src/http/route-models.ts",
+    "src/http/route-session-title.test.ts",
+    "src/http/route-session-title.ts",
     "src/http/route-sessions.test.ts",
     "src/http/route-sessions.ts",
     "src/http/route-skills.test.ts",
@@ -510,9 +552,15 @@
     "src/http/route-table.ts",
     "src/http/route-tasks.test.ts",
     "src/http/route-tasks.ts",
+    "src/http/route-telegram-pairing.test.ts",
+    "src/http/route-telegram-pairing.ts",
     "src/http/route-webhooks.test.ts",
     "src/http/route-webhooks.ts",
+    "src/http/secret-equal.test.ts",
+    "src/http/secret-equal.ts",
     "src/http/session-status.test.ts",
+    "src/http/slow-first-token-hint.test.ts",
+    "src/http/slow-first-token-hint.ts",
     "src/http/stream-cancel-frame.test.ts",
     "src/http/stream-failure-frame.test.ts",
     "src/http/stream-fusion-worker-frame.test.ts",
@@ -520,6 +568,8 @@
     "src/http/stream-maintenance-frames.ts",
     "src/http/stream-reply-frame.test.ts",
     "src/http/stream-tool-result-frame.test.ts",
+    "src/http/stream-turn-phase.test.ts",
+    "src/http/stream-turn-phase.ts",
     "src/http/test-harness.ts",
     "src/http/undelivered-steers.test.ts",
     "src/http/undelivered-steers.ts",
@@ -612,6 +662,8 @@
     "src/integrations/composio-integration.ts",
     "src/integrations/discord-integration.test.ts",
     "src/integrations/discord-integration.ts",
+    "src/integrations/exa-integration.test.ts",
+    "src/integrations/exa-integration.ts",
     "src/integrations/github-integration.test.ts",
     "src/integrations/github-integration.ts",
     "src/integrations/index.ts",
@@ -659,17 +711,27 @@
     "src/llm/grammar/build-grammar.ts",
     "src/llm/grammar/gbnf-test-helpers.ts",
     "src/llm/grammar/index.ts",
+    "src/llm/grammar/mcp-server-tool-grammar.test.ts",
     "src/llm/grammar/reasoning-prelude.test.ts",
     "src/llm/grammar/reasoning-prelude.ts",
+    "src/llm/grammar/repair-tool-call-json.test.ts",
+    "src/llm/grammar/repair-tool-call-json.ts",
     "src/llm/grammar/stream-parser.test.ts",
     "src/llm/grammar/stream-parser.ts",
+    "src/llm/grammar/tool-call-branches.test.ts",
+    "src/llm/grammar/tool-call-branches.ts",
     "src/llm/grammar/tool-call-grammar.test.ts",
     "src/llm/grammar/tool-call-grammar.ts",
     "src/llm/index.ts",
+    "src/llm/llama-default-port-note.test.ts",
+    "src/llm/llama-default-port-note.ts",
     "src/llm/llama-endpoint-url.test.ts",
     "src/llm/llama-endpoint-url.ts",
+    "src/llm/llama-prompt-progress.test.ts",
+    "src/llm/llama-prompt-progress.ts",
     "src/llm/llama-server-auth-probe.ts",
     "src/llm/llama-server-client-response-format.test.ts",
+    "src/llm/llama-server-client.prompt-progress.test.ts",
     "src/llm/llama-server-client.test.ts",
     "src/llm/llama-server-client.ts",
     "src/llm/llama-server-client.url.test.ts",
@@ -680,6 +742,7 @@
     "src/llm/local-backend-gate.ts",
     "src/llm/model-mode.test.ts",
     "src/llm/model-mode.ts",
+    "src/llm/model-profile-manager-mcp-race.test.ts",
     "src/llm/model-profile-manager.test.ts",
     "src/llm/model-profile-manager.ts",
     "src/llm/model-profile.fixtures.ts",
@@ -699,6 +762,8 @@
     "src/llm/provider/aimlapi/index.ts",
     "src/llm/provider/catalog-for-provider.test.ts",
     "src/llm/provider/catalog-for-provider.ts",
+    "src/llm/provider/catalog-refresh-result.test.ts",
+    "src/llm/provider/catalog-refresh-result.ts",
     "src/llm/provider/cloud-subcall.test.ts",
     "src/llm/provider/cloud-subcall.ts",
     "src/llm/provider/completion-types.ts",
@@ -742,6 +807,10 @@
     "src/llm/provider/openai/generation-id.ts",
     "src/llm/provider/openai/index.ts",
     "src/llm/provider/openai/json-schema-support.ts",
+    "src/llm/provider/openai/local-bad-request.test.ts",
+    "src/llm/provider/openai/local-bad-request.ts",
+    "src/llm/provider/openai/local-server-url.test.ts",
+    "src/llm/provider/openai/local-server-url.ts",
     "src/llm/provider/openai/merge-tool-name.test.ts",
     "src/llm/provider/openai/model-params.ts",
     "src/llm/provider/openai/normalize-openai-base-url.test.ts",
@@ -770,6 +839,7 @@
     "src/llm/provider/openai/openai-stream-retry.test.ts",
     "src/llm/provider/openai/openai-strict-tools.test.ts",
     "src/llm/provider/openai/openai-strict-tools.ts",
+    "src/llm/provider/openai/openai-tool-call-adapter-repair.test.ts",
     "src/llm/provider/openai/openai-tool-call-adapter.test.ts",
     "src/llm/provider/openai/openai-tool-call-adapter.ts",
     "src/llm/provider/openai/parse-credit-limit.test.ts",
@@ -809,6 +879,8 @@
     "src/llm/provider/provider-key.ts",
     "src/llm/provider/provider-service-name.ts",
     "src/llm/provider/registry/active-text-provider.ts",
+    "src/llm/provider/registry/chat-model-guard.test.ts",
+    "src/llm/provider/registry/chat-model-guard.ts",
     "src/llm/provider/registry/cloud-passthroughs.test.ts",
     "src/llm/provider/registry/index.ts",
     "src/llm/provider/registry/provider-registry.test.ts",
@@ -864,8 +936,12 @@
     "src/llm/provider/verify/verify-types.ts",
     "src/llm/reasoning-budget.test.ts",
     "src/llm/reasoning-budget.ts",
+    "src/llm/recheck-local-connection.test.ts",
+    "src/llm/recheck-local-connection.ts",
     "src/llm/reliability/classify-failure.test.ts",
     "src/llm/reliability/classify-failure.ts",
+    "src/llm/reliability/context-overflow-counts.test.ts",
+    "src/llm/reliability/context-overflow-counts.ts",
     "src/llm/reliability/detect-model-failure.test.ts",
     "src/llm/reliability/detect-model-failure.ts",
     "src/llm/reliability/fabricated-tool-transcript.test.ts",
@@ -874,14 +950,23 @@
     "src/llm/reliability/index.ts",
     "src/llm/reliability/llm-failures.test.ts",
     "src/llm/reliability/llm-failures.ts",
+    "src/llm/reliability/local-engine-down.ts",
+    "src/llm/reliability/local-server-error.test.ts",
+    "src/llm/reliability/local-server-error.ts",
     "src/llm/reliability/network-error.test.ts",
     "src/llm/reliability/network-error.ts",
     "src/llm/reliability/provider-error-verdict.test.ts",
     "src/llm/reliability/provider-error-verdict.ts",
     "src/llm/reliability/provider-wait-cause.test.ts",
     "src/llm/reliability/provider-wait-cause.ts",
+    "src/llm/reliability/repetitive-tail.test.ts",
+    "src/llm/reliability/repetitive-tail.ts",
     "src/llm/reliability/request-size-rejection.test.ts",
     "src/llm/reliability/request-size-rejection.ts",
+    "src/llm/reliability/request-too-large.test.ts",
+    "src/llm/reliability/request-too-large.ts",
+    "src/llm/reliability/stream-repetition-watcher.test.ts",
+    "src/llm/reliability/stream-repetition-watcher.ts",
     "src/llm/resolve-n-predict.test.ts",
     "src/llm/run-mode/index.ts",
     "src/llm/run-mode/local-leg-role.test.ts",
@@ -941,6 +1026,8 @@
     "src/local-llm/catalog/local-gguf.ts",
     "src/local-llm/catalog/models-catalog.test.ts",
     "src/local-llm/catalog/models-catalog.ts",
+    "src/local-llm/catalog/recommended-model.test.ts",
+    "src/local-llm/catalog/recommended-model.ts",
     "src/local-llm/chat-templates.test.ts",
     "src/local-llm/chat-templates.ts",
     "src/local-llm/core/core-backend-env.test.ts",
@@ -961,11 +1048,14 @@
     "src/local-llm/core/core-install-retry.test.ts",
     "src/local-llm/core/core-install.ts",
     "src/local-llm/core/core-operation.ts",
+    "src/local-llm/core/core-retire-sessions.ts",
     "src/local-llm/core/core-sessions.test.ts",
     "src/local-llm/core/core-sessions.ts",
     "src/local-llm/core/core-state.ts",
     "src/local-llm/core/core-switch-back.test.ts",
     "src/local-llm/core/core-versions.test.ts",
+    "src/local-llm/core/core-video.test.ts",
+    "src/local-llm/core/core-video.ts",
     "src/local-llm/downloads/download-attempt.test.ts",
     "src/local-llm/downloads/download-attempt.ts",
     "src/local-llm/downloads/download-errors.test.ts",
@@ -1001,9 +1091,16 @@
     "src/local-llm/server/context-size.ts",
     "src/local-llm/server/daemon-launch-guard.test.ts",
     "src/local-llm/server/daemon-launch-guard.ts",
+    "src/local-llm/server/daemon-lifecycle-core-status.test.ts",
     "src/local-llm/server/daemon-lifecycle-core.test.ts",
+    "src/local-llm/server/daemon-lifecycle-low-memory.test.ts",
+    "src/local-llm/server/daemon-lifecycle-pid-state.test.ts",
     "src/local-llm/server/daemon-lifecycle.test.ts",
     "src/local-llm/server/daemon-lifecycle.ts",
+    "src/local-llm/server/embedding-memory-gate.test.ts",
+    "src/local-llm/server/embedding-memory-gate.ts",
+    "src/local-llm/server/engine-liveness.test.ts",
+    "src/local-llm/server/engine-liveness.ts",
     "src/local-llm/server/log-tail.test.ts",
     "src/local-llm/server/log-tail.ts",
     "src/local-llm/server/managed-api-key.test.ts",
@@ -1021,6 +1118,7 @@
     "src/local-llm/server/worker-slots.test.ts",
     "src/local-llm/server/worker-slots.ts",
     "src/mcp/index.ts",
+    "src/mcp/mcp-client-env.test.ts",
     "src/mcp/mcp-client-stderr.test.ts",
     "src/mcp/mcp-client.ts",
     "src/mcp/mcp-descriptor-builder.test.ts",
@@ -1042,8 +1140,12 @@
     "src/mcp/mcp-sampling-handler.ts",
     "src/mcp/mcp-stderr-tail.test.ts",
     "src/mcp/mcp-stderr-tail.ts",
+    "src/mcp/mcp-stdio-env.test.ts",
+    "src/mcp/mcp-stdio-env.ts",
     "src/mcp/mcp-tool-adapter.test.ts",
     "src/mcp/mcp-tool-adapter.ts",
+    "src/mcp/mcp-tool-filter.test.ts",
+    "src/mcp/mcp-tool-filter.ts",
     "src/mcp/mcp-types.ts",
     "src/memory/consolidator/clustering.test.ts",
     "src/memory/consolidator/clustering.ts",
@@ -1260,8 +1362,14 @@
     "src/runtime/compaction-extractive.test.ts",
     "src/runtime/compaction-extractive.ts",
     "src/runtime/compaction-mode.ts",
+    "src/runtime/compaction-open-request.test.ts",
+    "src/runtime/compaction-open-request.ts",
+    "src/runtime/compaction-reply-budget.test.ts",
+    "src/runtime/compaction-reply-budget.ts",
     "src/runtime/compaction-rolling.test.ts",
     "src/runtime/compaction-rolling.ts",
+    "src/runtime/composition/llm-failure-context.test.ts",
+    "src/runtime/composition/llm-failure-context.ts",
     "src/runtime/composition/runtime-channels.test.ts",
     "src/runtime/composition/runtime-channels.ts",
     "src/runtime/composition/runtime-inference.test.ts",
@@ -1270,6 +1378,8 @@
     "src/runtime/composition/runtime-lifecycle.ts",
     "src/runtime/composition/runtime-local-profile.test.ts",
     "src/runtime/composition/runtime-local-profile.ts",
+    "src/runtime/composition/runtime-memory-embedding-switch.test.ts",
+    "src/runtime/composition/runtime-memory-embedding-switch.ts",
     "src/runtime/composition/runtime-memory-services.test.ts",
     "src/runtime/composition/runtime-memory-services.ts",
     "src/runtime/composition/runtime-memory-stores.test.ts",
@@ -1293,6 +1403,7 @@
     "src/runtime/composition/runtime-turn-service.ts",
     "src/runtime/context-compaction-chunks.ts",
     "src/runtime/context-compaction-extractive.test.ts",
+    "src/runtime/context-compaction-model.test.ts",
     "src/runtime/context-compaction-model.ts",
     "src/runtime/context-compaction-rolling.test.ts",
     "src/runtime/context-compaction-runner.ts",
@@ -1314,11 +1425,15 @@
     "src/runtime/llm-fallback-seam.ts",
     "src/runtime/llm-link-attempt.test.ts",
     "src/runtime/llm-link-attempt.ts",
+    "src/runtime/local-engine-state.test.ts",
+    "src/runtime/local-engine-state.ts",
     "src/runtime/local-link-availability.test.ts",
     "src/runtime/local-link-availability.ts",
     "src/runtime/local-probe-gating.test.ts",
     "src/runtime/project-instructions.test.ts",
     "src/runtime/project-instructions.ts",
+    "src/runtime/prompt-enhancer.test.ts",
+    "src/runtime/prompt-enhancer.ts",
     "src/runtime/recorder-eviction.test.ts",
     "src/runtime/resolve-model-pricing.test.ts",
     "src/runtime/resolve-model-pricing.ts",
@@ -1343,6 +1458,8 @@
     "src/runtime/vision-route.ts",
     "src/sandbox/capped-output.test.ts",
     "src/sandbox/capped-output.ts",
+    "src/sandbox/command-env.test.ts",
+    "src/sandbox/command-env.ts",
     "src/sandbox/command-job.test.ts",
     "src/sandbox/command-job.ts",
     "src/sandbox/command-runner-kill.test.ts",
@@ -1371,6 +1488,7 @@
     "src/session/macro-turn-starts.ts",
     "src/session/normalize-session-state.ts",
     "src/session/session-compaction-rolling.test.ts",
+    "src/session/session-compaction.test.ts",
     "src/session/session-compaction.ts",
     "src/session/session-exit-status.test.ts",
     "src/session/session-llm.test.ts",
@@ -1389,6 +1507,8 @@
     "src/session/session-store.turns.test.ts",
     "src/session/session-summary-page.ts",
     "src/session/session-summary.ts",
+    "src/session/session-title-user.test.ts",
+    "src/session/session-title-user.ts",
     "src/session/session-title.test.ts",
     "src/session/session-title.ts",
     "src/session/turn-owner.test.ts",
@@ -1422,6 +1542,8 @@
     "src/skills/hub/index.ts",
     "src/skills/hub/install-from-hub.test.ts",
     "src/skills/hub/install-from-hub.ts",
+    "src/skills/hub/scan-skill-dir.test.ts",
+    "src/skills/hub/scan-skill-dir.ts",
     "src/skills/hub/skill-hub-catalog.test.ts",
     "src/skills/hub/skill-hub-catalog.ts",
     "src/skills/hub/skill-hub-source.test.ts",
@@ -1429,6 +1551,8 @@
     "src/skills/hub/skill-security-scanner.test.ts",
     "src/skills/hub/skill-security-scanner.ts",
     "src/skills/index.ts",
+    "src/skills/install-local-skill.test.ts",
+    "src/skills/install-local-skill.ts",
     "src/skills/seed-starter-skills.test.ts",
     "src/skills/seed-starter-skills.ts",
     "src/skills/skill-catalog.test.ts",
@@ -1461,6 +1585,7 @@
     "src/tasks/task-store.ts",
     "src/tasks/task-types.ts",
     "src/test-setup.ts",
+    "src/tools/argument-aliases.ts",
     "src/tools/argument-error-hint.test.ts",
     "src/tools/argument-error-hint.ts",
     "src/tools/browser/aria-compressor.test.ts",
@@ -1585,6 +1710,8 @@
     "src/tools/os/fs/fs-diff.ts",
     "src/tools/os/fs/fs-edit-contract.ts",
     "src/tools/os/fs/fs-edit-diff.ts",
+    "src/tools/os/fs/fs-edit-match.test.ts",
+    "src/tools/os/fs/fs-edit-match.ts",
     "src/tools/os/fs/fs-edit.test.ts",
     "src/tools/os/fs/fs-edit.ts",
     "src/tools/os/fs/fs-glob-budget.test.ts",
@@ -1615,6 +1742,8 @@
     "src/tools/os/fs/fs-locate-project-test-helpers.ts",
     "src/tools/os/fs/fs-locate-project.test.ts",
     "src/tools/os/fs/fs-locate-project.ts",
+    "src/tools/os/fs/fs-move-aliases.test.ts",
+    "src/tools/os/fs/fs-move-aliases.ts",
     "src/tools/os/fs/fs-move-contract.ts",
     "src/tools/os/fs/fs-move-plan.test.ts",
     "src/tools/os/fs/fs-move-plan.ts",
@@ -1633,6 +1762,8 @@
     "src/tools/os/fs/fs-read-contracts.test.ts",
     "src/tools/os/fs/fs-read-coverage.test.ts",
     "src/tools/os/fs/fs-read-coverage.ts",
+    "src/tools/os/fs/fs-read-freshness.test.ts",
+    "src/tools/os/fs/fs-read-freshness.ts",
     "src/tools/os/fs/fs-read-not-a-file.test.ts",
     "src/tools/os/fs/fs-read-not-a-file.ts",
     "src/tools/os/fs/fs-read.ts",
@@ -1687,6 +1818,7 @@
     "src/tools/os/git/git-remote-sync.test.ts",
     "src/tools/os/git/git-remote.ts",
     "src/tools/os/git/git-repo-probe.ts",
+    "src/tools/os/git/git-runner-env.test.ts",
     "src/tools/os/git/git-runner.test.ts",
     "src/tools/os/git/git-runner.ts",
     "src/tools/os/git/git-show.test.ts",
@@ -1746,8 +1878,10 @@
     "src/tools/os/shell/node-check-notice.test.ts",
     "src/tools/os/shell/node-check-notice.ts",
     "src/tools/os/shell/shell-detach.test.ts",
+    "src/tools/os/shell/shell-env.test.ts",
     "src/tools/os/shell/shell-interpretation.test.ts",
     "src/tools/os/shell/shell-interpretation.ts",
+    "src/tools/os/shell/shell-job-calls.test.ts",
     "src/tools/os/shell/shell-job-calls.ts",
     "src/tools/os/shell/shell-jobs.test.ts",
     "src/tools/os/shell/shell-jobs.ts",
@@ -1768,6 +1902,7 @@
     "src/tools/os/web-search/providers/exa-provider.ts",
     "src/tools/os/web-search/providers/index.ts",
     "src/tools/os/web-search/providers/provider-registry.ts",
+    "src/tools/os/web-search/providers/search-failure-report.ts",
     "src/tools/os/web-search/providers/search-orchestrator.test.ts",
     "src/tools/os/web-search/providers/search-orchestrator.ts",
     "src/tools/os/web-search/providers/searxng-provider.test.ts",
@@ -1836,6 +1971,8 @@
     "src/tools/tasks/tasks-show.test.ts",
     "src/tools/tasks/tasks-show.ts",
     "src/tools/tool-contract-conformance.test.ts",
+    "src/tools/tool-output-spill.test.ts",
+    "src/tools/tool-output-spill.ts",
     "src/tools/tool-registry.ts",
     "src/tools/tool-roles.test.ts",
     "src/tools/tool-roles.ts",
@@ -1844,10 +1981,14 @@
     "src/tools/tool-view/tool-view.ts",
     "src/tools/unknown-argument-guard.test.ts",
     "src/tools/unknown-argument-guard.ts",
+    "src/tools/untrusted-tool-output.test.ts",
+    "src/tools/untrusted-tool-output.ts",
     "src/tools/verify/check-css-syntax.test.ts",
     "src/tools/verify/check-css-syntax.ts",
     "src/tools/verify/check-html-syntax.test.ts",
     "src/tools/verify/check-html-syntax.ts",
+    "src/tools/verify/check-language-syntax.test.ts",
+    "src/tools/verify/check-language-syntax.ts",
     "src/tools/verify/check-script-syntax.test.ts",
     "src/tools/verify/check-script-syntax.ts",
     "src/tools/verify/check-typescript-syntax.test.ts",
@@ -1861,6 +2002,8 @@
     "src/tools/verify/run-verify.ts",
     "src/tools/verify/spawn-verify-process.ts",
     "src/tools/verify/syntax-check-types.ts",
+    "src/tools/verify/terminal-app-hint.test.ts",
+    "src/tools/verify/terminal-app-hint.ts",
     "src/tools/verify/verify-checks.test.ts",
     "src/tools/verify/verify-checks.ts",
     "src/tools/verify/verify-isolation.test.ts",
@@ -1872,6 +2015,11 @@
     "src/tools/verify/verify-syntax.ts",
     "src/tools/verify/verify-workspace-copy.test.ts",
     "src/tools/verify/verify-workspace-copy.ts",
+    "src/tools/video/args.ts",
+    "src/tools/video/fit-model.ts",
+    "src/tools/video/generate.test.ts",
+    "src/tools/video/generate.ts",
+    "src/tools/video/index.ts",
     "src/tools/vision/describe.test.ts",
     "src/tools/vision/describe.ts",
     "src/tools/vision/index.ts",
@@ -1904,6 +2052,7 @@
     "src/tui/approval-live-composer.test.tsx",
     "src/tui/approval-modal.test.tsx",
     "src/tui/approval-modal.tsx",
+    "src/tui/approval-preview-pages.ts",
     "src/tui/backdrop-dismissal.test.ts",
     "src/tui/backdrop-dismissal.ts",
     "src/tui/build-terminal-launch.test.ts",
@@ -1911,6 +2060,7 @@
     "src/tui/chat-loop-reducer.test.ts",
     "src/tui/chat-orchestrator-composer.test.ts",
     "src/tui/chat-orchestrator-daemon-restart.test.ts",
+    "src/tui/chat-orchestrator-enhance.test.ts",
     "src/tui/chat-orchestrator-rail-refresh.test.ts",
     "src/tui/chat-orchestrator-steering.test.ts",
     "src/tui/chat-orchestrator-switch.test.ts",
@@ -1945,6 +2095,8 @@
     "src/tui/chat/system-bubble.tsx",
     "src/tui/chat/thinking-indicator.test.tsx",
     "src/tui/chat/thinking-indicator.tsx",
+    "src/tui/chat/tool-card-path-chip.test.tsx",
+    "src/tui/chat/tool-card-path-chip.tsx",
     "src/tui/chat/tool-card.tsx",
     "src/tui/chat/tool-cards-annotation-line.test.tsx",
     "src/tui/chat/tool-cards-annotation.test.ts",
@@ -2162,6 +2314,7 @@
     "src/tui/integrations/integrations-key-bindings.ts",
     "src/tui/integrations/integrations-orchestrator-atomic-mail.test.ts",
     "src/tui/integrations/integrations-orchestrator-atomic-mail.ts",
+    "src/tui/integrations/integrations-orchestrator-exa.test.ts",
     "src/tui/integrations/integrations-orchestrator-github.test.ts",
     "src/tui/integrations/integrations-orchestrator-github.ts",
     "src/tui/integrations/integrations-orchestrator.test.ts",
@@ -2241,6 +2394,8 @@
     "src/tui/local-models/daemon-supervisor.ts",
     "src/tui/local-models/daemon-wedge-watch.test.ts",
     "src/tui/local-models/daemon-wedge-watch.ts",
+    "src/tui/local-models/describe-memory-embedding-reconnect.test.ts",
+    "src/tui/local-models/describe-memory-embedding-reconnect.ts",
     "src/tui/local-models/describe-pull-waiting.test.ts",
     "src/tui/local-models/describe-pull-waiting.ts",
     "src/tui/local-models/download-chip.test.tsx",
@@ -2260,8 +2415,10 @@
     "src/tui/local-models/local-models-key-bindings.ts",
     "src/tui/local-models/local-models-notify-keys.ts",
     "src/tui/local-models/local-models-notify-prompt.test.ts",
+    "src/tui/local-models/local-models-orchestrator-auth-mismatch.test.ts",
     "src/tui/local-models/local-models-orchestrator-auto-restart.test.ts",
     "src/tui/local-models/local-models-orchestrator-auto-update.test.ts",
+    "src/tui/local-models/local-models-orchestrator-cloud-stop.test.ts",
     "src/tui/local-models/local-models-orchestrator-core-failure.test.ts",
     "src/tui/local-models/local-models-orchestrator-cpu-fallback.test.ts",
     "src/tui/local-models/local-models-orchestrator-downloads.test.ts",
@@ -2275,6 +2432,7 @@
     "src/tui/local-models/local-models-orchestrator.ts",
     "src/tui/local-models/local-models-panel-state.test.ts",
     "src/tui/local-models/local-models-panel-state.ts",
+    "src/tui/local-models/local-models-panel.test.tsx",
     "src/tui/local-models/local-models-panel.tsx",
     "src/tui/local-models/local-models-port-clearance.test.ts",
     "src/tui/local-models/local-models-port-clearance.ts",
@@ -2527,6 +2685,8 @@
     "src/tui/reducer-helpers.ts",
     "src/tui/render/chat-line-builder.test.tsx",
     "src/tui/render/chat-line-builder.ts",
+    "src/tui/render/close-streaming-markdown.test.ts",
+    "src/tui/render/close-streaming-markdown.ts",
     "src/tui/render/linkify-text.test.tsx",
     "src/tui/render/linkify-text.tsx",
     "src/tui/render/markdown-inline.tsx",
@@ -2706,8 +2866,14 @@
     "src/tui/update/update-modal.tsx",
     "src/tui/update/update-restart-prompt.tsx",
     "src/types/word-extractor.d.ts",
+    "src/uninstall/desktop-data-policy.test.ts",
+    "src/uninstall/desktop-data-policy.ts",
+    "src/uninstall/desktop-notices.ts",
+    "src/uninstall/detect-desktop-sharing.test.ts",
+    "src/uninstall/detect-desktop-sharing.ts",
     "src/uninstall/index.ts",
     "src/uninstall/measure-uninstall-plan.ts",
+    "src/uninstall/resolve-uninstall-plan.test.ts",
     "src/uninstall/resolve-uninstall-plan.ts",
     "src/uninstall/run-uninstall.test.ts",
     "src/uninstall/run-uninstall.ts",
@@ -2724,7 +2890,7 @@
     "src/update/run-app-update.ts",
     "src/version.ts"
   ],
-  "testTsx": 110,
+  "testTsx": 112,
   "diagnostics": [
     {
       "path": "src/agent/agent-loop-fusion-seams.test.ts",
@@ -2771,7 +2937,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveReflect",
-      "line": 4488,
+      "line": 4718,
       "count": 1
     },
     {
@@ -2779,7 +2945,7 @@
       "code": 2558,
       "message": "Expected 0-1 type arguments, but got 2.",
       "anchor": "[], Promise<Record<string, unknown>>",
-      "line": 4240,
+      "line": 4470,
       "count": 2
     },
     {
@@ -2787,7 +2953,7 @@
       "code": 6133,
       "message": "'loop' is declared but its value is never read.",
       "anchor": "loop",
-      "line": 2204,
+      "line": 2434,
       "count": 1
     },
     {
@@ -2795,7 +2961,7 @@
       "code": 2322,
       "message": "Type '() => { delegations: number; }' is not assignable to type '() => FusionOrchestratorState'.   Property 'barrenDelegations' is missing in type '{ delegations: number; }' but required in type 'FusionOrchestratorState'.",
       "anchor": "fusionState",
-      "line": 1611,
+      "line": 1635,
       "count": 4
     },
     {
@@ -2867,7 +3033,7 @@
       "code": 18048,
       "message": "'params.messages' is possibly 'undefined'.",
       "anchor": "params.messages",
-      "line": 5397,
+      "line": 5469,
       "count": 1
     },
     {
@@ -2875,7 +3041,7 @@
       "code": 2345,
       "message": "Argument of type '{ approvalPosture?: StepApprovalPostureSource | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<...>; grammar: string; profile: PlainModelProfile; onEvent: (event: StepEvent) => number; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ approvalPosture?: StepApprovalPostureSource | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<...>; grammar: string; profile: PlainModelProfile; onEvent: (event: StepEvent) => number; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: orderLoggingRegistry(log), slotManager: new SlotManager(2), llmComplete: async () => mockCompletion(body), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (event) => events.push(event), ...(approvalPosture ? { approvalPosture } : {}), }",
-      "line": 1754,
+      "line": 1826,
       "count": 1
     },
     {
@@ -2883,7 +3049,7 @@
       "code": 2345,
       "message": "Argument of type '{ logger?: StructuredLogger | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ logger?: StructuredLogger | undefined; registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: QWEN_THINK_PROFILE, ...(logger ? { logger } : {}), }",
-      "line": 3155,
+      "line": 3227,
       "count": 1
     },
     {
@@ -2891,7 +3057,7 @@
       "code": 2345,
       "message": "Argument of type '{ logger?: StructuredLogger | undefined; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 4 more ...; registry: ToolRegistry; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ logger?: StructuredLogger | undefined; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 4 more ...; registry: ToolRegistry; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...(options.linkEvidence === false ? {} : { linkEvidence: { noticed: () => noticed, markNoticed: () => { noticed = true; marks += 1; }, }, }), ...(options.claimEvidence === true ? { claimEvidence: { noticed: () => claimMarks > 0, markNoticed: () => { claimMarks += 1; }, }, } : {}), slotManager: new SlotManager(2), llmComplete: async () => ({ content: JSON.stringify([{ tool: \"reply\", args: { text: replyText } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, ...(options.logger ? { logger: options.logger } : {}), }",
-      "line": 5864,
+      "line": 5936,
       "count": 1
     },
     {
@@ -2899,7 +3065,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: boolean; truncated: boolean; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: boolean; truncated: boolean; timing: { ...; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "deps",
-      "line": 3044,
+      "line": 3116,
       "count": 2
     },
     {
@@ -2907,7 +3073,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if ( ev.type === \"tool_call_parsed\" || ev.type === \"tool_call_executed\" ) { events.push({ type: ev.type, batchIndex: ev.batchIndex, batchSize: ev.batchSize, }); } }, }",
-      "line": 1331,
+      "line": 1403,
       "count": 1
     },
     {
@@ -2915,7 +3081,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if (ev.type === \"batch_trimmed\" || ev.type === \"parse_retry\") { events.push({ type: ev.type, ...(ev.type === \"batch_trimmed\" ? { kept: ev.kept, reason: ev.reason } : { reason: ev.reason }), }); } }, }",
-      "line": 1211,
+      "line": 1283,
       "count": 1
     },
     {
@@ -2923,7 +3089,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: completionBody, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 118,
+      "line": 119,
       "count": 2
     },
     {
@@ -2931,7 +3097,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => ({ content: JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 6062,
+      "line": 6134,
       "count": 1
     },
     {
@@ -2939,7 +3105,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { const content = bodies[calls] ?? \"\"; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: content.length, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 3875,
+      "line": 3947,
       "count": 1
     },
     {
@@ -2947,7 +3113,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; gra...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { llmCalls += 1; return { content: llmCalls > 1 && opts?.repairBody ? opts.repairBody : body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => { if ( ev.type === \"batch_wave_split\" || ev.type === \"parse_retry\" || ev.type === \"batch_trimmed\" ) { events.push(ev as { type: string; [k: string]: unknown }); } }, }",
-      "line": 1520,
+      "line": 1592,
       "count": 1
     },
     {
@@ -2955,7 +3121,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ readonly content: string; readonly reasoningContent: string; readonly stop: true; ... 4 more ...; readonly modelId: \"mock\"; }>; llmCompleteStream: () => AsyncGenerator<...>; grammar: string; profile: TaggedReasoningModelProfile; onCompl...' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<{ readonly content: string; readonly reasoningContent: string; readonly stop: true; ... 4 more ...; readonly modelId: \"mock\"; }>; llmCompleteStream: () => AsyncGenerator<...>; grammar: string; profile: TaggedReasoningModelProfile; onCompl...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => finalCompletion, llmCompleteStream: async function* () { for (const chunk of args.chunks) yield chunk; return finalCompletion; }, grammar, profile: QWEN_THINK_PROFILE, onCompletion: (c) => { captured = c; }, }",
-      "line": 2832,
+      "line": 2904,
       "count": 1
     },
     {
@@ -2963,7 +3129,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { throw thrown; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 3816,
+      "line": 3888,
       "count": 1
     },
     {
@@ -2971,7 +3137,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; llmCompleteStream: () => AsyncGenerator<{ delta: string; reasoningDelta: string; done: false; }, { ...; }, void>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: () => Promise<never>; llmCompleteStream: () => AsyncGenerator<{ delta: string; reasoningDelta: string; done: false; }, { ...; }, void>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async () => { throw new Error(\"unary path not taken\"); }, llmCompleteStream: async function* () { try { yield { delta: \"one\", reasoningDelta: \"\", done: false }; yield { delta: \"two\", reasoningDelta: \"\", done: false }; return { content: \"onetwo\", reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; } finally { released = true; } }, grammar, profile: QWEN_THINK_PROFILE, onEvent: (event) => { if (event.type === \"reasoning_delta\") { threw = true; throw boom; } }, }",
-      "line": 2938,
+      "line": 3010,
       "count": 1
     },
     {
@@ -2979,7 +3145,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async ({ prompt }) => { prompts.push(prompt); const content = bodies[calls] ?? bodies[bodies.length - 1]!; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 1036,
+      "line": 1083,
       "count": 1
     },
     {
@@ -2987,7 +3153,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt, maxTokens }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: ({ prompt, maxTokens }: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async ({ prompt, maxTokens }) => { prompts.push(prompt); maxTokensSeen.push(maxTokens); const content = bodies[calls] ?? bodies[bodies.length - 1]!; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: QWEN_THINK_PROFILE, }",
-      "line": 1110,
+      "line": 1172,
       "count": 1
     },
     {
@@ -2995,7 +3161,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "deps",
-      "line": 6358,
+      "line": 6430,
       "count": 3
     },
     {
@@ -3003,7 +3169,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: true; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: true; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "{ registry, slotManager, llmComplete: async (params: { slotId: number }) => { slots.push(params.slotId); return mockCompletion(replyBody, { slotId: 1 }); }, grammar, profile: PLAIN_INSTRUCT_PROFILE, supportsSlotAffinity: true, onEvent: (event: StepEvent) => { if (event.type === \"prompt_captured\") cacheReused.push(event.cacheReused); }, }",
-      "line": 6419,
+      "line": 6491,
       "count": 1
     },
     {
@@ -3011,7 +3177,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean; }) => Promise<...>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: false; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean | undefined; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: false; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "{ registry, slotManager, llmComplete: async (params: { slotId: number; cachePrompt?: boolean; }) => { seen.push({ slotId: params.slotId, cachePrompt: params.cachePrompt }); return mockCompletion(replyBody, { slotId: 5 }); }, grammar, profile: PLAIN_INSTRUCT_PROFILE, supportsSlotAffinity: false, }",
-      "line": 6457,
+      "line": 6529,
       "count": 1
     },
     {
@@ -3019,7 +3185,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: { slotId: number; cachePrompt?: boolean | undefined; }) => Promise<CompletionResult>; grammar: string; profile: PlainModelProfile; supportsSlotAffinity: boolean; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter",
       "anchor": "deps",
-      "line": 6311,
+      "line": 6383,
       "count": 2
     },
     {
@@ -3027,7 +3193,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push({ ...(params.reasoningEffort === undefined ? {} : { reasoningEffort: params.reasoningEffort }), ...(params.maxOutputTokens === undefined ? {} : { maxOutputTokens: params.maxOutputTokens }), ...(params.maxTokens === undefined ? {} : { maxTokens: params.maxTokens }), }); return { content: JSON.stringify([ { tool: \"reply\", args: { text: \"ok\" } }, ]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 6122,
+      "line": 6194,
       "count": 1
     },
     {
@@ -3035,7 +3201,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); calls += 1; return { content: calls === 1 ? \"not json at all\" : JSON.stringify([{ tool: \"reply\", args: { text: \"ok\" } }]), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 1, predictedTokens: 1, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 5090,
+      "line": 5162,
       "count": 1
     },
     {
@@ -3043,7 +3209,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; reasoningContent: string; ... 5 more ...; modelId: string; }>; grammar: string; profile: TaggedReasoningModelProfile; onEvent: (event: StepEvent) => void; }' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: makeRegistry(), slotManager: new SlotManager(2), llmComplete: async (params) => { seen.push(params); const content = bodies[calls] ?? bodies[bodies.length - 1]!; calls += 1; return { content, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile: QWEN_THINK_PROFILE, onEvent: (event) => { events.push(event); }, }",
-      "line": 6530,
+      "line": 6602,
       "count": 1
     },
     {
@@ -3051,7 +3217,7 @@
       "code": 2345,
       "message": "Argument of type '{ registry: ToolRegistry; slotManager: SlotManager; toolTransport: \"grammar\"; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; ... 6 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile | TaggedReasoningModelProfile; }' is not assignable to parameter of type 'StepDependencies'.   Type '{ registry: ToolRegistry; slotManager: SlotManager; toolTransport: \"grammar\"; llmComplete: (params: LlmStreamParams) => Promise<{ content: string; ... 6 more ...; modelId: string; }>; grammar: string; profile: PlainModelProfile | TaggedReasoningModelProfile; }' is missing the following properties from type 'StepDependencies': toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry: registryWithReply(), slotManager: new SlotManager(2), toolTransport: \"grammar\", llmComplete: async (params) => { seen.push(params as unknown as Record<string, unknown>); return { content: JSON.stringify({ tool: \"reply\", args: { text: \"hi\" } }), reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }; }, grammar, profile, }",
-      "line": 6205,
+      "line": 6277,
       "count": 1
     },
     {
@@ -3059,7 +3225,7 @@
       "code": 2345,
       "message": "Argument of type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 6 more ...; registry: T...' is not assignable to parameter of type 'StepDependencies'.   Type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; ... 6 more ...; registry: T...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...policy, ...(policy.isFusionOrchestrator ? { fusionState: () => ({ delegations: 0 }) } : {}), slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, onEvent: (ev) => events.push(ev), }",
-      "line": 5483,
+      "line": 5555,
       "count": 1
     },
     {
@@ -3067,7 +3233,7 @@
       "code": 2345,
       "message": "Argument of type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: P...' is not assignable to parameter of type 'StepDependencies'.   Type '{ slotManager: SlotManager; llmComplete: () => Promise<{ content: string; reasoningContent: string; stop: true; truncated: false; timing: { promptMs: number; predictedMs: number; promptTokens: number; predictedTokens: number; }; cacheHitTokens: number; slotId: number; modelId: string; }>; grammar: string; profile: P...' is missing the following properties from type 'StepDependencies': toolTransport, toolCallAdapter, supportsSlotAffinity",
       "anchor": "{ registry, ...(options.claimEvidence === false ? {} : { claimEvidence: { noticed: () => noticed, markNoticed: () => { noticed = true; marks += 1; }, }, }), slotManager: new SlotManager(2), llmComplete: async () => ({ content: body, reasoningContent: \"\", stop: true, truncated: false, timing: { promptMs: 1, predictedMs: 1, promptTokens: 20, predictedTokens: 5, }, cacheHitTokens: 0, slotId: 0, modelId: \"mock\", }), grammar, profile: PLAIN_INSTRUCT_PROFILE, }",
-      "line": 5693,
+      "line": 5765,
       "count": 1
     },
     {
@@ -3075,7 +3241,7 @@
       "code": 2345,
       "message": "Argument of type '{ tool: string; args: Record<string, unknown>; }' is not assignable to parameter of type '{ tool: string; args: { path: string; content: string; }; }'.   Types of property 'args' are incompatible.     Type 'Record<string, unknown>' is missing the following properties from type '{ path: string; content: string; }': path, content",
       "anchor": "...reads(13)",
-      "line": 1639,
+      "line": 1711,
       "count": 1
     },
     {
@@ -3091,7 +3257,7 @@
       "code": 2532,
       "message": "Object is possibly 'undefined'.",
       "anchor": "client.capture.mock.calls[0]",
-      "line": 186,
+      "line": 217,
       "count": 4
     },
     {
@@ -3195,7 +3361,7 @@
       "code": 2322,
       "message": "Type '(u: InboundCallbackUpdate) => void | Promise<void>' is not assignable to type '(u: unknown) => void | Promise<void>'.   Types of parameters 'u' and 'u' are incompatible.     Type 'unknown' is not assignable to type 'InboundCallbackUpdate'.",
       "anchor": "state.callbackHandler",
-      "line": 119,
+      "line": 120,
       "count": 1
     },
     {
@@ -3203,7 +3369,7 @@
       "code": 2322,
       "message": "Type '(u: InboundFileUpdate) => void | Promise<void>' is not assignable to type '(u: unknown) => void | Promise<void>'.   Types of parameters 'u' and 'u' are incompatible.     Type 'unknown' is not assignable to type 'InboundFileUpdate'.",
       "anchor": "state.fileHandler",
-      "line": 122,
+      "line": 123,
       "count": 1
     },
     {
@@ -3211,7 +3377,7 @@
       "code": 2322,
       "message": "Type '(u: InboundTextUpdate) => void | Promise<void>' is not assignable to type '(u: unknown) => void | Promise<void>'.   Types of parameters 'u' and 'u' are incompatible.     Type 'unknown' is not assignable to type 'InboundTextUpdate'.",
       "anchor": "state.textHandler",
-      "line": 116,
+      "line": 117,
       "count": 1
     },
     {
@@ -3219,7 +3385,7 @@
       "code": 2493,
       "message": "Tuple type '[]' of length '0' has no element at index '0'.",
       "anchor": "0",
-      "line": 1462,
+      "line": 1587,
       "count": 1
     },
     {
@@ -3227,7 +3393,7 @@
       "code": 2532,
       "message": "Object is possibly 'undefined'.",
       "anchor": "welcomes[0]",
-      "line": 949,
+      "line": 961,
       "count": 1
     },
     {
@@ -3243,7 +3409,7 @@
       "code": 2322,
       "message": "Type 'string | undefined' is not assignable to type 'string'.   Type 'undefined' is not assignable to type 'string'.",
       "anchor": "match![1]",
-      "line": 429,
+      "line": 509,
       "count": 2
     },
     {
@@ -3251,7 +3417,7 @@
       "code": 2322,
       "message": "Type 'string | undefined' is not assignable to type 'string'.   Type 'undefined' is not assignable to type 'string'.",
       "anchor": "match![2]",
-      "line": 698,
+      "line": 778,
       "count": 1
     },
     {
@@ -3267,7 +3433,7 @@
       "code": 2739,
       "message": "Type '{ pid: number; }' is missing the following properties from type 'DaemonStartResult': tokensPerSecond, contextSize, swaFull, prefixReuse",
       "anchor": "chat",
-      "line": 128,
+      "line": 132,
       "count": 1
     },
     {
@@ -3415,51 +3581,19 @@
       "count": 1
     },
     {
-      "path": "src/llm/llama-server-client-response-format.test.ts",
-      "code": 2552,
-      "message": "Cannot find name 'RequestInfo'. Did you mean 'RequestInit'?",
-      "anchor": "RequestInfo",
-      "line": 17,
-      "count": 1
-    },
-    {
       "path": "src/llm/llama-server-client.test.ts",
       "code": 2339,
       "message": "Property 'delta' does not exist on type 'CompletionResult | StreamChunk'.   Property 'delta' does not exist on type 'CompletionResult'.",
       "anchor": "delta",
-      "line": 1785,
+      "line": 2007,
       "count": 2
-    },
-    {
-      "path": "src/llm/llama-server-client.test.ts",
-      "code": 2552,
-      "message": "Cannot find name 'RequestInfo'. Did you mean 'RequestInit'?",
-      "anchor": "RequestInfo",
-      "line": 18,
-      "count": 1
-    },
-    {
-      "path": "src/llm/llama-server-client.url.test.ts",
-      "code": 2304,
-      "message": "Cannot find name 'RequestInfo'.",
-      "anchor": "RequestInfo",
-      "line": 42,
-      "count": 2
-    },
-    {
-      "path": "src/llm/llama-server-client.url.test.ts",
-      "code": 2552,
-      "message": "Cannot find name 'RequestInfo'. Did you mean 'RequestInit'?",
-      "anchor": "RequestInfo",
-      "line": 29,
-      "count": 1
     },
     {
       "path": "src/llm/llama-server-health.test.ts",
       "code": 2493,
       "message": "Tuple type '[]' of length '0' has no element at index '0'.",
       "anchor": "0",
-      "line": 151,
+      "line": 156,
       "count": 3
     },
     {
@@ -3579,7 +3713,7 @@
       "code": 2322,
       "message": "Type '{ Authorization: string; \"x-goog-api-key\"?: undefined; } | { \"x-goog-api-key\": string; Authorization?: undefined; }' is not assignable to type 'Record<string, string>'.   Type '{ Authorization: string; \"x-goog-api-key\"?: undefined; }' is not assignable to type 'Record<string, string>'.     Property '\"x-goog-api-key\"' is incompatible with index signature.       Type 'undefined' is not assignable to type 'string'.",
       "anchor": "extraHeaders",
-      "line": 1108,
+      "line": 1153,
       "count": 1
     },
     {
@@ -4071,35 +4205,11 @@
       "count": 4
     },
     {
-      "path": "src/runtime/embedding-auth.test.ts",
-      "code": 2304,
-      "message": "Cannot find name 'RequestInfo'.",
-      "anchor": "RequestInfo",
-      "line": 61,
-      "count": 1
-    },
-    {
       "path": "src/runtime/llm-fallback-seam.test.ts",
       "code": 2345,
       "message": "Argument of type 'string | null' is not assignable to parameter of type 'string'.   Type 'null' is not assignable to type 'string'.",
       "anchor": "r.modelId",
       "line": 141,
-      "count": 1
-    },
-    {
-      "path": "src/runtime/vision-follows-route.test.ts",
-      "code": 2304,
-      "message": "Cannot find name 'RequestInfo'.",
-      "anchor": "RequestInfo",
-      "line": 81,
-      "count": 1
-    },
-    {
-      "path": "src/runtime/vision-per-model.test.ts",
-      "code": 2304,
-      "message": "Cannot find name 'RequestInfo'.",
-      "anchor": "RequestInfo",
-      "line": 98,
       "count": 1
     },
     {
@@ -4275,7 +4385,7 @@
       "code": 2322,
       "message": "Type '{ enabled: boolean; provider: WebSearchProviderName; maxResults: number; timeoutMs: number; cacheTtlMinutes: number; persistCache?: boolean | undefined; fallback: WebSearchProviderName[]; searxng: { instanceUrl: string | null; }; exa: { endpoint: string; apiEndpoint: string; apiKeyEnv: string; }; brave: { apiKeyEnv:...' is not assignable to type 'WebSearchConfig'.   Types of property 'persistCache' are incompatible.     Type 'boolean | undefined' is not assignable to type 'boolean'.       Type 'undefined' is not assignable to type 'boolean'.",
       "anchor": "search",
-      "line": 28,
+      "line": 29,
       "count": 1
     },
     {
@@ -4331,7 +4441,7 @@
       "code": 2339,
       "message": "Property 'window' does not exist on type 'ContextUsageState'.",
       "anchor": "window",
-      "line": 2012,
+      "line": 2123,
       "count": 1
     },
     {
@@ -4339,7 +4449,7 @@
       "code": 2353,
       "message": "Object literal may only specify known properties, and 'window' does not exist in type 'ContextUsageState'.",
       "anchor": "window",
-      "line": 2001,
+      "line": 2112,
       "count": 1
     },
     {
@@ -4347,7 +4457,7 @@
       "code": 2741,
       "message": "Property 'category' is missing in type '{ approvalId: string; sessionId: string; tool: string; reason: string; }' but required in type 'ApprovalRequest'.",
       "anchor": "request",
-      "line": 297,
+      "line": 307,
       "count": 1
     },
     {
@@ -4355,7 +4465,7 @@
       "code": 2741,
       "message": "Property 'category' is missing in type '{ approvalId: string; sessionId: string; tool: string; reason: string; preview: string; }' but required in type 'ApprovalRequest'.",
       "anchor": "request",
-      "line": 253,
+      "line": 263,
       "count": 1
     },
     {
@@ -4363,7 +4473,7 @@
       "code": 2741,
       "message": "Property 'details' is missing in type '{ tool: string; status: \"ok\"; summary: string; truncated: false; }' but required in type 'CompressedToolResult'.",
       "anchor": "result",
-      "line": 224,
+      "line": 234,
       "count": 2
     },
     {
@@ -4504,14 +4614,6 @@
     },
     {
       "path": "src/tui/approval-key-arbitration.test.ts",
-      "code": 2345,
-      "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; }; ctrlCArmed: boolean; setCtrlCArmed: Mock<...>; sidebarVisible: boolean; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
-      "anchor": "c",
-      "line": 248,
-      "count": 4
-    },
-    {
-      "path": "src/tui/approval-key-arbitration.test.ts",
       "code": 2739,
       "message": "Type '{ sessionId: string; workingDir: string; llamaUrl: string; browserChannel: string; browserHeadless: true; approvalLevel: number; maxSteps: number; skillCount: number; }' is missing the following properties from type 'TuiSessionInfo': completionMaxTokens, localBackendConfigured",
       "anchor": "return",
@@ -4611,7 +4713,7 @@
       "code": 2741,
       "message": "Property 'width' is missing in type '{ state: TuiState; ctrlCArmed: true; }' but required in type 'HotkeyHintProps'.",
       "anchor": "HotkeyHint",
-      "line": 511,
+      "line": 522,
       "count": 1
     },
     {
@@ -4619,7 +4721,7 @@
       "code": 2741,
       "message": "Property 'width' is missing in type '{ state: TuiState; menuLeaderArmed: true; }' but required in type 'HotkeyHintProps'.",
       "anchor": "HotkeyHint",
-      "line": 377,
+      "line": 388,
       "count": 2
     },
     {
@@ -4947,7 +5049,7 @@
       "code": 2345,
       "message": "Argument of type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to parameter of type 'TuiEventBus & { emit(action: unknown): void; }'.   Type '{ emit: (action: unknown) => void; subscribe: (l: (action: unknown) => void) => () => void; actions: ({ type: string; } & Record<string, unknown>)[]; }' is not assignable to type 'TuiEventBus'.     Types of property 'subscribe' are incompatible.       Type '(l: (action: unknown) => void) => () => void' is not assignable to type '(listener: (action: TuiAction) => void) => () => void'.         Types of parameters 'l' and 'listener' are incompatible.           Types of parameters 'action' and 'action' are incompatible.             Type 'unknown' is not assignable to type 'TuiAction'.",
       "anchor": "bus",
-      "line": 102,
+      "line": 107,
       "count": 2
     },
     {
@@ -5005,14 +5107,6 @@
       "anchor": "satisfies",
       "line": 71,
       "count": 13
-    },
-    {
-      "path": "src/tui/llm-health/llm-health-poller.test.ts",
-      "code": 2304,
-      "message": "Cannot find name 'RequestInfo'.",
-      "anchor": "RequestInfo",
-      "line": 431,
-      "count": 1
     },
     {
       "path": "src/tui/llm-health/llm-health-poller.test.ts",
@@ -5179,7 +5273,7 @@
       "code": 6133,
       "message": "'dataDir' is declared but its value is never read.",
       "anchor": "dataDir",
-      "line": 88,
+      "line": 90,
       "count": 1
     },
     {
@@ -5219,7 +5313,7 @@
       "code": 2531,
       "message": "Object is possibly 'null'.",
       "anchor": "readUserConfigFileSync(getUserConfigPath(stateDir))",
-      "line": 78,
+      "line": 80,
       "count": 2
     },
     {
@@ -5227,15 +5321,15 @@
       "code": 18047,
       "message": "'onDisk' is possibly 'null'.",
       "anchor": "onDisk",
-      "line": 167,
+      "line": 257,
       "count": 2
     },
     {
       "path": "src/tui/local-models/local-models-orchestrator-pairing.test.ts",
       "code": 2345,
-      "message": "Argument of type '{ llm: { activeTextProvider: string; activeEmbeddingProvider: string; toolTransport: \"auto\"; providers: ({ id: string; kind: string; url: string; } | { id: string; kind: string; apiKey: string; defaultChatModel: string; })[]; }; ... 23 more ...; mcp?: { ...; } | undefined; }' is not assignable to parameter of type 'UserConfigFile'.   Types of property 'version' are incompatible.     Type 'number | undefined' is not assignable to type 'number'.       Type 'undefined' is not assignable to type 'number'.",
+      "message": "Argument of type '{ llm: { activeTextProvider: string; activeEmbeddingProvider: string; toolTransport: \"auto\"; providers: ({ id: string; kind: string; url: string; } | { id: string; kind: string; apiKey: string; defaultChatModel: string; })[]; }; ... 24 more ...; mcp?: { ...; } | undefined; }' is not assignable to parameter of type 'UserConfigFile'.   Types of property 'version' are incompatible.     Type 'number | undefined' is not assignable to type 'number'.       Type 'undefined' is not assignable to type 'number'.",
       "anchor": "{ ...file, llm: { activeTextProvider: \"openrouter\", activeEmbeddingProvider: \"local-llama\", toolTransport: \"auto\", providers: [ { id: \"local-llama\", kind: \"llama-server\", url: \"http://127.0.0.1:19091\", }, { id: \"openrouter\", kind: \"openrouter\", apiKey: \"test\", defaultChatModel: \"openai/gpt-5.5\", }, ], }, }",
-      "line": 281,
+      "line": 371,
       "count": 1
     },
     {
@@ -5755,7 +5849,7 @@
       "code": 2345,
       "message": "Argument of type 'string | null' is not assignable to parameter of type 'string'.   Type 'null' is not assignable to type 'string'.",
       "anchor": "a.text",
-      "line": 375,
+      "line": 420,
       "count": 1
     },
     {
@@ -6027,7 +6121,7 @@
       "code": 2322,
       "message": "Type 'null' is not assignable to type 'string'.",
       "anchor": "botUsername",
-      "line": 246,
+      "line": 263,
       "count": 1
     },
     {
@@ -6035,7 +6129,7 @@
       "code": 2322,
       "message": "Type 'null' is not assignable to type 'string'.",
       "anchor": "ownerUserId",
-      "line": 243,
+      "line": 260,
       "count": 1
     },
     {
@@ -6043,7 +6137,7 @@
       "code": 2322,
       "message": "Type 'number | null' is not assignable to type 'null'.   Type 'number' is not assignable to type 'null'.",
       "anchor": "expiresAt",
-      "line": 247,
+      "line": 264,
       "count": 1
     },
     {
@@ -6123,7 +6217,7 @@
       "code": 2349,
       "message": "This expression is not callable.   Type 'never' has no call signatures.",
       "anchor": "resolveClaim",
-      "line": 303,
+      "line": 319,
       "count": 1
     },
     {
@@ -6163,7 +6257,7 @@
       "code": 2345,
       "message": "Argument of type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onUninstallConfirmed: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is not assignable to parameter of type 'AppKeyContext'.   Type '{ state: TuiState; dispatch: Mock<Procedure>; callbacks: { onApprovalDecision: Mock<Procedure>; onAbort: Mock<Procedure>; onQuit: Mock<...>; onUninstallConfirmed: Mock<...>; }; ctrlCArmed: false; setCtrlCArmed: Mock<...>; sidebarVisible: false; }' is missing the following properties from type 'AppKeyContext': menuLeaderArmed, setMenuLeaderArmed, activateMenuNode, activateComposerSwitch",
       "anchor": "{ state, dispatch, callbacks: { onApprovalDecision: vi.fn(), onAbort: vi.fn(), onQuit: vi.fn(), onUninstallConfirmed, }, ctrlCArmed: false, setCtrlCArmed: vi.fn(), sidebarVisible: false, }",
-      "line": 75,
+      "line": 80,
       "count": 1
     },
     {

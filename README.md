@@ -45,7 +45,59 @@ Windows (PowerShell):
 irm https://atomicagent.io/install.ps1 | iex
 ```
 
-The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place; `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git.
+The installer downloads the release archive, verifies the checksum, and installs the CLI plus support assets (`grammars/`, native prebuilds, and bundled `ripgrep`). Atomic Agent updates itself in place; after an update the TUI prompts you to restart. Outside the TUI, run `atomic-agent update` (or `atag update`) to check for a newer release and re-run the installer in place; `atomic-agent update --check` probes without installing, and `--version <tag>` pins a specific release. Only the installed binary can self-update; a dev checkout updates via git, and a Linux package (below) updates with the package manager.
+
+### Linux packages
+
+On Debian, Ubuntu, Fedora, RHEL-compatible systems and Arch, Atomic Agent also comes as a package, and the package manager then updates it with the rest of the system. A package carries the same release bundle as the installer, under `/usr/lib/atomic-agent`, with `atomic-agent` and `atag` in `/usr/bin`. The repository and the rpm packages are signed with the Atomic Chat packages key in [`packaging/atomic-chat.asc`](packaging/atomic-chat.asc), fingerprint `1047 F119 58C6 442D D472  E497 E4C3 D361 FB7F F123`.
+
+Debian, Ubuntu (x86-64, arm64):
+
+<!-- install:apt -->
+
+```bash
+curl -fsSL https://atomic-agent-packages.fsn1.your-objectstorage.com/atomic-chat.gpg | sudo tee /usr/share/keyrings/atomic-chat.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/atomic-chat.gpg] https://atomic-agent-packages.fsn1.your-objectstorage.com/deb stable main" \
+  | sudo tee /etc/apt/sources.list.d/atomic-agent.list
+sudo apt update && sudo apt install atomic-agent
+```
+
+Fedora, RHEL, Rocky, Alma (x86-64, aarch64):
+
+<!-- install:dnf -->
+
+```bash
+sudo curl -fsSL -o /etc/yum.repos.d/atomic-agent.repo https://atomic-agent-packages.fsn1.your-objectstorage.com/rpm/atomic-agent.repo
+sudo dnf install atomic-agent
+```
+
+Arch Linux: `yay -S atomic-agent-bin`, or any other AUR helper.
+
+Updates come with `sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`; on a packaged install `atomic-agent update` refuses and names the command to use, and the TUI does not offer its in-app update. A copy left by `install.sh` in `~/.local/bin` runs ahead of the package on the usual PATH and keeps its own updates; `atomic-agent update` names both copies when that happens, and removing the copy hands the command to the package. `sudo apt remove atomic-agent`, `sudo dnf remove atomic-agent` or `sudo pacman -R atomic-agent-bin` removes the program and leaves your data; `atomic-agent uninstall` then lists only the data. The repository keeps the last ten releases; older ones are on the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) as `.deb` and `.rpm` files. A package states the glibc its binary needs (2.34 today: Debian 12, Ubuntu 22.04, RHEL 9 and newer), and the package manager refuses where the system's is older.
+
+#### Desktop app
+
+The desktop app is in the same repository as `atomic-agent-desktop` (on Arch `atomic-agent-desktop-bin`). It has releases of its own (`desktop-vX.Y.Z`), carries its own copy of the agent under `/opt/Atomic Agent` and leaves a packaged or installed `atomic-agent` alone, so the two can be installed side by side. Once installed it is in the applications menu, and `atomic-agent-desktop` starts it from a terminal.
+
+Debian, Ubuntu (x86-64, arm64):
+
+```bash
+curl -fsSL https://atomic-agent-packages.fsn1.your-objectstorage.com/atomic-chat.gpg | sudo tee /usr/share/keyrings/atomic-chat.gpg >/dev/null
+echo "deb [signed-by=/usr/share/keyrings/atomic-chat.gpg] https://atomic-agent-packages.fsn1.your-objectstorage.com/deb stable main" \
+  | sudo tee /etc/apt/sources.list.d/atomic-agent.list
+sudo apt update && sudo apt install atomic-agent-desktop
+```
+
+Fedora, RHEL, Rocky, Alma (x86-64, aarch64):
+
+```bash
+sudo curl -fsSL -o /etc/yum.repos.d/atomic-agent.repo https://atomic-agent-packages.fsn1.your-objectstorage.com/rpm/atomic-agent.repo
+sudo dnf install atomic-agent-desktop
+```
+
+Arch Linux: `yay -S atomic-agent-desktop-bin`, or any other AUR helper.
+
+Installed as a package, the app is updated with the rest of the system (`sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`) and its Settings say so instead of offering an in-app update; the AppImage from the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) updates itself. `sudo apt remove atomic-agent-desktop`, `sudo dnf remove atomic-agent-desktop` or `sudo pacman -R atomic-agent-desktop-bin` removes the app and leaves your data.
 
 > [!NOTE]
 > Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64. Intel Macs are not supported yet; Windows on ARM runs the x64 build under emulation.
@@ -96,7 +148,7 @@ If something isn't working:
 
 1. Copy your error logs and system specs.
 2. Open an issue on [GitHub](https://github.com/AtomicBot-ai/atomic-agent/issues).
-3. Or ask for help in our [Discord](https://discord.gg/kXWDFSJpMW).
+3. Or ask for help in our [Discord](https://discord.gg/DCqtG8WZX8).
 
 ## Talk to Us
 
@@ -273,7 +325,7 @@ atomic-agent trace list --limit 10
 | `auto` | File writes inside the workspace stop asking. |
 | `bypass permissions` | Nothing asks this session; hardline shell-guard rules still block. |
 
-Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prompt, `ctrl+y` approves, `ctrl+d` denies, `ctrl+f` grants the category, `ctrl+b` retargets a write or grants a shell command's shape, `esc` aborts, and typing answers the agent in words. `/theme` switches between six palettes: `classic-dark`, `classic-light`, `toxic-green`, `khorne-red`, `darky-dark`, `moon-yellow`. The TUI is clickable; to select text, drag over plain text, or turn the mouse off with `/mouse off` or `--no-mouse`. Handy slash commands: `/help`, `/tools`, `/model`, `/privacy`. A failed or long turn raises a desktop notification, sessions are named from their first prompt, and inside a [herdr](https://github.com/herdrdev/herdr) pane the TUI labels the pane with its state.
+Switch modes with `/mode`, `ctrl+g M`, or the composer chip. On an approval prompt, `ctrl+y` approves, `ctrl+d` denies, `ctrl+f` grants the category, `ctrl+b` retargets a write or grants a shell command's shape, `ctrl+z` pages through the full command when the preview is cut, `esc` aborts, and typing answers the agent in words. `/theme` switches between six palettes: `classic-dark`, `classic-light`, `toxic-green`, `khorne-red`, `darky-dark`, `moon-yellow`. The TUI is clickable; to select text, drag over plain text, or turn the mouse off with `/mouse off` or `--no-mouse`. Handy slash commands: `/help`, `/tools`, `/model`, `/privacy`. A failed or long turn raises a desktop notification, sessions are named from their first prompt, and inside a [herdr](https://github.com/herdrdev/herdr) pane the TUI labels the pane with its state.
 
 Full TUI guide: [TUI.md](docs/user/tui.md).
 
@@ -367,7 +419,7 @@ Every term has to match (`claude vision` is not a substring of any id), a size t
 <details>
 <summary><b>External <code>llama-server</code></b></summary>
 
-Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:8080`), or save the URL in the TUI's LLM tab, External pane:
+Already have your own `llama.cpp` process? Point `atomic-agent` at it with `localModels.url` in `<stateDir>/config.json` (external mode; the default is `http://127.0.0.1:9931`, llama-server's own default port since llama.cpp v0.7.0), or save the URL in the TUI's LLM tab, External pane:
 
 ```jsonc
 // <stateDir>/config.json
@@ -434,6 +486,8 @@ atomic-agent serve \
   --cwd /path/to/work \
   --api-key "$ATOMIC_AGENT_API_KEY"
 ```
+
+Without a key, anyone who reaches the port can run the agent and its tools, so `serve` refuses to start on a host other than loopback (`0.0.0.0`, a LAN address) unless `--api-key` or `ATOMIC_AGENT_API_KEY` is set. On loopback it still starts without one and prints a one-line warning.
 
 `POST /v1/chat/completions` maps one request to one full macro-turn: `user -> 0..N tool steps -> reply`. Atomic-specific routes expose sessions, approvals, tasks, webhooks, events, skills, config, and capabilities.
 
@@ -554,6 +608,8 @@ Configure MCP servers in `config.json`, and their tools join the same registry a
 }
 ```
 
+To offer only some of a server's tools, list their raw names: `"enabledTools": ["get_issue", "list_issues"]` keeps just those, and `"disabledTools": ["delete_repository"]` drops tools on top of that (or on its own, from the full list). Turned-off tools never reach the prompt and cannot be called; a change applies when the server reconnects.
+
 The TUI MCP panel supports live add / remove without restarting the process. When a stdio server fails to connect, the tail of its stderr is surfaced in the error instead of a bare disconnect message.
 
 </details>
@@ -582,7 +638,7 @@ Everything Atomic Agent does is inspectable and interruptible:
 
 By default, Atomic Agent does not require a hosted agent provider. Model calls go to your configured backend, and local artifacts stay under `<stateDir>`.
 
-Anonymous usage analytics is on by default. Every event carries a random install id shared by the terminal and desktop apps on the same machine (stored in `~/.atomic-agent-install-id`; the desktop app reuses the terminal's existing id unless analytics is off in the terminal's config), your OS platform and CPU architecture, the app version, the desktop app version when it comes from the desktop app, which surface sent it (terminal UI, command line, or desktop), and the install channel (the install script, or the desktop `dmg`, `exe`, `AppImage`, or `deb` package). It sends the provider and model names exactly as configured, including a custom provider's name and, for a model added from Hugging Face, its repository id, plus turn-shape numbers (latency, step count, outcome, token counts, estimated cost). It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up: the provider name and whether it is local or cloud, never the key, the URL, or the host. The desktop app adds these event groups: launch and health (startup timings, agent start failures and restarts, window crashes, app close), onboarding screens, model downloads and backend start, chat turn timing, approval answers, button and menu usage by action id only, and feature usage counts (settings panes, sessions, voice, tasks, skills, MCP servers, Telegram setup, import). If you turn analytics off, one last event records that it was switched off and how many days after install. Message content, file paths, tool arguments, full URLs, keys, and your IP address are never sent.
+Anonymous usage analytics is on by default. Every event carries a random install id shared by the terminal and desktop apps on the same machine (stored in `~/.atomic-agent-install-id`; the desktop app reuses the terminal's existing id unless analytics is off in the terminal's config), your OS platform and CPU architecture, the app version, the desktop app version when it comes from the desktop app, which surface sent it (terminal UI, command line, or desktop), and the install channel (the install script, a Linux `deb`, `rpm` or AUR package, or the desktop `dmg`, `exe`, `AppImage`, or `deb` package). It sends the provider and model names exactly as configured, including a custom provider's name and, for a model added from Hugging Face, its repository id, plus turn-shape numbers (latency, step count, outcome, token counts, estimated cost). It also records that the app launched, which first-run screen was reached (a fixed list of screen names, never anything you typed), and that a backend was set up: the provider name and whether it is local or cloud, never the key, the URL, or the host. The desktop app adds these event groups: launch and health (startup timings, agent start failures and restarts, window crashes, app close), onboarding screens, model downloads and backend start, chat turn timing, approval answers, button and menu usage by action id only, and feature usage counts (settings panes, sessions, voice, tasks, skills, MCP servers, Telegram setup, import). If you turn analytics off, one last event records that it was switched off and how many days after install. Message content, file paths, tool arguments, full URLs, keys, and your IP address are never sent.
 
 Crash reports go to Sentry on the same switch. They carry path-stripped stack frames, the error type and category, safe scalar codes, a bounded tool name, the surface, install channel and app versions as tags, and, for a failed connection, only the class of the endpoint host (`localhost`, `private`, `known_cloud`, or `other`), never the host itself. A failed model turn also reports the provider id when it is a built-in one, which local engine served it (`atomic-core`, `llama-server`, or `external`), how long and how many times the turn waited for the provider, and, for the engine the agent manages, whether its process was alive (`alive`, `dead`, `no_pid`, or `unknown`). No native memory dumps are sent. Turn both off with `/privacy analytics off` in the TUI, the Privacy switch in the desktop app, or `"analytics": { "enabled": false }` in `config.json`. The TUI toggle applies live; an edit to `config.json` applies to processes started after it. In the desktop app the switch stops the app's own reporting at once, and the bundled agent stops after its runtime restarts. Setting `ATOMIC_AGENT_ANALYTICS=off` in the environment turns both off for that process whatever the config says.
 
@@ -706,7 +762,9 @@ OBSIDIAN_VAULT_PATH=/Users/me/Documents/Obsidian Vault
 
 Shell-exported variables win over `.env`. The built-in parser intentionally supports only simple `KEY=VALUE` lines.
 
-`EXA_API_KEY` is optional. Without it, web search uses Exa's free keyless tier, which runs out quickly, and then DuckDuckGo. When the free limit is reached, or no search provider answers, the search result says so and asks for a free key from <https://dashboard.exa.ai/api-keys>. Apps get the same request as `details.keyRequired` on the `os.web.search` result (`{ provider: "exa", reason: "rate_limited" | "unreachable" | "missing", getKeyUrl, envVar }`); the HTTP stream forwards it as `key_required` on the `tool_result` event.
+Commands the agent runs (`os.shell.run`, `os.git.*`, skill scripts) do not inherit these secrets: every variable named like a key, token, secret or password, and every known provider key, is removed from the command's environment, so a command slipped in through a web page or a file cannot read `OPENAI_API_KEY` or `TELEGRAM_BOT_TOKEN`. The agent itself still uses them. The names in `tools.shell.envPassthrough` in `config.json` are passed to shell commands anyway; the default is `["GITHUB_TOKEN", "NOTION_API_KEY"]`, which the bundled `github` and `notion` skills read through the shell. Add a name there when a command of yours needs one, or set `[]` to keep those two out as well. Reading the files themselves asks too: an agent tool reading `.env`, `config.json` or the local server key in the state folder, or a shell command that names one (`cat ~/.atomic-agent/.env`, `sed -i … config.json`), asks for approval at every level below 5, even where shell commands otherwise run unasked, and "allow for this session" is never offered for it. The shell check reads the command line for those paths; a command that builds the path at run time is not caught, so it is a guard, not a sandbox.
+
+`EXA_API_KEY` is optional. Without it, web search uses Exa's free keyless tier, which runs out quickly, and then DuckDuckGo. When the free limit is reached, or no search provider answers, the search result says so and asks for a free key from <https://dashboard.exa.ai/api-keys>. Apps get the same request as `details.keyRequired` on the `os.web.search` result (`{ provider: "exa", reason: "rate_limited" | "unreachable" | "missing", getKeyUrl, envVar }`); the HTTP stream forwards it as `key_required` on the `tool_result` event. In the TUI, the **Web search (Exa)** entry of the Integrations tab saves the key (as `EXA_API_KEY`), and the next search uses it without a restart; the search error there points at `/integrations` instead of the `.env` file. A search site that cannot be reached from your network (DNS, refused, no answer to the connection within 5 s) is skipped by the searches that start after the failure, for two minutes, instead of each of them waiting for it again. That skip lives only in the running agent, and when every search site was unreachable the first site is tried again at most every 30 s.
 
 The Integrations tab (`/integrations`) writes these for you. Its **GitHub** entry stores `GITHUB_TOKEN` and carries the **Remote sync** switch (`git.remoteSync`, off by default): while it is off, a repository the agent versions stays on this machine (`git push`, `fetch`, `pull`, `clone` and `remote add` are refused, through the git tools and through the shell alike), so you keep full local history without publishing anything. Turn it on when a project should reach GitHub; every sync then goes through the approval ladder. The dedicated tools (`os.git.remote`, `fetch`, `pull`, `push`, `clone`) honour the same switch and hand the token to git only for `github.com`, only through the child process's environment (never in a URL, in argv, or in `.git/config`) and scrub it from every line of output.
 

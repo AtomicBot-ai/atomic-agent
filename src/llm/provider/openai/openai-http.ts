@@ -2,6 +2,7 @@ import { isAsciiOnly } from "./ascii-header-guard.js";
 import { buildOpenAiAuthHeaders } from "./openai-auth-headers.js";
 import { readErrnoCode } from "../../errno-code.js";
 import { providerServiceName } from "../provider-service-name.js";
+import { isLocalProviderUrl } from "../presets/is-local-provider-url.js";
 import {
   creditLimitRetryContext,
   creditLimitRetryMessage,
@@ -16,6 +17,11 @@ import {
   readProviderErrorReason,
   type ProviderErrorBody,
 } from "./parse-provider-error-body.js";
+import {
+  LOCAL_BAD_REQUEST_ADVICE,
+  LOCAL_BAD_REQUEST_SENTENCE,
+  localBadRequestKind,
+} from "./local-bad-request.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -212,6 +218,9 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status === 401 || err.status === 403) {
     return `${who} rejected the API key (${err.status}). Check the key in the Providers panel.`;
   }
+  if ((err.status === 404 || err.status === 405) && isLocalProviderUrl(err.url)) {
+    return localServerNotFoundSentence(err.url, err.status);
+  }
   if (err.status === 404) {
     return `${who} answered 404 (not found). The model id or the base URL is likely wrong.`;
   }
@@ -241,6 +250,10 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   if (err.status >= 500) {
     return `${who} is having server trouble (${err.status}). Tried ${OPENAI_MAX_ATTEMPTS} times — this is on the provider, not your setup.`;
   }
+  if (err.status === 400 && isLocalProviderUrl(err.url)) {
+    const sentence = localBadRequestSentence(err);
+    if (sentence !== null) return sentence;
+  }
   // Everything else — 400 bad request, 413, 422 — has no wording of its own
   // here, and a bare "rejected the request (400)" throws away the only
   // sentence that could have helped. The
@@ -252,6 +265,67 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   return reason
     ? `${who} rejected the request (${err.status}). ${reason}`
     : `${who} rejected the request (${err.status}).`;
+}
+
+/**
+ * Which program a local OpenAI-compatible server usually is, by its
+ * default port: Atomic Chat's Local API Server on 1337, Ollama on 11434
+ * (the same port rule as `looksLikeAtomicChatUrl` / `looksLikeOllamaUrl`
+ * in `describe-llama-health-failure.ts`, kept inline so the provider
+ * path does not load the local-engine modules). Null for any other port.
+ */
+function localServerProgram(url: string): string | null {
+  let port: string;
+  try {
+    port = new URL(url).port;
+  } catch {
+    return null;
+  }
+  if (port === "1337") return "Atomic Chat";
+  if (port === "11434") return "Ollama";
+  return null;
+}
+
+/**
+ * A 404 or 405 from a server on this machine (ATO-871). A local server
+ * has no account and no model catalogue to get wrong the way a cloud one
+ * does: the reply means the model is not loaded there, or the base URL
+ * points past its API. Keeps "answered 404" / "answered 405" so the
+ * desktop still reads it as the provider having replied.
+ */
+function localServerNotFoundSentence(url: string, status: 404 | 405): string {
+  const program = localServerProgram(url);
+  const server = program === null ? "The local server" : `The local ${program} server`;
+  const remedy = program === null ? "Load the model in that server" : `Load the model in ${program}`;
+  return (
+    `${server} at ${hostOf(url)} answered ${status}: the model is not loaded there, ` +
+    `or this address is not its API. ${remedy}, or check the base URL.`
+  );
+}
+
+/**
+ * A 400 from a server on this machine whose body says why (ATO-707,
+ * ATO-737): the conversation outgrew the context window, or the server
+ * would not accept something in the request. Plain words and what to
+ * do, instead of "rejected the request (400)". Keeps "(400)" so the
+ * desktop still reads it as the provider having replied. A context
+ * overflow leaves the server's own words out: the agent loop appends
+ * the size excerpt for that one (`isRequestSizeRejection`). Null for a
+ * 400 whose body names neither reason.
+ */
+function localBadRequestSentence(err: OpenAiHttpError): string | null {
+  const raw = err.message.replace(/^openai provider \d+:\s*/, "");
+  const type = err.body?.type ?? parseProviderErrorBody(raw).type;
+  const kind = localBadRequestKind(err.status, type, err.body?.text ?? raw);
+  if (kind === null) return null;
+  const program = localServerProgram(err.url);
+  const server = program === null ? "The local server" : `The local ${program} server`;
+  const head =
+    `${server} at ${hostOf(err.url)} turned the request down (400). ` +
+    `${LOCAL_BAD_REQUEST_SENTENCE[kind]} ${LOCAL_BAD_REQUEST_ADVICE[kind]}`;
+  if (kind === "context_exceeded") return head;
+  const own = providerReason(err);
+  return own ? `${head} The server said: ${own}` : head;
 }
 
 /**

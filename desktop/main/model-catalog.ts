@@ -42,6 +42,8 @@ export interface CuratedModelMeta {
   mmprojSizeGb?: number;
   /** `supportsVision` — it reads images (a projector rides along). */
   vision: boolean;
+  /** `recommendRank` — recommendation order, 1 first; unset = never auto-recommended. */
+  recommendRank?: number;
   /** `tag`, when the catalogue sets one. */
   tag?: string;
   /** `uncensored` — reduced-refusal weights; never auto-recommended. */
@@ -52,7 +54,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "gemma-4-e4b",
     name: "Gemma 4 E4B QAT GGUF",
-    description: "Compact multimodal reasoning (QAT)",
+    description: "Small and light Gemma, for 8 GB machines and up",
+    recommendRank: 10,
     minRamGb: 6,
     recommendedRamGb: 8,
     sizeGb: 4.22,
@@ -63,7 +66,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "gemma-4-12b",
     name: "Gemma 4 12B QAT GGUF",
-    description: "Mid-size dense multimodal reasoning (QAT)",
+    description: "Mid-size Gemma, for 12 GB machines and up",
+    recommendRank: 9,
     minRamGb: 8,
     recommendedRamGb: 12,
     sizeGb: 6.72,
@@ -74,7 +78,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "gemma-4-26b-a4b",
     name: "Gemma 4 26B-A4B QAT GGUF",
-    description: "Fast MoE with 256K context (QAT)",
+    description: "Big Gemma that stays quick for its size, 20 GB and up",
+    recommendRank: 2,
     minRamGb: 16,
     recommendedRamGb: 20,
     sizeGb: 14.25,
@@ -86,7 +91,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "gemma-4-31b",
     name: "Gemma 4 31B QAT GGUF",
-    description: "Top-tier dense reasoning (QAT)",
+    description: "Biggest Gemma, for 24 GB machines and up",
+    recommendRank: 6,
     minRamGb: 20,
     recommendedRamGb: 24,
     sizeGb: 17.29,
@@ -98,7 +104,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "qwen-3.8-27b",
     name: "Qwen 3.8 27B GGUF",
-    description: "Latest dense agentic reasoning",
+    description: "Newest big Qwen, for 28 GB machines and up",
+    recommendRank: 4,
     minRamGb: 20,
     recommendedRamGb: 28,
     sizeGb: 17.9,
@@ -110,7 +117,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "qwen-3.6-27b",
     name: "Qwen 3.6 27B GGUF",
-    description: "Next-gen dense reasoning",
+    description: "Big Qwen, older version, for 28 GB machines and up",
+    recommendRank: 5,
     minRamGb: 20,
     recommendedRamGb: 28,
     sizeGb: 17.6,
@@ -121,7 +129,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "qwen-3.6-35b-a3b",
     name: "Qwen 3.6 35B-A3B GGUF",
-    description: "Next-gen agentic coding MoE",
+    description: "Big Qwen that stays quick for its size, 36 GB and up",
+    recommendRank: 1,
     minRamGb: 24,
     recommendedRamGb: 36,
     sizeGb: 22.4,
@@ -130,9 +139,20 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
     vision: true,
   },
   {
+    id: "qwen-3.5-2b",
+    name: "Qwen 3.5 2B GGUF",
+    description: "Tiny starter model, ready in a minute; any machine",
+    minRamGb: 4,
+    recommendedRamGb: 6,
+    sizeGb: 1.34,
+    contextLabel: "256K",
+    vision: false,
+  },
+  {
     id: "qwen-3.5-4b",
     name: "Qwen 3.5 4B GGUF",
-    description: "Quality-size sweet spot",
+    description: "Small and quick to download, for 8 GB machines and up",
+    recommendRank: 8,
     minRamGb: 6,
     recommendedRamGb: 8,
     sizeGb: 2.7,
@@ -143,19 +163,20 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "qwen-3.5-9b",
     name: "Qwen 3.5 9B GGUF",
-    description: "Balanced performance",
+    description: "Everyday mid-size Qwen, for 16 GB machines and up",
+    recommendRank: 7,
     minRamGb: 10,
     recommendedRamGb: 16,
     sizeGb: 5.3,
     mmprojSizeGb: 0.92,
     contextLabel: "256K",
     vision: true,
-    tag: "Recommended",
   },
   {
     id: "qwen-3.5-35b",
     name: "Qwen 3.5 35B-A3B GGUF",
-    description: "High quality reasoning",
+    description: "Older big Qwen, for 36 GB machines and up",
+    recommendRank: 3,
     minRamGb: 24,
     recommendedRamGb: 36,
     sizeGb: 22.0,
@@ -167,7 +188,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "nemotron-3.5-30b-a3b",
     name: "NVIDIA Nemotron 3.5 Lightning 30B-A3B GGUF",
-    description: "Hybrid Mamba2 MoE reasoning, imatrix-calibrated",
+    description: "Big NVIDIA model, text only, for 32 GB machines and up",
     minRamGb: 24,
     recommendedRamGb: 32,
     sizeGb: 19.65,
@@ -178,7 +199,7 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   {
     id: "muse-glimmer-30b",
     name: "Meta Muse Glimmer 30B GGUF",
-    description: "Multimodal 30B MoE, generic tool calling",
+    description: "Big Meta model, generic tool calling, 32 GB and up",
     minRamGb: 20,
     recommendedRamGb: 32,
     sizeGb: 15.9,
@@ -189,8 +210,8 @@ export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
   },
   {
     id: "qwen-3.8-27b-uncensored",
-    name: "Qwen3.8 27B Uncensored GGUF",
-    description: "Reduced-refusal Qwen3.8 27B (abliterated)",
+    name: "Qwen 3.8 27B Uncensored GGUF",
+    description: "Reduced-refusal Qwen 3.8 27B (abliterated)",
     minRamGb: 20,
     recommendedRamGb: 32,
     sizeGb: 16.5,

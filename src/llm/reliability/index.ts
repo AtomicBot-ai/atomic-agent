@@ -13,8 +13,27 @@ export {
   ToolExecutionError,
   TransportError,
 } from "./llm-failures.js";
-export type { LlmFailureOptions, ModelErrorOptions } from "./llm-failures.js";
+export type {
+  LlmFailureOptions,
+  ModelErrorOptions,
+  ToolExecutionErrorKind,
+  ToolExecutionErrorOptions,
+  UnregisteredToolNameClass,
+} from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
+export { classifyFailureCause } from "./classify-failure-cause.js";
+export {
+  FAILURE_CATALOG,
+  failureVerdict,
+  loopDetectorVerdict,
+} from "./failure-catalog.js";
+export type {
+  FailureAction,
+  FailureCatalogEntry,
+  FailureCauseId,
+  FailureVerdict,
+  LoopDetectorName,
+} from "./failure-catalog.js";
 export {
   LOCAL_ENGINE_DOWN_CODE,
   LOCAL_ENGINE_DOWN_MESSAGE,
@@ -22,6 +41,26 @@ export {
   LocalEngineDownError,
   isLocalEngineDown,
 } from "./local-engine-down.js";
+export {
+  LOCAL_OUT_OF_MEMORY_CODE,
+  LocalOutOfMemoryError,
+  isLocalOutOfMemory,
+} from "./local-out-of-memory.js";
+export {
+  LOCAL_CONTEXT_EXCEEDED_CODE,
+  LOCAL_PROVIDER_NOT_FOUND_CODE,
+  LOCAL_REQUEST_INVALID_CODE,
+  LOCAL_SERVER_NOT_FOUND_ADVICE,
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  LOCAL_SERVER_NOT_FOUND_MESSAGE,
+  LOCAL_SERVER_RECHECK_COMMAND,
+  LOCAL_SERVER_RECHECK_HINT,
+  classifyLocalServerError,
+  localServerErrorLines,
+  type ClassifyLocalServerErrorOptions,
+  type LocalServerError,
+  type LocalServerErrorCode,
+} from "./local-server-error.js";
 export { isRequestSizeRejection } from "./request-size-rejection.js";
 export {
   readProviderErrorVerdict,
@@ -47,6 +86,14 @@ export type {
   DetectModelFailureOptions,
   DetectedModelFailure,
 } from "./detect-model-failure.js";
+export {
+  STREAM_LOOP_MIN_REPEATS,
+  createStreamRepetitionWatcher,
+} from "./stream-repetition-watcher.js";
+export type {
+  StreamRepetition,
+  StreamRepetitionWatcher,
+} from "./stream-repetition-watcher.js";
 export {
   FABRICATED_TRANSCRIPT_MIN_LINES,
   STREAM_FABRICATION_ABORT_MIN_LINES,

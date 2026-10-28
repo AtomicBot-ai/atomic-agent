@@ -167,9 +167,19 @@ export function chipBody(usage: ContextUsageView): string {
       : usage.droppedTurns > 0
         ? ` · ${usage.droppedTurns} lost`
         : "";
-  const tasks =
-    usage.pairsCap > 0 ? `${usage.pairs}/${usage.pairsCap} tasks · ` : "";
-  if (usage.conversationCap === null || usage.conversationPercent === null) {
+  // A route with no task limit (the cloud prompt builder) reports it as
+  // `Number.MAX_SAFE_INTEGER`. Printing that as `6/9007199254740991`
+  // reads as a fault, so an unbounded limit shows the bare count.
+  const tasks = !(usage.pairsCap > 0)
+    ? ""
+    : isKnownLimit(usage.pairsCap)
+      ? `${usage.pairs}/${usage.pairsCap} tasks · `
+      : `${usage.pairs} task${usage.pairs === 1 ? "" : "s"} · `;
+  if (
+    usage.conversationCap === null ||
+    usage.conversationPercent === null ||
+    !isKnownLimit(usage.conversationCap)
+  ) {
     // Nothing has set a scale yet. The total is still worth showing — it
     // is the only number that says whether this session is big.
     return `${formatTokens(usage.tokens)}${lost}`;
@@ -184,7 +194,7 @@ export function chipBody(usage: ContextUsageView): string {
   // model's name is already on this bar, so " window" was spelling out
   // what the second figure after a `cap` can only be.
   const window =
-    usage.contextWindow === null
+    usage.contextWindow === null || !isKnownLimit(usage.contextWindow)
       ? ""
       : ` · ${formatTokens(usage.contextWindow)}`;
   return `[${renderProgressBar(
@@ -195,6 +205,22 @@ export function chipBody(usage: ContextUsageView): string {
     usage.conversationCap,
   )} cap${window}${lost}`;
 }
+
+/**
+ * Whether `limit` is a real ceiling rather than a stand-in for "no
+ * limit". Callers that have no bound pass `Number.MAX_SAFE_INTEGER` (or
+ * `Infinity`), and neither belongs on screen as a number: it is wider
+ * than the composer and a bar drawn against it is always empty.
+ */
+export function isKnownLimit(limit: number): boolean {
+  return Number.isFinite(limit) && limit < UNBOUNDED_LIMIT;
+}
+
+/**
+ * Anything at or past this is a sentinel, not a size. A trillion tokens
+ * or tasks is far beyond any real window or configured cap.
+ */
+const UNBOUNDED_LIMIT = 1e12;
 
 /** The chip's ground: three steps of accent, then violet once trimmed. */
 export function groundFor(usage: ContextUsageView, fusion = false): string {

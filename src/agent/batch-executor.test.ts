@@ -421,9 +421,10 @@ describe("executeBatch", () => {
     });
     // A misspelt key (`patth`) no longer reaches the tool at all — F40
     // refuses it before dispatch — so the thrown path is exercised with
-    // a known key the tool rejects.
+    // a required key left out. Correct keys with a bad value get no key
+    // report (ATO-323): see the next test.
     const inputs = toBatchInputs([
-      { tool: "os.fs.read", args: { path: "" } },
+      { tool: "os.fs.read", args: {} },
     ]);
     const out = await executeBatch(
       inputs,
@@ -433,9 +434,9 @@ describe("executeBatch", () => {
     const result = out.results[0]!.compressed!;
     expect(result.status).toBe("error");
     expect(result.summary).toBe(
-      "os.fs.read: `path` must be a non-empty string — received keys: path; expected: path, maxBytes, offset, limit, lineNumbers",
+      "os.fs.read: `path` must be a non-empty string — received keys: (none); expected: path, maxBytes, offset, limit, lineNumbers",
     );
-    expect(result.details.receivedKeys).toEqual(["path"]);
+    expect(result.details.receivedKeys).toEqual([]);
     expect(result.details.expectedKeys).toEqual([
       "path",
       "maxBytes",
@@ -443,6 +444,26 @@ describe("executeBatch", () => {
       "limit",
       "lineNumbers",
     ]);
+  });
+
+  it("adds no key report when every key is right and a value is rejected (ATO-323)", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "os.fs.read",
+      description: "r",
+      readonly: true,
+      run: async () => {
+        throw new Error("os.fs.read: `path` must be a non-empty string");
+      },
+    });
+    const out = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "" } }]),
+      registry,
+      ctx(new AbortController().signal),
+    );
+    const result = out.results[0]!.compressed!;
+    expect(result.summary).toBe("os.fs.read: `path` must be a non-empty string");
+    expect(result.details.receivedKeys).toBeUndefined();
   });
 
   it("leaves a thrown runtime error without a key report", async () => {
@@ -870,19 +891,22 @@ describe("executeBatch", () => {
       { url: "u1" },
       okResult("os.web.fetch", "u1"),
     );
-    const run = (urls: string[]) =>
+    // Two model steps, so two step indices: siblings of one step are one
+    // round to the run rule (ATO-999), and it is the next step that is
+    // stopped.
+    const run = (urls: string[], stepIndex: number) =>
       executeBatch(
         toBatchInputs(
           urls.map((url) => ({ tool: "os.web.fetch", args: { url } })),
         ),
         registry,
-        { ...ctx(new AbortController().signal), tracker },
+        { ...ctx(new AbortController().signal), stepIndex, tracker },
       );
     // Every call in the batch is gated against the same recorded history,
     // so all three run and the spread ends at 4, past the cap of 3.
-    await run(["u2", "u3", "u4"]);
+    await run(["u2", "u3", "u4"], 1);
     expect(fn).toHaveBeenCalledTimes(3);
-    const out = await run(["u5"]);
+    const out = await run(["u5"], 2);
     expect(fn).toHaveBeenCalledTimes(3);
     // The signal quotes the spread (5, counting u5), not the cap, which
     // is why the forced reply does not call its count "the cap".
@@ -1889,12 +1913,12 @@ describe("executeBatch refuses a call with unknown argument keys (F40)", () => {
     const result = out.results[0]!.compressed!;
     expect(result.status).toBe("error");
     expect(result.summary).toBe(
-      'unknown argument `-e` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, wait, kill, jobs; put the script in args: ["-c", "…"]) — the call was not run; re-emit it with the right keys',
+      'unknown argument `-e` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, background, wait, kill, jobs; put the script in args: ["-c", "…"]) — the call was not run; re-emit it with the right keys',
     );
     expect(result.summary).not.toContain("rename");
     expect(result.details).toEqual({
       unknownKeys: ["-e"],
-      expectedKeys: ["cmd", "args", "cwd", "timeoutMs", "keep", "wait", "kill", "jobs"],
+      expectedKeys: ["cmd", "args", "cwd", "timeoutMs", "keep", "background", "wait", "kill", "jobs"],
     });
     expect(out.cancelled).toBe(false);
   });
@@ -1914,7 +1938,7 @@ describe("executeBatch refuses a call with unknown argument keys (F40)", () => {
     );
     expect(run).not.toHaveBeenCalled();
     expect(out.results[0]!.compressed!.summary).toBe(
-      "unknown argument `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, wait, kill, jobs; did you mean `args`?) — the call was not run; re-emit it with the right keys",
+      "unknown argument `-args` for os.shell.run (expected: cmd, args, cwd, timeoutMs, keep, background, wait, kill, jobs; did you mean `args`?) — the call was not run; re-emit it with the right keys",
     );
   });
 

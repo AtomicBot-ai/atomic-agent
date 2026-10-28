@@ -2,6 +2,8 @@
 
 /* The Electron preload exposes window.atomic. Without it (opened as a
    plain page) the app runs the scripted demo instead of a real agent. */
+// Declared up top: render() can run renderProse before the code below is evaluated (TDZ).
+const PROSE_CACHE = {map: new Map(), ver: 0, last: '', max: 600};
 const BR = typeof window !== "undefined" ? window.atomic : null;
 /* The platform the window runs on. The scripted demo (no bridge) and macOS
    take every path below exactly as before; the Windows and Linux arms only
@@ -61,6 +63,7 @@ const SEL = {
   rows:[], models:[], modelsFor:null, modelsBusy:false, modelsErr:null,
   local:[], localBusy:false, addOpen:false, presetCur:0,
   pulling:null, pullLine:'', busy:false, err:null,
+  ramWarned:null, // ATO-337: the model the memory warning was shown for; the next pick of it runs
 };
 /* Item 1 (plan hand-off). The offer that follows a finished plan-mode turn,
    ported from src/tui/components/plan-handoff.tsx. `on` is the offer itself;
@@ -432,6 +435,9 @@ const OB = {
   pendingMmproj: null,
   /** Whether an IPC on the way here already bounced `atag serve`. */
   restarted: false,
+  /** ATO-822 item 5: how the local model's start went when setup selected it
+   *  (obLocalStartOf): 'started', 'failed', or null when nothing said. */
+  localStart: null,
   /** r5 item 7 review fix: the in-flight `useManagedMode()` write. Picking
    *  local records managed mode NOW so a quit mid-download does not lose
    *  the choice — but `models update` REFUSES outside managed mode
@@ -806,7 +812,7 @@ const XPULL = {key:null, percent:0, transferredBytes:0, totalBytes:0, sawProgres
    to the functions that use them, several hundred lines below it — safe
    only because OB.open starts false, and a TDZ ReferenceError inside the
    first paint the moment anything opens the flow synchronously. */
-const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';   // USER_CONFIG_DEFAULTS.localModels.url
+const OB_DEFAULT_LLAMA_URL = 'http://127.0.0.1:9931';   // USER_CONFIG_DEFAULTS.localModels.url
 /* Which leading tokens of a hint are the chord rather than the sentence.
    The footer is one string in the TUI because a terminal has no chips;
    this splits it back apart so the desktop can draw the keycaps it has. */
@@ -937,8 +943,18 @@ let UNVERIFIED = [];
    against this exact string and does NOT count the default it never
    chose — needsOnboarding() below may not count it either, or a genuinely
    fresh state directory reaches the chat window with no backend and no
-   wizard. */
-const DEFAULT_LLAMA_URL = 'http://127.0.0.1:8080';
+   wizard.
+   ATO-834: llama-server moved its default port from 8080 to 9931 (llama.cpp
+   v0.7.0) and the agent's default followed. Every first run writes the
+   defaults to config.json, so installs from before carry 8080 that nobody
+   chose: the agent's LEGACY_EXTERNAL_LLAMA_URL. Both count as untouched,
+   as they do in isLocalBackendConfigured. */
+const DEFAULT_LLAMA_URL = 'http://127.0.0.1:9931';
+const LEGACY_LLAMA_URL = 'http://127.0.0.1:8080';
+/* True for a localModels.url that is one of the shipped defaults. */
+function llamaUrlUntouched(url) {
+  return url === DEFAULT_LLAMA_URL || url === LEGACY_LLAMA_URL;
+}
 
 /* ---- r5 item 10: optimistic switching ----
    The user's words: "when he clicks to switch, it is already switched, but
@@ -1019,8 +1035,8 @@ const SWXBR = {
   // Each stamps SWX.route so swxRun's `finally` can file the measurement
   // under the route that was actually taken (r5 review, minor).
   switchBackend: (kind) => { SWX.route = 'switchBackend'; return BR.switchBackend(kind); },
-  activateProvider: (id) => { SWX.route = 'activateProvider'; return BR.activateProvider(id); },
-  selectCloudModel: (id, model) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model); },
+  activateProvider: (id, opts) => { SWX.route = 'activateProvider'; return BR.activateProvider(id, opts); },
+  selectCloudModel: (id, model, opts) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model, opts); },
   selectLocalModel: (id) => { SWX.route = 'selectLocalModel'; return BR.selectLocalModel(id); },
   codingMode: (id) => { SWX.route = 'codingMode'; return BR.codingMode(id); },
   // Run mode — Fusion: the TUI's RunModeOrchestrator writes (main/backend-switch.ts).
@@ -1175,24 +1191,48 @@ const MENUFOCUS = { want: false };
 const NARROW = typeof window !== 'undefined' && window.matchMedia
   ? window.matchMedia('(max-width:1000px)') : {matches:false, addEventListener(){}};
 function sidebarExpanded() { return S.sidebar !== 'rail' && !NARROW.matches; }
-/* r5 review fix (item 2) — below 1000px the toggle was a live control that did
-   nothing. styles.css pins `#sidebar{width:52px}` inside
-   `@media (max-width:1000px)` at the same specificity as `#sidebar{width:260px}`
-   and later in the file, so the `.rail` class cannot win there: clicking the
-   button flipped S.sidebar between 'open' and 'rail' with no visual change at
-   all, and because the glow is the conjunction, aria-pressed stayed "false" in
-   both positions — a screen-reader user got no feedback that the button had
-   done anything. The button is now honestly disabled on a narrow window, with
-   a tooltip that says why, and the ⌘ 0 chord (which does not go through the
-   button) answers with the same sentence instead of flipping a dead flag. */
+/* ATO-538 (U-106): below 1000px the width forces the rail, and the toggle used
+   to be disabled there (r5 review fix: the media query pinned 52px whatever
+   `.rail` said, so a click changed nothing). Between the 940px minimum window
+   and 1000px that left no way to see the chat list at all. Now the toggle and
+   ⌘ \ open the full sidebar as a drawer over the content on a narrow window
+   (sidebar-nav.js toggleSidebar); S.sidebar, the collapse kept for a wide
+   window, is left alone. The drawer closes on a pick inside it, a click
+   outside it, Escape, or the window growing past 1000px. */
+const SBDRAWER = { open: false };
+function sidebarDrawerOpen() { return SBDRAWER.open && NARROW.matches; }
 function sidebarToggleHTML() {
-  const narrow = NARROW.matches, open = sidebarExpanded();
-  const title = narrow ? 'The sidebar is a rail on a narrow window'
-    : kbdText(open ? 'Hide sidebar (⌘ 0)' : 'Show sidebar (⌘ 0)');
-  return '<button class="iconbtn sidebtn' + (open ? ' on' : '') + '" data-act="toggle:sidebar"'
-    + (narrow ? ' disabled' : '')
-    + ' aria-pressed="' + open + '"'
+  const view = sidebarToggleView({narrow: NARROW.matches, sidebar: S.sidebar, drawer: sidebarDrawerOpen()});
+  const title = kbdText(view.label);
+  return '<button class="iconbtn sidebtn' + (view.open ? ' on' : '') + '" data-act="toggle:sidebar"'
+    + ' aria-pressed="' + view.open + '"'
     + ' title="' + title + '" aria-label="' + title + '">' + ic('sidebar') + '</button>';
+}
+function closeSidebarDrawer() {
+  if (!SBDRAWER.open) return;
+  SBDRAWER.open = false;
+  renderToolbar(); renderSidebar();
+}
+if (typeof document !== 'undefined') {
+  // A click outside the drawer closes it (the toggle runs its own verb). A pick
+  // inside it (a chat, a task, a section row, New chat, Settings) closes it as
+  // well; the workspace chip, Load more and a row's "…" menu keep it, their
+  // menus hang off it. Where the click landed is read in the capture phase,
+  // before a handler repaints the sidebar under it; the close itself waits
+  // until that handler has run on the DOM it clicked.
+  document.addEventListener('click', (e) => {
+    if (!sidebarDrawerOpen() || S.overlay) return;   // a menu up (the chip's, a row's) takes this click first
+    const t = e.target instanceof Element ? e.target : null;
+    if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
+    const inside = !!t.closest('#sidebar');
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-more], input, textarea')) return;
+    if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || !sidebarDrawerOpen() || S.overlay || S.settings) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    closeSidebarDrawer();
+  }, true);
 }
 /* 13.10 (owner's review): Search is a magnifier button beside the sidebar
    toggle, not a pill at the right of the toolbar. Same verb, same chord in the
@@ -1307,6 +1347,7 @@ const LLMP = {
   status:null, statusBusy:false, statusErr:null, // `atag models status`
   local:null, localBusy:false, localErr:null, lastRefreshedAt:null, // `atag models list` rows
   emb:null, embDaemon:null, // `atag models list-embeddings` rows + its trailer
+  embAct:null, embWatch:0, // ATO-900: {id, busy, error} for the memory model's card while its click runs, or after it failed; the load watch's token
   served:null, // ATO-125: {chat, embedding} — what the managed servers say they run, asked on their ports (cli:modelsServed)
   models:[], modelsFor:null, modelsBusy:false, modelsErr:null, // `atag models search --json` for the Cloud text-models block
   modelsStale:false, modelsRetry:null, // ATO-318: the list is the app's built-in one (the live fetch did not come back); the one timed retry
@@ -1314,7 +1355,8 @@ const LLMP = {
   health:null, // /health.llama for the External row's status
   envKeys:null, dotenvKeys:null, // key NAMES present (never values)
   busy:false, statusLine:null, statusSource:null, msg:null,
-  confirm:null, // {kind:'removeProvider'|'removeLocal'|'removeEmbedding', id, error, submitting}
+  confirm:null, // {kind:'removeProvider'|'removeLocal'|'removeEmbedding'|'ramOver', id, error, submitting}
+  ramOk:null, // ATO-337: the model id "Run anyway" was pressed for, this session
   externalDraft:null, externalInvalid:false, steerUrl:null,
   fallbackPicker:null, // {cursor}
   daemonPhase:null, // 'starting' | 'stopping' while a `models start|stop` runs (the TUI's daemonPhase)
@@ -1332,12 +1374,18 @@ const TG = {
   keysKnown:false, dotenvKeys:[], envKeys:[], keysBusy:false, keysChain:null,
   mode:'list', token:{error:null, submitting:false},
   message:null, lastError:null, busy:false,
+  channel:null, // ATO-758: the live channel as the agent reports it (BR.telegramChannel)
   confirm:null, // ATO-426: 'clearToken' / 'clearOwner' while its button waits for a second click
   confirmAt:0, // ATO-435: when it was armed; a second click sooner than TG_CONFIRM_MIN_MS is the same double-click
-  // The message's kind ('owed' carries a change the agent loads at start, 'restarting' is the restart's own line,
-  // 'info' anything else) and the agent generation it was said in; owedGen: the generation a restart is owed to.
+  // The message's kind ('owed' carries a change the agent loads at start, 'info' anything else) and the agent
+  // generation it was said in; owedGen: the generation a restart is owed to.
   msgKind:'info', msgGen:0, owedGen:null,
+  // ATO-900 item 6: the tab's own Restart agent (telegram-restart.js): restarting, then its result, said in place.
+  restart:tgRestartInitial(),
   cfg:null, cfgBusy:false, // `atag config get telegram` — the effective values when the user file has no telegram.* key
+  // ATO-859: pairing from the app (telegram-pairing.js). `pair.code` is the one-time code while its window is open, never logged;
+  // `pairBusy` while a start or cancel is in flight; `pairTimer` the next poll for the claim.
+  pair:tgPairInitial(), pairBusy:false, pairTimer:null,
 };
 /* Composio pane (composio.js, main/composio-key.ts). `dotenvHas` / `envHas`:
    COMPOSIO_API_KEY is in <stateDir>/.env / this app's environment (names
@@ -1391,7 +1439,7 @@ const IMP_REPORT_ROWS = 12; // import-panel.tsx maxRows
    server's log shown there — open or not, its last read, the poll's timer. */
 /* ATO-720..722: `check` is the provider row's last live check ({id, busy, res, at}); `provErr` the last
    error a turn met on each provider ({text, at}), dropped once a turn on it completes or a check passes. */
-const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{} };
+const DIAG = { copy:[], agentLog:'', logOpen:false, log:null, logBusy:false, logTimer:null, statusAsked:false, check:null, provErr:{}, gpu:null, gpuAsked:false };
 const DIAG_LOG_LINES = 30; // the lines the log shows, as Models › LLM logs did (LLM_LOG_LINES)
 /* ATO-444: where each cloud provider hands out API keys, for the key step's "Get one" link. */
 const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://aimlapi.com/app/keys', gemini:'https://aistudio.google.com/apikey',
@@ -1402,14 +1450,16 @@ const OB_KEY_PAGES = {openrouter:'https://openrouter.ai/keys', aimlapi:'https://
   perplexity:'https://www.perplexity.ai/settings/api', dashscope:'https://modelstudio.console.alibabacloud.com/?tab=playground#/api-key',
   nous:'https://portal.nousresearch.com', novita:'https://novita.ai/settings/key-management'};
 const PROVIDER_KEY_ENV_FALLBACK = {openrouter:'OPENROUTER_API_KEY', anthropic:'ANTHROPIC_API_KEY', gemini:'GEMINI_API_KEY', groq:'GROQ_API_KEY', aimlapi:'AIMLAPI_API_KEY', openai:'OPENAI_API_KEY'}; // agent-cli.ts PROVIDER_KEY_ENV, the env names the LLM tab asks about
-const TG_PAIRING_NOTE = 'Pairing needs the live channel — open the Telegram tab in `atag tui` to pair';
-// ATO-426: the running app holds telegram.lock (shared ~/.atomic-agent), so the terminal can pair only once the app is quit.
+// ATO-859 / ATO-822 item 1: shown only when the running agent has no pairing route (it answered 404). The terminal's
+// pairing is under Integrations, and the app must be quit first: it holds telegram.lock (shared ~/.atomic-agent, ATO-426).
+const TG_PAIRING_NOTE = 'This agent cannot pair from the app. Update Atomic Agent, or quit the app, run `atag tui`, open Integrations › Telegram and press p.';
 // ATO-435: the pairing steps only make sense with a token and no owner yet; these say what to do instead.
 const TG_PAIR_NEEDS_TOKEN = 'Pairing needs a bot token first. Press t to paste the one from @BotFather.';
-const TG_PAIR_HAS_OWNER = 'The bot is already paired. To pair a different Telegram account, clear the owner first.';
+const TG_PAIR_HAS_OWNER = 'The bot is already paired. To pair a different Telegram account, press Replace beside the owner and confirm.';
 // ATO-435: a double-click on Remove token / Clear owner must not arm and confirm in one go.
 const TG_CONFIRM_MIN_MS = 400;
-const TG_PAIR_HOWTO = 'The desktop app can\'t pair yet. Quit it, run `atag tui`, open Telegram under Integrations and press p to start pairing, then DM your bot. Reopen the app and press Check again.';
+// ATO-859: the agent's own instruction line replaces this once a code is on screen.
+const TG_PAIR_HOWTO = 'Press Pair for a one-time code, then send /start and the code to your bot in Telegram. The code works once, for 5 minutes.';
 
 /* ---- Item 5: file attachments — what a turn actually wrote ----
    The strip under an assistant reply is sourced ONLY from write-tool cards.
@@ -1585,6 +1635,8 @@ const P = {
   alert:'<path d="M8 2.5 14 13H2zM8 6.5v3M8 11.3v.2"/>',
   info:'<circle cx="8" cy="8" r="5.5"/><path d="M8 7.3v3.5M8 5.2v.2"/>',
   stop:'<rect x="3.5" y="3.5" width="9" height="9" rx="2" fill="currentColor" stroke="none"/>',
+  // ATO-1046: Read aloud.
+  speak:'<path d="M3 6.5h2l3-2.5v8l-3-2.5H3z"/><path d="M10.5 6a2.8 2.8 0 0 1 0 4M12.3 4.3a5.2 5.2 0 0 1 0 7.4"/>',
   up:'<path d="M8 13V3.5M4 7.5l4-4 4 4"/>',
   arrowR:'<path d="M3 8h10M9 4l4 4-4 4"/>',
   copy:'<rect x="5.5" y="5.5" width="8" height="8" rx="2"/><path d="M3 10.5v-6A2 2 0 0 1 5 2.5h5.5"/>',
@@ -1888,7 +1940,7 @@ const PAL = [
   ]],
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
-    ['sidebar','Hide or show the sidebar','','⌘ 0','toggle:sidebar'],
+    ['sidebar','Hide or show the sidebar','','⌘ \\','toggle:sidebar'],
     ['skills','Enable or disable a skill…','','','settings:skills'],
     ['tasks','Create, cancel or run a task…','','','settings:tasks'],
     ['key','Analytics','','','settings:general'],
@@ -2216,6 +2268,10 @@ function renderToolbar() {
    about tasks that have already executed. Skills leaves the sidebar only —
    ⌘3, the palette rows and View › Skills still reach it (they open Settings ›
    Skills on this tree).
+   ATO-457 (U-24, owner's decision 15.10): Tasks and Skills came back as two
+   standing section rows under New chat (sidebarNavHTML), so the places ⌘ 2
+   and ⌘ 3 lead to are visible. They are not the old nav rows: no headers, no
+   counts, and the Tasks list below still shows the tasks themselves.
    ============================================================ */
 function renderSidebar() {
   const tk = sidebarTasks(), ch = sidebarChats();
@@ -2225,7 +2281,11 @@ function renderSidebar() {
   const keepScroll = prevLists ? prevLists.scrollTop : 0;
   // r5 item 2: the class is derived from S.sidebar on every render, applied
   // BEFORE the innerHTML write — the geometry hooks measure in the same tick.
-  $('#sidebar').classList.toggle('rail', S.sidebar === 'rail');
+  // ATO-538: the drawer (a narrow window, opened by the toggle) is the full
+  // sidebar over the content, so it never carries the kept rail's class.
+  const drawer = sidebarDrawerOpen();
+  $('#sidebar').classList.toggle('rail', S.sidebar === 'rail' && !drawer);
+  $('#sidebar').classList.toggle('drawer', drawer);
   /* Calm (S1): workspace chip, New chat, Chats, then Tasks only when the
      agent holds any, and Settings at the bottom. The Chats header lost its
      plus to the New chat button (one way to do one thing); the Tasks header
@@ -2239,8 +2299,10 @@ function renderSidebar() {
     (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML() + sidebarToggleHTML() + '</div>' : '')
     + '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
-    + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
+    // ATO-1032: the chord is shown on the row (drawn by CSS from data-kbd, so the row's text stays "New chat").
+    + '<button class="sb-new" data-act="session:new" data-kbd="' + esc(IS_MAC ? '⌘N' : kbd('⌘ N')) + '" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
+    + sidebarNavHTML()
     // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
     + (window.STUDIO ? STUDIO.sidebarHTML(S.room) : '')
     + '<div class="sb-lists">'
@@ -2252,10 +2314,14 @@ function renderSidebar() {
           + ch.rows.slice(0, ch.pinned).map(chatRow).join('')
         + '</div>'
         : '')
+      // ATO-1034: the folders (chat-folders.js), then the chats in none of them.
+      + foldersSidebarHTML(ch.groups)
       + '<div class="sb-list" data-list="chats">'
-        + '<div class="sb-list-head micro"><span>Chats</span></div>'
+        + '<div class="sb-list-head micro" data-fdrop=""><span>Chats</span>'
+          + (FOLDERS.state.folders.length ? '' : '<button class="iconbtn sb-add sb-fnew" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('folder') + '</button>')
+        + '</div>'
         + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
-           : ch.rows.length ? '' : '<div class="sb-empty">No chats yet</div>')
+           : ch.rows.length || ch.filed ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
       + (showTasks
@@ -2283,6 +2349,23 @@ function renderSidebar() {
     if (lists) lists.scrollTop = keepScroll;
   }
   queuesKeep();   // ATO-135
+}
+
+/* ATO-457: the Tasks and Skills section rows. They reuse the New chat row's
+   shape (.sb-new: icon and word, the icon alone in the rail) and open their
+   Settings tab through act('room:…'), the same verb as ⌘ 2 / ⌘ 3; the row
+   whose tab is on screen is lit. */
+function sidebarNavHTML() {
+  const pane = S.settings ? settingsPaneId(S.settingsPane) : null;
+  return '<div class="sb-nav" role="group" aria-label="Sections">'
+    + sidebarNavItems(pane).map((n) => {
+      const title = kbdText(n.label + ' (' + n.chord + ')');
+      return '<button class="sb-new sb-nav-row' + (n.on ? ' on' : '') + '" data-act="' + n.act + '" data-nav="' + n.id + '"'
+        + (n.on ? ' aria-current="page"' : '')
+        + ' title="' + title + '" aria-label="' + esc(n.label) + '">'
+        + '<span class="sb-new-ic">' + ic(n.icon) + '</span><span class="sb-new-lb">' + esc(n.label) + '</span></button>';
+    }).join('')
+    + '</div>';
 }
 
 /** The workspace chip's label: the folder's own name, not the whole path
@@ -2332,9 +2415,15 @@ function sidebarChats() {
   const stored = new Set(SESSIONS.map((s) => s.id));
   const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
   const order = orderChats(SESSIONS, pending, PREFS.pinned);
-  const all = order.pinned.concat(order.rest);
+  /* ATO-1034: a chat in a folder is drawn under that folder (all of them, a
+     folder is short), a pinned one stays in Pinned; Load more pages the rest.
+     `visible` is every row on screen, for nameVisibleSessions. */
+  const fg = folderGroups(FOLDERS.state, order.rest);
+  const all = order.pinned.concat(fg.loose);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
-  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length)};
+  const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0);
+  const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows));
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, visible, filed};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2403,8 +2492,9 @@ function taskMeta(t) {
 function taskRow(t) {
   const [state, tip, tone] = taskDot(t);
   const meta = taskMeta(t);
+  const glyph = railGlyph(t.t);   // ATO-538: what the rail paints in place of an anonymous dot
   return '<button class="sesrow" data-task="' + esc(t.id) + '" title="' + esc(t.t + ' · ' + tip) + '"'
-    + (meta ? ' data-m="' + esc(meta) + '"' : '') + '>'
+    + (meta ? ' data-m="' + esc(meta) + '"' : '') + (glyph ? ' data-g="' + esc(glyph) + '"' : '') + '>'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(t.t) + '</span></button>';
 }
@@ -2414,9 +2504,16 @@ function chatRow(s) {
   const pinned = PREFS.pinned.includes(s.id);
   // ATO-135: a chat with messages waiting for its turn to end says so on its row, as a task row says its schedule.
   const queued = chatQueuedCount(s.id);
+  // ATO-538: the rail paints this glyph (the title's first letter or emoji) with the dot as its badge.
+  const glyph = railGlyph(s.t);
   // Studio: no chat is "open" while a Studio page is on screen.
-  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '"'
-    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
+  // ATO-1032: how long ago the chat last moved ("5m", "2h", "3d"), where nothing is queued.
+  const age = queued ? '' : chatAgeShort(s.updatedAt);
+  if (age) ensureChatAgeTick();
+  // ATO-1034: draggable onto a folder (chat-folders.js).
+  return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '" draggable="true"'
+    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : age ? ' data-m="' + age + '" data-age="1" data-at="' + Number(s.updatedAt) + '"' : '')
+    + (glyph ? ' data-g="' + esc(glyph) + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
     + '<span class="t1">' + esc(s.t) + '</span>'
@@ -2431,6 +2528,32 @@ function chatRow(s) {
       + ' aria-haspopup="menu" aria-expanded="' + (S.overlay === 'sesmenu' && SESMENU.id === s.id ? 'true' : 'false') + '"'
       + ' role="button" tabindex="0">' + ic('dots') + '</span>'
     + '</button>';
+}
+
+/* ATO-1032: the ages move on while nothing re-renders the sidebar, so a
+   minute tick rewrites them in place (no re-render: scroll and focus stay). */
+let CHAT_AGE_TICK = 0;
+function ensureChatAgeTick() {
+  if (CHAT_AGE_TICK || typeof setInterval !== 'function') return;
+  CHAT_AGE_TICK = setInterval(refreshChatAges, 60000);
+}
+
+function refreshChatAges(root) {
+  for (const el of (root || document).querySelectorAll('.sesrow[data-age][data-at]')) {
+    const age = chatAgeShort(Number(el.dataset.at));
+    if (age && el.dataset.m !== age) el.dataset.m = age;
+  }
+}
+
+/** ATO-1032: a chat row's age, short: "now", "5m", "2h", "3d", "6w"; '' with no time. */
+function chatAgeShort(at) {
+  if (!(at > 0)) return '';
+  const m = Math.floor(Math.max(0, Date.now() - at) / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60); if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24); if (d < 7) return d + 'd';
+  return Math.floor(d / 7) + 'w';
 }
 
 /* ATO-165: the chat row's menu. `point` is where a right-click landed; null
@@ -2466,8 +2589,9 @@ function chatMenuHTML() {
   const s = chatById(SESMENU.id);
   if (!s) return '';
   const id = s.id;
+  const stored = SESSIONS.some((x) => x.id === id);
   const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
-    renamable: SESSIONS.some((x) => x.id === id)});   // ATO-455: a stand-in has nothing stored to rename
+    renamable: stored, folders: stored});   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
   if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
@@ -2545,7 +2669,15 @@ function renderContent() {
     const pe = document.getElementById('entry');
     const hadFocus = !!(pe && document.activeElement === pe);
     const caret = hadFocus ? [pe.selectionStart, pe.selectionEnd] : null;
-    c.innerHTML = chatView(); afterChat(keep, hadFocus, caret); return;
+    /* ATO-1023: morphed, not replaced (dom-morph.js, as repaintTranscript
+       does for a stream frame). A click used to throw away the transcript and
+       the composer: the scroller, the textarea and every running animation
+       were new nodes on each render. Kept nodes keep their focus, caret,
+       scroll and animation; only markup that changed is swapped. */
+    const next = document.createElement('template');
+    next.innerHTML = chatView();
+    morphChildren(c, next.content);
+    afterChat(keep, hadFocus, caret); return;
   }
   if (S.room === 'tasks')  { c.innerHTML = tasksView(); return; }
   c.innerHTML = skillsView();
@@ -2565,9 +2697,11 @@ function emptyChat() {
      provider and backend are on the composer's chips right below, and the
      Build row named the desktop shell's version, not the agent's (U7). The
      suggestions stay: they are the cheapest way into a first turn. */
-  return '<div class="emptychat">' + sharedSetupNoticeHTML() + emptyPlateHTML()
+  return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
     + '<div class="ghost">'
-      + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
+      /* ATO-1032: one suggestion, as Codex, Jan and Ollama keep it: the
+         question above is the screen; three chips competed with it. */
+      + ['Summarise the files in this folder']
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
     + '</div></div>';
 }
@@ -2813,13 +2947,16 @@ function isLastReply(m) {
   }
   return false;
 }
-/** ATO-861: the question reply m answers, or null when that turn ran a tool.
-    Walks back to the nearest user message that is not a steer (a steer was
-    folded into the same turn); a tool card or an approval row on the way means
-    the agent acted, and asking again would act again, so there is no retry.
-    The log is the same shape live and after reopening (sessionTurnsToLog). */
-function plainTurnQuestion(m) {
+/* ATO-861: the question a reply answers, when its turn used no tools. Walks
+   back from the reply to the nearest user message that is not a steer; a tool
+   card or an approval on the way means the turn acted, and the answer is null.
+   null too when the question is empty, as resendUser would send nothing,
+   and when a later message follows the reply: a turn that ended as "(no
+   reply)" or "(stopped)" leaves the reply above it as the last real one, and
+   re-asking that older question is not retrying the one that just failed. */
+function replyRetryAsk(m) {
   const at = S.log.findIndex((x) => x.id === m.id);
+  if (at < 0 || S.log.slice(at + 1).some((x) => x.k === 'user')) return null;
   for (let i = at - 1; i >= 0; i--) {
     const x = S.log[i];
     if (x.k === 'tool' || x.k === 'approval') return null;
@@ -2827,6 +2964,23 @@ function plainTurnQuestion(m) {
   }
   return null;
 }
+/* ATO-862: whether the reply's own turn acted, read the same way as
+   replyRetryAsk: a tool card (the Exa key card rides on one) or an approval
+   between the reply and its question. false when a later message follows the
+   reply, for the same reason replyRetryAsk gives up there. */
+function replyTurnActed(m) {
+  const at = S.log.findIndex((x) => x.id === m.id);
+  if (at < 0 || S.log.slice(at + 1).some((x) => x.k === 'user')) return false;
+  for (let i = at - 1; i >= 0; i--) {
+    const x = S.log[i];
+    if (x.k === 'tool' || x.k === 'approval') return true;
+    if (x.k === 'user' && !x.steered) return false;
+  }
+  return false;
+}
+const ACTED_RETRY_HINT = 'Repeating this turn could create or delete files a second time';
+// ATO-901: the user bubble's retry while a turn runs (msgActs).
+const BUSY_RETRY_HINT = 'Wait for the answer to finish';
 function msgActs(m) {
   const text = String(m.text || '');
   /* Still streaming: there is nothing final to copy yet, so the row is emitted
@@ -2847,26 +3001,51 @@ function msgActs(m) {
      shown, so a newcomer sees there is something to do with an answer
      without having to find the hover. Icons only; the names live in each
      button's tooltip and aria-label. */
-  const last = m.k === 'assistant' && isLastReply(m);
-  const cls = last ? 'msgacts msgacts-last' : 'msgacts';
+  const cls = m.k === 'assistant' && isLastReply(m) ? 'msgacts msgacts-last' : 'msgacts';
   const copy = '<button class="msgact" data-copy="' + esc(m.id) + '" title="Copy message" aria-label="Copy message">'
     + ic('copy') + '</button>';
   if (m.k !== 'user') {
-    /* ATO-861: the last reply of a turn that ran no tool can be asked again,
-       through the question's own data-resend path (resendUser). Not while a
-       turn runs: resendUser would only park the text in the composer. */
-    const q = last && !S.busy ? plainTurnQuestion(m) : null;
-    const again = q ? '<button class="msgact" data-resend="' + esc(q.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>' : '';
-    return '<div class="' + cls + '">' + again + copy + '</div>';
+    /* ATO-861: under the last reply of a turn that used no tools, "Ask again"
+       sends the question once more through the same data-resend path as the
+       user bubble's retry (resendUser). A turn that ran a tool or asked for an
+       approval did something, and repeating it is not a harmless re-ask, so
+       no button there. Never while a turn runs, never under a placeholder.
+       ATO-862: in its place a turn that acted shows a muted retry icon that
+       only explains why: no data-resend and no data-act, so a click reaches
+       no handler and sends nothing; aria-disabled for assistive tech and
+       tabindex -1 so Tab does not stop on a control that does nothing.
+       ATO-900: its sentence is drawn by CSS from data-tip on hover
+       (chat.css), not by a native title. The native tooltip waits for the
+       pointer to rest on the SAME node, and the renders that land just
+       after a turn ends (render() rebuilds #content) replace that node, so
+       on the reply people hover first the tooltip never came up. A CSS
+       :hover follows the new node at once. No title too, or the sentence
+       would show twice. */
+    const last = cls === 'msgacts msgacts-last' && !m.placeholder && !S.busy;
+    const ask = last ? replyRetryAsk(m) : null;
+    const again = ask
+      ? '<button class="msgact" data-resend="' + esc(ask.id) + '" title="Ask again" aria-label="Ask again">' + ic('retry') + '</button>'
+      : last && replyTurnActed(m)
+        ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + ACTED_RETRY_HINT
+          + '" aria-label="' + ACTED_RETRY_HINT + '">' + ic('retry') + '</button>'
+        : '';
+    // ATO-1046: Read aloud after copy, under a finished reply (tts.js).
+    return '<div class="' + cls + '">' + again + copy + (typeof ttsButtonHTML === 'function' && !m.placeholder ? ttsButtonHTML(m) : '') + '</div>';
   }
   // Review fix: no `usr` modifier class here. The right-alignment the user
   // asked for ("a copy icon at its end") is on the base `.msgacts` rule for
   // BOTH kinds, so a `.msgacts.usr` element would have matched nothing in
   // styles.css and would have told the next reader the user row's alignment
   // was unstyled.
-  return '<div class="' + cls + '">'
-    + '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>'
-    + copy + '</div>';
+  /* ATO-901: while a turn runs the retry is the muted, inert icon ATO-862
+     draws under a reply that acted, with its own sentence: pressed, it used
+     to park the text in the composer behind a toast nobody understood. The
+     render that ends the turn draws the live button back. */
+  const resend = S.busy || S.pending
+    ? '<button type="button" class="msgact msgact-off" aria-disabled="true" tabindex="-1" data-tip="' + BUSY_RETRY_HINT
+      + '" aria-label="' + BUSY_RETRY_HINT + '">' + ic('retry') + '</button>'
+    : '<button class="msgact danger" data-resend="' + esc(m.id) + '" title="Send this message again" aria-label="Send this message again">' + ic('retry') + '</button>';
+  return '<div class="' + cls + '">' + resend + copy + '</div>';
 }
 
 /* What is copied is `m.text` and only `m.text`. For a user message that is the
@@ -2944,7 +3123,8 @@ function resendUser(id) {
     // these two are the narrow repaints the rest of the file uses.
     refreshSend();
     ctxDraftChanged();
-    toast('A turn is already running', 'the message is in the composer — Enter folds it into this turn', 'bad');
+    // ATO-901: plain words, no dash (a "Try again" on a failure row still lands here mid-turn).
+    toast('The agent is still answering', 'Your message is in the box: press Enter to add it to this answer, or wait.', 'bad');
     return;
   }
   // Both the editor and S.draft, because submit() reads `e.value` FIRST and
@@ -3029,6 +3209,14 @@ function clipWords(s, n) {
   const t = String(s == null ? '' : s).replace(/\s+/g, ' ').trim();
   return t.length > n ? t.slice(0, n - 1) + '\u2026' : t;
 }
+/* ATO-432: lines of a command after its first one. The card and the step
+   line show only the first, so a script whose first line is `echo hi` read
+   as `echo hi` alone; they now say how much more there is. */
+function moreLines(s) {
+  const t = String(s == null ? '' : s).trim();
+  return t ? t.split('\n').length - 1 : 0;
+}
+function moreLinesNote(n) { return n > 0 ? ' (+' + plural(n, 'more line') + ')' : ''; }
 /* "os.proc.list" -> "proc list", "mcp.docs.search" -> "docs search". */
 function toolWords(name) {
   return String(name || 'tool').replace(/^(os|mcp)\./, '').replace(/[._]+/g, ' ').trim() || 'a tool';
@@ -3093,9 +3281,10 @@ function toolLine(m) {
   if (n === 'os.fs.grep' && a.pattern) return 'Searched files for ' + quote(a.pattern);
   if (n === 'os.shell.run' && (a.cmd || a.command)) {
     const argv = Array.isArray(a.args) ? a.args : [];
-    const line = [a.cmd || a.command].concat(argv).join(' ').split('\n')[0];
+    const full = [a.cmd || a.command].concat(argv).join(' ').trim();
+    const line = full.split('\n')[0];
     const ex = /^exit:\s*(-?\d+|\S+)/m.exec(out);
-    return 'Ran ' + code(clipWords(line, 80)) + (ex && ex[1] !== '0' ? ' \u00b7 exit ' + esc(ex[1]) : '');
+    return 'Ran ' + code(clipWords(line, 80)) + esc(moreLinesNote(moreLines(full))) + (ex && ex[1] !== '0' ? ' \u00b7 exit ' + esc(ex[1]) : '');
   }
   if ((n === 'os.web.search' || n === 'browser.search' || n === 'web.search') && a.query) return 'Searched the web for ' + quote(a.query);
   if ((n === 'os.web.fetch' || n === 'browser.navigate') && a.url) return 'Opened ' + code(toolHost(a.url));
@@ -3414,6 +3603,10 @@ function apprCard(m) {
     + '</div></div>'
     + '<div class="apprbtns">'
       + '<button class="btn sm appr-yes" data-appr="y" title="Allow this one call' + (current ? ' (' + apprKeyLabel('y') + ')' : '') + '">Allow once' + keyOn('y') + '</button>'
+      /* ATO-473: the agent's shape grant, for a command it can name (m.shape,
+         never `bash -c`), on an agent that takes it (apprChatOk). No key: the
+         chords stay Allow once and Deny. */
+      + (apprChatOk(m) ? '<button class="btn sm btn-s appr-chat" data-appr="c" title="' + esc('Allow this call, and ' + m.shape + ' commands for the rest of this chat without asking') + '">Allow in this chat</button>' : '')
       + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny' + (current ? ' (' + apprKeyLabel('n') + ')' : '') + '">Deny' + keyOn('n') + '</button>'
       + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run">Abort run</button>'
     + '</div>'
@@ -3422,7 +3615,7 @@ function apprCard(m) {
        waiting; it is never the answer. Said on this chat's own live request:
        another thread's question has nothing to do with the box. */
     + (typed ? '<div class="apprfoot">A message typed below goes to the agent; this request still waits for Allow or Deny.</div>' : '')
-    + '<details class="apprdet"' + (m.open ? ' open' : '') + '><summary data-apprdet="' + m.id + '">' + ic('chevR') + 'Details</summary>'
+    + '<details class="apprdet"' + ((m.open === undefined ? apprMultiline(m) : m.open) ? ' open' : '') + '><summary data-apprdet="' + m.id + '">' + ic('chevR') + 'Details</summary>'
       + '<dl class="aplate">'
         + '<dt>Tool</dt><dd><span class="mono">' + esc(m.tool) + '</span></dd>'
         + '<dt>Category</dt><dd><span class="badge">' + esc(m.kind) + '</span> <span class="cap">'
@@ -3434,9 +3627,9 @@ function apprCard(m) {
         + (m.reason ? '<dt>Reason</dt><dd>' + esc(apprHomePaths(m.reason)) + '</dd>' : '')
         + (pv && pv !== '(no preview)' ? '<dt>Preview</dt><dd><div class="previewblk">' + esc(pv) + '</div></dd>' : '')
       + '</dl>'
-      /* The one approval surface for "ask me less" is the mode control in the
-         composer (src/tui/approval-modal.tsx footerHint); the agent's HTTP
-         API carries allow-once and deny only, so no session grant is drawn. */
+      /* "Ask me less" for everything is the mode control in the composer
+         (src/tui/approval-modal.tsx footerHint). For one command there is
+         Allow in this chat above (ATO-473), when the agent can name it. */
       + '<div class="apprmode">To be asked less often, change the <button class="apprlink" data-act="modes">mode</button> in the composer.</div>'
     + '</details>'
     + '</div>';
@@ -3471,6 +3664,15 @@ const APPR_FALLBACK = {
   git_remote:'talk to a git remote', email:'send an e-mail', fs_read_outside:'read outside this folder',
   paid_generation:'make a paid image in the cloud',
 };
+/** ATO-473: whether the card offers "Allow in this chat". The agent grants
+    the request's command shape (the binary, `git`) for the rest of the chat;
+    it names one only for a command it can see into (never `bash -c`), and an
+    agent that does not list `allow-in-chat` on /api/capabilities answers it
+    with a 400, so there the button is not drawn at all. */
+function apprChatOk(m) {
+  const decisions = LIVE_CAPS && LIVE_CAPS.agent && LIVE_CAPS.agent.approvalDecisions;
+  return !!m.shape && m.cat === 'shell' && Array.isArray(decisions) && decisions.includes('allow-in-chat');
+}
 /** The question: "Allow Atomic Agent to run `touch approved.txt`?" (html). */
 function apprAsk(m) {
   const q = (h) => 'Allow Atomic Agent to ' + h + '?';
@@ -3480,7 +3682,8 @@ function apprAsk(m) {
   let mt;
   if (m.cat === 'shell' || m.tool === 'os.shell.run') {
     const cmd = pv && pv !== '(no preview)' ? firstLine(pv) : '';
-    if (cmd) return q('run ' + apprCode(cmd));
+    // ATO-432: a multiline command says so; the whole of it is open under Details (apprMultiline).
+    if (cmd) return q('run ' + apprCode(cmd) + esc(moreLinesNote(moreLines(pv))));
   }
   if (m.cat === 'fs_read_outside') {
     if ((mt = /^read (.+?) — /.exec(r))) return q('read ' + apprCode(apprPath(mt[1])));
@@ -3506,6 +3709,12 @@ function apprAsk(m) {
     return q(esc(clause.replace(/(^|\s)(\/[^\s"]+)/g, (all, sp, p) => sp + apprPath(p))));
   }
   return q(APPR_FALLBACK[m.cat] || 'go ahead');
+}
+/** ATO-432: a shell request whose command has more than one line. Its card
+    opens Details (the full Preview) from the start, until the person closes it. */
+function apprMultiline(m) {
+  const pv = String(m.preview || '').trim();
+  return (m.cat === 'shell' || m.tool === 'os.shell.run') && pv !== '(no preview)' && moreLines(pv) > 0;
 }
 /** One line of what allowing it does, or '' when there is nothing to add (html). */
 function apprWhy(m) {
@@ -3639,7 +3848,7 @@ function composer() {
 
        It hangs off `.composerwrap` now, which is the same anchor visually
        (the composer is its last child) and does not clip. */
-    + (S.slash ? slashPopover() : '')
+    + (slashShown() ? slashPopover() : '')
     // ATO-404: the "+" menu hangs here for the same reason (attachments.js).
     + attMenuHTML()
     + '<div class="composer' + (running ? ' running' : '') + loaderClass() + '" id="composer">'
@@ -3671,7 +3880,8 @@ function composer() {
 }
 
 /* Calm (S6, U16) — no route anyone chose. Skipping setup leaves the agent's
-   own default: the external llama.cpp route at 127.0.0.1:8080, which nobody
+   own default: the external llama.cpp route at 127.0.0.1:9931 (8080 on
+   installs from before llama.cpp moved), which nobody
    picked (needsOnboarding does not count it either). The composer used to
    draw that as "Custom server · llama.cpp", a route to a server that is not
    there. Now it says what is true and offers the way out: one "Set up a
@@ -3683,7 +3893,7 @@ function composerNeedsSetup() {
   if (selBackend() !== 'custom') return false;
   const lm = LIVE_CONFIG.localModels || {};
   const url = lm.url || DEFAULT_LLAMA_URL;
-  if (url !== DEFAULT_LLAMA_URL) return false;
+  if (!llamaUrlUntouched(url)) return false;
   return !(EXT.url === url && EXT.model);
 }
 /* The first-run wizard's pull runs in DL, which the composer never read: it
@@ -3739,7 +3949,7 @@ function downloadingChipHtml(slot) {
     + ' aria-label="Downloading ' + esc(what) + '">' + ic('download') + '<span class="cval">Downloading ' + esc(what) + '</span></span>';
 }
 function setupChipHtml() {
-  return '<button class="cchip setupchip" data-act="onboarding:choose" title="No model is set up yet. Open setup"'
+  return '<button class="cchip setupchip" data-act="settings:llm:local" title="No model is set up yet. Open Settings › Models › Local models"'
     + ' aria-label="Set up a model">' + ic('plus') + '<span class="cval">Set up a model</span></button>';
 }
 /** Where · Provider · Model (· Fusion's seats), as the route draws them. */
@@ -3867,7 +4077,8 @@ function sendButton() {
     // the next turn only when the agent refuses it, which is a fact the
     // route answers and this button cannot know in advance.
     if (S.draft.trim() || attHasReady()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
-    return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
+    // ATO-1032: the chord as this platform presses it (⌘ . on a Mac said Ctrl+. before).
+    return '<button class="sendbtn stop" data-act="stop" title="' + kbdText('Stop (⌘ .)') + '">' + ic('stop') + '</button>';
   }
   return '<button class="sendbtn' + (S.draft.trim() || attHasReady() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
 }
@@ -4059,6 +4270,7 @@ function voiceMenuHTML() {
     + '</div>';
 }
 
+const SCROLL_WIRED = new WeakSet();
 function afterChat(keep, hadFocus, caret) {
   const e = $('#entry');
   if (!e) return;
@@ -4090,14 +4302,33 @@ function afterChat(keep, hadFocus, caret) {
   } else if (hadFocus && !S.settings && !S.overlay && S.menuOpen === null) {
     e.focus();
     if (caret) e.setSelectionRange(Math.min(caret[0], e.value.length), Math.min(caret[1], e.value.length));
+  } else if (document.activeElement === e && (S.settings || S.overlay || S.menuOpen !== null)) {
+    /* ATO-1023 follow-up: renderContent morphs now, so this textarea outlives
+       the render and its caret no longer dies with it. A modal that opened
+       from the composer takes the caret out explicitly, as the rewrite used to. */
+    e.blur();
   }
   const sc = $('#scroller');
   if (sc) {
-    sc.addEventListener('scroll', () => {
-      S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
-      $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
-      apprJumpSync();
-    });
+    /* ATO-1023: the scroller now outlives a render (renderContent morphs), so
+       it is wired once. A WeakSet, not a data- attribute: the next morph would
+       strip an attribute the markup does not carry. S.stick is set in the
+       event itself: a stream frame's rAF runs before any rAF this handler
+       could ask for, and would snap a scroll-up back to the bottom. The
+       toolbar class and the approval jump wait for the frame. */
+    if (!SCROLL_WIRED.has(sc)) {
+      SCROLL_WIRED.add(sc);
+      let frame = 0;
+      sc.addEventListener('scroll', () => {
+        S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+        if (frame) return;
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          $('#toolbar').classList.toggle('scrolled', sc.scrollTop > 2);
+          apprJumpSync();
+        });
+      }, {passive: true});
+    }
     if (S.stick) sc.scrollTop = sc.scrollHeight;
     // Scroll-stable cards: a scrolled-up user is put back at the same pixel
     // after a whole-DOM render (streaming deltas, reconcileToolCards, expand
@@ -4466,36 +4697,28 @@ function palRows() {
   const all = [];
   PAL.forEach(([g, rows]) => rows.forEach((r) => all.push({ic:r[0], t:r[1], cx:r[2], sc:r[3], act:r[4], g})));
   if (!q) return null; // grouped rendering
-  const score = (r) => {
-    const t = r.t.toLowerCase();
-    if (t === q) return 0;
-    if (t.startsWith(q)) return 1;
-    if (t.split(/[\s·]+/).some((w) => w.startsWith(q))) return 2;
-    if (t.includes(q)) return 3;
-    if ((r.cx || '').toLowerCase().includes(q)) return 4;
-    // The slash alias ("/llm", "/feed"): typed with or without its slash.
-    if ((r.sc || '').startsWith('/') && r.sc.slice(1).startsWith(q.replace(/^\//, ''))) return 2;
-    return 9;
-  };
-  const hits = all.map((r) => ({r, s:score(r)})).filter((x) => x.s < 9).sort((a, b) => a.s - b.s).map((x) => x.r);
+  // ATO-669: fuzzyRank (fuzzy-match.js) keeps the old exact/prefix/substring order
+  // and adds a subsequence tier ("mdl" finds Models) and a one-typo tier after it.
+  const score = (r) => fuzzyRank(q, r.t, r);
+  const hits = all.map((r, i) => ({r, i, s:score(r)})).filter((x) => x.s !== Infinity).sort((a, b) => a.s - b.s || a.i - b.i).map((x) => x.r);
   // cross-entity. ATO-453: chats used to stop at three title matches, so with many
   // similar chats the one you wanted never showed. They are ranked like the commands
   // above; ties keep the agent's order, most recent first.
   // ATO-824 (owner, 22.10): the first PAL_CHATS_SHOWN, then one "N more chats" row,
   // then tasks and skills, which up to 20 chats pushed out of sight. The row shows
   // every matching chat for this query in place (palMoreChats).
-  const chats = SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k < 4)
+  const chats = SESSIONS.map((s, i) => ({s, i, k:score({t:String(s.t || '')})})).filter((x) => x.k !== Infinity)
     .sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.s);
   const allChats = S.palMoreFor === q || chats.length <= PAL_CHATS_SHOWN + 1;
   (allChats ? chats : chats.slice(0, PAL_CHATS_SHOWN))
-    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
+    .forEach((s) => hits.push({ic:'chat', t:s.t, cx:'Chat · ' + folderPaletteWord(s.id) + chatStatusWord(s), sc:'', act:'ses:' + s.id, badge:'session', dot:chatDot(s)}));
   if (!allChats) {
     const more = chats.length - PAL_CHATS_SHOWN;
     hits.push({ic:'chevD', t:more + ' more chats', cx:'Show every chat that matches', sc:'', act:'palette:morechats', badge:'session', more:true});
   }
-  TASKS.filter((t) => t.t.toLowerCase().includes(q)).slice(0, 3)
+  fuzzyFilter(q, TASKS, (t) => t.t).slice(0, 3)
     .forEach((t) => hits.push({ic:'tasks', t:t.t, cx:'Task · ' + t.when, sc:'', act:'room:tasks', badge:'task', dot:taskDot(t)}));
-  SKILLS.filter((s) => s.t.toLowerCase().includes(q)).slice(0, 3)
+  fuzzyFilter(q, SKILLS, (s) => s.t).slice(0, 3)
     .forEach((s) => hits.push({ic:'skills', t:s.t, cx:'Skill · ' + s.s, sc:'', act:SK.workingDir ? 'skill:compose:' + s.t : 'room:skills', badge:'skill'}));
   return hits;
 }
@@ -4570,6 +4793,13 @@ function paletteHTML() {
 }
 
 /* ---------------- slash completion ---------------- */
+/** ATO-923: the command list only while nothing is over the composer. The
+    palette, a menu, the model pickers, Settings or a question (S.alert)
+    would otherwise have it hanging over them; it comes back with the
+    render that closes them, the typed `/` still there. */
+function slashShown() {
+  return !!S.slash && !S.overlay && !SEL.open && !S.settings && !S.alert;
+}
 function slashMatches() {
   // The command word only: with arguments typed (`/runmode status`) the list
   // keeps showing that command and its hint instead of "no matching command".
@@ -4610,11 +4840,13 @@ function overlaysHTML() {
   if (S.overlay === 'context') html += contextHTML();
   if (S.overlay === 'modes') html += modesHTML();
   if (S.overlay === 'sesmenu') html += chatMenuHTML();
+  if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
+  if (ptOnScreen()) html += projectTrustHTML();   // ATO-1250
   if (OB.open) html = obHTML();
   return html;
 }
@@ -4890,6 +5122,20 @@ function refreshDlProgress() {
  *  inspector. Its width (narrowed when the column is narrower) and the height
  *  the column leaves above the card are part of the returned style, so a
  *  caller's own `width:` in front of it is only the default. */
+/* ATO-1235: a popover under (or, short of room, over) a button inside
+   Settings, kept inside the window: on a 700 px window it scrolls rather
+   than run off the bottom. */
+function settingsAnchorStyle(el, width) {
+  const r = el.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight, pad = 12;
+  const w = Math.round(Math.min(width, vw - pad * 2));
+  const left = Math.round(Math.max(pad, Math.min(r.right - w, vw - pad - w)));
+  const below = vh - r.bottom - pad - 6, above = r.top - pad - 6;
+  if (below >= 260 || below >= above) {
+    return 'position:fixed;left:' + left + 'px;top:' + Math.round(Math.min(r.bottom + 6, vh - pad - 160)) + 'px;bottom:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, Math.min(below, vh - pad * 2))) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 0';
+  }
+  return 'position:fixed;left:' + left + 'px;bottom:' + Math.round(vh - r.top + 6) + 'px;top:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, above)) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 100%';
+}
 function anchorStyle(sel, width) {
   const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
   const winEl = $('#window');
@@ -5095,7 +5341,9 @@ function shortcutsSheet() {
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
-    ['Toggle sidebar','⌘ 0','Ctrl 0'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    ['Toggle sidebar','⌘ \\','Ctrl \\'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    // ATO-544: View menu zoom (menu.ts zoomItems). ATO-900: ⌘ 0 is Actual Size, as in every Mac app and browser.
+    ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size','⌘ 0',''],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop (no approval on screen)','⌘ .','Ctrl .'],
     ['Expand all cards','⌥ ⌘ E',''],['Collapse all cards','⌥ ⌘ K',''],
     ['Allow the approval on screen once','⌘ ↩','Ctrl ↩'],['Deny the approval on screen','⌘ .','Ctrl .'],
@@ -5402,8 +5650,69 @@ function skillSessionId() {
 }
 function skillContextKey() { return JSON.stringify([AGENT_GEN, WORKSPACE, skillSessionId()]); }
 const SK_LOADER = createSkillCatalogLoader(id => { SK.calls++; return BR.skillList(id); });
+/* ATO-1250: "Trust this folder?" — asked once per folder, for the chat's own
+   folder (renderer/project-trust.js). Read again whenever the catalog's
+   context moves (another chat, another folder, a new agent); an agent
+   without /api/project-trust shows nothing. */
+const PT = createProjectTrust({
+  read: (id) => BR && BR.projectTrust ? BR.projectTrust(id) : {supported: false},
+  answer: (body) => BR && BR.projectTrustAnswer ? BR.projectTrustAnswer(body) : {supported: false},
+});
+let PT_KEY = null, PT_GEN = null;
+async function projectTrustCheck(force) {
+  const key = skillContextKey();
+  if (PT_GEN !== AGENT_GEN) { PT_GEN = AGENT_GEN; PT.reset(); }   // what one agent lacked says nothing about the next
+  if (!force && PT_KEY === key) return;
+  PT_KEY = key;
+  const before = JSON.stringify([PT.state.question, PT.state.status]);
+  await PT.check(skillSessionId());
+  if (key !== skillContextKey()) return;
+  if (before !== JSON.stringify([PT.state.question, PT.state.status])) {
+    if (S.settings && settingsPaneId(S.settingsPane) === 'skills') { if (!tkTyping() && !skpTyping()) render(); }
+    else renderOverlays();
+  }
+}
+/* The dialog waits under any other dialog, menu, picker, Settings or first-run setup, and appears once they close. */
+function ptOnScreen() {
+  return !!PT.state.question && !S.overlay && !S.alert && !SEL.open && !WIZ.phase && !OB.open && !S.settings;
+}
+function projectTrustHTML() {
+  const q = PT.state.question;
+  return '<div class="sheetwrap alertwrap ptrustwrap"><div class="alertbox ptrust" role="alertdialog" aria-label="Trust this folder?">'
+    + '<span class="alertmark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
+    + '<div class="ttl">' + esc(q.question) + '</div>'
+    + '<p class="alertmsg">' + esc(projectTrustLine(q)) + '</p>'
+    + '<p class="alertmsg mono ptrust-dir">' + esc(q.workingDir) + '</p>'
+    + (PT.state.error ? '<p class="alertmsg tuierr">' + esc(PT.state.error) + '</p>' : '')
+    + '<div class="alertacts">'
+      + '<button class="btn btn-s" data-act="ptrust:decline"' + (PT.state.busy ? ' disabled' : '') + ' autofocus>Don’t trust</button>'
+      + '<button class="btn btn-df" data-act="ptrust:trust"' + (PT.state.busy ? ' disabled' : '') + '>Trust</button></div></div></div>';
+}
+/* Settings › Skills: where the folder stands, and the switch that changes an earlier answer. */
+function projectTrustRowHTML() {
+  const sum = PT.state.supported ? projectTrustSummary(PT.state.status) : null;
+  if (!sum || sum.state === 'none') return '';
+  const busy = PT.state.busy ? ' disabled' : '';
+  return '<div class="tk-notice set-softnote ptrust-row" data-ptrust="' + sum.state + '"><span class="grow">Folder trust: ' + esc(sum.text) + '</span>'
+    + (sum.canTrust ? '<button class="btn btn-s sm" data-act="ptrust:all:trust"' + busy + '>Trust this folder</button>' : '')
+    + (sum.canDecline ? '<button class="btn btn-s sm" data-act="ptrust:all:decline"' + busy + '>Stop trusting</button>' : '')
+    + '</div>';
+}
+async function projectTrustAct(v) {
+  if (v === 'later') { PT.dismiss(); render(); return; }
+  const all = v.indexOf('all:') === 0;
+  const kind = all ? v.slice(4) : v;
+  const pending = all ? PT.setAll(kind === 'trust', skillSessionId()) : PT.answer(kind, skillSessionId());
+  render();
+  const res = await pending;
+  render();
+  if (res && res.ok) { await skpReloadRows(); toast(kind === 'trust' ? 'Folder trusted' : 'Folder not trusted',
+    kind === 'trust' ? 'Its project skills and instructions load from the next message' : 'Nothing from this folder is loaded'); }
+  else if (res && res.conflict) toast('The folder changed', 'Something new appeared in it; the question shows what is there now');
+}
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
+  projectTrustCheck();
   const key = skillContextKey();
   if (SK.for !== key) {
     SK.for = key; SK.rows = null; SK.err = null; SK.workingDir = null; SK.errors = []; SKILLS.length = 0;
@@ -5523,6 +5832,12 @@ function generalPane() {
         + '<button class="btn btn-s sm" data-act="workspace:choose"' + (BR ? '' : ' disabled') + '>Change…</button>'
       + '</div>'
       + tpNotifyRowHTML()
+      // ATO-464: finished turns fold their steps into one line unless this is on.
+      + '<div class="tk-setrow">'
+        + '<div class="body"><div class="t">Always show steps</div>'
+          + '<div class="d">Keep the reasoning and tool calls of a finished reply open. When off, they fold into one line you can click to open.</div></div>'
+        + setSwitchHTML({on: STEPS.always, act: 'steps:always', label: 'Always show steps', title: 'Turn always showing steps ' + (STEPS.always ? 'off' : 'on')})
+      + '</div>'
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Anonymous usage analytics</div>'
           + '<div class="d">Crash reports and coarse usage counts (including which buttons and menus are used, by action name only, and download and startup timings), tied only to an install id. Your messages, paths and tool arguments are never sent with analytics. '
@@ -5586,7 +5901,13 @@ function diagnosticsPane() {
     // Chat review (Д29): written as the chat and Settings › General write it.
     ['Working folder', workingDirLabel(wd), wd, wd],
     ['Local model server', llama],
+    // ATO-1030: hardware acceleration, off after repeated GPU crashes or by hand; a change applies at the next launch.
+    ...(DIAG.gpu ? [['Graphics acceleration', diagGpuValue(DIAG.gpu), '', '', {gpu:true}]] : []),
   ];
+  if (!DIAG.gpuAsked && BR && BR.gpuGet) {
+    DIAG.gpuAsked = true;
+    BR.gpuGet().then((r) => { if (r && r.ok) { DIAG.gpu = r; diagRepaint(); } }).catch(() => {});
+  }
   // What each row's Copy takes: the value as shown (paths under home stay `~/…`).
   // ATO-723: `open` is the folder its Show in Finder button hands to BR.openPath.
   DIAG.copy = rows.map(([k, v, , open, x]) => ({label:k, value:(x && x.copy) || v || '', open:open || ''}));
@@ -5600,6 +5921,7 @@ function diagnosticsPane() {
       + rows.map(([k, v, full, , x], i) => '<div class="tk-setrow set-diagrow"><div class="t">' + esc(k) + '</div>'
         + '<div class="set-diagv' + (x && x.tone ? ' set-diagv--' + x.tone : ' mono') + '" title="' + esc(full || v || '') + '">' + esc(v || '—') + '</div>'
         + (x && x.restart ? '<button class="btn btn-s xs set-diagrestart" data-act="agent:restart">' + ic('refresh') + 'Restart</button>' : '')
+        + (x && x.gpu ? '<button class="btn btn-s xs set-diagrestart" data-act="diag:gpu">' + (DIAG.gpu && DIAG.gpu.next === null ? 'Turn off' : 'Turn on') + '</button>' : '')
         + (rows[i][3] && BR && BR.openPath ? '<button class="iconbtn sm set-copybtn set-openbtn" data-act="diag:open:' + i + '" title="' + esc(reveal) + '" aria-label="' + esc(reveal + ': ' + k) + '">' + ic('folder') + '</button>' : '')
         + (v ? '<button class="iconbtn sm set-copybtn" data-act="diag:copy:' + i + '" title="Copy" aria-label="Copy ' + esc(k) + '">' + ic('copy') + '</button>'
           : '<span class="set-copybtn" aria-hidden="true"></span>') + '</div>').join('')
@@ -5613,6 +5935,7 @@ function diagnosticsPane() {
       // ATO-535: where to write, opened in the browser by the [data-url] click handler (BR.openExternal).
       + '<a class="msglink" href="#" data-url="https://discord.gg/kXWDFSJpMW">Discord</a> or in a '
       + '<a class="msglink" href="#" data-url="https://github.com/AtomicBot-ai/atomic-agent/issues/new">GitHub issue</a>.</p>'
+    + doctorDataHTML(DOCD, {esc, ic})
     + diagLogHTML()
     + '</div>';
 }
@@ -5875,6 +6198,13 @@ function diagAgentLogPath(sd) {
   const sep = PLATFORM === 'win32' ? '\\' : '/';
   return sd.replace(/[\\/]+$/, '') + sep + 'agent.log';
 }
+/** ATO-1030: the Graphics acceleration row: this run's state, and the next launch's when it differs. */
+function diagGpuValue(g) {
+  const now = g.activeNow ? 'On' : 'Off';
+  const next = g.next === null ? 'on' : 'off';
+  if ((g.next === null) === g.activeNow) return g.activeNow ? now : now + (g.next === 'auto' ? ' (the graphics process kept crashing)' : '');
+  return now + ', ' + next + ' from the next start';
+}
 /* ATO-723: a folder or log opened from Diagnostics, with main's own words
    when it cannot (a log not written yet, a folder that is gone). */
 async function diagOpen(path, what) {
@@ -5890,6 +6220,16 @@ function diagAct(what) {
     return;
   }
   if (what === 'agentlog') { diagOpen(DIAG.agentLog, 'the agent log'); return; }
+  if (what === 'gpu') {
+    if (!DIAG.gpu || !BR || !BR.gpuSet) return;
+    BR.gpuSet(DIAG.gpu.next !== null).then((r) => {
+      if (!r || !r.ok) { toast('Could not change graphics acceleration', (r && r.error) || '', 'bad'); return; }
+      DIAG.gpu = r;
+      toast('Graphics acceleration ' + (r.next === null ? 'on' : 'off'), 'Takes effect the next time the app starts');
+      diagRepaint();
+    }).catch(() => {});
+    return;
+  }
   if (what === 'check') { diagCheckProvider(); return; }
   if (what === 'startModel') { diagStartModel(); return; }
   if (what === 'openlog') { if (DIAG.log && DIAG.log.path && !DIAG.log.external) diagOpen(DIAG.log.path, 'the model server log'); return; }
@@ -5924,9 +6264,9 @@ function diagAct(what) {
   }
 }
 /* src/tui/privacy/components/privacy-panel.tsx after PR #303: analytics
-   + session grants, no ladder. The desktop's approval path only offers
-   allow-once/deny, so the runtime never accumulates grants and the TUI's
-   "none active" line is the truth here. The toggle is `atag config set
+   + session grants, no ladder. The desktop's approval path offers
+   allow-once/deny, plus "Allow in this chat" (ATO-473), a shape grant the
+   card's own receipt names; this pane does not list grants. The toggle is `atag config set
    analytics.enabled`; the running agent keeps its boot-time client, so
    the note and the Restart button say so.
    Д47–Д50 (Danya, 30.09): a read-scope change the agent takes at once is a
@@ -6252,6 +6592,8 @@ function act(a) {
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
+  // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
+  if (k === 'ptrust') { projectTrustAct(v || ''); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -6420,6 +6762,8 @@ function act(a) {
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
   if (a === 'notify:toggle') { close(); tpNotifyToggle(); return; }
   if (a === 'names:toggle') { close(); nameChatsSet(!nameChatsOn()); return; }
+  // ATO-464: Settings › General › Always show steps (turn-summary.js).
+  if (a === 'steps:always') { close(); stepsAlwaysSet(!STEPS.always); render(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
   // r5 item 4: this verb toasted "Copied last reply" and made no clipboard call
@@ -6456,6 +6800,8 @@ function act(a) {
   if (k === 'composio') { close(); composioAct(a.slice(9)); return; }
   // ATO-328: Save on the Exa key card or its Settings row. No close(): the card is in the chat, the row in Settings.
   if (k === 'exakey') { exaKeyAct(v); return; }
+  // ATO-577 / ATO-579: Diagnostics' Doctor and Data buttons (doctor-data.js).
+  if (k === 'doctor') { doctorDataAct(v, BR, () => location.reload()); return; }
   if (k === 'import') { close(); importAct(a.slice(7)); return; }
   if (a === 'na') return;
 
@@ -6476,23 +6822,29 @@ function act(a) {
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
-  // Review fix (item 2): ⌘ 0 does not go through the button, so the chord gets
-  // the same honest refusal the disabled button gives — below 1000px the
-  // sidebar is a rail whatever S.sidebar says (sidebarToggleHTML).
-  if (k === 'toggle' && v === 'sidebar' && NARROW.matches) {
-    close(); toast('The sidebar is a rail on a narrow window', 'widen the window past 1000px to open it', 'bad'); return;
-  }
-  if (k === 'toggle')    { close(); if (v === 'sidebar') S.sidebar = S.sidebar === 'rail' ? 'open' : 'rail';
+  // ATO-538: below 1000px the button and ⌘ \ open or close the drawer instead
+  // (sidebar-nav.js toggleSidebar); S.sidebar keeps the wide window's collapse.
+  if (k === 'toggle')    { close();
+                           if (v === 'sidebar') {
+                             const next = toggleSidebar({narrow: NARROW.matches, sidebar: S.sidebar, drawer: sidebarDrawerOpen()});
+                             S.sidebar = next.sidebar; SBDRAWER.open = next.drawer;
+                           }
                            else if (v === 'inspector') S.inspector = !S.inspector;
                            else S.consoleOpen = !S.consoleOpen; render(); return; }
   if (k === 'settings')  { close(); const opened = !S.settings; S.settings = 1; S.settingsPane = settingsPaneId(v); LLMP.logsBack = null; render(); settingsPaneEntered(opened); return; }
+  // ATO-1046: View › Read Replies Aloud (tts.js).
+  if (a === 'tts:auto' && typeof ttsSetAuto === 'function') { ttsSetAuto(!TTS.auto); return; }
   if (k === 'theme')     { close(); S.theme = v;
                            if (v === 'system') document.documentElement.removeAttribute('data-theme');
                            else document.documentElement.setAttribute('data-theme', v);
                            try { localStorage.setItem('atag.theme', v); } catch (e) { /* no storage: the choice lasts this launch */ }
                            // ATO-251: read again once the new theme has painted.
                            syncChromeTheme(); syncWindowGround(); render(); syncWindowGroundSoon(); return; }
-  if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; }); render(); return; }
+  if (k === 'cards')     { close(); S.log.forEach((m) => { if (m.k === 'tool') m.open = v === 'expand'; });
+                           // ATO-464: and the finished turns folded into a line open (or fold) with them.
+                           if (v === 'expand') turnFoldsOf(S.log, {runningId: S.turnId ? S.streamId : null}).forEach((f) => TURN_OPEN.add(f.replyId));
+                           else TURN_OPEN.clear();
+                           render(); return; }
   if (k === 'ses')       { close(); openSession(v); return; }
   /* ATO-165: the chat row's menu — opened by the row's "…" control, a
      right-click on the row, or the context-menu key on it (openChatMenu).
@@ -6527,6 +6879,7 @@ function act(a) {
                              PREFS.pinned = PREFS.pinned.filter((x) => x !== v);
                              delete PREFS.seen[v];
                              savePrefs();
+                             if (folderForget(FOLDERS.state, v)) saveFolders();   // ATO-1034
                              /* Backlog 25: the chat's card goes with it, and the empty view that
                                 takes its place answers no request, as after New chat. (A chat whose
                                 turn runs here never gets this far: deleteRefused.) */
@@ -6543,6 +6896,29 @@ function act(a) {
                            return; }
   // ATO-455: the row menu's Rename opens the inline box over the row's name (chat-rename.js).
   if (k === 'rename')    { close(); renameStart(v, 'row'); return; }
+  /* ATO-1034: folders (chat-folders.js). Folder ids never hold a colon, so
+     `fput:<folder>:<chat>` splits at its first one; an empty folder is "no folder". */
+  if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;
+                           f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
+  if (k === 'fnew')      { close(); folderCreate(v || null); return; }
+  if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
+  if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
+  if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
+                           if (f && folderRemove(FOLDERS.state, v)) { saveFolders(); toast('Folder deleted', 'Its chats are kept, under Chats'); }
+                           render(); return; }
+  if (k === 'fpick')     { const anchor = document.querySelector('#sidebar .sesrow[data-ses="' + (typeof CSS !== 'undefined' && CSS.escape ? CSS.escape(v) : v) + '"] [data-sesmenu]');
+                           const point = SESMENU.point; close();
+                           if (point) { FMENU.id = v; FMENU.point = point; S.overlay = 'fpick'; render(); focusChatMenu(0); }
+                           else folderMenuOpen('fpick', v, anchor);
+                           return; }
+  if (k === 'fput')      { const cut = v.indexOf(':'); const fid = v.slice(0, cut), sid = v.slice(cut + 1);
+                           close();
+                           if (cut >= 0 && folderPut(FOLDERS.state, sid, fid || null)) {
+                             saveFolders();
+                             // A pinned chat is drawn under Pinned only: filed, it leaves Pinned, or it would seem to go nowhere.
+                             if (fid && PREFS.pinned.includes(sid)) { PREFS.pinned = PREFS.pinned.filter((x) => x !== sid); savePrefs(); }
+                           }
+                           render(); nameVisibleSessions(); return; }
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -6744,6 +7120,8 @@ function submit(preparedSkillText, opts) {
   // promises it will not: post the pre-dictation draft and land the
   // transcript in an empty composer afterwards. So Enter waits.
   if (VOICE.state === 'finishing') return;
+  // ATO-1042: the starter model is still on its way; the draft stays and the line above says how far it is.
+  if (typeof starterHoldsSend === 'function' && starterHoldsSend()) { toast('The model is still downloading', 'Your message stays here; send it once the line above says Ready.', 'bad'); return; }
   const e = $('#entry');
   const typed = typeof preparedSkillText === 'string' ? preparedSkillText : (e ? e.value : S.draft).trim();
   /* ATO-405: files in the composer ride in the message itself, as the
@@ -6979,7 +7357,7 @@ function shortcutKey(e) {
   if (k.length !== 1 || k.charCodeAt(0) < 128) return k;
   if (/^Key[A-Z]$/.test(c)) return e.shiftKey ? c.slice(3) : c.slice(3).toLowerCase();
   if (/^Digit[0-9]$/.test(c)) return c.slice(5);
-  return {Period: '.', Comma: ',', Slash: '/', Enter: 'Enter'}[c] || k;
+  return {Period: '.', Comma: ',', Slash: '/', Backslash: '\\', Enter: 'Enter'}[c] || k;
 }
 
 /* 05.10: the approval chord a keydown is, if any: 'y' for ⌘↩ (Ctrl+↩ off
@@ -6997,7 +7375,7 @@ function apprChordOf(e, k) {
    underneath. */
 function apprOnScreen() {
   const req = S.pending;
-  if (!approvalOpen(req) || S.settings || S.overlay) return null;
+  if (!approvalOpen(req) || S.settings || S.overlay || ptOnScreen()) return null;
   if (S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open) return null;
   const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
   return card ? req : null;
@@ -7005,7 +7383,7 @@ function apprOnScreen() {
 /* ATO-224: whether a dialog, a popover, a sheet, Settings or the menu is
    open over the chat — the layers ⌘↩ must not send the composer from under. */
 function layerOverChat() {
-  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open);
+  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open || ptOnScreen());
 }
 /** 05.10: the keys named on the card's buttons and in the shortcuts sheet. */
 function apprKeyLabel(which) {
@@ -7194,6 +7572,16 @@ document.addEventListener('click', (e) => {
   // ATO-728: a CRLF reply's lines go out as plain \n, with no stray \r at their ends.
   const mdc = t.closest('[data-mdcopy]');
   if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '', 'Code copied'); return; }
+  // ATO-1251: a table's Copy (TSV, pastes into a spreadsheet) and Markdown, read off the drawn cells.
+  const mdt = t.closest('[data-mdtcopy]');
+  if (mdt) {
+    e.preventDefault();
+    const tbl = mdt.closest('.mdtblx')?.querySelector('table');
+    const rows = tbl ? [...tbl.rows].map((r) => [...r.cells].map((c) => c.textContent)) : [];
+    const aligns = tbl && tbl.rows[0] ? [...tbl.rows[0].cells].map((c) => c.style.textAlign || '') : [];
+    copyText(rows.length ? mdTableText(rows, aligns, mdt.dataset.mdtcopy) : '', 'Table copied', mdt.dataset.mdtcopy === 'md' ? 'as markdown' : 'paste it into a spreadsheet');
+    return;
+  }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -7247,6 +7635,13 @@ document.addEventListener('click', (e) => {
      through to [data-ses]. */
   const sm = t.closest('[data-sesmenu]');
   if (sm) { e.preventDefault(); e.stopPropagation(); openChatMenu(sm.dataset.sesmenu, null); return; }
+  // ATO-1034: a folder header's "…" (inside the header button, so first), then the header itself.
+  const fm = t.closest('[data-fmenu]');
+  if (fm) { e.preventDefault(); e.stopPropagation();
+            if (S.overlay === 'fmenu' && FMENU.id === fm.dataset.fmenu) { close(); render(); }
+            else folderMenuOpen('fmenu', fm.dataset.fmenu, fm);
+            return; }
+  const ft = t.closest('[data-ftoggle]'); if (ft) { act('ftoggle:' + ft.dataset.ftoggle); return; }
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
@@ -7258,6 +7653,11 @@ document.addEventListener('click', (e) => {
   if (cimg && openImageViewer(cimg.dataset.imgOpen)) return;
   const fchip = t.closest('[data-file]');
   // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
+  /* ATO-1053: a click previews the file beside the chat (file-preview.js); the
+     panel's Open goes through the same opener as before. ⌘/Ctrl-click, or a
+     build without the preview, opens it in its default app straight away. */
+  if (fchip && BR && !(e.metaKey || e.ctrlKey) && typeof filePreviewOpen === 'function'
+      && filePreviewOpen(fchip.dataset.file, {reply: !!fchip.dataset.reply})) return;
   if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
@@ -7269,6 +7669,9 @@ document.addEventListener('click', (e) => {
   if (sdet && sdet.parentElement) { SETDET[sdet.dataset.setdet] = !sdet.parentElement.open; return; }
   const adet = t.closest('[data-apprdet]');
   if (adet) { const m = S.log.find((x) => x.id === adet.dataset.apprdet); if (m && adet.parentElement) m.open = !adet.parentElement.open; return; }
+  // ATO-464: a finished turn's summary line opens or folds its steps in place.
+  const tsum = t.closest('[data-turnsum]');
+  if (tsum) { turnSumToggle(tsum.dataset.turnsum); return; }
   const tg = t.closest('[data-toggle]');
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
@@ -7276,11 +7679,14 @@ document.addEventListener('click', (e) => {
   const sd = t.closest('[data-sysdet]');   // ATO-380: a failed turn's Details (sysDetailHTML)
   if (sd) { const m = S.log.find((x) => x.id === sd.dataset.sysdet); if (m) { m.detOpen = !m.detOpen; repaintEntry(m, '.sys-det-t'); } return; }
   const go = t.closest('[data-goto]');
-  if (go) { const el = document.getElementById('card-' + go.dataset.goto);
+  if (go) { let el = document.getElementById('card-' + go.dataset.goto);
+            if (!el && turnSumReveal(go.dataset.goto)) el = document.getElementById('card-' + go.dataset.goto);   // ATO-464
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
   // r5 item 4: real <button> elements inside a `.turn`, so no other selector in
   // this handler competes for them.
   const cp = t.closest('[data-copy]'); if (cp) { e.preventDefault(); copyMessage(cp.dataset.copy); return; }
+  // ATO-1046: the speaker under a reply.
+  const sp = t.closest('[data-speak]'); if (sp) { e.preventDefault(); const m = S.log.find((x) => x.id === sp.dataset.speak); if (m) ttsToggle(m.id, m.text); return; }
   const rs = t.closest('[data-resend]'); if (rs) { e.preventDefault(); resendUser(rs.dataset.resend); return; }
   const es = t.closest('[data-engine-start]'); if (es) { e.preventDefault(); deadEngineStart(es.dataset.engineStart); return; }
   const fill = t.closest('[data-fill]');
@@ -7397,8 +7803,12 @@ document.addEventListener('input', (e) => {
   if (e.target.dataset && e.target.dataset.tkField) { tkFieldInput(e.target.dataset.tkField, e.target.value); return; }
   // Item 7 part B: the hub search box and the MCP add-modal textarea edit state in place.
   if (e.target.id === 'skp-hubq') { SKP.hubQuery = e.target.value; return; }
+  // ATO-510: the server name in the add box's review block.
+  if (e.target.id === 'mcp-name') { if (MCP.addModal) { MCP.addModal.name = e.target.value; MCP.addModal.error = null; } return; }
   if (e.target.id === 'mcp-json') {
     if (MCP.addModal) { MCP.addModal.json = e.target.value; MCP.addModal.error = null; }
+    // ATO-510: only the review block repaints (the caret stays in the box).
+    const det = $('#mcp-detect'); if (det) det.innerHTML = mcpAddPreview();
     // ATO-514: Add stays off until something is pasted (a toggle, not a render: the caret stays).
     const add = $('[data-act="mcp:addSubmit"]'); if (add) add.disabled = !e.target.value.trim() || !!(MCP.addModal && MCP.addModal.submitting);
     return;
@@ -8043,9 +8453,19 @@ function cpufbApply(n) {
   }
   if (llmVisible()) llmRepaint();
 }
+/* ATO-858: after the switch the agent keeps `localModels.managed.backendVariant: "cpu"`,
+   so later starts run the CPU build with no switch in their output and main's word
+   goes back to null. The saved setting says the model is still on the CPU build.
+   Only on llama.cpp: Atomic Core picks its own build and never reads backendVariant,
+   and the v77 move to Core kept a "cpu" saved under llama.cpp. */
+function cpufbSaved() {
+  const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
+  const m = lm.managed;
+  return lm.mode === 'managed' && !!m && m.engine === 'llama-server' && m.backendVariant === 'cpu';
+}
 /** Settings › Models: the CPU switch, one line. Left out while the failure card is up: that card carries it. */
 function cpufbCardHTML() {
-  if (!CPUFB.on || ENGF.f) return '';
+  if ((!CPUFB.on && !cpufbSaved()) || ENGF.f) return '';
   return '<div class="tk-notice tk-notice--amber llm-cpufb" role="status">' + ic('cpu')
     + '<span class="grow"><span class="llm-note">' + esc(CPUFB_LINE) + '</span></span></div>';
 }
@@ -8255,6 +8675,7 @@ function refreshSlash() {
      immediately before the composer, inside the wrapper that does not clip. */
   const wrap = $('.composerwrap'); if (!wrap) return;
   const old = wrap.querySelector('.slash'); if (old) old.remove();
+  if (!slashShown()) { refreshSend(); return; }
   const composer = wrap.querySelector('#composer');
   if (composer) composer.insertAdjacentHTML('beforebegin', slashPopover());
   else wrap.insertAdjacentHTML('beforeend', slashPopover());
@@ -8349,6 +8770,11 @@ document.addEventListener('keydown', (e) => {
   if (smk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault(); e.stopPropagation(); ANX.via('key'); openChatMenu(smk.dataset.sesmenu, null); return;
   }
+  // ATO-1034: the same for a folder header's "…" (chat-folders.js).
+  const fmk = e.target.closest && e.target.closest('[data-fmenu]');
+  if (fmk && (k === 'Enter' || k === ' ') && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault(); e.stopPropagation(); ANX.via('key'); folderMenuOpen('fmenu', fmk.dataset.fmenu, fmk); return;
+  }
   // ATO-165: Escape closes the menu and hands the focus back to the row's "…" it came from.
   if (S.overlay === 'sesmenu' && k === 'Escape') {
     e.preventDefault();
@@ -8356,7 +8782,8 @@ document.addEventListener('keydown', (e) => {
     return;
   }
   // ATO-165: the menu's rows move with the arrows, Home and End.
-  if (S.overlay === 'sesmenu' && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
+  // ATO-1034: and so do the folder menus (chat-folders.js), drawn with the same classes.
+  if ((S.overlay === 'sesmenu' || S.overlay === 'fmenu' || S.overlay === 'fpick') && (k === 'ArrowDown' || k === 'ArrowUp' || k === 'Home' || k === 'End')) {
     e.preventDefault();
     const items = Array.from(document.querySelectorAll('.sesmenu [role="menuitem"]'));
     const at = items.indexOf(document.activeElement);
@@ -8423,17 +8850,20 @@ document.addEventListener('keydown', (e) => {
   if (mod && k === 'Enter' && e.target.dataset && e.target.dataset.tkField) { e.preventDefault(); tkSubmit(); return; }
   // …and inside the Add MCP server box it adds the server (plain Enter is a new line there).
   if (mod && k === 'Enter' && e.target.id === 'mcp-json') { e.preventDefault(); mcpAddSubmit(e.target.value); return; }
+  // ATO-510: Enter in the review block's name field adds too.
+  if (k === 'Enter' && e.target.id === 'mcp-name' && MCP.addModal) { e.preventDefault(); mcpAddSubmit(MCP.addModal.json); return; }
   // ATO-328: Enter in an Exa key field saves it, in the chat card and in Settings alike, through act() as the Save click does (ui_action exakey:save:*).
   if (k === 'Enter' && !mod && e.target.dataset && e.target.dataset.exaKey) { e.preventDefault(); ANX.via('key'); act('exakey:save:' + e.target.dataset.exaKey); return; }
   /* ATO-226: by `sk`, so ⌘K, ⌘N, ⌘. and the rest work on a Russian layout
-     too. ⌘N, ⌘0, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
+     too. ⌘N, ⌘\, ⌘1-4, ⌘, and ⌘/ are also menu accelerators, which macOS
      and Windows already match on a Russian layout; with the page taking
      them as well, that layout now goes the way a Latin one always has.
      ⌘↩ and ⌘. are only shown in the menu (menu.ts), so nothing fires them
-     twice. */
+     twice. ATO-900: ⌘0 is not here: it is View › Actual Size, a menu role
+     the page leaves alone; the sidebar is ⌘\. */
   if (mod && !e.shiftKey && !e.altKey) {
     const map = {k:'palette', '1':'room:chat', '2':'room:tasks', '3':'room:skills', '4':'settings:memory',
-                 '0':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
+                 '\\':'toggle:sidebar', n:'session:new', o:'session:switch', ',':'settings:open',
                  '.':'stop', '/':'shortcuts', '5':'studio:open:images', '6':'studio:open:video'};   // Studio: ⌘5 Images, ⌘6 Video
     if (map[sk.toLowerCase()]) { e.preventDefault(); ANX.via('shortcut'); act(map[sk.toLowerCase()]); return; }
     /* ATO-224: ⌘↩ (Ctrl+↩) is Send only with nothing over the chat. With a
@@ -8483,7 +8913,7 @@ document.addEventListener('keydown', (e) => {
      could be sent with the keyboard at all. It falls through to submit(), as
      does a line that matches no command (submit says "unknown command"). */
   const slashArgs = /^\/\S+\s+\S/.test(S.draft);
-  if (S.slash && e.target.id === 'entry' && !(k === 'Enter' && !e.shiftKey && (slashArgs || !slashMatches().length))) {
+  if (slashShown() && e.target.id === 'entry' && !(k === 'Enter' && !e.shiftKey && (slashArgs || !slashMatches().length))) {
     const m = slashMatches();
     if (k === 'ArrowDown') { e.preventDefault(); S.slashCur = Math.min(S.slashCur + 1, m.length - 1); refreshSlash(); return; }
     if (k === 'ArrowUp')   { e.preventDefault(); S.slashCur = Math.max(S.slashCur - 1, 0); refreshSlash(); return; }
@@ -8496,6 +8926,8 @@ document.addEventListener('keydown', (e) => {
 
   if (k === 'Escape') {
     e.preventDefault();
+    // ATO-1250: Escape is "not now" on the folder-trust dialog: nothing recorded, asked again at the next start.
+    if (ptOnScreen()) { act('ptrust:later'); return; }
     /* ATO-167 review: with Done gone from the model and mode popovers, Escape
        is a keyboard way out of them — so an open popover closes FIRST, before
        the scroll-to-bottom and before Escape's stop of a running turn (which
@@ -8583,7 +9015,8 @@ setTimeout(() => { const e = $('#entry'); if (e) e.focus(); }, 60);
    rebuild the composer on every drag pixel. */
 // 13.10: the toggle and Search move between the sidebar's top row and the
 // toolbar on this crossing, so both are repainted (still no #content write).
-if (NARROW.addEventListener) NARROW.addEventListener('change', () => { renderToolbar(); renderSidebar(); });
+// ATO-538: a window that grows past 1000px drops the drawer; the full sidebar (or the kept rail) takes over.
+if (NARROW.addEventListener) NARROW.addEventListener('change', () => { if (!NARROW.matches) SBDRAWER.open = false; renderToolbar(); renderSidebar(); });
 // 14: the inspector is not rebuilt while the window is too narrow to show it,
 // so widening the window past 1180px repaints it.
 if (INSP_NARROW.addEventListener) INSP_NARROW.addEventListener('change', () => renderInspector());
@@ -8739,6 +9172,8 @@ function applySessions(res, askedAt) {
       updatedAt:x.updatedAt || 0,
       status:x.status || '',
       turnCount:x.turnCount || 0,
+      // ATO-1253: the folder the chat ran in; an imported Claude Code chat is filed under its project by it.
+      workingDir:typeof x.workingDir === 'string' ? x.workingDir : null,
     });
   });
   settlePendingChats();
@@ -8748,6 +9183,7 @@ function applySessions(res, askedAt) {
     if (row) approvalOver(sid, row.status, askedAt);
   }
   sessionsRead();   // B01 QA: requests kept while the list was not known yet
+  foldersAfterSessions();   // ATO-1034: imported chats find their folder
   return true;
 }
 
@@ -8767,7 +9203,7 @@ async function refreshSessions() {
    fire 200 requests at boot. */
 function nameVisibleSessions() {
   if (!BR) return;
-  sidebarChats().rows.filter((row) => !row.named).forEach((row) => {
+  sidebarChats().visible.filter((row) => !row.named).forEach((row) => {
     row.named = true;
     BR.session(row.id).then((res) => {
       /* Review fix: applySessions rebuilds SESSIONS with fresh objects while a
@@ -9409,12 +9845,14 @@ function providerFailure(ev) {
     every cloud HTTP error (401, 402, 404, 429, 400) and a missing or
     signed-out CLI as `transport`; its sentence names the status, e.g.
     '"openrouter" answered 404 (not found).' or '... (429).' (openai-http.ts
-    humanizeOpenAiHttpError). No status ("fetch failed", a refused
-    connection, a timeout) is the endpoint not answering. */
+    humanizeOpenAiHttpError). A llama-server entry says 'llama-server
+    returned http 404: …' (llama-server-client.ts, ATO-869). No status
+    ("fetch failed", a refused connection, a timeout) is the endpoint not
+    answering. */
 function providerReplied(ev) {
   const msg = String((ev && ev.error) || '');
   return String((ev && ev.category) || '') === 'transport'
-    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|isn't installed \(the|is not signed in\.|was not found on PATH\.|ended its reply with an error|reported an error in the middle of its reply/.test(msg);
+    && /\([1-5]\d\d\)|\banswered [1-5]\d\d\b|\breturned http [1-5]\d\d\b|isn't installed \(the|is not signed in\.|was not found on PATH\.|ended its reply with an error|reported an error in the middle of its reply/.test(msg);
 }
 
 /** How long this turn had been going, in words. */
@@ -9428,6 +9866,10 @@ function turnWaited() {
 /** ATO-380: a failed turn's row. `detail` keeps the agent's raw words under
     Details when the line is a short phrase; '' when the line is the reason. */
 function turnFailure(ev) {
+  /* ATO-1207: a local model whose context is full says so, with the agent's
+     words under Details, before any other wording of the same failure. */
+  const full = localContextFullLine(ev, selActiveProviderId());
+  if (full) return {text: esc(full), detail: String(ev.error || '')};
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
   /* ATO-391: the provider replied, with an error (a 404 for a model it does
@@ -9436,12 +9878,60 @@ function turnFailure(ev) {
      Details. */
   if (providerReplied(ev)) {
     const id = selActiveProviderId();
+    const wrong = localWrongServerLine(ev, id);
+    if (wrong) return {text: esc(wrong), detail: String(ev.error)};
     return {text: esc("Couldn't get a reply from " + (id ? providerWord(id) : 'the provider') + '.'
       + (turnWaited() ? ' The turn gave up' + turnWaited() + '.' : '')), detail: String(ev.error)};
   }
   const cat = String((ev && ev.category) || '');
   return {text: esc((cat === 'empty' || cat === 'model' ? "The model didn't give a usable answer" : 'This turn could not be completed') + turnWaited() + '.'),
     detail: String((ev && ev.error) || '') || 'the agent gave no reason'};
+}
+
+/** ATO-869: a local server that answered 404 or 405 is up, but it is not a
+    model server or has no model loaded (often another program on the old
+    port). '' for anything else. */
+function localWrongServerLine(ev, picked) {
+  // No `llm` block: the agent runs on its synthesized local-llama.
+  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
+  if (!id || !waitIsLocalServer(id)) return '';
+  if (!/\b(?:returned http|answered) 40[45]\b|\(40[45]\)/.test(String((ev && ev.error) || ''))) return '';
+  const host = localServerHost(id);
+  return (host ?'The server at ' + host : 'The local server') + ' is not a model server, or no model is loaded there.'
+    + ' Check the address in Settings › Models.';
+}
+/** ATO-1207: a local server that turned the request down because the
+    conversation outgrew the model's context window. A newer agent marks it
+    with `code: "local_context_exceeded"` and its words win; an older agent
+    only says it: llama.cpp's "exceeds the available context size" or its
+    `exceed_context_size_error` type, or the agent's own "no longer fits /
+    does not fit … model's context window" once compacting did not help.
+    Bare "context window" is too broad: a cut-off reply names "the model
+    server's context window" too. The sentence is the agent's for that code
+    (local-bad-request.ts). A 404/405 (localWrongServerLine) stays ahead; ''
+    on a cloud provider and for anything else. */
+function localContextFullLine(ev, picked) {
+  const words = /exceeds? the available context size|exceed_context_size_error|(?:no longer fits|does not fit)(?: in)? (?:this|the) (?:local )?model's context window/i;
+  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
+  if (!id || !waitIsLocalServer(id) || localWrongServerLine(ev, picked)) return '';
+  const p = (ev && ev.payload) || {};
+  const code = p.code || (ev && ev.code) || '';
+  if (code ? code !== 'local_context_exceeded' : !words.test(String((ev && ev.error) || ''))) return '';
+  return "The conversation no longer fits in the local model's context window."
+    + ' Compact this chat or start a new one, or give the model a larger context size.';
+}
+/** The host a llama-server entry talks to, or ''. Its address is `url`
+    (its `baseUrl` is the embeddings server), and selProviders() leaves
+    these entries out; a local-llama with no `url` uses localModels, as the
+    agent does (config-schema.ts). */
+function localServerHost(id) {
+  const entry = llmProvider(id);
+  const lm = llmLocalModels();
+  const raw = (entry && entry.url) || (id === 'local-llama'
+    ? (lm.mode === 'managed' ? 'http://127.0.0.1:' + ((lm.managed && lm.managed.port) || 19091) : (lm.url || ''))
+    : '');
+  if (!raw) return '';
+  try { return new URL(raw).host; } catch (e) { return String(raw); }
 }
 
 /** ATO-771/772: a turn that failed because the managed local model is not
@@ -10011,6 +10501,8 @@ function onChatEvent(ev) {
        on screen always ends its busy: a chat runs one turn at a time, so
        another entry RUNNING still holds for it is one whose end never came. */
     if (!(turnSid && turnSid !== S.sessionId && screenTurnId())) S.busy = false;
+    // ATO-464: how long the turn worked, for its summary line once its steps fold.
+    if (item && S.turnStartedAt && !item.workedMs) item.workedMs = Math.max(0, (ev.at || Date.now()) - S.turnStartedAt);
     S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
@@ -10025,6 +10517,8 @@ function onChatEvent(ev) {
        '(no reply)'. `item` is only defined for the turn streaming into the
        chat on screen (the turnId guard above), which is the only transcript
        the bar could honestly attach to. */
+    // ATO-1046: View › Read Replies Aloud reads a finished reply of the chat on screen.
+    if (ev.kind === 'done' && item && typeof ttsTurnEnded === 'function') ttsTurnEnded(item);
     if (ev.kind === 'done' && PLAN.startedMode === 'plan' && item && String(item.text || '').trim()) {
       PLAN.on = true; PLAN.itemId = item.id; PLAN.sessionId = S.agentSession;
     }
@@ -10758,8 +11252,33 @@ function apprNoLongerWaiting(req) {
   // The busy look answerLive put up was for a turn that is not running.
   if (req.sessionId && req.sessionId === S.agentSession && !sessionTurnId(req.sessionId)) S.busy = false;
 }
+/* ATO-473: an "Allow in this chat" the agent did not take (a 400: a request
+   it names no command for, or an agent older than the capability it listed)
+   is still a yes to this call. It goes again as allow-once, the narrower yes
+   the person also gave, and the card says the chat part did not happen. A
+   "not pending" answer is left alone: the request is over either way. */
+function apprChatFallback(req, decision, res) {
+  const took = !!(res && res.ok !== false && res.data && res.data.resolved === true);
+  if (decision !== 'allow-in-chat') return res;
+  if (took) return Object.assign({}, res, {chatGranted: true});
+  if (!res || res.ok === false || approvalNotWaiting(res.data)) return res;
+  return BR.approve(req.approvalId, 'allow-once').then((again) => {
+    if (again && again.ok !== false && again.data && again.data.resolved === true) {
+      placeAfterRow(req, {id:nid(), k:'system', apprNote:true,
+        text:'Allowed once. This agent can\u2019t remember it for the chat, so it will ask again next time.'});
+    }
+    return again;
+  });
+}
+/* The receipt for a taken "Allow in this chat". A system row's text is html,
+   and the shape is the binary name the model chose, so it is escaped. */
+function apprChatGrantedNote(req) {
+  return {id:nid(), k:'system', apprNote:true,
+    text:'Allowed in this chat. Atomic Agent won\u2019t ask again about <code>' + esc(req.shape) + '</code> commands until you start a new chat.'};
+}
 function answerLive(req, key) {
-  const approve = key === 'y' || key === 's' || key === 'a';
+  const approve = key === 'y' || key === 's' || key === 'a' || key === 'c';
+  const inChat = key === 'c' && apprChatOk(req);
   ANX.apprAnswered(req, key);
   // Backlog 25: an older card answered by its own button (see the click
   // delegator) leaves the newest request, and its card, open.
@@ -10796,9 +11315,11 @@ function answerLive(req, key) {
   /* Q60 review: whether the agent took it, for a replay of the same request
      (onApprovalEvent): only a confirmed answer keeps the card closed. */
   req.answering = true; delete req.landed;
-  BR.approve(req.approvalId, approve ? 'allow-once' : 'deny').then((res) => {
+  const decision = inChat ? 'allow-in-chat' : approve ? 'allow-once' : 'deny';
+  BR.approve(req.approvalId, decision).then((res) => apprChatFallback(req, decision, res)).then((res) => {
     req.answering = false;
     req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
+    if (inChat && req.landed && res.chatGranted) placeAfterRow(req, apprChatGrantedNote(req));
     if (res && res.ok !== false && approvalNotWaiting(res.data)) apprNoLongerWaiting(req);
     else if (res && !res.ok) placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn', text:'Couldn\u2019t send your answer to the agent: ' + esc(agentReplyWords(res.error || ''))});
     render();
@@ -10836,6 +11357,7 @@ if (BR) {
   // as "the thread you are in" over an empty transcript.
   S.sessionId = '';
   loadPrefs();
+  loadFolders();   // ATO-1034 (chat-folders.js)
   BR.onStatus(applyStatus);
   if (BR.onAutoRestart) BR.onAutoRestart(autoRestartApply);
   BR.onChat(onChatEvent);
@@ -10935,9 +11457,11 @@ if (BR) {
       /* ATO-729: a new folder restarts the agent, which would end a running
          turn. The chip, Settings › Change… and the menu all land here, so the
          picker stays shut mid-turn, as with a model switch. */
-      const held = restartStopsTurn();
-      if (held) { restartRefusedToast(held); return; }
-      BR.chooseWorkspace().then(applyWorkspaceChoice);
+      /* ATO-731: the folder is the chat's now and nothing restarts, so only a
+         turn in the chat on screen holds the picker (main refuses again if one
+         began meanwhile). A cloud chat keeps its folder and a new chat opens. */
+      if (S.busy) { restartRefusedToast({here:true, title:''}); return; }
+      BR.chooseWorkspace(SK.workingDir ? null : (S.agentSession || null)).then(applyWorkspaceChoice);
       return;
     }
     return originalAct(a);
@@ -10951,14 +11475,18 @@ function applyWorkspaceChoice(dir) {
   if (!dir) return;
   /* ATO-733: a turn began while the picker was open, and main left the folder
      and the agent as they were rather than cut it. */
-  if (typeof dir === 'object') {
+  if (typeof dir === 'object' && !dir.live) {
+    if (dir.error) { toast('The folder was not changed', dir.error, 'bad'); return; }
     if (dir.busy) restartRefusedToast(restartStopsTurn() || {here:false, title:'', elsewhere: dir.elsewhere ? 1 : 0});
     return;
   }
+  // ATO-731: the chat on screen (and every new one) works there now; the agent kept running.
+  const live = typeof dir === 'object' && dir.live;
+  if (live) dir = dir.dir;
   const cloud = !!SK.workingDir;
   WORKSPACE = dir;
   if (cloud) act('session:new');
-  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + ' · the agent is restarting there'});
+  S.log.push({id:nid(), k:'system', text:'workspace → ' + esc(dir) + (live ? ' · this chat works there now' : ' · the agent is restarting there')});
   render();
 }
 
@@ -11134,7 +11662,7 @@ function needsOnboarding(cfg, readyIds) {
          writes exactly that default, so without this the desktop's first
          run lands in a chat window with no backend and no wizard. */
   const managedReady = lm.managed && lm.managed.modelId;
-  const localConfigured = lm.mode === 'external' && lm.url && lm.url !== DEFAULT_LLAMA_URL;
+  const localConfigured = lm.mode === 'external' && lm.url && !llamaUrlUntouched(lm.url);
   const llm = (cfg && cfg.llm) || {};
   const active = (llm.providers || []).find((p) => p.id === llm.activeTextProvider);
   const cloudReady = !!active && active.kind !== 'llama-server'
@@ -11243,10 +11771,17 @@ function isSmallModel(model) {
 /* Calm (S6): one quiet line, not a paragraph. Same truth: quick and fine
    for everyday work, weaker at long multi-step tool work. */
 const SMALL_MODEL_CAUTION = 'A small model: quick, but weaker at long multi-step work.';
+/* ATO-449 (U-12): reduced-refusal weights stay in the first-run list, but say
+   in plain words what they are. The catalogue's own tag ("Use at your own
+   risk") warned without explaining; this is the note, and its short word is
+   the row's badge. */
+const UNCENSORED_NOTE = 'Fewer safety refusals: it may answer requests other models decline.';
+const UNCENSORED_WORD = 'Fewer refusals';
 
 /**
- * The catalogue ordered for THIS machine: best fit first, and within a
- * fit band the largest model first — the best thing that actually runs.
+ * The catalogue ordered for THIS machine: best fit first; within a fit
+ * band the catalogue's recommendation order (`recommendRank`, the agent's
+ * recommendedModelFor, ATO-817), then the largest unranked model.
  * Reduced-refusal weights sink to the bottom of their band, the way the
  * TUI's own picker pins them (models-catalog.ts `uncensored`).
  */
@@ -11264,6 +11799,8 @@ function orderModelsByFit(models, ram) {
     if (fa.rank !== fb.rank) return fa.rank - fb.rank;
     const ua = a.uncensored ? 1 : 0, ub = b.uncensored ? 1 : 0;
     if (ua !== ub) return ua - ub;
+    const ka = Number(a.recommendRank) || Infinity, kb = Number(b.recommendRank) || Infinity;
+    if (ka !== kb) return ka - kb;
     const ra = Number(a.recommendedRamGb) || 0, rb = Number(b.recommendedRamGb) || 0;
     if (ra !== rb) return rb - ra;
     return (Number(b.sizeGb) || sizeStringGb(b.size)) - (Number(a.sizeGb) || sizeStringGb(a.size));
@@ -11279,6 +11816,27 @@ function bestModelFor(models, ram) {
   const ordered = orderModelsByFit(models, ram)
     .filter((m) => !m.uncensored && fitFor(m, ram).v !== 'over');
   return ordered.length ? ordered[0] : null;
+}
+
+/**
+ * ATO-337: what to say before a model this machine is under the catalogue's
+ * minimum for is downloaded or started. The rows already say "will not run";
+ * this is the click on one. Only for catalogue figures (fitFor's `known`):
+ * a size-based estimate is not firm enough to stand in the way.
+ * `alt` is the best model that does run here (bestModelFor), or null.
+ * @returns {{title: string, text: string, alt: object|null}|null}
+ */
+function modelRamWarning(model, models, ram) {
+  const have = Number(ram) || 0;
+  const min = Number(model && model.minRamGb) || 0;
+  if (!model || !have || !min) return null;
+  const fit = fitFor(model, have);
+  if (fit.v !== 'over' || !fit.known) return null;
+  const alt = bestModelFor((models || []).filter((m) => m && m.id !== model.id), have);
+  return {title: 'Not enough memory for this model',
+    text: 'This model needs ' + min + ' GB of memory. ' + THIS_MACHINE_CAP + ' has ' + have + ' GB.'
+      + (alt ? ' ' + llmModelName(alt) + ' runs here.' : ''),
+    alt};
 }
 
 /** The facts line under a model's name: size, context, vision, disk state. */
@@ -12929,11 +13487,39 @@ function obModelLabel() {
   return id.indexOf('custom-') === 0 ? id.replace(/^custom-/, '') : id;
 }
 
-/** configuredLabel (onboarding-screen.tsx:298-302). */
+/** configuredLabel (onboarding-screen.tsx:298-302). ATO-822 item 5: "Local
+ *  model ready" only once the model really started (OB.localStart). A pick
+ *  whose start was not seen says it is selected; a start that failed says so
+ *  (the reason is in the transcript, bswReport). */
 function obConfiguredLabel() {
-  if (OB.outcome === 'local') return 'Local model ready';
+  if (OB.outcome === 'local') {
+    if (OB.localStart === 'started') return 'Local model ready';
+    if (OB.localStart === 'failed') return 'Local model selected, but it did not start';
+    return 'Local model selected';
+  }
   if (OB.outcome === 'cloud') return OB_COPY.cloudReadyLabel;
   return 'Backend ready';
+}
+
+/** The configured line: the green tick only for something that is ready. */
+function obConfiguredHTML() {
+  const text = obConfiguredLabel();
+  if (OB.outcome !== 'local' || OB.localStart === 'started') return obReadyHTML(text);
+  const failed = OB.localStart === 'failed';
+  return '<div class="ob-h ob-ready"><span class="ob-ok tk-ico tk-ico--sm ' + (failed ? 'tk-ico--red' : 'tk-ico--blue') + '">'
+    + ic(failed ? 'alert' : 'info') + '</span>' + esc(text) + '</div>';
+}
+
+/** ATO-822 item 5: what a local switch result says about the model server.
+ *  `untouched` is a server found up for this very model (backend-switch.ts
+ *  bringUpLocalDaemon); `skipped` and `superseded` started nothing.
+ *  `stop-failed` is the old model's server refusing to stop, so the new one
+ *  was never started: a failure too. */
+function obLocalStartOf(res) {
+  const d = res && res.daemon;
+  if (d === 'started' || d === 'restarted' || d === 'untouched') return 'started';
+  if (d === 'start-failed' || d === 'stop-failed') return 'failed';
+  return null;
 }
 
 /**
@@ -13096,8 +13682,8 @@ function obModelRowLabel(model, isBest, noteId) {
 function obModelNote(model) {
   const note = modelPickNote(model, OB.ram);
   if (!note || note.v === 'over') return null;
-  // The reduced-refusal tag ("Use at your own risk") is short enough to be its own word.
-  const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model' : note.text;
+  const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model'
+    : note.text === UNCENSORED_NOTE ? UNCENSORED_WORD : note.text;
   return {word, text: note.text, warn: note.v === 'tight' || !!model.uncensored};
 }
 
@@ -13154,6 +13740,7 @@ function hfDiskFit(choice) {
 }
 // A new reading that could change a verdict repaints whatever shows one.
 DISK.onChange = () => render();
+DOCD.onChange = () => diagRepaint();   // ATO-577 / ATO-579
 /** @returns {{v: 'over'|'tight'|'caution', text: string}|null} */
 function modelPickNote(model, ram) {
   const fit = fitFor(model, ram);
@@ -13162,7 +13749,7 @@ function modelPickNote(model, ram) {
     return {v:'over', text: need + (ram ? '. ' + THIS_MACHINE_CAP + ' has ' + ram + ' GB.' : '.')};
   }
   if (fit.v === 'tight') return {v:'tight', text:'Tight fit on ' + ram + ' GB. It will run slowly.'};
-  if (model.uncensored && model.tag) return {v:'caution', text: String(model.tag)};
+  if (model.uncensored) return {v:'caution', text: UNCENSORED_NOTE};
   if (isSmallModel(model)) return {v:'caution', text: SMALL_MODEL_CAUTION};
   return null;
 }
@@ -13405,7 +13992,7 @@ function obProposeHTML() {
     // The same tone as the route cards on the choose step.
     '<span class="tk-ico tk-ico--blue">' + ic(local ? 'laptop' : 'cloud') + '</span>',
   ];
-  return obReadyHTML(obConfiguredLabel())
+  return obConfiguredHTML()
     + '<div class="ob-explain">' + esc(OB_COPY.proposeExplainer.join(' ')) + '</div>'
     + '<div class="ob-list">'
     + rows.map((row, i) => obRow(i, (OB.cursor % 2) === i, esc(row.label), esc(row.detail), '', '', icons[i], (OB.cursor % 2) === i ? obTickHTML() : '')).join('') + '</div>';
@@ -14449,6 +15036,7 @@ async function obActivateLocal(id) {
   }
   bswReport(res);
   OB.restarted = !!res.restart;
+  OB.localStart = obLocalStartOf(res);
   obDispatch({type:'local_models_pull_finished', kind:'chat'});
 }
 
@@ -15185,7 +15773,7 @@ async function obReadiness() {
   const config = (cfg && cfg.ok && cfg.config) || {};
   const lm = config.localModels || {};
   out.localReady = !!((lm.mode === 'managed' && lm.managed && lm.managed.modelId)
-    || (lm.mode === 'external' && lm.url && lm.url !== OB_DEFAULT_LLAMA_URL));
+    || (lm.mode === 'external' && lm.url && lm.url !== OB_DEFAULT_LLAMA_URL && lm.url !== LEGACY_LLAMA_URL));
   out.stamps = (config.tui && config.tui.onboarding) || {};
   return out;
 }
@@ -15346,7 +15934,8 @@ async function obSettle() {
   if (!obClosingToastCarried(outcome)) toast(toastTitle, toastLine);
   render();
   if (OB.restarted) { refreshLiveConfig(); return; }
-  BR.restart().then(applyStatus);
+  // ATO-274: a restart setup asks for, not one the person pressed.
+  BR.restart('setup_finished').then(applyStatus);
 }
 
 /** Backlog 18: whether the download card already says what the closing toast would. */
@@ -15404,6 +15993,7 @@ async function openOnboarding(at) {
     outcome: null, skipSecondOffer: false, handOver: false, cursor: 0, embeddingUrl: '', busy: false, error: null,
     hfReference: '', hfRepo: null, importAgents: [], importOptions: [], importReport: null,
     introTyped: false, settling: false, testClose: false, pendingMmproj: null, restarted: false, leftEarly: false,
+    localStart: null,
   });
   // The out-of-reach models start folded again (obOutOpen decides).
   OB.outOpen = null;
@@ -15806,6 +16396,10 @@ if (BR) {
   /* The one pull subscriber the flow needs. The LLM pane keeps its own —
      `dlOnPull` is inert unless this flow started the download. */
   BR.onPull((ev) => { if (ev) dlOnPull(ev); });
+  // ATO-1042: the starter model's download and arrival (starter-chat.js).
+  if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
+  if (typeof starterCatchUp === 'function') starterCatchUp();
+  BR.onPull((ev) => { if (typeof starterOnPull === 'function') starterOnPull(ev); });
 
   /* First run: the wizard opens itself, exactly as the TUI does.
      r5 item 9 — `fresh` is latched in the main process BEFORE anything can
@@ -15841,6 +16435,8 @@ if (BR) {
     if (a === 'onboarding') { openOnboarding(); return; }
     // Calm (S6): the composer's "Set up a model" chip — straight to the choice, no title card.
     if (a === 'onboarding:choose') { openOnboarding('choose'); return; }
+    // The composer's "Set up a model" chip: Settings › Models on the Local models tab (ATO-1232).
+    if (a === 'settings:llm:local') { act('settings:llm'); act('llm:mode:local'); return; }
     if (a === 'onboarding:openNow') { obOpenNow(); return; }
     if (a === 'dl:cancel') { dlCancel(); return; }
     /* r6 — three lanes found this one independently, and the operator
@@ -17166,6 +17762,13 @@ async function selActivate(row) {
     return;
   }
   if (row.type === 'localModel') {
+    /* ATO-337: a model this machine is under the minimum for (listed here
+       only once it is on disk) warns on the first pick and runs on the
+       second, for the rest of the session. */
+    if (SEL.ramWarned !== row.id) {
+      const warn = modelRamWarning((SEL.local || []).find((m) => m && m.id === row.id), SEL.local, hostRamGb());
+      if (warn) { SEL.ramWarned = row.id; toast(warn.title, warn.text + ' Pick it again to run it anyway.', 'bad'); return; }
+    }
     if (!row.downloaded) { selPull(row.id); return; }
     // Close immediately; progress and failures remain beside the composer.
     SEL.busy = true; SEL.err = null; BSW.line = 'starting ' + row.id + '…';
@@ -17371,6 +17974,19 @@ function selShell(title, body, foot, lead) {
     || document.querySelector('.modelchip') || document.querySelector('.modechip');
   const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' || SEL.kind === 'workers' ? 520
     : SEL.kind === 'provider' ? 420 : 440;
+  /* ATO-1235: opened from Settings › Models' Add provider, the list hangs off
+     that button over a dimmed Settings, not off the composer chip under it,
+     where it lay on top of the cards with nothing between. */
+  const fromSettings = S.settings && WIZ.phase ? document.querySelector('.setwin [data-act="llm:add"]') : null;
+  if (fromSettings) {
+    return '<div class="scrim selscrim--settings" data-close="1">'
+      + '<div class="popover selpop selpop--settings tk-pop" style="' + settingsAnchorStyle(fromSettings, width) + '">'
+      + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
+      + (SEL.busy ? '<span class="cap selbusy"><span class="tk-spin"></span>' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
+      + body
+      + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
+      + '</div></div>';
+  }
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover selpop tk-pop" style="' + anchorStyle(anchor, width) + '">'
     + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
@@ -17730,8 +18346,11 @@ function contextChip() {
     + (CTX.window ? '<circle class="fg" cx="10" cy="10" r="7.5" stroke-dasharray="' + (47.12 * pct / 100).toFixed(2) + ' 47.12" transform="rotate(-90 10 10)"/>' : '')
     + '</svg>';
   /* ATO-481: from half full the ring carries its figure, so a filling
-     window reads as a gauge at a glance; below that it stays the ring alone. */
-  const fig = CTX.window && pct >= 50 ? '<span class="ctxpct">' + Math.round(pct) + '%</span>' : '';
+     window reads as a gauge at a glance. ATO-1025: below that too — a low
+     arc alone still read as a spinner that never stops ("Ask first" with an
+     endless empty spinner, review of 25.10), so the figure is always there
+     once the window is known. */
+  const fig = CTX.window ? '<span class="ctxpct">' + Math.max(1, Math.round(pct)) + '%</span>' : '';
   return '<button class="cchip ctxbtn' + (proj ? ' proj' : '') + (fig ? ' haspct' : '') + tone + cchipOpen('context') + '" data-act="context"'
     + ' title="' + esc(tip) + '" aria-label="Context: ' + esc(tip) + '">' + ring + fig + '</button>';
 }
@@ -19687,6 +20306,18 @@ async function wizNext() {
   }
 }
 
+/* ATO-1196: whether the agent's words about an empty model list mean the
+   server simply has none. `models search --refresh` on a local
+   openai-compatible server that answers with zero models prints "no
+   searchable cloud models: the configured providers ship no catalog...",
+   and the old `no models` test missed it, so an empty Ollama or LM Studio
+   read "didn't list its models". Only asked for a server on this machine:
+   for a cloud provider the same line is not about the server. A failure
+   ("could not list models from ...") is not an empty server. */
+function wizSaidNoModels(said) {
+  return !said || /\bno (?:searchable cloud )?models\b/.test(said);
+}
+
 async function wizNextStep() {
   const k = WIZ.row; if (!k) return;
   if (k.subscriptionCli) return wizSubscriptionStep(k);
@@ -19859,7 +20490,7 @@ async function wizNextStep() {
       ? wizService(k) + ' is limiting requests right now (429). Wait a moment, then try again.'
       : status >= 500
       ? wizService(k) + ' had a problem answering (HTTP ' + status + '). Try again in a moment.'
-      : local && (!said || /\bno models\b/.test(said))
+      : local && wizSaidNoModels(said)
       ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
       : local
       ? Name + ' at ' + where + ' didn\u2019t list its models.'
@@ -20007,7 +20638,8 @@ async function wizActivate(k, id, model, unverified) {
   const added = wizService(k) + (model ? ' \u00b7 ' + model : '') + (unverified ? ' \u00b7 not verified: ' + unverified : '')
     + (WIZ.noFundsNote ? ' \u00b7 the account has no funds' : '');   // Backlog 40
   if (OB.open && OB.step === 'cloud') {
-    OB.restarted = !!(sel && sel.restart);
+    // ATO-1021: a pick the running agent took live is on its route already, like one it restarted for.
+    OB.restarted = !!(sel && (sel.restart || sel.liveSwapped));
     toast(unverified ? 'Provider added, key not checked' : 'Provider added', added);
     obDispatch({type:'providers_wizard_succeeded'});
     return;
@@ -20027,8 +20659,24 @@ function renderItems() {
   const items = S.log; let html = '';
   // ATO-328: the one call the Exa key card goes under, below its row (or below the fold that holds it).
   const exaHost = exaKeyHost(items);
+  /* ATO-464: a finished turn's steps fold into one line (turn-summary.js).
+     The turn still streaming is the one S.turnId is on; it is drawn live. */
+  const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
+    failedOf: (t) => toolState(t) === 'err'});   // red only for what the card itself shows as an error
+  const hidden = new Set();
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
+    const fold = folds.get(i);
+    if (fold) {
+      const open = TURN_OPEN.has(fold.replyId);
+      html += turnSumHTML(fold, open, turnSumMs(fold, items), {esc, ic, dur});
+      if (!open) fold.rows.forEach((x) => hidden.add(x));
+    }
+    if (hidden.has(i)) {
+      // The Exa key card asks for something, so it stays in sight under the line.
+      if (exaHost && m.id === exaHost) html += exaKeyTurnHTML(m);
+      continue;
+    }
     if (m.k === 'tool') {
       let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
       const run = items.slice(i, j + 1);
@@ -20059,6 +20707,48 @@ function renderItems() {
     if (exaHost && m.id === exaHost) html += exaKeyTurnHTML(m);
   }
   return html;
+}
+/** ATO-464: how long a folded turn worked. The wall time this window saw
+    (the reply's `workedMs`, stamped at the turn's end), else the steps'
+    own measured times added up; null when nothing was measured, so the line
+    prints no number rather than a zero. */
+function turnSumMs(fold, log) {
+  const reply = log[fold.replyAt];   // by index: a lookup per fold on every frame would grow with the chat
+  if (reply && reply.workedMs > 0) return reply.workedMs;
+  let ms = 0;
+  fold.rows.forEach((x) => {
+    const m = log[x];
+    if (m.k === 'tool') {
+      const st = toolState(m), took = toolTook(m);
+      if (took && st !== 'deny' && st !== 'skip') ms += took.ms;   // ATO-197: a wait for an answer is no work
+    } else if (m.k === 'reason' && m.startedAt && m.endedAt) ms += (m.thoughtMs || 0) + (m.endedAt - m.startedAt);
+  });
+  return ms > 0 ? ms : null;
+}
+/** ATO-464: open or fold a finished turn's steps, its summary line kept where it was. */
+function turnSumToggle(replyId) {
+  if (TURN_OPEN.has(replyId)) TURN_OPEN.delete(replyId); else TURN_OPEN.add(replyId);
+  const sc = $('#scroller');
+  const head = () => document.querySelector('#turnsum-' + CSS.escape(replyId) + ' .turnsum');
+  const h0 = head();
+  if (!sc || !h0) { render(); return; }
+  const before = h0.getBoundingClientRect().top;
+  S.stick = false;   // the click is on this line: keep it under the pointer, not the bottom of the chat
+  if (!repaintTranscript()) { render(); return; }
+  const h1 = head();
+  const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+/** ATO-464: open the folded turn that holds row `id` (the inspector's Steps
+    jumps to a card). True when it was folded and is drawn open now. */
+function turnSumReveal(id) {
+  const at = S.log.findIndex((x) => x.id === id);
+  if (at < 0) return false;
+  for (const f of turnFoldsOf(S.log, {runningId: S.turnId ? S.streamId : null}).values()) {
+    if (f.rows.includes(at) && !TURN_OPEN.has(f.replyId)) { TURN_OPEN.add(f.replyId); render(); return true; }
+  }
+  return false;
 }
 /* ============================================================
    ATO-328: web search asks for an Exa key (exa-key.js)
@@ -20398,89 +21088,44 @@ async function applyTraceDurations() {
    nothing a model writes can become markup. Code spans and fences are lifted
    out first and put back last: markdown inside code is not markdown.
    --------------------------------------------------------------- */
-function mdInline(t) {
-  return t
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
-    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
-    .replace(/~~([^~]+)~~/g, '<s>$1</s>');
-}
-
-/* ATO-163: GitHub-style tables. Cells are split on `|` (a `\\|` stays a
-   pipe; code spans are already held out, so a pipe inside code is safe); the
-   separator row's colons set each column's alignment. A row may leave out
-   the outer pipes. Rows with fewer cells than the header are padded, extra
-   cells dropped, as GitHub does. */
-const MD_TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
-function mdCells(line) {
-  const body = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
-  return body.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
-}
-function mdTableAt(lines, at) {
-  const head = (lines[at] || '').trim();
-  const sep = lines[at + 1];
-  if (!head.includes('|') || sep === undefined || !MD_TABLE_SEP.test(sep) || !sep.includes('|') && !head.startsWith('|')) return null;
-  const cols = mdCells(head);
-  const seps = mdCells(sep);
-  // As GitHub: the separator has as many cells as the header, or this is prose and a rule, not a table.
-  if (seps.length !== cols.length || (cols.length < 2 && !head.startsWith('|'))) return null;
-  const aligns = seps.map((c) => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : /^:-/.test(c) ? 'left' : '');
-  const cell = (tag, text, i) => '<' + tag + (aligns[i] ? ' style="text-align:' + aligns[i] + '"' : '') + '>' + mdInline(text || '') + '</' + tag + '>';
-  let end = at + 1;
-  const rows = [];
-  while (end + 1 < lines.length && lines[end + 1].trim() && lines[end + 1].includes('|')) {
-    end++;
-    const c = mdCells(lines[end]);
-    rows.push('<tr>' + cols.map((_, i) => cell('td', c[i], i)).join('') + '</tr>');
-  }
-  const html = '<div class="mdtbl"><table><thead><tr>' + cols.map((c, i) => cell('th', c, i)).join('') + '</tr></thead>'
-    + (rows.length ? '<tbody>' + rows.join('') + '</tbody>' : '') + '</table></div>';
-  return { html, end };
-}
-
+/* ATO-1251 / ATO-664: the block parser lives in md-render.js (loaded first):
+   tables with Copy, nested and task lists, callouts, key/value fields,
+   Pros/Cons comparisons, link and file cards. Its contract is this
+   function's: escaped text in, tags of its own out, code held as
+   placeholders that renderProseFresh restores after its link and chip
+   passes — a path in backticks is a path the model wrote literally, not a
+   file to offer a button for, unless the span holds nothing else. */
 function renderMarkdown(escaped) {
-  const held = [];
-  let t = escaped
-    // ATO-430: the fence's info string (```js) is the language, not code: it moves to a small label.
-    .replace(/```(?:([\w+#.-]+)[ \t]*(?=\r?\n))?([\s\S]*?)```/g, (m, lang, code) =>
-      '\u0000' + (held.push('<pre class="mdpre"' + (lang ? ' data-lang="' + lang + '"' : '') + '><code>' + code.replace(/^\r?\n/, '') + '</code></pre>') - 1) + '\u0000')
-    .replace(/`([^`\n]+)`/g, (m, code) =>
-      '\u0000' + (held.push('<code class="mdcode">' + code + '</code>') - 1) + '\u0000');
-
-  const out = [];
-  let list = null;                       // 'ul' | 'ol' | null
-  const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
-  const lines = t.split('\n');
-  for (let at = 0; at < lines.length; at++) {
-    const line = lines[at].replace(/\s+$/, '');
-    /* ATO-163: a table — a row of cells, then a dashed separator row — was
-       printed as its pipes and dashes. The whole table is one line of markup
-       (no newlines inside it for `pre-wrap` to keep), in a wrapper that
-       scrolls sideways instead of pushing the reply wider. */
-    const table = mdTableAt(lines, at);
-    if (table) { closeList(); out.push(table.html); at = table.end; continue; }
-    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
-    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    const quote = /^&gt;\s?(.*)$/.exec(line);
-    if (heading) { closeList(); out.push('<h' + heading[1].length + ' class="mdh">' + mdInline(heading[2]) + '</h' + heading[1].length + '>'); continue; }
-    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { closeList(); out.push('<hr class="mdhr">'); continue; }
-    if (bullet) { if (list !== 'ul') { closeList(); out.push('<ul class="mdlist">'); list = 'ul'; } out.push('<li>' + mdInline(bullet[1]) + '</li>'); continue; }
-    if (numbered) { if (list !== 'ol') { closeList(); out.push('<ol class="mdlist">'); list = 'ol'; } out.push('<li>' + mdInline(numbered[1]) + '</li>'); continue; }
-    if (quote) { closeList(); out.push('<blockquote class="mdquote">' + mdInline(quote[1]) + '</blockquote>'); continue; }
-    closeList();
-    out.push(line ? mdInline(line) : '');
-  }
-  closeList();
-  /* The held code is NOT restored here. renderProse turns bare paths into
-     file chips and bare URLs into links, and both would happily rewrite the
-     inside of a code span — a path in backticks is a path the model wrote
-     literally, not a file to offer a button for. The placeholders survive
-     that pass and are put back afterwards. */
-  return { html: out.join('\n'), held };
+  return mdRender(escaped);
 }
 
+/* ATO-1023: a finished message's markup is the same on every paint, so it is
+   made once. renderProse ran the markdown, link and chip passes over every
+   message of the chat on every render, and on every frame of a stream. A hit
+   needs the text and the same path answers from main (PROSE_CACHE.ver moves
+   when any lands, and again when a "not there" answer is due to be asked
+   again). Markup still waiting on main ([data-rpath]) is not
+   kept. A streaming reply's text only grows, so its previous frame's entry is
+   dropped when the next one is stored: the cache holds messages, not frames. */
 function renderProse(text) {
+  const key = typeof text === 'string' ? text : String(text == null ? '' : text);
+  const C = PROSE_CACHE;
+  const hit = C.map.get(key);
+  if (hit && hit.ver === C.ver) {
+    C.map.delete(key); C.map.set(key, hit);
+    return hit.html;
+  }
+  const html = renderProseFresh(key);
+  if (html.indexOf('data-rpath=') < 0) {
+    if (C.last && C.last !== key && key.startsWith(C.last)) C.map.delete(C.last);
+    C.map.delete(key);
+    C.map.set(key, {html, ver: C.ver});
+    C.last = key;
+    if (C.map.size > C.max) C.map.delete(C.map.keys().next().value);
+  }
+  return html;
+}
+function renderProseFresh(text) {
   const URL_RE = /(?<![\w.])(?:https?:\/\/|www\.)[^\s<>"']+/g;
   // Chat review (Д23): letters of any script, so `~/Документы/отчёт.docx` reads as a path too,
   // and extensions up to ten characters (`run.command`): main decides what each one is.
@@ -20531,9 +21176,13 @@ function renderProse(text) {
     markup: the reply is pre-wrap. */
 function codeBlockFrame(pre) {
   const lang = (/^<pre class="mdpre"[^>]*\sdata-lang="([^"]*)"/.exec(pre) || [])[1] || '';
+  // ATO-1025: the code takes colour (code-highlight.js); Copy still reads its text alone.
+  const lit = typeof highlightCode === 'function'
+    ? pre.replace(/(<code>)([\s\S]*)(<\/code><\/pre>)$/, (m, open, code, close) => open + highlightCode(code, lang) + close)
+    : pre;
   return '<div class="mdblock"><div class="mdbar"><span class="mdlang">' + lang + '</span>'
     + '<button class="mdcopy" data-mdcopy title="Copy code" aria-label="Copy code">' + ic('copy') + '<span>Copy</span></button></div>'
-    + pre + '</div>';
+    + lit + '</div>';
 }
 /** A code span's text that is one path and nothing else: `~/…`, `/…` (`C:\…` on Windows), not a URL. */
 function codeSpanIsPath(s) {
@@ -20580,6 +21229,11 @@ async function replyPathsAsk() {
     REPLY_PATHS.set(p, v);
     if (v.ok) landed = true;
   });
+  /* ATO-1023: markup made before these answers may name them differently. A
+     "not there" answer is asked again after REPLY_PATH_RETRY_MS, so the markup
+     made from it goes stale then too. */
+  PROSE_CACHE.ver++;
+  if (batch.some((p) => !REPLY_PATHS.get(p).ok)) setTimeout(() => { PROSE_CACHE.ver++; }, REPLY_PATH_RETRY_MS);
   if (!landed) return;
   document.querySelectorAll('[data-rpath]').forEach((n) => {
     const v = REPLY_PATHS.get(n.dataset.rpath);
@@ -20630,7 +21284,9 @@ document.addEventListener('contextmenu', (e) => {
 document.addEventListener('dblclick', (e) => {
   const t = e.target;
   if (!t || !t.closest || S.overlay === 'rename') return;
-  if (t.closest('[data-sesmenu]')) return;
+  if (t.closest('[data-sesmenu]') || t.closest('[data-fmenu]')) return;
+  const fh = t.closest('#sidebar .sb-fhead[data-ftoggle]');   // ATO-1034
+  if (fh) { e.preventDefault(); renameStart(fh.dataset.ftoggle, 'folder'); return; }
   const row = t.closest('#sidebar .sesrow[data-ses]');
   if (row) { e.preventDefault(); renameStart(row.dataset.ses, 'row'); return; }
   if (S.room === 'chat' && S.sessionId && t.closest('#toolbar .tb-title b')) {
@@ -21163,6 +21819,7 @@ if (typeof window !== 'undefined') {
   };
   window.__scrollCardTo = (i, px) => {
     const m = S.log.filter((x) => x.k === 'tool')[i]; const sc = $('#scroller');
+    if (m && !document.getElementById('card-' + m.id)) turnSumReveal(m.id);   // ATO-464: in a folded turn: open it
     if (m && !document.getElementById('card-' + m.id)) { // folded into a group: unfold the run it belongs to
       let s = S.log.indexOf(m); while (s > 0 && S.log[s - 1].k === 'tool' && S.log[s - 1].name === m.name) s--;
       if (document.getElementById('group-' + S.log[s].id)) { OPEN_GROUPS.add(S.log[s].id); expandGroupInPlace(S.log[s].id); }
@@ -21198,6 +21855,29 @@ if (typeof window !== 'undefined') {
             cardsBefore, cardsAfter:document.querySelectorAll('.card').length,
             groupsBefore, groupsAfter:document.querySelectorAll('[data-group]').length};
   };
+}
+
+/* Hooks for --smoke: ATO-464, a finished turn's summary line. __turnSums
+   reads what is on screen; __clickTurnSum presses the REAL button (the
+   document click listener → [data-turnsum] → turnSumToggle), so the check
+   fails if that branch stops opening the steps in place. */
+if (typeof window !== 'undefined') {
+  window.__turnSums = () => [...document.querySelectorAll('#scroller [data-turnsum]')].map((b) => ({
+    id: b.dataset.turnsum, open: b.getAttribute('aria-expanded') === 'true',
+    text: [...b.querySelectorAll('span')].map((n) => n.textContent).filter((t) => t !== '\u00b7').join(' \u00b7 '),
+  }));
+  window.__clickTurnSum = (id) => {
+    const sc = $('#scroller');
+    const head = () => document.querySelector('#turnsum-' + CSS.escape(id) + ' .turnsum');
+    const h0 = head(); if (!sc || !h0) return null;
+    const headBefore = h0.getBoundingClientRect().top, scrollBefore = sc.scrollTop;
+    const cardsBefore = document.querySelectorAll('#scroller .card').length;
+    h0.click();
+    const h1 = head();
+    return {open: !!h1 && h1.getAttribute('aria-expanded') === 'true', headBefore, headAfter: h1 ? h1.getBoundingClientRect().top : NaN,
+            scrollBefore, scrollAfter: sc.scrollTop, cardsBefore, cardsAfter: document.querySelectorAll('#scroller .card').length};
+  };
+  window.__stepsAlways = () => STEPS.always;
 }
 
 /* Hooks for --smoke: item 4 — cards stay inside the transcript column, durations
@@ -21773,7 +22453,9 @@ function tkStatusClass(status) {
    search. The auto-refresh readout lives in the Settings window's status
    line beside Done now (Д26). */
 function tkFilterBar(visibleCount) {
-  const seg = '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
+  // ATO-519 (U-85): with no tasks at all, filters and search have nothing to act on; only Refresh and New task stay.
+  const none = !TK.rows.length;
+  const seg = none ? '' : '<div class="tk-seg set-seg" role="group" aria-label="Filter">'
     + TK_FILTER_ORDER.map((f) => '<button class="' + (TK.filter === f ? 'on' : '') + '" data-act="tasks:filter:' + f + '" aria-pressed="' + (TK.filter === f) + '">' + esc(f) + '</button>').join('')
     + '</div>';
   const search = TK.searchOpen
@@ -21789,10 +22471,10 @@ function tkFilterBar(visibleCount) {
         + '<button class="iconbtn sm" data-act="tasks:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button>'
         + '<button class="btn btn-p sm" data-act="tasks:new" title="n new">' + ic('plus') + 'New task</button>'
       + '</span></div>'
-    + '<div class="set-tbrow">' + search
+    + (none ? '' : '<div class="set-tbrow">' + search
       + (TK.search.length && !TK.searchOpen ? '<button class="btn btn-g xs" data-act="tasks:clearSearch" title="Esc clear search">' + ic('x') + 'Clear</button>' : '')
       + tkReadoutHTML(visibleCount)
-    + '</div></div>';
+    + '</div>') + '</div>';
 }
 /* Д26: what stands where the auto-refresh readout stood — how many tasks
    show, "12 tasks" or "3 of 12". Its "auto · refreshed …" part is the
@@ -21836,6 +22518,7 @@ function tkListHTML() {
       + '<span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('tasks') + '</span>'
       + '<h4>' + (TK.rows.length ? 'No ' + esc(what) + (TK.search ? ' match “' + esc(TK.search) + '”' : ' match the current filter') : 'No tasks yet') + '</h4>'
       + '<p>A task sends a message to the agent on a schedule.</p>'
+      + (TK.rows.length ? '' : '<p class="set-cap">' + esc(TASK_EMPTY_HINT) + '</p>')
       + '</div>';
   } else {
     // tasks-list.tsx:37-41: window the rows around the cursor (row-window.ts
@@ -21903,13 +22586,15 @@ function tkDetailHTML() {
     + '</div>';
 }
 function tkNewForm() {
-  return {kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
+  // ATO-519: `manual` false is the plain-words step (`ask`); true is the cron / interval / at form.
+  return {manual:false, ask:'', kind:'cron', cronExpression:'', intervalSeconds:'', atIsoOrMs:'', tz:'', message:'',
           preview:{ok:false, error:null, nextFirings:[]}, submitting:false, error:null, timer:null};
 }
 /* ST-03: kind as a segmented control, labelled fields, the next five
    firings beside them, and Create task disabled until the schedule parses. */
 function tkFormHTML() {
   const f = TK.form || (TK.form = tkNewForm());
+  if (!f.manual) return tkAskHTML(f);
   const field = (l, name, value, placeholder, help, mono) =>
     '<label class="tk-field tkrow"><span class="tk-lbl">' + esc(l) + '</span>'
     + '<input class="tk-inp' + (mono ? ' mono' : '') + '" data-tk-field="' + name + '" value="' + esc(value) + '" placeholder="' + esc(placeholder) + '" autocomplete="off" spellcheck="false">'
@@ -21925,8 +22610,8 @@ function tkFormHTML() {
         + '<div class="tk-field tkrow"><span class="tk-lbl">Kind</span><div class="tk-seg" role="group" aria-label="Kind">'
           + ['cron','interval','at'].map((k) => '<button class="tkkind' + (f.kind === k ? ' on' : '') + '" data-act="tasks:kind:' + k + '" aria-pressed="' + (f.kind === k) + '">' + k + '</button>').join('')
         + '</div></div>'
-        // ATO-519: in chat the agent turns a plain sentence into a schedule through its tasks.cron tool.
-        + '<p class="set-cap">Or just tell the agent in chat, for example: every weekday at 9, send me a summary.</p>'
+        // ATO-519: the way back to the plain-words step.
+        + '<p class="set-cap">Or <button class="set-linkbtn" data-act="tasks:plain">describe it in words</button> and the agent sets the schedule.</p>'
         + expr
         + (f.kind === 'cron' ? field('Time zone', 'tz', f.tz, 'optional, e.g. Europe/Berlin', '', true) : '')
         // ATO-522: every run replies in the task's own session (task-runner.ts), reached from the detail view's Open session.
@@ -21943,11 +22628,52 @@ function tkFormHTML() {
     + '</div>'
     + '</div>';
 }
+/* ATO-519: the first step of a new task. One sentence, sent to the agent in
+   a new chat, where its task tools turn it into a schedule (task-ask.js);
+   Set up manually opens the cron / interval / at form. */
+function tkAskHTML(f) {
+  const can = !!taskAskMessage(f.ask);
+  return '<div class="set-pane set-form set-askform">'
+    + '<div class="tk-bar"><button class="btn btn-g sm" data-act="tasks:back" title="Esc cancel">' + ic('chevL') + 'All tasks</button></div>'
+    + '<div class="set-formcol">'
+      + '<label class="tk-field tkrow"><span class="tk-lbl">What should the agent do, and when?</span>'
+        + '<input class="tk-inp" data-tk-field="ask" value="' + esc(f.ask) + '" placeholder="' + esc(TASK_ASK_PLACEHOLDER) + '" autocomplete="off" spellcheck="true">'
+        + '<span class="tk-help">The agent opens a new chat, sets up the schedule and tells you when it runs next.</span></label>'
+      + '<div class="set-chips set-askex" role="group" aria-label="Examples">'
+        + TASK_ASK_EXAMPLES.map((ex, i) => '<button class="tk-chip tk-chip--sm set-askchip" data-act="tasks:example:' + i + '">' + esc(ex) + '</button>').join('')
+      + '</div>'
+    + '</div>'
+    + '<div class="set-formfoot">'
+      + '<button class="btn btn-g" data-act="tasks:manual">Set up manually</button>'
+      + '<span class="grow"></span>'
+      + '<button class="btn btn-g" data-act="tasks:back">Cancel</button>'
+      + '<button class="btn btn-p set-submit" data-act="tasks:ask"' + (can ? '' : ' disabled') + ' title="Enter send">Ask the agent</button>'
+    + '</div>'
+    + '</div>';
+}
+/* ATO-519: the sentence goes out as the first message of a new chat, through
+   the composer's own submit(), as a message typed there would. It is sent
+   `plain`: files waiting in the composer stay for a message of the person's
+   own (as Continue and the plan hand-off do), and a draft that was in the
+   box carries into the new chat, as ⌘ N carries it, instead of being lost. */
+function tkAsk() {
+  const f = TK.form;
+  const text = f ? taskAskMessage(f.ask) : '';
+  if (!text) return {ok:false, error:'nothing to send'};
+  TK.mode = 'list'; TK.form = null;
+  const kept = S.draft || '';
+  act('session:new');
+  S.draft = text;
+  const e = $('#entry'); if (e) { e.value = text; autosize(e); }
+  submit(undefined, {plain:true});
+  if (kept && !S.draft) { S.draft = kept; const box = $('#entry'); if (box) { box.value = kept; autosize(box); } }
+  return {ok:true, text};
+}
 function tkPreviewHTML(f) {
-  const head = '<div class="set-prevh"><b>Next firings</b></div>';
-  if (f.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
-  if (f.preview.error) return '<div class="set-prevh"><b>Next firings</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
-  if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next firings</b></div><div class="set-cap">(preview unavailable)</div>';
+  const head = '<div class="set-prevh"><b>Next runs</b></div>';
+  if (f.error) return '<div class="set-prevh"><b>Next runs</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.error) + '</div>';
+  if (f.preview.error) return '<div class="set-prevh"><b>Next runs</b></div><div class="tuierr tk-help tk-help--err">error: ' + esc(f.preview.error) + '</div>';
+  if (!f.preview.nextFirings.length) return '<div class="set-prevh"><b>Next runs</b></div><div class="set-cap">' + esc(TASK_PREVIEW_EMPTY) + '</div>';
   return head
     + '<ul class="set-firings">' + f.preview.nextFirings.map((ms) => '<li>' + ic('clock') + '<span>' + esc(formatUnixMs(ms)) + '</span></li>').join('') + '</ul>';
   // ATO-193: no 0.5.4 caveat under a one-shot any more. Since ATO-133 `atag task create --at`
@@ -21956,6 +22682,8 @@ function tkPreviewHTML(f) {
 function tkFieldInput(name, value) {
   const f = TK.form || (TK.form = tkNewForm());
   f[name] = value; f.error = null;
+  // ATO-519: the plain-words field has no schedule to preview; only Ask the agent follows what is typed.
+  if (name === 'ask') { const b = document.querySelector('[data-act="tasks:ask"]'); if (b) b.disabled = !taskAskMessage(value); return; }
   clearTimeout(f.timer);
   f.timer = setTimeout(() => tkPreview(), 250);
 }
@@ -21975,6 +22703,7 @@ async function tkPreview() {
    on 0.5.4 takes no schedule). Success line is the TUI's runtime_info. */
 async function tkSubmit() {
   const f = TK.form; if (!f || !BR || f.submitting) return {ok:false, error:'no form'};
+  if (!f.manual) return tkAsk();   // ATO-519: Ctrl+Enter on the plain-words step sends it to the agent
   f.error = null;
   const v = await tkPreview();
   if (!v || v.ok === false || !v.schedule) return {ok:false, error:(f.preview && f.preview.error) || 'invalid'};
@@ -22031,6 +22760,10 @@ function tasksAct(what) {
   const arg = rest.join(':');
   const sel = () => arg || (TK.mode === 'detail' ? TK.detailId : (tkSelected() || {}).id);
   if (verb === 'new') { if (!S.settings && S.room !== 'tasks') { S.settings = 1; S.settingsPane = 'tasks'; } TK.mode = 'create'; TK.form = tkNewForm(); TK.msg = null; render(); return; }
+  // ATO-519: the plain-words step and the manual form, both ways, and an example into the field.
+  if (verb === 'manual' || verb === 'plain') { const f = TK.form || (TK.form = tkNewForm()); f.manual = verb === 'manual'; f.error = null; render(); return; }
+  if (verb === 'example') { const f = TK.form || (TK.form = tkNewForm()); const ex = TASK_ASK_EXAMPLES[Number(arg)]; if (ex) f.ask = ex; render(); const n = document.querySelector('[data-tk-field="ask"]'); if (n) { n.focus(); n.setSelectionRange(n.value.length, n.value.length); } return; }
+  if (verb === 'ask') { tkAsk(); return; }
   if (verb === 'kind') { const f = TK.form || (TK.form = tkNewForm()); f.kind = arg; f.error = null; render(); tkPreview(); return; }
   if (verb === 'submit') { tkSubmit(); return; }
   if (verb === 'back') { TK.mode = 'list'; TK.form = null; TK.cancel = null; render(); return; }
@@ -22070,6 +22803,7 @@ function tasksKey(e, k, inText) {
     return false;
   }
   if (tkField && (e.metaKey || e.ctrlKey) && k === 'Enter') { e.preventDefault(); tkSubmit(); return true; }
+  if (tkField === 'ask' && k === 'Enter' && !e.shiftKey && !e.altKey) { e.preventDefault(); tkAsk(); return true; }   // ATO-519: one line, so Enter sends it
   if (e.target.id === 'tk-search' && k === 'Enter') { e.preventDefault(); TK.searchOpen = false; render(); return true; }
   if (inText) return false;
   if (e.metaKey || e.ctrlKey || e.altKey) return false;
@@ -22212,7 +22946,7 @@ if (typeof window !== 'undefined') {
   window.__tasksMsg = () => TK.msg || '';
   window.__tasksRefresh = () => tasksRefresh();
   window.__tasksAct = (what) => { tasksAct(what); return {cancel: TK.cancel ? Object.assign({}, TK.cancel) : null, mode: TK.mode, msg: TK.msg || ''}; };
-  window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); return tkSubmit(); };
+  window.__taskCreate = (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), {manual:true}, fields); render(); return tkSubmit(); };
   window.__privacy = () => ({analyticsEnabled: privacyEffective(), fromConfig: !!(LIVE_CONFIG && LIVE_CONFIG.analytics && typeof LIVE_CONFIG.analytics.enabled === 'boolean')}); // effective value, as the TUI shows it
   window.__chordPending = () => CHORD.pending;
   window.__tasksNote = () => TK.note || '';
@@ -22234,7 +22968,7 @@ if (typeof window !== 'undefined') {
   window.__menuActivate = (id) => { menuActivate(id); return {settings: !!S.settings, pane: S.settings ? settingsPaneId(S.settingsPane) : null, inspector: S.inspector, inspTab: S.inspTab, overlay: S.overlay}; };
   window.__diag = () => ({line: diagLine(), session: S.agentSession, toolsFor: SET.toolsFor, health: SET.health});
   window.__skillCount = () => (SK.rows ? SK.rows.length : null);
-  window.__taskPreviewForm = async (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), fields); render(); await tkPreview(); return TK.form ? TK.form.preview : null; };
+  window.__taskPreviewForm = async (fields) => { TK.mode = 'create'; TK.form = Object.assign(tkNewForm(), {manual:true}, fields); render(); await tkPreview(); return TK.form ? TK.form.preview : null; };
 }
 
 /* Hook for --smoke (harness: the tool-card turn runs in a fresh session).
@@ -22356,6 +23090,7 @@ function skillsTabEntered() {
   ensureSkillsPoll();
   if (SK.workingDir) refreshSkillList();
   tpSkillsOmittedRefresh();
+  projectTrustCheck(true);   // ATO-1250: the folder-trust row reads the agent's current answer
 }
 function skpRender() { paneRepaintKeepFocus(skillsTab()); }
 /* `atag skill list` again after a mutation — behind any poll already in flight, never dropped by its SK.busy guard. */
@@ -22407,6 +23142,7 @@ function skillsTab() {
     view = bar
       + (SK.workingDir ? '<div class="tk-notice set-softnote"><span class="grow">Workspace: <span class="mono">' + esc(SK.workingDir) + '</span></span>'
         + '<button class="btn btn-s sm" data-act="skills:project"' + (SKP.busy ? ' disabled' : '') + '>' + (SK.projectSkillsEnabled ? 'Disable project skills' : 'Enable project skills') + '</button></div>' : '')
+      + (tools ? '' : projectTrustRowHTML())
       + (SK.errors.length && !tools ? '<details class="set-softnote"><summary>Skill diagnostics (' + SK.errors.length + ')</summary><pre>' + esc(SK.errors.join('\n')) + '</pre></details>' : '')
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
@@ -22581,18 +23317,22 @@ function skpRemoveConfirmHTML() {
           + '<button class="btn btn-df sm" data-act="skills:removeConfirm" title="[y] delete">Delete</button></div>')
     + '</div></div>';
 }
-/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override. */
+/* ST-11: installing past a DANGEROUS verdict is an explicit, acknowledged override.
+   PR #916: a CAUTION verdict asks too, in the calmer amber frame. */
 function skpInstallConfirmHTML() {
   const c = SKP.installConfirm;
-  return '<div class="set-overlay"><div class="tk-modal tk-modal--danger set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
-    + '<div class="set-mhead"><span class="tk-ico tk-ico--red">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
+  const caution = c.verdict === 'caution';
+  return '<div class="set-overlay"><div class="tk-modal' + (caution ? '' : ' tk-modal--danger') + ' set-modal set-modal--wide" role="alertdialog" aria-label="Security scan">'
+    + '<div class="set-mhead"><span class="tk-ico ' + (caution ? 'tk-ico--amber' : 'tk-ico--red') + '">' + ic('shield') + '</span><h4>Security scan: ' + esc(String(c.verdict).toUpperCase()) + '</h4></div>'
     + '<p>Install <b class="mono">' + esc(c.identifier) + '</b>?</p>'
     // The TUI lists the scan findings (`[rule] file:line excerpt`); `atag skill install` prints only its blocked line, shown plainly — no invented rule id in the finding slot.
     + '<div class="tuierr tk-out set-scan">' + esc(c.message) + '</div>'
     + '<p class="set-cap">(findings are not printed by `atag skill install` — the verdict line above is all the CLI reports)</p>'
     + (SKP.installing ? '<div class="acts"><span class="tk-spin"></span><span class="set-cap">installing…</span></div>'
         : '<div class="acts"><button class="btn btn-s sm" data-act="skills:installCancel" title="[n] cancel">Cancel</button>'
-          + '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>')
+          + (c.verdict === 'caution'
+            ? '<button class="btn btn-p sm" data-act="skills:installAck" title="[y] install">Install</button></div>'
+            : '<button class="btn btn-df sm" data-act="skills:installAck" title="[y] install anyway (risk acknowledged)">Install anyway (risk acknowledged)</button></div>'))
     + '</div></div>';
 }
 function skpHubIdLabel(identifier) {
@@ -22911,7 +23651,9 @@ async function skpInstall(ack) {
   const id = (SKP.installConfirm && SKP.installConfirm.identifier) || (SKP.hubCard && SKP.hubCard.installId);
   if (!id) return;
   SKP.installing = true; SKP.installError = null; render();
-  const res = await BR.skillInstall(id, !!ack);
+  // PR #916: a confirmed CAUTION approves caution only (--yes); a changed skill that now scans dangerous still asks.
+  const caution = !!ack && !!SKP.installConfirm && SKP.installConfirm.verdict === 'caution';
+  const res = await BR.skillInstall(id, !!ack && !caution, caution);
   SKP.installing = false;
   if (res && res.ok) {
     SKP.installConfirm = null; SKP.hubCard = null; SKP.hubCardLoading = false; SKP.cardSeq++; SKP.mode = 'list';
@@ -22919,7 +23661,8 @@ async function skpInstall(ack) {
     SKP.msg = {text:res.line || ('installed from ' + id), restart:true}; // the CLI's own `installed <name> (v…) from <id> — <scan>` line
     await skpReloadRows(); render(); return;
   }
-  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:'dangerous', message:res.message || ''}; render(); return; }
+  // PR #869: a CAUTION verdict asks too (the CLI will not install it without a confirm), in milder words.
+  if (res && res.blocked) { SKP.installConfirm = {identifier:id, verdict:res.caution ? 'caution' : 'dangerous', message:res.message || ''}; render(); return; }
   SKP.installConfirm = null;
   SKP.installError = (res && res.error) || 'install failed';
   SKP.msg = {text:'install ' + id + ' failed: ' + SKP.installError};
@@ -23785,17 +24528,40 @@ function mcpAddModalHTML() {
     /* Plain words (Danya, 30.09): the old line named two other products'
        config "envelopes", and two more lines explained key chords and the
        stdio auto-promotion. Every shape it listed is still accepted. */
-    + '<p>Paste the server\u2019s config (JSON). It\u2019s usually in the server\u2019s README.</p>'
-    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Example:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    /* ATO-510 (U-74): one box for JSON, a command or an address
+       (mcp-smart-add.js); what it understood shows under it for a check. */
+    + '<p>Paste the server\u2019s config (JSON), the command that starts it, or its address. It\u2019s usually in the server\u2019s README.</p>'
+    + '<textarea id="mcp-json" class="tk-inp sd-json' + (m.error ? ' is-error' : '') + '" rows="8" spellcheck="false" placeholder="' + esc('Examples:\n' + mcpJsonExample()) + '"' + (m.submitting ? ' disabled' : '') + '>' + esc(m.json) + '</textarea>'
+    + '<div id="mcp-detect">' + mcpAddPreview() + '</div>'
     + (m.error ? '<p class="tk-help tk-help--err">' + esc(m.error) + '</p>' : '')
     + (m.submitting ? '<p class="tk-help">writing config…</p>' : '')
     + '<div class="acts"><span class="sd-grow"></span>'
     + '<button class="btn btn-g sm" data-act="mcp:addCancel">Cancel</button>'
     + '<button class="btn btn-p sm" data-act="mcp:addSubmit" title="Add (\u2318 Enter)"' + (m.submitting || !String(m.json || '').trim() ? ' disabled' : '') + '>Add</button></div></div>';
 }
-/** The add box's example, laid out on lines the way a README shows it. */
+/** The add box's examples: a command, an address, and JSON laid out on lines the way a README shows it. */
 function mcpJsonExample() {
-  return '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@github/mcp-server"]\n    }\n  }\n}';
+  return 'npx -y @modelcontextprotocol/server-filesystem ~/Documents\n\nhttps://mcp.example.com/mcp\n\n'
+    + '{\n  "mcpServers": {\n    "github": {\n      "command": "npx",\n      "args": ["-y", "@github/mcp-server"]\n    }\n  }\n}';
+}
+/* ATO-510: the box's text as mcp-smart-add.js reads it. A name typed in the
+   review block wins over the made-up one until the text gives a new made-up
+   name (another package or host was pasted). */
+function mcpAddParsed() {
+  const m = MCP.addModal;
+  if (!m) return null;
+  const res = mcpParseAddInput(m.json, {name:m.name || '', home:homeDir()});
+  if (res.auto !== undefined && res.auto !== m.auto) {
+    const typed = m.auto !== null && m.name;
+    m.auto = res.auto;
+    if (typed) { m.name = null; return mcpParseAddInput(m.json, {home:homeDir()}); }
+  }
+  return res;
+}
+function mcpAddPreview() {
+  const m = MCP.addModal;
+  const res = mcpAddParsed();
+  return res ? mcpAddPreviewHTML(res, m.name, {esc}) : '';
 }
 function mcpRemoveModalHTML() {
   const c = MCP.removeConfirm;
@@ -23808,53 +24574,8 @@ function mcpRemoveModalHTML() {
     + '<button class="btn btn-g sm" data-act="mcp:removeCancel"' + (c.submitting ? ' disabled' : '') + '>Keep</button>'
     + '<button class="btn btn-df sm" data-act="mcp:removeConfirm"' + (c.submitting ? ' disabled' : '') + '>Remove</button></div></div>';
 }
-/* persist-mcp-server.ts parseAddServerJson: the three accepted shapes —
-   a bare object, the `{ mcpServers: { name: {…} } }` envelope with exactly
-   one entry, and the `command`/`args` (or `url`/`serverUrl`) shortcut
-   promoted into `transport`. The schema itself (name regex, transport
-   shape, trust enum) is checked by the CLI on the write. */
-function mcpNormalizeShortcut(obj) {
-  if (obj.transport !== undefined) return obj;
-  if (typeof obj.command === 'string') {
-    const out = Object.assign({}, obj); delete out.command; delete out.args; delete out.cwd;
-    const transport = {kind:'stdio', command:obj.command};
-    if (obj.args !== undefined) transport.args = obj.args;
-    if (obj.cwd !== undefined) transport.cwd = obj.cwd;
-    out.transport = transport; return out;
-  }
-  const rawUrl = typeof obj.url === 'string' ? obj.url : typeof obj.serverUrl === 'string' ? obj.serverUrl : null;
-  if (rawUrl !== null) {
-    const out = Object.assign({}, obj); delete out.url; delete out.serverUrl; delete out.headers; delete out.type;
-    const transport = {kind:obj.type === 'sse' ? 'sse' : 'streamable_http', url:rawUrl};
-    if (obj.headers !== undefined) transport.headers = obj.headers;
-    out.transport = transport; return out;
-  }
-  return obj;
-}
-function mcpParseAddJson(raw) {
-  const trimmed = String(raw || '').trim();
-  if (!trimmed.length) return {ok:false, error:'Paste a server config first.'};
-  let parsed;
-  try { parsed = JSON.parse(trimmed); } catch (err) { return {ok:false, error:'This isn\u2019t valid JSON. Check for a missing comma, quote or bracket (' + (err && err.message ? err.message : String(err)) + ').'}; }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return {ok:false, error:'Paste one server config: a JSON object in { } braces.'};
-  let candidate;
-  const envelope = parsed.mcpServers;
-  if (envelope !== undefined) {
-    if (envelope === null || typeof envelope !== 'object' || Array.isArray(envelope)) return {ok:false, error:'"mcpServers" should hold the server by name, like the example.'};
-    const entries = Object.entries(envelope);
-    if (!entries.length) return {ok:false, error:'"mcpServers" is empty. Paste exactly one server.'};
-    if (entries.length > 1) return {ok:false, error:'Paste exactly one server. This has ' + entries.length + ' in "mcpServers".'};
-    const [keyName, value] = entries[0];
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return {ok:false, error:'`mcpServers[' + JSON.stringify(keyName) + ']` must be an object'};
-    if (typeof value.name === 'string' && value.name !== keyName) return {ok:false, error:'name mismatch: envelope key ' + JSON.stringify(keyName) + ' vs inner ' + JSON.stringify(value.name)};
-    candidate = mcpNormalizeShortcut(Object.assign({name:keyName}, value));
-  } else {
-    candidate = mcpNormalizeShortcut(parsed);
-  }
-  if (Object.hasOwn(candidate, '__proto__') || Object.hasOwn(candidate, 'constructor') || Object.hasOwn(candidate, 'prototype')) return {ok:false, error:'refusing a prototype key'};
-  if (typeof candidate.name !== 'string' || !candidate.name.trim()) return {ok:false, error:'mcp.servers: name: expected a non-empty string'};
-  return {ok:true, server:candidate};
-}
+/* The JSON shapes (persist-mcp-server.ts parseAddServerJson), commands and
+   addresses are read by mcp-smart-add.js (mcpParseAddInput, mcpParseAddJson). */
 /* The write: read the user file right before, append, and write the list.
    On 0.6.6 that is PATCH /api/config (config-patch.js): the running agent
    re-reads its config, so the new row's Restart connects it at once. An
@@ -23866,7 +24587,7 @@ async function mcpAddSubmit(json) {
   const m = MCP.addModal;
   if (!BR || !m || m.submitting) return {ok:false, error:'no add modal'};
   m.json = json; m.error = null;
-  const parsed = mcpParseAddJson(json);
+  const parsed = mcpAddParsed();
   if (!parsed.ok) { ANX.mcpAdded(false); m.error = parsed.error; render(); return parsed; }
   m.submitting = true; render();
   const cfg = await BR.config();
@@ -23922,7 +24643,7 @@ function mcpAct(what) {
     else if (MCP_TAB_ORDER.includes(arg)) MCP.detailTab = arg;
     MCP.detailCursor = 0; render(); return;
   }
-  if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false}; MCP.removeConfirm = null; render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
+  if (verb === 'add') { MCP.addModal = {json:'', error:null, submitting:false, name:null, auto:null}; MCP.removeConfirm = null; render(); const n = $('#mcp-json'); if (n) n.focus(); return; }
   if (verb === 'addSubmit') { const n = $('#mcp-json'); mcpAddSubmit(n ? n.value : (MCP.addModal ? MCP.addModal.json : '')); return; }
   if (verb === 'addCancel') { MCP.addModal = null; render(); return; }
   if (verb === 'remove') { const name = sel(); if (!name) return; MCP.removeConfirm = {name, error:null, submitting:false}; render(); return; }
@@ -23938,7 +24659,7 @@ function mcpAct(what) {
    Enter starts a new line, Add (or ⌘/Ctrl+Enter, routed in the keydown
    handler before the composer's own ⌘+Enter) adds the server. */
 function mcpKey(e, k, inText) {
-  if (e.target.id === 'mcp-json') {
+  if (e.target.id === 'mcp-json' || e.target.id === 'mcp-name') {
     if (k === 'Escape') { e.preventDefault(); MCP.addModal = null; render(); return true; }
     return false;
   }
@@ -24002,7 +24723,7 @@ if (typeof window !== 'undefined') {
   window.__mcp = () => ({mode: MCP.mode, rows: mcpRows().length, servers: mcpServers().map((s) => s && s.name), detailName: MCP.detailName, detailTab: MCP.detailTab,
     addModal: MCP.addModal ? Object.assign({}, MCP.addModal) : null, removeConfirm: MCP.removeConfirm ? Object.assign({}, MCP.removeConfirm) : null,
     msg: MCP.msg ? MCP.msg.text : '', lastError: MCP.lastError, refreshed: MCP.lastRefreshedAt});
-  window.__mcpParse = (json) => mcpParseAddJson(json);
+  window.__mcpParse = (json) => mcpParseAddInput(json, {home:homeDir()});
   window.__mcpAct = (what) => { mcpAct(what); return window.__mcp(); };
   window.__mcpAddSubmit = async (json) => { if (!MCP.addModal) mcpAct('add'); const r = await mcpAddSubmit(json); return Object.assign({}, r, {state: window.__mcp()}); };
   window.__mcpRemove = async (name) => { mcpAct('remove:' + name); await mcpRemoveConfirm(); return window.__mcp(); };
@@ -24025,7 +24746,7 @@ function llmBlock() {
   const llm = LIVE_CONFIG && LIVE_CONFIG.llm;
   if (llm && Array.isArray(llm.providers)) return llm;
   const lm = (LIVE_CONFIG && LIVE_CONFIG.localModels) || {};
-  const url = lm.mode === 'managed' ? 'http://127.0.0.1:' + ((lm.managed && lm.managed.port) || 19091) : (lm.url || 'http://127.0.0.1:8080');
+  const url = lm.mode === 'managed' ? 'http://127.0.0.1:' + ((lm.managed && lm.managed.port) || 19091) : (lm.url || DEFAULT_LLAMA_URL);
   return {activeTextProvider:'local-llama', activeEmbeddingProvider:'local-llama', toolTransport:'auto', providers:[{id:'local-llama', kind:'llama-server', url}]};
 }
 function llmProviders() { return (llmBlock().providers || []).filter((p) => p && typeof p.id === 'string'); }
@@ -24033,7 +24754,7 @@ function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'l
 function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
 function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
 function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
-function llmLocalActive() { const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }
+function llmLocalActive() { if (LLMP.choosing) return false; const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }   // ATO-1234: a cloud pick on its way is the choice
 function llmLocalEmbActive() { const p = llmProvider(llmActiveEmbId()); return !!p && p.kind === 'llama-server'; }
 function llmLocalModels() { return (LIVE_CONFIG && LIVE_CONFIG.localModels) || {}; }
 function llmManaged() { return llmLocalModels().managed || {}; }
@@ -24371,7 +25092,12 @@ function llmLocalRows() {
     else if (!embActive || !m.active) { primary = 'use'; effect = 'Enter: select model'; }
     else if (!embEnabled) { primary = 'enable'; effect = 'Enter: enable local embeddings for ' + m.id; }
     else { primary = embWorks ? 'current' : 'start'; effect = embWorks ? 'Current: local embeddings/' + m.id : 'Enter: start embedding daemon for ' + m.id; }
-    rows.push({kind:'localEmbeddingModel', id:'local-embedding:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect,
+    // ATO-900: the card says what its click did, on the card (memory-model-card.js).
+    const act = LLMP.embAct && LLMP.embAct.id === m.id ? LLMP.embAct : null;
+    const mem = memCardState({downloaded: m.downloaded, pulling: pull, picked: embActive && m.active, enabled: embEnabled,
+      running: !!(LLMP.embDaemon && LLMP.embDaemon.running), health: LLMP.embDaemon ? LLMP.embDaemon.health : '',
+      busy: !!(act && act.busy), error: act ? act.error : null, engine: ENGF.f, chatUp: llmDaemonUp()});
+    rows.push({kind:'localEmbeddingModel', id:'local-embedding:' + m.id, model:m, active, primaryAction:primary, enterEffect:effect, mem, memBusy: !!(act && act.busy),
       text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'});
   });
   return rows;
@@ -24380,7 +25106,8 @@ function llmProviderRow(p) {
   // Backlog 32: a saved key the agent will not send is no key: its row says so and Enter opens the key screen.
   const badKey = p.kind !== 'subscription-cli' && savedKeyInvalid(p);
   const hasKey = !badKey && llmHasKey(p);
-  const active = p.id === llmActiveTextId();
+  // ATO-1234: a pick on its way shows as the choice already.
+  const active = LLMP.choosing ? LLMP.choosing.pid === p.id : p.id === llmActiveTextId();
   const auth = p.kind === 'subscription-cli' ? 'cli auth' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey, badKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
@@ -24389,7 +25116,9 @@ function llmProviderRow(p) {
 }
 function llmChatRow(p, modelId) {
   const hasKey = !savedKeyInvalid(p) && llmHasKey(p);
-  const active = p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
+  const choosing = LLMP.choosing;
+  const active = choosing ? choosing.pid === p.id && (choosing.modelId || p.defaultChatModel || p.model) === modelId
+    : p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
   // OpenRouter/AI-ML rows show formatOpenRouterChatModelDetails / formatAimlapiChatModelDetails in the TUI — an in-process catalogue
   // formatter the CLI does not print, so every kind gets the generic effect here.
   return {kind:'cloudChatModel', id:'cloud-text:' + p.id + ':' + modelId, provider:p, providerId:p.id, modelId, active, available:hasKey,
@@ -24441,7 +25170,7 @@ function llmCloudRows() {
 function llmExternalRows() {
   const lm = llmLocalModels();
   const active = lm.mode === 'external' && llmLocalActive();
-  const url = lm.url || 'http://127.0.0.1:8080';
+  const url = lm.url || DEFAULT_LLAMA_URL;
   return [{kind:'externalUrl', id:'external-url', url, active, available:true, primaryAction: active ? 'current' : 'use',
     enterEffect: active ? 'Enter: edit the base URL' : 'Enter: point the chat route at an external llama.cpp',
     text: 'base URL ' + url + ' [' + llmExternalStatus(active) + ']'}];
@@ -25037,13 +25766,15 @@ function llmRowHTML(row, index, cursor) {
   const open = '<button class="tuirow tk-li llm-row' + (row.sub ? ' llm-model' : '') + (selected ? ' on' : '') + (row.active ? ' is-active' : '')
     + '" data-llm-row="' + esc(row.id) + '"' + extra + (why ? ' aria-describedby="llm-why-' + index + '"' : '') + ' data-act="llm:row:' + index + '">'
     + (why ? '<span hidden id="llm-why-' + index + '">' + esc(why) + '</span>' : '');
-  const radio = '<span class="tk-radio' + (row.active ? ' on' : '') + '" aria-hidden="true"></span>';
+  // ATO-900: the memory model memory search is set to wears the selected radio whatever its server is doing; its chip says that.
+  const mem = row.kind === 'localEmbeddingModel' ? row.mem : null;
+  const radio = '<span class="tk-radio' + (row.active || (mem && mem.selected) ? ' on' : '') + '" aria-hidden="true"></span>';
   /* ATO-507: a download with no room for it on this disk: the pill is greyed
      (llmPrimary refuses it) and the row says why, under its blurb. */
   const disk = (row.kind === 'localTextModel' || row.kind === 'localEmbeddingModel') && row.primaryAction === 'download'
     ? modelDiskFit(row.model) : {ok: true};
   // The action a click (or Enter) takes on this row, as a pill; the TUI's sentence is its tooltip.
-  const effect = '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + (disk.ok ? '' : ' llm-effect--nodisk" aria-disabled="true')
+  const effect = mem && row.memBusy ? '' : '<span class="llm-effect llm-effect--' + esc(row.primaryAction || '') + (disk.ok ? '' : ' llm-effect--nodisk" aria-disabled="true')
     + '" title="' + esc(disk.ok ? row.enterEffect : disk.text) + '">'
     + (row.primaryAction === 'downloading' ? '<span class="tk-spin"></span>' : '') + esc(llmEffectLabel(row)) + '</span>';
   // A second verb on the row: a span with its own act (the delegate resolves the innermost [data-act]).
@@ -25058,21 +25789,30 @@ function llmRowHTML(row, index, cursor) {
       + (name !== m.id ? ' <span class="llm-id mono">' + esc(m.id) + '</span>' : '')
       + (chat ? '' : ' <span class="llm-size">' + esc(m.size) + '</span>')
       + (best ? ' <span class="tk-chip tk-chip--sm llm-ib tk-chip--indigo"' + (row.bestWhy ? ' title="' + esc(row.bestWhy) + '"' : '') + '>★ best fit for this machine</span>' : '')
-      + (chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
+      /* ATO-449: a reduced-refusal model says what it is here too, with the
+         first-run list's word and sentence, not the catalogue's bare tag. */
+      + (chat && m.uncensored && !best ? ' <span class="tk-chip tk-chip--sm llm-ib tk-chip--blue" title="' + esc(UNCENSORED_NOTE) + '">' + esc(UNCENSORED_WORD) + '</span>'
+        : chat && m.tag && !best ? ' ' + chip('blue', esc(m.tag)) : '')
       + llmRowBadgesHTML(row)
       // Gap 12: the speed `models start` measured for the daemon now serving this row (same pid only).
-      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '');
+      + (chat && row.primaryAction === 'current' && LLMP.status && LLMP.status.tokensPerSecond ? ' ' + chip('green', esc('~' + LLMP.status.tokensPerSecond + ' tok/s')) : '')
+      + (mem ? ' <span class="tk-chip tk-chip--sm llm-ib llm-memst tk-chip--' + esc(mem.tone) + '" data-memcard="' + esc(mem.key) + '">'
+        + (mem.spin ? '<span class="tk-spin"></span>' : '') + esc(mem.word) + '</span>' : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
       + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
       // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
       + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
       + (disk.ok ? '' : '<span class="llm-best-why llm-disk-why">' + esc(disk.text) + '</span>')
+      // ATO-900: what the click did, or why it could not, under the card's name; read out as it changes.
+      + (mem ? '<span class="llm-best-why llm-memline llm-memline--' + esc(mem.key) + '" role="status">' + esc(mem.line) + '</span>' : '')
       + '</span>'
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops
          first (llmRemoveStops). Not while it is coming down. */
-      + (m.downloaded && row.primaryAction !== 'downloading' ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      + (m.downloaded && row.primaryAction !== 'downloading' && !(mem && row.memBusy) ? rowAct('llm:removeAt:' + index, 'Remove') : '')
+      // ATO-900: the one action that fixes a failed card (Retry, or the engine's Download again), beside the row's pill.
+      + (mem && mem.act ? rowAct(mem.act === 'llm:embRetry' ? 'llm:embRetry:' + index : mem.act, mem.label) : '')
       + effect + '</button>';
   }
   if (row.kind === 'cloudProvider') {
@@ -25349,6 +26089,16 @@ function llmModalHTML() {
     // While it works Cancel waits (a removal half-done is worse than one finished or refused).
     const acts = (label, yes) => '<div class="acts"><button class="btn btn-s sm" data-act="llm:cancel"' + (c.submitting ? ' disabled' : '') + '>Cancel</button>'
       + '<button class="btn btn-df sm" data-act="llm:confirm"' + (yes.disabled ? ' disabled' : '') + (yes.title ? ' title="' + esc(yes.title) + '"' : '') + '>' + esc(label) + '</button></div>';
+    // ATO-337: amber, as nothing failed; the operator may provision for another machine.
+    if (c.kind === 'ramOver') {
+      const alt = c.altId ? (LLMP.local || []).find((m) => m && m.id === c.altId) : null;
+      return '<div class="tk-modal tk-modal--warn llm-modal" role="alertdialog">'
+        + '<div class="llm-modal-h"><span class="tk-ico tk-ico--amber">' + ic('info') + '</span><h4>Not enough memory for this model</h4></div>'
+        + '<p>' + esc(c.text) + '</p>'
+        + '<div class="acts"><button class="btn btn-s sm" data-act="llm:cancel">Cancel</button>'
+        + (alt ? '<button class="btn btn-s sm" data-act="llm:ramAlt">' + esc('Use ' + llmModelName(alt)) + '</button>' : '')
+        + '<button class="btn btn-p sm" data-act="llm:confirm">' + (c.download ? 'Download anyway' : 'Run anyway') + '</button></div></div>';
+    }
     if (c.kind === 'removeProvider') return '<div class="tk-modal tk-modal--danger llm-modal" role="alertdialog">' + head('Remove provider ' + providerWord(c.id) + '?')
       + err + busy + acts('Remove', {disabled:c.submitting}) + '</div>';
     /* ATO-119: any model on disk, the one in use and the embedding models
@@ -25673,17 +26423,26 @@ function llmRestartRefusal(held) {
    row, the selector and the wizard use — never a raw llmWrite of
    activeTextProvider. The serve process is restarted by main (applySwitch), so
    the message reports the switch instead of asking for a restart. */
+/* ATO-1234: what happened to the agent, said only when it did: a cloud pick is
+   usually taken live now, and the local server stops behind it. */
+function llmSwitchTail(res) {
+  return (res.daemon === 'stopping' && !res.daemonLine ? ' The local model stops in the background.' : '')
+    + (res.liveSwapped ? '' : res.restart ? ' The agent was restarted.' : '');
+}
 async function llmSwitchProvider(id) {
   const held = restartStopsTurn();   // Backlog 28: a turn in any chat
   if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return false; }
-  LLMP.busy = true; llmRepaint();
+  // ATO-1234: the row shows the pick at once; the switch lands behind it.
+  LLMP.busy = true; LLMP.choosing = {pid: id, modelId: null}; llmRepaint();
   // r5 item 10: Settings is an in-window overlay, so this locks the same
   // composer the selector does. The refusal keeps the tab's own llmReport
   // wording rather than the selector's toast.
-  const res = await swxRun('switching…', {providerId: id},
-    () => SWXBR.activateProvider(id),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: id},
+      () => SWXBR.activateProvider(id, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return false; }
   // U29: no model yet; the provider's setup ends on its model step.
   if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
@@ -25699,19 +26458,21 @@ async function llmSwitchProvider(id) {
   const transport = res.transport || (id === 'local-llama' ? 'grammar+llama-server' : 'native_tools');
   // providers-orchestrator.ts setActiveText: the providers_status line + the feed's runtime_info.
   llmReport('Active text: ' + id + (model ? ' · ' + model : '') + ' · ' + transport, 'cloud');
-  LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + ' The agent was restarted.'};
+  LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
   return true;
 }
 async function llmSelectChatModel(pid, modelId) {
   const held = restartStopsTurn();   // Backlog 28: a turn in any chat
   if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return; }
-  LLMP.busy = true; llmRepaint();
+  LLMP.busy = true; LLMP.choosing = {pid, modelId}; llmRepaint();   // ATO-1234: the pick shows at once
   // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId) — lane B's selectCloudModel is exactly that pair, plus the restart.
-  const res = await swxRun('switching…', {providerId: pid, model: modelId},
-    () => SWXBR.selectCloudModel(pid, modelId),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: pid, model: modelId},
+      () => SWXBR.selectCloudModel(pid, modelId, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return; }
   if (!res || !res.ok) {
     llmReport(res && res.needsKey && res.keyInvalid ? savedKeyLine(pid)
@@ -25722,7 +26483,7 @@ async function llmSelectChatModel(pid, modelId) {
   // r5 item 10: swxRun re-read the live config before it resolved.
   const transport = res.transport || 'native_tools';
   llmReport('Active text: ' + pid + ' · ' + modelId + ' · ' + transport, 'cloud');
-  LLMP.msg = {text:'Selected chat model ' + pid + '/' + modelId + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + ' The agent was restarted.'};
+  LLMP.msg = {text:'Selected chat model ' + pid + '/' + modelId + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
 }
 async function llmSelectEmbeddingModel(pid, modelId) {
@@ -25828,11 +26589,13 @@ function llmStopRefusal(held) {
       : held.elsewhere ? ' The agent is answering elsewhere (Telegram, a task or a bot).' : ' Another chat is still answering.');
 }
 async function llmDaemon(which) {
-  if (!BR || LLMP.daemonPhase) return;
+  // ATO-900: the answer goes back to the caller too (the memory model's card says a failed start on itself).
+  if (!BR) return null;
+  if (LLMP.daemonPhase) return {ok:false, error:'another start or stop is running, try again in a moment'};
   // A stop ends a turn the server is answering, this window's or one the agent runs for Telegram, a task or a bot.
   if (which === 'stop') {
     const held = await llmTurnsRunning();
-    if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return; }
+    if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return {ok:false, error:llmStopRefusal(held)}; }
   }
   LLMP.daemonPhase = which === 'stop' ? 'stopping' : 'starting'; llmRepaint();
   const res = which === 'stop' ? await BR.modelsStop() : await BR.modelsStart();
@@ -25843,6 +26606,7 @@ async function llmDaemon(which) {
   else if (which === 'start' && res.alreadyRunning) LLMP.msg = {text: res.stdout && res.stdout.trim() ? res.stdout.trim().split('\n').pop() : 'local-llm: daemon already running'};
   else LLMP.msg = {text:'local-llm: ' + (which === 'stop' ? 'daemon stopped' : 'daemon started') + (res.stdout && res.stdout.trim() ? ' — ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
+  return res;
 }
 /* ATO-852: Restart model for a server that rejects its model's key: what
    `models status` advises, `models stop` then `models start`, in one press.
@@ -25867,17 +26631,18 @@ async function llmRestartModel() {
   await llmRefreshStatus();
 }
 async function llmEmbToggle() {
-  if (!BR) return;
+  if (!BR) return null;
   const enabled = llmEmbCfg().enabled === true;
   // local-models-orchestrator.ts toggleEmbeddingEnabled; `use-embedding <id>` enables + selects, `--disable` turns it off.
   const target = enabled ? '--disable' : (llmEmbCfg().modelId || 'nomic-embed-text-v1.5');
   LLMP.busy = true; llmRepaint();
   const res = await BR.modelsUseEmbedding(target);
   LLMP.busy = false;
-  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
+  if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return res; }
   LLMP.msg = {text:'local-llm: embeddings ' + (enabled ? 'disabled' : 'enabled')};
   await refreshLiveConfig();
   llmRefresh();
+  return res;
 }
 /* ATO-130: the update waits its turn behind a model start (or a switch) on its
    way; "updating…" said otherwise all that time. Main tells which it is
@@ -26118,12 +26883,62 @@ function llmPull(kind, id) {
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
+/* ATO-900: the memory model's card while its click runs. A step returns
+   null, or the sentence its card says under Failed. After a step that went
+   through, the list is read again (the embedding server's state comes from
+   `models list-embeddings`, which the 5 s status poll does not read), and
+   again while that server loads, so the card turns Running without a click. */
+function llmEmbBusy() { return !!(LLMP.embAct && LLMP.embAct.busy); }
+async function llmEmbRun(id, step) {
+  LLMP.embAct = {id, busy:true, error:null}; llmRepaint();
+  let error = null;
+  try { error = await step(); } catch (err) { error = memCardError(null, err && err.message ? err.message : String(err)); }
+  /* A read that throws must not leave the card on Starting…: llmPrimary
+     ignores every memory model click while embAct is busy. */
+  if (!error) { try { await llmRefresh(); } catch (err) { /* the 5 s status poll and the next click read again */ } }
+  LLMP.embAct = error ? {id, busy:false, error} : null;
+  llmRepaint();
+  if (!error) llmEmbWatch(id);
+}
+/** While the server for the memory model loads (or was only just asked to start), read the list again every 3 s, for at most 30 s. */
+async function llmEmbWatch(id) {
+  const token = ++LLMP.embWatch;
+  for (let i = 0; i < 10; i++) {
+    const d = LLMP.embDaemon;
+    const m = (LLMP.emb || []).find((x) => x.id === id);
+    const loading = !!(d && d.running && String(d.health || '').toLowerCase() !== 'ok');
+    const settling = i < 2 && !!m && m.active && llmEmbCfg().enabled === true && !(d && d.running);
+    if (!loading && !settling) return;
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    if (token !== LLMP.embWatch || LLMP.embAct) return;
+    await llmRefresh();
+  }
+}
+/* ATO-337: press a local chat model's row by id, with the cursor on it. */
+function llmPrimaryForLocal(id) {
+  const rows = llmLocalRows();
+  const i = rows.findIndex((r) => r.kind === 'localTextModel' && r.model.id === id);
+  if (i < 0) { llmRepaint(); return; }
+  LLMP.cursor.local = i;
+  llmPrimary(rows[i]);
+}
 /* llm-panel-primary-actions.ts triggerLocalChatModel / triggerLocalEmbeddingModel / triggerCloud*, ported. */
 async function llmPrimary(row) {
   if (!row || !BR) return;
   if (row.kind === 'localTextModel') {
     const m = row.model;
     if (!m.downloaded && llmNoRoom(m)) return;
+    /* ATO-337: a model this machine is under the minimum for asks first
+       (download, use or start), naming one that runs here; "anyway" holds
+       for that model for the rest of the session. */
+    if (row.primaryAction !== 'current' && LLMP.ramOk !== m.id) {
+      const warn = modelRamWarning(m, LLMP.local, hostRamGb());
+      if (warn) {
+        LLMP.confirm = {kind:'ramOver', id:m.id, altId: warn.alt ? warn.alt.id : null, text: warn.text,
+          download: !m.downloaded, error:null, submitting:false};
+        llmRepaint(); return;
+      }
+    }
     if (!m.downloaded) { llmPull('chat', m.id); return; }
     if (row.primaryAction === 'start') { await llmDaemon('start'); return; }
     if (row.primaryAction === 'current') { llmRefresh(); return; }
@@ -26132,19 +26947,24 @@ async function llmPrimary(row) {
   }
   if (row.kind === 'localEmbeddingModel') {
     const m = row.model;
-    if (LLMP.pulling) return;
+    if (LLMP.pulling || llmEmbBusy()) return;
     if (!m.downloaded && llmNoRoom(m)) return;
-    if (!m.downloaded) { llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
-    if (!m.active) {
-      const res = await BR.modelsUseEmbedding(m.id);
-      if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); llmRepaint(); return; }
-      if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama');
-      await refreshLiveConfig(); llmRefresh(); return;
-    }
-    if (!llmLocalEmbActive()) { await llmWrite('activeEmbeddingProvider', 'local-llama'); await refreshLiveConfig(); }
-    if (llmEmbCfg().enabled !== true) { llmEmbToggle(); return; }
-    if (!(LLMP.embDaemon && LLMP.embDaemon.running)) { await llmDaemon('start'); return; }
-    llmRefresh();
+    if (!m.downloaded) { LLMP.embAct = null; llmPull('embedding', m.id); if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama'); return; }
+    if (row.primaryAction === 'current') { LLMP.embAct = null; llmRefresh(); return; }
+    // ATO-900: one step per click, as before, with the card saying Starting… while it runs and Failed with the reason after.
+    await llmEmbRun(m.id, async () => {
+      if (!m.active) {
+        const res = await BR.modelsUseEmbedding(m.id);
+        if (!res || res.ok === false) { LLMP.statusErr = llmFail('use-embedding failed', res); return memCardError(res); }
+        if (!llmLocalEmbActive()) await llmWrite('activeEmbeddingProvider', 'local-llama');
+        await refreshLiveConfig();
+        return null;
+      }
+      if (!llmLocalEmbActive()) { await llmWrite('activeEmbeddingProvider', 'local-llama'); await refreshLiveConfig(); }
+      if (llmEmbCfg().enabled !== true) { const res = await llmEmbToggle(); return res && res.ok !== false ? null : memCardError(res); }
+      if (!(LLMP.embDaemon && LLMP.embDaemon.running)) { const res = await llmDaemon('start'); return res && res.ok !== false ? null : memCardError(res); }
+      return null;
+    });
     return;
   }
   if (row.kind === 'cloudProvider') {
@@ -26328,6 +27148,13 @@ function llmAct(what) {
   // The server up though the route does not count it (a Custom server since) is stopped too, not started again.
   if (verb === 'daemon') { llmDaemon(llmServerUp() ? 'stop' : 'start'); return; }
   if (verb === 'restartModel') { llmRestartModel(); return; }
+  // ATO-900: the memory model card's Retry: its click again, with the failure cleared first.
+  if (verb === 'embRetry') {
+    const row = llmLocalRows()[+arg];
+    if (!row || row.kind !== 'localEmbeddingModel') return;
+    LLMP.cursor.local = +arg; LLMP.embAct = null;
+    llmPrimary(row); return;
+  }
   // ATO-125: the server runs another model than the one picked — restart it on the picked one.
   if (verb === 'usePicked') { const id = (LLMP.status && LLMP.status.activeModel) || llmManaged().modelId; if (id) llmUseLocalModel(id); return; }
   if (verb === 'hf') {
@@ -26388,6 +27215,13 @@ function llmAct(what) {
     const c = LLMP.confirm; if (!c) return;
     if (c.kind === 'removeProvider') llmRemoveProviderConfirm();
     else if (c.kind === 'removeLocal' || c.kind === 'removeEmbedding') llmRemoveLocalConfirm();
+    else if (c.kind === 'ramOver') { LLMP.confirm = null; LLMP.ramOk = c.id; llmPrimaryForLocal(c.id); }
+    return;
+  }
+  // ATO-337: the warning's suggestion, as if its row had been pressed.
+  if (verb === 'ramAlt') {
+    const c = LLMP.confirm; if (!c || c.kind !== 'ramOver' || !c.altId) return;
+    LLMP.confirm = null; llmPrimaryForLocal(c.altId);
     return;
   }
   // Д31: Cloud or Fusion, chosen before what it needs is there — that, opened here.
@@ -26653,16 +27487,16 @@ if (BR) {
 }
 
 /* ---------------- Telegram tab (setup-state.ts, telegram-panel.tsx, telegram-token-prompt.tsx,
-   tui-telegram-orchestrator.ts, telegram-key-bindings.ts). The channel state, bot identity and
-   pairing live inside the serve process's channel — nothing on the HTTP API exposes them, so
-   the tab reads the config and the saved token's presence, and says where pairing happens. ---------------- */
+   tui-telegram-orchestrator.ts, telegram-key-bindings.ts). The tab reads the config and the saved
+   token's presence. Pairing goes through the agent's /api/telegram/pairing (ATO-859,
+   telegram-pairing.js); an agent without that route gets TG_PAIRING_NOTE instead. ---------------- */
 
 function telegramVisible() { return !!S.settings && settingsPaneId(S.settingsPane) === 'telegram'; }
 function tgCfgBlock() { const t = LIVE_CONFIG && LIVE_CONFIG.telegram; return t && typeof t === 'object' ? t : null; }
 function tgEnabled() { const t = tgCfgBlock(); if (t && typeof t.enabled === 'boolean') return t.enabled; return TG.cfg && typeof TG.cfg.enabled === 'boolean' ? TG.cfg.enabled : null; }
 function tgOwner() { const t = tgCfgBlock(); if (t && 'ownerUserId' in t) return t.ownerUserId === undefined ? null : t.ownerUserId; return TG.cfg && TG.cfg.ownerUserId !== undefined ? TG.cfg.ownerUserId : null; }
 function tgHasToken() { if (!TG.keysKnown) return null; return TG.dotenvKeys.includes('TELEGRAM_BOT_TOKEN') || TG.envKeys.includes('TELEGRAM_BOT_TOKEN'); }
-function telegramTabEntered() { TG.confirm = null; tgRefresh(); }
+function telegramTabEntered() { TG.confirm = null; if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial(); tgRefresh(); tgPairProbe(); }
 function tgRepaint() { if (telegramVisible()) paneRepaintKeepFocus(telegramTab()); }
 /* R refresh (orchestrator refreshSettings): config + the key names in the env and .env.
    Review fix: a refresh asked for while one was in flight used to be DROPPED
@@ -26681,10 +27515,12 @@ async function tgRefreshOnce() {
   if (!BR) return;
   TG.keysBusy = true;
   const stateDir = memStateDir();
-  const [cfg, env, dotenv, eff] = await Promise.all([
+  const [cfg, env, dotenv, eff, channel] = await Promise.all([
     BR.configGet(), BR.envPresent(['TELEGRAM_BOT_TOKEN']), stateDir ? BR.dotenvKeys(stateDir) : Promise.resolve({ok:true, keys:[]}),
     tgCfgBlock() && typeof tgCfgBlock().enabled === 'boolean' ? Promise.resolve(null) : BR.configGetKey('telegram'),
+    BR.telegramChannel ? BR.telegramChannel().catch(() => null) : Promise.resolve(null),
   ]);
+  TG.channel = channel && channel.available ? channel : null;
   TG.keysBusy = false;
   if (cfg && cfg.ok && cfg.config) { LIVE_CONFIG = cfg.config; dropGateNoticesIfCleared(); }   // ATO-204: B02's refusal
   TG.envKeys = Array.isArray(env) ? env : [];
@@ -26716,12 +27552,14 @@ function telegramTab() {
       + '<button class="btn btn-p" data-act="telegram:token" title="Enter">Paste a bot token</button></div>';
   } else {
     body += tgStatusHTML(enabled, owner);
-    // setup-state.ts needs_pairing; the CTA would open the pairing window, which only the live channel can.
+    // setup-state.ts needs_pairing. ATO-859: the card pairs here, through the agent's pairing route.
     if (owner === null) {
-      body += '<div class="sd-well sd-pair"><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
-        // ATO-426: no agent route pairs from here, so the card says where pairing happens instead of promising a DM works.
-        + '<p>' + esc(TG_PAIR_HOWTO) + '</p>'
-        + '<p class="sd-cap sd-block">' + esc(TG_PAIRING_NOTE) + '</p></div>';
+      body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--amber">' + ic('user') + '</span><b>One last step — confirm it\'s you</b></div>'
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HOWTO, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Pair', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
+    } else if (TG.pair.phase !== 'idle' || TG.pair.error) {
+      // Replacing the owner (confirmed beside the Owner row): the same card, until its window ends.
+      body += '<div class="sd-well sd-pair" data-tg-pair><div class="sd-pairhead"><span class="tk-ico tk-ico--blue">' + ic('user') + '</span><b>Pair a different Telegram account</b></div>'
+        + tgPairCardHTML(TG.pair, {howto:TG_PAIR_HAS_OWNER, note:TG_PAIRING_NOTE, busy:TG.pairBusy, label:'Replace', restart:tgRestartButtonHTML(TG.restart, {esc, ic})}, {esc}) + '</div>';
     }
     body += tgRowsHTML(enabled, owner);
   }
@@ -26738,11 +27576,12 @@ function tgRestartOwed() { return TG.owedGen !== null && TG.owedGen === AGENT_GE
    the desktop can know. */
 function tgConnected(enabled, owner) { return tgHasToken() === true && owner !== null && enabled === true && !tgRestartOwed(); }
 function tgStatusHTML(enabled, owner) {
-  const on = tgConnected(enabled, owner);
+  // ATO-758: the settings say connected, but another poller holds the live channel off.
+  const on = tgConnected(enabled, owner) && !tgOtherPollerHTML(TG.channel);
   const line = on ? 'Message your bot in Telegram to talk to Atomic Agent. Send /help there for its commands.'
     : owner === null ? 'Almost there: confirm your Telegram account below.'
     : enabled !== true ? 'Turned off: the bot does not answer until you turn it on below.'
-    : 'Waiting for a restart: the agent loads the token and these settings when it starts.';
+    : 'Waiting for a restart: the agent loads the token and these settings when it starts. Press Restart agent below; the app stays open.';
   // The tab is read on entry and after its own writes; Check again reads it once more (the `R` key), e.g. after pairing elsewhere.
   return '<div class="tk-card sd-tgstatus"><div class="tk-setrow">'
     + '<span class="tk-ico tk-ico--blue">' + ic('send') + '</span>'
@@ -26765,24 +27604,41 @@ function tgRowsHTML(enabled, owner) {
       + '<button class="btn btn-danger sm" data-act="telegram:clearToken"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearToken' ? 'Click again to remove' : 'Remove token') + '</button>')
     + (owner !== null ? row('Owner', 'Only this Telegram account can talk to the bot.',
       '<span class="tk-chip tk-chip--sm sd-mono">' + esc(String(owner)) + '</span>'
+      // ATO-859: replacing the owner pairs a new account; like Clear owner it takes a second click (ATO-718: only after confirmation).
+      + (TG.pair.supported !== false ? '<button class="btn btn-s sm" data-act="telegram:pairReplace"' + (busy || TG.pairBusy ? ' disabled' : '') + '>' + (TG.confirm === 'pairReplace' ? 'Click again to replace' : 'Replace') + '</button>' : '')
       + '<button class="btn btn-danger sm" data-act="telegram:clearOwner"' + (busy ? ' disabled' : '') + '>' + (TG.confirm === 'clearOwner' ? 'Click again to clear' : 'Clear owner') + '</button>') : '')
-    + row('Restart the bot', 'Restarts the agent, and the bot with it.', '<button class="btn btn-s sm" data-act="telegram:restart">Restart</button>')
+    + row('Restart the bot', 'Restarts the agent, and the bot with it. The app stays open.',
+      '<button class="btn btn-s sm" data-act="telegram:restart"' + (TG.restart.phase === 'restarting' ? ' disabled' : '') + '>Restart</button>')
     + '</div>'
     + tuiHints(['e ' + (enabled ? 'disable' : 'enable'), 'r restart', 'R refresh', 't change token']);
 }
-/* What the last action left: an error, its message, and the restart a
-   change is still owed. Once a new agent is up, the restart's own line and
-   the messages that waited for it have nothing left to say. */
+/* What the last action left: an error, its message, the restart a change
+   is still owed, and the restart's own line (telegram-restart.js). Once a new
+   agent is up, the messages that waited for it have nothing left to say, and
+   the restart's line says how it went. ATO-900 item 6: every line that asks
+   for a restart has the primary Restart agent beside it and says the app
+   stays open; while the restart runs or after it failed, its own line says
+   so instead. */
 function tgNoticesHTML() {
-  const owed = tgRestartOwed();
-  const stale = TG.msgGen !== AGENT_GEN && (TG.msgKind === 'owed' || TG.msgKind === 'restarting');
+  const owed = tgRestartOwed() && !tgRestartSpeaks(TG.restart);
+  const stale = TG.msgGen !== AGENT_GEN && TG.msgKind === 'owed';
   const msg = TG.message && !stale ? TG.message : null;
-  const restarting = !!msg && TG.msgKind === 'restarting';
-  const restartBtn = '<button class="btn btn-t sm" data-act="agent:restart">' + ic('refresh') + 'Restart Agent Runtime</button>';
+  const restartBtn = tgRestartButtonHTML(TG.restart, {esc, ic});
   const note = (text, tail) => '<div class="tk-notice tk-notice--blue">' + ic('info') + '<span class="grow">' + text + '</span>' + (tail || '') + '</div>';
   return (TG.lastError ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(TG.lastError) + '</span></div>' : '')
-    + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">It takes effect after a restart.</span>', restartBtn)
-      : (msg ? note(esc(msg)) : '') + (owed && !restarting ? note('A change here takes effect after a restart.', restartBtn) : ''));
+    + tgOtherPollerHTML(TG.channel)
+    + (msg && TG.msgKind === 'owed' && owed ? note(esc(msg) + ' <span class="sec">' + esc(TG_RESTART_APPLY) + '</span>', restartBtn)
+      : (msg && !(TG.msgKind === 'owed' && tgRestartSpeaks(TG.restart)) ? note(esc(msg)) : '') + (owed ? note(esc(TG_RESTART_APPLY), restartBtn) : ''))
+    + tgRestartNoticeHTML(TG.restart, {esc, ic});
+}
+/* ATO-758: the bot is polled by someone else, so this agent's channel cannot start. Said in words, with what to do. */
+function tgOtherPollerHTML(ch) {
+  const o = ch && ch.state !== 'up' ? ch.otherPoller : null;
+  if (!o) return '';
+  const text = o.where === 'this_computer'
+    ? 'Another Atomic Agent on this computer is already answering this bot' + (o.pid ? ' (process ' + o.pid + ')' : '') + ', so this one cannot. Quit the other one (the terminal agent, or an old agent left running), then press Restart agent.'
+    : 'This bot is already answering from somewhere else (another computer or app using the same token), so this agent cannot. Stop it there, or give this agent its own bot, then press Restart agent.';
+  return '<div class="tk-notice tk-notice--amber">' + ic('alert') + '<span class="grow">' + esc(text) + '</span></div>';
 }
 /* telegram-token-prompt.tsx: a password input masks the token; the value never reaches state or the DOM as text. ST-29. */
 function tgTokenPromptHTML() {
@@ -26800,6 +27656,7 @@ function tgTokenPromptHTML() {
 /* `kind`: 'owed' — a change the agent loads at start, so a restart is owed from now; 'restarting'; 'info'. */
 function tgSetMessage(text, kind) {
   TG.message = text; TG.msgKind = kind || 'info'; TG.msgGen = AGENT_GEN; TG.lastError = null;
+  if (TG.restart.phase !== 'restarting') TG.restart = tgRestartInitial();   // a new action's line replaces the last restart's
   if (kind === 'owed') TG.owedGen = AGENT_GEN;
 }
 /* tui-telegram-orchestrator.ts submitToken: empty fails locally, then
@@ -26863,7 +27720,7 @@ function telegramAct(what) {
   const arg = what.slice(verb.length + 1);
   // ATO-426: removing the token or the owner takes a second click on the same button; any other action disarms it.
   const armed = TG.confirm;
-  const confirmVerb = verb === 'clearToken' || verb === 'clearOwner';
+  const confirmVerb = verb === 'clearToken' || verb === 'clearOwner' || verb === 'pairReplace';
   // ATO-435: the second click of a double-click lands within ~400 ms; it is not a confirmation.
   if (confirmVerb && armed === verb && Date.now() - TG.confirmAt < TG_CONFIRM_MIN_MS) return;
   TG.confirm = null;
@@ -26875,16 +27732,109 @@ function telegramAct(what) {
   if (verb === 'enable') { const e = tgEnabled(); if (e !== null) tgSetEnabled(!e); return; }
   if (verb === 'clearOwner') { tgClearOwner(); return; }
   // `r — restart` restarts the channel in the TUI; the desktop restarts the agent runtime, which restarts the channel with it.
-  // The line goes once the new agent is up (tgNoticesHTML): the restart is done then.
-  if (verb === 'restart') { tgSetMessage('Restarting the agent, and the bot with it.', 'restarting'); act('agent:restart'); return; }
+  if (verb === 'restart') { tgRestart(); return; }
   if (verb === 'refresh') { if (BR) { TG.keysBusy = true; tgRepaint(); } tgRefresh(); return; }
-  if (verb === 'pair') { tgSetMessage(tgPairLine(), 'info'); tgRepaint(); return; } // pairing needs the live channel (ATO-426)
+  // ATO-859: `o` and `/telegram pair` start pairing when there is a token and no owner; otherwise they say what to do.
+  if (verb === 'pair') { const line = tgPairLine(); if (line) { tgSetMessage(line, 'info'); tgRepaint(); } else tgPairStart(false); return; }
+  if (verb === 'pairStart') { tgPairStart(tgOwner() !== null); return; }
+  if (verb === 'pairReplace') { tgPairStart(true); return; }
+  if (verb === 'pairCancel') { tgPairCancel(); return; }
 }
-/** ATO-435: what `o` and `/telegram pair` say — the pairing steps only when there is a token and no owner. */
+/* ATO-900 item 6: Restart agent, from any line in the tab that asks for one. It
+   restarts the agent in place (the app stays open), says so while it runs, then
+   reads the tab again and says the result there: connected, what is still
+   missing, or why the agent did not start. A running reply would end with the
+   restart, so it is refused in place while one runs. */
+async function tgRestart() {
+  if (!BR || TG.restart.phase === 'restarting') return;
+  if (restartStopsTurn()) { TG.restart = tgRestartRefused(); tgRepaint(); return; }
+  TG.restart = tgRestartStart(); tgRepaint();
+  S.log.push({id:nid(), k:'system', text:'restarting the agent…'});
+  let st = null;
+  try { st = await BR.restart('telegram'); } catch (e) { st = {state:'error', error:String((e && e.message) || e)}; }
+  /* The tab's own read after the restart may fail (a rejected IPC). The result
+     is still said from what is known: left at 'restarting', the button would
+     stay disabled for good, since nothing else clears that phase. */
+  try {
+    applyStatus(st);
+    if (st && st.state === 'connected') {
+      // The agent now has Telegram running if it can: a "not running" pairing error is out of date.
+      if (TG.pair.error === TG_PAIR_NOT_RUNNING) TG.pair = Object.assign({}, TG.pair, {error:null});
+      await tgRefresh();
+    }
+  } catch (e) { /* the status above is what the result reads */ }
+  TG.restart = tgRestartResult(st, {hasToken: tgHasToken(), owner: tgOwner(), enabled: tgEnabled()});
+  tgRepaint();
+}
+/** ATO-435: what `o` and `/telegram pair` say instead of pairing, or null when they may pair. */
 function tgPairLine() {
   if (tgHasToken() === false) return TG_PAIR_NEEDS_TOKEN;
   if (tgOwner() !== null) return TG_PAIR_HAS_OWNER;
-  return TG_PAIR_HOWTO;
+  if (TG.pair.supported === false) return TG_PAIRING_NOTE;
+  return null;
+}
+/* ATO-859: pairing through the agent's /api/telegram/pairing (telegram-pairing.js for the state and
+   the card). `replace` carries the operator's confirmation to replace a paired owner (ATO-718). The
+   code is kept in TG.pair while its window is open and is never logged. */
+async function tgPairStart(replace) {
+  if (TG.pairBusy) return;
+  if (!BR || !BR.telegramPairing) { TG.pair = Object.assign({}, TG.pair, {supported:false}); tgRepaint(); return; }
+  TG.pairBusy = true; tgRepaint();
+  let res;
+  try { res = await BR.telegramPairing('start', !!replace); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  TG.pairBusy = false;
+  TG.pair = tgPairApply(TG.pair, 'start', res, Date.now());
+  if (TG.pair.askReplace) {
+    // The agent knows an owner the tab did not (paired elsewhere): read it, and let the next Replace click confirm.
+    TG.pair.askReplace = false; TG.confirm = 'pairReplace'; TG.confirmAt = 0;
+    tgSetMessage(TG_PAIR_HAS_OWNER, 'info');
+    await tgRefresh();
+  }
+  tgRepaint(); tgPairSchedule();
+}
+async function tgPairCancel() {
+  if (TG.pairBusy || !BR || !BR.telegramPairing) return;
+  TG.pairBusy = true; tgRepaint();
+  let res;
+  try { res = await BR.telegramPairing('cancel'); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  TG.pairBusy = false;
+  TG.pair = tgPairApply(TG.pair, 'cancel', res, Date.now());
+  tgRepaint(); tgPairSchedule();
+}
+/* Whether this agent can pair, asked once per visit: a 404 turns the card into TG_PAIRING_NOTE before anyone presses Pair.
+   It also picks up a window left open on an earlier visit: polling pauses while the tab is hidden. */
+async function tgPairProbe() {
+  if (!BR || !BR.telegramPairing) return;
+  let res;
+  try { res = await BR.telegramPairing('status'); } catch { return; }
+  await tgPairOnStatus(res, false);
+}
+function tgPairSchedule() {
+  if (TG.pairTimer) { clearTimeout(TG.pairTimer); TG.pairTimer = null; }
+  // Only while the Telegram tab is on screen; telegramTabEntered asks again on the way back.
+  if (tgPairPolling(TG.pair) && telegramVisible()) TG.pairTimer = setTimeout(tgPairPoll, TG_PAIR_POLL_MS);
+}
+/* Asks whether the code was claimed. */
+async function tgPairPoll() {
+  TG.pairTimer = null;
+  if (!BR || !BR.telegramPairing || !tgPairPolling(TG.pair) || !telegramVisible()) return;
+  let res;
+  try { res = await BR.telegramPairing('status'); } catch (e) { res = {ok:false, error:String((e && e.message) || e)}; }
+  await tgPairOnStatus(res, true);
+}
+/* A status reply, from a poll or the probe on entering the tab. A claim persists the owner in the agent,
+   so the tab reads the config again and says who paired. */
+async function tgPairOnStatus(res, fromPoll) {
+  if (fromPoll && !tgPairPolling(TG.pair)) return; // cancelled or restarted while the poll was out
+  TG.pair = tgPairApply(TG.pair, 'status', res, Date.now());
+  if (TG.pair.phase === 'paired') {
+    // "Paired: @username is now the owner." becomes the tab's message and the card goes back to rest: the owner row shows who it is now.
+    const line = TG.pair.pairedLine;
+    TG.pair = Object.assign(tgPairInitial(), {supported:true});
+    tgSetMessage(line, 'info');
+    await tgRefresh();
+  }
+  tgRepaint(); tgPairSchedule();
 }
 /* telegram-key-bindings.ts: list-mode letters; the token prompt owns its input. */
 function telegramKey(e, k, inText) {
@@ -26895,8 +27845,8 @@ function telegramKey(e, k, inText) {
   }
   if (inText || e.metaKey || e.ctrlKey || e.altKey) return false;
   if (TG.mode === 'tokenPrompt') { if (k === 'Escape') { e.preventDefault(); telegramAct('tokenCancel'); return true; } return false; }
-  // Enter = the connect flow's next step: paste a token, else (no owner) the pairing that needs the TUI.
-  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) tgSetMessage(TG_PAIR_HOWTO, 'info'), tgRepaint(); return true; }
+  // Enter = the connect flow's next step: paste a token, else (no owner) pair (ATO-859).
+  if (k === 'Enter') { e.preventDefault(); if (tgHasToken() === false) telegramAct('token'); else if (tgOwner() === null) telegramAct('pair'); return true; }
   // ATO-426: no T / O here; removing the token or the owner is a button that asks for a second click.
   const map = {e:'enable', t:'token', o:'pair', r:'restart', R:'refresh'};
   if (map[k]) { e.preventDefault(); telegramAct(map[k]); return true; }
@@ -27163,6 +28113,14 @@ function impFormHTML(f) {
     + '<div class="tk-card sd-rows">'
     + meta.toggles.map((t) => sw(t, IMP_TOGGLE_TITLES[t], t === 'secrets' ? '<span class="sd-mono">' + esc(meta.secretsHint || '') + '</span>' : esc(desc[t] || ''))).join('')
     + '</div>'
+    /* ATO-1034: imported chats go into a folder named after the app they came
+       from (chat-folders.js). Not an `atag import` option: it is the sidebar's,
+       kept in chat-folders.json, so it holds for every import and for chats
+       imported before. */
+    + '<div class="tk-card sd-rows"><div class="tk-setrow sd-frow">'
+      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">Claude Code chats go into a folder per project, other apps’ chats into a folder per app, such as “Codex”. '
+      + 'Chats imported earlier are sorted too. A chat you move yourself stays where you put it.</div></div>'
+      + '<button class="tk-switch" role="switch" aria-checked="' + !!FOLDERS.state.autoSort + '" aria-label="Put imported chats into folders" data-act="fautosort:"></button></div></div>'
     /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.
        What it replaces, per src/import (reconcile-session.ts, import-skill-dirs.ts, each importer's secrets
        and cron steps): a chat under the same id whose messages differ, including ones added here; a skill of
@@ -27328,8 +28286,10 @@ if (typeof window !== 'undefined') {
   window.__llmFallbackPersist = async (chain, appendLocal) => { await llmFallbackPersist(chain, appendLocal); return window.__llmPane(); };
   window.__llmProbe = (url) => (BR ? BR.llamaProbe(url) : Promise.resolve({ok:false, error:'no bridge'}));
   window.__llmExternalSave = async (url) => { llmSetMode('external'); LLMP.externalDraft = String(url); LLMP.externalInvalid = false; llmRepaint(); const n = document.getElementById('llm-url'); if (n) n.value = String(url); await llmExternalSave(); return window.__llmPane(); };
-  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: tgRestartOwed(),
-    lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error});
+  window.__telegram = () => ({hasToken: tgHasToken(), enabled: tgEnabled(), owner: tgOwner(), mode: TG.mode, message: TG.message || '', restart: tgRestartOwed(), restartPhase: TG.restart.phase,
+    lastError: TG.lastError, dotenvKeys: TG.dotenvKeys.slice(), envKeys: TG.envKeys.slice(), keysKnown: TG.keysKnown, busy: TG.busy, tokenError: TG.token.error,
+    // ATO-859: where pairing stands, never the code itself.
+    pair: {phase: TG.pair.phase, supported: TG.pair.supported, hasCode: !!TG.pair.code, pairedLine: TG.pair.pairedLine, error: TG.pair.error}});
   window.__telegramAct = (what) => { telegramAct(what); return window.__telegram(); };
   window.__telegramTokenSave = async (value) => { TG.mode = 'tokenPrompt'; TG.token = {error:null, submitting:false}; const r = await tgTokenSave(value); return Object.assign({}, r, {state: window.__telegram()}); };
   window.__telegramClearToken = async () => { await tgClearToken(); return window.__telegram(); };
@@ -27377,9 +28337,12 @@ if (typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   window.__sidebar = () => ({
     headers: [...document.querySelectorAll('.sb-list-head > span:first-child')].map((n) => n.textContent),
+    folders: FOLDERS.state.folders.length,   // ATO-1034
     pinnedRows: document.querySelectorAll('#sidebar [data-list="pinned"] .sesrow').length,   // ATO-165
     navrows: document.querySelectorAll('.navrow').length,
     skillsRow: !!document.querySelector('#sidebar [data-room="skills"]'),
+    // ATO-457: the standing section rows under New chat, by label.
+    nav: [...document.querySelectorAll('#sidebar .sb-nav [data-nav]')].map((n) => (n.querySelector('.sb-new-lb') || n).textContent),
     subtitles: document.querySelectorAll('#sidebar .sesrow .t2').length,
     onRows: document.querySelectorAll('#sidebar .sesrow.on').length,
     counter: (document.querySelector('[data-list="tasks"] .ct') || {}).textContent || '',
@@ -27510,7 +28473,9 @@ if (typeof window !== 'undefined') {
     const chip = document.querySelector('.attach .filechip');
     if (!chip) return null;
     LAST_OPEN_PATH = null; OPEN_PATH_DRYRUN = true;
-    try { chip.click(); } finally { OPEN_PATH_DRYRUN = false; }
+    // ATO-1053: the click opens the preview; its Open hands the path to the opener.
+    try { chip.click(); const o = document.querySelector('#fpreview .fp-head [data-fp="open"]'); if (o) o.click(); } finally { OPEN_PATH_DRYRUN = false; }
+    if (typeof filePreviewClose === 'function') filePreviewClose();
     return {file: chip.dataset.file, opened: LAST_OPEN_PATH, hasMenu: !!(BR && BR.fileMenu)};
   };
   /** Re-run the real collector over the current log (after a trash card). */
@@ -27679,6 +28644,7 @@ if (typeof window !== 'undefined') {
     const usr = t.classList.contains('usr');
     return {k: usr ? 'user'
               : t.classList.contains('interim') ? 'interim'
+              : t.classList.contains('tk-turnsum') ? 'turnsum'
               : t.querySelector('.card') ? 'tool'
               : t.querySelector('.appr') ? 'approval'
               : t.querySelector('.disc') ? 'reason'
@@ -27830,6 +28796,28 @@ if (typeof window !== 'undefined') {
   window.__clearToasts = () => { S.toasts = []; renderToasts(); return S.toasts.length; };
   window.__openPalette = () => { act('palette'); return S.overlay; };
   window.__rail = () => { act('toggle:sidebar'); return window.__sbHeads(); };
+  /* ATO-900: what the 52px rail draws. Every visible box inside #sidebar
+     (the Studio header word ran past the edge), every text label left on
+     screen, and the cells of the rows (New chat, the section rows, Studio,
+     chats, tasks) with their size and centre, so the column can be held to
+     one cell size on one centre line. */
+  window.__railFit = () => {
+    const sb = document.querySelector('#sidebar');
+    const box = sb.getBoundingClientRect();
+    const seen = (el) => !!el.offsetParent && el.getBoundingClientRect().width > 0;
+    const over = [...sb.querySelectorAll('*')].filter(seen).filter((el) => {
+      const r = el.getBoundingClientRect();
+      return r.left < box.left - 0.5 || r.right > box.right + 0.5;
+    }).map((el) => (el.className && el.className.baseVal === undefined ? String(el.className) : el.tagName) + ':' + (el.textContent || '').trim().slice(0, 20));
+    const labels = [...sb.querySelectorAll('.sb-new-lb, .sb-studio-head, .sb-list-head > span, .sesrow .t1, .sb-settings-lb, .wschip')]
+      .filter(seen).map((el) => (el.textContent || '').trim());
+    const cells = [...sb.querySelectorAll('.sb-new, .sesrow')].filter(seen).map((el) => {
+      const r = el.getBoundingClientRect();
+      return {w: Math.round(r.width), h: Math.round(r.height), centre: Math.round(r.left + r.width / 2 - box.left)};
+    });
+    return {width: Math.round(box.width), over, labels, cells,
+            studio: !!sb.querySelector('.sb-studio-row'), chats: sb.querySelectorAll('.sesrow').length};
+  };
   window.__menuSubRows = () => document.querySelectorAll('#settings .menurow.sub, #settings .menurow.parent').length;
   /* Item 5: the focus ring is re-applied on every render while MENUFOCUS.want
      is up, so the flag has to drop the moment focus leaves the first menu row.
@@ -28904,7 +29892,7 @@ if (typeof window !== 'undefined') {
     Object.assign(OB, {offer: null, resumeAfterCloud: null, localModelId: null, outcome: null,
       skipSecondOffer: false, handOver: false, cursor: 0, busy: false, error: null, hfReference: '', hfRepo: null,
       importAgents: [], importOptions: [], importReport: null, introTyped: false,
-      settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null});
+      settling: false, testClose: true, pendingMmproj: null, restarted: false, managedWrite: null, localStart: null});
     /* r5 item 7 review fix: the stamps are NO LONGER pre-marked here. They
        used to be, which short-circuited obStampOnce for the whole driven
        pass — so the five acceptance lines about write-on-arrival had no
@@ -29214,8 +30202,8 @@ if (typeof window !== 'undefined') {
     if (!b || !sb) return null;
     const cs = getComputedStyle(b);
     return {on: b.classList.contains('on'), pressed: b.getAttribute('aria-pressed'),
-            // Review fix (item 2): the narrow window disables the control.
-            disabled: !!b.disabled,
+            // ATO-538: the control stays live on a narrow window; it opens the drawer there.
+            disabled: !!b.disabled, drawer: sb.classList.contains('drawer'),
             title: b.getAttribute('title'), state: S.sidebar, rail: sb.classList.contains('rail'),
             narrow: NARROW.matches, expanded: sidebarExpanded(),
             width: Math.round(sb.getBoundingClientRect().width),
@@ -29231,8 +30219,13 @@ if (typeof window !== 'undefined') {
   window.__unreadCtl = (id) => {
     const s = SESSIONS.find((x) => x.id === id);
     const el = document.querySelector('.sesrow[data-ses="' + CSS.escape(id) + '"] [data-sesmenu]');
+    const row = el ? el.closest('.sesrow') : null;
+    const glyph = row ? getComputedStyle(row, '::before').content : '';
     const out = {present: !!el, vis: el ? getComputedStyle(el).visibility : '',
                  railDisplay: el ? getComputedStyle(el).display : '',
+                 // ATO-538: what the row's ::before paints ('none' outside the rail), and the glyph it carries.
+                 glyph: glyph && glyph !== 'none' && glyph !== 'normal' ? glyph.replace(/^"|"$/g, '') : '',
+                 dataGlyph: row ? (row.dataset.g || '') : '',
                  dot: chatDot(s)[0], label: null, verb: null};
     if (el && out.railDisplay !== 'none') {
       el.click();
@@ -29320,18 +30313,93 @@ if (typeof window !== 'undefined') {
     const last = btns[btns.length - 1];
     // ATO-168: a reply's actions start at the LEFT (after the last reply's dot), so its first button's left edge is reported too.
     const dot = t.querySelector('.enddot');
-    return {present: true, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
+    /* ATO-863: whether the reply's turn drew a tool card or an approval, read
+       from the DOM between the reply and the question above it, so the smoke
+       knows whether "Ask again" belongs under it without asking the code
+       under test. */
+    let acted = false;
+    for (let p = t.previousElementSibling; p && !p.classList.contains('usr'); p = p.previousElementSibling) {
+      // A tool card (single or folded run, [data-tool]), the Exa key card, or an approval; a reasoning row is also .tk-step but is not an action.
+      if (p.classList.contains('exak-turn') || p.querySelector('[data-tool], .appr')) { acted = true; break; }
+    }
+    return {present: true, acted, vis: cs.visibility, opacity: cs.opacity, events: cs.pointerEvents,
             btnLeft: btns[0] ? Math.round(btns[0].getBoundingClientRect().left) : null,
             anchorLeft: anchor ? Math.round(anchor.getBoundingClientRect().left) : null,
             dot: !!dot, dotLive: !!(dot && dot.classList.contains('live')),
             height: Math.round(br.height),
-            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : '?'),
-            titles: btns.map((b) => b.getAttribute('title')),
+            order: btns.map((b) => b.dataset.copy ? 'copy' : b.dataset.resend ? 'resend' : b.dataset.speak ? 'speak' : b.classList.contains('msgact-off') ? 'hint' : '?'),
+            // ATO-900: the muted hint names itself in data-tip (a CSS tooltip), the others in title.
+            titles: btns.map((b) => b.getAttribute('title') || b.getAttribute('data-tip')),
             dangerColor: danger ? getComputedStyle(danger).color : null,
             right: Math.round(br.right),
             btnRight: last ? Math.round(last.getBoundingClientRect().right) : null,
             anchorRight: anchor ? Math.round(anchor.getBoundingClientRect().right) : null,
             insideBubble: document.querySelectorAll('.bubble .msgact').length};
+  };
+  /* ATO-863: the last reply's own buttons on drawn transcripts, so the smoke
+     can hold "Ask again" to a turn without tools. Each case is rendered for
+     real and read back from the DOM; nothing is sent. The approval case is
+     read from replyRetryAsk only, because an approval card needs a live
+     request to draw. */
+  window.__replyRetry = () => {
+    const keep = {log: S.log, busy: S.busy, streamId: S.streamId};
+    const lastActs = (real) => {
+      const t = Array.from(document.querySelectorAll('.turn')).filter((r) => r.querySelector(real ? '.prose:not(.usr):not(.tk-ph)' : '.prose:not(.usr)')).pop();
+      const box = t ? t.querySelector('.msgacts') : null;
+      if (!box) return null;
+      /* ATO-862: the muted hint reads as hint:<aria-disabled>:<tip>; one
+         that gained a data-resend or data-act would read as resend or '?'.
+         ATO-900: its sentence is data-tip (the CSS tooltip), and one that
+         also carried a native title would show it twice, so it reads '?'. */
+      // ATO-1046: Read aloud is not part of the retry contract these checks pin.
+      return Array.from(box.querySelectorAll('button')).filter((b) => !b.dataset.speak).map((b) => b.dataset.resend
+        ? 'resend:' + b.dataset.resend + ':' + b.getAttribute('title')
+        : b.dataset.copy ? 'copy'
+          : b.classList.contains('msgact-off') && !b.dataset.act && !b.hasAttribute('title') && b.getAttribute('aria-label') === b.getAttribute('data-tip')
+            ? 'hint:' + b.getAttribute('aria-disabled') + ':' + b.getAttribute('data-tip') : '?');
+    };
+    const drawn = (log, busy, real) => { S.log = log; S.busy = !!busy; S.streamId = null; render(); return lastActs(real); };
+    const tool = {id: 'rr-t', k: 'tool', name: 'os.fs.list_dir', arg: '~', where: 'local', ms: 4, ok: true, open: false, out: 'a.txt'};
+    try {
+      const out = {
+        plain: drawn([{id: 'rr-u', k: 'user', text: 'hello, how are you?'}, {id: 'rr-a', k: 'assistant', text: 'fine, thanks'}]),
+        tool: drawn([{id: 'rr-u', k: 'user', text: 'list my files'}, tool, {id: 'rr-a', k: 'assistant', text: 'one file'}]),
+        // A tool in an EARLIER turn does not count against this one.
+        earlier: drawn([{id: 'rr-u0', k: 'user', text: 'list my files'}, tool, {id: 'rr-a0', k: 'assistant', text: 'one file'},
+                        {id: 'rr-u', k: 'user', text: 'thanks'}, {id: 'rr-a', k: 'assistant', text: 'you are welcome'}]),
+        // A steer folded into the turn is not the turn's question.
+        steered: drawn([{id: 'rr-u', k: 'user', text: 'write a haiku'}, {id: 'rr-s', k: 'user', text: 'about rain', steered: true},
+                        {id: 'rr-a', k: 'assistant', text: 'rain on the window'}]),
+        busy: drawn([{id: 'rr-u', k: 'user', text: 'hello'}, {id: 'rr-a', k: 'assistant', text: 'hi'}], true),
+        placeholder: drawn([{id: 'rr-u', k: 'user', text: 'hello'}, {id: 'rr-a', k: 'assistant', text: '(no reply)', placeholder: true}]),
+        // A later turn that ended as "(stopped)": the real reply above it (read past the placeholder) must not re-ask the older question.
+        stopped: drawn([{id: 'rr-u0', k: 'user', text: 'hello'}, {id: 'rr-a0', k: 'assistant', text: 'hi'},
+                        {id: 'rr-u', k: 'user', text: 'write a long story'}, {id: 'rr-a', k: 'assistant', text: '(stopped)', placeholder: true}], false, true),
+      };
+      /* ATO-862: clicking the muted hint under the tool turn reaches no
+         handler. Drawn again, clicked for real, and every resend counted. */
+      drawn([{id: 'rr-u', k: 'user', text: 'list my files'}, tool, {id: 'rr-a', k: 'assistant', text: 'one file'}]);
+      const hint = document.querySelector('.msgacts-last .msgact-off');
+      const realResend = resendUser, logLen = S.log.length;
+      let resends = 0;
+      resendUser = function () { resends++; };
+      try { if (hint) hint.click(); } finally { resendUser = realResend; }
+      out.toolClick = {found: !!hint, resends, logSame: S.log.length === logLen, focusable: hint ? hint.tabIndex >= 0 : null};
+      /* ATO-900: the hint's tooltip is its ::after, filled from data-tip,
+         hidden at rest and shown by the hover rule (read as text, since
+         :hover cannot be synthesised; __cssRule). The pseudo-element takes
+         no pointer events, so it never covers the reply above it. */
+      const tip = hint ? getComputedStyle(hint, '::after') : null;
+      out.toolTip = {content: tip ? tip.content : null, opacity: tip ? tip.opacity : null, events: tip ? tip.pointerEvents : null,
+                     hover: window.__cssRule('.msgact-off[data-tip]:hover::after')};
+      S.log = [{id: 'rr-u', k: 'user', text: 'delete the old logs'}, {id: 'rr-p', k: 'approval', state: 'approved'},
+               {id: 'rr-a', k: 'assistant', text: 'done'}];
+      out.approval = replyRetryAsk(S.log[2]);
+      out.approvalActed = replyTurnActed(S.log[2]);
+      return out;
+    } finally {
+      S.log = keep.log; S.busy = keep.busy; S.streamId = keep.streamId; render();
+    }
   };
   /* `:hover` cannot be synthesised from script, so the hover half of the
      contract is asserted as the rule's own text; its `:focus-within` twin is
@@ -29463,7 +30531,19 @@ if (typeof window !== 'undefined') {
     // draft, so CTX.draftTokens is put back with everything else.
     const keep = {busy: S.busy, draft: S.draft, draftTokens: CTX.draftTokens};
     S.busy = true; render();
-    const out = window.__clickRetry();
+    /* ATO-901: while a turn runs the bubble's retry is the inert hint, not a
+       button that parks the text. A resend that still lands mid-turn (a
+       failure row's Try again calls resendUser) is driven directly. */
+    const inert = !document.querySelector('.turn.usr [data-resend]')
+      && !!document.querySelector('.turn.usr .msgact-off[aria-disabled="true"]');
+    const lastUser = S.log.slice().reverse().find((m) => m.k === 'user' && String(m.text || '').trim());
+    const before = S.log.length;
+    if (lastUser) resendUser(lastUser.id);
+    const e0 = $('#entry'), sb = document.querySelector('.sendbtn');
+    const out = lastUser ? {inert, before, after: S.log.length, draft: S.draft, entry: e0 ? e0.value : null,
+      focused: document.activeElement === e0, send: sb ? (sb.dataset.act || null) : null,
+      sendTitle: sb ? sb.getAttribute('title') : null, draftTokens: CTX.draftTokens,
+      toasts: S.toasts.map((t) => [t.t, t.s, t.kind || 'ok'])} : null;
     S.busy = keep.busy; S.draft = keep.draft; CTX.draftTokens = keep.draftTokens;
     const e = $('#entry'); if (e) e.value = keep.draft;
     render();

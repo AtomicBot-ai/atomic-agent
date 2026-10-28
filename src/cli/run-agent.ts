@@ -8,8 +8,18 @@ import {
   resolveBootApprovalLevel,
 } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
-import { formatLlamaUnreachableHint } from "../llm/llama-server-health.js";
-import { LOCAL_ENGINE_START_HINT, isLocalEngineDown } from "../llm/reliability/index.js";
+import {
+  formatLlamaUnreachableHint,
+  formatLlamaWrongServerHint,
+  llamaWrongServerStatus,
+} from "../llm/llama-server-health.js";
+import {
+  LOCAL_ENGINE_START_HINT,
+  LOCAL_SERVER_NOT_FOUND_CODE,
+  classifyLocalServerError,
+  isLocalEngineDown,
+  localServerErrorLines,
+} from "../llm/reliability/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
@@ -44,6 +54,7 @@ const HELP =
     "Usage:",
     "  atomic-agent run [options]           interactive: one message per line",
     '  echo "<goal>" | atomic-agent run     one-shot: answer on stdout, logs on stderr',
+    "                                       (each piped line is a separate turn)",
     "",
     "Options:",
     "  --cwd <dir>          Working directory for OS tools (default: current directory)",
@@ -211,17 +222,48 @@ async function promptApproval(
 const TRANSPORT_NO_ANSWER =
   /fetch failed|ECONNREFUSED|ECONNRESET|socket hang up|timeout/i;
 
+/** What `formatAgentEvent` needs to decorate a local-route failure. */
+export interface LlamaHintContext {
+  /** `formatLlamaUnreachableHint(url)`, or null off the local route. */
+  llamaHint?: string | null;
+  /**
+   * `localModels.url`, set together with `llamaHint`: names the address
+   * in the wrong-server line when llama-server answered 404/405.
+   */
+  llamaUrl?: string | null;
+  hintShown?: { value: boolean };
+}
+
+/**
+ * The hint for this failure, or null. A llama-server that answered
+ * 404/405 is running, so it gets "wrong server or no model loaded"
+ * rather than "start it" (ATO-870); a transport error where nothing
+ * answered keeps the unreachable hint.
+ */
+function pickLlamaHint(
+  category: string,
+  message: string,
+  ctx: LlamaHintContext,
+): string | null {
+  if (category !== "transport" || !ctx.llamaHint) return null;
+  const status = llamaWrongServerStatus(message);
+  if (status !== null) {
+    return ctx.llamaUrl ? formatLlamaWrongServerHint(ctx.llamaUrl, status) : null;
+  }
+  return TRANSPORT_NO_ANSWER.test(message) ? ctx.llamaHint : null;
+}
+
 function withLlamaHint(
   base: string,
   category: string,
   message: string,
-  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+  ctx?: LlamaHintContext,
 ): string {
-  if (!ctx?.llamaHint || ctx.hintShown?.value) return base;
-  if (category !== "transport" || !TRANSPORT_NO_ANSWER.test(message))
-    return base;
+  if (!ctx || ctx.hintShown?.value) return base;
+  const hint = pickLlamaHint(category, message, ctx);
+  if (hint === null) return base;
   if (ctx.hintShown) ctx.hintShown.value = true;
-  const indented = ctx.llamaHint
+  const indented = hint
     .split("\n")
     .map((line) => `    ${line}`)
     .join("\n");
@@ -241,7 +283,7 @@ function withLlamaHint(
  */
 export function formatAgentEvent(
   event: AgentLoopEvent,
-  ctx?: { llamaHint?: string | null; hintShown?: { value: boolean } },
+  ctx?: LlamaHintContext,
 ): string | null {
   switch (event.type) {
     case "user_message":
@@ -276,6 +318,15 @@ export function formatAgentEvent(
       // ATO-772: the managed local model's process is gone; the turn ended
       // without waiting, and the fix is one command.
       if (isLocalEngineDown(event.error)) return `${base}\n    ${LOCAL_ENGINE_START_HINT}`;
+      // ATO-707 / ATO-737: a local server's typed 400 in plain words. A
+      // 404/405 keeps the wrong-server hint, which names `models check`.
+      const local = classifyLocalServerError(event.error);
+      if (local !== null && local.code !== LOCAL_SERVER_NOT_FOUND_CODE) {
+        // An OpenAI-compatible server's message already says it
+        // (`humanizeOpenAiHttpError`); saying it twice helps nobody.
+        if (event.error.message.includes(local.message)) return base;
+        return [base, ...localServerErrorLines(local).map((line) => `    ${line}`)].join("\n");
+      }
       return withLlamaHint(base, event.category, event.error.message, ctx);
     }
     default:
@@ -316,7 +367,20 @@ interface ChatLoopOptions {
   controller: AbortController;
   /** Stdin lines, shared with the approval prompt. */
   lines: StdinLineQueue;
+  /**
+   * Stdin is piped, not a terminal. A piped multi-line prompt still runs
+   * one turn per line, so the first time a second line becomes its own
+   * turn a one-line notice goes to stderr (ATO-910).
+   */
+  piped: boolean;
 }
+
+/**
+ * The stderr notice for piped stdin whose second line became a separate
+ * turn: a multi-line prompt is not read as one message.
+ */
+export const STDIN_LINE_PER_TURN_NOTICE =
+  "stdin: each line is sent as a separate turn; join a multi-line prompt into one line to send it as one message";
 
 /**
  * Read messages line-by-line from stdin and feed them through
@@ -381,6 +445,7 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
     }
   };
 
+  let turnsStarted = 0;
   try {
     while (true) {
       if (opts.controller.signal.aborted) break;
@@ -393,6 +458,10 @@ async function runChatLoop(opts: ChatLoopOptions): Promise<SessionState> {
       if (trimmed === "/abort") {
         opts.controller.abort();
         break;
+      }
+      turnsStarted += 1;
+      if (opts.piped && turnsStarted === 2) {
+        process.stderr.write(`${STDIN_LINE_PER_TURN_NOTICE}\n`);
       }
       await driveTurn(trimmed);
     }
@@ -431,10 +500,12 @@ export async function runAgentCommand(args: string[]): Promise<number> {
   // The hint only applies when a transport failure means "local llama is
   // down" — i.e. the active text route IS the local server. On a cloud
   // route the same category points at the provider, not at llama.
-  const llamaHint =
-    resolveLlmConfig(config).activeTextProvider === "local-llama"
-      ? formatLlamaUnreachableHint(config.localModels.url)
-      : null;
+  const onLocalRoute =
+    resolveLlmConfig(config).activeTextProvider === "local-llama";
+  const llamaHint = onLocalRoute
+    ? formatLlamaUnreachableHint(config.localModels.url)
+    : null;
+  const llamaUrl = onLocalRoute ? config.localModels.url : null;
   const hintShown = { value: false };
 
   const runtime = await createAgentRuntime({
@@ -447,7 +518,11 @@ export async function runAgentCommand(args: string[]): Promise<number> {
         // `eventHook` argument of `runTurn` (see `driveTurn`). This
         // global handler only feeds the diagnostic stderr stream so
         // the operator can watch the macro-turn lifecycle.
-        const line = formatAgentEvent(event, { llamaHint, hintShown });
+        const line = formatAgentEvent(event, {
+          llamaHint,
+          llamaUrl,
+          hintShown,
+        });
         if (line) process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {
@@ -528,6 +603,7 @@ export async function runAgentCommand(args: string[]): Promise<number> {
       ...(parsed.maxSteps === null ? {} : { maxSteps: parsed.maxSteps }),
       controller,
       lines: stdinLines,
+      piped: process.stdin.isTTY !== true,
     });
     runtime.sessionStore.save(finalSession);
     process.stderr.write(

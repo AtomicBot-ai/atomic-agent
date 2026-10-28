@@ -13,7 +13,7 @@
 import { existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { PROVIDER } from '../harness.mjs';
+import { PROVIDER, summarize } from '../harness.mjs';
 import { REPO_DIR } from '../drive.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -51,13 +51,10 @@ for (const r of results) {
   const mark = r.skipped ? '– SKIP' : r.ok ? '✔ PASS' : r.modelFault ? '~ MODEL' : '✘ FAIL';
   console.log(`${mark}  ${r.name}  (${r.secs}s)${r.skipped ? ` — ${r.skipped}` : r.ok ? '' : ` — ${String(r.error).split('\n')[0]}`}`);
 }
-const failed = results.filter((r) => !r.ok && !r.modelFault);
-const shortfalls = results.filter((r) => r.modelFault);
-const skipped = results.filter((r) => r.skipped);
+const { line, code, failed, shortfalls } = summarize(results);
 console.log(`──────────────────────────────────────────────`);
-console.log(`${results.length - failed.length - shortfalls.length - skipped.length} passed, ${failed.length} app failures, `
-  + `${shortfalls.length} model shortfalls, ${skipped.length} skipped`);
+console.log(line);
 if (shortfalls.length && !failed.length) {
   console.log('The app did its part everywhere; the model did not produce what was asked for above.');
 }
-process.exit(failed.length ? 1 : 0);
+process.exit(code);

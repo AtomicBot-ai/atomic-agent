@@ -28,7 +28,7 @@ import { resetModelVisionRejections } from "../llm/provider/model-vision-rejecti
  * `vision-follows-route.test.ts`.
  */
 
-const LOCAL = "127.0.0.1:8080";
+const LOCAL = "127.0.0.1:9931";
 const AIML = "aiml.invalid";
 const CUSTOM = "custom.invalid";
 
@@ -95,7 +95,7 @@ interface Traffic {
 
 function installFetch(): Traffic {
   const traffic: Traffic = { visionCalls: [], cloudReply: null };
-  vi.stubGlobal("fetch", (async (input: RequestInfo | URL) => {
+  vi.stubGlobal("fetch", (async (input: string | URL | Request) => {
     const url =
       typeof input === "string"
         ? input

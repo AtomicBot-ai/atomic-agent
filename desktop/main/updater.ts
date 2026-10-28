@@ -89,6 +89,8 @@ export interface UpdateState {
   autoCheck: boolean;
   currentVersion: string;
   channel: string;
+  /** ATO-575: the person reads beta builds too. */
+  beta: boolean;
   phase: UpdatePhase;
   /** The newer version, once one is known. */
   version: string | null;
@@ -119,9 +121,37 @@ export interface UpdatePrefs {
   lastDismissed: { version: string; at: number } | null;
   /** Written just before quitAndInstall; read on the next start for update_installed. */
   pendingInstall: { from: string; to: string; at: number } | null;
+  /** ATO-575: beta builds too (the feed's `beta*.yml`), or only the channel this build was made for. */
+  beta: boolean;
 }
 
-const PREFS_DEFAULT: UpdatePrefs = { autoCheck: true, skippedVersion: null, lastDismissed: null, pendingInstall: null };
+const PREFS_DEFAULT: UpdatePrefs = { autoCheck: true, skippedVersion: null, lastDismissed: null, pendingInstall: null, beta: false };
+
+/**
+ * ATO-575: point the updater at a feed channel without ever allowing a
+ * downgrade. electron-updater's `channel` setter turns `allowDowngrade` on,
+ * so it is turned off again after it, every time.
+ */
+export function readChannel(u: { channel: string | null; allowDowngrade: boolean }, channel: string): void {
+  u.channel = channel;
+  u.allowDowngrade = false;
+}
+
+/** ATO-575: the channel the feed is read on: `beta` when the person asked for betas, else the build's own. */
+export function effectiveChannel(buildChannel: string, prefs: Pick<UpdatePrefs, "beta">): string {
+  return prefs.beta ? "beta" : buildChannel;
+}
+
+/**
+ * ATO-573: whether this install can replace itself. macOS and Windows can.
+ * On Linux only an AppImage can (electron-updater sets APPIMAGE when it runs
+ * from one); a .deb is updated by its package manager or the download page,
+ * since updating it from the app needs a root password prompt (pkexec).
+ */
+export function selfUpdatingInstall(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): boolean {
+  if (platform === "darwin" || platform === "win32") return true;
+  return platform === "linux" && typeof env.APPIMAGE === "string" && env.APPIMAGE.trim().length > 0;
+}
 
 export function updatePrefsPath(): string {
   return join(app.getPath("userData"), "updates.json");
@@ -138,6 +168,7 @@ export function coerceUpdatePrefs(raw: unknown): UpdatePrefs {
   if (!raw || typeof raw !== "object") return out;
   const src = raw as Record<string, unknown>;
   if (typeof src.autoCheck === "boolean") out.autoCheck = src.autoCheck;
+  if (typeof src.beta === "boolean") out.beta = src.beta;
   out.skippedVersion = cleanVersion(src.skippedVersion);
   const d = src.lastDismissed as { version?: unknown; at?: unknown } | null | undefined;
   const dv = cleanVersion(d?.version);
@@ -448,8 +479,10 @@ export class AppUpdateController {
 
   private whyDisabled(feed: string | null): Disabled {
     if (this.fakeVersion) return null;
-    // macOS and Windows only for now: Linux packages (AppImage, deb) get new versions from the download page.
-    if (process.platform !== "darwin" && process.platform !== "win32") return { text: "Updates are not set up for this build." };
+    // ATO-573: macOS, Windows and a Linux AppImage; a .deb gets new versions from its package manager or the download page.
+    if (!selfUpdatingInstall(process.platform, process.env)) {
+      return { text: process.platform === "linux" ? "This install is updated by your package manager or from the download page." : "Updates are not set up for this build." };
+    }
     if (!feed || !existsSync(feed)) return { text: "Updates are not set up for this build." };
     return null;
   }
@@ -473,7 +506,8 @@ export class AppUpdateController {
       disabledText: this.disabled?.text ?? null,
       autoCheck: this.prefs.autoCheck,
       currentVersion: this.currentVersion,
-      channel: this.channel,
+      channel: effectiveChannel(this.channel, this.prefs),
+      beta: this.prefs.beta,
       phase: this.phase,
       version: this.version,
       notes: this.notes,
@@ -654,7 +688,20 @@ export class AppUpdateController {
       return { version: this.fakeVersion, releaseNotes: "Smoother model downloads and fixes for long chats." };
     }
     const updater = this.ensureUpdater();
-    const res = await updater.checkForUpdates();
+    let res: Awaited<ReturnType<AppUpdater["checkForUpdates"]>>;
+    try {
+      res = await updater.checkForUpdates();
+    } catch (err) {
+      /* ATO-575: a feed with no beta files yet. Beta must never cost the
+         stable releases, so the check reads the build's own channel instead. */
+      if (!this.prefs.beta || !/\b404\b|Cannot find channel|Cannot find latest/i.test(err instanceof Error ? err.message : String(err))) throw err;
+      readChannel(updater, this.channel);
+      try {
+        res = await updater.checkForUpdates();
+      } finally {
+        readChannel(updater, "beta");
+      }
+    }
     /* electron-updater can answer a newer version that is not for this
        machine (a staged rollout, minimumSystemVersion): isUpdateAvailable is
        false then, and downloadUpdate would refuse it. */
@@ -671,6 +718,8 @@ export class AppUpdateController {
     u.autoDownload = false;
     u.autoInstallOnAppQuit = false;
     u.allowPrerelease = false;
+    // ATO-575: a beta is read from the feed's beta*.yml. Setting `channel` lets electron-updater downgrade; it never should here.
+    if (this.prefs.beta) readChannel(u, "beta");
     u.allowDowngrade = false;
     u.logger = {
       info: (m?: unknown) => console.log(`[updater] ${String(m)}`),
@@ -723,6 +772,20 @@ export class AppUpdateController {
     }
     this.toast = false;
     this.downloadError = null;
+    this.emit();
+    return this.state();
+  }
+
+  /**
+   * ATO-575: Settings' beta switch. Back to stable keeps the beta build until
+   * a stable one is newer (no downgrade). The next check reads the new channel.
+   */
+  setBeta(on: boolean): UpdateState {
+    this.prefs.beta = on;
+    writeUpdatePrefs(this.prefs);
+    if (this.updater) {
+      readChannel(this.updater, on ? "beta" : this.channel);
+    }
     this.emit();
     return this.state();
   }

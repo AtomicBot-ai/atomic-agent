@@ -950,13 +950,12 @@ describe("parseUserConfigFile", () => {
     ).toThrow(/localModels.mode/);
   });
 
-  it("rejects unknown localModels.managed.modelId", () => {
-    expect(() =>
-      parseUserConfigFile({
-        version: USER_CONFIG_VERSION,
-        localModels: { managed: { modelId: "glm-4.7-flash-30b" } },
-      }),
-    ).toThrow(/localModels.managed.modelId/);
+  it("ATO-1239: an unknown localModels.managed.modelId (a newer app's model) reads as no model selected", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { modelId: "glm-4.7-flash-30b" } },
+    });
+    expect(parsed.localModels.managed.modelId).toBeNull();
   });
 
   it("defaults localModels.managed.device to 'auto'", () => {
@@ -984,11 +983,16 @@ describe("parseUserConfigFile", () => {
     expect(parsed.localModels.managed.backendVariant).toBe("cpu");
   });
 
-  it("rejects an unknown localModels.managed.backendVariant", () => {
+  it("ATO-1239: an unknown localModels.managed.backendVariant reads as the default; a wrong type is rejected", () => {
+    const parsed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      localModels: { managed: { backendVariant: "opencl" } },
+    });
+    expect(parsed.localModels.managed.backendVariant).toBe("auto");
     expect(() =>
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
-        localModels: { managed: { backendVariant: "opencl" } },
+        localModels: { managed: { backendVariant: 7 } },
       }),
     ).toThrow(/localModels.managed.backendVariant/);
   });
@@ -1630,8 +1634,39 @@ describe("parseUserConfigFile", () => {
     const parsed = parseUserConfigFile({ version: 66 });
     expect(parsed.version).toBe(USER_CONFIG_VERSION);
     expect(parsed.tools).toEqual({
-      shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3 },
+      shell: {
+        defaultTimeoutMs: 600_000,
+        jobMaxMs: 3_600_000,
+        maxJobs: 3,
+        envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
+      },
+      screen: { enabled: false },
     });
+  });
+
+  it("parses tools.shell.envPassthrough, defaulting to the skills' tokens only (ATO-347)", () => {
+    expect(USER_CONFIG_DEFAULTS.tools.shell.envPassthrough).toEqual([
+      "GITHUB_TOKEN",
+      "NOTION_API_KEY",
+    ]);
+    const none = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { envPassthrough: [] } },
+    });
+    expect(none.tools.shell.envPassthrough).toEqual([]);
+    const listed = parseUserConfigFile({
+      version: USER_CONFIG_VERSION,
+      tools: { shell: { envPassthrough: ["NPM_TOKEN"] } },
+    });
+    expect(listed.tools.shell.envPassthrough).toEqual(["NPM_TOKEN"]);
+    for (const value of ["GITHUB_TOKEN", [""], [1], true]) {
+      expect(() =>
+        parseUserConfigFile({
+          version: USER_CONFIG_VERSION,
+          tools: { shell: { envPassthrough: value } },
+        }),
+      ).toThrow(/tools\.shell\.envPassthrough/);
+    }
   });
 
   it("preserves explicit tools.shell.jobMaxMs and maxJobs, and rejects non-positive ones", () => {

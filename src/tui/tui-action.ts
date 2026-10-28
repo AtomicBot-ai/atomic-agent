@@ -1,3 +1,4 @@
+import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -72,6 +73,11 @@ export type TuiAction =
   | { type: "approval_path_edit_changed"; value: string }
   /** Esc in the target field, or the decision that closed the prompt. */
   | { type: "approval_path_edit_closed" }
+  /**
+   * `ctrl+z` (or the button) on a prompt whose preview is cut: show the
+   * next page of the full command, back to the excerpt after the last.
+   */
+  | { type: "approval_preview_paged" }
   /** The composer gained or lost a text selection (drives Ctrl+C's meaning). */
   | { type: "composer_selection_changed"; hasSelection: boolean }
   /** Right-click on a text surface: open the cut/copy/paste menu there. */
@@ -111,6 +117,12 @@ export type TuiAction =
   /** Any other key, or the turn ending: forget the pending Esc. */
   | { type: "abort_disarmed" }
   | { type: "input_changed"; value: string }
+  /**
+   * `/enhance` came back: put `value` in the composer, but only while it
+   * still holds `expected` (the draft that was sent). An edit made while
+   * the rewrite ran wins, and the notice says the rewrite was dropped.
+   */
+  | { type: "composer_draft_replaced"; expected: string; value: string }
   /**
    * Orchestrator acknowledges a chat message submission: we wipe step/feed
    * state for the new turn, keep history and metrics cumulative, and flip
@@ -337,6 +349,10 @@ export type TuiAction =
   | { type: "update_available"; current: string; latest: string }
   /** User declined the update offer (or it was otherwise cleared). */
   | { type: "update_dismissed" }
+  /** The opened folder ships project skills or instruction files nobody trusted yet. */
+  | { type: "project_trust_asked"; prompt: ProjectTrustPrompt }
+  /** The trust question was answered or put off. */
+  | { type: "project_trust_closed" }
   /** User accepted: the install script is now running. */
   | { type: "update_started" }
   /** The install script settled. */

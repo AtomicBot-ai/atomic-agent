@@ -122,6 +122,15 @@ export interface CompletionRequest {
    * fan-out for its workers.
    */
   reasoningEffort?: ReasoningEffort;
+  /**
+   * Ask the server to skip the reasoning channel for this request
+   * (`chat_template_kwargs: { enable_thinking: false }`). Sent only to an
+   * OpenAI-compatible server on a local or private-network address, where
+   * the field is the chat template's own; strict cloud APIs reject
+   * unknown fields, so every other provider ignores it. Never serialized
+   * under this name. Context compaction sets it.
+   */
+  disableThinking?: boolean;
   seed?: number;
   repeatPenalty?: number;
   repeatLastN?: number;
@@ -151,6 +160,27 @@ export interface CompletionRequest {
    * they rely on `grammar` instead.
    */
   responseFormat?: ResponseFormatJsonSchema;
+  /**
+   * How far the server got through the prompt before the first token
+   * (ATO-1027): on a local model the first message can spend minutes
+   * here with nothing to show. llama-server only — when set, a stream
+   * asks for `return_progress` and calls this for each `prompt_progress`
+   * frame instead of yielding it. Never serialized; every other provider
+   * ignores it.
+   */
+  onPromptProgress?: (progress: PromptProgress) => void;
+}
+
+/**
+ * One llama.cpp `prompt_progress` frame: prompt tokens evaluated so far
+ * (`processed`, the cached ones included) out of `total`, of which
+ * `cached` came from the KV cache, and the evaluation time so far.
+ */
+export interface PromptProgress {
+  processed: number;
+  total: number;
+  cached: number;
+  elapsedMs: number;
 }
 
 /**
@@ -193,12 +223,25 @@ export interface CompletionTiming {
  * transcript lines seen when it was cut. Not a truncation and not a
  * provider failure: the completion is judged like one whose text was
  * detected as fabricated after it finished.
+ *
+ * `repetition`: a local model's reply fell into a loop, one block of
+ * `periodChars` characters repeated back to back
+ * (`createStreamRepetitionWatcher`), so the llama-server stream was
+ * aborted. The completion is marked `truncated`, and
+ * `detectModelFailure` reports it as a repetitive truncation: the step
+ * is retried without raising the cap.
  */
-export interface CompletionEarlyStop {
-  reason: "fabricated_transcript";
-  calls: number;
-  results: number;
-}
+export type CompletionEarlyStop =
+  | {
+      reason: "fabricated_transcript";
+      calls: number;
+      results: number;
+    }
+  | {
+      reason: "repetition";
+      channel: "content" | "reasoning";
+      periodChars: number;
+    };
 
 export interface CompletionResult {
   servedModelMode?: import("../model-mode.js").ResolvedModelMode;
@@ -215,6 +258,13 @@ export interface CompletionResult {
   /** Raw OpenAI tool_calls when transport is native_tools. */
   toolCalls?: ReadonlyArray<OpenAiToolCall>;
   finishReason?: string | null;
+  /**
+   * llama-server's own `stop_type` (`eos`, `word`, `limit`, `none`), as
+   * it sent it. Only the llama-server client sets it. `limit` with
+   * `finishReason: "length"` is a reply cut at `n_predict`; `limit` on a
+   * context overflow keeps `finishReason` unset.
+   */
+  stopType?: string;
   /** Set when the runtime cut the completion short. See `CompletionEarlyStop`. */
   earlyStop?: CompletionEarlyStop;
   /**

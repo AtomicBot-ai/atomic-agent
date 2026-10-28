@@ -104,6 +104,7 @@ import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
+import { ProjectTrustModal } from "./project-trust/project-trust-modal.js";
 import { UpdateIndicator } from "./update/update-indicator.js";
 import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
@@ -292,6 +293,10 @@ export interface TuiAppCallbacks {
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
   onCompactionRequested?(verb: "run" | "show"): void;
+  /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */
+  onPromptEnhanceRequested?(draft: string): void;
+  /** Idle Esc: stop a running `/enhance` (no-op when none is running). */
+  onPromptEnhanceCancel?(): void;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */
@@ -404,6 +409,11 @@ export interface TuiAppCallbacks {
   onLocalModelsDaemonStartRequested?(): void | Promise<void>;
   /** Ask the orchestrator to stop the llama-server daemon. */
   onLocalModelsDaemonStopRequested?(): void | Promise<void>;
+  /**
+   * The chat route moved to a cloud model: stop only the chat daemon and
+   * keep the embedding one, so memory search keeps working (ATO-376).
+   */
+  onLocalModelsChatStopForCloudRequested?(): void | Promise<void>;
   /**
    * Bounce a wedged llama-server: stop the chat daemon and start it
    * again. Distinct from stop-then-start by hand, which also tears down
@@ -751,6 +761,8 @@ export interface TuiAppCallbacks {
   onImportExecute?(form: ImportFormState): void;
   /** Startup self-update: user accepted the offer — run `install.sh`. */
   onUpdateConfirmed?(): void;
+  /** Startup folder trust question answered (ATO-298). */
+  onProjectTrustAnswered?(answer: "trust" | "decline"): void;
   /** Self-update settled: user pressed a key to re-exec the new binary. */
   onUpdateRestart?(): void;
   /**
@@ -1702,6 +1714,10 @@ export function TuiApp({
     // and the half-typed message with it — was a trap: no hint strip ever
     // advertised it, while Ctrl+C deliberately asks twice. Quitting stays
     // on Ctrl+C twice and `/quit`; Esc clears the draft first.
+    // Idle Esc is also the cancel for a running `/enhance`: it never
+    // reaches `onAbort`, so without this the rewrite kept running after
+    // the draft it was for had been cleared.
+    callbacks.onPromptEnhanceCancel?.();
     if (state.inputValue.length > 0) {
       dispatch({ type: "input_changed", value: "" });
       return;
@@ -2378,6 +2394,15 @@ export function TuiApp({
                       onPathCancel={() =>
                         dispatch({ type: "approval_path_edit_closed" })
                       }
+                      previewPage={
+                        state.approvalPreviewPage?.approvalId ===
+                        state.pendingApproval.approvalId
+                          ? state.approvalPreviewPage.page
+                          : null
+                      }
+                      onPreviewPage={() =>
+                        dispatch({ type: "approval_preview_paged" })
+                      }
                     />
                   </Box>
                 ) : null}
@@ -2411,6 +2436,11 @@ export function TuiApp({
                     <TasksCancelModal
                       confirm={state.tasksPanel.cancelConfirm}
                     />
+                  </Box>
+                ) : null}
+                {state.projectTrustPrompt ? (
+                  <Box flexShrink={0}>
+                    <ProjectTrustModal prompt={state.projectTrustPrompt} />
                   </Box>
                 ) : null}
                 {state.updatePrompt ? (

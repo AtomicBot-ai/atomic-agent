@@ -1,4 +1,5 @@
 import type { BatchLoopSignal, BatchCallInput, BatchExecutionContext, BatchExecutionResult, BatchCallResult } from "./batch-contract.js";
+import { refuseUnregisteredTool } from "../policies/unknown-tool.js";
 import { refuseBeforeDispatch, skillAlreadyLoadedResult, runFinalStepGate, runPlanModeGate, runFusionOrchestratorGate, runSyncLoopGate, observeReadCoverage } from "./batch-gates.js";
 
 
@@ -14,6 +15,7 @@ import { describeArgumentError } from "../../tools/argument-error-hint.js";
 
 
 import { CancelledError } from "../../llm/index.js";
+import { ERROR_CODE_PATTERN } from "../tool-log-fields.js";
 import {
   runWithApprovalLedger,
   type ToolApprovalRecord,
@@ -135,6 +137,18 @@ export async function executeBatch(
       });
       continue;
     }
+    // A name the registry does not hold gets an error result naming the
+    // closest real tools instead of ending the turn (`unknown-tool.ts`).
+    // Like the plan-mode refusal below, it never spends a slot in the
+    // loop tracker; the step's unknown-tool streak bounds a model that
+    // keeps guessing.
+    const unregistered = refuseUnregisteredTool(input.call.tool, registry, ctx.toolSet);
+    if (unregistered !== null) {
+      ctx.onCallStarted?.({ batchIndex: input.batchIndex, batchSize });
+      slots[input.batchIndex] = { ...slots[input.batchIndex]!, compressed: unregistered, durationMs: 0 };
+      ctx.onCallFinished?.({ batchIndex: input.batchIndex, batchSize, result: unregistered, durationMs: 0 });
+      continue;
+    }
     // Plan mode next: a call that is not going to run should not spend
     // a slot in the loop tracker's history either. Recording it would
     // let a refused-and-retried tool trip the loop breaker, and end the
@@ -241,6 +255,7 @@ export async function executeBatch(
           ? { userGroundingTexts: ctx.userGroundingTexts }
           : {}),
         ...(ctx.providerId !== undefined ? { providerId: ctx.providerId } : {}),
+        ...(ctx.tracker ? { fileVersions: ctx.tracker.fileVersions } : {}),
       });
     } catch (err) {
       if (ctx.signal.aborted) {
@@ -270,6 +285,7 @@ export async function executeBatch(
         output: hint?.message ?? cause.message,
         details: {
           errorName: cause.name,
+          ...errorCodeOf(cause),
           ...(hint !== null
             ? {
                 receivedKeys: hint.receivedKeys,
@@ -375,9 +391,13 @@ export async function executeBatch(
       continue;
     }
     // Serialised group: process in batch-index order. Aborts skip the
-    // tail and mark remaining calls as cancelled.
+    // tail and mark remaining calls as cancelled. A call the operator did
+    // not approve stops the rest of its group: browser calls ask from
+    // inside a serialised group (`browser_commit` / `browser_secret`), and
+    // `[type password (denied), click "Sign in"]` must not click.
     groupTasks.push(
       (async (): Promise<void> => {
+        let deniedBy: BatchCallInput | null = null;
         for (const call of calls) {
           if (ctx.signal.aborted) {
             slots[call.batchIndex] = {
@@ -386,8 +406,25 @@ export async function executeBatch(
             };
             continue;
           }
+          if (deniedBy !== null) {
+            const notRun = notRunAfterDenialResult(call.call, deniedBy, batchSize);
+            ctx.onCallStarted?.({ batchIndex: call.batchIndex, batchSize });
+            slots[call.batchIndex] = {
+              ...slots[call.batchIndex]!,
+              compressed: notRun,
+              durationMs: 0,
+            };
+            ctx.onCallFinished?.({
+              batchIndex: call.batchIndex,
+              batchSize,
+              result: notRun,
+              durationMs: 0,
+            });
+            continue;
+          }
           try {
             await invokeOne(call);
+            if (wasNotApproved(slots[call.batchIndex]!.compressed)) deniedBy = call;
           } catch (err) {
             // CancelledError: stop the rest of this group and re-throw
             // upward so the agent loop's outer catch picks it up.
@@ -452,6 +489,39 @@ export async function executeBatch(
 }
 
 /**
+ * True when the call asked and was not approved: the approval ledger
+ * holds a denial, or the gate refused it (`ApprovalDeniedError`). The
+ * same reading `step-batch-policy.ts` uses for its approval barriers.
+ */
+export function wasNotApproved(result: CompressedToolResult | undefined): boolean {
+  if (result === undefined) return false;
+  if (result.approvals?.some((record) => record.verdict === "denied")) return true;
+  return (
+    result.details.errorName === "ApprovalDeniedError" ||
+    result.details.approvalDenied === true
+  );
+}
+
+/** The result a call gets when an earlier call in its group was not approved. */
+function notRunAfterDenialResult(
+  call: ToolCallPayload,
+  deniedBy: BatchCallInput,
+  batchSize: number,
+): CompressedToolResult {
+  return compressToolResult({
+    tool: call.tool,
+    status: "error",
+    output: `not run: it came after \`${deniedBy.call.tool}\` (call ${deniedBy.batchIndex + 1} of ${batchSize}) in the same batch, and that call was not approved`,
+    details: {
+      notRun: true,
+      blockedBy: deniedBy.call.tool,
+      blockedByIndex: deniedBy.batchIndex,
+      blockedCause: "not_approved",
+    },
+  });
+}
+
+/**
  * Helper: turn a parsed `ToolCallPayload[]` into the `BatchCallInput[]`
  * shape `executeBatch` expects, computing each call's resource class.
  * Index assignment matches the model's emit order.
@@ -464,4 +534,16 @@ export function toBatchInputs(
     call,
     resourceClass: resourceClassFor(call.tool),
   }));
+}
+
+/**
+ * A thrown error's code-style code (`ENOENT`, `EACCES`), kept so the
+ * log names what failed without parsing the message. Anything that does
+ * not look like such a code is left out.
+ */
+function errorCodeOf(cause: Error): { errorCode?: string } {
+  const code = (cause as NodeJS.ErrnoException).code;
+  return typeof code === "string" && ERROR_CODE_PATTERN.test(code)
+    ? { errorCode: code }
+    : {};
 }

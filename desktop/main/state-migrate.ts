@@ -33,7 +33,9 @@
  *                       ATOMIC_AGENT_LLAMA_API_KEY (envNameCrosses)
  *   sessions/memory/tasks.sqlite
  *                       a consistent snapshot when the shared side has no
- *                       such database; otherwise the agent's own importer,
+ *                       such database, with a chat turn or task run left
+ *                       live ended the way the importer ends one
+ *                       (copied-db-cleanup.ts); otherwise the agent's own importer,
  *                       `atag import atomic-desktop --source <old> --json`,
  *                       which merges rows and is idempotent
  *   skills/             skill folders the shared side lacks
@@ -103,6 +105,9 @@ import { isAbsolute, join, resolve, sep } from "node:path";
 import { daemonPidsIn, dotenvSet, normaliseLlmBlock, providerHasKey, type KeyEnvNames, type ProviderEntry } from "./agent-cli.js";
 import { parseDotenv } from "./tui-import.js";
 import { agentAnalyticsEnv } from "./analytics/environment.js";
+import { cleanCopiedDatabase } from "./copied-db-cleanup.js";
+import { expandHome, trimTrailingSep } from "./platform.js";
+import { pidFileOwnerAlive, pidFileText, processStartOf, recordedStart } from "./process-start.js";
 
 /* Local names for the two directories, so this file merges cleanly with the
    ATO-416 change to state-dir.ts (which makes ~/.atomic-agent the default and
@@ -137,6 +142,12 @@ export interface MigrateDeps {
   reapServe: (serveJsonPath: string) => void;
   pidAlive: (pid: number) => boolean;
   now: () => number;
+  /**
+   * ATO-418: a process's start time (process-start.ts), recorded in the merge
+   * lock next to the pid so a reused pid does not hold the lock. Absent, or
+   * null for a pid (Windows), means the pid alone decides, as before.
+   */
+  processStartOf?: (pid: number) => string | null;
 }
 
 export interface ImporterReport {
@@ -168,6 +179,11 @@ export interface StateMergeRecord {
     filesCopied: number;
     tracesMoved: number;
     modelsMoved: number;
+    /** ATO-418: traces / model folders a move failed for (EXDEV, EBUSY, EPERM); still in the old directory. */
+    tracesNotMoved?: number;
+    modelsNotMoved?: number;
+    /** ATO-418: chats ended as interrupted and tasks put back to pending in a database copied as is. */
+    runsEnded?: number;
   };
   imported: ImporterReport | null;
   /** Set when the desktop's settings could not be merged (the run still finished). */
@@ -189,6 +205,28 @@ function samePath(a: string, b: string): boolean {
   return process.platform === "win32" ? ra.toLowerCase() === rb.toLowerCase() : ra === rb;
 }
 
+/**
+ * ATO-418: do two spellings name one state directory? A leading `~` is
+ * expanded, trailing separators do not count, and where both exist their
+ * real paths are compared, so a symlinked spelling of the same folder
+ * counts as the same. Windows compares case-insensitively.
+ */
+export function sameStateDir(a: string, b: string, home: string = homedir()): boolean {
+  const norm = (p: string): string => {
+    const raw = p.trim();
+    const expanded = raw === "~" ? home : expandHome(process.platform, raw, home);
+    return resolve(trimTrailingSep(process.platform, expanded));
+  };
+  const na = norm(a);
+  const nb = norm(b);
+  if (samePath(na, nb)) return true;
+  try {
+    return samePath(realpathSync(na), realpathSync(nb));
+  } catch {
+    return false;
+  }
+}
+
 export function readMergeMarker(targetDir: string): StateMergeRecord | null {
   try {
     const parsed = JSON.parse(readFileSync(join(targetDir, MERGE_MARKER), "utf8")) as unknown;
@@ -201,6 +239,12 @@ export function readMergeMarker(targetDir: string): StateMergeRecord | null {
 /**
  * Whether this launch should try the merge, and if not, why. Pure apart from
  * the existence checks, so the smoke can walk its whole table.
+ *
+ * `fromEnv` says the environment named the directory. ATO-418: that holds
+ * the merge back only when the named directory is NOT the shared one. An
+ * `ATOMIC_AGENT_STATE_DIR` that names `~/.atomic-agent` itself (set through
+ * launchctl, say) still runs the desktop on the shared directory, so the old
+ * desktop data must still come over.
  */
 export function mergeGate(input: {
   currentDir: string;
@@ -208,7 +252,9 @@ export function mergeGate(input: {
   legacyDir: string;
   fromEnv: boolean;
 }): { run: boolean; reason: string } {
-  if (input.fromEnv) return { run: false, reason: "the state directory was named by the environment" };
+  if (input.fromEnv && !sameStateDir(input.currentDir, input.sharedDir)) {
+    return { run: false, reason: "the state directory was named by the environment" };
+  }
   if (!samePath(input.currentDir, input.sharedDir)) return { run: false, reason: "this app does not run on the shared directory" };
   if (samePath(input.legacyDir, input.sharedDir)) return { run: false, reason: "the old and the shared directory are the same" };
   if (!existsSync(join(input.legacyDir, "config.json"))) return { run: false, reason: "no earlier desktop setup" };
@@ -449,8 +495,12 @@ function nodeSqlite(): NodeSqlite | null {
  * folded in, and it is synchronous, which the boot path needs (the async
  * `backup()` is not). The source is opened read-only; a busy writer is
  * waited on for five seconds. Throws when it cannot copy.
+ *
+ * `beforePublish` (ATO-418) runs on the finished private copy before it is
+ * renamed into place, so nothing can open the copy before it is cleaned.
+ * It does not run on the plain file copy used when node:sqlite is missing.
  */
-export function sqliteSnapshot(src: string, dst: string): void {
+export function sqliteSnapshot(src: string, dst: string, beforePublish?: (copy: string) => void): void {
   const part = `${dst}.part`;
   rmSync(part, { force: true });
   const sq = nodeSqlite();
@@ -474,6 +524,14 @@ export function sqliteSnapshot(src: string, dst: string): void {
       }
     }
     if (lastErr) throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+    if (beforePublish) {
+      try {
+        beforePublish(part);
+      } catch (err) {
+        rmSync(part, { force: true });
+        throw err;
+      }
+    }
     renameSync(part, dst);
     return;
   }
@@ -483,11 +541,16 @@ export function sqliteSnapshot(src: string, dst: string): void {
   if (existsSync(`${src}-wal`)) copyFileSync(`${src}-wal`, `${dst}-wal`);
 }
 
-/** Move each entry of `fromDir` the destination lacks, except the `pinned` ones. */
-function moveMissing(fromDir: string, toDir: string, warnings: string[], what: string, pinned: Set<string>): number {
+/**
+ * Move each entry of `fromDir` the destination lacks, except the `pinned`
+ * ones. Counts the moves, and the entries a move failed for (ATO-418: the
+ * notice says so, not only the log).
+ */
+function moveMissing(fromDir: string, toDir: string, warnings: string[], what: string, pinned: Set<string>): { moved: number; failed: number } {
   let moved = 0;
+  let failed = 0;
   const names = entries(fromDir).filter((n) => !n.startsWith("."));
-  if (names.length === 0) return 0;
+  if (names.length === 0) return { moved, failed };
   mkdirSync(toDir, { recursive: true });
   for (const name of names) {
     const dst = join(toDir, name);
@@ -500,9 +563,10 @@ function moveMissing(fromDir: string, toDir: string, warnings: string[], what: s
       // Copying gigabytes here would hold the launch for minutes, so it is
       // left where it is and said.
       warnings.push(`${what} ${name} was not moved (${(err as NodeJS.ErrnoException).code ?? String(err)}); it is still in ${fromDir}`);
+      failed++;
     }
   }
-  return moved;
+  return { moved, failed };
 }
 
 /* ------------------------------------------------------------- the run --- */
@@ -519,6 +583,7 @@ function emptyRecord(legacyDir: string, targetDir: string, attempts: number, at:
     counts: {
       providersAdded: 0, keysFilled: 0, mcpServersAdded: 0, customModelsAdded: 0, envKeysAdded: 0,
       databasesCopied: [], skillsCopied: 0, filesCopied: 0, tracesMoved: 0, modelsMoved: 0,
+      tracesNotMoved: 0, modelsNotMoved: 0, runsEnded: 0,
     },
     imported: null,
     warnings: [],
@@ -661,7 +726,16 @@ function migrateLocked(legacyDir: string, targetDir: string, deps: MigrateDeps):
       if (!existsSync(src)) continue;
       const dst = join(targetDir, db);
       if (existsSync(dst)) { both.push(db); continue; }
-      sqliteSnapshot(src, dst);
+      // ATO-418: the importer ends a turn or a task run that was live in the
+      // old directory (its process is gone); a copy as is must do the same,
+      // or a chat shows "running" for ever and a task stays claimed.
+      sqliteSnapshot(src, dst, (copy) => {
+        try {
+          record.counts.runsEnded = (record.counts.runsEnded ?? 0) + cleanCopiedDatabase(copy, db);
+        } catch (err) {
+          w.push(`${db} was copied, but its unfinished chats and tasks could not be reset: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      });
       record.counts.databasesCopied.push(db);
     }
     if (!nodeSqlite() && record.counts.databasesCopied.length > 0) w.push("node:sqlite was not available; the databases were copied as files");
@@ -712,7 +786,9 @@ function migrateLocked(legacyDir: string, targetDir: string, deps: MigrateDeps):
     // 7. The two moves, last: traces, then the weights. A model folder a
     //    custom model was registered from (its `localPath`) stays where that
     //    path points.
-    record.counts.tracesMoved = moveMissing(join(legacyDir, "traces"), join(targetDir, "traces"), w, "trace", new Set());
+    const traces = moveMissing(join(legacyDir, "traces"), join(targetDir, "traces"), w, "trace", new Set());
+    record.counts.tracesMoved = traces.moved;
+    record.counts.tracesNotMoved = traces.failed;
     const targetModels = join(dataDirOf(readJson(join(targetDir, "config.json")), targetDir), "models");
     if (isSymlink(legacyModels)) {
       // The r5 seed linked the old weights folder to the shared one: nothing to move.
@@ -720,7 +796,9 @@ function migrateLocked(legacyDir: string, targetDir: string, deps: MigrateDeps):
       // A folder the operator chose (dataDirOverride) is theirs, not the old directory's: left alone.
       w.push(`the desktop's models are in ${legacyModels}, a folder of your own; they were left there`);
     } else if (isDir(legacyModels) && !sameRealPath(legacyModels, targetModels)) {
-      record.counts.modelsMoved = moveMissing(legacyModels, targetModels, w, "model", pinnedModelFolders(legacyCfgRaw, legacyModels));
+      const models = moveMissing(legacyModels, targetModels, w, "model", pinnedModelFolders(legacyCfgRaw, legacyModels));
+      record.counts.modelsMoved = models.moved;
+      record.counts.modelsNotMoved = models.failed;
     }
 
     if (importFailure) throw importFailure;
@@ -803,16 +881,24 @@ function takeMergeLock(targetDir: string, deps: MigrateDeps): { ok: true } | { o
   try {
     mkdirSync(targetDir, { recursive: true, mode: 0o700 });
   } catch { /* the write below says why */ }
+  // ATO-418: the lock records this process's start next to its pid, so a
+  // lock left by a crash is not held by whatever process gets that pid next.
+  const startOf = deps.processStartOf ?? (() => null);
   for (let turn = 0; turn < 2; turn++) {
     try {
-      writeFileSync(path, String(process.pid), { flag: "wx" });
+      writeFileSync(path, pidFileText(process.pid, startOf(process.pid)), { flag: "wx" });
       return { ok: true };
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "EEXIST") return { ok: false, reason: `could not take the merge lock: ${String(err)}` };
     }
     let pid = NaN;
-    try { pid = Number.parseInt(readFileSync(path, "utf8").trim(), 10); } catch { /* unreadable: stale */ }
-    if (Number.isInteger(pid) && pid > 1 && pid !== process.pid && deps.pidAlive(pid)) {
+    let start: string | null = null;
+    try {
+      const text = readFileSync(path, "utf8");
+      pid = Number.parseInt(text.trim(), 10);
+      start = recordedStart(text);
+    } catch { /* unreadable: stale */ }
+    if (Number.isInteger(pid) && pid > 1 && pid !== process.pid && pidFileOwnerAlive(pid, start, deps.pidAlive, startOf)) {
       return { ok: false, reason: `another launch (pid ${pid}) is merging right now` };
     }
     try { rmSync(path, { force: true }); } catch { /* the retry says why */ }
@@ -950,7 +1036,10 @@ export function stateMergeLogLine(r: StateMergeRecord): string {
     `${c.skillsCopied} skills`,
     `${c.modelsMoved} models moved`,
     `${c.tracesMoved} traces moved`,
+    c.modelsNotMoved ? `${c.modelsNotMoved} models not moved` : "",
+    c.tracesNotMoved ? `${c.tracesNotMoved} traces not moved` : "",
     c.databasesCopied.length ? `copied ${c.databasesCopied.join(", ")}` : "",
+    c.runsEnded ? `${c.runsEnded} unfinished chats or tasks reset` : "",
     imp ? `imported ${imp.sessions?.imported ?? 0} chats, ${imp.tasks?.imported ?? 0} tasks, ${imp.notes?.imported ?? 0} notes, ${imp.profileFacts?.imported ?? 0} profile facts` : "",
   ].filter(Boolean);
   return `[desktop] state: merged ${r.legacyDir} into ${r.targetDir} (${parts.join("; ")})`
@@ -993,14 +1082,42 @@ export function stateMergeNoticeFor(r: StateMergeRecord): StateMergeNotice {
       log: stateMergeLogLine(r),
     };
   }
-  const backup = r.mode === "merge" && r.backupDir ? r.backupDir : r.legacyDir;
   return {
     title: "Your desktop data moved",
     text: `Your desktop chats, memory and settings now live with the terminal agent in ${tilde(r.targetDir)}. `
-      + `A backup of the earlier files is in ${tilde(backup)}.`
+      + earlierFilesSentence(r)
+      + notMovedSentence(r)
       + (r.settingsSkipped ? ` Your desktop settings were not merged, because ${r.settingsSkipped}; they are still in ${tilde(r.legacyDir)}.` : ""),
     log: stateMergeLogLine(r),
   };
+}
+
+/**
+ * Where the earlier files are. A merge backed up the shared directory first,
+ * and that is the backup. A copy left the old directory as it was, except
+ * (ATO-418) the model files and traces it moved out: then the old directory
+ * is no longer a whole backup and is not called one.
+ */
+function earlierFilesSentence(r: StateMergeRecord): string {
+  if (r.mode === "merge" && r.backupDir) return `A backup of the earlier files is in ${tilde(r.backupDir)}.`;
+  const moved = [
+    r.counts.modelsMoved > 0 ? "model files" : "",
+    r.counts.tracesMoved > 0 ? "traces" : "",
+  ].filter(Boolean);
+  if (moved.length === 0) return `A backup of the earlier files is in ${tilde(r.legacyDir)}.`;
+  return `Your earlier files are still in ${tilde(r.legacyDir)}, except the ${moved.join(" and ")}, which were moved to ${tilde(r.targetDir)}.`;
+}
+
+/** ATO-418: a move that failed is said in the window, not only in the log. */
+function notMovedSentence(r: StateMergeRecord): string {
+  const models = r.counts.modelsNotMoved ?? 0;
+  const traces = r.counts.tracesNotMoved ?? 0;
+  if (models + traces === 0) return "";
+  const what = [
+    models > 0 ? `${models} ${models === 1 ? "model folder" : "model folders"}` : "",
+    traces > 0 ? `${traces} ${traces === 1 ? "trace" : "traces"}` : "",
+  ].filter(Boolean).join(" and ");
+  return ` ${what} could not be moved and ${models + traces === 1 ? "is" : "are"} still in ${tilde(r.legacyDir)}. The Diagnostics log has the details.`;
 }
 
 /**
@@ -1070,6 +1187,7 @@ export function runDesktopStateMigrationAtBoot(
         }
       },
       now: () => Date.now(),
+      processStartOf: (pid) => processStartOf(pid),
     });
     if (outcome.ran) console.error(stateMergeLogLine(outcome.record));
     else console.error(`[desktop] state: merge of ${legacyDir} postponed: ${outcome.reason}`);

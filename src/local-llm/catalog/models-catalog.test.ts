@@ -13,13 +13,20 @@ import {
   getLocalModelDef,
   isKnownEmbeddingModelId,
   LOCAL_MODELS_CATALOG,
+  STARTER_LOCAL_MODEL_ID,
 } from "./models-catalog.js";
 
 describe("models-catalog", () => {
-  it("has exactly 13 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
-    expect(LOCAL_MODELS_CATALOG.length).toBe(13);
+  it("has exactly 14 Qwen+Gemma+Nemotron+Muse models with unique ids", () => {
+    expect(LOCAL_MODELS_CATALOG.length).toBe(14);
     const ids = new Set(LOCAL_MODELS_CATALOG.map((m) => m.id));
-    expect(ids.size).toBe(13);
+    expect(ids.size).toBe(14);
+  });
+
+  it("names a small starter that is never auto-recommended (ATO-1041)", () => {
+    const starter = getLocalModelDef(STARTER_LOCAL_MODEL_ID);
+    expect(starter.fileSizeGb).toBeLessThan(1.5);
+    expect(starter.recommendRank).toBeUndefined();
   });
 
   it("defaults to qwen-3.5-4b", () => {
@@ -64,7 +71,7 @@ describe("models-catalog", () => {
 
   it("omits mmproj fields on text-only catalog entries", () => {
     const textOnly = LOCAL_MODELS_CATALOG.filter((m) => !m.supportsVision);
-    expect(textOnly.map((m) => m.id)).toEqual(["nemotron-3.5-30b-a3b"]);
+    expect(textOnly.map((m) => m.id)).toEqual(["qwen-3.5-2b", "nemotron-3.5-30b-a3b"]);
     for (const def of textOnly) {
       expect(def.mmprojUrl).toBeUndefined();
       expect(def.mmprojFilename).toBeUndefined();
@@ -98,6 +105,11 @@ describe("models-catalog", () => {
     expect(last?.id).toBe("qwen-3.8-27b-uncensored");
     expect(last?.uncensored).toBe(true);
     expect(last?.tag).toBe("Use at your own risk");
+    // U-12: one spelling across the catalog and the desktop picker, and a
+    // plain note on what "uncensored" means.
+    expect(last?.name).toBe("Qwen 3.8 27B Uncensored GGUF");
+    expect(last?.description).toBe("Reduced-refusal Qwen 3.8 27B (abliterated)");
+    expect(last?.note).toBe("Fewer safety refusals: it may answer requests other models decline.");
     // noMTP on purpose: the fused quants carry an inline MTP head the
     // daemon has no --model-draft wiring for; noMTP is plain GGUF.
     expect(last?.filename).toBe("Qwen3.8-27B-Uncensored-noMTP-Q4_K_M.gguf");
@@ -111,10 +123,18 @@ describe("models-catalog", () => {
   // Every uncensored entry must carry a warning tag — the onboarding row
   // surfaces exactly that string, and a tagless uncensored entry would
   // reach the first-run screen with no caution at all.
-  it("ships a warning tag on every uncensored entry", () => {
+  it("ships a warning tag and a plain note on every uncensored entry", () => {
     for (const def of LOCAL_MODELS_CATALOG) {
       if (def.uncensored !== true) continue;
       expect(def.tag, `${def.id} must warn the operator`).toBeTruthy();
+      expect(def.note, `${def.id} must say what uncensored means`).toBeTruthy();
+    }
+  });
+
+  it("spells every Qwen entry name the same way", () => {
+    for (const def of LOCAL_MODELS_CATALOG) {
+      if (def.family !== "qwen") continue;
+      expect(def.name, def.id).toMatch(/^Qwen \d/);
     }
   });
 

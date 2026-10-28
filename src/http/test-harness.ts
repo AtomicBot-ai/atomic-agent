@@ -18,6 +18,7 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -46,6 +47,12 @@ export class FakeBrowserBackend implements BrowserBackend {
   async shutdown(): Promise<void> {}
   async hasRef(): Promise<boolean> {
     return false;
+  }
+  async describeRef(): Promise<RefDescription | null> {
+    return null;
+  }
+  async currentUrl(): Promise<string> {
+    return "https://example.com/";
   }
   async snapshot(): Promise<AriaSnapshot> {
     return {
@@ -85,7 +92,7 @@ export interface HarnessOptions {
    * Point `localModels.url` at a specific server so llama health probes
    * are deterministic — e.g. a stub that answers `/health`, or a port
    * that is known to be closed. Without this the probe hits the config
-   * default (127.0.0.1:8080), which may or may not be occupied on the
+   * default (127.0.0.1:9931), which may or may not be occupied on the
    * machine running the tests.
    */
   localModelsUrl?: string;

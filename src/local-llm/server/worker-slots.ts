@@ -161,6 +161,13 @@ export interface WorkerSlotsInput {
    * thing `local` and `cloud` modes can mean.
    */
   localLegRole?: LocalLegRole;
+  /**
+   * A lower ceiling than {@link MAX_AUTO_SLOTS} for this launch — an
+   * auto window on a GPU with its own memory (`GPU_AUTO_MAX_SLOTS` /
+   * `GPU_GROWING_MAX_SLOTS` in `context-growth.ts`). Only the derived count reads it; a pinned
+   * `parallel` is honoured as written.
+   */
+  maxSlots?: number;
 }
 
 /**
@@ -190,7 +197,11 @@ export function resolveWorkerSlots(input: WorkerSlotsInput): number {
   const ctx = input.contextSize;
   if (ctx === null || !Number.isFinite(ctx) || ctx <= 0) return DEFAULT_SLOTS;
   const fits = Math.floor(ctx / workerSlotFootprint(input.completionMaxTokens));
-  return Math.max(1, Math.min(fits, MAX_AUTO_SLOTS));
+  const ceiling =
+    typeof input.maxSlots === "number" && input.maxSlots >= 1
+      ? Math.min(Math.floor(input.maxSlots), MAX_AUTO_SLOTS)
+      : MAX_AUTO_SLOTS;
+  return Math.max(1, Math.min(fits, ceiling));
 }
 
 /**

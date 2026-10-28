@@ -17,6 +17,9 @@ vi.mock("../local-llm/index.js", async () => {
     startEmbeddingDaemon: vi.fn(),
     getEmbeddingDaemonStatus: vi.fn(),
     isEmbeddingModelDownloaded: vi.fn(),
+    holdEmbeddingForLowMemory: vi.fn(async () => ({ ok: true })),
+    stopDaemon: vi.fn(),
+    stopChatAndEmbeddingDaemons: vi.fn(),
   };
 });
 
@@ -54,6 +57,7 @@ import {
   runLocalModelsPull,
   runLocalModelsStart,
   runLocalModelsStartEmbedding,
+  runLocalModelsStop,
   runLocalModelsUpdate,
 } from "./models-handlers.js";
 
@@ -120,6 +124,17 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     await runLocalModelsStart();
     expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.throughputProbe).toBeUndefined();
   });
+  it("starts with a one-off context size without writing it to the config (ATO-334)", async () => {
+    prepareManagedWindowsInstall();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(new Error("test stop"));
+    const configured = getConfig().localModels.managed.contextSize;
+    await runLocalModelsStart({ interactive: true, contextSize: 65_536 });
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.contextSize).toBe(65_536);
+    // The next plain start is back on the configured window.
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockClear();
+    await runLocalModelsStart();
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.contextSize).toBe(configured);
+  });
   it("retries once on the CPU device and persists the variant", async () => {
     const dataDir = prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons)
@@ -155,6 +170,19 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     const stderr = stderrChunks.join("");
     expect(stderr).toContain("falling back to the CPU build");
     expect(stderr).toContain('recorded backendVariant "cpu"');
+  });
+
+  it("says once that the memory model was held back for low memory (ATO-379)", async () => {
+    prepareManagedWindowsInstall();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockResolvedValueOnce({
+      chat: { pid: 777 },
+      embedding: { skipped: true, lowMemory: true },
+    } as never);
+
+    await expect(runLocalModelsStart()).resolves.toBe(0);
+
+    const stdout = vi.mocked(process.stdout.write).mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(stdout.match(/^embedding: skipped \(low memory\) — Low memory: memory search uses keywords only\.$/gm)).toHaveLength(1);
   });
 
   it("does not fall back on a pre-spawn failure", async () => {
@@ -366,6 +394,7 @@ describe("runLocalModelsStartEmbedding", () => {
     vi.spyOn(process.stderr, "write").mockReturnValue(true);
     vi.mocked(localLlm.resolveManagedDevice).mockReset().mockResolvedValue(undefined);
     vi.mocked(localLlm.startEmbeddingDaemon).mockReset().mockResolvedValue({ pid: 4243 });
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockReset().mockResolvedValue({ ok: true });
     vi.mocked(localLlm.getEmbeddingDaemonStatus).mockReset().mockResolvedValue({
       running: false, pid: null, port: 19092, healthy: false, loading: false,
     });
@@ -420,6 +449,18 @@ describe("runLocalModelsStartEmbedding", () => {
     expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
   });
 
+  it("holds the memory model back on a machine with little memory (ATO-379)", async () => {
+    writeConfig(true);
+    vi.mocked(localLlm.holdEmbeddingForLowMemory).mockResolvedValue({
+      ok: false, reason: "total-ram", totalBytes: 4 * 1024 ** 3, freeBytes: 1024 ** 3,
+    });
+    await expect(runLocalModelsStartEmbedding()).resolves.toBe(0);
+    expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
+    // No chat daemon in this state dir: the cloud-route floor is asked for.
+    expect(localLlm.holdEmbeddingForLowMemory).toHaveBeenCalledWith(expect.any(String), { localChatRunning: false });
+    expect(stdoutChunks.join("")).toMatch(/^embedding: skipped \(low memory\) — Low memory: memory search uses keywords only\.$/m);
+  });
+
   it("exits 1 when the start fails", async () => {
     writeConfig(true);
     vi.mocked(localLlm.startEmbeddingDaemon).mockRejectedValue(new Error("port 19092 is already served"));
@@ -441,6 +482,91 @@ describe("runLocalModelsStartEmbedding", () => {
     await expect(runLocalModelsStartEmbedding()).resolves.toBe(1);
     expect(localLlm.startEmbeddingDaemon).not.toHaveBeenCalled();
     expect(stderr.mock.calls.map(([chunk]) => String(chunk)).join("")).toContain("atomic-agent models engine atomic-core");
+  });
+});
+
+/**
+ * ATO-376: `models stop --chat-only` is the cloud switch's stop. It keeps
+ * the embedding daemon when the operator wants one (switch on, catalog
+ * model, GGUF on disk) and never touches `memory.embeddings.enabled`.
+ */
+describe("runLocalModelsStop --chat-only", () => {
+  let stateDir: string;
+  let stdoutChunks: string[];
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-models-stop-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    resetConfigCache();
+    stdoutChunks = [];
+    vi.spyOn(process.stdout, "write").mockImplementation((chunk: unknown) => {
+      stdoutChunks.push(typeof chunk === "string" ? chunk : String(chunk));
+      return true;
+    });
+    vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    vi.mocked(localLlm.stopDaemon).mockReset().mockResolvedValue();
+    vi.mocked(localLlm.stopChatAndEmbeddingDaemons).mockReset().mockResolvedValue();
+    vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReset().mockReturnValue(true);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    resetConfigCache();
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  function writeConfig(enabled: boolean): void {
+    writeUserConfigFileSync(getUserConfigPath(stateDir), {
+      ...USER_CONFIG_DEFAULTS,
+      localModels: {
+        ...USER_CONFIG_DEFAULTS.localModels,
+        mode: "managed",
+        managed: { ...USER_CONFIG_DEFAULTS.localModels.managed, engine: "llama-server" },
+        embeddings: {
+          ...USER_CONFIG_DEFAULTS.localModels.embeddings,
+          enabled,
+          modelId: "nomic-embed-text-v1.5",
+        },
+      },
+      memory: {
+        ...USER_CONFIG_DEFAULTS.memory,
+        embeddings: { ...USER_CONFIG_DEFAULTS.memory.embeddings, enabled },
+      },
+    });
+    resetConfigCache();
+  }
+
+  it("stops only the chat daemon and keeps memory search on", async () => {
+    writeConfig(true);
+    await expect(runLocalModelsStop({ chatOnly: true })).resolves.toBe(0);
+    expect(localLlm.stopDaemon).toHaveBeenCalledTimes(1);
+    expect(localLlm.stopChatAndEmbeddingDaemons).not.toHaveBeenCalled();
+    expect(stdoutChunks.join("")).toMatch(/^stopped chat model; embedding model kept for memory search$/m);
+    expect(getConfig().memory.embeddings.enabled).toBe(true);
+  });
+
+  it("stops both when the embedding model is off or not downloaded", async () => {
+    writeConfig(false);
+    await expect(runLocalModelsStop({ chatOnly: true })).resolves.toBe(0);
+    writeConfig(true);
+    vi.mocked(localLlm.isEmbeddingModelDownloaded).mockReturnValue(false);
+    await expect(runLocalModelsStop({ chatOnly: true })).resolves.toBe(0);
+    expect(localLlm.stopChatAndEmbeddingDaemons).toHaveBeenCalledTimes(2);
+    expect(localLlm.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it("a plain stop still stops both", async () => {
+    writeConfig(true);
+    await expect(runLocalModelsStop()).resolves.toBe(0);
+    expect(localLlm.stopChatAndEmbeddingDaemons).toHaveBeenCalledTimes(1);
+    expect(localLlm.stopDaemon).not.toHaveBeenCalled();
+  });
+
+  it("exits 1 when the chat stop fails", async () => {
+    writeConfig(true);
+    vi.mocked(localLlm.stopDaemon).mockRejectedValue(new Error("pid 7 belongs to another user"));
+    await expect(runLocalModelsStop({ chatOnly: true })).resolves.toBe(1);
   });
 });
 

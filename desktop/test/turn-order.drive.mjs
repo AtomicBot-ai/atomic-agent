@@ -150,7 +150,8 @@ function buildState(base, providerPort) {
 }
 
 /* ---------------- looking at the transcript ---------------- */
-const ROWS = `[...document.querySelectorAll('#content .turn, #content .sysrow')].map((t) => {
+// ATO-464: a finished turn's summary line is not a row of the turn; its steps are, once it is opened.
+const ROWS = `[...document.querySelectorAll('#content .turn:not(.tk-turnsum), #content .sysrow')].map((t) => {
   if (t.classList.contains('sysrow')) return { k: 'system', text: t.innerText.trim().slice(0, 80) };
   if (t.classList.contains('usr')) return { k: 'user', text: t.innerText.trim().slice(0, 80) };
   if (t.querySelector('.appr')) {
@@ -166,6 +167,17 @@ const ROWS = `[...document.querySelectorAll('#content .turn, #content .sysrow')]
   if (t.querySelector('.ubub, .user, .tk-user')) return { k: 'user', text: t.innerText.trim().slice(0, 80) };
   return { k: 'other', cls: t.className, text: t.innerText.trim().slice(0, 80) };
 })`;
+/* ATO-464: a finished turn shows its steps as one summary line until it is
+   clicked. Open every such line the way a person would (a trusted click),
+   then read the rows; says how many lines it opened. */
+async function openTurnSummaries(app) {
+  const ids = await app.eval(`[...document.querySelectorAll('#content [data-turnsum][aria-expanded="false"]')].map((b) => b.dataset.turnsum)`);
+  for (const id of ids) {
+    await app.clickSel(`#content [data-turnsum="${id}"]`);
+    await app.waitFor(`document.querySelector('#content [data-turnsum="${id}"]').getAttribute('aria-expanded') === 'true'`, 'the turn opened', { timeout: 5000 });
+  }
+  return ids.length;
+}
 const shape = (rows) => rows.map((r) => r.k === 'tool' ? `tool:${r.name}` : r.k === 'approval' ? `approval${r.done ? ':' + r.label : ':open'}` : r.k).join(' → ');
 
 async function main() {
@@ -196,6 +208,8 @@ async function main() {
     await app.waitFor(`[...document.querySelectorAll('#content .tk-asst .prose')].some((p) => p.innerText.includes(${JSON.stringify(REPLY)}))`
       + ` && !document.querySelector('.statusstrip') && !document.querySelector('.sendbtn.stop')`, 'the reply, turn over', { timeout: 90000 });
     await sleep(2500);   // reconcileToolCards and the trace merge settle
+    const liveOpened = await openTurnSummaries(app);
+    check(liveOpened === 1 || (await app.eval('window.__stepsAlways()')), 'live: the finished turn folded its steps into one summary line', `${liveOpened} summary lines`);
     const liveRows = await app.eval(ROWS);
     console.log(`live, turn over: ${shape(liveRows)}`);
     check(existsSync(join(workspace, 'approved.txt')), 'Approve released the write (the file exists)');
@@ -216,6 +230,7 @@ async function main() {
     await app.clickSel(`[data-ses="${sid}"]`);
     await app.waitFor(`[...document.querySelectorAll('#content .tk-asst .prose')].some((p) => p.innerText.includes(${JSON.stringify(REPLY)}))`, 'the reopened transcript', { timeout: 30000 });
     await sleep(1500);
+    await openTurnSummaries(app);
     const storedRows = await app.eval(ROWS);
     console.log(`reopened: ${shape(storedRows)}`);
     const storedLast = storedRows[storedRows.length - 1] || {};

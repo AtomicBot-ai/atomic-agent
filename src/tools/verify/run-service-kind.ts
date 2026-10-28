@@ -1,7 +1,8 @@
 /**
  * `kind: "service"` — start a server in the copy, wait until a port
  * accepts connections or a URL answers 2xx, send the requests, kill the
- * group.
+ * group. A page run with `start` uses the same lifecycle and does its
+ * browser work in `whileReady`, before the group is killed.
  */
 import net from "node:net";
 
@@ -146,7 +147,13 @@ async function sendRequest(
 
 export async function runServiceKind(
   args: VerifyRunArgs,
-  ctx: { cwd: string; signal?: AbortSignal; fetchImpl?: FetchLike },
+  ctx: {
+    cwd: string;
+    signal?: AbortSignal;
+    fetchImpl?: FetchLike;
+    /** Runs once the server is ready, after the requests; the server stays up until it settles. */
+    whileReady?: () => Promise<void>;
+  },
 ): Promise<ServiceRunOutcome> {
   const started = Date.now();
   const fetchImpl: FetchLike = ctx.fetchImpl ?? ((url, init) => fetch(url, init));
@@ -159,16 +166,21 @@ export async function runServiceKind(
     timeoutMs: args.timeoutMs,
     signal: ctx.signal,
   });
-  const readiness = await waitForReady(proc, ready, fetchImpl);
   const requests: RequestOutcome[] = [];
-  if (readiness.ready) {
-    const baseUrl = baseUrlFor(ready);
-    for (const spec of args.requests ?? []) {
-      if (ctx.signal?.aborted) break;
-      requests.push(await sendRequest(spec, baseUrl, fetchImpl));
+  let readiness: Awaited<ReturnType<typeof waitForReady>>;
+  try {
+    readiness = await waitForReady(proc, ready, fetchImpl);
+    if (readiness.ready) {
+      const baseUrl = baseUrlFor(ready);
+      for (const spec of args.requests ?? []) {
+        if (ctx.signal?.aborted) break;
+        requests.push(await sendRequest(spec, baseUrl, fetchImpl));
+      }
+      if (ctx.whileReady !== undefined && !ctx.signal?.aborted) await ctx.whileReady();
     }
+  } finally {
+    proc.killGroup();
   }
-  proc.killGroup();
   const exit = await proc.exited;
   return {
     commandLine: proc.commandLine,

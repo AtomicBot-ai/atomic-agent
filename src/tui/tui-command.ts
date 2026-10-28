@@ -506,6 +506,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionsEndReached: () => orchestrator.loadMoreSessions(),
         onSessionNewRequested: () => orchestrator.newSession(),
         onCompactionRequested: (verb) => { void orchestrator.compactContext(verb); },
+        onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
+        onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
         onSessionDeleteConfirmed: (sessionId) =>
           orchestrator.deleteSession(sessionId),
         onUninstallPlanRequested: () =>
@@ -715,6 +717,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
           void orchestrator.localModels.startDaemon(),
         onLocalModelsDaemonStopRequested: () =>
           void orchestrator.localModels.stopDaemon(),
+        onLocalModelsChatStopForCloudRequested: () =>
+          void orchestrator.localModels.stopChatForCloudSelection(),
         onLocalModelsDaemonRestartRequested: () =>
           void orchestrator.localModels.restartDaemon(),
         onLocalModelsEmbeddingPullRequested: (id) =>
@@ -807,6 +811,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onUpdateRestart: () => {
           restartRequested = true;
         },
+        onProjectTrustAnswered: (answer) => void orchestrator.projectTrust.answer(answer),
         onMouseSupportRequested: setMouseEnabled,
         // A drag that started on dead content (no target claimed the
         // press) — the terminal-agnostic selection trigger. Same
@@ -845,6 +850,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   for (const line of configNotices) bus.emit({ type: "runtime_info", line });
   configNotices.length = 0;
 
+  // Project skills and AGENTS.md/CLAUDE.md files of the opened folder load
+  // only after the operator trusted them (ATO-298); ask once if any are new.
+  orchestrator.projectTrust.check();
+
   // A `.env` that exists but could not be read means stored API keys were
   // silently dropped for this run (#59). The loader already wrote to
   // stderr, but that line scrolls away before the alt screen takes over
@@ -877,6 +886,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // picked up before the auto-start decides whether anything is missing.
   orchestrator.localModels.adoptBackgroundDownloads();
   void orchestrator.localModels.autoStartIfReady();
+  // This TUI owns the managed model, so it is what restarts it with a
+  // smaller context window after it runs out of memory (ATO-334).
+  runtime.setLocalModelRestarter?.((contextWindow) =>
+    orchestrator.localModels.restartWithContextSize(contextWindow));
 
   // Fire-and-forget startup version check. Surfaces an in-app update
   // offer when a newer release is published; silently no-ops when

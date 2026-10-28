@@ -19,6 +19,7 @@ export {
   trackFromRenderer,
 } from "./core.js";
 export { agentAnalyticsEnv, desktopVersion, installChannelFor } from "./environment.js";
+export { restartTriggerFromWindow, type RestartTrigger } from "./catalog-values.js";
 export {
   agentRestarting,
   agentStartFailed,
@@ -28,6 +29,7 @@ export {
   beginSession,
   launchBackendSettled,
   noteOrphanReaped,
+  noteSessionTrouble,
   turnEnded,
   windowCrashed,
   windowShown,
@@ -45,11 +47,13 @@ export {
 } from "./downloads.js";
 export {
   configureSetup,
+  localBackendCrashed,
   localBackendStarted,
   localBackendSupervised,
   engineRecoveryShown,
   maybeModelConfigured,
   providerKeyChecked,
+  readServerFaultWith,
   shouldReportSwitch,
   switchBegin,
   switchEnd,

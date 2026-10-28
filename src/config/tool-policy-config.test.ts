@@ -28,9 +28,9 @@ describe("outbound HTTP and tool configuration ownership", () => {
     const projects = createProjectsDefaults();
     const tools = createToolsDefaults();
     const vision = createVisionDefaults();
-    expect(http).toStrictEqual({ enabled: true, approvalMode: "never", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000 });
+    expect(http).toStrictEqual({ enabled: true, approvalMode: "writes", hostAllowlist: null, maxResponseBytes: 1_048_576, defaultTimeoutMs: 30_000 });
     expect(projects).toStrictEqual({ roots: [] });
-    expect(tools).toStrictEqual({ shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3 } });
+    expect(tools).toStrictEqual({ shell: { defaultTimeoutMs: 600_000, jobMaxMs: 3_600_000, maxJobs: 3, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"] }, screen: { enabled: false } });
     expect(vision).toStrictEqual({ enabled: true, autoDetect: true, maxImageBytes: 8 * 1024 * 1024, maxImagesPerCall: 4 });
     expect(Object.keys(http)).toEqual(["enabled", "approvalMode", "hostAllowlist", "maxResponseBytes", "defaultTimeoutMs"]);
     expect(projects.roots).not.toBe(createProjectsDefaults().roots);
@@ -53,14 +53,19 @@ describe("outbound HTTP and tool configuration ownership", () => {
   });
 
   it.each([
-    { version: 24, raw: undefined, expected: "never", reads: 0 },
-    { version: 24, raw: null, expected: "never", reads: 0 },
-    { version: 24, raw: "writes", expected: "never", reads: 0 },
+    { version: 24, raw: undefined, expected: "always", reads: 1 },
+    { version: 24, raw: null, expected: "always", reads: 1 },
+    { version: 24, raw: "writes", expected: "writes", reads: 0 },
     { version: 24, raw: "always", expected: "always", reads: 0 },
-    { version: 24, raw: "never", expected: "never", reads: 0 },
+    { version: 24, raw: "never", expected: "writes", reads: 0 },
     { version: 25, raw: undefined, expected: "always", reads: 1 },
     { version: 25, raw: null, expected: "always", reads: 1 },
     { version: 25, raw: "writes", expected: "writes", reads: 0 },
+    { version: 25, raw: "never", expected: "writes", reads: 0 },
+    { version: 78, raw: "never", expected: "writes", reads: 0 },
+    { version: 78, raw: "always", expected: "always", reads: 0 },
+    { version: 79, raw: "never", expected: "never", reads: 0 },
+    { version: 79, raw: undefined, expected: "always", reads: 1 },
   ])("retains HTTP migration lookup branches at v$version for $raw", ({ version, raw, expected, reads }) => {
     const original = schema.USER_CONFIG_DEFAULTS.http;
     const defaults = createHttpDefaults();
@@ -93,19 +98,27 @@ describe("outbound HTTP and tool configuration ownership", () => {
 
   it("retains shell zero/no-default and independent time limits without introducing a runtime clamp", () => {
     expect(parseToolsConfig({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1 }, createToolsDefaults).shell)
-      .toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1 });
+      .toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"] });
     expect(parseToolsConfig({ defaultTimeoutMs: "2e3", jobMaxMs: 1 }, createToolsDefaults).shell.defaultTimeoutMs).toBe(2000);
     expect(schema.parseUserConfigFile({ tools: { shell: { defaultTimeoutMs: "2e3", jobMaxMs: 1 } } }).tools.shell.defaultTimeoutMs).toBe(2000);
+  });
+
+  it("keeps screen control off by default and reads tools.screen.enabled (ATO-525)", () => {
+    expect(parseToolsConfig({}, createToolsDefaults).screen).toStrictEqual({ enabled: false });
+    expect(parseToolsConfig({}, createToolsDefaults, { enabled: true }).screen).toStrictEqual({ enabled: true });
+    expect(schema.parseUserConfigFile({}).tools.screen.enabled).toBe(false);
+    expect(schema.parseUserConfigFile({ tools: { screen: { enabled: true } } }).tools.screen.enabled).toBe(true);
+    expect(() => schema.parseUserConfigFile({ tools: { screen: { enabled: "maybe" } } })).toThrow(/tools\.screen\.enabled/);
   });
 
   it("short-circuits explicit scalar defaults in all four owners", () => {
     const noDefaults = () => { throw new Error("explicit fields must not read defaults"); };
     const http = { enabled: false, approvalMode: "never", hostAllowlist: [], maxResponseBytes: 1, defaultTimeoutMs: 1 };
     const vision = { enabled: false, autoDetect: false, maxImageBytes: 1, maxImagesPerCall: 1 };
-    expect(parseHttpConfig(http, 25, noDefaults)).toStrictEqual(http);
+    expect(parseHttpConfig(http, 79, noDefaults)).toStrictEqual(http);
     expect(parseProjectsConfig({ roots: [] }, noDefaults)).toStrictEqual({ roots: [] });
-    expect(parseToolsConfig({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1 }, noDefaults).shell)
-      .toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1 });
+    expect(parseToolsConfig({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: [] }, noDefaults, { enabled: true }))
+      .toStrictEqual({ shell: { defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 1, envPassthrough: [] }, screen: { enabled: true } });
     expect(parseVisionConfig(vision, noDefaults)).toStrictEqual(vision);
   });
 
@@ -130,14 +143,14 @@ describe("outbound HTTP and tool configuration ownership", () => {
         get enabled() { events.push("HTTP replacement"); schema.USER_CONFIG_DEFAULTS.http = { ...createHttpDefaults(), enabled: false, approvalMode: "always" }; return undefined; },
         get approvalMode() { events.push("HTTP second replacement"); schema.USER_CONFIG_DEFAULTS.http = { ...createHttpDefaults(), approvalMode: "writes", maxResponseBytes: 7 }; return undefined; },
       }, tools: { shell: {
-        get defaultTimeoutMs() { events.push("shell replacement"); schema.USER_CONFIG_DEFAULTS.tools.shell = { defaultTimeoutMs: 0, jobMaxMs: 3, maxJobs: 2 }; return undefined; },
-        get jobMaxMs() { events.push("whole tools replacement"); schema.USER_CONFIG_DEFAULTS.tools = { shell: { defaultTimeoutMs: 5, jobMaxMs: 1, maxJobs: 7 } }; return undefined; },
+        get defaultTimeoutMs() { events.push("shell replacement"); schema.USER_CONFIG_DEFAULTS.tools.shell = { defaultTimeoutMs: 0, jobMaxMs: 3, maxJobs: 2, envPassthrough: [] }; return undefined; },
+        get jobMaxMs() { events.push("whole tools replacement"); schema.USER_CONFIG_DEFAULTS.tools = { shell: { defaultTimeoutMs: 5, jobMaxMs: 1, maxJobs: 7, envPassthrough: [] }, screen: { enabled: false } }; return undefined; },
       } } });
       expect(events).toEqual(["HTTP replacement", "HTTP second replacement", "shell replacement", "whole tools replacement"]);
       expect(root.http.enabled).toBe(false);
       expect(root.http.approvalMode).toBe("writes");
       expect(root.http.maxResponseBytes).toBe(7);
-      expect(root.tools.shell).toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 7 });
+      expect(root.tools.shell).toStrictEqual({ defaultTimeoutMs: 0, jobMaxMs: 1, maxJobs: 7, envPassthrough: [] });
       schema.USER_CONFIG_DEFAULTS.tools.shell.maxJobs = 9;
       expect(root.tools.shell.maxJobs).toBe(7);
     } finally {

@@ -2,6 +2,7 @@ import { ipcMain } from "electron";
 
 import type { AgentClient } from "./agent-client.js";
 import { withConfigLock } from "./agent-cli.js";
+import { isTelegramPairingOp } from "./telegram-pairing.js";
 
 /**
  * Agent routes that act on the RUNNING agent instead of on the file and a
@@ -75,4 +76,16 @@ export function wireAgentLiveIpc(client: AgentClient): void {
     // enable / disable write `enabled` into config.json, so they take the config lock too.
     return op === "restart" ? run() : withConfigLock(run);
   });
+
+  /* ATO-859: Telegram pairing (main/telegram-pairing.ts). The agent writes
+     the new owner itself when the code is claimed, so this takes no config
+     lock. The answer carries the one-time code to the window; nothing here
+     logs it. */
+  ipcMain.handle("agent:telegramPairing", async (_event, payload: unknown) => {
+    const { op, replaceOwner } = (payload ?? {}) as { op?: unknown; replaceOwner?: unknown };
+    if (!isTelegramPairingOp(op)) return { ok: false, error: "op must be start, status or cancel" };
+    return client.telegramPairing(op, replaceOwner === true);
+  });
+  // ATO-758: why the bot does not answer, when another poller holds it off.
+  ipcMain.handle("agent:telegramChannel", () => client.telegramChannel());
 }

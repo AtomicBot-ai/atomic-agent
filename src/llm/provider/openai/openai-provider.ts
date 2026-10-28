@@ -49,6 +49,7 @@ import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "./openai-chat-path.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
 import { isAnthropicHost, isAnthropicModel } from "./prompt-cache-control.js";
+import { isLocalServerUrl } from "./local-server-url.js";
 import {
   adaptQwenCompletionResult,
   adaptQwenTaggedToolResponse,
@@ -232,6 +233,9 @@ export class OpenAiProvider implements LlmProvider {
     this.bodyOptions = {
       nameEscape: (name) => this.toolCallAdapter.nameEscape(name),
       ...(options.providerKind ? { providerKind: options.providerKind } : {}),
+      ...(isTemplateKwargsKind(options.providerKind) && isLocalServerUrl(options.baseUrl)
+        ? { templateKwargs: true }
+        : {}),
       ...(options.modelParams ? { modelParams: options.modelParams } : {}),
       ...(resolveAnthropicCacheControl(options)
         ? { anthropicCacheControl: true }
@@ -739,6 +743,11 @@ function openAiVisionCapabilities(
     return { vision: false, visionSource: "rejected-images" };
   }
   return { vision: true, visionSource: "assumed" };
+}
+
+/** Kinds that front a self-hosted server, whose template may read `chat_template_kwargs`. */
+function isTemplateKwargsKind(kind: string | undefined): boolean {
+  return kind === "openai-compatible" || kind === "qwen-openai-compatible";
 }
 
 /**

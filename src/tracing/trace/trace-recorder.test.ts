@@ -412,6 +412,42 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records llama-server's stop_type on llm_completion (ATO-329)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-stop", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({ type: "step_started", stepIndex: 0 });
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "llm_raw_completion",
+        stepIndex: 0,
+        attempt: 1,
+        completion: {
+          content: "{",
+          reasoningContent: "",
+          stop: true,
+          truncated: true,
+          stopType: "limit",
+          finishReason: "length",
+          cacheHitTokens: 0,
+          slotId: 0,
+          modelId: "demo",
+          timing: {
+            promptMs: 1,
+            predictedMs: 1,
+            promptTokens: 10,
+            predictedTokens: 512,
+          },
+        },
+      },
+    });
+    expect(events.find((e) => e.type === "llm_completion")).toMatchObject({
+      truncated: true,
+      stopType: "limit",
+    });
+  });
+
   it("records a batch trim with the calls that never ran", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-trim", emit, now });
@@ -475,6 +511,34 @@ describe("createTraceRecorder", () => {
       invalidated: 2,
       stoppedBy: { tool: "os.fs.write", batchIndex: 0, cause: "not_approved" },
       cancelled: false,
+    });
+  });
+
+  it("records a cut answer's continuation with counts only (ATO-1031)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-cont", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 } as AgentLoopEvent);
+    rec.onAgentEvent({ type: "step_started", stepIndex: 2 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "answer_continued",
+        stepIndex: 2,
+        cause: "reply_cap",
+        partialChars: 1_234,
+        outcome: "cut_again",
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "answer_continued",
+      seq: 2,
+      sessionId: "s-cont",
+      ts: 1000,
+      turnIndex: 1,
+      stepIndex: 2,
+      cause: "reply_cap",
+      partialChars: 1_234,
+      outcome: "cut_again",
     });
   });
 
@@ -872,6 +936,25 @@ describe("createTraceRecorder", () => {
       }),
     ]);
     expect(recorded[0]).not.toHaveProperty("requestedMaxTokens");
+  });
+
+  it("records that a cut reply was a loop (ATO-331)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-trunc-loop", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 0 });
+    rec.onAgentEvent({
+      type: "completion_truncated",
+      stepIndex: 2,
+      cause: "unknown",
+      completionTokens: 0,
+      promptTokens: 0,
+      requestedMaxTokens: 16_384,
+      repetitive: true,
+      retry: { kind: "same_cap", maxTokens: 16_384 },
+    });
+    expect(
+      events.find((e) => e.type === "completion_truncated"),
+    ).toMatchObject({ repetitive: true, retry: "same_cap" });
   });
 
   it("records a truncation retry with its cause, counts and the retry taken", () => {

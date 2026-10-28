@@ -21,6 +21,7 @@ import { chromeTheme } from "../theme/theme.js";
 import { fitToWidth } from "../components/fit-to-width.js";
 import { formatTokens } from "../components/format-tokens.js";
 import { renderProgressBar } from "../components/render-progress-bar.js";
+import { isKnownLimit } from "./context-chip.js";
 
 /** Panel width, clamped to the pane on narrow terminals. */
 const PREFERRED_WIDTH = 58;
@@ -246,7 +247,9 @@ function buildRows(
 /**
  * The reply reservation as this window can actually honour it: the
  * prompt budget's own figure (`effectiveReplyReserve` — the configured
- * cap, held to half a window it does not fit in), and never more than
+ * cap, held to half a window it does not fit in, and on a window under
+ * 32k to what leaves the prompt 16k, but at least a quarter of the
+ * window), and never more than
  * the prompt left of the window. The desktop's context popover ports
  * this rule (`ctxReplyReserve` in desktop/renderer/renderer.js).
  */
@@ -314,7 +317,10 @@ function TaskSelector({
   onStep?: (delta: number) => void;
 }): ReactElement {
   const label = " tasks per turn".padEnd(LABEL_WIDTH);
-  const value = String(selected).padStart(String(PAIRS_MAX).length);
+  // No task limit on this route: say so rather than print the sentinel.
+  const value = (isKnownLimit(selected) ? String(selected) : "all").padStart(
+    String(PAIRS_MAX).length,
+  );
   return (
     <Box>
       <Text color={chromeTheme.colors.railForeground}>{label}</Text>
