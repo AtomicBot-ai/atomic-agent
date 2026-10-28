@@ -1,5 +1,6 @@
 import type { RefDescription } from "./browser-backend.js";
 import { hostMatchesAny, webHostOf } from "./browser-domain-policy.js";
+import { isOneTimeCodeHint } from "./redact-secret-fields.js";
 
 /**
  * Decides whether a `browser.click` / `browser.type` must ask first, and
@@ -133,6 +134,7 @@ function secretFieldReason(element: RefDescription): string | null {
   if (tokens.some((t) => t.startsWith("cc-"))) return "payment card field";
   if (CARD_FIELD.test(element.fieldHints)) return "payment card field";
   if (PASSWORD_FIELD.test(element.fieldHints)) return "password field";
+  if (isOneTimeCodeHint(element.fieldHints)) return "one-time code field";
   return null;
 }
 

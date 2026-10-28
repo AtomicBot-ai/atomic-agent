@@ -12,7 +12,13 @@ import type { BrowserDomainPolicy } from "./browser-domain-policy.js";
 import { findUserChromeCdpUrl } from "./attach-user-chrome.js";
 import { PlaywrightBackend } from "./playwright-backend.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
-import { redactSecretFieldValues, SECRET_MASK } from "./redact-secret-fields.js";
+import {
+  collectSecretFieldValuesInPage,
+  ONE_TIME_CODE_HINT,
+  redactSecretFieldValues,
+  SECRET_AUTOCOMPLETE_TOKENS,
+  SECRET_MASK,
+} from "./redact-secret-fields.js";
 import { UserSiteApprovals } from "./user-profile-sites.js";
 import { buildBrowserReadAriaTool } from "./read-aria.js";
 
@@ -438,5 +444,124 @@ describe("redactSecretFieldValues", () => {
 
   it("leaves text alone when there are no secrets", () => {
     expect(redactSecretFieldValues("- textbox [ref=e1]: hi", [])).toBe("- textbox [ref=e1]: hi");
+  });
+});
+
+describe("PlaywrightBackend after the user restarts Chrome (ATO-1260)", () => {
+  function connectableBrowser(context: FakeContext) {
+    const state = { connected: true, closed: 0 };
+    const browser = {
+      contexts: () => [context],
+      isConnected: () => state.connected,
+      close: async () => {
+        state.closed += 1;
+      },
+    };
+    (context as unknown as { browser: () => unknown }).browser = () => browser;
+    return { browser: browser as unknown as Browser, state };
+  }
+
+  it("the next call re-reads the endpoint and attaches to the new Chrome", async () => {
+    const first = connectableBrowser(new FakeContext([]));
+    const second = connectableBrowser(new FakeContext([]));
+    const finds: number[] = [];
+    let connects = 0;
+    const backend = new PlaywrightBackend({
+      userDataDir: "/unused",
+      channel: "chrome",
+      headless: false,
+      launchTimeoutMs: 1_000,
+      connect: "user-chrome",
+      findUserChrome: async () => {
+        finds.push(finds.length);
+        return { cdpUrl: `ws://127.0.0.1:${9333 + finds.length}/devtools/browser/x`, browser: "Google Chrome", openedSettings: false };
+      },
+      connectOverCdp: async () => (connects++ === 0 ? first.browser : second.browser),
+    });
+    await backend.tabs({ action: "new", url: "https://shop.example" });
+    first.state.connected = false; // Chrome quit
+    expect(await backend.currentUrl()).toBe("about:blank");
+    expect(finds).toHaveLength(2);
+    expect(connects).toBe(2);
+    expect(first.state.closed).toBe(1);
+  });
+
+  it("a restarted Chrome without remote debugging is a plain error with the steps, no wait", async () => {
+    let opened = 0;
+    let slept = 0;
+    const notReady = () => {
+      throw new UserChromeNotReadyError("remote debugging is not turned on");
+    };
+    await expect(
+      findUserChromeCdpUrl({
+        cdpUrl: null,
+        userDataDir: null,
+        waitMs: 60_000,
+        reconnect: true,
+        openRemoteDebuggingPage: () => {
+          opened += 1;
+          return true;
+        },
+        resolve: notReady,
+        sleep: async () => {
+          slept += 1;
+        },
+      }),
+    ).rejects.toThrow(/closed or restarted .*do not call the browser again.*chrome:\/\/inspect\/#remote-debugging/);
+    expect(opened).toBe(0);
+    expect(slept).toBe(0);
+  });
+});
+
+describe("one-time code fields (ATO-1260)", () => {
+  it("an 8-digit code typed into a field labelled only 'Verification code' asks as browser_secret and hides the code", async () => {
+    const backend = new GateBackend();
+    backend.element = facts({ tag: "input", type: "text", editable: true, inForm: true, href: null, name: "Verification code", fieldHints: "code verification code" });
+    const { prompts, options } = recordingGate(true);
+    const result = await buildBrowserTypeTool(backend, options, USER).run({ ref: "e1", text: "48213907" }, GATE_CTX);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ category: "browser_secret" });
+    expect(JSON.stringify(prompts[0])).not.toContain("48213907");
+    expect(result.summary).not.toContain("48213907");
+    expect(JSON.stringify(result.details)).not.toContain("48213907");
+  });
+
+  it("masks the code in the snapshot", async () => {
+    const context = new FakeContext([]);
+    const { backend } = userChromeBackend(context);
+    await backend.tabs({ action: "new" });
+    const page = context.all[0]!;
+    page.secrets = ["48213907"];
+    page.aria = '- textbox "Verification code" [ref=e1]: "48213907"\n- button "Verify" [ref=e2]';
+    const snap = await backend.snapshot({ full: true });
+    expect(snap.text).not.toContain("48213907");
+    expect(snap.text).toContain(SECRET_MASK);
+  });
+});
+
+describe("collectSecretFieldValuesInPage", () => {
+  it("collects a code field found by its label, and leaves a postal code alone", () => {
+    const field = (value: string, attrs: Record<string, string>, label = "") => ({
+      type: "text",
+      value,
+      labels: label ? [{ textContent: label }] : [],
+      getAttribute: (n: string) => attrs[n] ?? null,
+    });
+    const fields = [
+      field("48213907", { name: "otc" }, "Verification code"),
+      field("123456", { placeholder: "Код из SMS" }),
+      field("94103", { name: "zip" }, "ZIP code"),
+      field("me@example.com", { name: "email" }),
+    ];
+    const g = globalThis as unknown as { document?: unknown };
+    const before = g.document;
+    g.document = { querySelectorAll: () => fields };
+    try {
+      expect(
+        collectSecretFieldValuesInPage({ tokens: [...SECRET_AUTOCOMPLETE_TOKENS], codeHint: ONE_TIME_CODE_HINT }),
+      ).toEqual(["48213907", "123456"]);
+    } finally {
+      g.document = before;
+    }
   });
 });

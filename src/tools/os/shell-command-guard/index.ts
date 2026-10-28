@@ -9,6 +9,11 @@ export {
   buildGitRemotePolicyRule,
   readGitSubcommand,
 } from "./rules-policy.js";
+export {
+  BROWSER_BYPASS_RULE,
+  checkBrowserBypassArgv,
+  checkBrowserBypassLine,
+} from "./browser-bypass.js";
 export { basenameCommand } from "./normalise.js";
 export { execWriteTargets, shellWriteTargets } from "./write-targets.js";
 export type {

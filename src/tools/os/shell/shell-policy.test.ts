@@ -87,3 +87,38 @@ describe("os.shell.run honours the git remote-sync policy", () => {
     expect(prompts).toBe(1);
   });
 });
+
+/**
+ * ATO-1260: with the browser tool failing, a model drove Chrome through
+ * `osascript` and `open -a`. The shell refuses before any approval, so
+ * Bypass cannot run it either.
+ */
+describe("os.shell.run refuses to drive a web browser", () => {
+  let dir: string;
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "atomic-shell-browser-"));
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it.each([
+    [{ cmd: "osascript", args: ["-e", 'tell application "Google Chrome" to set URL of active tab of front window to "https://mail.google.com"'] }],
+    [{ cmd: "open", args: ["-a", "Google Chrome", "https://mail.google.com/mail/u/0/"] }],
+    [{ cmd: `osascript -e 'tell application "Google Chrome" to get {URL, title} of active tab of front window'` }],
+  ])("%j is refused without asking", async (call) => {
+    let prompts = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        prompts += 1;
+        gate.resolve({ approvalId: req.approvalId, approved: true });
+      },
+    });
+    const tool = buildOsShellTool({ approvals: gate, approvalRequired: false });
+    const result = await tool.run(call, makeCtx(dir));
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain("use the browser tool");
+    expect(result.details.guardRule).toBe("browser.use_browser_tool");
+    expect(prompts).toBe(0);
+  });
+});
