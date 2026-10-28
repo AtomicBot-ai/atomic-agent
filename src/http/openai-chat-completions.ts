@@ -42,6 +42,7 @@ import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
+import { claimScreenOverlay } from "../tools/os/screen/screen-overlay-hosts.js";
 import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
@@ -62,6 +63,12 @@ export const COMPLETION_ID_HEADER = "X-Atomic-Completion-Id";
  * `usage`). Atomic-native consumers opt in to keep the richer stream.
  */
 export const EXTENSIONS_HEADER = "X-Atomic-Extensions";
+/**
+ * ATO-1018: the extensions client draws `os.screen.point` marks on THIS
+ * computer's screen (the desktop app on its own local agent). Without
+ * it the tool answers that marks need the desktop app.
+ */
+export const SCREEN_OVERLAY_HEADER = "X-Atomic-Screen-Overlay";
 const MODEL_DEFAULT = "atomic-agent";
 
 /**
@@ -92,6 +99,8 @@ interface ParsedRequest {
   /** ATO-731: `working_dir`, checked; null for the server's own folder. */
   workingDir: string | null;
   extensionsEnabled: boolean;
+  /** `X-Atomic-Screen-Overlay` on an extensions request (ATO-1018). */
+  screenOverlay: boolean;
 }
 
 /**
@@ -296,6 +305,8 @@ async function handleStream(
   // Only this stream's turn asks the model server for prompt progress;
   // the TUI, channels and workers stream as before.
   const releaseProgress = phases ? claimTurnProgress(env.session.id) : null;
+  // ATO-1018: marks are drawn only while the stream that draws them is open.
+  const releaseOverlay = env.request.screenOverlay ? claimScreenOverlay(env.session.id) : null;
 
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
@@ -316,6 +327,7 @@ async function handleStream(
   } finally {
     phases?.dispose();
     releaseProgress?.();
+    releaseOverlay?.();
     ctx.completionRegistry.unregister(env.completionId);
   }
 
@@ -523,6 +535,7 @@ export function buildStreamEventHook(
             : {}),
           summary: clipToolSummary(inner.result.summary),
           ...keyRequiredFrame(inner.result),
+          ...screenMarksFrame(inner.result),
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
@@ -863,6 +876,25 @@ function keyRequiredFrame(
   };
 }
 
+/**
+ * `screen_marks` on a `tool_result` frame (ATO-1018): what an ok
+ * `os.screen.point` call asks the desktop overlay to draw, as
+ * `{marks, seconds}` in global screen points. The frame is the only
+ * live path: the summary is clipped and the store keeps no `details`.
+ * Left out unless the shape is one a host can draw from.
+ */
+function screenMarksFrame(
+  result: CompressedToolResult,
+): { screen_marks?: { marks: unknown[]; seconds: number } } {
+  if (result.tool !== "os.screen.point" || result.status !== "ok") return {};
+  const raw = (result.details ?? {}).screenMarks;
+  if (typeof raw !== "object" || raw === null) return {};
+  const { marks, seconds } = raw as { marks?: unknown; seconds?: unknown };
+  if (!Array.isArray(marks) || marks.length === 0) return {};
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return {};
+  return { screen_marks: { marks, seconds } };
+}
+
 /** Longest `summary` a `tool_result` carries; the store keeps the whole one. */
 const TOOL_SUMMARY_MAX = 400;
 
@@ -1091,6 +1123,9 @@ async function parseRequestBody(
     extensionsEnabled: isExtensionsHeaderTruthy(
       getHeader(req, EXTENSIONS_HEADER),
     ),
+    screenOverlay:
+      isExtensionsHeaderTruthy(getHeader(req, EXTENSIONS_HEADER)) &&
+      isExtensionsHeaderTruthy(getHeader(req, SCREEN_OVERLAY_HEADER)),
   };
 }
 

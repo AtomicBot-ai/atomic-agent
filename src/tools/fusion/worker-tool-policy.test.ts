@@ -35,6 +35,7 @@ describe("worker tool policy", () => {
         "os.screen.capture",
         "os.screen.click",
         "os.screen.key",
+        "os.screen.point",
         "os.screen.type",
         "tasks.cancel",
         "tasks.cron",

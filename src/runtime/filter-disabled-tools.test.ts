@@ -24,7 +24,7 @@ const ALL_OPEN: ToolGateConfig = {
   fusion: { enabled: true },
   image: { available: true },
   video: { available: true },
-  screen: { enabled: true },
+  screen: { enabled: true, point: true },
 };
 
 function nameSet(
@@ -278,6 +278,28 @@ describe("screen gate", () => {
       expect(off.has(name), name).toBe(false);
     }
     expect(off.has("os.window.list")).toBe(true);
+  });
+
+  it("keeps capture and point, not click/type/key, when only pointing is on (ATO-1018)", () => {
+    const pointOnly = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        screen: { enabled: false, point: true },
+      }),
+    );
+    expect(pointOnly.has("os.screen.capture")).toBe(true);
+    expect(pointOnly.has("os.screen.point")).toBe(true);
+    for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) {
+      expect(pointOnly.has(name), name).toBe(false);
+    }
+    const controlOnly = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        screen: { enabled: true, point: false },
+      }),
+    );
+    expect(controlOnly.has("os.screen.click")).toBe(true);
+    expect(controlOnly.has("os.screen.point")).toBe(false);
   });
 });
 
