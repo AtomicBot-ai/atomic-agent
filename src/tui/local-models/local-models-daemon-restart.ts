@@ -58,8 +58,8 @@ export async function restartLocalDaemon(
   const llm = resolveLlmConfig(cfg);
   if (!activeTextProviderIsLlamaServer(llm)) {
     // Careful with the wording: "nothing local to restart" is not true.
-    // `fallback.appendLocal` defaults to true, so a managed daemon is
-    // very often still up and still in the chain behind a cloud head.
+    // With `fallback.appendLocal` on (off by default since ATO-349), a managed daemon is
+    // often still up and still in the chain behind a cloud head.
     // What is true is that this action bounces the daemon behind the
     // ACTIVE route, and that is not one — switching the route back is
     // the operator's call, not something a restart key should do.

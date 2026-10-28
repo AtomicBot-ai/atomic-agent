@@ -106,7 +106,7 @@ export type UserModelConfigEntry = {
 export type LlmFallbackConfig = {
   /** Ordered provider ids to fall over through (primary first). */
   chain?: readonly string[];
-  /** Auto-append the configured local (llama-server) provider to the tail. Default true. */
+  /** Auto-append the configured local (llama-server) provider to the tail. Default false (ATO-349). */
   appendLocal?: boolean;
   /** Consecutive advance-worthy failures before switching (non-immediate signals). */
   failureThreshold?: number;
