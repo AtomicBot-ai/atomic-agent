@@ -91,7 +91,7 @@ function chatFilesOf(log, deps) {
         const a = d.argsOf(m) || {};
         add(cfAbsolute(a.path, d.workingDir, d.home), 'agent');
       } else if (m.name === 'image.generate') {
-        cfGeneratedPaths(m.out).forEach((p) => add(p, 'image'));
+        cfGeneratedPaths(m.out).forEach((p) => add(cfAbsolute(p, '', d.home), 'image'));
       } else if (CF_SHOTS.has(m.name)) {
         add(cfShotPath(m.out), 'shot');
       }
@@ -181,10 +181,12 @@ function chatFilesNow() {
 function chatFilesSync() {
   if (typeof S === 'undefined' || !S) return;
   const sid = S.room === 'chat' ? String(S.sessionId || '') : null;
-  const files = chatFilesNow();
-  const sig = files.map((f) => f.path).join('\n');
   // A new chat's stand-in id ('' or `waiting-…`) turning into the agent's own is the same chat.
   const chatChanged = sid !== CF.sid && !(CF.sid === '' || String(CF.sid || '').startsWith('waiting-'));
+  // Another chat: paths are looked at again, so a file made since (or made again) is listed.
+  if (chatChanged) { CF.stat.clear(); CF.missing.clear(); }
+  const files = chatFilesNow();
+  const sig = files.map((f) => f.path).join('\n');
   if (!chatChanged && sig === CF.sig) return;
   CF.sid = sid; CF.sig = sig; CF.files = files;
   cfStatSoon();

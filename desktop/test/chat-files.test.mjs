@@ -81,3 +81,9 @@ test('the panel starts closed and on no file', () => {
   assert.equal(FPV.FP.path, '');
   assert.deepEqual(FPV.FP.files, []);
 });
+
+test('image.generate paths written with ~ are listed expanded, as main stats them', () => {
+  const log = [{k: 'tool', name: 'image.generate', ok: true, out: 'Saved 1 picture:\n- ~/Pictures/a.png'}];
+  assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n'}).map((f) => f.path), ['/Users/n/Pictures/a.png']);
+  assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n', missing: new Set(['/Users/n/Pictures/a.png'])}), []);
+});
