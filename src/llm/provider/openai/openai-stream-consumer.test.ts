@@ -171,6 +171,29 @@ describe("openai stream consumer tool-call assembly", () => {
     ]);
   });
 
+  it("keeps arguments a provider sends as a JSON object (ATO-1259)", async () => {
+    const result = await drain(
+      toolCallFrame([
+        {
+          index: 0,
+          id: "call_a",
+          type: "function",
+          function: { name: "os__shell__run", arguments: { cmd: "osascript", args: ["-e", "x"] } },
+        },
+      ]) +
+        // Some providers repeat the whole object in a later event.
+        toolCallFrame([{ index: 0, function: { arguments: { cmd: "osascript", args: ["-e", "x"] } } }]) +
+        DONE,
+    );
+    expect(result.toolCalls).toEqual([
+      {
+        id: "call_a",
+        type: "function",
+        function: { name: "os__shell__run", arguments: '{"cmd":"osascript","args":["-e","x"]}' },
+      },
+    ]);
+  });
+
   it("reassembles fragments of one unindexed call that repeats its id", async () => {
     const result = await drain(
       toolCallFrame([
