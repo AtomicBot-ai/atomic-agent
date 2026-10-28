@@ -144,6 +144,26 @@ export class TurnUsageMeter {
   }
 
   /**
+   * Open a bucket for `sessionId` unless one is already open. For turns
+   * that do not come through `runTurn` (the sidecar's `executeTurn`, the
+   * scheduler), so a fusion turn's cap (ATO-947) still sees the
+   * orchestrator's spend; the caller reads it as a delta from its own
+   * baseline, because such a bucket is never closed by `snapshot`.
+   */
+  ensureOpen(sessionId: string): void {
+    if (!this.buckets.has(sessionId)) this.begin(sessionId);
+  }
+
+  /**
+   * The open turn's priced spend so far, without closing it: `0` while
+   * nothing priced has landed, `undefined` when no turn is open. Read
+   * by the fusion turn cap (ATO-947) between fan-outs.
+   */
+  peekCostUsd(sessionId: string): number | undefined {
+    return this.buckets.get(sessionId)?.costUsd;
+  }
+
+  /**
    * Close the open turn for `sessionId` and report its totals. Fields
    * the turn could not measure are omitted entirely: a provider that
    * never reported usage yields `{}`, and an unpriced model yields

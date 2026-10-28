@@ -226,6 +226,19 @@ export interface AgentRuntime {
    */
   steer(sessionId: string, text: string): boolean;
   /**
+   * The running fusion workers of `parentSessionId`'s fan-out, by task
+   * id, and the person's two actions on one (ATO-66, ATO-942): `stop`
+   * cancels that worker alone (`false` when it is not running);
+   * `escalate` asks the configured escalation model to advise it and
+   * resolves with one line saying what happened and what it cost
+   * (`null` when it is not running).
+   */
+  readonly fusionWorkers: {
+    running(parentSessionId: string): string[];
+    stop(parentSessionId: string, taskId: string): boolean;
+    escalate(parentSessionId: string, taskId: string): Promise<string | null>;
+  };
+  /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
    * SQLite connection used by any future feature that reuses the same
