@@ -74,14 +74,14 @@
 .emptyhead b{font-weight:600;min-width:0;text-wrap:balance}
 .emptyhead svg{width:1.5em;height:1.5em;flex:none}
 .emptymeta{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:4px 8px;min-width:0;
-  font-size:13px;line-height:20px;color:var(--ink-2)}
+  font-size:var(--fs-cap);line-height:20px;color:var(--ink-2)}
 .emptymeta .em-it{display:inline-flex;align-items:center;gap:6px;min-width:0}
 .emptymeta .em-it > span{min-width:0;overflow-wrap:anywhere}
 .emptymeta .em-it > svg{width:14px;height:14px;flex:none;color:var(--ink-3)}
 .emptymeta .em-sep{color:var(--ink-3)}
 .ghost{display:flex;gap:8px;flex-wrap:wrap;justify-content:center;max-width:560px}
 .ghostchip{display:inline-flex;align-items:center;height:32px;padding:0 14px;border-radius:var(--r-pill);
-  background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font-size:13px;
+  background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink-2);font-size:var(--fs-cap);
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
 .ghostchip:hover{background:var(--hover);color:var(--ink)}
 
@@ -101,7 +101,7 @@
 .turn.usr{display:block;max-width:100%}
 .prose.usr.bubble{width:fit-content;max-width:74%;min-width:0;margin-left:auto;padding:10px 15px;
   border-radius:22px 22px 6px 22px;background:var(--brand);color:var(--on-strong);
-  font-size:14.5px;line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
+  font-size:var(--fs-body);line-height:1.5;overflow-wrap:anywhere;word-break:break-word}
 
 /* ---------------- assistant prose and markdown ----------------
    A model writes markdown and renderMarkdown turns it into tags of its own,
@@ -109,12 +109,12 @@
    therefore inline-blocks spanning the line: a block box would turn the newline
    on either side of it into an empty line. Machine text — code spans and
    fences — is mono; prose is not. */
-.prose{font-size:14.5px;line-height:1.62;color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.prose{font-size:var(--fs-body);line-height:1.62;color:var(--ink);white-space:pre-wrap;word-break:break-word}
 .prose.tk-ph{color:var(--ink-2)}
 .prose .mdh{display:inline-block;width:100%;vertical-align:top;margin:4px 0 2px;font-weight:600;line-height:1.3;letter-spacing:-.015em;color:var(--ink)}
-.prose h1.mdh{font-size:18px;letter-spacing:-.02em}
-.prose h2.mdh{font-size:16px}
-.prose h3.mdh{font-size:15px}
+.prose h1.mdh{font-size:var(--fs-title);letter-spacing:-.02em}
+.prose h2.mdh{font-size:var(--fs-sub)}
+.prose h3.mdh{font-size:var(--fs-lead)}
 .prose .mdlist{display:inline-block;width:100%;vertical-align:top;margin:0;padding-left:22px;white-space:normal}
 .prose .mdlist li{margin:2px 0;white-space:pre-wrap}
 .prose .mdlist li::marker{color:var(--ink-2)}
@@ -123,14 +123,14 @@
 .prose .mdhr{display:inline-block;width:100%;vertical-align:middle;border:0;height:1px;background:var(--bd);margin:6px 0}
 .prose .mdcode{font-family:var(--font-mono);font-size:.86em;background:var(--panel-2);padding:1px 6px;border-radius:7px}
 .prose .mdpre{display:inline-block;width:100%;vertical-align:top;margin:4px 0;padding:10px 12px;
-  background:var(--panel-2);border-radius:var(--r-well);overflow-x:auto;white-space:pre;font-size:12px;line-height:1.6}
-.prose .mdpre code{font:400 12px/1.6 var(--font-mono);white-space:pre}
+  background:var(--panel-2);border-radius:var(--r-well);overflow-x:auto;white-space:pre;font-size:var(--fs-label);line-height:1.6}
+.prose .mdpre code{font:400 var(--fs-label)/1.6 var(--font-mono);white-space:pre}
 /* ATO-430: the fence's language, as a small label above the code. */
-.prose .mdpre[data-lang]::before{content:attr(data-lang);display:block;margin-bottom:4px;font:500 11px/16px var(--font-ui);color:var(--ink-3)}
+.prose .mdpre[data-lang]::before{content:attr(data-lang);display:block;margin-bottom:4px;font:500 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3)}
 /* ATO-163: markdown tables. One line of markup, so the wrapper sets white-space back to normal;
    it scrolls sideways rather than widening the reply. Cells wrap; the header row is the quiet one. */
 .prose .mdtbl{display:inline-block;width:100%;vertical-align:top;margin:4px 0;overflow-x:auto;white-space:normal}
-.prose .mdtbl table{border-collapse:collapse;font-size:13.5px;line-height:1.45;min-width:60%}
+.prose .mdtbl table{border-collapse:collapse;font-size:var(--fs-ui);line-height:1.45;min-width:60%}
 .prose .mdtbl th,.prose .mdtbl td{padding:6px 12px;text-align:left;vertical-align:top;border-bottom:1px solid var(--divider);
   word-break:normal;overflow-wrap:break-word}   /* .prose's break-word would squeeze a wide table letter by letter instead of letting it scroll */
 .prose .mdtbl th{font-weight:600;color:var(--ink-2);border-bottom-color:var(--bd)}
@@ -142,19 +142,98 @@
 .prose .mdblock > .mdpre{display:block;margin:0;border-radius:0;padding-top:4px}
 .prose .mdblock .mdpre[data-lang]::before{content:none}   /* the header names the language */
 .prose .mdbar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 6px 0 12px;
-  font:500 11px/16px var(--font-ui);color:var(--ink-3);user-select:none}
+  font:500 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3);user-select:none}
 .prose .mdcopy{display:inline-flex;align-items:center;gap:4px;padding:2px 6px;border:0;border-radius:6px;
   background:none;color:inherit;font:inherit;cursor:pointer}
 .prose .mdcopy svg{width:12px;height:12px}
 .prose .mdcopy:hover{background:var(--hover);color:var(--ink-2)}
+/* ATO-1025: code colour (code-highlight.js), from the theme's own tokens so both themes carry it. */
+.prose .mdpre .hl-k{color:var(--reasoning)}
+.prose .mdpre .hl-s{color:var(--success)}
+.prose .mdpre .hl-n{color:var(--amber-text)}
+.prose .mdpre .hl-p{color:var(--accent)}
+.prose .mdpre .hl-c{color:var(--ink-3);font-style:italic}
 .prose strong{font-weight:600}
+/* ---------------- ATO-1251: typed blocks in a reply (md-render.js) ----------------
+   Same rules as the blocks above: inline-blocks spanning the line, one line of
+   markup each, white-space set back to normal inside, colours from the theme. */
+.prose h1.mdh,.prose h2.mdh{margin-top:8px}
+.prose h4.mdh{font-size:var(--fs-body);color:var(--ink-2)}
+/* tables: a quiet frame with Copy (TSV) and Markdown; the bar is always there, so nothing moves when it shows */
+.prose .mdtblx{display:inline-block;width:100%;vertical-align:top;margin:4px 0;white-space:normal;
+  border-radius:var(--r-well);box-shadow:inset 0 0 0 1px var(--divider);overflow:hidden}
+.prose .mdtblx > .mdbar{padding:3px 6px 3px 12px;background:var(--panel-2)}
+.prose .mdtblx .mdtools{display:inline-flex;gap:2px;opacity:0;transition:opacity var(--t-state) var(--ease)}
+.prose .mdtblx:hover .mdtools,.prose .mdtblx .mdtools:focus-within{opacity:1}
+.prose .mdtblx > .mdtbl{display:block;margin:0}
+.prose .mdtblx .mdtbl table{width:100%}
+.prose .mdtblx .mdtbl tbody tr:nth-child(even) td{background:color-mix(in srgb, var(--panel-2) 55%, transparent)}
+.prose .mdtbl .mdnum{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.prose .mdtbl td.mdyes{color:var(--success)}
+.prose .mdtbl td.mdno{color:var(--danger)}
+/* checklists */
+.prose .mdlist li.mdtask{list-style:none;position:relative;margin-left:-20px;padding-left:24px}
+.prose .mdchk{position:absolute;left:0;top:.3em;width:15px;height:15px;border-radius:4px;box-sizing:border-box;
+  box-shadow:inset 0 0 0 1.5px var(--bd-2);font:700 var(--fs-micro)/15px var(--font-ui);text-align:center;color:var(--on-strong)}
+.prose .mdtask.done .mdchk{background:var(--success);box-shadow:none}
+.prose .mdtask.done > .mdtask-t{color:var(--ink-2)}
+/* steps: numbered items that each lead with a bold name */
+.prose .mdlist.mdsteps{list-style:none;padding-left:0;counter-reset:mdstep}
+.prose .mdsteps > li{counter-increment:mdstep;position:relative;padding-left:32px;margin:0 0 6px;min-height:22px}
+.prose .mdsteps > li::before{content:counter(mdstep);position:absolute;left:0;top:1px;width:22px;height:22px;border-radius:50%;
+  background:var(--accent-wash);color:var(--accent-text);font:600 var(--fs-label)/22px var(--font-ui);text-align:center}
+.prose .mdsteps > li:not(:last-child)::after{content:'';position:absolute;left:11px;top:27px;bottom:-4px;width:1px;background:var(--divider)}
+/* key / value fields */
+.prose .mdkv{display:inline-grid;width:100%;vertical-align:top;box-sizing:border-box;grid-template-columns:minmax(72px,max-content) 1fr;
+  column-gap:0;margin:4px 0;padding:2px 12px;white-space:normal;border-radius:var(--r-well);box-shadow:inset 0 0 0 1px var(--divider)}
+.prose .mdkv-r{display:contents}
+.prose .mdkv dt,.prose .mdkv dd{margin:0;padding:6px 0;border-bottom:1px solid var(--divider);min-width:0;overflow-wrap:anywhere}
+.prose .mdkv dt{color:var(--ink-2);font-weight:500;max-width:22ch;padding-right:16px}
+.prose .mdkv-r:last-child > *{border-bottom:0}
+/* callouts: > [!NOTE], **Warning:** … */
+.prose .mdcallout{display:inline-block;width:100%;vertical-align:top;box-sizing:border-box;margin:4px 0;padding:8px 12px 8px 13px;
+  border-radius:var(--r-well);white-space:normal;background:var(--panel-2);box-shadow:inset 3px 0 0 var(--mdc, var(--blue))}
+.prose .mdcallout-t{font:600 var(--fs-label)/18px var(--font-ui);color:var(--mdc, var(--blue))}
+.prose .mdcallout-b{white-space:pre-wrap;color:var(--ink)}
+.prose .mdcallout.mdc-tip{--mdc:var(--success);background:var(--success-wash)}
+.prose .mdcallout.mdc-important{--mdc:var(--reasoning)}
+.prose .mdcallout.mdc-warning{--mdc:var(--warn);background:var(--warn-wash)}
+.prose .mdcallout.mdc-caution{--mdc:var(--danger);background:var(--danger-wash)}
+/* Pros / Cons, side by side (stacked when the column is narrow) */
+.prose .mdcmp{display:inline-grid;width:100%;vertical-align:top;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px;margin:4px 0;white-space:normal}
+.prose .mdcmp-c{padding:8px 12px;border-radius:var(--r-well);box-shadow:inset 0 0 0 1px var(--divider);min-width:0}
+.prose .mdcmp-t{font:600 var(--fs-label)/18px var(--font-ui);margin-bottom:2px}
+.prose .mdcmp-c.pro .mdcmp-t{color:var(--success)}
+.prose .mdcmp-c.con .mdcmp-t{color:var(--danger)}
+.prose .mdcmp-c.pro .mdcmp-t::before{content:'✓ '}
+.prose .mdcmp-c.con .mdcmp-t::before{content:'✕ '}
+.prose .mdcmp .mdlist{padding-left:18px}
+/* a link alone on its line: a card with the site's name */
+.prose .msglink.mdcard{display:inline-flex;align-items:center;gap:10px;max-width:100%;box-sizing:border-box;margin:2px 0;padding:7px 12px 7px 8px;
+  vertical-align:top;border-radius:var(--r-well);background:var(--panel-2);box-shadow:inset 0 0 0 1px var(--bd);
+  color:var(--ink);text-decoration:none;white-space:normal;transition:background var(--t-state) var(--ease)}
+.prose .msglink.mdcard:hover{background:var(--hover);color:var(--ink)}
+.prose .mdcard-ic{flex:none;width:26px;height:26px;border-radius:7px;background:var(--lift);color:var(--blue);font:600 var(--fs-cap)/26px var(--font-ui);text-align:center}
+.prose .mdcard-tx{display:flex;flex-direction:column;min-width:0}
+.prose .mdcard-t{font:600 var(--fs-cap)/18px var(--font-ui);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prose .mdcard-h{font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* a path alone on its line: the file chip, drawn as a card with its folder under the name */
+.prose .mdsolo .filechip{display:inline-grid;grid-template-columns:auto minmax(0,1fr);column-gap:10px;height:auto;padding:7px 12px 7px 9px;
+  border-radius:var(--r-well);text-align:left;font-size:var(--fs-cap);line-height:18px}
+.prose .mdsolo .filechip svg{grid-row:1 / span 2;width:18px;height:18px}
+.prose .mdsolo .filechip::after{content:attr(title);grid-column:2;font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .prose.usr .mdcode{background:var(--glass-18)}
 
 /* files and links inside replies — the chip keeps `.filechip` + data-file, so
    the click (open) and right-click (native file menu) handlers are unchanged */
-.filechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:24px;padding:0 9px 0 7px;vertical-align:-6px;
+/* ATO-903: the chip sits on the line it is in. 24px tall at -6px it was
+   taller than the reply's line (14.5px × 1.62 ≈ 23.5px) and pushed it apart
+   and off its baseline; at 20px, centred on the lowercase letters
+   (vertical-align:middle), it fits inside the line box. */
+.filechip{display:inline-flex;align-items:center;gap:5px;max-width:100%;height:20px;padding:0 8px 0 6px;vertical-align:middle;
   border-radius:var(--r-pill);background:var(--lift);box-shadow:inset 0 0 0 1px var(--bd);
-  font:600 12.5px/1 var(--font-ui);color:var(--ink);white-space:nowrap;
+  font:600 var(--fs-cap)/1 var(--font-ui);color:var(--ink);white-space:nowrap;
   transition:background var(--t-state) var(--ease)}
 .filechip svg{width:13px;height:13px;color:var(--blue)}
 .filechip span{overflow:hidden;text-overflow:ellipsis;min-width:0}
@@ -174,41 +253,38 @@
    review Д16: the step count beside it was noise), or "Thought for 12 s" once
    the window timed it (ATO-467, reasonLabel) */
 .disc{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;border-radius:var(--r-row);
-  font-size:13.5px;color:var(--ink-3);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+  font-size:var(--fs-ui);color:var(--ink-3);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .disc svg{width:14px;height:14px}
 .disc:hover{background:var(--hover);color:var(--ink-2)}
 .disc[aria-expanded="true"]{color:var(--ink-2)}
 .discbody{margin:2px 0 4px 16px;padding:2px 0 2px 16px;border-left:2px solid var(--bd-2);
-  color:var(--ink-2);font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
+  color:var(--ink-2);font-size:var(--fs-cap);line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* a finished turn folded into one line (ATO-464, turn-summary.js): the
    reasoning line's box and ink, so the line reads as one more quiet step,
    the failures in red words and the time small, as on a tool line. */
 .turnsum{display:inline-flex;align-items:center;gap:8px;max-width:100%;min-height:32px;padding:0 12px 0 10px;border-radius:var(--r-row);
-  font-size:13.5px;color:var(--ink-3);white-space:nowrap;transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+  font-size:var(--fs-ui);color:var(--ink-3);white-space:nowrap;transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .turnsum svg{flex:none;width:14px;height:14px}
 .turnsum:hover{background:var(--hover);color:var(--ink-2)}
 .turnsum[aria-expanded="true"]{color:var(--ink-2)}
 .turnsum .ts-l{min-width:0;overflow:hidden;text-overflow:ellipsis}
 .turnsum .ts-sep{flex:none}
 .turnsum .ts-bad{flex:none;color:var(--critical)}
-.turnsum .ts-du{flex:none;font-size:12px;font-variant-numeric:tabular-nums}
+.turnsum .ts-du{flex:none;font-size:var(--fs-label);font-variant-numeric:tabular-nums}
 
 /* "Working…" (0.6.7 item 10) — from the send to the turn's first step or word
    (workingRowHTML). It takes the reasoning line's box: the height, inset, gap
    and type of `.disc`, the spinner in the chevron's 14px slot, so the
    Reasoning line or tool step that replaces it lands where it stood. The word
-   shimmers, a lighter band crossing the muted ink, and the seconds count in
-   tabular figures. Reduced motion: the word is plain text in the secondary
+   sits in the secondary ink (ATO-1025: it shimmered once), and the seconds
+   count in tabular figures. Reduced motion: the word is plain text in the secondary
    ink, and the spinner keeps the kit's slower turn (styles.css). */
 .tk-work{display:inline-flex;align-items:center;gap:8px;min-height:32px;padding:0 12px 0 10px;
-  font-size:13.5px;color:var(--ink-3);white-space:nowrap}
+  font-size:var(--fs-ui);color:var(--ink-3);white-space:nowrap}
 .tk-work .tk-spin{width:12px;height:12px;margin:0 1px;border-width:1.5px}
-.tk-work-t{background:linear-gradient(90deg,var(--ink-3) 40%,var(--ink) 50%,var(--ink-3) 60%) 0 0/300% 100%;
-  -webkit-background-clip:text;background-clip:text;color:transparent;animation:chat-shimmer 2.4s linear infinite}
+.tk-work-t{color:var(--ink-2)}   /* ATO-1025: no shimmer; the spinner and the seconds already say it is alive */
 .tk-work-n{font-variant-numeric:tabular-nums}
-@keyframes chat-shimmer{from{background-position:100% 0}to{background-position:0 0}}
-@media (prefers-reduced-motion:reduce){.tk-work-t{animation:none;background:none;color:var(--ink-2)}}
 
 /* tool calls and folded runs — `.card` / `.cardhead` / `.cardbody` / `.cardsum`
    / `.du` / `.nm` are what the smoke and drivers read. At rest a row has no
@@ -227,13 +303,13 @@
 .cardhead:focus-visible{outline-offset:-2px}
 .cardhead .tl-ic{flex:none;display:flex;color:var(--ink-3)}
 .cardhead .tl-ic svg{width:14px;height:14px}
-.cardhead .nm{flex:1 1 auto;min-width:0;font:400 13.5px/1.45 var(--font-ui);color:var(--ink-2);
+.cardhead .nm{flex:1 1 auto;min-width:0;font:400 var(--fs-ui)/1.45 var(--font-ui);color:var(--ink-2);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.cardhead .tl-m{font:400 12.5px/1 var(--font-mono);color:var(--ink)}
+.cardhead .tl-m{font:400 var(--fs-cap)/1 var(--font-mono);color:var(--ink)}
 .turn .card.err .nm{color:var(--ink)}
-.cardhead .du{flex:none;font-size:12px;line-height:1.3;font-variant-numeric:tabular-nums;color:var(--ink-3)}
+.cardhead .du{flex:none;font-size:var(--fs-label);line-height:1.3;font-variant-numeric:tabular-nums;color:var(--ink-3)}
 .cardhead .du:empty{display:none}
-.tl-bad{flex:none;font-size:12px;line-height:1.3;color:var(--critical)}
+.tl-bad{flex:none;font-size:var(--fs-label);line-height:1.3;color:var(--critical)}
 .tl-st{flex:none;width:16px;height:16px;display:grid;place-items:center}
 .tl-st svg{width:13px;height:13px;stroke-width:2.2}
 .tl-st.ok{color:var(--ink-3)}
@@ -247,19 +323,19 @@
 .cardhead .chev{flex:none;display:flex;color:var(--ink-3)}
 .cardhead .chev svg{width:14px;height:14px}
 /* the error line of a failed call, under its sentence (text column: 10 + 14 + 8) */
-.cardsum{padding:0 12px 9px 32px;font-size:12.5px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;
+.cardsum{padding:0 12px 9px 32px;font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;
   display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .cardsum.bad{color:var(--critical)}
 /* a long call's progress (video.generate, tool_update): a thin bar and "About 42% · 2 min" */
-.cardsum.tl-prog{display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:12px}
+.cardsum.tl-prog{display:flex;align-items:center;gap:10px;color:var(--ink-3);font-size:var(--fs-label)}
 .tl-prog-bar{flex:0 1 160px;height:4px;border-radius:2px;background:var(--well);overflow:hidden;box-shadow:inset 0 0 0 1px var(--line-hair)}
 .tl-prog-bar i{display:block;height:100%;background:var(--brand);border-radius:2px;transition:width .4s ease}
 .cardbody{padding:2px 10px 10px;display:grid;gap:6px;min-width:0}
-.tl-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;padding:0 2px 2px;font-size:12px;line-height:18px;color:var(--ink-3)}
-.tl-meta .mono{color:var(--ink-2);font-size:12px}
+.tl-meta{display:flex;align-items:center;flex-wrap:wrap;gap:4px 12px;padding:0 2px 2px;font-size:var(--fs-label);line-height:18px;color:var(--ink-3)}
+.tl-meta .mono{color:var(--ink-2);font-size:var(--fs-label)}
 .tl-meta .tnum{font-variant-numeric:tabular-nums}
-.cardbody .micro{padding:4px 2px 0;font-size:11.5px;line-height:16px;font-weight:500;color:var(--ink-3)}
-.cardbody pre{margin:0;max-height:240px;max-width:100%;font-size:11.5px}
+.cardbody .micro{padding:4px 2px 0;font-size:var(--fs-label);line-height:16px;font-weight:500;color:var(--ink-3)}
+.cardbody pre{margin:0;max-height:240px;max-width:100%;font-size:var(--fs-label)}
 
 /* ---------------- approval: a lifted card with an indigo accent ----------------
    Inline, never a modal. `.appr` / `#apprcard` (the card y/n/Esc answer,
@@ -278,15 +354,15 @@
 .apprico svg{width:15px;height:15px}
 .appr.danger .apprico{background:var(--critical-wash);color:var(--critical)}
 .apprmain{display:grid;gap:4px;min-width:0;padding-top:4px}
-.appr .ttl{font-size:15px;line-height:1.4;font-weight:600;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
+.appr .ttl{font-size:var(--fs-lead);line-height:1.4;font-weight:600;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
 .appr .ttl code,.apprwhy code{padding:1px 6px;border-radius:var(--r-kbd);background:var(--hover);font:500 .9em/1.4 var(--font-mono);color:var(--ink)}
-.apprwhy{font-size:13px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere}
+.apprwhy{font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere}
 .apprres{padding-top:4px}
 .pathchip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;max-width:100%;min-height:24px;padding:2px 10px 2px 8px;
-  border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font-size:12px;line-height:1.4}
+  border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font-size:var(--fs-label);line-height:1.4}
 .pathchip svg{width:13px;height:13px;color:var(--ink-3)}
 .pathchip b{font-weight:600;color:var(--ink);overflow-wrap:anywhere}
-.pathchip .cap{font:400 11.5px/1.4 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
+.pathchip .cap{font:400 var(--fs-label)/1.4 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
 /* the answers, under the words, aligned with them (30px disc + 12px gap) */
 .apprbtns{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-left:42px}
 .appr .appr-yes{background:var(--indigo);color:var(--on-strong)}
@@ -299,26 +375,26 @@
 .appr:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 .appr .apprdeny:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 /* 05.10: the keys that answer the card on screen, named on its buttons (⌘↩, ⌘.). */
-.appr .apprkbd{margin-left:6px;font:500 11px/1 var(--font-mono);opacity:.72}
-.apprfoot{padding-left:42px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+.appr .apprkbd{margin-left:6px;font:500 var(--fs-micro)/1 var(--font-mono);opacity:.72}
+.apprfoot{padding-left:42px;font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2)}
 /* Details: the engineer's view, closed until asked */
 .apprdet{margin-left:42px;min-width:0}
 .apprdet > summary{display:inline-flex;align-items:center;gap:4px;height:24px;padding:0 8px 0 4px;margin-left:-4px;border-radius:var(--r-pill);
-  list-style:none;cursor:pointer;font-size:12.5px;color:var(--ink-2);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+  list-style:none;cursor:pointer;font-size:var(--fs-cap);color:var(--ink-2);transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .apprdet > summary::-webkit-details-marker{display:none}
 .apprdet > summary:hover{background:var(--hover);color:var(--ink)}
 .apprdet > summary svg{width:12px;height:12px;transition:transform var(--t-state) var(--ease)}
 .apprdet[open] > summary svg{transform:rotate(90deg)}
-.aplate{display:grid;grid-template-columns:76px minmax(0,1fr);gap:6px 12px;margin:8px 0 0;font-size:12.5px;line-height:1.45}
+.aplate{display:grid;grid-template-columns:76px minmax(0,1fr);gap:6px 12px;margin:8px 0 0;font-size:var(--fs-cap);line-height:1.45}
 .aplate dt{margin:0;color:var(--ink-3)}
 .aplate dd{margin:0;min-width:0;color:var(--ink);overflow-wrap:anywhere}
-.aplate .mono{font-size:12px}
+.aplate .mono{font-size:var(--fs-label)}
 .appr .cap{color:var(--ink-2)}
 .appr .badge{display:inline-flex;align-items:center;height:20px;padding:0 8px;border-radius:var(--r-badge);
-  box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2);font-size:11.5px;font-weight:500;white-space:nowrap}
+  box-shadow:inset 0 0 0 1px var(--bd-2);color:var(--ink-2);font-size:var(--fs-label);font-weight:500;white-space:nowrap}
 .previewblk{max-height:200px;overflow:auto;padding:8px 10px;border-radius:var(--r-well);background:var(--well);
-  color:var(--ink);font:400 12px/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
-.apprmode{margin-top:8px;font-size:12.5px;line-height:1.5;color:var(--ink-2)}
+  color:var(--ink);font:400 var(--fs-label)/1.55 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere}
+.apprmode{margin-top:8px;font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2)}
 .apprlink{display:inline;color:var(--blue);text-decoration:underline;text-underline-offset:2px}
 .apprlink:hover{color:var(--blue-deep)}
 
@@ -326,7 +402,7 @@
    shadow, no chip: the record of who allowed it and when stays, at the
    weight of a step line, its text in line with the step's name. */
 .appr.done{display:flex;align-items:center;gap:8px;max-width:100%;min-height:24px;margin-top:-6px;padding:0 10px;
-  background:none;box-shadow:none;border-radius:0;color:var(--ink-3);font-size:12.5px;line-height:1.45}
+  background:none;box-shadow:none;border-radius:0;color:var(--ink-3);font-size:var(--fs-cap);line-height:1.45}
 .appr.done .tk-gly{flex:none;display:flex;color:var(--ink-3)}
 .appr.done .tk-gly svg{width:14px;height:14px}
 .appr.done .tk-gly--err{color:var(--critical)}
@@ -335,7 +411,7 @@
 .appr.done .apprlbl b{font-weight:400;color:var(--ink-2)}
 .appr.done .apprlbl .mono{font:inherit;font-variant-numeric:tabular-nums;color:var(--ink-3)}
 .appr.done .badge{height:auto;margin-left:0;padding:0;background:none;box-shadow:none;border-radius:0;
-  color:var(--ink-3);font-size:12.5px;font-weight:400}
+  color:var(--ink-3);font-size:var(--fs-cap);font-weight:400}
 .appr.done .badge::before{content:"\00b7";margin-right:8px}
 
 /* ---------------- the message actions ----------------
@@ -386,9 +462,11 @@
 .msgact.msgact-off svg{opacity:.55}
 .msgact-off[data-tip]::after{content:attr(data-tip);position:absolute;left:0;bottom:calc(100% + 6px);z-index:5;
   width:max-content;max-width:280px;white-space:normal;text-align:left;padding:5px 10px;border-radius:var(--r-kbd);background:var(--lift);box-shadow:var(--sh-pop);
-  color:var(--ink);font:400 12px/16px var(--font-ui);letter-spacing:0;opacity:0;pointer-events:none;
+  color:var(--ink);font:400 var(--fs-label)/16px var(--font-ui);letter-spacing:0;opacity:0;pointer-events:none;
   transition:opacity var(--t-state) var(--ease)}
 .msgact-off[data-tip]:hover::after{opacity:1;transition-delay:300ms}
+/* ATO-901: under the user's bubble the row sits at the right edge, so the sentence opens leftwards. */
+.turn.usr .msgact-off[data-tip]::after{left:auto;right:0}
 /* ATO-168: on a reply the actions start at the LEFT, under the text they copy
    (Danya: on the right "it flies off who knows where"); the user bubble keeps
    them at its right edge. The last reply's dot (replyDot) is a zero-height
@@ -408,8 +486,8 @@
 
 /* ---------------- Saved to strip (item 5) ---------------- */
 .attach{margin-top:10px;display:flex;flex-direction:column;gap:3px;min-width:0}
-.attach-label{font-size:12.5px;line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;word-break:break-word}
-.attach-label .mono{font-size:11.5px;line-height:1.5;color:var(--ink-2)}
+.attach-label{font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere;word-break:break-word}
+.attach-label .mono{font-size:var(--fs-label);line-height:1.5;color:var(--ink-2)}
 .attach-more{color:var(--ink-2)}
 .attach-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px;min-width:0}
 .attach .filechip{vertical-align:0}
@@ -428,7 +506,7 @@
 .planrun.bad:hover{background:color-mix(in srgb, var(--critical) 18%, transparent);color:var(--critical)}
 .planbar [data-plan]::after{min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;
   margin-left:2px;border-radius:var(--r-kbd);box-shadow:inset 0 0 0 1px color-mix(in srgb, currentColor 30%, transparent);
-  font:400 10.5px/1 var(--font-mono);opacity:.85}
+  font:400 var(--fs-micro)/1 var(--font-mono);opacity:.85}
 .planbar [data-plan="auto"]::after{content:"⌃Y"}
 .planbar [data-plan="bypass"]::after{content:"⌃B"}
 .planbar [data-plan="dismiss"]::after{content:"⌃D"}
@@ -442,7 +520,9 @@
    (`.sysact` — failure-line.drive reads it). The glyph carries the tone:
    red for a failure, amber for a pause or a warning, muted otherwise. */
 .sysrow{display:grid;grid-template-columns:16px minmax(0,1fr) auto;column-gap:10px;align-items:start;padding:0 4px;
-  font-size:13px;line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere}
+  font-size:var(--fs-cap);line-height:1.55;color:var(--ink-2);overflow-wrap:anywhere;white-space:normal}
+/* ATO-903: a system row's sentence wraps whatever it sits in ("Allowed in this chat…" was cut at the edge). */
+.sysrow .sys-tx{min-width:0;white-space:normal}
 .sysrow .sys-ic{display:grid;place-items:center;height:20px;color:var(--ink-3)}
 .sysrow .sys-ic svg{width:14px;height:14px}
 .sysrow .sys-ic.err{color:var(--critical)}
@@ -452,23 +532,23 @@
 .sysrow .sys-acts .btn{height:26px}
 .sysrow .sys-acts .btn svg{width:12px;height:12px}
 /* ATO-772: the dead-engine row's wait on the app's own restart, in place of its button. */
-.sysrow .sys-acts .sys-note{font-size:12px;color:var(--ink-3)}
-.sysrow code{font:400 12px var(--font-mono);color:var(--ink)}
+.sysrow .sys-acts .sys-note{font-size:var(--fs-label);color:var(--ink-3)}
+.sysrow code{font:400 var(--fs-label) var(--font-mono);color:var(--ink)}
 /* Fusion's first-switch intro (fusion-intro.ts): the tree mark, then paragraphs. */
 .sysrow.sys-block{grid-template-columns:0 minmax(0,1fr);column-gap:0}
 .sysrow .fz-intro{display:flex;flex-direction:column;gap:8px;padding:6px 0 4px;max-width:72ch}
-.sysrow .fz-mark{display:block;white-space:pre;overflow-x:auto;font:400 12px/1.35 var(--font-mono);letter-spacing:0;color:var(--ink)}
+.sysrow .fz-mark{display:block;white-space:pre;overflow-x:auto;font:400 var(--fs-label)/1.35 var(--font-mono);letter-spacing:0;color:var(--ink)}
 .sysrow .fz-p{display:block}
 .sysrow .tk-spin{display:inline-block;width:13px;height:13px}
 /* a repeated warning is one row with a count, not a wall */
 .sysrow .sysrep{display:inline-flex;align-items:center;height:18px;margin-left:6px;padding:0 7px;border-radius:var(--r-badge);
-  font-size:11px;font-variant-numeric:tabular-nums;background:var(--hover);color:var(--ink-2);vertical-align:1px}
+  font-size:var(--fs-micro);font-variant-numeric:tabular-nums;background:var(--hover);color:var(--ink-2);vertical-align:1px}
 /* a system row that is a notice (the session model stamp) */
 .sysrow.tk-sysnotice{padding:0;grid-template-columns:0 minmax(0,1fr);column-gap:0}
 .tk-sysnotice .tk-notice{align-items:flex-start}
 .tk-sysnotice .tk-notice > svg{width:16px;height:16px;margin-top:2px}
 .tk-sysnotice .grow{display:grid;grid-template-columns:minmax(0,1fr) auto;column-gap:12px;align-items:center;line-height:1.5}
-.tk-stampcap{grid-column:1;font-size:12px;line-height:1.5;color:var(--ink-2)}
+.tk-stampcap{grid-column:1;font-size:var(--fs-label);line-height:1.5;color:var(--ink-2)}
 .tk-stampbtn{grid-column:2;grid-row:1 / span 2;align-self:center}
 
 @media (max-width:820px){
@@ -482,7 +562,7 @@
    so it reads as running commentary between the work lines; the final reply
    below it stays the turn's message. */
 .tk-interim{padding:0}
-.tk-interim .prose{font-size:14px;line-height:1.6;color:var(--ink-2)}
+.tk-interim .prose{font-size:var(--fs-ui);line-height:1.6;color:var(--ink-2)}
 
 /* ---------------- paused task (B5) ----------------
    Calm (S4): a paused task is a `.sysrow.pause` (chat.css system rows);
@@ -490,21 +570,21 @@
 
 /* ---------------- steered message (B4) ----------------
    Caption under a bubble that was folded into the running turn. */
-.turn.usr .usrcap{margin:4px 4px 0 auto;width:fit-content;max-width:74%;font-size:12px;line-height:1.4;color:var(--ink-2);text-align:right}
+.turn.usr .usrcap{margin:4px 4px 0 auto;width:fit-content;max-width:74%;font-size:var(--fs-label);line-height:1.4;color:var(--ink-2);text-align:right}
 /* Providers the fallback chain tried, under a failed turn's row (tui-parity.js). */
 .sysrow .sys-tried{display:block;margin-top:4px}
-.sysrow .sys-tried-t{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:var(--ink-3);font:inherit;font-size:12px;cursor:pointer}
+.sysrow .sys-tried-t{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:var(--ink-3);font:inherit;font-size:var(--fs-label);cursor:pointer}
 .sysrow .sys-tried-t:hover{color:var(--ink)}
 .sysrow .sys-tried-t svg{width:12px;height:12px}
-.sysrow .sys-tried-l{display:flex;flex-direction:column;gap:2px;margin:4px 0 0 16px;font-size:12px;color:var(--ink-3)}
+.sysrow .sys-tried-l{display:flex;flex-direction:column;gap:2px;margin:4px 0 0 16px;font-size:var(--fs-label);color:var(--ink-3)}
 .sysrow .sys-tried-i b{font-weight:600;color:var(--ink)}
 /* ATO-380: a failed turn's Details (sysDetailHTML). Folded, the text is
    clipped, not removed, so copying the row still copies it. */
 .sysrow .sys-det{display:block;position:relative;margin-top:4px}
-.sysrow .sys-det-t{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:var(--ink-3);font:inherit;font-size:12px;cursor:pointer}
+.sysrow .sys-det-t{display:inline-flex;align-items:center;gap:4px;padding:0;border:0;background:none;color:var(--ink-3);font:inherit;font-size:var(--fs-label);cursor:pointer}
 .sysrow .sys-det-t:hover{color:var(--ink)}
 .sysrow .sys-det-t svg{width:12px;height:12px}
-.sysrow .sys-det-x{display:block;margin:4px 0 0 16px;font:400 12px/1.45 var(--font-mono);color:var(--ink-3);white-space:pre-wrap;overflow-wrap:anywhere}
+.sysrow .sys-det-x{display:block;margin:4px 0 0 16px;font:400 var(--fs-label)/1.45 var(--font-mono);color:var(--ink-3);white-space:pre-wrap;overflow-wrap:anywhere}
 .sysrow .sys-det-x.shut{position:absolute;width:1px;height:1px;margin:0;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 
 /* ---------------- a reply's own files (ATO-408) ----------------
@@ -536,7 +616,7 @@
   padding:48px 24px 12px;cursor:zoom-out}
 .imgview-img{max-width:100%;max-height:100%;object-fit:contain;cursor:default;border-radius:8px}
 .imgview-bar{display:flex;align-items:center;gap:8px;padding:12px 16px 16px;color:#fff;flex-wrap:wrap}
-.imgview-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px;opacity:.85}
+.imgview-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--fs-cap);opacity:.85}
 .imgview-bar .iconbtn{color:#fff}
 /* A picture that could not be shown: a chip, quieter, its tooltip says why. */
 .replyfiles .filechip.unshown{opacity:.7}
@@ -545,12 +625,12 @@
    One card under the search call that asked (exa-key.js), in the column the
    tool cards use; the same field sits in Settings › General. */
 .exak.tk-card.pad{gap:10px;margin:6px 0 4px;max-width:520px}
-.exak p{margin:0;font-size:14px;line-height:1.55;color:var(--ink-2)}
-.exak-head{display:flex;align-items:center;gap:8px;font-size:14.5px;color:var(--ink)}
+.exak p{margin:0;font-size:var(--fs-ui);line-height:1.55;color:var(--ink-2)}
+.exak-head{display:flex;align-items:center;gap:8px;font-size:var(--fs-body);color:var(--ink)}
 .exak-head > svg{width:16px;height:16px;color:var(--ink-3)}
 .exak-head b{font-weight:600}
-.exak .exak-sub,.exak-row .exak-sub{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-3)}
-.exak-inp input{font:400 13.5px/1 var(--font-mono);letter-spacing:.04em}
+.exak .exak-sub,.exak-row .exak-sub{margin:0;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-3)}
+.exak-inp input{font:400 var(--fs-ui)/1 var(--font-mono);letter-spacing:.04em}
 .exak-inp.is-error{border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
 .exak-acts{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .exak-row .exak-inp{margin-top:8px;max-width:420px}

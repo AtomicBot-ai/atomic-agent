@@ -27,7 +27,7 @@ function fixture(chatCount, q = 'report') {
     TASKS: [{t: 'Report digest', when: 'daily'}],
     SKILLS: [{t: 'report-writer', s: 'workspace'}],
     SK: {workingDir: null},
-    chatStatusWord: () => 'read', chatDot: () => ['empty', ''], taskDot: () => ['empty', ''],
+    chatStatusWord: () => 'read', folderPaletteWord: () => '', chatDot: () => ['empty', ''], taskDot: () => ['empty', ''],
     ANX: {via() {}}, act: (a) => acted.push(a), refreshPalette: () => { repaints++; },
     fuzzyRank, fuzzyFilter,
     String, Array,

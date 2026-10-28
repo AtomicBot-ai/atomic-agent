@@ -34,6 +34,7 @@ import { finishTool, replyTool } from "./index.js";
 import { buildBrowserTools } from "./browser/index.js";
 import type { BrowserBackend } from "./browser/browser-backend.js";
 import { registerOsTools } from "./os/index.js";
+import { registerOsScreenTools } from "./os/screen/index.js";
 import { ShellJobRegistry } from "./os/shell/shell-jobs.js";
 import { registerVerifyTools } from "./verify/index.js";
 import { registerGithubTools } from "./github/github-tools.js";
@@ -84,9 +85,10 @@ const CORE_CONTRACTS = [
 const unexpected = (): never => { throw new Error("Catalog assembly must not execute an external operation"); };
 const browser: BrowserBackend = {
   ensureReady: async () => unexpected(), shutdown: async () => {},
-  snapshot: async () => unexpected(), hasRef: async () => unexpected(),
+  snapshot: async () => unexpected(), hasRef: async () => unexpected(), describeRef: async () => unexpected(), currentUrl: async () => unexpected(),
   navigate: async () => unexpected(), click: async () => unexpected(),
   type: async () => unexpected(), search: async () => unexpected(),
+  screenshot: async () => unexpected(),
   tabs: async () => unexpected(), scroll: async () => unexpected(),
 };
 
@@ -104,7 +106,7 @@ const TERMINALS = {
   finish: { owner: "tools/finish + OpenAI adapter", reason: "Native adapter supplies the session terminal even when a role hides its descriptor; its wire schema overrides the catalog schema" },
 };
 const CONDITIONAL = {
-  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks and vision builders follow their enabled gates" },
+  registration: { owner: "runtime/bootstrap", reason: "Browser, memory, tasks, vision and screen builders follow their enabled gates" },
   availability: { owner: "runtime/filter-disabled-tools", reason: "Web, email, GitHub, fusion, image and video definitions stay registered while unavailable descriptors are hidden" },
   mcp: { owner: "mcp/McpManager + runtime/bootstrap", reason: "Meta tools are registered once; server-qualified tools and external schemas belong to the live catalog" },
   wrapper: { owner: "tools/read-scope/confine-reads", reason: "The protection phase replaces selected definitions without changing their catalog metadata" },
@@ -114,9 +116,9 @@ const CONDITIONAL = {
 // Both copies affect stable-prefix bytes; discovery is last-wins and native wire is first-wins.
 // This bounded compatibility ledger grants no permission for another duplicate.
 const KNOWN_DESCRIPTOR_DUPLICATES = new Map<string, { indices: number[]; fingerprints: string[]; owner: string; reason: string }>([
-  ["os.git.push", { indices: [33, 43], fingerprints: ["093e96423e4d2e226a0c520bea7398f10f6f9fc22a02b382e57191b57412e67f", "9d8ae0fa05777782f8218cfa69b6661e2c85c0a191406ee581cc52a9e2602a48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
-  ["os.git.commit", { indices: [32, 47], fingerprints: ["95ef51ed40cc6ce5a762a7138f9f840dfa3e932b6f0f01bea11dd81a02fed773", "76a621b86514c6c0de7bdc5987127ccb26ebec8534bdf273cf46a5fb2f83227e"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
-  ["os.git.checkout", { indices: [31, 48], fingerprints: ["838fd065d1f322f4948821d4e787582d513bd86336b003f3e7143142080030ce", "981cfd260f769a8d38355113818ad41766037e142d4e5f5bbe37fff689ee2e48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
+  ["os.git.push", { indices: [34, 44], fingerprints: ["093e96423e4d2e226a0c520bea7398f10f6f9fc22a02b382e57191b57412e67f", "9d8ae0fa05777782f8218cfa69b6661e2c85c0a191406ee581cc52a9e2602a48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
+  ["os.git.commit", { indices: [33, 48], fingerprints: ["95ef51ed40cc6ce5a762a7138f9f840dfa3e932b6f0f01bea11dd81a02fed773", "76a621b86514c6c0de7bdc5987127ccb26ebec8534bdf273cf46a5fb2f83227e"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
+  ["os.git.checkout", { indices: [32, 49], fingerprints: ["838fd065d1f322f4948821d4e787582d513bd86336b003f3e7143142080030ce", "981cfd260f769a8d38355113818ad41766037e142d4e5f5bbe37fff689ee2e48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
 ]);
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -256,6 +258,7 @@ const gates: ToolGateConfig = {
   tasks: { agentToolsEnabled: true }, email: { available: true }, mcp: { enabled: true }, github: { connected: true }, fusion: { enabled: true },
   image: { available: true },
   video: { available: true },
+  screen: { enabled: true },
 };
 
 let directory: string;
@@ -287,7 +290,8 @@ beforeAll(() => {
     http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: USER_CONFIG_DEFAULTS.tools,
     web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
   } });
-  registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000 } } });
+  registerOsScreenTools(registry, { ...dangerous, enabled: true, platform: "darwin" });
+  registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, connect: "agent", userChromeDataDir: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000, blockedDomains: [], allowedDomains: [] } } });
   registerGithubTools(registry, dangerous);
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
@@ -327,8 +331,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(91);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(88);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(96);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(93);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
@@ -413,6 +417,8 @@ describe("whole built-in tool catalog conformance", () => {
     registerTaskTools(disabled, taskOptions(false));
     registerVisionTools(disabled, { enabled: false, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
     registerVisionTools(disabled, { enabled: true, provider: undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
+    registerOsScreenTools(disabled, { ...dangerous, enabled: false, platform: "darwin" });
+    registerOsScreenTools(disabled, { ...dangerous, enabled: true, platform: "linux" });
     expect(disabled.registrations).toEqual([]);
     const families = [
       { group: GATED_TOOL_NAMES.browser, next: { ...gates, browser: { enabled: false } } },
@@ -426,6 +432,7 @@ describe("whole built-in tool catalog conformance", () => {
       { group: GATED_TOOL_NAMES.fusion, next: { ...gates, fusion: { enabled: false } } },
       { group: GATED_TOOL_NAMES.image, next: { ...gates, image: { available: false } } },
       { group: GATED_TOOL_NAMES.video, next: { ...gates, video: { available: false } } },
+      { group: GATED_TOOL_NAMES.screen, next: { ...gates, screen: { enabled: false } } },
     ];
     for (const family of families) {
       expect(names(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, family.next))).toEqual(names(DEFAULT_TOOL_DESCRIPTORS).filter((name) => !new Set<string>(family.group).has(name)));
@@ -437,6 +444,8 @@ describe("whole built-in tool catalog conformance", () => {
     const tasks = new RecordingRegistry(); registerTaskTools(tasks, taskOptions(true));
     expect(new Set(names(tasks.registrations))).toEqual(new Set(GATED_TOOL_NAMES.tasks));
     expect(new Set(names(buildBrowserTools(browser, dangerous)))).toEqual(new Set(GATED_TOOL_NAMES.browser));
+    const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, platform: "darwin" });
+    expect(names(screen.registrations)).toEqual([...GATED_TOOL_NAMES.screen]);
   });
 
   it("keeps role order, loaded-tool unions, native wire names and grammar membership aligned", async () => {

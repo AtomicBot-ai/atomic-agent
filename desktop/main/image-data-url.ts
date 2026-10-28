@@ -59,8 +59,8 @@ export function imageRootsFor(platform: Platform, home: string, stateDir: string
   return roots.filter((r) => typeof r === "string" && r.length > 0);
 }
 
-/** Where a path stands against the roots, before anything is opened. */
-async function imageTarget(
+/** Where a path stands against the roots, before anything is opened. Shared with file-preview.ts (ATO-1053). */
+export async function imageTarget(
   raw: unknown,
   roots: readonly string[],
   home: string,

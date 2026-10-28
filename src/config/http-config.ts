@@ -6,6 +6,8 @@ import { parseStringArrayOrNull } from "./config-values.js";
  * When to require approval for outbound HTTP calls via `os.http.request`.
  *  - `never`:   trust the LLM blindly (not recommended outside sandboxes).
  *  - `writes`:  GET + HEAD bypass approval; anything with a body (POST…) needs it.
+ *               The default since v79. A GET can still carry data out in its
+ *               URL (query string, path); this mode does not look inside it.
  *  - `always`:  every call goes through the approval gate.
  */
 export type HttpApprovalMode = "never" | "writes" | "always";
@@ -38,11 +40,16 @@ export function parseHttpApprovalMode(
 }
 
 /**
- * v25 migration: outbound HTTP POST no longer requires approval by default.
- * The old default `"writes"` (POST asks) is rewritten to `"never"` on any
- * config older than v25, and a missing value adopts the new `"never"` default.
- * Users who explicitly tightened to `"always"` — or already chose `"never"` —
- * are preserved. From v25 onward the on-disk value is respected verbatim.
+ * v79 migration: a request that sends data asks first again (ATO-760).
+ *
+ * v25 made `"never"` the default, so with no approval at all a model that
+ * read a hostile page could POST the user's files or keys anywhere. Every
+ * first run writes the full defaults and the v25 migration rewrote
+ * `"writes"` to `"never"`, so a stored `"never"` in a file older than v79
+ * is the schema's value, not a choice: it becomes `"writes"`. A missing
+ * value takes the current default. `"always"` (and `"writes"`) are kept.
+ * From v79 the on-disk value is respected verbatim, so an operator who
+ * sets `http.approvalMode: "never"` again keeps it.
  */
 function resolveHttpApprovalMode(
   inputVersion: number,
@@ -50,12 +57,7 @@ function resolveHttpApprovalMode(
   field: string,
   readDefaults: () => UserHttpConfig,
 ): HttpApprovalMode {
-  if (
-    inputVersion < 25 &&
-    (raw === undefined || raw === null || raw === "writes")
-  ) {
-    return "never";
-  }
+  if (inputVersion < 79 && raw === "never") return "writes";
   return parseHttpApprovalMode(
     raw ?? readDefaults().approvalMode,
     field,
@@ -65,7 +67,7 @@ function resolveHttpApprovalMode(
 export function createHttpDefaults(): UserHttpConfig {
   return {
     enabled: true,
-    approvalMode: "never",
+    approvalMode: "writes",
     hostAllowlist: null,
     maxResponseBytes: 1_048_576,
     defaultTimeoutMs: 30_000,

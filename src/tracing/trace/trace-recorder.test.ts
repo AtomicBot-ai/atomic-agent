@@ -514,6 +514,34 @@ describe("createTraceRecorder", () => {
     });
   });
 
+  it("records a cut answer's continuation with counts only (ATO-1031)", () => {
+    const { events, emit } = collector();
+    const rec = createTraceRecorder({ sessionId: "s-cont", emit, now });
+    rec.onAgentEvent({ type: "turn_started", turnIndex: 1 } as AgentLoopEvent);
+    rec.onAgentEvent({ type: "step_started", stepIndex: 2 } as AgentLoopEvent);
+    rec.onAgentEvent({
+      type: "llm_event",
+      event: {
+        type: "answer_continued",
+        stepIndex: 2,
+        cause: "reply_cap",
+        partialChars: 1_234,
+        outcome: "cut_again",
+      },
+    });
+    expect(events.at(-1)).toEqual({
+      type: "answer_continued",
+      seq: 2,
+      sessionId: "s-cont",
+      ts: 1000,
+      turnIndex: 1,
+      stepIndex: 2,
+      cause: "reply_cap",
+      partialChars: 1_234,
+      outcome: "cut_again",
+    });
+  });
+
   it("emits parse_retry and error events", () => {
     const { events, emit } = collector();
     const rec = createTraceRecorder({ sessionId: "s-6", emit, now });

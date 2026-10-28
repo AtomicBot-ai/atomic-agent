@@ -104,6 +104,7 @@ import { SlashPalette } from "./components/slash-palette.js";
 import { StatusBar } from "./components/status-bar.js";
 import { TasksCancelModal } from "./tasks/tasks-cancel-modal.js";
 import { UpdateModal } from "./update/update-modal.js";
+import { ProjectTrustModal } from "./project-trust/project-trust-modal.js";
 import { UpdateIndicator } from "./update/update-indicator.js";
 import { UpdateRestartPrompt } from "./update/update-restart-prompt.js";
 import { META_SLOT_SHRINK } from "./components/prompt-meta-bar.js";
@@ -760,6 +761,8 @@ export interface TuiAppCallbacks {
   onImportExecute?(form: ImportFormState): void;
   /** Startup self-update: user accepted the offer — run `install.sh`. */
   onUpdateConfirmed?(): void;
+  /** Startup folder trust question answered (ATO-298). */
+  onProjectTrustAnswered?(answer: "trust" | "decline"): void;
   /** Self-update settled: user pressed a key to re-exec the new binary. */
   onUpdateRestart?(): void;
   /**
@@ -2433,6 +2436,11 @@ export function TuiApp({
                     <TasksCancelModal
                       confirm={state.tasksPanel.cancelConfirm}
                     />
+                  </Box>
+                ) : null}
+                {state.projectTrustPrompt ? (
+                  <Box flexShrink={0}>
+                    <ProjectTrustModal prompt={state.projectTrustPrompt} />
                   </Box>
                 ) : null}
                 {state.updatePrompt ? (

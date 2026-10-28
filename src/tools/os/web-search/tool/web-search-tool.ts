@@ -6,6 +6,7 @@ import { runCommand as defaultRunCommand } from "../../../../sandbox/command-run
 import type { ToolDefinition } from "../../../tool-registry.js";
 import type { HostLookup } from "../../web/web-fetch-ssrf-guard.js";
 import { runWebSearchWithFallback } from "../providers/index.js";
+import { buildFallbackKeyHint } from "../providers/search-failure-report.js";
 import {
   createPersistentProviderCooldown,
   createProviderCooldown,
@@ -14,7 +15,10 @@ import {
   createPersistentSearchCache,
   createSearchCache,
 } from "../transport/search-cache.js";
-import { WebSearchUnavailableError } from "../web-search-errors.js";
+import {
+  WebSearchUnavailableError,
+  type WebSearchKeyHelp,
+} from "../web-search-errors.js";
 import type { WebSearchResult } from "../web-search-provider.js";
 import { checkMissingSearchKey } from "./warn-missing-search-key.js";
 
@@ -40,6 +44,12 @@ export interface OsWebSearchOptions {
   env?: NodeJS.ProcessEnv;
   /** Warning sink; defaults to stderr. Injectable for tests. */
   warn?: (message: string) => void;
+  /**
+   * Where this process's user adds an Exa key, for the advice in the
+   * error (ATO-345). The terminal UI passes `integrations-hub`; omitted
+   * keeps the desktop / `.env` advice.
+   */
+  keyHelp?: WebSearchKeyHelp;
 }
 
 interface WebSearchArgs {
@@ -91,6 +101,10 @@ export function buildOsWebSearchTool(
       ((message: string) => process.stderr.write(`${message}\n`));
     warn(missingKey.message);
   }
+  // Sessions already told, in this process, that /integrations takes an
+  // Exa key (ATO-345). Once per session: the note repeats on every search
+  // while Exa is parked, and one line is enough for the model to pass on.
+  const keyHintedSessions = new Set<string>();
   return {
     name: TOOL_NAME,
     description:
@@ -130,13 +144,20 @@ export function buildOsWebSearchTool(
           },
           cache,
           cooldown,
+          ...(options.keyHelp === undefined ? {} : { keyHelp: options.keyHelp }),
         });
         return compressToolResult(
           {
             tool: TOOL_NAME,
             status: "ok",
             output:
-              renderNotes(outcome.degraded) + renderResults(outcome.results),
+              renderNotes(outcome.degraded) +
+              renderKeyHint(
+                buildFallbackKeyHint(options.keyHelp, outcome.keyRequired),
+                keyHintedSessions,
+                ctx.sessionId,
+              ) +
+              renderResults(outcome.results),
             details: {
               provider: outcome.provider,
               fromCache: outcome.fromCache,
@@ -217,6 +238,21 @@ function parseArgs(
 function renderNotes(degraded: readonly string[]): string {
   if (degraded.length === 0) return "";
   return `${degraded.map((note) => `[search] ${note}`).join("\n")}\n\n`;
+}
+
+/**
+ * The fallback key hint as a note line (ATO-345), once per session: it
+ * repeats on every search while Exa is parked, and one line is enough for
+ * the model to pass on.
+ */
+function renderKeyHint(
+  hint: string | undefined,
+  hintedSessions: Set<string>,
+  sessionId: string,
+): string {
+  if (hint === undefined || hintedSessions.has(sessionId)) return "";
+  hintedSessions.add(sessionId);
+  return `[search] ${hint}\n\n`;
 }
 
 function renderResults(results: readonly WebSearchResult[]): string {

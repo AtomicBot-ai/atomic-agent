@@ -3,11 +3,11 @@
 Status: current
 Owner: src/config/
 
-Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
+Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
 
 ## version
 
-- `version` (default `78`).
+- `version` (default `79`).
 
 ## localModels
 
@@ -16,7 +16,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 - `localModels.completionMaxTokens` (default `16384`).
 - `localModels.useServerTemplate` (default `"auto"`).
 - `localModels.thinking` (default `"auto"`).
-- `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced up to 499 by llama.cpp, see #600).
+- `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced in full; until ATO-607 llama.cpp's repeat limit capped it at 499, see #600).
 - `localModels.managed.engine` (default `"atomic-core"`).
 - `localModels.managed.modelId` (default `null`).
 - `localModels.managed.port` (default `19091`).
@@ -26,6 +26,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 - `localModels.managed.autoRestart` (default `true`).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).
+- `localModels.managed.coreBackendVariant` (default `"auto"`).
 - `localModels.managed.contextSize` (default `0`).
 - `localModels.managed.parallel` (default `"auto"`).
 - `localModels.managed.swaFull` (default `"auto"`).
@@ -62,7 +63,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 ## http
 
 - `http.enabled` (default `true`).
-- `http.approvalMode` (default `"never"`).
+- `http.approvalMode` (default `"writes"`: a POST asks, a GET does not).
 - `http.hostAllowlist` (default `null`).
 - `http.maxResponseBytes` (default `1048576`).
 - `http.defaultTimeoutMs` (default `30000`).
@@ -92,6 +93,15 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 - `tools.shell.jobMaxMs` (default `3600000`).
 - `tools.shell.maxJobs` (default `3`).
 - `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
+- `tools.screen.enabled` (default `false`): the macOS `os.screen.*` computer-use tools ([OS tools](../../tools/os/README.md)); read at start.
+
+## browser
+
+- `browser.blockedDomains` (default `[]`): hosts the browser tools refuse at every approval level, subdomains included.
+- `browser.allowedDomains` (default `[]`): when non-empty, opening any other host asks first (`browser_offsite`).
+- `browser.connect` (default `"agent"`): `"agent"` uses the agent's own Chrome profile; `"user-chrome"` (opt-in) works in the user's own signed-in Chrome ([browser tools](../../tools/browser/README.md#your-own-chrome)).
+- `browser.cdpUrl` (default `null`): a DevTools address to attach to instead; loopback only. Env `ATOMIC_AGENT_BROWSER_CDP_URL` wins.
+- `browser.userDataDir` (default `null`): the user's Chrome data folder for `"user-chrome"` when it is not in a standard place.
 
 ## sessions
 

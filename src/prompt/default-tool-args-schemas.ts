@@ -46,6 +46,7 @@ import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
+import { SCREEN_TOOL_ARGS_SCHEMAS } from "./screen-tool-args-schemas.js";
 
 type Schema = Record<string, unknown>;
 
@@ -96,7 +97,13 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["ref", "text"],
     ),
   ],
-  ["browser.read_aria", obj({})],
+  [
+    "browser.read_aria",
+    obj({
+      mode: { type: "string", enum: ["full", "interactive", "diff", "region"] },
+      ref: stringSchema,
+    }),
+  ],
   [
     "browser.search",
     obj({ query: stringSchema, engine: stringSchema }, ["query"]),
@@ -112,6 +119,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["action"],
     ),
   ],
+  ["browser.screenshot", obj({ ref: stringSchema, fullPage: booleanSchema })],
   [
     "browser.scroll",
     obj(
@@ -142,6 +150,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       cwd: stringSchema,
       timeoutMs: numberSchema,
       keep: booleanSchema,
+      background: booleanSchema,
       wait: integerSchema,
       kill: integerSchema,
       jobs: booleanSchema,
@@ -422,6 +431,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       "text",
     ]),
   ],
+  ...SCREEN_TOOL_ARGS_SCHEMAS,
 
   // ── skill / tool ─────────────────────────────────────────────────────────
   ["skill.view", obj({ name: stringSchema }, ["name"])],

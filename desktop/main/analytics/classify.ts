@@ -4,6 +4,7 @@
  * pick an enum and never leaves this file.
  */
 
+import { faultLineIn } from "../server-fault-line.js";
 import { PROVIDER_PRESETS, SUPERVISOR_KINDS } from "./catalog.js";
 
 /** Provider preset id, or `custom` for anything a user named themselves. */
@@ -127,6 +128,30 @@ export function engineFault(line: unknown): "oom" | "port_in_use" | "load_failed
 }
 
 /**
+ * ATO-278: why the local model server did not start, or died, as a code
+ * (catalog-values BACKEND_FAIL_REASONS). `error` is the start's own error
+ * text, `stderr` the start's stderr tail, `faultLine` the line daemon-watch
+ * describeFault picked from this run's server log. All can hold paths and
+ * model names: they are read here to pick the code and never leave this file.
+ * Only the line that names a failure is classified (server-fault-line
+ * faultLineIn), never a whole stderr: a loaded `ggml-*.dll` note or a
+ * backend check's "timeout" is not why the start failed.
+ */
+export function backendFailReason(error: unknown, stderr: unknown, faultLine: unknown):
+  "oom" | "port_in_use" | "load_failed" | "missing_lib" | "crash" | "timeout" | "exited_after_ready" | "other" {
+  const text = typeof error === "string" ? error.trim() : "";
+  // agent-cli modelsStart: the server came up, then stopped answering while the start waited on it.
+  if (/stopped answering while it was starting/i.test(text)) return "exited_after_ready";
+  // agent-cli cli(): the app's own time limit on `models start` (execFile killed it) — its message, nothing else.
+  if (/^the agent did not answer\b/i.test(text)) return "timeout";
+  for (const line of [faultLineIn(text), faultLineIn(stderr), faultLine]) {
+    const fault = engineFault(line);
+    if (fault && fault !== "unknown") return fault;
+  }
+  return "other";
+}
+
+/**
  * ATO-773: `local_backend_supervised` props from a supervisor notice
  * (daemon-supervisor SupervisorNotice), or null for one that is not sent
  * (`clear`, ATO-244's CPU word on the same channel). `quickDeaths` is the
@@ -148,4 +173,10 @@ export function supervisedProps(notice: unknown, quickDeaths: number | null): {
     after_ms: kind === "restarted" ? count(n.afterMs) : null,
     fault: kind === "restart_failed" || kind === "gave_up" ? engineFault(n.fault) : null,
   };
+}
+
+/** `app_opened.prev_session_end`: clean, or why it was not — os_shutdown, crashed, or killed (nothing seen: Force Quit, End task, power loss). */
+export function prevSessionEnd(prevCrashed: boolean, trouble: "crashed" | "os_shutdown" | null): "clean" | "os_shutdown" | "crashed" | "killed" {
+  if (!prevCrashed) return "clean";
+  return trouble ?? "killed";
 }

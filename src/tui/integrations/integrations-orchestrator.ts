@@ -19,13 +19,16 @@ import {
   runAtomicMailAction,
 } from "./integrations-orchestrator-atomic-mail.js";
 import {
+  EXA_INTEGRATION_ID,
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
   IntegrationSecretError,
   displayFieldValue,
+  exaKeyUnusedReason,
   findIntegration,
   listIntegrations,
   presentFieldKeys,
+  readExaSearchSetup,
   readFieldValue,
   writeFieldValue,
 } from "../../integrations/index.js";
@@ -149,6 +152,7 @@ export class IntegrationsOrchestrator {
         channelErrors,
         verifiedIdentities,
         verifyErrors,
+        config: config as unknown as Record<string, unknown>,
       };
       const status = descriptor.status(statusCtx);
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({
@@ -399,6 +403,16 @@ export class IntegrationsOrchestrator {
         this.refresh();
         return;
       }
+      if (integrationId === EXA_INTEGRATION_ID) {
+        // Nothing to restart: the write above already set process.env,
+        // and the Exa provider reads its key on every search (ATO-345).
+        this.bus.emit({
+          type: "integrations_action_settled",
+          message: exaSavedMessage(value !== null),
+        });
+        this.refresh();
+        return;
+      }
       if (integrationId === "composio") {
         await this.applyComposio(value !== null);
       }
@@ -474,4 +488,23 @@ export class IntegrationsOrchestrator {
     }
     await this.runtime.refreshMcp?.();
   }
+}
+
+/**
+ * What the hub says after an Exa key change. It promises "the next web
+ * search uses it" only when that is true: the row always writes
+ * `EXA_API_KEY`, and web search may read another variable or not ask Exa.
+ */
+export function exaSavedMessage(saved: boolean): string {
+  const setup = readExaSearchSetup(
+    getConfig() as unknown as Record<string, unknown>,
+  );
+  if (!saved) {
+    return setup.inChain
+      ? "Exa key cleared. Web search is back on Exa's free searches."
+      : "Exa key cleared.";
+  }
+  const unused = exaKeyUnusedReason(setup);
+  if (unused !== undefined) return `Exa key saved, but ${unused}.`;
+  return "Exa key saved. The next web search uses it, no restart needed.";
 }

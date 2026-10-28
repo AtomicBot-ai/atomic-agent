@@ -28,7 +28,7 @@ export interface ErrorInput {
   stack?: unknown;
   /** Small enum tags (kind, reason, exit_code…); anything not tag-shaped is dropped. */
   tags?: Record<string, unknown>;
-  level?: "error" | "warning";
+  level?: "error" | "warning" | "info";
 }
 
 export function baseTags(): Record<string, string> {

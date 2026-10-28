@@ -58,7 +58,7 @@ describe("bootstrap embedding client authenticates to the managed daemon (#582)"
     resetConfigCache();
     const dim = getEmbeddingModelDef(DEFAULT_EMBEDDING_MODEL_ID).dim;
     const keyFile = join(stateDir, "models", "llama-server.key");
-    vi.stubGlobal("fetch", (async (input: RequestInfo | URL, init?: RequestInit) => {
+    vi.stubGlobal("fetch", (async (input: string | URL | Request, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input.toString();
       if (url.includes(EMBED_HOST) && url.endsWith("/health")) {
         return new Response(JSON.stringify({ status: "ok" }), { status: 200 });

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { render } from "ink-testing-library";
 import { afterEach, expect, it, vi } from "vitest";
 import { ensureUserConfigFileSync, writeUserConfigFileSync, getConfig, resetConfigCache } from "../../config/index.js";
-import { setSkillDisabled } from "../../config/skill-policy-commands.js";
+import { recordProjectTrust, setSkillDisabled } from "../../config/skill-policy-commands.js";
 import { createAgentRuntime } from "../../runtime/bootstrap.js";
 import { FakeBrowserBackend } from "../../http/test-harness.js";
 import type { CompletionResult } from "../../llm/provider/completion-types.js";
@@ -33,6 +33,8 @@ async function fixture(cloud = true) {
   vi.stubEnv("ATOMIC_AGENT_STATE_DIR", join(dir, "state"));
   vi.stubEnv("ATOMIC_AGENT_GRAMMARS_DIR", join(process.cwd(), "grammars"));
   resetConfigCache();
+  // Project skills load only once the folder is trusted (ATO-298).
+  recordProjectTrust(workspace, "trusted", { skills: ["openspec-explore"], instructions: [] });
   const config = getConfig();
   config.agent.nameSessions = false;
   config.memory.reflection.enabled = false;
@@ -143,6 +145,7 @@ it("changes suggestions and counts with the selected session workspace", async (
     const skillDir = join(other, ".claude/skills/workspace-beta");
     mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, "SKILL.md"), "---\ndescription: Beta workspace only\n---\nBeta body");
+    recordProjectTrust(other, "trusted", { skills: ["workspace-beta"], instructions: [] });
     const a = f.runtime.createSession();
     const b = { ...f.runtime.createSession(), workingDir: other };
     f.runtime.sessionStore.save(b);

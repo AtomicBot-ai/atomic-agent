@@ -5,7 +5,7 @@ Owner: src/config/
 
 ## Authority
 
-`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 78; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
+`USER_CONFIG_DEFAULTS`, `parseUserConfigFile` and `loadConfig` are the current authority for defaults, migration and precedence. The current schema version is 79; documentation-only changes do not bump it. Inspect the source rather than reconstructing defaults from historical rollout phases.
 
 The checked primitive-value snapshots live in [user defaults](user-defaults.md) and [operational/helper defaults](operational-defaults.md). Read only the relevant surface for a defaults change.
 
@@ -23,9 +23,17 @@ For input versions below 75, validated providers without `modelMode` receive `cl
 
 Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before it the Atomic Core choice sat behind an opt-in environment variable, so a stored `llama-server` was the written default rather than a decision: for input versions below 77 a missing or `llama-server` engine becomes `atomic-core`. Nothing else in the file changes, including external mode and every other managed field. From version 77 an explicit `llama-server` is honoured, so switching back with `models engine llama-server` survives later loads. Unknown engine values still fail validation. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
+## Atomic Core backend variant
+
+`localModels.managed.coreBackendVariant` (`auto` or `cpu`) is additive and unversioned: a file without it reads `auto`, Core's recommended build, as before. It is the Atomic Core engine's own key on purpose. `localModels.managed.backendVariant` belongs to the llama-server engine, whose start rescue wrote `cpu` there on any health timeout, including on machines whose GPU build works; files moved to `atomic-core` by version 77 still carry it, and reading it for Core would move them to the slower CPU build. Only Core's own rescue writes `coreBackendVariant: "cpu"`, after the CPU build served a model the GPU build crashed on. [Local model config tests](../local-models/local-models-config.test.ts) and [Core backend variant tests](../../local-llm/core/core-backend-variant.test.ts) cover it.
+
 ## Reasoning budget default migration
 
-Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound, as it was before version 68. llama.cpp clamps a grammar repetition to 1,999 characters, so the old default of 1500 tokens was really 499 and cut thinking models off mid-thought. Every file since version 68 carries the value the schema wrote, so for input versions below 78 a stored value of exactly `1500` is read as that default and becomes `0`. Any other value, including a lower positive bound, is kept, and a missing field takes the new default. From version 78 an explicit `1500` is honoured. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
+Version 78 sets the default `localModels.reasoningBudgetTokens` to `0`, no bound, as it was before version 68. At the time llama.cpp's repeat limit clamped the grammar bound to 1,999 characters, so the old default of 1500 tokens was really 499 (until ATO-607, which chains repetitions under the limit and enforces the full budget) and cut thinking models off mid-thought. Every file since version 68 carries the value the schema wrote, so for input versions below 78 a stored value of exactly `1500` is read as that default and becomes `0`. Any other value, including a lower positive bound, is kept, and a missing field takes the new default. From version 78 an explicit `1500` is honoured. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
+
+## Outbound HTTP approval migration
+
+Version 79 makes `"writes"` the default `http.approvalMode` again: an `os.http.request` that sends a body (POST) goes through the approval gate, a GET does not. Version 25 had made `"never"` the default, so a model steered by a hostile page or file could send the user's data anywhere without a prompt (ATO-760). Every first run writes the full defaults and the v25 migration rewrote `"writes"` to `"never"`, so a stored `"never"` in a file older than 79 is the schema's value, not a choice: it becomes `"writes"`. `"always"` and `"writes"` are kept and a missing value takes the default. From version 79 an explicit `"never"` is honoured. A GET can still carry data out in its URL; the approval level ladder (`http` stops asking from level 3) is unchanged. [Tool policy config tests](../tool-policy-config.test.ts) cover the migration.
 
 ## External llama.cpp URL default
 

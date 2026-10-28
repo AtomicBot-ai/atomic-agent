@@ -5,6 +5,7 @@ import { getConfig } from "../config/index.js";
 import { buildCapabilities } from "../prompt/capabilities.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../prompt/tool-descriptors.js";
 import { SkillRegistry } from "../skills/skill-registry.js";
+import { createProjectSkillTrustGate } from "../skills/project-trust.js";
 import { buildSkillCatalogSection } from "../skills/skill-catalog.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../llm/index.js";
 import { replaySession } from "../replay/index.js";
@@ -145,6 +146,8 @@ async function handleReplay(args: string[]): Promise<number> {
       projectDir: joinPath(workingDir, config.paths.projectSkillsDirName),
     },
     config.skills.disabled,
+    // Same trust gate as the runtime, or untrusted project skills read as drift.
+    createProjectSkillTrustGate(config.paths.userConfigFile, config.skills.projectTrust, workingDir),
   );
   await skillRegistry.refresh();
   const skillSection = buildSkillCatalogSection(skillRegistry.list(), {

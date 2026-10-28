@@ -83,6 +83,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "browser.search": "browser",
   "browser.tabs": "browser",
   "browser.scroll": "browser",
+  "browser.screenshot": "browser",
 
   // os.shell.* — always approval-gated when approvals are on
   "os.shell.run": "approval_gated",
@@ -161,6 +162,15 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // os.email.* — the agent's own inbox
   "os.email.inbox": "pure_read",
   "os.email.send": "approval_gated",
+
+  // os.screen.* — one shared desktop (ATO-525). All four in one serial
+  // class, so a batched click → capture runs in the order emitted and a
+  // screenshot is never taken while a click is still in flight (distinct
+  // groups run concurrently).
+  "os.screen.capture": "approval_gated",
+  "os.screen.click": "approval_gated",
+  "os.screen.type": "approval_gated",
+  "os.screen.key": "approval_gated",
 
   // discovery
   "skill.view": "pure_read",
@@ -366,6 +376,11 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     "os.proc.kill": ["proc_kill"],
     "os.http.request": ["http"],
     "os.email.send": ["email"],
+    // A screenshot asks below level 3 (`screen_capture`).
+    "os.screen.capture": ["screen_capture"],
+    "os.screen.click": ["screen_control"],
+    "os.screen.type": ["screen_control"],
+    "os.screen.key": ["screen_control"],
     "skill.run_script": ["script"],
     // A local generation asks nothing; the cloud one is `paid_generation`.
     "image.generate": ["paid_generation"],

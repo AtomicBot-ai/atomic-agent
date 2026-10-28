@@ -57,8 +57,8 @@ beforeEach(() => {
   acquiredManager = undefined; acquiredTelemetry = undefined; acquiredProviders = undefined; events = [];
   browser = {
     ensureReady: async () => unexpected(), shutdown: vi.fn(async () => {}), snapshot: async () => unexpected(),
-    hasRef: async () => unexpected(), navigate: async () => unexpected(), click: async () => unexpected(),
-    type: async () => unexpected(), search: async () => unexpected(), tabs: async () => unexpected(), scroll: async () => unexpected(),
+    hasRef: async () => unexpected(), describeRef: async () => unexpected(), currentUrl: async () => unexpected(), navigate: async () => unexpected(), click: async () => unexpected(),
+    type: async () => unexpected(), search: async () => unexpected(), tabs: async () => unexpected(), scroll: async () => unexpected(), screenshot: async () => unexpected(),
   };
 });
 afterEach(async () => {

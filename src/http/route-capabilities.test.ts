@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
+import { recordProjectTrust } from "../config/skill-policy-commands.js";
 
 describe("GET /api/capabilities", () => {
   let harness: Harness | null = null;
@@ -157,6 +158,7 @@ describe("GET /api/capabilities skill truncation", () => {
       ].join("\n"),
       "utf8",
     );
+    recordProjectTrust(harness.workingDir, "trusted", { skills: ["late"], instructions: [] });
     await harness.runtime.refreshSkills();
 
     expect((await fetchSkills(harness.baseUrl)).skillsOmitted).toBe(before + 1);

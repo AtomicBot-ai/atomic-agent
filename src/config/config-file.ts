@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { carryUnknownConfigKeys } from "./carry-unknown-config-keys.js";
+import { keepSetAsideLocalModelValues } from "./local-models/keep-set-aside-values.js";
 import {
   ConfigValidationError,
   ENV_DEFAULTS,
@@ -40,6 +41,35 @@ export function getTrustConfigPaths(paths: {
 }
 
 /**
+ * Every file in the agent's state that holds a secret or the trust
+ * config: the trust surface above, plus the bearer key the managed
+ * llama-server is launched with (`resolveApiKeyFilePath`), the session
+ * records Atomic Chat Core writes with their per-session key
+ * (`coreSessionPath`) and the cached Atomic Mail session
+ * (`resolveSessionPath`). Reading one of these through an agent tool,
+ * or naming one in a shell command, asks as `state_secret` (pinned at
+ * level 5, never grantable; `src/tools/read-scope/state-secrets.ts`).
+ *
+ * The file names are spelled here rather than imported because config
+ * sits below `local-llm/` and `atomic-mail/`; `config-file.test.ts`
+ * pins them against the owners' own path helpers so the list cannot
+ * drift from where those files really are.
+ */
+export function getStateSecretPaths(paths: {
+  userConfigFile: string;
+  stateDir: string;
+  localModelsDataDir: string;
+}): readonly string[] {
+  return [
+    ...getTrustConfigPaths(paths),
+    join(paths.localModelsDataDir, "llama-server.key"),
+    join(paths.localModelsDataDir, "core", "chat.json"),
+    join(paths.localModelsDataDir, "core", "embedding.json"),
+    join(paths.stateDir, "atomic-mail", "session.json"),
+  ];
+}
+
+/**
  * Synchronously read and validate the user config file.
  * Returns `null` if the file does not exist. Throws `ConfigValidationError`
  * if the file is present but malformed.
@@ -67,8 +97,8 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
  * build that opens a newer file relabels it on the first settings
  * toggle, and the version field is load-bearing — `version < 41` forces
  * `localModels.managed.autoUpdate` back on, `version < 22` overrides an
- * explicit `memory.*` opt-out, `version < 25` rewrites
- * `http.approvalMode`. Downgrading the label silently reverts choices
+ * explicit `memory.*` opt-out, `version < 79` rewrites a stored
+ * `http.approvalMode: "never"`. Downgrading the label silently reverts choices
  * the user made.
  *
  * For the same reason, keys this build does not know inside fixed blocks
@@ -90,7 +120,7 @@ export function writeUserConfigFileSync(
       `[atomic-agent] kept config version ${onDisk} (this build writes v${data.version}) at ${path}\n`,
     );
   }
-  const carried = diskTree ? carryUnknownConfigKeys(data, diskTree) : data;
+  const carried = diskTree ? carryUnknownConfigKeys(keepSetAsideLocalModelValues(data, diskTree), diskTree) : data;
   const payload =
     JSON.stringify(
       version === carried.version ? carried : { ...carried, version },
@@ -131,21 +161,9 @@ export function writeUserConfigFileSync(
  * UI instead. Every other caller (the CLI, the sidecar) keeps stderr,
  * which is the default.
  */
-export type ConfigNoticeSink = (line: string) => void;
-
-let configNoticeSink: ConfigNoticeSink | null = null;
-
-export function setConfigNoticeSink(sink: ConfigNoticeSink | null): void {
-  configNoticeSink = sink;
-}
-
-function emitConfigNotice(line: string): void {
-  if (configNoticeSink) {
-    configNoticeSink(line);
-    return;
-  }
-  process.stderr.write(`${line}\n`);
-}
+// The sink lives with the primitives so a block parser can say a value was set aside (ATO-1239).
+export { setConfigNoticeSink, type ConfigNoticeSink } from "./config-primitives.js";
+import { emitConfigNotice } from "./config-primitives.js";
 
 export function ensureUserConfigFileSync(path: string): UserConfigFile {
   const raw = readRawUserConfigFileSync(path);
