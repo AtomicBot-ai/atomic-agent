@@ -6,6 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { activeCoreVersion, coreLoopbackPort, coreRoot, coreSessionPath, orphanedCoreSession, readCoreBackend, readCoreJson, writeCoreJson, type CoreSession, type CoreSessionRecord } from "./core-state.js";
 import { connectCore, ensureCore, withCoreClient } from "./core-client.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
+import { noteReleaseTimeout, RELEASE_WAIT_MS, waitForProcessRelease } from "../server/process-release.js";
 
 /** These host arguments are owned by the control contract, never duplicated in extra_args. */
 export function coreLoadOverrides(args: readonly string[]): Record<string, unknown> {
@@ -85,8 +86,11 @@ export async function loadCoreSession(dataDir: string, options: {
   });
 }
 
-/** Return true even for a stale record: falling through to kill(pid) would bypass Core ownership. */
-export async function stopCoreSession(dataDir: string, role: "chat" | "embedding", opts: { waitMs?: number } = {}): Promise<boolean> {
+/**
+ * Return true even for a stale record: falling through to kill(pid) would bypass Core ownership.
+ * `waitMs` bounds the wait for the engine lock; `releaseWaitMs` the Windows wait for the unloaded server to exit.
+ */
+export async function stopCoreSession(dataDir: string, role: "chat" | "embedding", opts: { waitMs?: number; releaseWaitMs?: number } = {}): Promise<boolean> {
   // Every llama-server stop asks here first. A user who never ran Core has no
   // core folder, and must not contend for its lock. Otherwise skip the lock only
   // when there is no record and no engine operation: a Core load in another
@@ -116,6 +120,13 @@ export async function stopCoreSession(dataDir: string, role: "chat" | "embedding
       }
       const result = await client.call<{ success: boolean; error?: string }>(`/models/${record.provider}/${encodeURIComponent(record.model_id)}/unload`, {}, { timeoutMs: 30_000 });
       if (!result.success) throw new Error(result.error ?? "Atomic Core could not stop the model.");
+      // On Windows the unload can answer before Core's llama-server has exited and
+      // freed its port; the next load on that port then failed to bind (ATO-304).
+      // Waited under the engine lock, so a start queued behind this stop waits too.
+      if (process.platform === "win32") {
+        const released = await waitForProcessRelease(record.pid, record.port, { timeoutMs: opts.releaseWaitMs ?? RELEASE_WAIT_MS });
+        noteReleaseTimeout(join(dataDir, role === "embedding" ? "llama-embed.log" : "llama-server.log"), record.pid, record.port, released);
+      }
     }
   }
   const pidPath = join(dataDir, role === "chat" ? "llama-server.pid" : "llama-embed.pid");
