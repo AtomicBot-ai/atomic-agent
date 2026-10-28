@@ -4846,6 +4846,7 @@ function overlaysHTML() {
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
+  if (ptOnScreen()) html += projectTrustHTML();   // ATO-1250
   if (OB.open) html = obHTML();
   return html;
 }
@@ -5649,8 +5650,68 @@ function skillSessionId() {
 }
 function skillContextKey() { return JSON.stringify([AGENT_GEN, WORKSPACE, skillSessionId()]); }
 const SK_LOADER = createSkillCatalogLoader(id => { SK.calls++; return BR.skillList(id); });
+/* ATO-1250: "Trust this folder?" — asked once per folder, for the chat's own
+   folder (renderer/project-trust.js). Read again whenever the catalog's
+   context moves (another chat, another folder, a new agent); an agent
+   without /api/project-trust shows nothing. */
+const PT = createProjectTrust({
+  read: (id) => BR && BR.projectTrust ? BR.projectTrust(id) : {supported: false},
+  answer: (body) => BR && BR.projectTrustAnswer ? BR.projectTrustAnswer(body) : {supported: false},
+});
+let PT_KEY = null;
+async function projectTrustCheck(force) {
+  const key = skillContextKey();
+  if (!force && PT_KEY === key) return;
+  PT_KEY = key;
+  const before = JSON.stringify([PT.state.question, PT.state.status]);
+  await PT.check(skillSessionId());
+  if (key !== skillContextKey()) return;
+  if (before !== JSON.stringify([PT.state.question, PT.state.status])) {
+    if (S.settings && settingsPaneId(S.settingsPane) === 'skills') { if (!tkTyping() && !skpTyping()) render(); }
+    else renderOverlays();
+  }
+}
+/* The dialog waits under any other dialog, menu, picker, Settings or first-run setup, and appears once they close. */
+function ptOnScreen() {
+  return !!PT.state.question && !S.overlay && !S.alert && !SEL.open && !WIZ.phase && !OB.open && !S.settings;
+}
+function projectTrustHTML() {
+  const q = PT.state.question;
+  return '<div class="sheetwrap alertwrap ptrustwrap"><div class="alertbox ptrust" role="alertdialog" aria-label="Trust this folder?">'
+    + '<span class="alertmark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
+    + '<div class="ttl">' + esc(q.question) + '</div>'
+    + '<p class="alertmsg">' + esc(projectTrustLine(q)) + '</p>'
+    + '<p class="alertmsg mono ptrust-dir">' + esc(q.workingDir) + '</p>'
+    + (PT.state.error ? '<p class="alertmsg tuierr">' + esc(PT.state.error) + '</p>' : '')
+    + '<div class="alertacts">'
+      + '<button class="btn btn-s" data-act="ptrust:decline"' + (PT.state.busy ? ' disabled' : '') + ' autofocus>Don’t trust</button>'
+      + '<button class="btn btn-df" data-act="ptrust:trust"' + (PT.state.busy ? ' disabled' : '') + '>Trust</button></div></div></div>';
+}
+/* Settings › Skills: where the folder stands, and the switch that changes an earlier answer. */
+function projectTrustRowHTML() {
+  const sum = PT.state.supported ? projectTrustSummary(PT.state.status) : null;
+  if (!sum || sum.state === 'none') return '';
+  const busy = PT.state.busy ? ' disabled' : '';
+  return '<div class="tk-notice set-softnote ptrust-row" data-ptrust="' + sum.state + '"><span class="grow">Folder trust: ' + esc(sum.text) + '</span>'
+    + (sum.canTrust ? '<button class="btn btn-s sm" data-act="ptrust:all:trust"' + busy + '>Trust this folder</button>' : '')
+    + (sum.canDecline ? '<button class="btn btn-s sm" data-act="ptrust:all:decline"' + busy + '>Stop trusting</button>' : '')
+    + '</div>';
+}
+async function projectTrustAct(v) {
+  if (v === 'later') { PT.dismiss(); render(); return; }
+  const all = v.indexOf('all:') === 0;
+  const kind = all ? v.slice(4) : v;
+  const pending = all ? PT.setAll(kind === 'trust', skillSessionId()) : PT.answer(kind, skillSessionId());
+  render();
+  const res = await pending;
+  render();
+  if (res && res.ok) { await skpReloadRows(); toast(kind === 'trust' ? 'Folder trusted' : 'Folder not trusted',
+    kind === 'trust' ? 'Its project skills and instructions load from the next message' : 'Nothing from this folder is loaded'); }
+  else if (res && res.conflict) toast('The folder changed', 'Something new appeared in it; the question shows what is there now');
+}
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
+  projectTrustCheck();
   const key = skillContextKey();
   if (SK.for !== key) {
     SK.for = key; SK.rows = null; SK.err = null; SK.workingDir = null; SK.errors = []; SKILLS.length = 0;
@@ -6530,6 +6591,8 @@ function act(a) {
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
+  // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
+  if (k === 'ptrust') { projectTrustAct(v || ''); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -7311,7 +7374,7 @@ function apprChordOf(e, k) {
    underneath. */
 function apprOnScreen() {
   const req = S.pending;
-  if (!approvalOpen(req) || S.settings || S.overlay) return null;
+  if (!approvalOpen(req) || S.settings || S.overlay || ptOnScreen()) return null;
   if (S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open) return null;
   const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
   return card ? req : null;
@@ -7319,7 +7382,7 @@ function apprOnScreen() {
 /* ATO-224: whether a dialog, a popover, a sheet, Settings or the menu is
    open over the chat — the layers ⌘↩ must not send the composer from under. */
 function layerOverChat() {
-  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open);
+  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open || ptOnScreen());
 }
 /** 05.10: the keys named on the card's buttons and in the shortcuts sheet. */
 function apprKeyLabel(which) {
@@ -8847,6 +8910,8 @@ document.addEventListener('keydown', (e) => {
 
   if (k === 'Escape') {
     e.preventDefault();
+    // ATO-1250: Escape is "not now" on the folder-trust dialog: nothing recorded, asked again at the next start.
+    if (ptOnScreen()) { act('ptrust:later'); return; }
     /* ATO-167 review: with Done gone from the model and mode popovers, Escape
        is a keyboard way out of them — so an open popover closes FIRST, before
        the scroll-to-bottom and before Escape's stop of a running turn (which
@@ -23078,6 +23143,7 @@ function skillsTabEntered() {
   ensureSkillsPoll();
   if (SK.workingDir) refreshSkillList();
   tpSkillsOmittedRefresh();
+  projectTrustCheck(true);   // ATO-1250: the folder-trust row reads the agent's current answer
 }
 function skpRender() { paneRepaintKeepFocus(skillsTab()); }
 /* `atag skill list` again after a mutation — behind any poll already in flight, never dropped by its SK.busy guard. */
@@ -23129,6 +23195,7 @@ function skillsTab() {
     view = bar
       + (SK.workingDir ? '<div class="tk-notice set-softnote"><span class="grow">Workspace: <span class="mono">' + esc(SK.workingDir) + '</span></span>'
         + '<button class="btn btn-s sm" data-act="skills:project"' + (SKP.busy ? ' disabled' : '') + '>' + (SK.projectSkillsEnabled ? 'Disable project skills' : 'Enable project skills') + '</button></div>' : '')
+      + (tools ? '' : projectTrustRowHTML())
       + (SK.errors.length && !tools ? '<details class="set-softnote"><summary>Skill diagnostics (' + SK.errors.length + ')</summary><pre>' + esc(SK.errors.join('\n')) + '</pre></details>' : '')
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')

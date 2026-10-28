@@ -26,6 +26,16 @@ with `cwd` set to the chosen workspace, waits for `/health`, and speaks HTTP to
 it. The port is ephemeral, the bind is loopback-only, and the bearer token is
 generated per launch, so nothing outside this app can reach the agent.
 
+**Folder trust (ATO-1250).** A folder's own skills and instruction files
+(`AGENTS.md`, `.atomic-agent/skills`, …) load only after the person trusts
+that folder. Whenever the chat's folder changes, the window reads
+`GET /api/project-trust` and, when the agent has a question, shows it once
+with Trust / Don't trust (Escape: not now, until the next start). The agent
+remembers the answer per folder and asks again only about new items.
+Settings › Skills shows where the folder stands and changes an earlier
+answer (`scope: "all"`). An agent without the route shows nothing
+(`renderer/project-trust.js`).
+
 Choosing another workspace restarts the agent in it, so it never happens
 under a running turn: the window keeps the picker shut while one of its chats
 is answering, and main checks again once the picker closes (a turn may have
@@ -49,6 +59,7 @@ window shows "Not while a turn is running".
 | Steering the turn already running | `POST /api/sessions/{id}/steer` |
 | What a turn accepted but never read | `GET` / `DELETE /api/sessions/{id}/steer` |
 | Compacting a chat's context now | `POST /api/sessions/{id}/compact` |
+| "Trust this folder?" and Settings › Skills' folder-trust switch (ATO-1250) | `GET` / `POST /api/project-trust` |
 
 The turn stream is sent with `X-Atomic-Extensions: 1`, which upgrades it from
 plain OpenAI chunks to atomic's named frames — `session_id`,

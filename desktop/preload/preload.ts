@@ -85,6 +85,9 @@ contextBridge.exposeInMainWorld("atomic", {
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),
   config: () => ipcRenderer.invoke("agent:config"),
   skills: (sessionId?: string | null) => ipcRenderer.invoke("agent:skills", sessionId),
+  /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
+  projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),
+  projectTrustAnswer: (body: unknown) => ipcRenderer.invoke("agent:projectTrustAnswer", body),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
