@@ -357,8 +357,11 @@ function forgetInterpreter(kind: InterpreterKind, run: CheckerRunner, platform: 
 const PYTHON_COMPILE =
   "import sys; compile(open(sys.argv[1], 'rb').read(), sys.argv[1], 'exec')";
 
-/** Exception class names are not localized. */
-const PYTHON_SYNTAX_ERROR = /\b(?:SyntaxError|IndentationError|TabError)\b/;
+/**
+ * Exception class names are not localized. Python 3.10 and older (macOS's
+ * system 3.9) raise ValueError, not SyntaxError, for a NUL byte in the source.
+ */
+const PYTHON_SYNTAX_ERROR = /\b(?:SyntaxError|IndentationError|TabError)\b|\bsource code (?:string )?cannot contain null bytes\b/;
 
 /** bash: "syntax error"; dash: "Syntax error"; zsh: "parse error". */
 const SHELL_SYNTAX_ERROR = /\b(?:syntax error|parse error)\b|\bunexpected\b/i;

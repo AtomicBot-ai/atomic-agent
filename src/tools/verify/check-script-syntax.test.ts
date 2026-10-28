@@ -234,6 +234,16 @@ describe("checkPythonFile with a broken python3 (Windows Store alias)", () => {
     expect(out.error).toMatch(/SyntaxError/);
   });
 
+  it("fails a NUL byte that Python 3.10 and older report as ValueError", async () => {
+    const { run } = fakeRunner({
+      [`python3 ${PY_PROBE}`]: { stdout: "3" },
+      python3: { exitCode: 1, stderr: "Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nValueError: source code string cannot contain null bytes" },
+    });
+    const out = await checkPythonFile("/w/a.py", { run, platform: "darwin" });
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/null bytes/);
+  });
+
   it("reports unchecked when compile exits non-zero without a SyntaxError", async () => {
     const { run } = fakeRunner({
       [`python3 ${PY_PROBE}`]: { stdout: "3" },
