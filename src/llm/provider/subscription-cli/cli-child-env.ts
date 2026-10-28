@@ -1,3 +1,5 @@
+import { posix, win32 } from "node:path";
+
 /**
  * The environment a vendor CLI is spawned with: the agent's own, minus
  * the variables that would move the CLI off the user's subscription.
@@ -26,4 +28,34 @@ export function cliChildEnv(
     if (!drop.has(key.toUpperCase())) env[key] = value;
   }
   return env;
+}
+
+/**
+ * Put the folder of an absolutely pathed CLI on the child's PATH
+ * (ATO-756).
+ *
+ * The desktop saves `subscriptionCli.binPath` when it finds the CLI in a
+ * folder the app's own PATH lacks (an app opened from the Dock gets
+ * `/usr/bin:/bin:/usr/sbin:/sbin`). An npm-installed `claude` or `codex`
+ * is a `#!/usr/bin/env node` script, and the `node` it needs sits in that
+ * same folder (Homebrew, Volta, a global npm prefix); without it the
+ * spawn dies with "env: node: No such file or directory". Appended, never
+ * prepended, so nothing already on PATH is shadowed. A bare name is left
+ * alone: PATH already found it.
+ */
+export function withBinaryDirOnPath(
+  env: NodeJS.ProcessEnv,
+  binary: string,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
+  const path = platform === "win32" ? win32 : posix;
+  if (!path.isAbsolute(binary)) return env;
+  const dir = path.dirname(binary);
+  const key =
+    Object.keys(env).find((k) => k.toUpperCase() === "PATH") ?? "PATH";
+  const sep = platform === "win32" ? ";" : ":";
+  const current = env[key] ?? "";
+  const dirs = current.split(sep);
+  if (dirs.includes(dir)) return env;
+  return { ...env, [key]: current ? `${current}${sep}${dir}` : dir };
 }
