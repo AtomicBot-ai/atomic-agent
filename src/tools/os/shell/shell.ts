@@ -269,6 +269,11 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           category: "shell",
           reason:
             `${guardVerdict.reason} in ${cwd}` +
+            // The user approves the lifetime too: a background command
+            // outlives the turn (ATO-1252).
+            (rawArgs.background === true
+              ? " (starts in the background and keeps running until the session ends or it is stopped)"
+              : "") +
             (recovered === null
               ? ""
               : " (command reconstructed from args: the call had no cmd)"),
@@ -362,9 +367,14 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       ctx.signal,
       options.promptWatch,
     );
-    if (prompt !== null && prompt.kind === "sign_in") {
+    if (
+      prompt !== null &&
+      prompt.kind === "sign_in" &&
+      timeout.source === "default"
+    ) {
       // A sign-in completes in the user's browser while the command
-      // listens for it: kept as a job so it can finish there.
+      // listens for it: kept as a job so it can finish there. Not when
+      // the model set its own `timeoutMs` — that bound still kills.
       const { record, evicted } = jobs.register(ctx.sessionId, job, facts, true);
       return renderShellDetached(record, {
         waitedMs: Date.now() - job.startedAt,

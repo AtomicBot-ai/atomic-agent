@@ -78,6 +78,17 @@ describe.skipIf(process.platform === "win32")("os.shell.run and commands that wa
     expect(asked).toHaveLength(1);
   });
 
+  it("stops a sign-in at the model's own timeoutMs instead of keeping it", async () => {
+    const result = await tool().run(
+      { cmd: "printf 'Enter the code ABCD-1234 at https://example.test/login/device\\n'; sleep 30", timeoutMs: 15_000 },
+      ctx(),
+    );
+    expect(result.summary).toContain("this step needs the user");
+    expect(result.summary).toContain("was stopped");
+    expect(result.details).not.toMatchObject({ detached: true });
+    expect(jobs.list(SESSION)).toHaveLength(0);
+  });
+
   it("stops a command sitting at a password prompt", async () => {
     const result = await tool().run(
       { cmd: "printf 'Password: '; sleep 30" },
@@ -105,6 +116,8 @@ describe.skipIf(process.platform === "win32")("os.shell.run and commands that wa
     expect(result.summary).toContain("started in the background as job");
     expect(result.summary).toContain("listening on http://localhost:3000");
     expect(result.details).toMatchObject({ detached: true, keep: true });
+    // The user was told, before approving, that it keeps running.
+    expect(asked[0]!.reason).toContain("starts in the background");
     jobs.endTurn(SESSION);
     expect(jobs.list(SESSION).filter((r) => r.job.exited() === null)).toHaveLength(1);
   });
