@@ -399,9 +399,11 @@ describe("browser tools on a fake backend", () => {
     expect(backend.readyCalls).toBe(1);
   });
 
-  it("tabs new with javascript: URL is gated the same way", async () => {
+  it("tabs new with javascript: URL is refused before any prompt", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.reject(req.approvalId, "denied js scheme"),
+      emit: () => {
+        throw new Error("a javascript: URL must not reach the approval gate");
+      },
     });
     const tool = buildBrowserTabsTool(backend, {
       approvals: gate,
@@ -409,7 +411,7 @@ describe("browser tools on a fake backend", () => {
     });
     await expect(
       tool.run({ action: "new", url: "javascript:alert(1)" }, CTX),
-    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    ).rejects.toThrow(/runs code in the page/);
     expect(backend.lastTabs).toBeNull();
   });
 

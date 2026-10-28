@@ -339,6 +339,19 @@ export function createTraceRecorder(
           reason: inner.reason,
         });
         return;
+      case "answer_continued":
+        push({
+          type: "answer_continued",
+          seq: nextSeq(),
+          sessionId,
+          ts: now(),
+          turnIndex: currentTurnIndex,
+          stepIndex: inner.stepIndex,
+          cause: inner.cause,
+          partialChars: inner.partialChars,
+          outcome: inner.outcome,
+        });
+        return;
       case "batch_trimmed":
         push({
           type: "batch_trimmed",

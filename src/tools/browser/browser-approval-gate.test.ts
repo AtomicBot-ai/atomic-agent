@@ -123,6 +123,37 @@ describe("browser.type approval gate", () => {
   });
 });
 
+describe("script URLs", () => {
+  // Playwright's page.goto runs a javascript: URL in the open page, so a
+  // browser_nonweb answer would otherwise cover a form submit or a payment.
+  it("navigate refuses a javascript: URL without asking, even with an approving gate", async () => {
+    const backend = new GateBackend();
+    const { request, options } = gate(true);
+    const tool = buildBrowserNavigateTool(backend, options);
+    await expect(tool.run({ url: "javascript:void(document.forms[0].submit())" }, CTX)).rejects.toThrow(/runs code in the page/);
+    await expect(tool.run({ url: " JavaScript:alert(1)" }, CTX)).rejects.toThrow(/runs code in the page/);
+    expect(request).toHaveLength(0);
+    expect(backend.navigations).toHaveLength(0);
+  });
+
+  it("tabs new refuses a javascript: URL before the backend", async () => {
+    const backend = new GateBackend();
+    const { request, options } = gate(true);
+    await expect(
+      buildBrowserTabsTool(backend, options).run({ action: "new", url: "javascript:void(0)" }, CTX),
+    ).rejects.toThrow(/runs code in the page/);
+    expect(request).toHaveLength(0);
+    expect(backend.tabCalls).toBe(0);
+  });
+
+  it("file: still asks as browser_nonweb", async () => {
+    const backend = new GateBackend();
+    const { request, options } = gate(true);
+    await buildBrowserNavigateTool(backend, options).run({ url: "file:///tmp/page.html" }, CTX);
+    expect(promptOf(request)).toMatchObject({ category: "browser_nonweb" });
+  });
+});
+
 describe("browser domain lists", () => {
   const blocked = { blockedDomains: ["bank.example"], allowedDomains: [] };
 

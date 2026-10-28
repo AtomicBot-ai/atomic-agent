@@ -280,6 +280,23 @@ describe("the task selector", () => {
     const body = lines(usage(), 100, 24, 4096, 4).join("\n");
     expect(body).toContain("  4 ");
   });
+
+  /**
+   * ATO-904. The cloud route reports "no task limit" as
+   * `Number.MAX_SAFE_INTEGER`; the selector must say so in a word, and
+   * keep every row at the panel's width while it does.
+   */
+  it("says 'all' when the route has no task limit", () => {
+    const rows = lines(usage({ pairsCap: Number.MAX_SAFE_INTEGER }));
+    const body = rows.join("\n");
+    expect(body).toContain(" all ");
+    expect(body).not.toContain(String(Number.MAX_SAFE_INTEGER));
+    expect(body).toContain("(1-1000)");
+    const width = rows[0]?.trimStart().length ?? 0;
+    for (const line of rows) {
+      expect(line.trimStart().length, line).toBe(width);
+    }
+  });
 });
 
 /**

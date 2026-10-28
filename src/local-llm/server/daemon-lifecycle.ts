@@ -11,6 +11,7 @@ import type { DownloadFileOptions } from "../downloads/download-file.js";
 import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
+import { holdEmbeddingForLowMemory, type EmbeddingMemoryVerdict } from "./embedding-memory-gate.js";
 import { resolveConfiguredSlots } from "./worker-slots.js";
 import { execSync, spawn } from "node:child_process";
 import {
@@ -48,6 +49,7 @@ import {
   UNIFIED_MEMORY_KV_SHARE,
   type KvLayoutSource,
 } from "./context-size.js";
+import { GPU_AUTO_MAX_CONTEXT, resolveDedicatedGpuAutoContext } from "./context-growth.js";
 import {
   classifyPrefixReuse,
   kvLayoutSourceFromMetadata,
@@ -72,6 +74,7 @@ import {
   type LocalModelId,
 } from "../catalog/models-catalog.js";
 import { resolvePlatformAsset } from "../backend/platform-assets.js";
+import { assertBackendRunsOnThisMac } from "../backend/macos-min-version.js";
 import { assertPortFree, waitForOwnDaemon } from "./daemon-launch-guard.js";
 import {
   buildDaemonEnv,
@@ -122,6 +125,29 @@ export interface DaemonStartOptions {
    * `--ctx-size` exactly (clamped to the model's trained ceiling).
    */
   contextSize?: number;
+  /**
+   * Opt in to the growing auto window (`context-growth.ts`): with
+   * `contextSize` auto on a GPU with memory of its own, start at
+   * `GPU_AUTO_START_CONTEXT` and record a ceiling the owner may grow it
+   * to. Only a caller that grows it between turns passes this (the TUI on
+   * a plain local chat route); every other auto launch on such a card
+   * gets the fit, at most `GPU_AUTO_MAX_CONTEXT`. Ignored for a pinned
+   * `contextSize`, unified memory and CPU-only launches.
+   */
+  growContext?: boolean;
+  /**
+   * With `growContext`: start at least this large instead of
+   * `GPU_AUTO_START_CONTEXT` — how the owner restarts the daemon one step
+   * bigger once the conversation has filled the window
+   * (`decideContextGrowth`). Still held to the ceiling.
+   */
+  autoContextAtLeast?: number;
+  /**
+   * Internal: a lower ceiling for `parallel: "auto"` slots
+   * (`WorkerSlotsInput.maxSlots`), set by `startDaemon` for an auto
+   * window on a GPU with its own memory. A pinned `parallel` ignores it.
+   */
+  autoSlotsCap?: number;
   /**
    * Multi-GPU ratios (`localModels.managed.tensorSplit`). A non-empty
    * list appends `--split-mode layer --tensor-split <r0,r1,…>` so the
@@ -356,6 +382,12 @@ export interface LaunchRecord {
   swaFull: boolean;
   prefixReuse: "partial" | "none" | null;
   launchedAt: number;
+  /**
+   * How far the auto window may grow before the next turn
+   * (`decideContextGrowth`); `null` / absent for a launch that does not
+   * grow. Read by whoever owns the daemon to decide a growth restart.
+   */
+  autoContextCeiling?: number | null;
 }
 
 export function writeLaunchRecord(dataDir: string, record: LaunchRecord): void {
@@ -387,6 +419,7 @@ export function readLaunchRecord(
           ? parsed.prefixReuse
           : null,
       launchedAt: toFiniteNumber(parsed.launchedAt) ?? 0,
+      autoContextCeiling: toFiniteNumber(parsed.autoContextCeiling) ?? null,
     };
   } catch {
     return null;
@@ -586,6 +619,9 @@ export function buildLlamaServerArgs(
             ...(opts.localLegRole === undefined
               ? {}
               : { localLegRole: opts.localLegRole }),
+            ...(opts.autoSlotsCap === undefined
+              ? {}
+              : { maxSlots: opts.autoSlotsCap }),
           }),
     ),
     "-kvu",
@@ -675,9 +711,14 @@ async function resolveEffectiveContextSize(
     /** The model's attention layout from its header, when readable. */
     kvLayout?: KvLayoutSource | null;
     listDevices: ListDevices;
+    /** `DaemonStartOptions.growContext` / `.autoContextAtLeast`. */
+    growContext?: boolean;
+    autoContextAtLeast?: number;
   },
 ): Promise<{
   contextSize: number;
+  autoContextCeiling: number | null;
+  autoSlotsCap: number | null;
   kvBudgetBytes: number | null;
   deviceBudgetBytes: number | null;
   note: string | null;
@@ -702,8 +743,25 @@ async function resolveEffectiveContextSize(
     kvLayout: opts.kvLayout ? buildKvLayout(opts.kvLayout) : null,
     cacheType: MANAGED_KV_CACHE_TYPE,
   };
-  const contextSize = estimateContextSize({ ...input, systemMemoryMiB });
+  const fitContext = estimateContextSize({ ...input, systemMemoryMiB });
+  // A GPU with memory of its own, auto-sized: held to
+  // `GPU_AUTO_MAX_CONTEXT`, and started small when the owner grows it
+  // with the conversation (`context-growth.ts`).
+  const gpu =
+    opts.configured <= 0 && freeVramMiB !== null && freeVramMiB > 0 && systemMemoryMiB === null
+      ? resolveDedicatedGpuAutoContext({
+          fitContext,
+          growable: opts.growContext === true,
+          atLeast: opts.autoContextAtLeast ?? null,
+        })
+      : null;
+  const contextSize = gpu ? gpu.contextSize : fitContext;
   let note: string | null = null;
+  if (gpu && gpu.ceiling !== null) {
+    note = `started small to grow with the conversation, up to ${gpu.ceiling}`;
+  } else if (gpu && fitContext > contextSize) {
+    note = `held to ${GPU_AUTO_MAX_CONTEXT} on a GPU with its own memory (${fitContext} would fit)`;
+  }
   if (systemMemoryMiB !== null) {
     const fits = estimateContextSize(input);
     if (fits > contextSize) {
@@ -728,6 +786,8 @@ async function resolveEffectiveContextSize(
   const kvBudgetBytes = budgetBytes(true);
   return {
     contextSize,
+    autoContextCeiling: gpu ? gpu.ceiling : null,
+    autoSlotsCap: gpu ? gpu.maxSlots : null,
     kvBudgetBytes: kvBudgetBytes === null ? null : Math.max(0, kvBudgetBytes),
     deviceBudgetBytes: budgetBytes(false),
     note,
@@ -962,6 +1022,12 @@ export interface DaemonStartResult {
   /** Whether the model's prompt cache is reusable partially or only whole. */
   prefixReuse: "partial" | "none" | null;
   /**
+   * How far the auto window may grow (`context-growth.ts`): the memory
+   * fit on a GPU with memory of its own; `null` / absent when the window
+   * does not grow (pinned, unified memory, CPU-only).
+   */
+  autoContextCeiling?: number | null;
+  /**
    * Atomic Core only: a projector was requested but Core had to load the
    * model without it (its session reports no mmproj), so vision is off.
    */
@@ -1046,6 +1112,9 @@ export async function startDaemon(
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
+  // ATO-116: a build stamped for a newer macOS than this Mac's is refused
+  // by dyld before it prints a line; say so instead of a crash or timeout.
+  assertBackendRunsOnThisMac(binPath);
 
   const model = getLocalModelDef(opts.modelId);
   // A model registered from disk launches straight from the operator's
@@ -1079,6 +1148,8 @@ export async function startDaemon(
   const prefixReuse = header ? classifyPrefixReuse(header) : null;
   const {
     contextSize,
+    autoContextCeiling,
+    autoSlotsCap,
     kvBudgetBytes,
     deviceBudgetBytes,
     note: contextNote,
@@ -1087,6 +1158,8 @@ export async function startDaemon(
     hasMmproj: Boolean(opts.mmprojFile),
     kvLayout,
     listDevices,
+    ...(opts.growContext === true ? { growContext: true } : {}),
+    ...(opts.autoContextAtLeast === undefined ? {} : { autoContextAtLeast: opts.autoContextAtLeast }),
   });
   const swaFull =
     opts.swaFullFlag !== undefined
@@ -1149,6 +1222,7 @@ export async function startDaemon(
       device,
       swaFullFlag: swaFull.enabled,
       ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
+      ...(autoSlotsCap === null ? {} : { autoSlotsCap }),
     },
     modelPath,
     model.id,
@@ -1211,12 +1285,12 @@ export async function startDaemon(
       probe: opts.throughputProbe !== false,
     });
     writeLaunchRecord(opts.dataDir, { pid: session.pid, modelId: model.id, contextSize,
-      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now() });
+      swaFull: swaFull.enabled, prefixReuse: effectivePrefixReuse, launchedAt: Date.now(), autoContextCeiling });
     // Core retries a load that fails with the projector once without it and
     // reports `mmproj_path: null`; an older Core omits the field.
     const projectorDropped = Boolean(opts.mmprojFile) && (session.mmproj_path === null || session.mmproj_path === "");
     return { pid: session.pid, contextSize, swaFull, prefixReuse: effectivePrefixReuse, tokensPerSecond,
-      ...(projectorDropped ? { projectorDropped } : {}) };
+      autoContextCeiling, ...(projectorDropped ? { projectorDropped } : {}) };
   }
 
   const logFd = openSync(resolveLogFilePath(opts.dataDir), "a");
@@ -1272,6 +1346,7 @@ export async function startDaemon(
       swaFull: swaFull.enabled,
       prefixReuse: effectivePrefixReuse,
       launchedAt: Date.now(),
+      autoContextCeiling,
     });
     return {
       pid: child.pid,
@@ -1279,6 +1354,7 @@ export async function startDaemon(
       contextSize,
       swaFull,
       prefixReuse: effectivePrefixReuse,
+      autoContextCeiling,
     };
   } finally {
     closeSync(logFd);
@@ -1499,6 +1575,9 @@ export async function startEmbeddingDaemon(
   if (!existsSync(binPath)) {
     throw new Error("backend not downloaded; run 'atomic-agent models update'");
   }
+  // ATO-116: a build stamped for a newer macOS than this Mac's is refused
+  // by dyld before it prints a line; say so instead of a crash or timeout.
+  assertBackendRunsOnThisMac(binPath);
 
   const model = getEmbeddingModelDef(opts.modelId);
   const modelPath = resolveModelFilePath(
@@ -1765,6 +1844,9 @@ export async function getEmbeddingDaemonStatus(
  *     `{ chat: { pid }, embedding: { error } }` so the CLI can warn
  *     the operator. The runtime then falls back to FTS5-only recall
  *     for the duration of the session.
+ *   - On a machine with little memory (ATO-379, `embedding-memory-gate`)
+ *     the embedding daemon is not started: `{ skipped: true, lowMemory:
+ *     true }`, and recall runs on FTS5 as above.
  *   - If `embedding` options are omitted, only the chat daemon is
  *     started — observably identical to the legacy `startDaemon`
  *     code path.
@@ -1775,14 +1857,23 @@ export async function getEmbeddingDaemonStatus(
  */
 export interface StartBothResult {
   chat: DaemonStartResult;
-  embedding: { pid: number; port?: number } | { error: string } | { skipped: true };
+  /** `lowMemory`: held back on a machine with little memory (ATO-379); recall runs on keywords. */
+  embedding: { pid: number; port?: number } | { error: string } | { skipped: true; lowMemory?: true };
+}
+
+/** Seams for tests; production passes none. */
+export interface StartBothDeps {
+  startChat?: (opts: DaemonStartOptions) => Promise<DaemonStartResult>;
+  startEmbedding?: (opts: EmbeddingDaemonStartOptions) => Promise<{ pid: number; port?: number }>;
+  holdForLowMemory?: (dataDir: string) => Promise<EmbeddingMemoryVerdict>;
+  embeddingRunning?: (opts: EmbeddingDaemonStartOptions) => Promise<boolean>;
 }
 
 export async function startChatAndEmbeddingDaemons(opts: {
   chat: DaemonStartOptions;
   embedding?: EmbeddingDaemonStartOptions;
-}): Promise<StartBothResult> {
-  const chatResult = await startDaemon(opts.chat);
+}, deps: StartBothDeps = {}): Promise<StartBothResult> {
+  const chatResult = await (deps.startChat ?? startDaemon)(opts.chat);
   opts.chat.signal?.throwIfAborted();
   if (!opts.embedding) {
     return {
@@ -1790,8 +1881,21 @@ export async function startChatAndEmbeddingDaemons(opts: {
       embedding: { skipped: true },
     };
   }
+  // Decided after the chat model loaded, so free memory is read as it now
+  // stands. Not asked when the memory model already runs (Core's module
+  // reaches here running): its own memory would count against it. A status
+  // that cannot be read leaves the start as it was before the gate.
+  const embOpts = opts.embedding;
+  const running = await (deps.embeddingRunning ?? ((o: EmbeddingDaemonStartOptions) =>
+    getEmbeddingDaemonStatus(o.dataDir, o.port, o.modelId).then(s => s.running, () => true)))(embOpts);
+  if (!running) {
+    const memory = await (deps.holdForLowMemory ?? holdEmbeddingForLowMemory)(embOpts.dataDir);
+    if (!memory.ok) {
+      return { chat: chatResult, embedding: { skipped: true, lowMemory: true } };
+    }
+  }
   try {
-    const embResult = await startEmbeddingDaemon({ ...opts.embedding, signal: opts.chat.signal ?? opts.embedding.signal });
+    const embResult = await (deps.startEmbedding ?? startEmbeddingDaemon)({ ...opts.embedding, signal: opts.chat.signal ?? opts.embedding.signal });
     return {
       chat: chatResult,
       embedding: embResult,

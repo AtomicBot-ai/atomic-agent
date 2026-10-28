@@ -11,6 +11,7 @@ import { closingReplyBatch, splitProgressNoteReply } from "../progress-note-repl
 import type { BatchApprovalPosture } from "../tool-resource-class.js";
 import { resourceClassFor, gatedCallRunsUnattended, isBatchable, isSoloRegardlessOfApproval } from "../tool-resource-class.js";
 import { BatchValidationError } from "./step-errors.js";
+import { resolveToolName } from "../tool-name-resolution.js";
 import { getConfig } from "../../config/index.js";
 import type { ToolRegistry } from "../../tools/tool-registry.js";
 import { wouldRefuse as planModeWouldRefuse } from "../policies/plan-mode.js";
@@ -422,11 +423,11 @@ export function validateBatch(
   let firstError: string | null = null;
 
   // Note: missing-from-registry is intentionally NOT validated here.
-  // That class of failure is surfaced as `ToolExecutionError` by the
-  // step executor (matching the legacy single-call semantics) so the
-  // agent loop's failure category is `tool`, not `grammar`. Replaying
-  // the same prompt would not change the registry contents.
-  void registry;
+  // A name that does not resolve gets an error result in its slot at
+  // dispatch (`unknown-tool.ts`) while its siblings run, so its missing
+  // resource class is not a batch-shape failure either. A separator /
+  // case near miss is checked under the name it resolves to, and a
+  // known name keeps its class whether or not it is registered.
   for (let i = 0; i < calls.length; i += 1) {
     const call = calls[i]!;
     const terminalArgsError = validateTerminalArgs(call);
@@ -444,7 +445,11 @@ export function validateBatch(
     const lastIdx = calls.length - 1;
     for (let i = 0; i < calls.length; i += 1) {
       const call = calls[i]!;
-      const cls = resourceClassFor(call.tool);
+      const name = registry.has(call.tool)
+        ? call.tool
+        : resolveToolName(call.tool, registry) ?? call.tool;
+      const cls = resourceClassFor(name);
+      if (cls === "unknown" && !registry.has(name)) continue;
       if (cls === "terminal") {
         // Terminal verbs are allowed only as the LAST call of the
         // batch. Any earlier position (or duplicated terminal) is

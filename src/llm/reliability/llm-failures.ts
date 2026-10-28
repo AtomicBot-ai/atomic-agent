@@ -166,22 +166,46 @@ export class ModelError extends LlmFailure {
 }
 
 /**
+ * Which kind of tool failure a `ToolExecutionError` is, when it is a
+ * known one. `unregistered`: the model kept calling tool names the
+ * registry does not hold until the step's streak limit ended the turn.
+ */
+export type ToolExecutionErrorKind = "unregistered";
+
+/**
+ * Bounded class of an unregistered name (`unknown-tool.ts`): close to a
+ * real tool, shaped like an MCP tool, or neither. Error reports carry
+ * this instead of the name the model invented.
+ */
+export type UnregisteredToolNameClass = "near_miss" | "mcp_like" | "other";
+
+export interface ToolExecutionErrorOptions extends LlmFailureOptions {
+  kind?: ToolExecutionErrorKind;
+  nameClass?: UnregisteredToolNameClass;
+}
+
+/**
  * Tool-side failure that escaped the tool's own error handling. The
  * registry's `invoke` folds most tool runtime errors into a
  * `CompressedToolResult { status: "error" }`, so this class mainly
- * captures "tool not registered" and aborts rethrown from a running
- * tool when `ctx.signal.aborted` is false.
+ * captures a streak of unregistered tool names (`kind: "unregistered"`)
+ * and aborts rethrown from a running tool when `ctx.signal.aborted` is
+ * false.
  */
 export class ToolExecutionError extends LlmFailure {
   readonly category = "tool" as const;
+  readonly kind?: ToolExecutionErrorKind;
+  readonly nameClass?: UnregisteredToolNameClass;
 
   constructor(
     readonly tool: string,
     message: string,
-    options?: LlmFailureOptions,
+    options?: ToolExecutionErrorOptions,
   ) {
     super(message, options);
     this.name = "ToolExecutionError";
+    if (options?.kind !== undefined) this.kind = options.kind;
+    if (options?.nameClass !== undefined) this.nameClass = options.nameClass;
   }
 }
 

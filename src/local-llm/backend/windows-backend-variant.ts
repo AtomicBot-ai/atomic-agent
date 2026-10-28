@@ -83,6 +83,37 @@ export function getConfiguredBackendVariant(): BackendVariantPreference {
 }
 
 /**
+ * Values of `localModels.managed.coreBackendVariant`: which build Atomic
+ * Core installs on Windows x64. `"auto"` (default) takes Core's
+ * recommendation; `"cpu"` the CPU build. Written as `"cpu"` only by the
+ * start that found Core's GPU build crashing on load and then served the
+ * model on the CPU build. Kept apart from `backendVariant`, which belongs
+ * to the llama-server engine: its older rescue wrote `"cpu"` there on any
+ * health timeout, and that must not move a Core install.
+ */
+export const CORE_BACKEND_VARIANTS = ["auto", "cpu"] as const;
+export type CoreBackendVariant = (typeof CORE_BACKEND_VARIANTS)[number];
+
+export function isCoreBackendVariant(raw: unknown): raw is CoreBackendVariant {
+  return CORE_BACKEND_VARIANTS.includes(raw as CoreBackendVariant);
+}
+
+/**
+ * The configured `coreBackendVariant`, pushed in by `loadConfig` as
+ * `setConfiguredBackendVariant` is, so the local-llm layer stays
+ * config-free. The CPU rescue flips it in-process for its install.
+ */
+let configuredCoreBackendVariant: CoreBackendVariant = "auto";
+
+export function setConfiguredCoreBackendVariant(v: CoreBackendVariant): void {
+  configuredCoreBackendVariant = v;
+}
+
+export function getConfiguredCoreBackendVariant(): CoreBackendVariant {
+  return configuredCoreBackendVariant;
+}
+
+/**
  * True when `assetName` is one of the Windows GPU builds (or an install
  * old enough to predate `BackendVersionInfo.asset` — the CPU zip was not
  * downloadable back then, so an undefined asset on win32 is a GPU build).

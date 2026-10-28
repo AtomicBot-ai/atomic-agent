@@ -63,6 +63,7 @@ describe("resource configuration ownership", () => {
       clawhub: { enabled: false, apiBase: "ftp://source.local/path" },
     }, createSkillsDefaults)).toEqual({
       cloudWorkspaces: [],
+      projectTrust: [],
       catalogTokenBudget: 4096,
       disabled: ["one", "two"],
       taps: ["Owner/repo", "owner/repo"],
@@ -88,6 +89,18 @@ describe("resource configuration ownership", () => {
       .toBe("skills.cloudWorkspaces[1]");
     expect(validation(() => parseSkillsConfig({ cloudWorkspaces: [{ workingDir: "/workspace", disabled: ["bad name"] }] }, createSkillsDefaults)).field)
       .toBe("skills.cloudWorkspaces[0].disabled[0]");
+  });
+
+  it("defaults and validates per-folder project trust without widening it", () => {
+    expect(parseSkillsConfig({ projectTrust: [{ workingDir: "/repo", trustedSkills: ["a", "a"], trustedInstructions: ["AGENTS.md", "pkg/CLAUDE.md"] }] }, createSkillsDefaults).projectTrust)
+      .toEqual([{ workingDir: "/repo", trustedSkills: ["a"], declinedSkills: [], trustedInstructions: ["AGENTS.md", "pkg/CLAUDE.md"], declinedInstructions: [] }]);
+    expect(parseSkillsConfig({}, createSkillsDefaults).projectTrust).toEqual([]);
+    for (const bad of ["../AGENTS.md", "/etc/AGENTS.md", "pkg/../../x.md", "a\\b.md", "C:/x.md", "./AGENTS.md", ""]) {
+      expect(validation(() => parseSkillsConfig({ projectTrust: [{ workingDir: "/repo", trustedInstructions: [bad] }] }, createSkillsDefaults)).field)
+        .toBe("skills.projectTrust[0].trustedInstructions[0]");
+    }
+    expect(validation(() => parseSkillsConfig({ projectTrust: [{ workingDir: "/repo" }, { workingDir: "/repo" }] }, createSkillsDefaults)).field)
+      .toBe("skills.projectTrust[1]");
   });
 
   it("reads outer skill defaults separately after raw getters replace them", () => {

@@ -7,7 +7,7 @@ Read the inherited [TUI instructions](../AGENTS.md) and [interface contract](../
 
 ## Ownership and entry points
 
-[components/integrations-panel.tsx](components/integrations-panel.tsx), integrations-panel-state/actions/reducer and [integrations-key-bindings.ts](integrations-key-bindings.ts) own hub UI. [IntegrationsOrchestrator](integrations-orchestrator.ts) coordinates credential writes and live MCP/channel operations; GitHub and Atomic Mail operations have their own local helpers/tests.
+[components/integrations-panel.tsx](components/integrations-panel.tsx), integrations-panel-state/actions/reducer and [integrations-key-bindings.ts](integrations-key-bindings.ts) own hub UI. [IntegrationsOrchestrator](integrations-orchestrator.ts) coordinates credential writes and live MCP/channel operations; GitHub and Atomic Mail operations have their own local helpers/tests. The Exa row only writes `EXA_API_KEY`; web search reads it per call, so a save needs no restart (ATO-345).
 
 Telegram setup/pairing is delegated to [telegram](../telegram/README.md), not copied into the hub. Runtime/domain owners retain MCP transports, primary channels and mail resources; [ChatOrchestrator](../chat-orchestrator.ts) composes their UI adapters and [DebugPane](../components/debug-pane.tsx) renders the hub. Credential presence and live/verified identity are distinct states; preserve failures and in-flight registration joining. Local components/ already belongs to this feature.
 

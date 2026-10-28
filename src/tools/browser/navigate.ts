@@ -28,6 +28,28 @@ export function isSafeUrl(url: string): boolean {
   }
 }
 
+const SCRIPT_SCHEMES = new Set(["javascript:", "vbscript:"]);
+
+/**
+ * A `javascript:` URL runs its code in the page already open — a form
+ * submit, a payment, a typed password — so a `browser_nonweb` grant must
+ * not cover it: the click/type gates (`browser_commit`, `browser_secret`)
+ * would be skipped. Refused outright; nothing needs it.
+ */
+export function refuseScriptUrl(tool: string, url: string): void {
+  let protocol: string;
+  try {
+    protocol = new URL(url.trim()).protocol.toLowerCase();
+  } catch {
+    return;
+  }
+  if (SCRIPT_SCHEMES.has(protocol)) {
+    throw new Error(
+      `${tool}: a ${protocol} URL runs code in the page and is refused. Use browser.click or browser.type on the page instead.`,
+    );
+  }
+}
+
 export function buildBrowserNavigateTool(
   backend: BrowserBackend,
   options: DangerousToolOptions,
@@ -43,6 +65,7 @@ export function buildBrowserNavigateTool(
       if (typeof url !== "string" || url.length === 0) {
         throw new Error("browser.navigate: `url` must be a non-empty string");
       }
+      refuseScriptUrl("browser.navigate", url);
       const refused = await gateBrowserUrl(options, policy, "browser.navigate", url, ctx);
       if (refused) return refused;
       if (!isSafeUrl(url)) {

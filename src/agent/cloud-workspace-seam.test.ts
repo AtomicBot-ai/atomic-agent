@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { setSkillDisabled } from "../config/skill-policy-commands.js";
+import { recordProjectTrust, setSkillDisabled } from "../config/skill-policy-commands.js";
 import { createWorkspaceLoader } from "../runtime/session-workspace.js";
 import { createRuntimePromptPreview } from "../runtime/composition/runtime-prompt-preview.js";
 import { createEmptySessionState } from "../session/session-state.js";
@@ -41,6 +41,8 @@ describe("cloud session workspace integration", () => {
       mkdirSync(join(dir!, ".agents/skills/guide"), { recursive: true });
       writeFileSync(join(dir!, "AGENTS.md"), `${marker} RULE`);
       writeFileSync(join(dir!, ".agents/skills/guide/SKILL.md"), `---\nname: guide\ndescription: ${marker} GUIDE\n---\n${marker} BODY`);
+      // What a folder ships loads only after the operator trusted it (ATO-298).
+      recordProjectTrust(dir!, "trusted", { skills: ["guide", "native"], instructions: ["AGENTS.md"] });
     }
   });
   afterEach(() => { vi.unstubAllEnvs(); resetConfigCache(); rmSync(base, { recursive: true, force: true }); });

@@ -83,6 +83,13 @@ export interface ToolGateConfig {
    * the image gate.
    */
   video: { available: boolean };
+  /**
+   * Screen control gate (ATO-525). `enabled=false` — the default
+   * `tools.screen.enabled`, or any host that is not macOS — drops the
+   * four `os.screen.*` descriptors. Unlike the availability gates above,
+   * the tools are then not registered either (`registerOsScreenTools`).
+   */
+  screen: { enabled: boolean };
 }
 
 /**
@@ -142,6 +149,12 @@ const GATED_TOOLS = {
   email: ["os.email.inbox", "os.email.send"],
   image: ["image.generate"],
   video: ["video.generate"],
+  screen: [
+    "os.screen.capture",
+    "os.screen.click",
+    "os.screen.type",
+    "os.screen.key",
+  ],
 } as const;
 
 /**
@@ -195,6 +208,9 @@ export function filterToolDescriptorsByConfig(
   }
   if (!gates.video.available) {
     for (const name of GATED_TOOLS.video) disabled.add(name);
+  }
+  if (!gates.screen.enabled) {
+    for (const name of GATED_TOOLS.screen) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;

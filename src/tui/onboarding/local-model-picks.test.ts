@@ -63,6 +63,18 @@ describe("recommendLocalModel", () => {
     expect(recommendLocalModel(2, CATALOG)).toBe("tiny");
   });
 
+  // ATO-817: on the real catalog the ranked rule decides, so a big
+  // machine gets the popular mid-size model under the download ceiling,
+  // not whichever download happens to be largest.
+  it.each([
+    [8, "qwen-3.5-4b"],
+    [16, "qwen-3.5-9b"],
+    [32, "qwen-3.5-9b"],
+    [64, "qwen-3.5-9b"],
+  ])("follows the catalog's ranked pick on a %i GB machine", (ramGb, id) => {
+    expect(recommendLocalModel(ramGb, LOCAL_MODELS_CATALOG)).toBe(id);
+  });
+
   it("has nothing to say about an empty catalog", () => {
     expect(recommendLocalModel(16, [])).toBeNull();
   });
