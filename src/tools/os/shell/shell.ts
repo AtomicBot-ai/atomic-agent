@@ -42,6 +42,7 @@ import {
 import { ShellJobRegistry } from "./shell-jobs.js";
 import {
   markRecoveredResult,
+  missingCmdMessage,
   recoverMissingShellCmd,
   type RecoveredShellCmd,
 } from "./recover-missing-cmd.js";
@@ -124,9 +125,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   ): Promise<CompressedToolResult> {
     const cmd = rawArgs.cmd;
     if (typeof cmd !== "string" || cmd.trim().length === 0) {
-      throw new Error(
-        'os.shell.run: `cmd` must be a non-empty string: the program, with its arguments in `args` (e.g. {"cmd":"git","args":["status"]}), or a full command line',
-      );
+      throw new Error(missingCmdMessage(rawArgs));
     }
     const rawArgList = coerceShellArgs(rawArgs.args);
     if (rawArgList === null) {
@@ -447,6 +446,18 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         return runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true);
       }
       if (form.kind === "kill") return runShellKill(jobCtx, form.id);
+
+      // `{"cmd": ["git", "status"]}`: an argv in `cmd` is the program and
+      // its arguments (ATO-1259), when `args` does not also say them.
+      if (
+        Array.isArray(rawArgs.cmd) &&
+        rawArgs.cmd.length > 0 &&
+        rawArgs.cmd.every((v) => typeof v === "string") &&
+        (coerceShellArgs(rawArgs.args)?.length ?? 1) === 0
+      ) {
+        const [program, ...rest] = rawArgs.cmd as string[];
+        rawArgs = { ...rawArgs, cmd: program, args: rest };
+      }
 
       // A call that put the whole command in `args` and named no `cmd`
       // is read back from its argv when that is unambiguous (#901); the

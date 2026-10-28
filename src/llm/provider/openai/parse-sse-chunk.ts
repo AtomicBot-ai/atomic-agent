@@ -15,6 +15,13 @@ export interface OpenAiToolCallDelta {
   function?: {
     name?: string;
     arguments?: string;
+    /**
+     * The provider sent `arguments` as a JSON object rather than a string
+     * fragment (ATO-1259: some services behind OpenRouter do). It is
+     * serialised here and is the whole of the arguments, so the consumer
+     * replaces rather than appends.
+     */
+    argumentsWhole?: true;
   };
 }
 
@@ -117,11 +124,12 @@ export function parseOpenAiSseEvent(
           index?: number;
           id?: string;
           type?: string;
-          function?: { name?: string; arguments?: string };
+          function?: { name?: string; arguments?: unknown };
         }>
       | undefined;
     if (toolCalls && toolCalls.length > 0) {
-      const frag = toolCalls[0]?.function?.arguments ?? "";
+      const first = toolCalls[0]?.function?.arguments;
+      const frag = typeof first === "string" ? first : "";
       const nextBuffer = toolArgsBuffer + frag;
       // A chunk that carries both text and a tool-call delta keeps its
       // text: some services (Gemini's compatibility layer, Anthropic
@@ -155,9 +163,7 @@ export function parseOpenAiSseEvent(
                   ...(typeof toolCall.function.name === "string"
                     ? { name: toolCall.function.name }
                     : {}),
-                  ...(typeof toolCall.function.arguments === "string"
-                    ? { arguments: toolCall.function.arguments }
-                    : {}),
+                  ...readArgumentsFragment(toolCall.function.arguments),
                 },
               }
             : {}),
@@ -216,4 +222,24 @@ function readStreamError(
       ? error.message
       : "stream error";
   return { status: code, message };
+}
+
+/**
+ * A delta's `arguments`: a string fragment as the OpenAI contract has it,
+ * or an object some providers send whole. Dropping the object (the old
+ * `typeof … === "string"` filter) turned `{"cmd":"…"}` into a call with
+ * no arguments at all (ATO-1259).
+ */
+function readArgumentsFragment(
+  raw: unknown,
+): { arguments?: string; argumentsWhole?: true } {
+  if (typeof raw === "string") return { arguments: raw };
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    try {
+      return { arguments: JSON.stringify(raw), argumentsWhole: true };
+    } catch {
+      return {};
+    }
+  }
+  return {};
 }

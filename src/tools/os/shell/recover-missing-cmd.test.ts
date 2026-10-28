@@ -262,7 +262,7 @@ describe.skipIf(process.platform === "win32")(
     it("still refuses a call with nothing to recover, saying what `cmd` is", async () => {
       await expect(
         approvingTool().run({ args: ["-la"], timeoutMs: 1_000 }, ctx()),
-      ).rejects.toThrow(/`cmd` must be a non-empty string: the program/);
+      ).rejects.toThrow(/`cmd` must be a non-empty string \(got no `cmd` with `args`, `timeoutMs`\): put the program/);
       await expect(
         approvingTool().run({ args: ["-c", "print('x')"] }, ctx()),
       ).rejects.toThrow(/`cmd` must be a non-empty string/);

@@ -370,7 +370,11 @@ function applyToolCallDeltas(
       );
     }
     if (delta.function?.arguments) {
-      current.function.arguments += delta.function.arguments;
+      // A whole object (repeated in every event by some providers)
+      // replaces; a string fragment appends.
+      current.function.arguments = delta.function.argumentsWhole
+        ? delta.function.arguments
+        : current.function.arguments + delta.function.arguments;
     }
   }
 }
