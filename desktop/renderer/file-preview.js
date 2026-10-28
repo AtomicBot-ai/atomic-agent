@@ -26,7 +26,6 @@
 
 const FP_POLL_MS = 2500;
 const FP_MD_MAX = 200 * 1024;          // markdown rendered; past this the rest shows as text
-const FP_HL_MAX = 200 * 1024;          // code highlighted; past this, plain
 const FP_TABLE_ROWS = 2000;
 const FP_TABLE_COLS = 200;
 const FP_WIDTH_KEY = 'atomic.filePreview.width';
@@ -224,7 +223,8 @@ function fpOtherHtml(d, why) {
 }
 function fpCodeHtml(text, lang) {
   const escaped = fpEsc(text);
-  const lit = text.length <= FP_HL_MAX && typeof highlightCode === 'function' ? highlightCode(escaped, lang) : escaped;
+  // highlightCode has its own size cap (HL_MAX): a bigger file comes back plain.
+  const lit = typeof highlightCode === 'function' ? highlightCode(escaped, lang) : escaped;
   return '<div class="prose fp-prose"><pre class="mdpre fp-code"><code>' + lit + '</code></pre></div>';
 }
 function fpTableHtml(text, delim) {
@@ -319,8 +319,12 @@ if (typeof document !== 'undefined') {
     else if (what === 'view') { FP.view = FP.view === 'source' ? 'render' : 'source'; fpPaintHead(); fpPaintBody(fpBodyHtml(FP.data)); }
   }, true);
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && FP.open && e.target && e.target.closest && e.target.closest('#fpreview')) { e.preventDefault(); filePreviewClose(); }
-  });
+    /* Capture phase and stopImmediatePropagation: renderer.js's own Esc chain
+       would otherwise also run — aborting a streaming turn, or opening Settings. */
+    if (e.key === 'Escape' && FP.open && e.target && e.target.closest && e.target.closest('#fpreview')) {
+      e.preventDefault(); e.stopImmediatePropagation(); filePreviewClose();
+    }
+  }, true);
   document.addEventListener('pointerdown', (e) => {
     const h = e.target && e.target.closest ? e.target.closest('#fpreview .fp-resize') : null;
     if (!h) return;
