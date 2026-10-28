@@ -16,6 +16,22 @@ import { fakeHost, screenCtx, type FakeHostOptions } from "./screen-host.fixture
 type Decision = { approved: boolean; reason?: string };
 
 const TERMINAL = { name: "Terminal", bundleId: "com.apple.Terminal" };
+const SETTINGS = { name: "System Settings", bundleId: "com.apple.systempreferences" };
+const BROWSERS = [
+  ["Safari", "com.apple.Safari"], ["Google Chrome", "com.google.Chrome"], ["Arc", "company.thebrowser.Browser"],
+  ["Microsoft Edge", "com.microsoft.edgemac"], ["Firefox", "org.mozilla.firefox"], ["Brave Browser", "com.brave.Browser"],
+  ["Opera", "com.operasoftware.Opera"], ["Vivaldi", "com.vivaldi.Vivaldi"], ["Chromium", "org.chromium.Chromium"],
+  ["Orion", "com.kagi.kagimacOS"], ["DuckDuckGo", "com.duckduckgo.macos.browser"],
+  // Sub-ids: a Chrome web app and a Safari web app (Add to Dock) are the browser too.
+  ["Gmail", "com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm"], ["Web App", "com.apple.Safari.WebApp.1234-ABCD"],
+].map(([name, bundleId]) => ({ name: name!, bundleId: bundleId! }));
+const CODE_APPS = [
+  ["Terminal", "com.apple.Terminal"], ["iTerm2", "com.googlecode.iterm2"], ["Warp", "dev.warp.Warp-Stable"],
+  ["Ghostty", "com.mitchellh.ghostty"], ["Visual Studio Code", "com.microsoft.VSCode"], ["Cursor", "com.todesktop.230313mzl4w4u92"],
+  ["IntelliJ IDEA", "com.jetbrains.intellij"], ["PyCharm", "com.jetbrains.pycharm"], ["WebStorm", "com.jetbrains.WebStorm"],
+].map(([name, bundleId]) => ({ name: name!, bundleId: bundleId! }));
+/** An agent started outside any terminal (the desktop's own launch is `io.atomicagent.desktop`, blocked anyway). */
+const NO_HOST = { PATH: "/usr/bin" };
 
 function setup(host: FakeHostOptions = {}, decision: Decision = { approved: true }) {
   const fake = fakeHost(host);
@@ -54,11 +70,13 @@ describe("os.screen.click", () => {
     });
     const click = fake.ops()[1]!;
     expect(click).toMatchObject({ op: "click", x: 720, y: 450, button: "left", double: false, expectBundleId: "com.apple.finder" });
-    expect(click.protectedIds).toEqual(expect.arrayContaining(["com.apple.Terminal", "io.atomicagent.desktop"]));
+    // The action script refuses browsers and the blocked apps once more when it posts; terminals take clicks.
+    expect(click.protectedIds).toEqual(expect.arrayContaining(["com.apple.Safari", "io.atomicagent.desktop"]));
+    expect(click.protectedIds).not.toContain("com.googlecode.iterm2");   // the host Terminal (TERM_PROGRAM) stays in
   });
 
   it("refuses a click whose point lies on a protected app, at every level and without a prompt", async () => {
-    const { order, request, options } = setup({ ownerAtPoint: TERMINAL });
+    const { order, request, options } = setup({ ownerAtPoint: SETTINGS });
     const result = await buildOsScreenClickTool(options).run({ x: 10, y: 10 }, screenCtx());
     expect(result.status).toBe("error");
     expect(result.details.reason).toBe("protected-app");
@@ -106,6 +124,102 @@ describe("os.screen.click", () => {
   });
 });
 
+describe("browsers are look-only for screen control", () => {
+  it("refuses clicks, typing and keys in every known browser, before any prompt, pointing at the browser tool", async () => {
+    for (const app of BROWSERS) {
+      for (const [tool, args] of [
+        [buildOsScreenClickTool, { x: 10, y: 10 }],
+        [buildOsScreenTypeTool, { text: "hunter2" }],
+        [buildOsScreenKeyTool, { keys: "return" }],
+      ] as const) {
+        const { order, request, options } = setup({ frontmost: app, ownerAtPoint: app });
+        const result = await tool(options).run(args, screenCtx());
+        expect(result.status, app.bundleId).toBe("error");
+        expect(result.details.reason, app.bundleId).toBe("protected-app");
+        expect(result.details.appClass, app.bundleId).toBe("browser");
+        expect(result.summary, app.bundleId).toContain("use the browser tool for web pages");
+        expect(request, app.bundleId).not.toHaveBeenCalled();
+        expect(order, app.bundleId).toEqual(["run:probe"]);
+      }
+    }
+  });
+
+  it("judges the window under the click point, not the frontmost app", async () => {
+    // A browser window behind TextEdit, under the point: refused.
+    const behind = setup({ frontmost: { name: "TextEdit", bundleId: "com.apple.TextEdit" }, ownerAtPoint: BROWSERS[1] });
+    expect((await buildOsScreenClickTool(behind.options).run({ x: 10, y: 10 }, screenCtx())).details.appClass).toBe("browser");
+    // A browser in front, but the point is on the Dock: the Dock gets the click.
+    const dock = setup({ frontmost: BROWSERS[0], ownerAtPoint: { name: "Dock", bundleId: "com.apple.dock" } });
+    expect((await buildOsScreenClickTool(dock.options).run({ x: 10, y: 10 }, screenCtx())).status).toBe("ok");
+  });
+
+  it("re-checks at every call: an approved app switched for a browser is refused at the next action", async () => {
+    const fake = fakeHost({ frontmost: { name: "TextEdit", bundleId: "com.apple.TextEdit" } });
+    const request = vi.fn(async () => ({ approved: true }));
+    const options = { approvals: { request } as unknown as ApprovalGate, approvalRequired: true, deps: fake.deps, geometry: new ScreenGeometryStore() };
+    expect((await buildOsScreenTypeTool(options).run({ text: "a" }, screenCtx())).status).toBe("ok");
+    const switched = setup({ frontmost: BROWSERS[2] });
+    const result = await buildOsScreenTypeTool(switched.options).run({ text: "a" }, screenCtx());
+    expect(result.details.appClass).toBe("browser");
+    expect(switched.request).not.toHaveBeenCalled();
+  });
+
+  it("reports the script's own refusal when the app changed between the probe and the action", async () => {
+    const { options } = setup({ actionReport: { error: "protected", frontmost: BROWSERS[0] } });
+    const result = await buildOsScreenTypeTool(options).run({ text: "a" }, screenCtx());
+    expect(result.status).toBe("error");
+    expect(result.details.reason).toBe("protected-app");
+    expect(result.summary).toContain("Safari");
+  });
+});
+
+describe("terminals and IDEs take clicks but no typing or keys", () => {
+  it("allows a click (with the approval), refuses typing and keys without a prompt, pointing at os.shell.run", async () => {
+    for (const app of CODE_APPS) {
+      const click = setup({ ownerAtPoint: app, frontmost: app, env: NO_HOST });
+      const clicked = await buildOsScreenClickTool(click.options).run({ x: 10, y: 10 }, screenCtx());
+      expect(clicked.status, app.bundleId).toBe("ok");
+      expect(click.request, app.bundleId).toHaveBeenCalledTimes(1);
+      expect(click.fake.ops().at(-1), app.bundleId).toMatchObject({ op: "click", expectBundleId: app.bundleId });
+      for (const [tool, args] of [[buildOsScreenTypeTool, { text: "rm -rf ~" }], [buildOsScreenKeyTool, { keys: "return" }]] as const) {
+        const { order, request, options } = setup({ frontmost: app, env: NO_HOST });
+        const result = await tool(options).run(args, screenCtx());
+        expect(result.status, app.bundleId).toBe("error");
+        expect(result.details.appClass, app.bundleId).toBe("terminal");
+        expect(result.summary, app.bundleId).toContain("use os.shell.run for commands");
+        expect(request, app.bundleId).not.toHaveBeenCalled();
+        expect(order, app.bundleId).toEqual(["run:probe"]);
+      }
+    }
+  });
+
+  it("the typing and key scripts refuse terminals once more at the moment of posting", async () => {
+    const { fake, options } = setup();
+    await buildOsScreenTypeTool(options).run({ text: "a" }, screenCtx());
+    await buildOsScreenKeyTool(options).run({ keys: "return" }, screenCtx());
+    for (const op of fake.ops().filter((o) => o.op !== "probe")) {
+      expect(op.protectedIds).toEqual(expect.arrayContaining(["com.apple.Terminal", "com.microsoft.VSCode", "com.apple.Safari"]));
+    }
+  });
+
+  it("the terminal the agent runs in takes no clicks either (its TUI takes mouse input)", async () => {
+    const { request, options } = setup({ ownerAtPoint: TERMINAL, env: { TERM_PROGRAM: "Apple_Terminal" } });
+    const result = await buildOsScreenClickTool(options).run({ x: 10, y: 10 }, screenCtx());
+    expect(result.details.appClass).toBe("blocked");
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("an unknown app is allowed behind the approval; an unidentified one is refused", async () => {
+    const known = setup({ frontmost: { name: "Notes", bundleId: "com.apple.Notes" } });
+    expect((await buildOsScreenTypeTool(known.options).run({ text: "a" }, screenCtx())).status).toBe("ok");
+    expect(known.request).toHaveBeenCalledTimes(1);
+    const nameless = setup({ frontmost: { name: "Mystery", bundleId: null } as unknown as { name: string; bundleId: string } });
+    const result = await buildOsScreenTypeTool(nameless.options).run({ text: "a" }, screenCtx());
+    expect(result.details.reason).toBe("protected-app");
+    expect(nameless.request).not.toHaveBeenCalled();
+  });
+});
+
 describe("os.screen.type", () => {
   it("refuses to type into the agent's own terminal — the /mode self-escalation path", async () => {
     const { order, request, options } = setup({ frontmost: TERMINAL });
@@ -132,7 +246,7 @@ describe("os.screen.type", () => {
     const action = fake.calls.at(-1)!;
     expect(action.args).toEqual(["-l", "JavaScript", "-e", SCREEN_JXA_SOURCE]);
     expect(action.args.join(" ")).not.toContain("/bin/rm");
-    expect(action.op).toMatchObject({ op: "type", text, typeVia: "keys", expectBundleId: "com.apple.Safari" });
+    expect(action.op).toMatchObject({ op: "type", text, typeVia: "keys", expectBundleId: "com.apple.TextEdit" });
     expect(Object.keys(action.env ?? {}).sort()).toEqual(["PATH", SCREEN_PAYLOAD_ENV].sort());
     expect(String(request.mock.calls[0]?.[0].preview)).toContain(JSON.stringify(text));
   });
@@ -172,7 +286,7 @@ describe("os.screen.key", () => {
     const { fake, options } = setup();
     const result = await buildOsScreenKeyTool(options).run({ keys: "Cmd+Shift+T" }, screenCtx());
     expect(result.status).toBe("ok");
-    expect(fake.ops().at(-1)).toMatchObject({ op: "key", keyCode: 17, flags: 0x100000 | 0x20000, expectBundleId: "com.apple.Safari" });
+    expect(fake.ops().at(-1)).toMatchObject({ op: "key", keyCode: 17, flags: 0x100000 | 0x20000, expectBundleId: "com.apple.TextEdit" });
   });
 
   it("refuses app and space switchers before probing", async () => {

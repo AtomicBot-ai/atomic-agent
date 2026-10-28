@@ -55,12 +55,16 @@ export type {
 } from "./screen-host.js";
 export { buildScreenInvocation, SCREEN_PAYLOAD_ENV, screenChildEnv } from "./screen-jxa.js";
 export {
+  BLOCKED_BUNDLE_IDS,
+  BROWSER_BUNDLE_IDS,
   hostBundleIds,
-  PROTECTED_BUNDLE_IDS,
   protectedAppReason,
   protectedBundleIds,
   refusedChordReason,
+  screenAppClass,
+  TERMINAL_BUNDLE_IDS,
 } from "./screen-protected.js";
+export type { ScreenAppClass, ScreenInputKind } from "./screen-protected.js";
 export type { ScreenOp } from "./screen-jxa.js";
 
 /** The four names, in catalog order — mirrored by `GATED_TOOLS.screen`. */

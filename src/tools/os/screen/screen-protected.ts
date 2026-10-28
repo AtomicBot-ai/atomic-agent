@@ -1,44 +1,111 @@
 import type { KeyChord } from "./screen-keys.js";
 
 /**
- * Apps the screen tools never click into or type into, at any approval
- * level and whatever the session was granted.
+ * What screen control may do in an app, decided from the bundle id of the
+ * app that would receive the input, on every call (the click point's
+ * window owner, otherwise the frontmost app) and pinned for the action
+ * itself (`screen-jxa.ts` refuses if a different app is there by then).
+ * The same split Claude's own computer use makes:
  *
- * The reason is self-escalation: the agent's own terminal (or Atomic
- * Agent Desktop) accepts slash commands, so one keystroke sequence like
- * "/mode bypass" + return would raise the approval level from inside a
- * turn. Every terminal and terminal-hosting IDE is on the list because
- * the agent may run in any of them; System Settings, the keychain, the
- * login / security prompts and password managers because input there
- * grants permissions or reveals secrets; Script Editor and Automator
- * because they post input of their own, outside this guard.
+ * - `blocked`: no input at all. Atomic Agent itself and the app that
+ *   launched the agent (its TUI takes mouse input and slash commands, so
+ *   a click or "/mode bypass" + return there would raise its approval
+ *   level), settings, credentials, the login and security prompts, and
+ *   script runners that post input of their own.
+ * - `browser`: read-only. Screenshots are fine; clicks, typing and keys
+ *   are refused, because a web page is where a password, a payment or a
+ *   submit happens, and the browser tool asks for those
+ *   (`browser_secret`, `browser_commit`) where screen control cannot.
+ * - `terminal`: terminals and IDEs. Clicks are allowed (focus, a tab, a
+ *   button); typing and keys are refused, because a keystroke there runs
+ *   a command and the agent has `os.shell.run` for that, with its own
+ *   approval.
+ * - `open`: anything else, behind the `screen_control` approval.
+ *
+ * An unidentified target (no bundle id) is refused: the guard cannot vouch
+ * for an app it cannot name. Matching is case-insensitive; an id also
+ * covers its sub-ids (`com.google.Chrome.app.<id>` web apps,
+ * `com.apple.Safari.WebApp.<id>`, `com.jetbrains.<ide>`).
  */
-export const PROTECTED_BUNDLE_IDS: readonly string[] = [
+export type ScreenAppClass = "blocked" | "browser" | "terminal" | "open";
+export type ScreenInputKind = "click" | "type" | "key";
+
+/** No input of any kind (plus the host app, see `hostBundleIds`). */
+export const BLOCKED_BUNDLE_IDS: readonly string[] = [
   // Atomic Agent itself.
   "io.atomicagent.desktop",
-  // Terminals.
-  "com.apple.Terminal",
-  "com.googlecode.iterm2",
-  "dev.warp.Warp-Stable",
-  "com.mitchellh.ghostty",
-  "net.kovidgoyal.kitty",
-  "org.alacritty",
-  "com.github.wez.wezterm",
-  // Editors with a built-in terminal.
-  "com.microsoft.VSCode",
-  "com.todesktop.230313mzl4w4u92", // Cursor
-  "dev.zed.Zed",
   // Permissions, credentials, the login and security prompts.
   "com.apple.systempreferences",
   "com.apple.Settings",
   "com.apple.keychainaccess",
   "com.apple.SecurityAgent",
   "com.apple.loginwindow",
+  "com.apple.Passwords",
   "com.1password.1password",
+  "com.agilebits.onepassword7",
   "com.bitwarden.desktop",
   // Apps that run scripts which post input themselves.
   "com.apple.ScriptEditor2",
   "com.apple.Automator",
+  "com.apple.shortcuts",
+];
+
+/** Web browsers: screenshots only. */
+export const BROWSER_BUNDLE_IDS: readonly string[] = [
+  "com.apple.Safari",
+  "com.apple.SafariTechnologyPreview",
+  "com.google.Chrome",
+  "com.google.Chrome.beta",
+  "com.google.Chrome.dev",
+  "com.google.Chrome.canary",
+  "org.chromium.Chromium",
+  "company.thebrowser.Browser", // Arc
+  "company.thebrowser.dia",
+  "com.microsoft.edgemac",
+  "com.microsoft.edgemac.Beta",
+  "com.microsoft.edgemac.Dev",
+  "com.microsoft.edgemac.Canary",
+  "org.mozilla.firefox",
+  "org.mozilla.firefoxdeveloperedition",
+  "org.mozilla.nightly",
+  "com.brave.Browser",
+  "com.brave.Browser.beta",
+  "com.brave.Browser.nightly",
+  "com.operasoftware.Opera",
+  "com.operasoftware.OperaGX",
+  "com.operasoftware.OperaAir",
+  "com.vivaldi.Vivaldi",
+  "com.kagi.kagimacOS", // Orion
+  "com.duckduckgo.macos.browser",
+  "app.zen-browser.zen",
+  "org.torproject.torbrowser",
+  "ru.yandex.desktop.yandex-browser",
+  "com.naver.Whale",
+];
+
+/** Terminals and IDEs: clicks only. */
+export const TERMINAL_BUNDLE_IDS: readonly string[] = [
+  "com.apple.Terminal",
+  "com.googlecode.iterm2",
+  "dev.warp.Warp-Stable",
+  "dev.warp.Warp",
+  "com.mitchellh.ghostty",
+  "net.kovidgoyal.kitty",
+  "org.alacritty",
+  "com.github.wez.wezterm",
+  "co.zeit.hyper",
+  "com.microsoft.VSCode",
+  "com.microsoft.VSCodeInsiders",
+  "com.vscodium",
+  "com.todesktop.230313mzl4w4u92", // Cursor
+  "com.exafunction.windsurf",
+  "dev.zed.Zed",
+  "dev.zed.Zed-Preview",
+  "com.jetbrains", // every JetBrains IDE: com.jetbrains.intellij, .pycharm, .WebStorm, …
+  "com.google.android.studio",
+  "com.apple.dt.Xcode",
+  "com.sublimetext.4",
+  "com.panic.Nova",
 ];
 
 /** `TERM_PROGRAM` values → the bundle id of the terminal that set them. */
@@ -61,24 +128,54 @@ export function hostBundleIds(env: NodeJS.ProcessEnv): string[] {
   return ids;
 }
 
-/** The static list plus the host app, deduplicated — also sent to the JXA guard. */
-export function protectedBundleIds(env: NodeJS.ProcessEnv): string[] {
-  return [...new Set([...PROTECTED_BUNDLE_IDS, ...hostBundleIds(env)])];
+function matches(list: readonly string[], lower: string): boolean {
+  return list.some((id) => {
+    const entry = id.toLowerCase();
+    return lower === entry || lower.startsWith(`${entry}.`);
+  });
+}
+
+/** The class of the app with this bundle id; `null` when there is no id to judge. */
+export function screenAppClass(bundleId: string | null | undefined, env: NodeJS.ProcessEnv): ScreenAppClass | null {
+  if (!bundleId) return null;
+  const lower = bundleId.toLowerCase();
+  if (matches(BLOCKED_BUNDLE_IDS, lower) || hostBundleIds(env).some((id) => id.toLowerCase() === lower)) return "blocked";
+  if (matches(BROWSER_BUNDLE_IDS, lower)) return "browser";
+  if (matches(TERMINAL_BUNDLE_IDS, lower)) return "terminal";
+  return "open";
 }
 
 /**
- * Why input to this app is refused, or `null` when it is allowed. An app
- * whose bundle id is unknown is refused too: the guard cannot vouch for
- * a target it cannot name.
+ * Exact ids the action script itself refuses for this kind of input —
+ * the second check, at the moment of posting. Prefix entries cannot be
+ * matched there, but the script also refuses any app other than the one
+ * classified here (`expectBundleId`), so a sub-id is covered by the pin.
+ */
+export function protectedBundleIds(env: NodeJS.ProcessEnv, kind: ScreenInputKind = "type"): string[] {
+  const ids = [...BLOCKED_BUNDLE_IDS, ...hostBundleIds(env), ...BROWSER_BUNDLE_IDS, ...(kind === "click" ? [] : TERMINAL_BUNDLE_IDS)];
+  return [...new Set(ids)];
+}
+
+/**
+ * Why this kind of input to this app is refused, or `null` when it is
+ * allowed (still behind the approval). Worded for the model: what to use
+ * instead.
  */
 export function protectedAppReason(
   bundleId: string | null | undefined,
   env: NodeJS.ProcessEnv,
+  kind: ScreenInputKind = "type",
 ): string | null {
-  if (!bundleId) return "the target app could not be identified";
-  const lower = bundleId.toLowerCase();
-  if (protectedBundleIds(env).some((id) => id.toLowerCase() === lower)) {
-    return `${bundleId} is protected (the agent's own terminal or app, a terminal, system settings, credentials or a script runner)`;
+  const cls = screenAppClass(bundleId, env);
+  if (cls === null) return "the target app could not be identified";
+  if (cls === "blocked") {
+    return `${bundleId} is protected (the agent's own terminal or app, system settings, credentials or a script runner)`;
+  }
+  if (cls === "browser") {
+    return `${bundleId} is a web browser, which screen control only looks at; use the browser tool for web pages`;
+  }
+  if (cls === "terminal" && kind !== "click") {
+    return `${bundleId} is a terminal or code editor, where screen control may click but not type or press keys; use os.shell.run for commands`;
   }
   return null;
 }

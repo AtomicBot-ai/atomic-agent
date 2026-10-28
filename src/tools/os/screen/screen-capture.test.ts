@@ -42,7 +42,8 @@ describe("os.screen.capture", () => {
   });
 
   it("asks as screen_capture after the probe and before anything is captured", async () => {
-    const { prompts, tool } = capture();
+    // A browser in front is fine: screen control only looks at browsers, it never clicks or types there.
+    const { prompts, tool } = capture({ frontmost: { name: "Safari", bundleId: "com.apple.Safari" } });
     await tool.run({}, screenCtx());
     expect(prompts).toHaveLength(1);
     expect(prompts[0]).toMatchObject({ tool: "os.screen.capture", category: "screen_capture" });
