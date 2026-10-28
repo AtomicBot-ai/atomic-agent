@@ -82,8 +82,9 @@ test('a setting response from A cannot clear B pending state or show A message',
   assert.equal(context.SKP.busy,true); assert.equal(context.SKP.msg,null);
 });
 test('a catalog answer updates slash suggestions without rebuilding a focused composer', async () => {
-  let fullRenders=0, slashRenders=0;
+  let fullRenders=0, slashRenders=0, trustChecks=0;
   const context=createContext({
+    projectTrustCheck:()=>{trustChecks++;},   // ATO-1250: every catalog read also asks the folder-trust question's route
     BR:{skillList:()=>{}}, SK:{for:'A',rows:null,projectSkillsEnabled:true}, SKP:{mode:'list'}, SKILLS:[], LIVE_CAPS:null,
     S:{settings:null,overlay:null,slash:true,draft:'/openspec'},
     SK_LOADER:createSkillCatalogLoader(async()=>({ok:true,workingDir:'/A',rows:[{name:'openspec-explore',enabled:true}]})),
@@ -93,6 +94,7 @@ test('a catalog answer updates slash suggestions without rebuilding a focused co
   runInContext(actionSource('async function refreshSkillList()', '/* Everything a Manage tab needs'),context);
   await context.refreshSkillList();
   assert.equal(fullRenders,0); assert.equal(slashRenders,1); assert.equal(context.S.draft,'/openspec');
+  assert.equal(trustChecks,1);
 });
 
 test('default Enable in workspace never adds another ban to a globally disabled skill', async () => {

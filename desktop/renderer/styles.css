@@ -622,3 +622,6 @@ button.tk-hint:hover{background:var(--hover);color:var(--ink)}
 .tk-crumb{display:flex;align-items:baseline;gap:6px;min-width:0}
 .tk-crumb .k{font-size:12.5px;color:var(--ink-2)}
 .tk-crumb h3{margin:0;font-size:20px;font-weight:600;letter-spacing:-.03em;color:var(--ink);white-space:nowrap}
+
+/* ATO-1250: the folder the trust question is about, under its plain line. */
+.ptrust .ptrust-dir { font-size: 11px; opacity: .7; word-break: break-all; margin-top: -4px; }

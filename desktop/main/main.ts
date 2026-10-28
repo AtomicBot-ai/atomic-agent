@@ -28,7 +28,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -1336,6 +1336,24 @@ function wireIpc(client: AgentClient): void {
     return value;
   };
   ipcMain.handle("agent:skills", (_event, sessionId: unknown) => wrap(() => client.skills(skillSession(sessionId))));
+  // ATO-1250: the project-trust question (renderer/project-trust.js). Every field is checked here; the agent checks them again.
+  ipcMain.handle("agent:projectTrust", async (_event, sessionId: unknown) => {
+    try { return await client.projectTrust(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:projectTrustAnswer", async (_event, raw: unknown) => {
+    const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    if (body.answer !== "trust" && body.answer !== "decline") return { ok: false, error: "answer must be trust or decline" };
+    const out: ProjectTrustAnswerBody = { answer: body.answer };
+    try {
+      const sessionId = skillSession(body.sessionId);
+      if (sessionId) out.sessionId = sessionId;
+    } catch (err) { return { ok: false, error: String(err) }; }
+    if (!out.sessionId && typeof body.workingDir === "string" && body.workingDir.length < 4096) out.workingDir = body.workingDir;
+    if (body.scope === "all") out.scope = "all";
+    else if (typeof body.questionId === "string" && body.questionId.length <= 128) out.questionId = body.questionId;
+    else return { ok: false, error: "questionId required" };
+    return client.answerProjectTrust(out);
+  });
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());
@@ -5846,6 +5864,14 @@ async function settingsTest(
   // Skills count suffix: N = every installed skill incl. disabled, from `atag skill list`.
   let skillCount: number | null = null;
   for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
+  // ATO-1250: the folder-trust route answers (or, on an agent from before it, is reported as absent and nothing shows),
+  // and a question, when there is one, is about a folder and carries the id an answer must echo.
+  const trust = await js<{ supported?: boolean; ok?: boolean; status?: { workingDir?: string; question?: string | null; questionId?: string | null }; error?: string }>("window.atomic.projectTrust()");
+  check(
+    "folder trust: GET /api/project-trust answers or is absent",
+    trust.supported === false || (trust.ok === true && !!trust.status?.workingDir && (trust.status.question == null) === (trust.status.questionId == null)),
+    trust.supported === false ? "agent without the route" : `ok=${String(trust.ok)} dir=${trust.status?.workingDir ?? "?"} question=${JSON.stringify(trust.status?.question ?? null)} ${trust.error ?? ""}`,
+  );
   const skillsCli = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.atomic.skillList()");
   // The nav row a person reads: the label alone (Calm S5: no count badge; the pane's own tabs carry the counts, Д43).
   const skillsLabel = await js<{ act: string; label: string; count: string | null }>(
