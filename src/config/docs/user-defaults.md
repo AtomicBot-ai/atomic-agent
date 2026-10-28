@@ -17,6 +17,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.useServerTemplate` (default `"auto"`).
 - `localModels.thinking` (default `"auto"`).
 - `localModels.reasoningBudgetTokens` (default `0`, no bound; a positive value is enforced in full; until ATO-607 llama.cpp's repeat limit capped it at 499, see #600).
+- `localModels.drySampler` (default `false`; `true` sends llama.cpp's DRY anti-repeat sampler, looking at the last 256 tokens of prompt plus reply, with every `/completion` request to Atomic Core, managed or External llama-server, never to Ollama or cloud providers).
 - `localModels.managed.engine` (default `"atomic-core"`).
 - `localModels.managed.modelId` (default `null`).
 - `localModels.managed.port` (default `19091`).

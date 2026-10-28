@@ -222,6 +222,7 @@ export function loadConfig(): AtomicAgentConfig {
       useServerTemplate: user.localModels.useServerTemplate,
       thinking: user.localModels.thinking,
       reasoningBudgetTokens: user.localModels.reasoningBudgetTokens,
+      drySampler: user.localModels.drySampler,
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
       download: { ...user.localModels.download },
