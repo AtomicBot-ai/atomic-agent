@@ -8,10 +8,12 @@ import { buildBrowserReadAriaTool } from "./read-aria.js";
 import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
+import { buildBrowserScreenshotTool } from "./screenshot.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
+import { AriaSnapshotStore } from "./aria-view.js";
 
 export type {
   AriaSnapshot,
@@ -19,6 +21,8 @@ export type {
   ClickInput,
   NavigateInput,
   RefDescription,
+  ScreenshotInput,
+  ScreenshotResult,
   ScrollDirection,
   ScrollInput,
   ScrollResult,
@@ -64,6 +68,7 @@ export type {
 } from "./aria-compressor.js";
 export {
   EMPTY_DOMAIN_POLICY,
+  blockedHostOfPage,
   checkBrowserHost,
   checkBrowserUrl,
   hostMatchesAny,
@@ -82,13 +87,30 @@ export type {
   BrowserActionKind,
   BrowserActionVerdict,
 } from "./classify-browser-action.js";
+export {
+  ARIA_VIEW_MODES,
+  AriaSnapshotStore,
+  ariaCharBudget,
+  defaultAriaViewMode,
+  readAriaView,
+  renderAriaView,
+} from "./aria-view.js";
+export type { AriaViewMode, AriaViewContext, RenderedAriaView } from "./aria-view.js";
 export { buildBrowserNavigateTool, isSafeUrl } from "./navigate.js";
 export { buildBrowserClickTool } from "./click.js";
 export { buildBrowserTypeTool } from "./type.js";
 export { buildBrowserReadAriaTool } from "./read-aria.js";
+export { requireUserSite, userSiteCleared, UserSiteApprovals } from "./user-profile-sites.js";
 export { buildBrowserSearchTool } from "./search.js";
 export { buildBrowserTabsTool } from "./tabs.js";
 export { buildBrowserScrollTool } from "./scroll.js";
+export {
+  BROWSER_SCREENSHOT_TOOL,
+  BROWSER_SHOT_DIR,
+  browserShotDir,
+  buildBrowserScreenshotTool,
+} from "./screenshot.js";
+export type { BrowserScreenshotDeps } from "./screenshot.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -102,13 +124,16 @@ export function buildBrowserTools(
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): ToolDefinition[] {
+  // One per tool set: the last snapshot of each tab, for read_aria's diff view.
+  const store = new AriaSnapshotStore();
   return [
-    buildBrowserNavigateTool(backend, dangerous, policy),
+    buildBrowserNavigateTool(backend, dangerous, policy, store),
     buildBrowserClickTool(backend, dangerous, policy),
     buildBrowserTypeTool(backend, dangerous, policy),
-    buildBrowserReadAriaTool(backend, policy),
-    buildBrowserSearchTool(backend, dangerous, policy),
+    buildBrowserReadAriaTool(backend, policy, store, dangerous),
+    buildBrowserSearchTool(backend, dangerous, policy, store),
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
+    buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
   ];
 }

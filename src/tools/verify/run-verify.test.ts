@@ -20,6 +20,8 @@ const CONFIG: Pick<AtomicAgentConfig, "browser"> = {
     channel: "chrome",
     headless: true,
     cdpUrl: null,
+    connect: "agent",
+    userChromeDataDir: null,
     executablePath: null,
     noSandbox: false,
     launchTimeoutMs: 20_000,

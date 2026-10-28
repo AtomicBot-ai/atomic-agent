@@ -15,8 +15,8 @@ import {
   type RuntimeVisionConfig, type UserVisionConfig,
 } from "./tool-config.js";
 
-import { createBrowserDefaults, parseBrowserConfig, type UserBrowserConfig } from "./browser-config.js";
-export type { UserBrowserConfig } from "./browser-config.js";
+import { createBrowserDefaults, parseBrowserConfig, type BrowserConnectMode, type UserBrowserConfig } from "./browser-config.js";
+export type { BrowserConnectMode, UserBrowserConfig } from "./browser-config.js";
 
 import { createSkillsDefaults, parseSkillsConfig, parseClawHubConfigWithDefaults, DEFAULT_SKILLS_CATALOG_BUDGET, type RuntimeSkillsConfig, type UserSkillsConfig } from "./skills-config.js";
 export { DEFAULT_SKILLS_CATALOG_BUDGET, parseSkillNameArray, parseSkillTapArray } from "./skills-config.js";
@@ -220,7 +220,20 @@ export interface AtomicAgentConfig {
     enabled: boolean;
     channel: BrowserChannel;
     headless: boolean;
+    /**
+     * Attach to this DevTools endpoint instead of launching. Env
+     * `ATOMIC_AGENT_BROWSER_CDP_URL`, else `UserConfigFile.browser.cdpUrl`
+     * (loopback only).
+     */
     cdpUrl: string | null;
+    /** `UserConfigFile.browser.connect`: own profile or the user's Chrome. */
+    connect: BrowserConnectMode;
+    /**
+     * `UserConfigFile.browser.userDataDir`, `~` expanded: where to look
+     * for the user's `DevToolsActivePort` in `"user-chrome"` mode; `null`
+     * tries the standard Chrome / Chromium / Brave / Edge locations.
+     */
+    userChromeDataDir: string | null;
     executablePath: string | null;
     noSandbox: boolean;
     launchTimeoutMs: number;
@@ -1010,6 +1023,11 @@ export interface UserConfigFile {
 // (default `[]`, ATO-958). A blocked host is refused by every browser
 // tool; a non-empty allow-list makes other hosts ask (`browser_offsite`).
 // An older file has no block and takes the empty lists.
+// Unversioned, additive: `browser.connect` (default `"agent"`),
+// `browser.cdpUrl` and `browser.userDataDir` (default `null`, ATO-511).
+// `"user-chrome"` attaches to the user's own Chrome through its
+// DevToolsActivePort file; `cdpUrl` must be a loopback URL. An older
+// file takes the defaults and keeps launching the agent's own Chrome.
 // v79: `http.approvalMode` defaults to `"writes"` again (ATO-760): an
 // `os.http.request` that sends data (POST) asks first; GET stays silent.
 // v25 had made `"never"` the default, so a prompt-injected model could

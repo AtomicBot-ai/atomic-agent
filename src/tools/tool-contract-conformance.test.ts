@@ -88,6 +88,7 @@ const browser: BrowserBackend = {
   snapshot: async () => unexpected(), hasRef: async () => unexpected(), describeRef: async () => unexpected(), currentUrl: async () => unexpected(),
   navigate: async () => unexpected(), click: async () => unexpected(),
   type: async () => unexpected(), search: async () => unexpected(),
+  screenshot: async () => unexpected(),
   tabs: async () => unexpected(), scroll: async () => unexpected(),
 };
 
@@ -115,9 +116,9 @@ const CONDITIONAL = {
 // Both copies affect stable-prefix bytes; discovery is last-wins and native wire is first-wins.
 // This bounded compatibility ledger grants no permission for another duplicate.
 const KNOWN_DESCRIPTOR_DUPLICATES = new Map<string, { indices: number[]; fingerprints: string[]; owner: string; reason: string }>([
-  ["os.git.push", { indices: [33, 43], fingerprints: ["093e96423e4d2e226a0c520bea7398f10f6f9fc22a02b382e57191b57412e67f", "9d8ae0fa05777782f8218cfa69b6661e2c85c0a191406ee581cc52a9e2602a48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
-  ["os.git.commit", { indices: [32, 47], fingerprints: ["95ef51ed40cc6ce5a762a7138f9f840dfa3e932b6f0f01bea11dd81a02fed773", "76a621b86514c6c0de7bdc5987127ccb26ebec8534bdf273cf46a5fb2f83227e"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
-  ["os.git.checkout", { indices: [31, 48], fingerprints: ["838fd065d1f322f4948821d4e787582d513bd86336b003f3e7143142080030ce", "981cfd260f769a8d38355113818ad41766037e142d4e5f5bbe37fff689ee2e48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
+  ["os.git.push", { indices: [34, 44], fingerprints: ["093e96423e4d2e226a0c520bea7398f10f6f9fc22a02b382e57191b57412e67f", "9d8ae0fa05777782f8218cfa69b6661e2c85c0a191406ee581cc52a9e2602a48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
+  ["os.git.commit", { indices: [33, 48], fingerprints: ["95ef51ed40cc6ce5a762a7138f9f840dfa3e932b6f0f01bea11dd81a02fed773", "76a621b86514c6c0de7bdc5987127ccb26ebec8534bdf273cf46a5fb2f83227e"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
+  ["os.git.checkout", { indices: [32, 49], fingerprints: ["838fd065d1f322f4948821d4e787582d513bd86336b003f3e7143142080030ce", "981cfd260f769a8d38355113818ad41766037e142d4e5f5bbe37fff689ee2e48"], owner: "prompt/default-tool-descriptors-a", reason: "Preserve shipped prefix entries and first-wire/last-discovery resolution during the mechanical move" }],
 ]);
 
 const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -290,7 +291,7 @@ beforeAll(() => {
     web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
   } });
   registerOsScreenTools(registry, { ...dangerous, enabled: true, platform: "darwin" });
-  registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000, blockedDomains: [], allowedDomains: [] } } });
+  registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, connect: "agent", userChromeDataDir: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000, blockedDomains: [], allowedDomains: [] } } });
   registerGithubTools(registry, dangerous);
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
@@ -330,8 +331,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(95);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(92);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(96);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(93);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);

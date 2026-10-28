@@ -34,8 +34,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "browser.read_aria",
-    summary: "Capture the page as a compact ARIA text snapshot.",
-    argsSchema: "{}",
+    summary:
+      "Capture the page as an ARIA text snapshot. mode: full (whole page), interactive (controls only), diff (changes since the last snapshot of this tab), region (the part under ref).",
+    argsSchema: "{ mode?: string, ref?: string }",
   },
   {
     name: "browser.search",
@@ -53,6 +54,12 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     summary:
       "Scroll the page; does not refresh ARIA — read_aria after if needed.",
     argsSchema: `{ direction: "up" | "down" | "top" | "bottom", amount?: "page" | "half" | number }`,
+  },
+  {
+    name: "browser.screenshot",
+    summary:
+      "JPEG of the page (viewport), the whole page (fullPage) or one element (ref); returns a path for vision.describe or reply.attachments.",
+    argsSchema: "{ ref?: string, fullPage?: boolean }",
   },
   {
     name: "os.shell.run",

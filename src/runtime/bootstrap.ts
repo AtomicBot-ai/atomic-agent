@@ -202,6 +202,8 @@ export async function createAgentRuntime(
       noSandbox: config.browser.noSandbox,
       launchTimeoutMs: config.browser.launchTimeoutMs,
       cdpUrl: config.browser.cdpUrl,
+      connect: config.browser.connect,
+      userChromeDataDir: config.browser.userChromeDataDir,
     });
   const preparedSkills = await prepareRuntimeSkills(config, workingDir, logger);
   const { skillRegistry } = preparedSkills;
