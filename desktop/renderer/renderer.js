@@ -7702,6 +7702,7 @@ document.addEventListener('click', (e) => {
   const go = t.closest('[data-goto]');
   if (go) { let el = document.getElementById('card-' + go.dataset.goto);
             if (!el && turnSumReveal(go.dataset.goto)) el = document.getElementById('card-' + go.dataset.goto);   // ATO-464
+            if (!el && failRunMark(go.dataset.goto)) { render(); el = document.getElementById('card-' + go.dataset.goto); }   // ATO-1257
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
   // r5 item 4: real <button> elements inside a `.turn`, so no other selector in
   // this handler competes for them.
@@ -20683,7 +20684,18 @@ function renderItems() {
   /* ATO-464: a finished turn's steps fold into one line (turn-summary.js).
      The turn still streaming is the one S.turnId is on; it is drawn live. */
   // ATO-1257: which failures the agent went on from (tool-failures.js); toolCard and groupCard read it.
-  TOOL_QUIET = quietToolFailures(items, {running: !!S.turnId, failed: (t) => toolState(t) === 'err', worked: (t) => toolState(t) === 'ok'});
+  // Running: the turn on screen, not one in another chat (S.turnId follows the turn whichever chat it is in).
+  const liveHere = !!S.turnId && !!S.streamId && items.some((x) => x.id === S.streamId);
+  TOOL_QUIET = quietToolFailures(items, {running: liveHere, failed: (t) => toolState(t) === 'err', worked: (t) => toolState(t) === 'ok'});
+  // A same-tool run opened by a click stays open: its quiet members do not fold again.
+  const openRuns = new Set();
+  for (let i = 0; i < items.length; i++) {
+    const m = items[i];
+    if (m.k !== 'tool' || (i > 0 && items[i - 1].k === 'tool' && items[i - 1].name === m.name)) continue;
+    let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
+    if (j - i >= 2 && OPEN_GROUPS.has(m.id)) for (let x = i; x <= j; x++) openRuns.add(items[x].id);
+  }
+  const foldsQuiet = (x) => x && x.k === 'tool' && TOOL_QUIET.has(x.id) && !openRuns.has(x.id) && !OPEN_GROUPS.has('f:' + x.id);
   const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
     failedOf: (t) => toolState(t) === 'err' && !TOOL_QUIET.has(t.id)});   // red only for what the card itself shows as an error
   const hidden = new Set();
@@ -20701,8 +20713,8 @@ function renderItems() {
       continue;
     }
     // ATO-1257: two or more quiet failures in a row are one line, "3 attempts failed", until opened.
-    if (m.k === 'tool' && TOOL_QUIET.has(m.id) && !OPEN_GROUPS.has('f:' + m.id)) {
-      let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && TOOL_QUIET.has(items[j + 1].id) && !hidden.has(j + 1)) j++;
+    if (foldsQuiet(m)) {
+      let j = i; while (j + 1 < items.length && foldsQuiet(items[j + 1]) && !hidden.has(j + 1)) j++;
       if (j > i) {
         const run = items.slice(i, j + 1);
         html += failRunHTML(run, {esc, ic});
@@ -20775,8 +20787,18 @@ function turnSumToggle(replyId) {
   S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
 }
 /** ATO-1257: open a run of quiet failures in place. */
+/** The run of quiet failures `id` starts or sits in, opened for good: each member, and no same-tool fold over them. */
+function failRunMark(id) {
+  const at = S.log.findIndex((x) => x.id === id);
+  if (at < 0 || !TOOL_QUIET.has(id)) return false;
+  let i = at; while (i > 0 && S.log[i - 1].k === 'tool' && TOOL_QUIET.has(S.log[i - 1].id)) i--;
+  let j = at; while (j + 1 < S.log.length && S.log[j + 1].k === 'tool' && TOOL_QUIET.has(S.log[j + 1].id)) j++;
+  if (i === j) return false;
+  for (let x = i; x <= j; x++) { OPEN_GROUPS.add('f:' + S.log[x].id); OPEN_GROUPS.add(S.log[x].id); }
+  return true;
+}
 function failRunOpen(id) {
-  OPEN_GROUPS.add('f:' + id);
+  failRunMark(id);
   const sc = $('#scroller');
   const h0 = document.getElementById('failrun-' + id);
   if (!sc || !h0) { render(); return; }
@@ -20990,7 +21012,7 @@ function groupCard(run) {
         : states.every((x) => x === 'unk') ? 'unk' : states.every((x) => x === 'deny') ? 'deny'
         : states.every((x) => x === 'skip') ? 'skip' : states.every((x) => x === 'held') ? 'held' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
     + (bad && bad + softBad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
-    + (softBad && !bad && softBad < run.length ? '<span class="tl-soft">' + softBad + ' failed</span>' : '')
+    + (softBad && (bad || softBad < run.length) ? '<span class="tl-soft">' + softBad + (bad ? ' recovered' : ' failed') + '</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
     + toolStatus(pending ? 'run' : bad ? 'err' : softBad ? 'soft' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'

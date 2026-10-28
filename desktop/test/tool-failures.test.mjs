@@ -51,3 +51,50 @@ test('the folded line counts the attempts and escapes the tool id', () => {
   assert.match(html, /data-failrun="a"/);
   assert.ok(!html.includes(' err'), 'no red class on the line');
 });
+
+/* ---------------- renderer.js wiring: renderItems folds, and opening stays open ---------------- */
+import { readFileSync } from 'node:fs';
+import vm from 'node:vm';
+const ts = require('typescript');
+const rsrc = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+const rast = ts.createSourceFile('renderer.js', rsrc, ts.ScriptTarget.Latest, true);
+const rfn = new Map(rast.statements.filter(ts.isFunctionDeclaration).map((n) => [n.name.text, n.getText(rast)]));
+
+function wired(log, S0) {
+  const c = vm.createContext({
+    S: Object.assign({log, turnId: null, streamId: null}, S0 || {}), OPEN_GROUPS: new Set(), TOOL_QUIET: new Set(),
+    quietToolFailures, failRunHTML: (run) => '<fold ' + run.map((m) => m.id).join(',') + '>',
+    toolState: (m) => (m.ok === null ? 'run' : m.ok ? 'ok' : 'err'), esc: (s) => String(s), ic: () => '',
+    exaKeyHost: () => null, turnFoldsOf: () => new Map(), STEPS: {always: false}, TURN_OPEN: new Set(),
+    item: (m) => '<row ' + m.id + '>', groupCard: (run) => '<group ' + run.map((m) => m.id).join(',') + '>',
+    systemRun: () => '', render() {}, document: {getElementById: () => null}, $: () => null,
+  });
+  for (const n of ['renderItems', 'failRunMark']) vm.runInContext(rfn.get(n), c);
+  return c;
+}
+
+test('«закрой хром» folds into one line, and opened it stays open', () => {
+  const sh = (id, ok) => ({id, k: 'tool', name: 'os.shell.run', ok});
+  const log = [user('u'), sh('a', false), sh('b', false), sh('c', false), sh('d', false), sh('e', false), sh('f', true), reply('r')];
+  const c = wired(log);
+  assert.equal(c.renderItems(), '<row u><fold a,b,c,d,e><row f><row r>');
+  c.failRunMark('a');
+  assert.equal(c.renderItems(), '<row u><row a><row b><row c><row d><row e><row f><row r>', 'no second fold, no same-tool group');
+});
+
+test('different tools: one click opens the whole run', () => {
+  const t = (id, name, ok) => ({id, k: 'tool', name, ok});
+  const log = [user('u'), t('a', 'x', false), t('b', 'y', false), t('c', 'z', false), t('d', 'x', true), reply('r')];
+  const c = wired(log);
+  assert.equal(c.renderItems(), '<row u><fold a,b,c><row d><row r>');
+  c.failRunMark('b');
+  assert.equal(c.renderItems(), '<row u><row a><row b><row c><row d><row r>');
+});
+
+test('a turn running in another chat leaves this chat\'s turn-ending failure red', () => {
+  const t = (id, ok) => ({id, k: 'tool', name: 'os.shell.run', ok});
+  const log = [user('u'), t('a', false), t('b', false), reply('r')];
+  const c = wired(log, {turnId: 'other-chat-turn', streamId: 'not-here'});
+  assert.equal(c.renderItems(), '<row u><row a><row b><row r>');
+  assert.equal(c.TOOL_QUIET.size, 0);
+});
