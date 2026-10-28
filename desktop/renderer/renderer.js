@@ -9058,6 +9058,8 @@ function applySessions(res, askedAt) {
       updatedAt:x.updatedAt || 0,
       status:x.status || '',
       turnCount:x.turnCount || 0,
+      // ATO-1253: the folder the chat ran in; an imported Claude Code chat is filed under its project by it.
+      workingDir:typeof x.workingDir === 'string' ? x.workingDir : null,
     });
   });
   settlePendingChats();
@@ -28071,7 +28073,7 @@ function impFormHTML(f) {
        kept in chat-folders.json, so it holds for every import and for chats
        imported before. */
     + '<div class="tk-card sd-rows"><div class="tk-setrow sd-frow">'
-      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">A folder per app, such as “Claude Code” or “Codex”. '
+      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">Claude Code chats go into a folder per project, other apps’ chats into a folder per app, such as “Codex”. '
       + 'Chats imported earlier are sorted too. A chat you move yourself stays where you put it.</div></div>'
       + '<button class="tk-switch" role="switch" aria-checked="' + !!FOLDERS.state.autoSort + '" aria-label="Put imported chats into folders" data-act="fautosort:"></button></div></div>'
     /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.

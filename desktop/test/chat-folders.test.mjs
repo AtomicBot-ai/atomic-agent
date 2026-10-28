@@ -49,6 +49,72 @@ test("imported chats sort into a folder per app, once, and never against the per
   assert.equal(F.folderAutoSort(off, sessions), 0);
 });
 
+test("ATO-1253: Claude Code chats go into a folder per project, duplicates disambiguated", () => {
+  const st = F.foldersEmpty();
+  const sessions = [
+    { id: "claude-code:a1", workingDir: "/Users/me/src/atomic-agent" },
+    { id: "claude-code:a2", workingDir: "/Users/me/src/atomic-agent/" },
+    { id: "claude-code:b1", workingDir: "/Users/me/work/client/app" },
+    { id: "claude-code:c1", workingDir: "/Users/me/play/app" },
+    { id: "claude-code:w1", workingDir: "C:\\Users\\me\\site" },
+    { id: "claude-code:x1" },
+    { id: "codex:1", workingDir: "/Users/me/src/atomic-agent" },
+  ];
+  assert.equal(F.folderAutoSort(st, sessions), 7);
+  const name = (sid) => F.folderOf(st, sid).name;
+  assert.equal(name("claude-code:a1"), "atomic-agent");
+  assert.equal(F.folderOf(st, "claude-code:a2").id, F.folderOf(st, "claude-code:a1").id, "one folder per project path");
+  assert.equal(name("claude-code:b1"), "app");
+  assert.equal(name("claude-code:c1"), "app (play)");
+  assert.equal(name("claude-code:w1"), "site");
+  assert.equal(name("claude-code:x1"), "Claude Code", "no project known: the app's folder");
+  assert.equal(name("codex:1"), "Codex", "other apps keep a folder per app");
+  const before = JSON.stringify(st);
+  assert.equal(F.folderAutoSort(st, sessions), 0, "a re-run changes nothing and makes no duplicates");
+  assert.equal(JSON.stringify(st), before);
+  assert.equal(st.folders.length, 6);
+});
+
+test("ATO-1253: a re-run moves sorted chats to their project, never the person's", () => {
+  const st = F.foldersEmpty();
+  F.folderAutoSort(st, [{ id: "claude-code:a" }, { id: "claude-code:b" }]);
+  assert.equal(F.folderOf(st, "claude-code:a").name, "Claude Code");
+  const mine = F.folderAdd(st, "Mine");
+  F.folderPut(st, "claude-code:b", mine);   // the person's choice
+  const renamed = F.folderForProject(st, "/p/web");
+  F.folderRename(st, renamed.id, "Website");
+  F.folderAutoSort(st, [{ id: "claude-code:a", workingDir: "/p/web" }, { id: "claude-code:b", workingDir: "/p/web" }]);
+  assert.equal(F.folderOf(st, "claude-code:a").name, "Website", "a renamed project folder keeps its project");
+  assert.equal(F.folderOf(st, "claude-code:b").name, "Mine");
+  // A folder of the project's name the person made is used; deleting a project folder leaves its chats alone.
+  const own = F.folderAdd(st, "api");
+  F.folderAutoSort(st, [{ id: "claude-code:c", workingDir: "/p/api" }]);
+  assert.equal(F.folderOf(st, "claude-code:c").id, own);
+  F.folderRemove(st, own);
+  F.folderAutoSort(st, [{ id: "claude-code:c", workingDir: "/p/api" }]);
+  assert.equal(F.folderOf(st, "claude-code:c"), null);
+  assert.ok(!(own in st.projects));
+});
+
+test("ATO-1253: a file from before splits its one Claude Code folder into projects, once", () => {
+  const st = F.foldersCoerce({ folders: [{ id: "fcc", name: "Claude Code" }, { id: "fcx", name: "Codex" }],
+    chats: { "claude-code:a": "fcc", "claude-code:b": "fcc", "claude-code:old": "fcc", "codex:1": "fcx" } });
+  assert.equal(st.projectSort, false);
+  F.folderAutoSort(st, [{ id: "claude-code:a", workingDir: "/p/one" }, { id: "claude-code:b", workingDir: "/p/two" }, { id: "codex:1" }]);
+  assert.equal(F.folderOf(st, "claude-code:a").name, "one");
+  assert.equal(F.folderOf(st, "claude-code:b").name, "two");
+  assert.equal(F.folderOf(st, "codex:1").name, "Codex");
+  assert.equal(st.projectSort, true);
+  // A chat past the list's rows stays where it was, still marked as sorted, and moves when it shows up.
+  assert.equal(F.folderOf(st, "claude-code:old").name, "Claude Code");
+  F.folderAutoSort(st, [{ id: "claude-code:old", workingDir: "/p/one" }]);
+  assert.equal(F.folderOf(st, "claude-code:old").name, "one");
+  // Empty now; the next file from before would remove it, a person's own "Claude Code" folder later is theirs.
+  const again = F.foldersCoerce({ folders: [{ id: "fcc", name: "Claude Code" }], chats: { "claude-code:a": "fcc" } });
+  F.folderAutoSort(again, [{ id: "claude-code:a", workingDir: "/p/one" }]);
+  assert.ok(!again.folders.some((f) => f.name === "Claude Code"), "the emptied old folder goes");
+});
+
 test("rename checks the name; a deleted chat leaves the file", () => {
   const st = F.foldersEmpty();
   const id = F.folderAdd(st, "A");
@@ -92,10 +158,14 @@ after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
 test("main writes the file whole and reads back a checked value", { skip: !M && "run npm run build first" }, () => {
   const dir = mkdtempSync(join(tmpdir(), "folders-")); dirs.push(dir);
-  assert.deepEqual(M.readChatFolders(dir), { version: 1, folders: [], chats: {}, autoSort: true });
-  const res = M.writeChatFolders(dir, { folders: [{ id: "fa", name: "A", collapsed: true }, { id: "bad id", name: "x" }], chats: { s1: "fa", s2: "fb" }, autoSort: false });
+  assert.deepEqual(M.readChatFolders(dir), { version: 1, folders: [], chats: {}, autoSort: true, projects: {}, auto: {}, projectSort: true });
+  const res = M.writeChatFolders(dir, { folders: [{ id: "fa", name: "A", collapsed: true }, { id: "bad id", name: "x" }], chats: { s1: "fa", s2: "fb", s3: null },
+    autoSort: false, projects: { fa: "/src/A", fz: "/gone" }, auto: { s1: true, s2: true, s3: true }, projectSort: true });
   assert.equal(res.ok, true);
-  assert.deepEqual(M.readChatFolders(dir), { version: 1, folders: [{ id: "fa", name: "A", collapsed: true }], chats: { s1: "fa" }, autoSort: false });
+  assert.deepEqual(M.readChatFolders(dir), { version: 1, folders: [{ id: "fa", name: "A", collapsed: true }], chats: { s1: "fa", s3: null },
+    autoSort: false, projects: { fa: "/src/A" }, auto: { s1: true }, projectSort: true });
+  // A file from before ATO-1253 has no projectSort: its Claude Code chats are split into project folders once.
+  assert.equal(M.coerceChatFolders({ folders: [] }).projectSort, false);
   writeFileSync(M.chatFoldersPath(dir), "not json");
   assert.deepEqual(M.readChatFolders(dir).folders, []);
 });
