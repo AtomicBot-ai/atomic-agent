@@ -16,7 +16,7 @@ import {
   type FailureVerdict,
 } from "../llm/reliability/index.js";
 import { currentLlamaUrl, failureReasonFields } from "./failure-reason-frame.js";
-import { readFailedAttempts } from "../llm/fallback/index.js";
+import { falloverSentence, readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
   createEmptySessionState,
@@ -644,6 +644,26 @@ export function buildStreamEventHook(
           event.fallbackFailures.length > 0
             ? { fallback_failures: failedLinksFrame(event.fallbackFailures) }
             : {}),
+        });
+      }
+      return;
+    }
+    /* ATO-483: the person's fallback link answered instead of the
+       provider they picked. Said in the turn, one plain sentence ("OpenRouter is
+       rate-limited, answered with Gemini (gemini-2.5-flash)."), so a
+       switch is never silent; `reason` keeps the provider's own words for
+       Details. Extensions-only, like the wait frames. */
+    if (event.type === "provider_switched") {
+      if (env.request.extensionsEnabled && event.direction === "away") {
+        sse.writeEvent("provider_switched", {
+          object: "atomic.provider_switched",
+          session_id: env.session.id,
+          from: event.from,
+          to: event.to,
+          ...(event.toModel !== undefined ? { to_model: event.toModel } : {}),
+          ...(event.failure !== undefined ? { cause: event.failure } : {}),
+          notice: falloverSentence(event.from, event.to, event.failure, event.toModel),
+          reason: event.reason,
         });
       }
       return;

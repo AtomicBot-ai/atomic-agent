@@ -8,7 +8,7 @@ import type { ModelProfile } from "../llm/model-profile.js";
 import type { ModelProfileManager } from "../llm/model-profile-manager.js";
 import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import type { FailureVerdict } from "../llm/reliability/failure-catalog.js";
+import type { FailureCauseId, FailureVerdict } from "../llm/reliability/failure-catalog.js";
 import type { ProviderWaitCause, ProviderWaitFailure } from "../llm/reliability/provider-wait-cause.js";
 import type { LlmFailureCategory, TruncationCause } from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
@@ -936,6 +936,10 @@ export type AgentLoopEvent =
       reason: string;
       /** The failure's kind, read off the error (`falloverCause`). */
       cause?: "billing" | "auth" | "other";
+      /** The failure-catalog cause behind an "away" (ATO-483). */
+      failure?: FailureCauseId;
+      /** The fallback link's model, when its entry names one. */
+      toModel?: string;
     }
   /**
    * A memory sub-call (reflection, link generation, voting, query
