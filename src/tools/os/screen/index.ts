@@ -8,6 +8,7 @@ import {
 } from "./screen-input.js";
 import { ScreenGeometryStore } from "./screen-geometry.js";
 import { buildOsScreenPointTool } from "./screen-point.js";
+import { screenOverlayAvailable } from "./screen-overlay-hosts.js";
 import { resolveScreenDeps, type ScreenDeps } from "./screen-host.js";
 
 export {
@@ -98,6 +99,8 @@ export interface RegisterOsScreenToolsOptions extends DangerousToolOptions {
    * model can see what it points at, without `enabled`.
    */
   point?: boolean;
+  /** Test seam: whether a session's host draws marks (`screen-overlay-hosts.ts`). */
+  overlayAvailable?: (sessionId: string) => boolean;
   /** Host platform; the tools exist on macOS only (other OSes: ATO-527). */
   platform?: NodeJS.Platform;
   /** Test seam: runner, clock and file helpers. */
@@ -130,11 +133,15 @@ export function registerOsScreenTools(
     deps,
     geometry,
   };
-  registry.register(buildOsScreenCaptureTool(input));
+  const overlayAvailable = options.overlayAvailable ?? screenOverlayAvailable;
+  // Without screen control, a screenshot is only for pointing: the desktop app's own chat.
+  registry.register(
+    buildOsScreenCaptureTool(options.enabled ? input : { ...input, onlyWithOverlay: overlayAvailable }),
+  );
   if (options.enabled) {
     registry.register(buildOsScreenClickTool(input));
     registry.register(buildOsScreenTypeTool(input));
     registry.register(buildOsScreenKeyTool(input));
   }
-  if (point) registry.register(buildOsScreenPointTool({ geometry, platform: deps.platform }));
+  if (point) registry.register(buildOsScreenPointTool({ geometry, platform: deps.platform, overlayAvailable }));
 }

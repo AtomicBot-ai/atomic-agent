@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ToolRegistry, type ToolContext } from "../../tool-registry.js";
 import { captureGeometry, ScreenGeometryStore } from "./screen-geometry.js";
 import { registerOsScreenTools } from "./index.js";
+import { CAPTURE_NEEDS_OVERLAY_MESSAGE } from "./screen-capture.js";
 import { claimScreenOverlay, screenOverlayAvailable } from "./screen-overlay-hosts.js";
 import {
   buildOsScreenPointTool,
@@ -176,6 +177,21 @@ describe("registering os.screen.point", () => {
     expect(names({ enabled: true, point: false })).not.toContain("os.screen.point");
     expect(names({ enabled: false, point: false })).toEqual([]);
     expect(names({ enabled: false, point: true, platform: "linux" })).toEqual([]);
+  });
+
+  it("without screen control, capture refuses a session whose host draws no marks (TUI, channel, task)", async () => {
+    const registry = new ToolRegistry();
+    registerOsScreenTools(registry, {
+      ...dangerous,
+      enabled: false,
+      point: true,
+      platform: "darwin",
+      overlayAvailable: () => false,
+    });
+    const out = await registry.get("os.screen.capture").run({}, ctx());
+    expect(out.status).toBe("error");
+    expect(out.summary).toBe(CAPTURE_NEEDS_OVERLAY_MESSAGE);
+    expect(out.details).toMatchObject({ reason: "no-overlay" });
   });
 
   it("the registered tool is read-only", () => {
