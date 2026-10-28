@@ -194,6 +194,8 @@ const KIND_ROWS = [
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
+/* ATO-1257: the failed cards drawn quietly, as renderItems last worked them out (tool-failures.js). `var`: toolCard may run first. */
+var TOOL_QUIET = new Set();
 /* item 5 review fix (attachment strip): every file chip — the inline ones and
    the strip's — opens through this one seam, so the smoke can assert that a
    strip chip really is clickable (which path the click hands to BR.openPath)
@@ -3406,6 +3408,7 @@ function toolIcon(name) {
 function toolStatus(state) {
   return state === 'run' ? '<span class="tl-st run" title="Running"><span class="tk-spin"></span></span>'
     : state === 'err' ? '<span class="tl-st err" title="Failed">' + ic('alert') + '</span>'
+    : state === 'soft' ? '<span class="tl-st soft" title="Failed; the agent went on">' + ic('alert') + '</span>'
     : state === 'deny' ? '<span class="tl-st deny" title="Denied">' + ic('x') + '</span>'
     : state === 'skip' ? '<span class="tl-st skip" title="Not run: the turn ended first">' + ic('slash') + '</span>'
     : state === 'unk' ? '<span class="tl-st unk" title="The outcome was not recorded">' + ic('minus') + '</span>'
@@ -3514,13 +3517,15 @@ function toolTook(m) {
 function toolCard(m) {
   const st = toolState(m);
   const running = st === 'run';
-  const failed = st === 'err';
+  // ATO-1257: a failure the agent went on from is drawn quietly (tool-failures.js); red is for the one that ended the turn.
+  const soft = st === 'err' && TOOL_QUIET.has(m.id);
+  const failed = st === 'err' && !soft;
   const took = toolTook(m);
   // ATO-197: a denied call's time is the wait for the answer, and one not run has none.
   const ms = running || st === 'deny' || st === 'skip' || !took ? '' : dur(took.ms);
   /* `data-tool` is the raw id the drivers compare (turn-order.drive reads it);
      the same id is printed, visibly, inside the expanded part. */
-  return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
+  return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (soft ? ' soft' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
       + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
       + '<span class="nm">' + (st === 'held' ? toolHeldLine(m) : toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st)) + '</span>'
@@ -3533,16 +3538,16 @@ function toolCard(m) {
             : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
             : 'no trace for this call')
             + (took && took.waited ? '; from your answer on (it waited ' + dur(took.waited) + ' for your approval before that)' : '')) + '">' + ms + '</span>'
-      + toolStatus(st)
+      + toolStatus(soft ? 'soft' : st)
       + '<span class="chev">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
-    // The failure stays readable without opening the card.
-    + (failed && !m.open ? '<div class="cardsum bad">' + esc(toolErrLine(m)) + '</div>' : '')
+    // The failure stays readable without opening the card (a quiet one in the muted ink).
+    + ((failed || soft) && !m.open ? '<div class="cardsum' + (soft ? '' : ' bad') + '">' + esc(toolErrLine(m)) + '</div>' : '')
     // A long call's progress (tool_update, chat-media.js), while it runs.
     + (running ? toolProgressHTML(m, esc) : '')
     + (m.open ? '<div class="cardbody">'
         + '<div class="tl-meta"><span class="mono">' + esc(m.name) + '</span>'
-          + (failed ? '<span class="tl-bad">failed</span>' : '')
+          + (failed ? '<span class="tl-bad">failed</span>' : soft ? '<span class="tl-soft">failed, the agent went on</span>' : '')
           + (m.truncated ? '<span>output shortened</span>' : '') + '</div>'
         + '<div class="micro">Arguments</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
         + '<div class="micro">Output</div><pre class="tk-out">' + esc(running ? 'Still running\u2026' : (m.out || '\u2014')) + '</pre></div>' : '')
@@ -7658,6 +7663,9 @@ document.addEventListener('click', (e) => {
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
+  // ATO-1257: "3 attempts failed" opens into its cards, the line kept under the pointer.
+  const frun = t.closest('[data-failrun]');
+  if (frun) { failRunOpen(frun.dataset.failrun); return; }
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   // ATO-408: a picture in a reply opens full screen (its menu is the file chip's).
@@ -20674,8 +20682,10 @@ function renderItems() {
   const exaHost = exaKeyHost(items);
   /* ATO-464: a finished turn's steps fold into one line (turn-summary.js).
      The turn still streaming is the one S.turnId is on; it is drawn live. */
+  // ATO-1257: which failures the agent went on from (tool-failures.js); toolCard and groupCard read it.
+  TOOL_QUIET = quietToolFailures(items, {running: !!S.turnId, failed: (t) => toolState(t) === 'err', worked: (t) => toolState(t) === 'ok'});
   const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
-    failedOf: (t) => toolState(t) === 'err'});   // red only for what the card itself shows as an error
+    failedOf: (t) => toolState(t) === 'err' && !TOOL_QUIET.has(t.id)});   // red only for what the card itself shows as an error
   const hidden = new Set();
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
@@ -20689,6 +20699,17 @@ function renderItems() {
       // The Exa key card asks for something, so it stays in sight under the line.
       if (exaHost && m.id === exaHost) html += exaKeyTurnHTML(m);
       continue;
+    }
+    // ATO-1257: two or more quiet failures in a row are one line, "3 attempts failed", until opened.
+    if (m.k === 'tool' && TOOL_QUIET.has(m.id) && !OPEN_GROUPS.has('f:' + m.id)) {
+      let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && TOOL_QUIET.has(items[j + 1].id) && !hidden.has(j + 1)) j++;
+      if (j > i) {
+        const run = items.slice(i, j + 1);
+        html += failRunHTML(run, {esc, ic});
+        const host = exaHost ? run.find((c) => c.id === exaHost) : null;
+        if (host) html += exaKeyTurnHTML(host);
+        i = j; continue;
+      }
     }
     if (m.k === 'tool') {
       let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
@@ -20749,6 +20770,20 @@ function turnSumToggle(replyId) {
   S.stick = false;   // the click is on this line: keep it under the pointer, not the bottom of the chat
   if (!repaintTranscript()) { render(); return; }
   const h1 = head();
+  const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+/** ATO-1257: open a run of quiet failures in place. */
+function failRunOpen(id) {
+  OPEN_GROUPS.add('f:' + id);
+  const sc = $('#scroller');
+  const h0 = document.getElementById('failrun-' + id);
+  if (!sc || !h0) { render(); return; }
+  const before = h0.getBoundingClientRect().top;
+  S.stick = false;
+  if (!repaintTranscript()) { render(); return; }
+  const h1 = document.getElementById('turn-' + id);
   const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
   if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
   S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
@@ -20931,7 +20966,9 @@ function groupCard(run) {
   // ATO-197: a denied call's wait and a call not run are no time the run took.
   const measured = run.filter((c, i) => (c.msSource === 'trace' || c.observedMs) && states[i] !== 'deny' && states[i] !== 'skip');
   const ms = measured.reduce((n, c) => n + toolTook(c).ms, 0);   // ATO-237: each without its approval wait
-  const bad = states.filter((x) => x === 'err').length;
+  // ATO-1257: a member the agent went on from is counted, but not in red.
+  const bad = run.filter((c, i) => states[i] === 'err' && !TOOL_QUIET.has(c.id)).length;
+  const softBad = run.filter((c, i) => states[i] === 'err' && TOOL_QUIET.has(c.id)).length;
   const pending = states.includes('run');
   // The title says where the numbers come from: a fold of live cards is window-observed until the store lands.
   const observed = measured.filter((c) => c.msSource !== 'trace').length;
@@ -20943,18 +20980,19 @@ function groupCard(run) {
      phrase and how many times ("Listed files \u00b7 3 times"), the failures
      counted in red words, status and total time small on the right. The
      members' own lines are one click away (the run unfolds in place). */
-  return '<div class="turn tk-step" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : '') + '" data-tool="' + esc(m.name) + '">'
+  return '<div class="turn tk-step" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : softBad ? ' soft' : '') + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-group="' + m.id + '" title="' + esc(m.name) + '">'
     + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
     /* Calm (S7): the head takes the run's tense like a single call does —
        "Couldn't list files · 3 times" when every member failed (and then no
        separate "3 failed"), "Listing files" while one still runs. */
-    + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad === run.length ? 'err'
+    + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad + softBad === run.length ? 'err'
         : states.every((x) => x === 'unk') ? 'unk' : states.every((x) => x === 'deny') ? 'deny'
         : states.every((x) => x === 'skip') ? 'skip' : states.every((x) => x === 'held') ? 'held' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
-    + (bad && bad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
+    + (bad && bad + softBad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
+    + (softBad && !bad && softBad < run.length ? '<span class="tl-soft">' + softBad + ' failed</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
-    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok')
+    + toolStatus(pending ? 'run' : bad ? 'err' : softBad ? 'soft' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }
