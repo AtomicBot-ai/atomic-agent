@@ -81,7 +81,7 @@ function servedThenHung(
 function okTurn(): Promise<RunTurnResult> {
   return Promise.resolve({
     session: createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
-    reason: "finished",
+    reason: "reply",
     stepCount: 1,
   } as RunTurnResult);
 }
