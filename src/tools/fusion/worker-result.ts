@@ -1,4 +1,5 @@
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
+import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import type {
   AgentLoopEvent,
   AgentLoopReason,
@@ -297,6 +298,16 @@ export class WorkerRunCollector {
               promptTokens: prev.promptTokens + next.promptTokens,
               completionTokens: prev.completionTokens + next.completionTokens,
               totalTokens: prev.totalTokens + next.totalTokens,
+              // Kept through the sum (ATO-918): dropping it priced every
+              // cached prompt token at the full input rate, which on a
+              // multi-step worker overstated its cost about threefold.
+              ...(prev.cachedTokens === undefined &&
+              next.cachedTokens === undefined
+                ? {}
+                : {
+                    cachedTokens:
+                      (prev.cachedTokens ?? 0) + (next.cachedTokens ?? 0),
+                  }),
             };
     }
   }
@@ -744,6 +755,8 @@ const TABLE_DETAIL_CHARS = 160;
 export interface WorkerPricing {
   input: number;
   output: number;
+  /** Cached prompt tokens' rate; absent, they are billed at `input`. */
+  cacheRead?: number;
 }
 
 /** What a fan-out cost on its worker leg, for the status table header. */
@@ -752,12 +765,25 @@ export interface FanoutSpend {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  /** Of `promptTokens`, the ones served from the prompt cache, when reported. */
+  cachedTokens?: number;
+}
+
+/** One task's cost at `pricing`, cache discount included (`estimateUsageCostUsd`). */
+export function taskSpendUsd(
+  result: Pick<WorkerTaskResult, "usage">,
+  pricing: WorkerPricing,
+): number {
+  return result.usage === undefined
+    ? 0
+    : estimateUsageCostUsd(result.usage, pricing);
 }
 
 /**
  * Σ over the tasks' usage at `pricing`, the same arithmetic as the
- * turn cost line (`turn-usage-meter.ts`). Tasks with no usage (a turn
- * that died before its first completion) contribute nothing.
+ * turn cost line (`turn-usage-meter.ts`): cached prompt tokens at the
+ * `cacheRead` rate (ATO-918). Tasks with no usage (a turn that died
+ * before its first completion) contribute nothing.
  */
 export function fanoutSpend(
   results: readonly WorkerTaskResult[],
@@ -766,15 +792,24 @@ export function fanoutSpend(
 ): FanoutSpend {
   let promptTokens = 0;
   let completionTokens = 0;
+  let cachedTokens: number | undefined;
+  let usd = 0;
   for (const r of results) {
     if (r.usage === undefined) continue;
     promptTokens += r.usage.promptTokens;
     completionTokens += r.usage.completionTokens;
+    if (r.usage.cachedTokens !== undefined) {
+      cachedTokens = (cachedTokens ?? 0) + r.usage.cachedTokens;
+    }
+    usd += taskSpendUsd(r, pricing);
   }
-  const usd =
-    (promptTokens / 1_000_000) * pricing.input +
-    (completionTokens / 1_000_000) * pricing.output;
-  return { usd, model, promptTokens, completionTokens };
+  return {
+    usd,
+    model,
+    promptTokens,
+    completionTokens,
+    ...(cachedTokens === undefined ? {} : { cachedTokens }),
+  };
 }
 
 function formatUsd(usd: number): string {
@@ -827,7 +862,7 @@ function renderStatusTable(
   const cost =
     spend === null
       ? ""
-      : ` — cloud spend ${formatUsd(spend.usd)} on ${spend.model} (${spend.promptTokens.toLocaleString("en-US")} in / ${spend.completionTokens.toLocaleString("en-US")} out)`;
+      : ` — cloud spend ${formatUsd(spend.usd)} on ${spend.model} (${spend.promptTokens.toLocaleString("en-US")} in${spend.cachedTokens === undefined || spend.cachedTokens === 0 ? "" : `, ${spend.cachedTokens.toLocaleString("en-US")} cached`} / ${spend.completionTokens.toLocaleString("en-US")} out)`;
   const replacedCount = countReplacedInputs(results);
   const replaced = replacedCount === null ? "" : ` — ${replacedCount}`;
   // The order the contract imposed, on the head line: which tasks

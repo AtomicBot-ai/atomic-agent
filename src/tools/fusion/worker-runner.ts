@@ -6,6 +6,7 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { DelegateContract } from "./contract.js";
+import type { CompletionUsage } from "../../llm/provider/completion-types.js";
 import { resolveContractInputs } from "./contract-inputs.js";
 import {
   applyDeclaredFileReport,
@@ -515,6 +516,32 @@ export interface RunWorkerTasksOptions {
    */
   contract?: DelegateContract;
   signal: AbortSignal;
+  /**
+   * Asked before each task starts: a reason means the task is not
+   * started and comes back `cancelled` with that reason (the turn's cap,
+   * ATO-947). Absent, every task starts as before.
+   */
+  shouldStart?: () => string | undefined;
+  /** Every worker completion's usage, as it lands (live spend, ATO-947). */
+  onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
+}
+
+/** The row of a task the turn's cap kept from starting. */
+export function notStartedResult(
+  task: Pick<DelegateTask, "id" | "title">,
+  reason: string,
+): WorkerTaskResult {
+  return {
+    ...new WorkerRunCollector().finish({
+      id: task.id,
+      title: task.title,
+      reason: "cancelled",
+      stepCount: 0,
+      durationMs: 0,
+      error: `not started: ${reason}`,
+    }),
+    queueWaitMs: null,
+  };
 }
 
 /**
@@ -547,7 +574,11 @@ export async function runWorkerTasks(
   const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
   const runners = Array.from({ length: width }, async () => {
     for (let i = claim(); i < options.tasks.length; i = claim()) {
-      results[i] = await runOneTask(deps, options, options.tasks[i]!);
+      const stop = options.shouldStart?.();
+      results[i] =
+        stop === undefined
+          ? await runOneTask(deps, options, options.tasks[i]!)
+          : notStartedResult(options.tasks[i]!, stop);
     }
   });
   await Promise.all(runners);
@@ -958,6 +989,9 @@ async function runOneTask(
           event.event.type === "llm_completed"
         ) {
           announceUsage(event.event.completion.timing?.promptTokens ?? 0);
+          if (event.event.completion.usage !== undefined) {
+            options.onWorkerUsage?.(task.id, event.event.completion.usage);
+          }
           // Counted rather than read off `finish_reason`: llama-server's
           // own endpoint reports none, and the count is what says the
           // cap, not the context window, was the wall.
