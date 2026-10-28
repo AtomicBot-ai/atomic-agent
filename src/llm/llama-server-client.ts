@@ -8,6 +8,7 @@ import { discardResponseBody } from "./discard-response-body.js";
 import { parseProviderErrorBody } from "./provider/openai/parse-provider-error-body.js";
 import { readContextOverflowCounts, type ContextOverflowCounts } from "./reliability/context-overflow-counts.js";
 import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-watcher.js";
+import { drySamplerFields } from "./dry-sampler.js";
 import { takePromptProgress } from "./llama-prompt-progress.js";
 import type {
   CompletionRequest,
@@ -539,6 +540,12 @@ export interface LlamaServerClientOptions {
    * Core session's key (`refreshCoreKeyForUrl`). Injectable for tests.
    */
   refreshApiKey?: (url: string) => Promise<string | null>;
+  /**
+   * Overrides `config.localModels.drySampler`: send llama.cpp's DRY
+   * anti-repeat sampler fields with every `/completion` request. When omitted, the
+   * client reads the config on each request.
+   */
+  drySampler?: boolean;
 }
 
 export interface LlamaServerProps {
@@ -574,6 +581,7 @@ export class LlamaServerClient {
   private readonly completionRetryBackoffMsOverride: number | undefined;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly refreshApiKey: (url: string) => Promise<string | null>;
+  private readonly drySamplerOverride: boolean | undefined;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
   /**
@@ -638,6 +646,7 @@ export class LlamaServerClient {
     this.sleep = options.sleep ?? defaultSleep;
     this.refreshApiKey = options.refreshApiKey ??
       ((url) => refreshCoreKeyForUrl(getConfig().paths.localModelsDataDir, url));
+    this.drySamplerOverride = options.drySampler;
   }
 
   /**
@@ -1663,6 +1672,10 @@ export class LlamaServerClient {
       repeat_penalty: request.repeatPenalty ?? 1.1,
       repeat_last_n: request.repeatLastN ?? 256,
     };
+    // ATO-332: opt-in, off by default until measured on real tasks.
+    if (this.drySamplerOverride ?? (config.localModels.drySampler === true)) {
+      Object.assign(payload, drySamplerFields());
+    }
     if (request.grammar) payload.grammar = request.grammar;
     if (request.stop) payload.stop = request.stop;
     // Asked only when someone listens (ATO-1027); a build that does not

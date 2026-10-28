@@ -1,13 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { realpathSync, writeFileSync } from "node:fs";
-import { createServer } from "node:net";
 import { basename } from "node:path";
 
 import {
   resolveEmbeddingPidFilePath,
   resolvePidFilePath,
 } from "../backend-paths.js";
-import { fetchServedModelIds, isPortAnswering } from "./daemon-launch-guard.js";
+import { fetchServedModelIds } from "./daemon-launch-guard.js";
+import { isPortOpen } from "./process-release.js";
 import { readCoreSession } from "../core/core-state.js";
 import { recoverOrphanedCoreSessions, stopCoreSession } from "../core/core-sessions.js";
 import { findPortHolder, isStateDirInUse, type PortHolder } from "./port-holder.js";
@@ -197,19 +197,8 @@ async function move(
   throw new Error(`${why}; no free port found near ${req.port}`);
 }
 
-/** Open = something accepts on it: an HTTP answer, or a bind that fails. */
-export async function isPortOpen(port: number): Promise<boolean> {
-  if (await isPortAnswering(port, 800)) return true;
-  return !(await canBind(port));
-}
-
-function canBind(port: number): Promise<boolean> {
-  return new Promise((resolve) => {
-    const server = createServer();
-    server.once("error", () => resolve(false));
-    server.listen(port, "127.0.0.1", () => server.close(() => resolve(true)));
-  });
-}
+// The port probe lives with the stop's release wait, which uses it too.
+export { isPortOpen };
 
 /** SIGTERM, up to 5 s grace, then SIGKILL (`taskkill /F` on Windows). */
 export async function stopProcess(pid: number): Promise<void> {
