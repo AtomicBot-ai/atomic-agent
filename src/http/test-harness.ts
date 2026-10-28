@@ -83,6 +83,9 @@ export class FakeBrowserBackend implements BrowserBackend {
   async scroll(_input: ScrollInput): Promise<ScrollResult> {
     return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
   }
+  async screenshot(): Promise<never> {
+    throw new Error("FakeBrowserBackend: screenshot not supported");
+  }
 }
 
 export interface HarnessOptions {

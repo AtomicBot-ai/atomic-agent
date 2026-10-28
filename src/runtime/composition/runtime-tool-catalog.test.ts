@@ -34,7 +34,7 @@ const externalOperation = (): never => { throw new Error("Test must not perform 
 const backend: BrowserBackend = {
   ensureReady: async () => externalOperation(), shutdown: async () => {}, snapshot: async () => externalOperation(),
   hasRef: async () => externalOperation(), describeRef: async () => externalOperation(), currentUrl: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
-  type: async () => externalOperation(), search: async () => externalOperation(), tabs: async () => externalOperation(), scroll: async () => externalOperation(),
+  type: async () => externalOperation(), search: async () => externalOperation(), tabs: async () => externalOperation(), scroll: async () => externalOperation(), screenshot: async () => externalOperation(),
 };
 const grammar = 'root ::= mcp-server-tool\nmcp-server-tool ::= "placeholder"\n';
 const disabledServer = { name: "disabled", enabled: false, transport: { kind: "stdio", command: "must-not-start" } } satisfies mcp.McpServerConfig;

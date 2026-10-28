@@ -19,15 +19,16 @@ import {
   runAtomicMailAction,
 } from "./integrations-orchestrator-atomic-mail.js";
 import {
-  EXA_API_KEY_ENV,
   EXA_INTEGRATION_ID,
   GITHUB_INTEGRATION_ID,
   GITHUB_TOKEN_FIELD,
   IntegrationSecretError,
   displayFieldValue,
+  exaKeyUnusedReason,
   findIntegration,
   listIntegrations,
   presentFieldKeys,
+  readExaSearchSetup,
   readFieldValue,
   writeFieldValue,
 } from "../../integrations/index.js";
@@ -151,6 +152,7 @@ export class IntegrationsOrchestrator {
         channelErrors,
         verifiedIdentities,
         verifyErrors,
+        config: config as unknown as Record<string, unknown>,
       };
       const status = descriptor.status(statusCtx);
       const fields: IntegrationFieldRow[] = descriptor.fields.map((field) => ({
@@ -489,15 +491,20 @@ export class IntegrationsOrchestrator {
 }
 
 /**
- * What the hub says after an Exa key change. The row always writes
- * `EXA_API_KEY`, so an agent configured to read another variable is told
- * the key will not be used, instead of being left to wonder.
+ * What the hub says after an Exa key change. It promises "the next web
+ * search uses it" only when that is true: the row always writes
+ * `EXA_API_KEY`, and web search may read another variable or not ask Exa.
  */
 export function exaSavedMessage(saved: boolean): string {
-  if (!saved) return "Exa key cleared. Web search is back on Exa's free searches.";
-  const envVar = getConfig().web.search.exa.apiKeyEnv;
-  if (envVar !== EXA_API_KEY_ENV) {
-    return `Exa key saved as ${EXA_API_KEY_ENV}, but web search reads ${envVar} (web.search.exa.apiKeyEnv). Set that variable, or reset the setting.`;
+  const setup = readExaSearchSetup(
+    getConfig() as unknown as Record<string, unknown>,
+  );
+  if (!saved) {
+    return setup.inChain
+      ? "Exa key cleared. Web search is back on Exa's free searches."
+      : "Exa key cleared.";
   }
+  const unused = exaKeyUnusedReason(setup);
+  if (unused !== undefined) return `Exa key saved, but ${unused}.`;
   return "Exa key saved. The next web search uses it, no restart needed.";
 }

@@ -501,7 +501,7 @@ describe("os.web.search with an Exa primary", () => {
     expect(result.status).toBe("error");
     expect(result.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
     expect(result.summary).toContain(
-      "Free Exa searches ran out. Open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys)",
+      "Free Exa searches ran out. Open /integrations in the terminal app and add an Exa key (https://dashboard.exa.ai/api-keys)",
     );
     expect(result.summary).not.toContain("key card");
     expect(result.summary).not.toContain("~/.atomic-agent/.env");
@@ -550,7 +550,7 @@ describe("os.web.search with an Exa primary", () => {
         ...(keyHelp ? { keyHelp } : {}),
       });
     const hint =
-      "[search] Free Exa searches ran out. Tell the user: open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys).";
+      "[search] Free Exa searches ran out. Tell the user: open /integrations in the terminal app and add an Exa key (https://dashboard.exa.ai/api-keys).";
 
     const tui = build("integrations-hub");
     const first = await tui.run({ query: "first" }, makeCtx());
@@ -577,7 +577,17 @@ describe("os.web.search with an Exa primary", () => {
     // The Integrations hub writes the key into process.env; the provider
     // reads it per call, and the free-tier park must not hold it back.
     vi.stubEnv("EXA_API_KEY", "");
+    // Hosts match in order: the keyed API answers, the keyless MCP tier
+    // is out of free searches.
     const { run, urls } = makeRecordingRunCommand({
+      "api.exa.ai": {
+        body: JSON.stringify({
+          results: [
+            { title: "Keyed Exa", url: "https://keyed.example", text: "from the API" },
+          ],
+        }),
+        status: 200,
+      },
       "exa.ai": FREE_LIMIT,
       "duckduckgo.com": { body: RESULT_HTML, status: 200 },
     });
@@ -591,6 +601,7 @@ describe("os.web.search with an Exa primary", () => {
     });
 
     const before = await tool.run({ query: "before the key" }, makeCtx());
+    expect(before.details.provider).toBe("duckduckgo");
     expect(before.details.keyRequired).toEqual(KEY_REQUIRED_RATE_LIMITED);
     expect(urls.some((url) => url.includes("api.exa.ai"))).toBe(false);
 
@@ -598,7 +609,59 @@ describe("os.web.search with an Exa primary", () => {
     const after = await tool.run({ query: "after the key" }, makeCtx());
 
     expect(urls.some((url) => url.includes("api.exa.ai"))).toBe(true);
+    expect(after.status).toBe("ok");
+    expect(after.details.provider).toBe("exa");
+    expect(after.summary).toContain("Keyed Exa");
     expect(after.details.keyRequired).toBeUndefined();
+  });
+
+  it("falls back to the .env advice when web search reads a custom Exa variable (ATO-345)", async () => {
+    // /integrations writes EXA_API_KEY; telling the user to go there would
+    // not fix a search that reads MY_EXA.
+    vi.stubEnv("MY_EXA", "");
+    const exa = {
+      endpoint: "https://mcp.exa.ai/mcp",
+      apiEndpoint: "https://api.exa.ai/search",
+      apiKeyEnv: "MY_EXA",
+    };
+    const failing = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": {
+        body: "",
+        status: 0,
+        exitCode: 28,
+        stderr: "curl: (28) Connection timed out after 15005 milliseconds",
+      },
+    });
+    const error = await buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"], exa }),
+      env: {},
+      warn: () => undefined,
+      runCommand: failing.run,
+      lookup: publicLookup,
+      keyHelp: "integrations-hub",
+    }).run({ query: "nothing answers" }, makeCtx());
+    expect(error.status).toBe("error");
+    expect(error.summary).not.toContain("/integrations");
+    expect(error.summary).toContain("`MY_EXA=...`");
+
+    const covered = makeRecordingRunCommand({
+      "exa.ai": FREE_LIMIT,
+      "duckduckgo.com": { body: RESULT_HTML, status: 200 },
+    });
+    const ok = await buildOsWebSearchTool({
+      config: makeConfig({ provider: "exa", fallback: ["duckduckgo"], exa }),
+      env: {},
+      warn: () => undefined,
+      runCommand: covered.run,
+      lookup: publicLookup,
+      keyHelp: "integrations-hub",
+    }).run({ query: "fallback answers" }, makeCtx());
+    expect(ok.status).toBe("ok");
+    expect(ok.summary).not.toContain("/integrations");
+    expect(ok.summary).toContain(
+      "[search] Free Exa searches ran out. Tell the user: get a free Exa API key at https://dashboard.exa.ai/api-keys, add `MY_EXA=...` to the agent's .env file and restart the agent.",
+    );
   });
 
   it("answers ok when a keyed Exa fails and DuckDuckGo covers for it", async () => {

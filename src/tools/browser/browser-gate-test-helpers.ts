@@ -4,6 +4,8 @@ import type {
   ClickInput,
   NavigateInput,
   RefDescription,
+  ScreenshotInput,
+  ScreenshotResult,
   TabInfo,
   TypeInput,
 } from "./browser-backend.js";
@@ -109,6 +111,27 @@ export class GateBackend implements BrowserBackend {
   }
   async scroll(): Promise<{ scrollY: number; scrollHeight: number; viewportHeight: number }> {
     return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
+  }
+  public shots: ScreenshotInput[] = [];
+  /** Bytes per capture attempt (the last entry repeats); frame URLs reported with the shot. */
+  public shotBytes: number[] = [1_000];
+  public shotFrames: string[] = [];
+  /** Where the page is once the capture is taken (a racing redirect). */
+  public landDuringShot: string | null = null;
+  async screenshot(input: ScreenshotInput): Promise<ScreenshotResult> {
+    this.shots.push(input);
+    const size = this.shotBytes[Math.min(this.shots.length - 1, this.shotBytes.length - 1)]!;
+    if (this.landDuringShot !== null) this.url = this.landDuringShot;
+    return {
+      buffer: Buffer.alloc(size, 1),
+      width: input.maxSide,
+      height: Math.round(input.maxSide * 0.6),
+      mime: "image/jpeg",
+      url: this.url,
+      title: "Page",
+      frameUrls: [this.url, ...this.shotFrames],
+      clipped: false,
+    };
   }
 }
 

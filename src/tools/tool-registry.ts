@@ -21,6 +21,11 @@ import type { ToolOutputSpill } from "./tool-output-spill.js";
 export interface ToolContext {
   workspaceSkills?: import("../skills/workspace-skills.js").WorkspaceSkills;
   modelMode?: "local" | "cloud";
+  /**
+   * Context window (tokens) of the model serving this step, when known.
+   * `browser.*` picks its page view and size from it (ATO-956).
+   */
+  contextWindowTokens?: number;
   /** Working directory for OS tools and relative path resolution. */
   workingDir: string;
   sessionId: string;

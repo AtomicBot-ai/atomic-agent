@@ -102,6 +102,9 @@ class FakeBackend implements BrowserBackend {
   async currentUrl(): Promise<string> {
     return "https://example.com/";
   }
+  async screenshot(): Promise<never> {
+    throw new Error("FakeBackend: screenshot not used here");
+  }
   async scroll(_input: ScrollInput): Promise<ScrollResult> {
     return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
   }

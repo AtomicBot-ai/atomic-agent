@@ -4,7 +4,11 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { resetConfigCache } from "../../config/index.js";
+import {
+  USER_CONFIG_DEFAULTS,
+  resetConfigCache,
+  writeUserConfigFileSync,
+} from "../../config/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 
 import { IntegrationsOrchestrator } from "./integrations-orchestrator.js";
@@ -121,6 +125,45 @@ describe("IntegrationsOrchestrator — Web search (Exa), ATO-345", () => {
     }
     expect(settled(bus).message).toMatch(/cleared/);
     expect(exaRow(bus).level).toBe("not_configured");
+  });
+
+  function writeSearchConfig(
+    edit: (search: (typeof USER_CONFIG_DEFAULTS)["web"]["search"]) => void,
+  ): void {
+    const config = structuredClone(USER_CONFIG_DEFAULTS);
+    edit(config.web.search);
+    writeUserConfigFileSync(join(stateDir, "config.json"), config);
+    resetConfigCache();
+  }
+
+  it("says a key saved as EXA_API_KEY is not used when web search reads another variable", async () => {
+    writeSearchConfig((search) => {
+      search.exa.apiKeyEnv = "MY_EXA";
+    });
+    const { hub, bus } = makeHub();
+    await hub.saveField("exa", "apiKey", KEY);
+
+    expect(settled(bus).message).toBe(
+      "Exa key saved, but web search reads MY_EXA (web.search.exa.apiKeyEnv), not EXA_API_KEY.",
+    );
+    expect(exaRow(bus).detail).toBe(
+      "key saved, but web search reads MY_EXA (web.search.exa.apiKeyEnv), not EXA_API_KEY",
+    );
+  });
+
+  it("does not promise the next search uses the key when Exa is not in the chain", async () => {
+    writeSearchConfig((search) => {
+      search.provider = "duckduckgo";
+      search.fallback = [];
+    });
+    const { hub, bus } = makeHub();
+    await hub.saveField("exa", "apiKey", KEY);
+
+    expect(settled(bus).message).not.toMatch(/next web search uses it/);
+    expect(settled(bus).message).toBe(
+      "Exa key saved, but web search is set to duckduckgo; Exa is used only when it is web.search.provider or in web.search.fallback.",
+    );
+    expect(exaRow(bus).detail).toMatch(/set to duckduckgo/);
   });
 
   it("rejects a paste with a space without writing anything", async () => {
