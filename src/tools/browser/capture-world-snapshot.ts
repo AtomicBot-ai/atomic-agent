@@ -1,9 +1,10 @@
 import type { BrowserBackend } from "./browser-backend.js";
 import {
-  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
+import { readAriaView, type AriaSnapshotStore, type AriaViewContext } from "./aria-view.js";
+import type { ToolContext } from "../tool-registry.js";
 
 export interface CapturedWorldSnapshot {
   kind: "browser";
@@ -15,27 +16,33 @@ export interface CapturedWorldSnapshot {
  * Best-effort ARIA snapshot right after a navigation/search/click, so the
  * step-executor can fold it into `session.worldSnapshot` and the model
  * observes the current page in the next prompt's `### world` section.
+ * The view is the model's default (`aria-view.ts`): the whole tree for a
+ * cloud model, the interactive controls for a local or small-window one.
  *
  * Swallows snapshot failures on purpose: the mutating tool (navigate,
  * search, …) already succeeded, and we do not want an ARIA timeout to
  * flip the tool status to `error`. Callers just skip the field when
  * `undefined` is returned. A page on a blocked host
- * (`browser.blockedDomains`) is never captured: its content must not
- * reach the model.
+ * (`browser.blockedDomains`), or embedding one in a frame, is never
+ * captured: its content must not reach the model. In the user's own
+ * Chrome a site not cleared this session (a redirect went elsewhere) is
+ * not captured either; browser.read_aria asks for it (`gate-page-read.ts`).
  */
 export async function captureWorldSnapshot(
   backend: BrowserBackend,
-  full = false,
+  ctx: Pick<ToolContext, "modelMode" | "contextWindowTokens" | "sessionId">,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  store?: AriaSnapshotStore,
 ): Promise<CapturedWorldSnapshot | undefined> {
+  const view: AriaViewContext = {
+    ...(ctx.modelMode ? { modelMode: ctx.modelMode } : {}),
+    ...(ctx.contextWindowTokens !== undefined ? { contextWindowTokens: ctx.contextWindowTokens } : {}),
+    sessionId: ctx.sessionId,
+  };
   try {
-    const snap = full ? await backend.snapshot({ full: true }) : await backend.snapshot();
-    if (blockedHostOfPage(snap.url, snap.frameUrls, policy) !== null) return undefined;
-    return {
-      kind: "browser",
-      digest: snap.digest,
-      text: snap.text,
-    };
+    const result = await readAriaView(backend, {}, view, policy, store);
+    if (result.kind !== "ok") return undefined;
+    return { kind: "browser", digest: result.view.digest, text: result.view.text };
   } catch {
     return undefined;
   }

@@ -2,6 +2,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, SearchInput } from "./browser-backend.js";
 import { captureWorldSnapshot } from "./capture-world-snapshot.js";
+import type { AriaSnapshotStore } from "./aria-view.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import {
   EMPTY_DOMAIN_POLICY,
@@ -15,6 +16,7 @@ export function buildBrowserSearchTool(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  store?: AriaSnapshotStore,
 ): ToolDefinition {
   return {
     name: "browser.search",
@@ -43,7 +45,7 @@ export function buildBrowserSearchTool(
       const result = await backend.search(payload);
       const landed = await recheckLandedPage(backend, policy, "browser.search");
       if (landed) return landed;
-      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud", policy);
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx, policy, store);
       return compressToolResult({
         tool: "browser.search",
         status: "ok",

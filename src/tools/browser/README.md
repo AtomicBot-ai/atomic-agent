@@ -32,8 +32,30 @@ Owner: src/tools/browser/
 
 `browser.screenshot { ref?, fullPage? }` (`screenshot.ts`, `screenshot-geometry.ts`, ATO-515): a JPEG of the viewport, the whole page (cut at 8000 CSS px) or one element. Long side at most 1280 px, never upscaled; at most 900 KB, retaken smaller (quality 70 → 50 → 40) and refused if still over. Taken through CDP `Page.captureScreenshot` with a scaled clip, with card-number / one-time-code field values drawn as dots for the capture.
 
-Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working folder, inside the read roots). The model looks at it with `vision.describe`; the desktop and chat channels show it through `reply.attachments`. Read-only, no prompt: it shows only what `read_aria` already reads.
+Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working folder, inside the read roots). The model looks at it with `vision.describe`; the desktop and chat channels show it through `reply.attachments`. Read-only, no prompt in the agent's own profile: it shows only what `read_aria` already reads. It goes through the same page-read check as `read_aria` (`gate-page-read.ts`), so in the user's own Chrome a site not opened this session asks first.
 
 A page on a blocked host is never captured. A capture is discarded, never saved, when the page or any of its frames is on a blocked host by the time the pixels are taken (a racing redirect, a blocked iframe).
+
+## Page views
+
+`browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):
+
+- `full`: the whole tree, as before.
+- `interactive`: one line per control (interactive roles, plus any other ref'd node Playwright marks clickable) under landmark / heading headers; page text hidden. Refs are Playwright's own, so click / type resolve them exactly as from the full tree. Names that would read the same once clipped are shown longer.
+- `diff`: changes by ref since this tab's last snapshot (`+` added, `~` changed with `was:`, `-` gone). Falls back to `interactive` on a new URL or without history.
+- `region` with `ref`: the subtree under one ref.
+
+Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering; a name Playwright writes as a quoted YAML key (`- 'button "Pay: $5" [ref=e7]'`) is unquoted first, so such a control is never dropped. A blocked page, or one framing a blocked site (AI-mode snapshots include iframe content), is neither rendered nor remembered for `diff`.
+
+## Your own Chrome
+
+`browser.connect: "user-chrome"` in config.json (opt-in; default `"agent"`, the agent's own profile). The agent then works in the user's signed-in Chrome (`attach-user-chrome.ts`, `user-chrome-endpoint.ts`):
+
+- Attach order: `browser.cdpUrl` (a Chrome the user started with `--remote-debugging-port`, loopback only), else the `DevToolsActivePort` file Chrome 144+ writes while remote debugging is on (Chrome / Beta / Canary / Chromium / Brave / Edge on macOS, Windows, Linux, or `browser.userDataDir`). Otherwise Chrome is opened once on `chrome://inspect/#remote-debugging` and the agent waits up to 60 s for the user to turn it on and allow Chrome's dialog. Chrome 136+ ignores a debugging port on the default profile, so the agent never launches it with one.
+- Not reachable: a plain error with those steps; the next browser call retries.
+- The agent opens its own tab and only sees, switches to or closes its tabs and their pop-ups. Shutdown disconnects; the user's windows stay.
+- Opening or reading a site the agent has not opened this session asks as `browser_secret` (`user-profile-sites.ts`): navigate, tabs new, search, a link or form to a new host, and `read_aria` (every view) or `screenshot` on a page that landed elsewhere; the world snapshot of such a page is skipped. One check (`gate-page-read.ts`) covers blocked frames and this. Once per site per session; hosts in `browser.allowedDomains` do not ask. Reading a signed-in site is reading the account, and a URL can carry what was read to another host.
+- Every `browser_commit` (submit, send, post, delete, Enter in a form) asks as `browser_secret`: every time, never covered by a session grant. Non-web URLs (chrome://, file://, view-source:, data:…) are refused outright.
+- Cookies, saved passwords and storage are never read. Values of password, one-time-code and card fields are masked in every snapshot, in both modes (`redact-secret-fields.ts`).
 
 Read [tool instructions](../AGENTS.md) and the adjacent tests before changing the classifier or the gate order.

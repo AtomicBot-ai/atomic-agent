@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { BrowserBackend, ScreenshotResult } from "./browser-backend.js";
 import {
   blockedDomainMessage,
-  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
+import { gatePageRead } from "./gate-page-read.js";
 import { BROWSER_SHOT_MAX_BYTES, SHOT_ATTEMPTS } from "./screenshot-geometry.js";
 
 export const BROWSER_SCREENSHOT_TOOL = "browser.screenshot";
@@ -49,10 +50,8 @@ function errorResult(output: string, details: Record<string, unknown>) {
   return compressToolResult({ tool: BROWSER_SCREENSHOT_TOOL, status: "error", output, details });
 }
 
-/** The first blocked host among the page and its frames, or `null`. */
-function blockedHostIn(urls: readonly string[], policy: BrowserDomainPolicy): string | null {
-  const [page = "", ...frames] = urls;
-  return blockedHostOfPage(page, frames, policy);
+function notClearedMessage(host: string | null): string {
+  return `${BROWSER_SCREENSHOT_TOOL}: ${host} has not been opened in your own Chrome this session`;
 }
 
 /**
@@ -65,12 +64,16 @@ function blockedHostIn(urls: readonly string[], policy: BrowserDomainPolicy): st
  *
  * A page on a blocked host is never captured, and a capture is thrown
  * away (never saved) when the page or any of its frames turned out to be
- * on a blocked host by the time the pixels were taken.
+ * on a blocked host by the time the pixels were taken. In the user's own
+ * Chrome a site not cleared this session asks first, like `read_aria`
+ * (`dangerous`; without it, refused), and a capture that landed on
+ * another uncleared site is thrown away (`gate-page-read.ts`).
  */
 export function buildBrowserScreenshotTool(
   backend: BrowserBackend,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
   deps: BrowserScreenshotDeps = DEFAULT_DEPS,
+  dangerous?: DangerousToolOptions,
 ): ToolDefinition {
   return {
     name: BROWSER_SCREENSHOT_TOOL,
@@ -88,12 +91,24 @@ export function buildBrowserScreenshotTool(
       }
       await backend.ensureReady();
       const before = await backend.currentUrl();
-      const blockedBefore = blockedHostIn([before], policy);
-      if (blockedBefore !== null) {
-        return errorResult(blockedDomainMessage(BROWSER_SCREENSHOT_TOOL, blockedBefore), {
+      const gateBefore = await gatePageRead(
+        { url: before },
+        policy,
+        ctx.sessionId,
+        dangerous ? { dangerous, tool: BROWSER_SCREENSHOT_TOOL, signal: ctx.signal } : undefined,
+      );
+      if (gateBefore.kind === "blocked") {
+        return errorResult(blockedDomainMessage(BROWSER_SCREENSHOT_TOOL, gateBefore.host), {
           url: before,
-          host: blockedBefore,
+          host: gateBefore.host,
           reason: "blocked_domain",
+        });
+      }
+      if (gateBefore.kind === "user_site_not_cleared") {
+        return errorResult(notClearedMessage(gateBefore.host), {
+          url: before,
+          host: gateBefore.host,
+          reason: "user_site_not_cleared",
         });
       }
       if (ref !== undefined && !(await backend.hasRef(ref))) {
@@ -110,11 +125,17 @@ export function buildBrowserScreenshotTool(
           maxSide: attempt.maxSide,
           quality: attempt.quality,
         });
-        const blocked = blockedHostIn([taken.url, ...taken.frameUrls], policy);
-        if (blocked !== null) {
+        const gate = await gatePageRead(taken, policy, ctx.sessionId);
+        if (gate.kind === "blocked") {
           return errorResult(
-            `${blockedDomainMessage(BROWSER_SCREENSHOT_TOOL, blocked)} The page showed that site, so the screenshot was discarded.`,
-            { url: taken.url, host: blocked, reason: "blocked_domain" },
+            `${blockedDomainMessage(BROWSER_SCREENSHOT_TOOL, gate.host)} The page showed that site, so the screenshot was discarded.`,
+            { url: taken.url, host: gate.host, reason: "blocked_domain" },
+          );
+        }
+        if (gate.kind === "user_site_not_cleared") {
+          return errorResult(
+            `${notClearedMessage(gate.host)}; the page moved there, so the screenshot was discarded.`,
+            { url: taken.url, host: gate.host, reason: "user_site_not_cleared" },
           );
         }
         if (taken.buffer.length <= BROWSER_SHOT_MAX_BYTES) {

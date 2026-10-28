@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { GATE_CTX, GateBackend } from "./browser-gate-test-helpers.js";
+import { GATE_CTX, GateBackend, recordingGate } from "./browser-gate-test-helpers.js";
+import { UserSiteApprovals } from "./user-profile-sites.js";
 import { browserShotDir, buildBrowserScreenshotTool, type BrowserScreenshotDeps } from "./screenshot.js";
 import {
   BROWSER_SHOT_MAX_BYTES,
@@ -89,6 +90,34 @@ describe("browser.screenshot", () => {
     const result = await buildBrowserScreenshotTool(backend, BLOCK_BANK, deps).run({}, GATE_CTX);
     expect(result.status).toBe("error");
     expect(files.size).toBe(0);
+  });
+
+  it("in the user's own Chrome asks before shooting a site not cleared; without a gate refuses", async () => {
+    const policy: BrowserDomainPolicy = {
+      blockedDomains: [],
+      allowedDomains: [],
+      userProfile: true,
+      userSites: new UserSiteApprovals(),
+    };
+    const backend = new GateBackend();
+    backend.url = "https://mail.example/inbox";
+    const { files, deps } = memoryDisk();
+    const refused = await buildBrowserScreenshotTool(backend, policy, deps).run({}, GATE_CTX);
+    expect(refused.details).toMatchObject({ reason: "user_site_not_cleared", host: "mail.example" });
+    const denied = recordingGate(false);
+    await expect(buildBrowserScreenshotTool(backend, policy, deps, denied.options).run({}, GATE_CTX))
+      .rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(denied.prompts[0]).toMatchObject({ category: "browser_secret", affectedResources: ["mail.example"] });
+    expect(backend.shots).toHaveLength(0);
+    expect(files.size).toBe(0);
+
+    const allowed = recordingGate(true);
+    const ok = await buildBrowserScreenshotTool(backend, policy, deps, allowed.options).run({}, GATE_CTX);
+    expect(ok.status).toBe("ok");
+    backend.landDuringShot = "https://console.example/keys";
+    const moved = await buildBrowserScreenshotTool(backend, policy, deps, allowed.options).run({}, GATE_CTX);
+    expect(moved.details).toMatchObject({ reason: "user_site_not_cleared", host: "console.example" });
+    expect(files.size).toBe(1);
   });
 
   it("retakes an oversized picture smaller, then refuses it", async () => {

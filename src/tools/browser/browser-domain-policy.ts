@@ -5,9 +5,25 @@
  * asks first (`browser_offsite`). Matching is by host: an entry matches
  * itself and every subdomain, case-insensitively.
  */
+import type { UserSiteApprovals } from "./user-profile-sites.js";
+
 export interface BrowserDomainPolicy {
   readonly blockedDomains: readonly string[];
   readonly allowedDomains: readonly string[];
+  /**
+   * The browser is the user's own signed-in Chrome
+   * (`browser.connect: "user-chrome"`). Non-web URLs (chrome://, file://,
+   * view-source:…) are refused outright, and a click / Enter that would
+   * be `browser_commit` asks as `browser_secret` instead: every time,
+   * never covered by a session grant.
+   */
+  readonly userProfile?: boolean;
+  /**
+   * With `userProfile`: the sites the user let the agent open this
+   * session (`user-profile-sites.ts`). Each other site asks once, hosts
+   * in `allowedDomains` excepted. Absent ⇒ every site asks.
+   */
+  readonly userSites?: UserSiteApprovals;
 }
 
 export const EMPTY_DOMAIN_POLICY: BrowserDomainPolicy = {

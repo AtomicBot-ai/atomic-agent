@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
-import type { BrowserContext as PwBrowserContext, Page } from "playwright-core";
-import type { BrowserChannel } from "../../config/index.js";
+import type { Browser as PwBrowser, BrowserContext as PwBrowserContext, Page } from "playwright-core";
+import type { BrowserChannel, BrowserConnectMode } from "../../config/index.js";
 import { loadPlaywrightCore } from "../../native/load-playwright-core.js";
 import { summariseAriaSnapshot } from "./aria-compressor.js";
 import { describeElementInPage, toRefDescription } from "./describe-element.js";
@@ -13,6 +13,17 @@ import {
   markChromeProfileCleanExit,
 } from "./decorate-chrome-profile.js";
 import { findChromeExecutable } from "./find-chrome-executable.js";
+import {
+  findUserChromeCdpUrl,
+  openRemoteDebuggingPage,
+  type UserChromeCdpTarget,
+} from "./attach-user-chrome.js";
+import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
+import {
+  collectSecretFieldValuesInPage,
+  redactSecretFieldValues,
+  SECRET_AUTOCOMPLETE_TOKENS,
+} from "./redact-secret-fields.js";
 import {
   pickAvailableLoopbackPort,
   spawnChrome,
@@ -48,7 +59,25 @@ export interface PlaywrightBackendOptions {
   cdpUrl?: string | null;
   /** Pass `--no-sandbox`; required in some containerised environments. */
   noSandbox?: boolean;
+  /**
+   * `browser.connect`. `"user-chrome"` attaches to the user's own
+   * signed-in Chrome (`cdpUrl` when set, else its DevToolsActivePort)
+   * and works only in tabs the agent opened there.
+   */
+  connect?: BrowserConnectMode;
+  /** `browser.userDataDir` for `"user-chrome"`; `null` tries the standard places. */
+  userChromeDataDir?: string | null;
+  /** Test seam: Playwright's `chromium.connectOverCDP`. */
+  connectOverCdp?: (url: string, timeoutMs: number) => Promise<PwBrowser>;
+  /** Test seam: where the user's Chrome listens. */
+  findUserChrome?: () => Promise<UserChromeCdpTarget>;
 }
+
+/**
+ * How long attaching to the user's Chrome may take: Chrome shows its own
+ * "Allow remote debugging?" dialog and waits for the user's click.
+ */
+const USER_CHROME_CONNECT_TIMEOUT_MS = 60_000;
 
 /**
  * Playwright-backed implementation with "openclaw-style" stealth: we
@@ -60,18 +89,34 @@ export interface PlaywrightBackendOptions {
  *
  * When the caller provides `cdpUrl`, we simply attach — we never touch
  * a user-managed browser process.
+ *
+ * In `"user-chrome"` mode the agent is a guest in the user's own browser:
+ * it opens its own tab and only ever sees, switches to or closes tabs it
+ * opened (and their pop-ups); the user's other tabs never reach a
+ * snapshot. Shutdown only disconnects. Cookies, saved passwords and
+ * storage are never read: there is no API here for them, and secret
+ * field values are masked in every snapshot (`redact-secret-fields.ts`).
  */
 export class PlaywrightBackend implements BrowserBackend {
   private context: PwBrowserContext | null = null;
   private spawnedProc: ChildProcess | null = null;
   private spawnedUserDataDir: string | null = null;
   private ready: Promise<void> | null = null;
+  /** `"user-chrome"`: the tabs the agent opened, oldest first, active last. */
+  private readonly ownedPages = new Set<Page>();
+  private userProfile = false;
+  private openedRemoteDebugging = false;
 
   constructor(private readonly options: PlaywrightBackendOptions) {}
 
   ensureReady(): Promise<void> {
     if (!this.ready) {
-      this.ready = this.initialise();
+      // A failed start (Chrome not reachable yet) is retried on the next
+      // call instead of failing every later call with the same error.
+      this.ready = this.initialise().catch((error: unknown) => {
+        this.ready = null;
+        throw error;
+      });
     }
     return this.ready;
   }
@@ -79,7 +124,9 @@ export class PlaywrightBackend implements BrowserBackend {
   async shutdown(): Promise<void> {
     if (this.context) {
       const browser = this.context.browser();
-      await this.context.close().catch(() => undefined);
+      // The user's own Chrome: disconnect only, never close their
+      // windows or tabs.
+      if (!this.userProfile) await this.context.close().catch(() => undefined);
       // `connectOverCDP` produces a `Browser` handle separate from the
       // context; close it too so Playwright tears down its CDP session.
       if (browser) {
@@ -99,6 +146,8 @@ export class PlaywrightBackend implements BrowserBackend {
       this.spawnedProc = null;
       this.spawnedUserDataDir = null;
     }
+    this.ownedPages.clear();
+    this.userProfile = false;
     this.ready = null;
   }
 
@@ -138,7 +187,8 @@ export class PlaywrightBackend implements BrowserBackend {
     } as never);
     const url = page.url();
     const title = await page.title().catch(() => "");
-    const summary = summariseAriaSnapshot(raw, { url, title }, options?.full
+    const masked = redactSecretFieldValues(raw, await collectSecretValues(page));
+    const summary = summariseAriaSnapshot(masked, { url, title }, options?.full
       ? { maxLines: Number.MAX_SAFE_INTEGER, maxChars: 0, dropNoise: false } : {});
     return {
       url,
@@ -288,16 +338,17 @@ export class PlaywrightBackend implements BrowserBackend {
 
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
     const context = await this.requireContext();
-    const pages = context.pages();
+    const pages = this.visiblePages(context);
     switch (input.action) {
       case "list":
         return { tabs: await enumerateTabs(pages) };
       case "new": {
         const page = await context.newPage();
+        this.adopt(page);
         if (input.url) {
           await page.goto(input.url).catch(() => undefined);
         }
-        return { tabs: await enumerateTabs(context.pages()) };
+        return { tabs: await enumerateTabs(this.visiblePages(context)) };
       }
       case "switch": {
         if (input.index === undefined) {
@@ -310,7 +361,12 @@ export class PlaywrightBackend implements BrowserBackend {
           );
         }
         await target.bringToFront();
-        return { tabs: await enumerateTabs(context.pages()) };
+        if (this.userProfile) {
+          // Active = last: move it to the end of the agent's tab list.
+          this.ownedPages.delete(target);
+          this.ownedPages.add(target);
+        }
+        return { tabs: await enumerateTabs(this.visiblePages(context)) };
       }
       case "close": {
         if (input.index === undefined) {
@@ -323,7 +379,8 @@ export class PlaywrightBackend implements BrowserBackend {
           );
         }
         await target.close();
-        return { tabs: await enumerateTabs(context.pages()) };
+        this.ownedPages.delete(target);
+        return { tabs: await enumerateTabs(this.visiblePages(context)) };
       }
       default: {
         const exhaustive: never = input.action;
@@ -335,13 +392,78 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   private async initialise(): Promise<void> {
-    const playwright = await loadPlaywrightCore();
+    if (this.options.connect === "user-chrome") {
+      await this.attachUserChrome();
+      return;
+    }
     const cdpUrl = this.options.cdpUrl ?? (await this.launchOwnChrome());
-    const browser = await playwright.chromium.connectOverCDP(cdpUrl, {
-      timeout: this.options.launchTimeoutMs,
-    });
+    const browser = await this.connectOverCdp(cdpUrl, this.options.launchTimeoutMs);
     const contexts = browser.contexts();
     this.context = contexts[0] ?? (await browser.newContext());
+  }
+
+  private async connectOverCdp(url: string, timeoutMs: number): Promise<PwBrowser> {
+    if (this.options.connectOverCdp) return this.options.connectOverCdp(url, timeoutMs);
+    const playwright = await loadPlaywrightCore();
+    return playwright.chromium.connectOverCDP(url, { timeout: timeoutMs });
+  }
+
+  private findUserChrome(): Promise<UserChromeCdpTarget> {
+    if (this.options.findUserChrome) return this.options.findUserChrome();
+    return findUserChromeCdpUrl({
+      cdpUrl: this.options.cdpUrl ?? null,
+      userDataDir: this.options.userChromeDataDir ?? null,
+      waitMs: USER_CHROME_CONNECT_TIMEOUT_MS,
+      openRemoteDebuggingPage: () => {
+        // Once per backend: a retry after the user closed the page
+        // should not keep popping it back up.
+        if (this.openedRemoteDebugging) return true;
+        this.openedRemoteDebugging = true;
+        return openRemoteDebuggingPage({
+          channel: this.options.channel,
+          executablePath: this.options.executablePath ?? null,
+        });
+      },
+    });
+  }
+
+  /** `"user-chrome"`: attach to the user's browser and open the agent's own tab lazily. */
+  private async attachUserChrome(): Promise<void> {
+    const target = await this.findUserChrome();
+    let browser: PwBrowser;
+    try {
+      browser = await this.connectOverCdp(
+        target.cdpUrl,
+        Math.max(this.options.launchTimeoutMs, USER_CHROME_CONNECT_TIMEOUT_MS),
+      );
+    } catch {
+      throw new UserChromeNotReadyError(
+        `${target.browser} did not answer at ${target.cdpUrl} (it may be closed, or the "Allow remote debugging" dialog was declined)`,
+      );
+    }
+    const context = browser.contexts()[0];
+    if (!context) {
+      await browser.close().catch(() => undefined);
+      throw new UserChromeNotReadyError(`${target.browser} has no open window`);
+    }
+    this.userProfile = true;
+    this.context = context;
+  }
+
+  /** Track a tab the agent opened in the user's Chrome, and its pop-ups. */
+  private adopt(page: Page): void {
+    if (!this.userProfile) return;
+    this.ownedPages.add(page);
+    page.on("popup", (popup) => this.adopt(popup));
+    page.on("close", () => {
+      this.ownedPages.delete(page);
+    });
+  }
+
+  /** Every tab, or in the user's Chrome only the agent's own. */
+  private visiblePages(context: PwBrowserContext): Page[] {
+    if (!this.userProfile) return context.pages();
+    return [...this.ownedPages].filter((page) => !page.isClosed());
   }
 
   /**
@@ -394,10 +516,12 @@ export class PlaywrightBackend implements BrowserBackend {
 
   private async requireActivePage(): Promise<Page> {
     const context = await this.requireContext();
-    const pages = context.pages();
+    const pages = this.visiblePages(context);
     const active = pages[pages.length - 1];
     if (active) return active;
-    return context.newPage();
+    const page = await context.newPage();
+    this.adopt(page);
+    return page;
   }
 }
 
@@ -436,9 +560,9 @@ function readViewportMetricsInPage(): ViewportMetrics {
 }
 
 const SECRET_MASK_STYLE_ID = "__atomic_agent_secret_mask";
+/** The same secret fields the snapshot masks (`redact-secret-fields.ts`). */
 const SECRET_MASK_CSS =
-  'input[autocomplete~="cc-number"],input[autocomplete~="cc-csc"],input[autocomplete~="one-time-code"],' +
-  'input[autocomplete~="cc-exp"],input[autocomplete~="cc-exp-month"],input[autocomplete~="cc-exp-year"]' +
+  SECRET_AUTOCOMPLETE_TOKENS.map((token) => `input[autocomplete~="${token}"]`).join(",") +
   "{-webkit-text-security:disc!important}";
 
 /** Runs in each frame: add or remove the style that draws secret fields as dots. */
@@ -466,6 +590,17 @@ async function setSecretFieldMask(page: Page, on: boolean): Promise<void> {
         .catch(() => undefined),
     ),
   );
+}
+
+/** Secret field values in every frame; a frame that cannot be read gives none. */
+async function collectSecretValues(page: Page): Promise<string[]> {
+  const tokens = [...SECRET_AUTOCOMPLETE_TOKENS];
+  const perFrame = await Promise.all(
+    page.frames().map((frame) =>
+      frame.evaluate(collectSecretFieldValuesInPage, tokens).catch(() => [] as string[]),
+    ),
+  );
+  return perFrame.flat();
 }
 
 async function enumerateTabs(pages: Page[]): Promise<TabInfo[]> {

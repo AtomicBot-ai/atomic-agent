@@ -97,7 +97,13 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["ref", "text"],
     ),
   ],
-  ["browser.read_aria", obj({})],
+  [
+    "browser.read_aria",
+    obj({
+      mode: { type: "string", enum: ["full", "interactive", "diff", "region"] },
+      ref: stringSchema,
+    }),
+  ],
   [
     "browser.search",
     obj({ query: stringSchema, engine: stringSchema }, ["query"]),

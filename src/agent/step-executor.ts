@@ -258,8 +258,15 @@ async function executeStepInner(
       : policy.runInOrder
         ? executeCallsInOrder
         : executeBatch;
+  // The window of the model serving this step: the probed profile unless
+  // the step runs on another link (fusion cloud leg), then the catalogue.
+  const stepWindow =
+    deps.profileWindowApplies === false
+      ? deps.contextWindow
+      : (deps.profile.contextWindow ?? deps.contextWindow);
   const batchOutcome = await runBatch(inputs, deps.registry, {
     ...(ctx.workspace ? { workspaceSkills: ctx.workspace.skills } : {}),
+    ...(typeof stepWindow === "number" && stepWindow > 0 ? { contextWindowTokens: stepWindow } : {}),
     ...(completion.servedModelMode ?? deps.modelMode ? { modelMode: (completion.servedModelMode ?? deps.modelMode)!.mode } : {}),
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,
