@@ -106,6 +106,18 @@ describe("the desktop app's launch line", () => {
   });
 });
 
+describe("an API key of only whitespace", () => {
+  it("is refused from the flag and from the environment, on any host", () => {
+    expect(parseError(["--host", "127.0.0.1", "--api-key", "   "])).toMatch(/only whitespace/);
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", " ".repeat(24));
+    expect(parseError(["--host", "0.0.0.0"])).toMatch(/only whitespace/);
+  });
+  it("does not block --reap, which serves nothing", () => {
+    vi.stubEnv("ATOMIC_AGENT_API_KEY", "  ");
+    expect(parsedOk(["--reap"]).reapOnly).toBe(true);
+  });
+});
+
 describe("isLoopbackListenHost", () => {
   it("is true only for hosts that accept local connections only", () => {
     expect(isLoopbackListenHost("127.0.0.1")).toBe(true);
@@ -114,6 +126,17 @@ describe("isLoopbackListenHost", () => {
     expect(isLoopbackListenHost("::")).toBe(false);
     expect(isLoopbackListenHost("128.0.0.1")).toBe(false);
     expect(isLoopbackListenHost("127.evil.example")).toBe(false);
+  });
+
+  it("reads IP literals the way the socket will, never by pattern alone", () => {
+    // Every spelling of the IPv6 loopback, and IPv4-mapped 127/8.
+    for (const h of ["::1", "[::1]", "0:0:0:0:0:0:0:1", "::ffff:127.0.0.1", "[::ffff:127.1.2.3]", "127.255.0.9"]) {
+      expect(isLoopbackListenHost(h), h).toBe(true);
+    }
+    // Not IP literals, or not loopback: a key is required for these.
+    for (const h of ["127.0.0.256", "127.1", "::ffff:10.0.0.1", "::2", "fe80::1%eth0"]) {
+      expect(isLoopbackListenHost(h), h).toBe(false);
+    }
   });
 });
 
