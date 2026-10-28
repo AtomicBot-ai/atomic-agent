@@ -556,6 +556,12 @@ export interface RunWorkerTasksOptions {
   escalation?: { target: FusionEscalationTarget; pricing?: WorkerPricing };
   /** What an escalation cost, as it lands, for the turn's cap. */
   onEscalationSpend?: (taskId: string, usd: number) => void;
+  /**
+   * Text appended to a task's brief: its acceptance checklist and, on a
+   * judge's retry, what was found not met (ATO-944). Absent: the brief
+   * is exactly as before.
+   */
+  briefSuffix?: (taskId: string) => string | undefined;
 }
 
 /** The row of a task the turn's cap kept from starting. */
@@ -760,13 +766,14 @@ async function runOneTask(
   };
   armWorkerSession(session.id);
 
-  const brief = renderWorkerBrief(task, {
+  const suffix = options.briefSuffix?.(task.id);
+  const brief = `${renderWorkerBrief(task, {
     workingDir: deps.workingDir,
     ...(options.originalRequest === undefined
       ? {}
       : { originalRequest: options.originalRequest }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
-  });
+  })}${suffix === undefined ? "" : `\n\n${suffix}`}`;
   const declaredFiles = task.files?.length ?? 0;
   // Per-task budgets the orchestrator sized itself, clamped into what
   // this install allows. A task that asked for nothing keeps the

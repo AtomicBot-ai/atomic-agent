@@ -1066,6 +1066,8 @@ export interface UserConfigFile {
 // `escalationProvider` (default the orchestrator leg) and
 // `escalationMaxUsd` (default 0.25), ATO-942. An older file has none and
 // never escalates automatically.
+// Unversioned, additive: `llm.runMode.fusion.judge` (`off|on`, default
+// `off`) and `judgeProvider` (default the orchestrator leg), ATO-944.
 export const USER_CONFIG_VERSION = 79;
 
 /**

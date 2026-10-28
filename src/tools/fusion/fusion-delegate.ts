@@ -21,6 +21,7 @@ import {
   inspectContractProvides,
   renderContractLine,
   runContractChecks,
+  type ContractCheckOutcome,
   type ContractCheckRunner,
   type ContractReport,
 } from "./contract-checks.js";
@@ -31,6 +32,16 @@ import {
   planWaves,
 } from "./contract-waves.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
+import {
+  applyJudgeVerdict,
+  buildAcceptanceChecklist,
+  judgeTask,
+  renderAcceptanceBlock,
+  renderRetryFindings,
+  type JudgeVerdict,
+} from "./judge.js";
+import type { DelegateTask } from "./delegate-args.js";
+import type { DelegateContract } from "./contract.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
   FusionTurnBudget,
@@ -523,25 +534,41 @@ export function buildFusionDelegateTool(
         ? AbortSignal.any([ctx.signal, budgetAbort.signal])
         : ctx.signal;
 
-      let results: WorkerTaskResult[];
-      try {
-        const finished = new Map<string, WorkerTaskResult>();
-        for (const wave of plan.waves) {
-          waveWarnings.push(
-            ...dependencyWarnings(wave, plan.dependencies, finished),
-          );
-          // Fresh each wave, not accumulated: the notes are recomputed
-          // from everything finished so far, so appending them to the
-          // running warning list would repeat every earlier wave.
-          const contract = contractForWave(parsed.contract, [
-            ...waveWarnings,
-            ...completedWaveNotes(finished),
-          ]);
-          const waveResults = await runWorkerTasks(ctx.modelMode === "cloud" ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true } : deps, {
+      // The judge's acceptance lists (ATO-944), built before any work so
+      // every brief carries its own, read-only. Off: no list, no suffix.
+      const judgeTarget = mode.judge ?? null;
+      const judging =
+        judgeTarget !== null && deps.escalationComplete !== undefined;
+      const acceptance = new Map(
+        judging
+          ? parsed.tasks.map((t) => [
+              t.id,
+              buildAcceptanceChecklist(t, parsed.contract),
+            ])
+          : [],
+      );
+      const acceptanceSuffix = judging
+        ? (taskId: string): string | undefined => {
+            const items = acceptance.get(taskId);
+            return items === undefined || items.length === 0
+              ? undefined
+              : renderAcceptanceBlock(items);
+          }
+        : undefined;
+      const runTasks = (
+        tasks: readonly DelegateTask[],
+        contract: DelegateContract | undefined,
+        briefSuffix: ((taskId: string) => string | undefined) | undefined,
+      ): Promise<WorkerTaskResult[]> =>
+        runWorkerTasks(
+          ctx.modelMode === "cloud"
+            ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true }
+            : deps,
+          {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
             parentSessionId: ctx.sessionId,
-            tasks: parsed.tasks.filter((t) => wave.includes(t.id)),
+            tasks,
             maxWorkers,
             providerId: workerProviderId,
             workerModel,
@@ -559,7 +586,29 @@ export function buildFusionDelegateTool(
             signal: runSignal,
             ...budgetOptions,
             ...escalationOptions,
-          });
+            ...(briefSuffix === undefined ? {} : { briefSuffix }),
+          },
+        );
+
+      let results: WorkerTaskResult[];
+      try {
+        const finished = new Map<string, WorkerTaskResult>();
+        for (const wave of plan.waves) {
+          waveWarnings.push(
+            ...dependencyWarnings(wave, plan.dependencies, finished),
+          );
+          // Fresh each wave, not accumulated: the notes are recomputed
+          // from everything finished so far, so appending them to the
+          // running warning list would repeat every earlier wave.
+          const contract = contractForWave(parsed.contract, [
+            ...waveWarnings,
+            ...completedWaveNotes(finished),
+          ]);
+          const waveResults = await runTasks(
+            parsed.tasks.filter((t) => wave.includes(t.id)),
+            contract,
+            acceptanceSuffix,
+          );
           for (const result of waveResults) finished.set(result.id, result);
         }
         // In the caller's task order, whatever wave each ran in.
@@ -599,23 +648,36 @@ export function buildFusionDelegateTool(
       // declared check failed is `failed` in the table the orchestrator
       // reads, not `ok` with a footnote.
       let contract: ContractReport | undefined;
-      if (parsed.contract !== undefined) {
-        // `results` goes in so a task that never ran is not accused of
+      // Check outcomes in `contract.checks` order, for the judge.
+      let checkOutcomes: readonly (ContractCheckOutcome | undefined)[] = [];
+      // Folds the disk and the check runner into `rows`. Run once after
+      // the waves and, for the tasks a judge sent back, once after their
+      // retry — on the retried rows only, so nothing is applied twice.
+      const evaluateContract = async (
+        rows: WorkerTaskResult[],
+        allRows: WorkerTaskResult[],
+      ): Promise<WorkerTaskResult[]> => {
+        if (parsed.contract === undefined) return rows;
+        // `allRows` goes in so a task that never ran is not accused of
         // failing to provide: a cancelled fan-out leaves the disk empty
         // for reasons that are not the worker's.
         const provides = await inspectContractProvides(
           parsed.contract,
           parsed.tasks,
           ctx.workingDir,
-          { results, signal: ctx.signal },
+          { results: allRows, signal: ctx.signal },
         );
-        results = applyContractFindings(results, provides.findings);
+        let out = applyContractFindings(rows, provides.findings);
         const checks = await runContractChecks(
           parsed.contract.checks ?? [],
           deps.runChecks,
           { workingDir: ctx.workingDir, signal: ctx.signal },
         );
-        results = applyCheckOutcomes(results, checks.outcomes);
+        out = applyCheckOutcomes(out, checks.outcomes);
+        checkOutcomes =
+          checks.outcomes.length === (parsed.contract.checks ?? []).length
+            ? checks.outcomes
+            : [];
         // What the call was run with despite the contract — a require
         // nobody provides, a provide nothing can check, a cycle in the
         // requires, a provider that had not delivered when its dependent
@@ -633,6 +695,117 @@ export function buildFusionDelegateTool(
             : { checksSkipped: checks.checksSkipped }),
           ...(warnings.length === 0 ? {} : { warnings }),
         };
+        return out;
+      };
+      results = await evaluateContract(results, results);
+
+      // The judge (ATO-944): a task closes on a green acceptance list, a
+      // red list is re-run once with the findings, and a list still red
+      // after that is a failed task, item by item. Its spend counts
+      // toward the turn's cap.
+      let judgeSpendUsd = 0;
+      if (judging && judgeTarget !== null) {
+        const judgePricing = deps.resolveWorkerPricing?.(
+          judgeTarget.providerId,
+          judgeTarget.model ?? judgeTarget.providerId,
+        );
+        const judgeable = (r: WorkerTaskResult): boolean =>
+          (acceptance.get(r.id)?.length ?? 0) > 0 &&
+          (r.status === "ok" ||
+            (r.status === "failed" && (r.error ?? "").startsWith("checks:")));
+        const judgeRows = async (
+          rows: readonly WorkerTaskResult[],
+        ): Promise<Map<string, JudgeVerdict>> => {
+          const verdicts = new Map<string, JudgeVerdict>();
+          for (const row of rows) {
+            if (!judgeable(row)) continue;
+            const task = parsed.tasks.find((t) => t.id === row.id)!;
+            const stop = budgetStop();
+            if (stop !== undefined || ctx.signal.aborted) {
+              verdicts.set(row.id, {
+                green: false,
+                items: [],
+                unverified:
+                  stop === undefined
+                    ? "the turn was cancelled"
+                    : `not judged: ${stop.message}`,
+                costUsd: null,
+              });
+              continue;
+            }
+            const verdict = await judgeTask({
+              task,
+              items: acceptance.get(row.id) ?? [],
+              facts: {
+                checkOutcomes,
+                findings: contract?.findings ?? [],
+              },
+              reply: row.reply,
+              contract: parsed.contract,
+              workingDir: ctx.workingDir,
+              target: judgeTarget,
+              pricing: judgePricing,
+              complete: deps.escalationComplete!,
+              signal: ctx.signal,
+            });
+            if (verdict.costUsd !== null && verdict.costUsd > 0) {
+              judgeSpendUsd += verdict.costUsd;
+              turnBudget.addWorkerSpend(ctx.sessionId, verdict.costUsd);
+            }
+            verdicts.set(row.id, verdict);
+          }
+          return verdicts;
+        };
+        const first = await judgeRows(results);
+        const red = [...first].filter(
+          ([, v]) => !v.green && v.unverified === undefined,
+        );
+        const retryIds = new Set(
+          budgetStop() === undefined && !ctx.signal.aborted
+            ? red.map(([id]) => id)
+            : [],
+        );
+        let second = new Map<string, JudgeVerdict>();
+        if (retryIds.size > 0) {
+          const findings = new Map(
+            red.map(([id, verdict]) => [
+              id,
+              renderRetryFindings(acceptance.get(id) ?? [], verdict),
+            ]),
+          );
+          const retried = await runTasks(
+            parsed.tasks.filter((t) => retryIds.has(t.id)),
+            contractForWave(parsed.contract, [...waveWarnings]),
+            (taskId) =>
+              [acceptanceSuffix?.(taskId), findings.get(taskId)]
+                .filter((part): part is string => part !== undefined)
+                .join("\n\n"),
+          );
+          const merged = results.map(
+            (r) => retried.find((x) => x.id === r.id) ?? r,
+          );
+          const evaluated = await evaluateContract(
+            merged.filter((r) => retryIds.has(r.id)),
+            merged,
+          );
+          results = merged.map(
+            (r) => evaluated.find((x) => x.id === r.id) ?? r,
+          );
+          second = await judgeRows(results.filter((r) => retryIds.has(r.id)));
+        }
+        results = results.map((r) => {
+          if (retryIds.has(r.id)) {
+            const verdict = second.get(r.id);
+            // A retry that did not come back judgeable (it failed or was
+            // cancelled) keeps its own status; the first verdict stands
+            // beside it.
+            return verdict === undefined
+              ? applyJudgeVerdict(r, first.get(r.id)!, true)
+              : applyJudgeVerdict(r, verdict, true);
+          }
+          const verdict = first.get(r.id);
+          return verdict === undefined ? r : applyJudgeVerdict(r, verdict, false);
+        });
       }
       const contractLine =
         contract === undefined ? undefined : renderContractLine(contract);
@@ -690,6 +863,10 @@ export function buildFusionDelegateTool(
             escalationSpendUsd > 0
               ? `\n\nEscalations to ${escalationTarget?.model ?? escalationTarget?.providerId ?? "the escalation model"} cost ${formatUsd(escalationSpendUsd)} this fan-out (each worker's row says what for).`
               : ""
+          }${
+            judgeSpendUsd > 0
+              ? `\n\nThe judge (${judgeTarget?.model ?? judgeTarget?.providerId}) cost ${formatUsd(judgeSpendUsd)} this fan-out.`
+              : ""
           }${budgetNote}`,
           details: {
             tasks: results,
@@ -703,6 +880,7 @@ export function buildFusionDelegateTool(
             ...(contract === undefined ? {} : { contract }),
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
             ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
+            ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(budgetStopped === undefined
               ? {}
               : {

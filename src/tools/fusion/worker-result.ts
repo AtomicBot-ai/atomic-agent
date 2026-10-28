@@ -12,6 +12,7 @@ import {
   type ReplacedInput,
 } from "./replaced-inputs.js";
 import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
+import type { JudgeSummary } from "./judge.js";
 
 /**
  * What one delegated task produced, as the orchestrator sees it.
@@ -181,6 +182,8 @@ export interface WorkerTaskResult {
    * status stands; the row and the head line carry the fact.
    */
   replacedInputs?: ReplacedInput[];
+  /** The judge's verdict on this task's acceptance list (ATO-944), when it ran. */
+  judge?: JudgeSummary;
 }
 
 export interface TaskCheckSummary {

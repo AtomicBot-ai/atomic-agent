@@ -70,6 +70,11 @@ export type ResolvedRunMode = {
    * needs only a non-null value. Optional so hand-built fixtures stay valid.
    */
   escalation?: FusionEscalationTarget | null;
+  /**
+   * The judge's model when `llm.runMode.fusion.judge` is `"on"` (ATO-944);
+   * `null` when it is off or no provider resolves. Optional for fixtures.
+   */
+  judge?: { providerId: string; model: string | null } | null;
   /** `llm.runMode.fusion.turnBudgetUsd`, present only when set above 0. */
   turnBudgetUsd?: number;
   /** `llm.runMode.fusion.turnTimeBudgetMs`, present only when set above 0. */
@@ -187,6 +192,23 @@ export function resolveRunMode(
     (effective === "local" ? workerProviderId : orchestratorProviderId) ??
     resolved.activeTextProvider;
 
+  // The judge reads in a fresh context; any configured provider may be
+  // it, the orchestrator leg by default.
+  const judgeEntry = byId(fusion?.judgeProvider) ?? orchestrator;
+  const judge =
+    fusion?.judge !== "on" || judgeEntry === undefined
+      ? null
+      : {
+          providerId: judgeEntry.id,
+          model:
+            (judgeEntry.id === orchestrator?.id
+              ? fusion?.orchestratorModel
+              : undefined) ??
+            judgeEntry.defaultChatModel ??
+            judgeEntry.model ??
+            null,
+        };
+
   // Escalation only ever goes to a provider the operator configured, and
   // never to the worker leg itself (nothing would be gained). The
   // orchestrator leg is the default: it is the model already paid for.
@@ -242,6 +264,7 @@ export function resolveRunMode(
     workerTimeoutMs:
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
     escalation,
+    judge,
     ...(fusion?.turnBudgetUsd !== undefined && fusion.turnBudgetUsd > 0
       ? { turnBudgetUsd: fusion.turnBudgetUsd }
       : {}),
