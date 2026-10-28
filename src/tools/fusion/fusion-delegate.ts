@@ -31,6 +31,14 @@ import {
   planWaves,
 } from "./contract-waves.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
+import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
+import {
+  FusionTurnBudget,
+  TURN_BUDGET_INSTRUCTION,
+  formatUsd,
+  type TurnBudgetLimits,
+  type TurnBudgetStop,
+} from "./turn-budget.js";
 import {
   delegateOutcome,
   fanoutSpend,
@@ -89,6 +97,14 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * completion has been measured.
    */
   localTokensPerSecond?: () => number | null;
+  /**
+   * The per-turn caps' state (ATO-947), reset by the runtime at each
+   * fusion turn's start. Absent, the tool keeps its own (whose clock
+   * starts at the first fan-out). Only consulted when a cap is set.
+   */
+  turnBudget?: FusionTurnBudget;
+  /** The orchestrator's priced spend so far this turn (`TurnUsageMeter.peekCostUsd`). */
+  orchestratorTurnSpendUsd?: (sessionId: string) => number | undefined;
 }
 
 function error(
@@ -172,6 +188,7 @@ export function describeFanoutPreview(
 export function buildFusionDelegateTool(
   deps: FusionDelegateDeps,
 ): ToolDefinition {
+  const turnBudget = deps.turnBudget ?? new FusionTurnBudget();
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
@@ -194,6 +211,36 @@ export function buildFusionDelegateTool(
       }
       const parsed = parseDelegateArgs(rawArgs);
       if (!parsed.ok) return error(parsed.error, { field: "tasks" });
+
+      // The turn's caps (ATO-947). Unset — the default — and nothing
+      // below changes: no check, no extra signal, no timer.
+      const limits: TurnBudgetLimits = {
+        ...(mode.turnBudgetUsd === undefined ? {} : { usd: mode.turnBudgetUsd }),
+        ...(mode.turnTimeBudgetMs === undefined
+          ? {}
+          : { timeMs: mode.turnTimeBudgetMs }),
+      };
+      const capped = limits.usd !== undefined || limits.timeMs !== undefined;
+      const budgetStop = (): TurnBudgetStop | undefined =>
+        capped
+          ? turnBudget.check(
+              ctx.sessionId,
+              limits,
+              deps.orchestratorTurnSpendUsd?.(ctx.sessionId) ?? 0,
+            )
+          : undefined;
+      const reached = budgetStop();
+      if (reached !== undefined) {
+        return error(
+          `fusion.delegate did not run: ${reached.message}. ${TURN_BUDGET_INSTRUCTION}`,
+          {
+            reason: "turn-budget",
+            kind: reached.kind,
+            spentUsd: reached.spentUsd,
+            elapsedMs: reached.elapsedMs,
+          },
+        );
+      }
 
       // Before the pool is measured: warming replays the probes a cloud
       // boot deferred, and it is the `/props` round trip inside it that
@@ -394,6 +441,88 @@ export function buildFusionDelegateTool(
       const waveWarnings: string[] =
         plan.cycle === undefined ? [] : [plan.cycle];
 
+      // A cap reached mid-fan-out stops what is running and starts
+      // nothing more; the rows say why.
+      const workerPricing = deps.resolveWorkerPricing?.(
+        workerProviderId,
+        workerModel,
+      );
+      const budgetAbort = new AbortController();
+      let stoppedBy: TurnBudgetStop | undefined;
+      const stopForBudget = (stop: TurnBudgetStop): void => {
+        if (stoppedBy !== undefined) return;
+        stoppedBy = stop;
+        budgetAbort.abort(new Error(stop.message));
+      };
+      const timeLeft = capped
+        ? turnBudget.timeLeftMs(ctx.sessionId, limits)
+        : undefined;
+      const budgetTimer =
+        timeLeft === undefined
+          ? undefined
+          : setTimeout(
+              () => {
+                const stop = budgetStop();
+                if (stop !== undefined) stopForBudget(stop);
+              },
+              Math.max(0, timeLeft) + 50,
+            );
+      budgetTimer?.unref?.();
+      const budgetOptions = capped
+        ? {
+            shouldStart: (): string | undefined => {
+              const stop = stoppedBy ?? budgetStop();
+              if (stop === undefined) return undefined;
+              stopForBudget(stop);
+              return stop.message;
+            },
+            onWorkerUsage: (
+              _taskId: string,
+              usage: Parameters<typeof estimateUsageCostUsd>[0],
+            ): void => {
+              if (workerPricing !== undefined) {
+                turnBudget.addWorkerSpend(
+                  ctx.sessionId,
+                  estimateUsageCostUsd(usage, workerPricing),
+                );
+              }
+              const stop = budgetStop();
+              if (stop !== undefined) stopForBudget(stop);
+            },
+          }
+        : {};
+      // Escalation (ATO-942): only to the configured target, priced with
+      // the same resolver as the workers, and counted in the turn's cap.
+      const escalationTarget = mode.escalation ?? null;
+      const escalationPricing =
+        escalationTarget === null
+          ? undefined
+          : deps.resolveWorkerPricing?.(
+              escalationTarget.providerId,
+              escalationTarget.model ?? escalationTarget.providerId,
+            );
+      let escalationSpendUsd = 0;
+      const escalationOptions =
+        escalationTarget === null || deps.escalationComplete === undefined
+          ? {}
+          : {
+              escalation: {
+                target: escalationTarget,
+                ...(escalationPricing === undefined
+                  ? {}
+                  : { pricing: escalationPricing }),
+              },
+              onEscalationSpend: (_taskId: string, usd: number): void => {
+                escalationSpendUsd += usd;
+                turnBudget.addWorkerSpend(ctx.sessionId, usd);
+                const stop = budgetStop();
+                if (stop !== undefined) stopForBudget(stop);
+              },
+            };
+      const runSignal = capped
+        ? AbortSignal.any([ctx.signal, budgetAbort.signal])
+        : ctx.signal;
+
       let results: WorkerTaskResult[];
       try {
         const finished = new Map<string, WorkerTaskResult>();
@@ -427,7 +556,9 @@ export function buildFusionDelegateTool(
               ? {}
               : { workerMaxOutputTokens }),
             writeScope,
-            signal: ctx.signal,
+            signal: runSignal,
+            ...budgetOptions,
+            ...escalationOptions,
           });
           for (const result of waveResults) finished.set(result.id, result);
         }
@@ -442,6 +573,24 @@ export function buildFusionDelegateTool(
         return error(
           `the fan-out failed: ${err instanceof Error ? err.message : String(err)}`,
           { reason: "fan-out-failed" },
+        );
+      } finally {
+        if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+      }
+      // Rows a cap cut short say so, so a cancelled worker is not read
+      // as the operator's doing.
+      const budgetStopped = stoppedBy as TurnBudgetStop | undefined;
+      if (budgetStopped !== undefined && !ctx.signal.aborted) {
+        results = results.map((r) =>
+          r.status === "cancelled" && !r.error?.startsWith("not started:")
+            ? {
+                ...r,
+                notes: [
+                  ...(r.notes ?? []),
+                  `stopped by the turn's cap: ${budgetStopped.message}`,
+                ],
+              }
+            : r,
         );
       }
 
@@ -521,14 +670,14 @@ export function buildFusionDelegateTool(
       // What the fan-out cost on the worker leg, when its model is priced
       // (a cloud leg with a catalogue entry); a local leg resolves to no
       // pricing and the header says nothing.
-      const pricing = deps.resolveWorkerPricing?.(
-        workerProviderId,
-        workerModel,
-      );
       const spend =
-        pricing === undefined
+        workerPricing === undefined
           ? null
-          : fanoutSpend(results, pricing, workerModel);
+          : fanoutSpend(results, workerPricing, workerModel);
+      const budgetNote =
+        budgetStopped === undefined
+          ? ""
+          : `\n\nStopped: ${budgetStopped.message}. ${TURN_BUDGET_INSTRUCTION}`;
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
@@ -537,7 +686,11 @@ export function buildFusionDelegateTool(
             ...(contractLine === undefined ? {} : { contractLine }),
             spend,
             ...(ordered ? { waves: plan.waves } : {}),
-          })}${hint}`,
+          })}${hint}${
+            escalationSpendUsd > 0
+              ? `\n\nEscalations to ${escalationTarget?.model ?? escalationTarget?.providerId ?? "the escalation model"} cost ${formatUsd(escalationSpendUsd)} this fan-out (each worker's row says what for).`
+              : ""
+          }${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -549,6 +702,16 @@ export function buildFusionDelegateTool(
             ...(ordered ? { waves: plan.waves } : {}),
             ...(contract === undefined ? {} : { contract }),
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
+            ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
+            ...(budgetStopped === undefined
+              ? {}
+              : {
+                  turnBudget: {
+                    kind: budgetStopped.kind,
+                    spentUsd: budgetStopped.spentUsd,
+                    elapsedMs: budgetStopped.elapsedMs,
+                  },
+                }),
           },
         },
         { maxSummaryLength: deps.outputCharCap + 400, maxTailLines: 2000 },

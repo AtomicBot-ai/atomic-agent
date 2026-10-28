@@ -47,6 +47,7 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
+import { FusionLiveWorkers, FusionTurnBudget } from "../tools/fusion/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -355,6 +356,8 @@ export async function createAgentRuntime(
   // behind the same analytics opt-out, since nothing is emitted unless
   // `captureMessageSent` fires.
   const turnUsageMeter = new TurnUsageMeter();
+  const fusionTurnBudget = new FusionTurnBudget();
+  const fusionLiveWorkers = new FusionLiveWorkers();
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
@@ -485,8 +488,19 @@ export async function createAgentRuntime(
     // reads, so the tool the orchestrator is being pushed towards is
     // always in the catalog when the push happens.
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
-    clearFanoutTurnGrant: (sessionId: string) =>
-      approvals.fanoutScopes.clearTurnGrant(sessionId),
+    // A fusion turn starts: its fan-out grant is dropped and its $ /
+    // time caps (ATO-947) start from zero.
+    clearFanoutTurnGrant: (sessionId: string) => {
+      approvals.fanoutScopes.clearTurnGrant(sessionId);
+      // A turn that did not come through `runTurn` (sidecar, scheduler)
+      // has no meter bucket; open one so the cap sees the planner's own
+      // spend, measured from what it reads now.
+      turnUsageMeter.ensureOpen(sessionId);
+      fusionTurnBudget.begin(
+        sessionId,
+        turnUsageMeter.peekCostUsd(sessionId) ?? 0,
+      );
+    },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
     grammar: getGrammar(),
@@ -696,6 +710,10 @@ export async function createAgentRuntime(
     config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest: (id) => turnRequests.get(id),
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
+    turnBudget: fusionTurnBudget,
+    liveWorkers: fusionLiveWorkers,
+    steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
+    orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
 
   const scheduler = createRuntimeScheduler({
@@ -724,6 +742,13 @@ export async function createAgentRuntime(
     turnController,
     steeringInbox,
     steer,
+    fusionWorkers: {
+      running: (parentSessionId: string) => fusionLiveWorkers.running(parentSessionId),
+      stop: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.stop(parentSessionId, taskId),
+      escalate: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.escalate(parentSessionId, taskId),
+    },
     profileStore,
     notesStore,
     lessonStore,
