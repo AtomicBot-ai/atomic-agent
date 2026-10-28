@@ -1,4 +1,9 @@
 import type { BrowserBackend } from "./browser-backend.js";
+import {
+  checkBrowserUrl,
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
 
 export interface CapturedWorldSnapshot {
   kind: "browser";
@@ -14,14 +19,18 @@ export interface CapturedWorldSnapshot {
  * Swallows snapshot failures on purpose: the mutating tool (navigate,
  * search, …) already succeeded, and we do not want an ARIA timeout to
  * flip the tool status to `error`. Callers just skip the field when
- * `undefined` is returned.
+ * `undefined` is returned. A page on a blocked host
+ * (`browser.blockedDomains`) is never captured: its content must not
+ * reach the model.
  */
 export async function captureWorldSnapshot(
   backend: BrowserBackend,
   full = false,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): Promise<CapturedWorldSnapshot | undefined> {
   try {
     const snap = full ? await backend.snapshot({ full: true }) : await backend.snapshot();
+    if (checkBrowserUrl(snap.url, policy).kind === "blocked") return undefined;
     return {
       kind: "browser",
       digest: snap.digest,

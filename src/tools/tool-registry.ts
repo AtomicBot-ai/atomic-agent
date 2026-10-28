@@ -1,7 +1,19 @@
+import { statSync } from "node:fs";
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { fullToolResult } from "../compressor/result-compressor.js";
+import { readArgumentAliases, withAliasNote } from "./argument-aliases.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
+import { resolveUserPath } from "./os/expand-home.js";
 import { markUntrustedResult } from "./untrusted-tool-output.js";
+import {
+  maskErrorSecrets,
+  maskResultSecrets,
+  UNMASKED_TOOLS,
+} from "./tool-output-secrets.js";
+import {
+  knownSecretsFromEnv,
+  type KnownSecret,
+} from "../error-reporting/secret-detector.js";
 import type { ToolRole } from "./tool-roles.js";
 import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
 import type { ToolOutputSpill } from "./tool-output-spill.js";
@@ -90,14 +102,24 @@ export interface ToolRegistryOptions {
    * Absent ⇒ local results stay as the tool returned them.
    */
   outputSpill?: Pick<ToolOutputSpill, "spill">;
+  /**
+   * Exact secret values to mask in every tool result, read on each call
+   * so a key added mid-session is covered (`tool-output-secrets.ts`,
+   * ATO-1077). Shape-based masking applies regardless. Absent ⇒ the
+   * secret-looking variables of `process.env`, which carries the agent's
+   * `.env`.
+   */
+  knownSecrets?: () => readonly KnownSecret[];
 }
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
   private readonly outputSpill: Pick<ToolOutputSpill, "spill"> | undefined;
+  private readonly knownSecrets: () => readonly KnownSecret[];
 
   constructor(options: ToolRegistryOptions = {}) {
     this.outputSpill = options.outputSpill;
+    this.knownSecrets = options.knownSecrets ?? (() => knownSecretsFromEnv());
   }
 
   register(definition: ToolDefinition): void {
@@ -134,11 +156,38 @@ export class ToolRegistry {
     ctx: ToolContext,
   ): Promise<CompressedToolResult> {
     const tool = this.get(name);
-    // Models sometimes emit a JSON value one level over-encoded (a
-    // number as "200000", an array as "[\"a.png\"]"). Unwrap those
-    // before dispatch; anything that cannot be coerced is passed
-    // through untouched so the tool reports its own error.
-    const result = await tool.run(coerceToolArgs(name, args), ctx);
+    // An alias shape the tool reads (`argument-aliases.ts`: `os.fs.move`
+    // `{paths, destination}`) is rewritten here, before any wrapper
+    // (read scope) sees the call, and the result's last line says how
+    // it was read.
+    const aliased = readArgumentAliases(name, args, {
+      isFile: (path) => isExistingFile(path, ctx.workingDir),
+    });
+    const masks = !UNMASKED_TOOLS.has(name);
+    let result: CompressedToolResult;
+    try {
+      // Models sometimes emit a JSON value one level over-encoded (a
+      // number as "200000", an array as "[\"a.png\"]"). Unwrap those
+      // before dispatch; anything that cannot be coerced is passed
+      // through untouched so the tool reports its own error.
+      result = await tool.run(coerceToolArgs(name, aliased?.args ?? args), ctx);
+    } catch (err) {
+      // Same error object (its class matters to callers), one more line.
+      // A message that cannot be set (a getter-only DOMException) is left
+      // as it is: the error itself must reach the caller unchanged.
+      if (aliased !== null && err instanceof Error && !ctx.signal.aborted) {
+        try {
+          err.message = `${err.message}\n${aliased.note}`;
+        } catch {
+          // keep `err` as thrown
+        }
+      }
+      throw masks ? maskErrorSecrets(err, this.knownSecrets()) : err;
+    }
+    if (aliased !== null) result = withAliasNote(result, aliased.note);
+    // Secrets are masked first, so the cloud promotion, the spill file
+    // and the untrusted framing below all see the marker, never the key.
+    if (masks) result = maskResultSecrets(result, this.knownSecrets());
     const shown =
       ctx.modelMode === "cloud"
         ? fullToolResult(result)
@@ -148,5 +197,14 @@ export class ToolRegistry {
     return tool.untrustedOutput === undefined
       ? shown
       : markUntrustedResult(shown, tool.untrustedOutput);
+  }
+}
+
+/** `path` (resolved against `workingDir`) is an existing file; any failure is no. */
+function isExistingFile(path: string, workingDir: string): boolean {
+  try {
+    return statSync(resolveUserPath(path, workingDir)).isFile();
+  } catch {
+    return false;
   }
 }

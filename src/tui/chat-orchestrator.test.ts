@@ -672,3 +672,67 @@ describe("messages accepted during model switching", () => {
     expect(run.mock.calls[0]?.[0].id).toBe("s1");
   });
 });
+
+describe("growing the local window before a turn (ATO-848)", () => {
+  const localGateFacts = (): LocalTurnGateFacts => ({
+    activeProviderIsLocal: true,
+    managedMode: true,
+    modelId: "qwen-3.8-27b",
+    modelDownloaded: true,
+    fallbackChainLength: 1,
+  });
+
+  function localChat(busy: readonly string[] = []) {
+    const run = vi.fn(async () => ({ session: session(), reason: "reply", stepCount: 1 }));
+    const runtime = stubRuntime(run);
+    const filled = { ...session(), contextUsage: { tokens: 20_000 } } as unknown as ReturnType<typeof session>;
+    (runtime as unknown as { createSession: () => unknown }).createSession = () => filled;
+    (runtime as unknown as { turnController: unknown }).turnController = {
+      isBusy: () => false,
+      busySessionIds: () => busy,
+    };
+    const chat = new ChatOrchestrator(runtime, makeTuiEventBus(), {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:19091",
+      readGateFacts: localGateFacts,
+    });
+    const order: string[] = [];
+    const grow = vi.spyOn(chat.localModels, "growContextForPrompt").mockImplementation(async () => {
+      order.push("grow");
+      return false;
+    });
+    run.mockImplementation(async () => {
+      order.push("run");
+      return { session: session(), reason: "reply", stepCount: 1 };
+    });
+    return { chat, run, grow, order };
+  }
+
+  it("offers the session's last prompt to the growth check before the turn is sent", async () => {
+    const { chat, run, grow, order } = localChat();
+    chat.sendMessage("next");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(grow).toHaveBeenCalledWith(20_000);
+    expect(order).toEqual(["grow", "run"]);
+  });
+
+  it("does not restart the server while another session's turn is running", async () => {
+    const { chat, run, grow } = localChat(["other-session"]);
+    chat.sendMessage("next");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(grow).not.toHaveBeenCalled();
+  });
+
+  it("leaves a cloud route alone", async () => {
+    const run = vi.fn(async () => ({ session: session(), reason: "reply", stepCount: 1 }));
+    const chat = new ChatOrchestrator(stubRuntime(run), makeTuiEventBus(), {
+      maxSteps: 5,
+      llamaUrl: "http://127.0.0.1:19091",
+      readGateFacts: cloudGateFacts,
+    });
+    const grow = vi.spyOn(chat.localModels, "growContextForPrompt");
+    chat.sendMessage("next");
+    await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(1));
+    expect(grow).not.toHaveBeenCalled();
+  });
+});

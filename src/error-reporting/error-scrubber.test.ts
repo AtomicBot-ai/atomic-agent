@@ -10,6 +10,7 @@ import {
   extractSafeUpstreamErrorType,
   sanitizeStack,
   scrubError,
+  STATIC_MESSAGE_ERRORS,
 } from "./error-scrubber.js";
 
 describe("sanitizeStack", () => {
@@ -526,5 +527,29 @@ describe("scrubError", () => {
     const ev = scrubError(wrapper, { source: "llm_failure" });
     expect(ev.upstreamErrorType).toBeUndefined();
     expect(JSON.stringify(ev)).not.toContain("resignation");
+  });
+});
+
+describe("scrubError message and the shared secret detector (ATO-1077)", () => {
+  it("still drops the message of an error class that is not allowlisted", () => {
+    const err = Object.assign(new Error("key sk-proj-" + "Ab12Cd34Ef56Gh78Ij90Kl12"), {
+      name: "NotAllowlistedError",
+    });
+    const ev = scrubError(err, { source: "test" });
+    expect(ev.message).toBeUndefined();
+  });
+
+  it("masks a key in the message of an allowlisted class", () => {
+    STATIC_MESSAGE_ERRORS.add("AuditedStaticError");
+    try {
+      const err = Object.assign(
+        new Error("rejected sk-proj-" + "Ab12Cd34Ef56Gh78Ij90Kl12"),
+        { name: "AuditedStaticError" },
+      );
+      const ev = scrubError(err, { source: "test" });
+      expect(ev.message).toBe("rejected [redacted:openai-key]");
+    } finally {
+      STATIC_MESSAGE_ERRORS.delete("AuditedStaticError");
+    }
   });
 });

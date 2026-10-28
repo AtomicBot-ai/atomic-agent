@@ -9,7 +9,7 @@ import { unverifiedClaims, turnToolCalls, formatUnverifiedClaimNotice, formatUnv
 import { extractLinks, unsourcedLinks, linkSources, formatUnsourcedLinkNotice, formatUnsourcedLinkRefusal } from "../policies/link-evidence.js";
 import { logTextPreview } from "./step-parsing.js";
 import { resolveToolName } from "../tool-name-resolution.js";
-import { ToolExecutionError } from "../../llm/index.js";
+import { admitUnregisteredCalls } from "./step-unknown-tools.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { FabricatedToolTranscript } from "../../llm/index.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -137,25 +137,24 @@ export function prepareStepDispatch(
     (suppressedTerminal !== null ? 1 : 0) +
     (progressNote !== null ? 1 : 0);
 
-  // Registry membership: surfaces as `ToolExecutionError` (category
-  // `tool`) instead of `BatchValidationError`. A missing tool is a
-  // bootstrap-time configuration mismatch, not a transient grammar
-  // failure — replaying the prompt would not change the registry.
+  // Registry membership. A name that does not resolve is a model guess
+  // (`os.grep`, `mcp.example.toolkit`), not a bootstrap mismatch: it
+  // stays in the batch and gets an error result in its slot naming the
+  // closest real tools, while the step's valid calls run
+  // (`step-unknown-tools.ts`). Only a streak of unknown-only steps still
+  // throws `ToolExecutionError`.
+  const unregistered: string[] = [];
   for (const call of calls) {
     if (deps.registry.has(call.tool)) continue;
     // A near miss on the separator is not a missing tool. Qualified
     // names travel over the OpenAI wire as `__` and a model writing the
     // escaped form from memory lands on `fusion_delegate` — every
-    // character right, one underscore short. That ended a whole turn in
-    // a real session, twice in a row. Resolve the obvious forms before
-    // treating the name as unknown; anything that still does not
-    // resolve throws exactly as it did.
+    // character right, one underscore short. Resolve the obvious forms
+    // before treating the name as unknown.
     const resolved = resolveToolName(call.tool, deps.registry);
     if (resolved === null) {
-      throw new ToolExecutionError(
-        call.tool,
-        `tool not registered in this agent: ${call.tool}`,
-      );
+      unregistered.push(call.tool);
+      continue;
     }
     deps.logger?.debug?.("tool name resolved to its registered form", {
       emitted: call.tool,
@@ -163,6 +162,7 @@ export function prepareStepDispatch(
     });
     call.tool = resolved;
   }
+  admitUnregisteredCalls(ctx, deps, calls.length, unregistered);
 
   // Emit one `tool_call_parsed` per call. Single-call steps preserve the
   // legacy ordering (parsed → executed → next event) one-for-one;
@@ -216,8 +216,6 @@ export function prepareStepDispatch(
 }
 
 export type StepDispatchPlan = ReturnType<typeof prepareStepDispatch>;
-
-
 
 /**
  * The next-step notice for a completion that wrote tool calls as text.

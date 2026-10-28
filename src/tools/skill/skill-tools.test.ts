@@ -505,4 +505,40 @@ describe("skill tools", () => {
     expect(result.summary).toContain("said hi");
     expect(result.details.exitCode).toBe(0);
   });
+
+  it("skill.run_script gives the script the shell's filtered environment (ATO-877)", async () => {
+    const saved = {
+      key: process.env.OPENROUTER_API_KEY,
+      pass: process.env.ATO877_TOOL_TOKEN,
+    };
+    process.env.OPENROUTER_API_KEY = "ato877-tool-key";
+    process.env.ATO877_TOOL_TOKEN = "ato877-tool-token";
+    try {
+      const skills = await installWriting(
+        "'key=' + (process.env.OPENROUTER_API_KEY ?? 'unset') + ' pass=' + (process.env.ATO877_TOOL_TOKEN ?? 'unset')",
+      );
+      const gate = new ApprovalGate({
+        emit: (req) =>
+          gate.resolve({ approvalId: req.approvalId, approved: true }),
+      });
+      // The wiring the runtime does: `tools.shell.envPassthrough` reaches
+      // the script through the tool's options.
+      const tool = buildSkillRunScriptTool(skills, {
+        approvals: gate,
+        approvalRequired: true,
+        envPassthrough: ["ATO877_TOOL_TOKEN"],
+      });
+      const result = await tool.run(
+        { skill: "loud", script: "loud.js" },
+        makeCtx(base),
+      );
+      expect(result.summary).toContain("key=unset pass=ato877-tool-token");
+      expect(result.summary).not.toContain("ato877-tool-key");
+    } finally {
+      if (saved.key === undefined) delete process.env.OPENROUTER_API_KEY;
+      else process.env.OPENROUTER_API_KEY = saved.key;
+      if (saved.pass === undefined) delete process.env.ATO877_TOOL_TOKEN;
+      else process.env.ATO877_TOOL_TOKEN = saved.pass;
+    }
+  });
 });

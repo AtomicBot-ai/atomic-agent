@@ -16,6 +16,8 @@ vi.mock("../../local-llm/index.js", async () => {
     fetchServedModelIds: vi.fn(async () => null),
     getEmbeddingDaemonStatus: vi.fn(),
     startEmbeddingDaemon: vi.fn(),
+    // Never the real one: it reads this machine's memory (ATO-379).
+    holdEmbeddingForLowMemory: vi.fn(async () => ({ ok: true })),
     stopEmbeddingDaemon: vi.fn(),
     maybeAutoUpdateBackend: vi.fn(),
   };

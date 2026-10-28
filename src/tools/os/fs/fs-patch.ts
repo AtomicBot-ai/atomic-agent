@@ -1,5 +1,6 @@
 import { OS_FS_PATCH_CONTRACT } from "./fs-patch-contract.js";
 import { readFile, writeFile } from "node:fs/promises";
+import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
 import { dirname, basename } from "node:path";
 import { applyPatch, parsePatch } from "diff";
 import type { StructuredPatch } from "diff";
@@ -69,6 +70,22 @@ export function buildOsFsPatchTool(
       // contents are rebuilt the same way as dry-run, so the approval
       // message can faithfully describe what will land.
       const allApplicable = previews.every((p) => p.applied);
+      // A `[redacted:…]` marker copied out of masked tool output must not
+      // land over the real secret (ATO-1077). Checked on every file
+      // before the prompt, so a refused patch writes nothing.
+      for (let i = 0; i < parsed.length; i++) {
+        const hunkFile = parsed[i];
+        const outcome = previews[i];
+        if (!hunkFile || !outcome?.applied) continue;
+        const patched = applyPatch(
+          outcome.originalContent ?? "",
+          hunkFile as StructuredPatch,
+          { fuzzFactor: args.fuzzFactor },
+        );
+        if (patched !== false) {
+          refuseMaskedSecretWrite("os.fs.patch", outcome.path, outcome.originalContent ?? "", patched);
+        }
+      }
       const preview = formatReport(previews, "applied");
       await requireFsApproval(
         options,

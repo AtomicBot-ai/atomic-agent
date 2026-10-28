@@ -14,7 +14,7 @@ import { LlamaServerClient } from "./llama-server-client.js";
 describe("LlamaServerClient — a request that also carries responseFormat", () => {
   function captureBodies(): { client: LlamaServerClient; bodies: string[] } {
     const bodies: string[] = [];
-    const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
       bodies.push(String(init?.body));
       return new Response(
         JSON.stringify({ content: "NONE", stop: true, truncated: false }),

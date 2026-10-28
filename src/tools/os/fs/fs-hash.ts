@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { orMissing } from "./fs-missing-path.js";
 
 export const osFsHashTool: ToolDefinition = {
   name: OS_FS_HASH_CONTRACT.name,
@@ -22,7 +23,10 @@ export const osFsHashTool: ToolDefinition = {
   async run(rawArgs, ctx) {
     const args = parseHashArgs(rawArgs);
     const absolute = resolveUserPath(args.path, ctx.workingDir);
-    const info = await stat(absolute);
+    const info = await orMissing("os.fs.hash", absolute, ctx, () =>
+      stat(absolute),
+    );
+    if ("missing" in info) return info.missing;
     if (!info.isFile()) {
       throw new Error(`os.fs.hash: ${absolute} is not a regular file`);
     }

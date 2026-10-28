@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { getConfig, resetConfigCache, getTrustConfigPaths } from "../../config/index.js";
+import { getConfig, resetConfigCache, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { ApprovalGate } from "../../approval/approval-gate.js";
@@ -12,6 +12,7 @@ import * as browserTools from "../../tools/browser/index.js";
 import * as osTools from "../../tools/os/index.js";
 import * as fusionTools from "../../tools/fusion/index.js";
 import * as readScope from "../../tools/read-scope/index.js";
+import * as skillTools from "../../tools/skill/index.js";
 import { ProfileStore } from "../../memory/profile-store.js";
 import { MemoryStore } from "../../memory/memory-store.js";
 import { SkillRegistry } from "../../skills/skill-registry.js";
@@ -23,13 +24,16 @@ import * as mcp from "../../mcp/index.js";
 import type { McpToolMeta, McpSamplingHandler } from "../../mcp/index.js";
 import * as composio from "../../composio/index.js";
 import { setDynamicResourceClassResolver } from "../../agent/tool-resource-class.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope, runtimeKnownSecrets } from "./runtime-tool-catalog.js";
+import { ModelProfileManager } from "../../llm/model-profile-manager.js";
+import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
+import { buildGrammar } from "../../llm/grammar/build-grammar.js";
 
 const logger = new StructuredLogger({ level: "error", sinks: [] });
 const externalOperation = (): never => { throw new Error("Test must not perform external work"); };
 const backend: BrowserBackend = {
   ensureReady: async () => externalOperation(), shutdown: async () => {}, snapshot: async () => externalOperation(),
-  hasRef: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
+  hasRef: async () => externalOperation(), describeRef: async () => externalOperation(), currentUrl: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
   type: async () => externalOperation(), search: async () => externalOperation(), tabs: async () => externalOperation(), scroll: async () => externalOperation(),
 };
 const grammar = 'root ::= mcp-server-tool\nmcp-server-tool ::= "placeholder"\n';
@@ -93,18 +97,24 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       const declaredInputs = new osTools.DeclaredInputsRegistry();
       const requests = new Map<string, string>(); const recent = vi.fn(() => []);
       const registration = vi.spyOn(osTools, "registerOsTools");
+      const skillRegistration = vi.spyOn(skillTools, "registerSkillTools");
       registerRuntimeCoreTools({ config, toolRegistry: registry, dangerous, logger, sessionStore: { listRecentWorkingDirs: recent, listSummaryPage: () => [], listChatLines: () => [] },
         resolveOriginalRequest: id => requests.get(id), declaredInputs, shellJobs, skillRegistry: new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), profileStore, notesStore });
       const wired = registration.mock.calls[0]?.[1]; if (!wired) throw new Error("OS tools not registered");
       expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);
       expect(wired.declaredInputs).toBe(declaredInputs); expect(wired.shellJobs).toBe(shellJobs);
       expect(wired.trustConfigPaths).toEqual(getTrustConfigPaths(config.paths)); expect(wired.stateDir).toBe(config.paths.stateDir);
+      // Skill scripts share the shell's passthrough list (ATO-877).
+      expect(skillRegistration.mock.calls[0]?.[3]).toBe(config.tools.shell.envPassthrough);
       requests.set("session", "new request"); expect(wired.resolveOriginalRequest?.("session")).toBe("new request");
       wired.listRecentSessionDirs(7); expect(recent).toHaveBeenCalledWith(7);
       config.git.remoteSync = false; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(false);
       config.git.remoteSync = true; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(true);
       expect(registry.list().slice(0, 2).map(tool => tool.name)).toEqual(["finish", "reply"]);
       expect(registry.has("tool.view")).toBe(true);
+      // Computer use is opt-in (`tools.screen.enabled`, default off): nothing registered.
+      expect(config.tools.screen.enabled).toBe(false);
+      expect(registry.has("os.screen.capture")).toBe(false); expect(registry.has("os.screen.click")).toBe(false);
       // No surface named: the web-search error keeps the desktop / .env advice.
       expect(wired.webSearchKeyHelp).toBeUndefined();
     } finally { shellJobs.endAll(); notesStore.close(); profileStore.close(); }
@@ -163,6 +173,36 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(owner.getGrammar()).toBe(grammar);
     expect(owner.effectiveToolDescriptors().some(tool => tool.name.startsWith("mcp."))).toBe(false);
     expect(input.toolRegistry.list()).toHaveLength(4);
+  });
+
+  it("hands every MCP tool-name rule it applies to the profile manager's hook (ATO-1029)", async () => {
+    const { input } = deps(); const seen: Array<string | null> = []; const native: boolean[] = [];
+    const owner = await connect({ ...input, onMcpToolNameRule: (rule, nativeTools) => { seen.push(rule); native.push(nativeTools); } });
+    // No server configured: MCP is off, so not even the native tools.
+    expect(seen).toEqual([null]); expect(native).toEqual([false]);
+    await owner.mcpManager.addServerLive(disabledServer);
+    const list = vi.spyOn(owner.mcpManager, "listAllToolMeta").mockReturnValue([meta("first")]);
+    const refresh = owner.createRefreshMcp(); await refresh();
+    list.mockReturnValue([]); await refresh();
+    expect(seen.slice(-2)).toEqual(['mcp-server-tool ::= "\\"mcp.disabled.first\\""', null]);
+    // A server was added live, so the native tools were registered and stay.
+    expect(native.slice(-2)).toEqual([true, true]);
+  });
+
+  it("bootstrap seam: the profile manager's grammar follows the MCP catalog (ATO-1029)", async () => {
+    const { input } = deps();
+    const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
+    const manager = new ModelProfileManager({ llama: input.llama, initialProfile: PLAIN_INSTRUCT_PROFILE, initialGrammar: base, initialModelId: null });
+    // Wired exactly as bootstrap.ts wires it.
+    const owner = await connect({ ...input, initialGrammar: base, ...mcpGrammarHookFor(manager) });
+    expect(manager.getGrammar()).not.toMatch(/^tool-name ::= .*mcp-(native|server)-tool/m);
+    await owner.mcpManager.addServerLive(disabledServer);
+    vi.spyOn(owner.mcpManager, "listAllToolMeta").mockReturnValue([meta("first")]);
+    await owner.createRefreshMcp()();
+    expect(manager.getGrammar()).toContain('"\\"mcp.disabled.first\\""');
+    expect(manager.getGrammar()).toMatch(/^tool-name ::= .*\| mcp-native-tool \| mcp-server-tool \|/m);
+    expect(manager.getGrammar()).toBe(owner.getGrammar());
+    expect(mcpGrammarHookFor(undefined)).toEqual({});
   });
 
   it("keeps descriptor array identity while gates hold and changes it only when live fusion or vision flips", async () => {
@@ -227,9 +267,44 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(resolveOriginalRequest).toHaveBeenCalledWith("session");
     expect(wired.workerSupportsSlotAffinity("missing")).toBe(false);
     expect(protectedReads.approvals).toBe(dangerous);
+    // The secret-file guard gets the state's own list (ATO-877).
+    expect(protectedReads.stateSecrets).toEqual({ stateDir: config.paths.stateDir, files: getStateSecretPaths(config.paths) });
     config.agent.readScope = "unrestricted"; expect(protectedReads.readScope?.()).toBe("unrestricted");
     config.agent.readScope = "working-dir"; expect(protectedReads.readScope?.()).toBe("working-dir");
     expect(toolRegistry.list().map(tool => tool.name)).toEqual(["os.fs.read", "fusion.delegate"]);
     expect(builder.mock.invocationCallOrder[0]).toBeLessThan(confinement.mock.invocationCallOrder[0] ?? 0);
+  });
+});
+
+describe("runtimeKnownSecrets (ATO-1077)", () => {
+  it("lists the env's secret variables and the credentials stored in config", () => {
+    const config = {
+      llm: {
+        activeTextProvider: "or",
+        activeEmbeddingProvider: "or",
+        providers: [
+          { id: "or", kind: "openrouter", apiKey: "Zq9xVv81LmNbTt42", headers: { "X-Title": "atomic", Authorization: "Bearer Hh7Gg6Ff5Ee4" } },
+          { id: "local", kind: "llama" },
+        ],
+      },
+      localModels: { apiKey: "Ll3Mm4Nn5Oo6" },
+      webhooks: { deploy: { secret: "Ww1Xx2Yy3Zz4" } },
+      mcp: {
+        servers: [
+          { name: "gh", enabled: true, transport: { kind: "stdio", command: "gh-mcp" }, env: { GITHUB_TOKEN: "Gg1Hh2Ii3Jj4", LOG_LEVEL: "debug" } },
+          { name: "remote", enabled: true, transport: { kind: "streamable_http", url: "https://mcp.example.com", headers: { "X-Api-Key": "Rr1Ss2Tt3Uu4", Accept: "application/json" } } },
+        ],
+      },
+    } as unknown as Parameters<typeof runtimeKnownSecrets>[0];
+    expect(runtimeKnownSecrets(config, { GROQ_API_KEY: "gsk1234567890", PATH: "/bin" })).toEqual([
+      { label: "GROQ_API_KEY", value: "gsk1234567890" },
+      { label: "or-key", value: "Zq9xVv81LmNbTt42" },
+      { label: "or-header", value: "Bearer Hh7Gg6Ff5Ee4" },
+      { label: "or-header", value: "Hh7Gg6Ff5Ee4" },
+      { label: "local-models-key", value: "Ll3Mm4Nn5Oo6" },
+      { label: "webhook-deploy-secret", value: "Ww1Xx2Yy3Zz4" },
+      { label: "mcp-gh-GITHUB_TOKEN", value: "Gg1Hh2Ii3Jj4" },
+      { label: "mcp-remote-header", value: "Rr1Ss2Tt3Uu4" },
+    ]);
   });
 });

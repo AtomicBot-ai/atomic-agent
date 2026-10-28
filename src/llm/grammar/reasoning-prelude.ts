@@ -1,11 +1,12 @@
 /**
- * Safe ceiling for a `{0,N}` quantifier against `llama.cpp`.
+ * The largest bound one GBNF repetition may carry against `llama.cpp`.
  *
  * `llama-grammar.cpp` defines `MAX_REPETITION_THRESHOLD = 2000`. Builds
  * before September 2025 reject exactly 2,000, and current master silently
- * treats anything above 2,000 as unbounded. 1,999 parses everywhere and
- * keeps a real bound. The pre-v78 default budget (1,500 tokens × 4 =
- * 6,000 chars) exceeded it; the default is now `0`, no bound. See: https://github.com/AtomicBot-ai/atomic-agent/issues/600.
+ * treats anything above 2,000 as unbounded (#600). 1,999 parses everywhere
+ * and keeps a real bound. The limit is per quantifier, not per grammar:
+ * a longer bound is written as a chain of quantifiers that each stay at
+ * or under it (`boundedBodyRules`).
  */
 export const LLAMA_SERVER_GBNF_MAX_REPETITION = 1999;
 
@@ -14,23 +15,31 @@ export const LLAMA_SERVER_GBNF_MAX_REPETITION = 1999;
  * that admit a think block ahead of the tool-call array, and the two
  * per-request variants a step swaps in (F49).
  *
- * The base grammar carries the BOUNDED prelude: `think-body ::=`
- * `think-char{0,N}` with `N = localModels.reasoningBudgetTokens × 4`. Past
- * N matches the sampler admits only the close sentinel, so the model is
- * forced to close the block and emit the call. llama.cpp expands `{0,N}`
- * into N nested optional rules server-side — the string sent stays
- * small; the expansion is linear in N. The unbounded form (`budgetChars
- * === 0`) is the pre-F49 text, kept byte-identical.
+ * The base grammar carries the BOUNDED prelude: the think body admits
+ * `0..N` units with `N = localModels.reasoningBudgetTokens × 4`. Past N
+ * the sampler admits only the close sentinel, so the model is forced to
+ * close the block and emit the call. For `N ≤ 1,999` the body is the one
+ * line `think-body ::= think-char{0,N}`; past it the body is a chain of
+ * rules whose every quantifier stays at or under
+ * `LLAMA_SERVER_GBNF_MAX_REPETITION` (`boundedBodyRules`). llama.cpp
+ * expands each quantifier server-side — the string sent stays small; the
+ * expansion is linear in N. The unbounded form (`budgetChars === 0`) is
+ * the pre-F49 text, kept byte-identical.
  *
- * `budgetChars` is clamped to `LLAMA_SERVER_GBNF_MAX_REPETITION` (1,999,
- * one under `MAX_REPETITION_THRESHOLD`) so the GBNF parser never rejects
- * the grammar (#600). The clamp is silent here: this module builds
- * strings and owns no logger. The runtime logs the effective bound once
- * at boot for a model that thinks (`logReasoningBudgetCap`).
+ * Before ATO-607 the bound was clamped to 1,999 here, so any budget past
+ * 499 tokens (the old 1,500 default among them) cut thinking at about
+ * 2,000 characters. The chain removes that clamp: the configured budget
+ * is the bound. The config range (`[64, 32768]` tokens) stays the
+ * ceiling: at most 66 body rules.
  */
 
-/** `think-body ::= think-char{0,N}` — the line the bounded base grammar carries. */
-const BOUNDED_BODY_RE = /^([a-z]+)-body ::= ([a-z]+)-char\{0,\d+\}$/m;
+/**
+ * The head line of a bounded body: `think-body ::= think-char{0,N}`,
+ * or, past the repeat limit, `think-body ::= think-char{0,1998} |
+ * think-char{1999} think-body-2`.
+ */
+const BOUNDED_BODY_RE =
+  /^([a-z]+)-body ::= ([a-z]+)-char\{0,\d+\}(?: \| [a-z]+-char\{\d+\} [a-z]+-body-\d+)?$/m;
 
 /** `root ::= think-prelude tool-call-array` — the root of a reasoning profile's grammar. */
 const PRELUDE_ROOT_RE = /^root ::= [a-z-]+-prelude tool-call-array$/m;
@@ -51,12 +60,6 @@ export function buildReasoningPreludeRules(
   const preludeRule = `${ruleStem}-prelude`;
   const bodyRule = `${ruleStem}-body`;
   const bounded = budgetChars > 0;
-  // Above MAX_REPETITION_THRESHOLD (2,000) older llama-server builds
-  // reject the grammar (HTTP 400) and current master treats it as
-  // unbounded. Clamp to 1,999.
-  const clampedBudgetChars = bounded
-    ? Math.min(budgetChars, LLAMA_SERVER_GBNF_MAX_REPETITION)
-    : 0;
   // Bounded: one character per repetition (a `<`-led alternative still
   // spans its whole prefix), so `{0,N}` is a bound in characters.
   // Unbounded: today's greedy `[^<]+` fragment, byte for byte.
@@ -83,15 +86,59 @@ export function buildReasoningPreludeRules(
   // bound the failure mode.
   return [
     `${preludeRule} ::= ${openLiteral}${bodyRule} ${quoteGbnf(sentinel)} prelude-trail-ws`,
-    `${bodyRule} ::= ${bounded ? `${unitRule}{0,${clampedBudgetChars}}` : `${unitRule}*`}`,
+    ...(bounded
+      ? boundedBodyRules(bodyRule, unitRule, Math.floor(budgetChars))
+      : [`${bodyRule} ::= ${unitRule}*`]),
     `${unitRule} ::= ${fragments.join(" | ")}`,
     `prelude-trail-ws ::= ( [ \\t\\n\\r] ){0,8}`,
   ].join("\n");
 }
 
 /**
- * The grammar with its reasoning bound lifted: `think-char{0,N}` becomes
- * `think-char*`, every other byte identical. For the forced final step
+ * `bodyRule` admitting exactly `0..chars` repetitions of `unitRule`,
+ * with no single quantifier above `LLAMA_SERVER_GBNF_MAX_REPETITION`
+ * (`C`). Up to `C` it is one rule, `body ::= unit{0,chars}`. Past it:
+ *
+ *     body   ::= unit{0,C-1} | unit{C} body-2
+ *     body-2 ::= unit{0,C-1} | unit{C} body-3
+ *     ...
+ *     body-k ::= unit{0,r}                      (r = what is left, ≤ C)
+ *
+ * By induction from the last rule: if `body-(j+1)` admits `0..M`, then
+ * `body-j` admits `0..C-1` from its first alternative and `C..C+M` from
+ * its second, i.e. exactly `0..C+M`; so `body` admits `0..chars`. The
+ * two alternatives split on the count (fewer than `C`, or at least `C`),
+ * so a body of a given length has one parse and the sampler keeps a
+ * constant number of live stacks, unlike the tempting
+ * `( unit{0,C} ){0,k}`, which admits a length in many ways. (The single
+ * parse and constant stack count are argued here, not tested: the test
+ * matcher tracks end positions only, and no test drives llama.cpp's
+ * sampler.) The head
+ * line keeps its name, so the root and `withUnboundedReasoningPrelude`
+ * still find it.
+ */
+function boundedBodyRules(bodyRule: string, unitRule: string, chars: number): string[] {
+  const limit = LLAMA_SERVER_GBNF_MAX_REPETITION;
+  const rules: string[] = [];
+  let name = bodyRule;
+  let remaining = chars;
+  let link = 2;
+  while (remaining > limit) {
+    const next = `${bodyRule}-${link}`;
+    rules.push(`${name} ::= ${unitRule}{0,${limit - 1}} | ${unitRule}{${limit}} ${next}`);
+    name = next;
+    remaining -= limit;
+    link += 1;
+  }
+  rules.push(`${name} ::= ${unitRule}{0,${remaining}}`);
+  return rules;
+}
+
+/**
+ * The grammar with its reasoning bound lifted: the body's head line
+ * becomes `think-body ::= think-char*`, every other byte identical (the
+ * chained `think-body-2 ...` rules of a long bound stay defined but
+ * unreferenced, harmless in GBNF). For the forced final step
  * (`reply` / `finish`), which is never cut mid-thought. A grammar
  * without a bounded body (plain profile, budget 0) is returned as is —
  * the same string, so the per-request cache keys on it unchanged.

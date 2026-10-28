@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setSkillDisabled, setProjectSkillsEnabled } from "../config/skill-policy-commands.js";
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
+import { projectTrustHint, readProjectTrust, skillTrust } from "../skills/project-trust.js";
+import { inspectProjectTrust, setProjectTrust, type ProjectTrustStatus } from "../runtime/project-trust.js";
 import {
   ensureUserConfigFileSync,
   getConfig,
@@ -9,11 +11,7 @@ import {
   writeUserConfigFileSync,
   type UserConfigFile,
 } from "../config/index.js";
-import {
-  installSkill,
-  SkillInstallError,
-  uninstallSkill,
-} from "../skills/skill-installer.js";
+import { uninstallSkill } from "../skills/skill-installer.js";
 import { loadSkills } from "../skills/skill-loader.js";
 import {
   browseHub,
@@ -28,27 +26,37 @@ import {
 import {
   browseClawHub,
   ClawHubClient,
+  installLocalSkill,
   installSkillRouted,
   listStarterSkillNames,
   looksLikeClawHubIdentifier,
   searchClawHub,
+  SkillHubInstallError,
   type HubSkillEntry,
+  type ScanGateOptions,
+  type SkillScanResult,
 } from "../skills/index.js";
+import {
+  createInstallConfirm,
+  formatScanFindings,
+} from "./skill-install-confirm.js";
 
 const HELP =
   [
     "atomic-agent skill — manage installed skills",
     "",
     "Subcommands:",
-    "  install <path|owner/repo[/path]|@owner/slug> [--force] [--acknowledge-risk]",
-    "                             Install a skill from a local directory, the GitHub skill hub, or ClawHub (@owner/slug)",
+    "  install <path|owner/repo[/path]|@owner/slug> [--force] [--yes] [--acknowledge-risk]",
+    "                             Install a skill from a local directory, the GitHub skill hub, or ClawHub (@owner/slug).",
+    "                             Every install is security-scanned: caution asks first (--yes skips the question;",
+    "                             without a terminal it is required), dangerous needs --acknowledge-risk",
     "  uninstall <name>           Remove an installed global skill",
     "  list                       List installed skills (project + global) with enabled/disabled state",
     "  show <name>                Print SKILL.md for an installed skill",
     "  enable <name>              Re-enable a previously disabled skill (mutates config.json)",
     "  disable <name>             Hide a skill from the registry without removing files (mutates config.json)",
     "  enable|disable <name> --workspace <dir>  Change cloud workspace policy only",
-    "  project on|off --workspace <dir>        Toggle all project skills in cloud",
+    "  project on|off --workspace <dir>        Trust (on) or revoke (off) the folder's project skills and AGENTS.md/CLAUDE.md files",
     "  list|show <name> --workspace <dir>      Inspect effective cloud workspace skills",
     "  browse [--source owner/repo]   Browse installable skills (ClawHub + configured GitHub taps)",
     "  search <query>             Search ClawHub + the configured GitHub taps",
@@ -110,8 +118,18 @@ function handleWorkspaceSkill(args: string[], workspace: string): number {
   }
   if (command === "project") {
     if ((value !== "on" && value !== "off") || args.length !== 2) throw new Error("Expected skill project on|off --workspace <dir>");
-    setProjectSkillsEnabled(workspace, value === "on");
-    process.stdout.write(`project skills ${value}: ${resolve(workspace)}\n`);
+    // Off declines what is there while it is still listed, then switches the folder off;
+    // on switches it back on first so its skills are counted when they are trusted.
+    let trust: ProjectTrustStatus;
+    if (value === "off") {
+      trust = setProjectTrust(getConfig(), workspace, false);
+      setProjectSkillsEnabled(workspace, false);
+    } else {
+      setProjectSkillsEnabled(workspace, true);
+      trust = setProjectTrust(getConfig(), workspace, true);
+    }
+    const items = value === "on" ? trust.trusted : trust.declined;
+    process.stdout.write(`project skills ${value}: ${resolve(workspace)} (${value === "on" ? "trusted" : "declined"}: ${items.skills.length} skills, ${items.instructions.length} instruction files)\n`);
     return 0;
   }
   if (command !== "list" && command !== "show") throw new Error("--workspace supports list, show, enable, disable and project");
@@ -125,30 +143,39 @@ function handleWorkspaceSkill(args: string[], workspace: string): number {
   } else {
     process.stdout.write(`workspace: ${view.workingDir}; project skills: ${view.projectSkillsEnabled ? "on" : "off"}\n`);
     for (const entry of view.entries) process.stdout.write(`${entry.record.manifest.name}\t[${entry.record.source}]\t${entry.disabledReasons.join(", ") || "enabled"}\t${entry.record.manifestPath}\n`);
+    const trust = inspectProjectTrust(config, workspace);
+    if (trust.trusted.instructions.length + trust.pending.instructions.length + trust.declined.instructions.length)
+      process.stdout.write(`instructions: ${trust.trusted.instructions.length} trusted, ${trust.pending.instructions.length} not trusted yet, ${trust.declined.instructions.length} declined\n`);
+    if (trust.question) process.stdout.write(`untrusted: ${trust.question.replace(/ Trust (it|them)\?$/, "")} Run ${trust.hint} to trust.\n`);
     for (const message of view.diagnostics) process.stderr.write(`WARN: ${message}\n`);
   }
   return 0;
 }
 
 async function handleInstall(args: string[]): Promise<number> {
-  const source = args.find((a) => !a.startsWith("--"));
+  const source = args.find((a) => !a.startsWith("-"));
   if (!source) {
     process.stderr.write(
-      "usage: atomic-agent skill install <path|owner/repo[/path]> [--force] [--acknowledge-risk]\n",
+      "usage: atomic-agent skill install <path|owner/repo[/path]> [--force] [--yes] [--acknowledge-risk]\n",
     );
     return 2;
   }
   const force = args.includes("--force");
-  const acknowledgeRisk = args.includes("--acknowledge-risk");
+  const gate: ScanGateOptions = {
+    acknowledgeRisk: args.includes("--acknowledge-risk"),
+    confirmCaution: args.includes("--yes") || args.includes("-y"),
+    confirm: createInstallConfirm(),
+  };
   const config = getConfig();
   // A ClawHub identifier (`@owner/slug`) routes through the registry
   // installer; a GitHub identifier (`owner/repo[/path]`) routes through
-  // the tap installer; anything else is a local directory path.
+  // the tap installer; anything else is a local directory path. All
+  // three run the same security scan and gate.
   if (looksLikeClawHubIdentifier(source)) {
     return await handleClawHubInstall(
       source,
       force,
-      acknowledgeRisk,
+      gate,
       config.paths.globalSkillsDir,
       config.skills.clawhub.apiBase,
     );
@@ -157,33 +184,70 @@ async function handleInstall(args: string[]): Promise<number> {
     return await handleHubInstall(
       source,
       force,
-      acknowledgeRisk,
+      gate,
       config.paths.globalSkillsDir,
     );
   }
   try {
-    const result = await installSkill({
+    const result = await installLocalSkill({
       sourceDir: resolve(source),
       targetRoot: config.paths.globalSkillsDir,
       force,
+      ...gate,
     });
     process.stdout.write(
-      `installed ${result.manifest.name} (v${result.manifest.version}) at ${result.installedAt}\n`,
+      `installed ${result.manifest.name} (v${result.manifest.version}) at ${result.installedAt} — ${summarizeScan(result.scan)}\n`,
     );
     return 0;
   } catch (err) {
-    if (err instanceof SkillInstallError && err.code === "already_installed") {
-      process.stderr.write(`${err.message}\n`);
+    return reportInstallError(err, gate, source);
+  }
+}
+
+/**
+ * Print an install failure. When the scan gate refused, the findings come
+ * first and a one-line summary is the LAST stderr line: the desktop app
+ * runs this command without a TTY and reads only that last line (it marks
+ * a skill `blocked` on "flagged dangerous by the security scan").
+ */
+function reportInstallError(
+  err: unknown,
+  gate: ScanGateOptions,
+  identifier: string,
+): number {
+  if (err instanceof SkillHubInstallError && err.scan) {
+    if (err.code === "needs_confirmation" && gate.confirm) {
+      // The findings were shown with the question; the operator said no.
+      process.stderr.write("install cancelled\n");
       return 1;
     }
-    throw err;
+    process.stderr.write(formatScanFindings(err.scan));
+    process.stderr.write(
+      `${scanRefusalLine(err.code, err.scan, identifier)}\n`,
+    );
+    return 1;
   }
+  const message = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`${message}\n`);
+  return 1;
+}
+
+function scanRefusalLine(
+  code: SkillHubInstallError["code"],
+  scan: SkillScanResult,
+  identifier: string,
+): string {
+  if (code === "needs_confirmation") {
+    const n = scan.findings.length;
+    return `install needs confirmation: ${identifier} was flagged caution by the security scan (${n} ${n === 1 ? "finding" : "findings"}); re-run with --yes to install anyway`;
+  }
+  return `install blocked: ${identifier} flagged dangerous by the security scan (${summarizeScan(scan)}; use --acknowledge-risk to override)`;
 }
 
 async function handleHubInstall(
   identifier: string,
   force: boolean,
-  acknowledgeRisk: boolean,
+  gate: ScanGateOptions,
   targetRoot: string,
 ): Promise<number> {
   try {
@@ -191,27 +255,21 @@ async function handleHubInstall(
       identifier,
       targetRoot,
       force,
-      acknowledgeRisk,
+      ...gate,
     });
     process.stdout.write(
       `installed ${result.manifest.name} (v${result.manifest.version}) from ${identifier} — ${summarizeScan(result.scan)}\n`,
     );
     return 0;
   } catch (err) {
-    if (err instanceof SkillInstallError && err.code === "already_installed") {
-      process.stderr.write(`${err.message}\n`);
-      return 1;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${message}\n`);
-    return 1;
+    return reportInstallError(err, gate, identifier);
   }
 }
 
 async function handleClawHubInstall(
   identifier: string,
   force: boolean,
-  acknowledgeRisk: boolean,
+  gate: ScanGateOptions,
   targetRoot: string,
   apiBase: string,
 ): Promise<number> {
@@ -222,20 +280,14 @@ async function handleClawHubInstall(
       clawHubClient: new ClawHubClient({ apiBase }),
       targetRoot,
       force,
-      acknowledgeRisk,
+      ...gate,
     });
     process.stdout.write(
       `installed ${result.manifest.name} (v${result.manifest.version}) from ${identifier} — ${summarizeScan(result.scan)}\n`,
     );
     return 0;
   } catch (err) {
-    if (err instanceof SkillInstallError && err.code === "already_installed") {
-      process.stderr.write(`${err.message}\n`);
-      return 1;
-    }
-    const message = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`${message}\n`);
-    return 1;
+    return reportInstallError(err, gate, identifier);
   }
 }
 
@@ -274,11 +326,16 @@ async function handleList(): Promise<number> {
     projectDir,
   });
   const disabled = new Set(config.skills.disabled);
+  // Project skills load only once this folder is trusted (ATO-298); show why one is off.
+  const trust = readProjectTrust(config.paths.userConfigFile, config.skills.projectTrust, process.cwd());
+  let untrusted = 0;
   if (skills.length === 0) {
     process.stdout.write("(no skills installed)\n");
   } else {
     for (const s of skills) {
-      const state = disabled.has(s.manifest.name) ? "disabled" : "enabled";
+      const projectTrust = s.source === "project" ? skillTrust(trust, s.manifest.name) : "trusted";
+      if (projectTrust === "pending") untrusted++;
+      const state = disabled.has(s.manifest.name) ? "disabled" : projectTrust === "pending" ? "untrusted" : projectTrust === "declined" ? "declined" : "enabled";
       process.stdout.write(
         `${s.manifest.name}\tv${s.manifest.version}\t[${s.source}]\t${state}\t${s.manifest.description}\n`,
       );
@@ -291,6 +348,9 @@ async function handleList(): Promise<number> {
   for (const name of disabled) {
     if (installedNames.has(name)) continue;
     process.stdout.write(`${name}\t-\t[missing]\tdisabled\t(not installed)\n`);
+  }
+  if (untrusted > 0) {
+    process.stdout.write(`untrusted: ${untrusted} project skill${untrusted === 1 ? "" : "s"} in this folder ${untrusted === 1 ? "is" : "are"} not loaded until the folder is trusted: run ${projectTrustHint(process.cwd())}\n`);
   }
   for (const e of errors) {
     process.stderr.write(`WARN: ${e.path}: ${e.error}\n`);

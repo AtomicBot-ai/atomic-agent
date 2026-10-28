@@ -213,6 +213,42 @@ describe("worker read scope", () => {
     expect(innerCalls).toBe(2);
   });
 
+  it("refuses an aliased os.fs.move whose source is outside, as it would the canonical call (ATO-899)", async () => {
+    const registry = new ToolRegistry();
+    let innerCalls = 0;
+    registry.register({
+      name: "os.fs.move",
+      description: "move",
+      readonly: false,
+      run: async () => {
+        innerCalls += 1;
+        return compressToolResult({ tool: "os.fs.move", status: "ok", output: "" });
+      },
+    });
+    confineWorkerReads(registry, { grantedDirs: () => [] });
+    const ctx: ToolContext = {
+      sessionId: WORKER,
+      workingDir: work,
+      stepIndex: 0,
+      signal: new AbortController().signal,
+    };
+    const stolen = "../../01-cloud-flash/work/js/main.js";
+    for (const args of [
+      { paths: [stolen], destination: "js/" },
+      { paths: ["js/main.js", stolen], destination: "lib" },
+      { src: stolen, dest: "js/theirs.js" },
+    ]) {
+      const refused = await registry.invoke("os.fs.move", args, ctx);
+      expect(refused.status, JSON.stringify(args)).toBe("error");
+      expect(refused.summary).toContain(join(sibling, "main.js"));
+    }
+    expect(innerCalls).toBe(0);
+    // The same alias with a source inside runs.
+    const ok = await registry.invoke("os.fs.move", { src: "js/main.js", dest: "js/m.js" }, ctx);
+    expect(ok.status).toBe("ok");
+    expect(innerCalls).toBe(1);
+  });
+
   it("names only real tools", () => {
     const known = new Set(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));
     for (const name of WORKER_READ_TOOL_TARGETS.keys()) {
