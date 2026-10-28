@@ -3,7 +3,7 @@ import { findUnknownArguments, suggestKey } from "./unknown-argument-guard.js";
 
 const NOT_RUN = "— the call was not run; re-emit it with the right keys";
 /** `os.shell.run`'s schema keys in schema order: the command form, then the job forms (F47). */
-const SHELL_KEYS = ["cmd", "args", "cwd", "timeoutMs", "keep", "wait", "kill", "jobs"];
+const SHELL_KEYS = ["cmd", "args", "cwd", "timeoutMs", "keep", "background", "wait", "kill", "jobs"];
 
 describe("findUnknownArguments", () => {
   it("refuses the live Gemma call: a flag used as a key, the script under it", () => {

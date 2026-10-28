@@ -105,6 +105,10 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * that exist on disk are appended.
    */
   probeLoginShell?: boolean;
+  /** Test seam: the prompt watch's poll and quiet intervals. */
+  promptWatch?: { pollMs?: number; quietMs?: number };
+  /** Test seam: how long a `background: true` command is watched. */
+  backgroundSettleMs?: number;
 }
 
 /**
@@ -117,6 +121,8 @@ export const SHELL_BACKGROUND_SETTLE_MS = 3_000;
 export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   const defaultTimeoutMs = options.defaultTimeoutMs ?? 0;
   const jobs = options.jobs ?? new ShellJobRegistry();
+  const backgroundSettleMs =
+    options.backgroundSettleMs ?? SHELL_BACKGROUND_SETTLE_MS;
   /**
    * The command form: guard, approval, run. `recovered` is set when the
    * call's `cmd` was read back from its `args` (#901).
@@ -329,11 +335,11 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // an early failure, then handed back as a kept job. It went through
     // the same guard and approval above; only the wait differs.
     if (rawArgs.background === true) {
-      const early = await job.waitFor(SHELL_BACKGROUND_SETTLE_MS, ctx.signal);
+      const early = await job.waitFor(backgroundSettleMs, ctx.signal);
       if (early === "elapsed") {
         const { record, evicted } = jobs.register(ctx.sessionId, job, facts, true);
         return renderShellDetached(record, {
-          waitedMs: SHELL_BACKGROUND_SETTLE_MS,
+          waitedMs: backgroundSettleMs,
           again: false,
           defaultTimeoutMs,
           evicted,
@@ -354,6 +360,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       job,
       timeout.timeoutMs,
       ctx.signal,
+      options.promptWatch,
     );
     if (prompt !== null && prompt.kind === "sign_in") {
       // A sign-in completes in the user's browser while the command
