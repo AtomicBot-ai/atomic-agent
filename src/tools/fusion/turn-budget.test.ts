@@ -214,3 +214,28 @@ describe("turn cap config (ATO-947)", () => {
     ).toThrow(/turnBudgetUsd/);
   });
 });
+
+describe("orchestrator spend on turns outside runTurn (ATO-947)", () => {
+  it("counts the planner's spend as a delta from the meter's reading at turn start", async () => {
+    const { TurnUsageMeter } = await import("../../analytics/turn-usage-meter.js");
+    const meter = new TurnUsageMeter();
+    const budget = new FusionTurnBudget();
+    const pricing = { input: 1_000_000, output: 0 } as never;
+    const spend = (usd: number) =>
+      meter.record({
+        sessionId: "s",
+        usage: { promptTokens: usd, completionTokens: 0, totalTokens: usd },
+        model: { pricing } as never,
+      });
+    // Turn 1 on the sidecar: no runTurn bucket, so the turn start opens one.
+    meter.ensureOpen("s");
+    budget.begin("s", meter.peekCostUsd("s") ?? 0);
+    spend(3);
+    expect(budget.check("s", { usd: 2 }, meter.peekCostUsd("s"))?.kind).toBe("usd");
+    // Turn 2: the bucket is still open with $3 in it; only new spend counts.
+    meter.ensureOpen("s");
+    budget.begin("s", meter.peekCostUsd("s") ?? 0);
+    spend(1);
+    expect(budget.check("s", { usd: 2 }, meter.peekCostUsd("s"))).toBeUndefined();
+  });
+});

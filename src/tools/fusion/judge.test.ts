@@ -236,6 +236,31 @@ describe("a node closes only on a green list (ATO-944)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("keeps the status of a retry that ended without being judged (stopped by the person)", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-c-"));
+    let runs = 0;
+    const d = deps(dir, async () => ({
+      content: JSON.stringify({ items: [{ id: "a2", pass: false, why: "no score" }] }),
+    }));
+    d.runTurn = async () => {
+      runs += 1;
+      writeFileSync(join(dir, "a.txt"), `attempt ${runs}`);
+      return {
+        session: createEmptySessionState({ id: "s-w", workingDir: dir }),
+        reason: runs === 1 ? "reply" : "cancelled",
+        stepCount: 1,
+      } as RunTurnResult;
+    };
+    const result = await buildFusionDelegateTool(d).run(
+      { tasks: TASK },
+      { workingDir: dir, sessionId: "s-p", stepIndex: 0, signal: new AbortController().signal },
+    );
+    const row = (result.details.tasks as Array<{ status: string; notes?: string[] }>)[0]!;
+    expect(row.status).toBe("cancelled");
+    expect(row.notes?.join(" ")).toMatch(/the retry ended cancelled and was not judged/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("changes nothing when the judge is off", async () => {
     const dir = mkdtempSync(join(tmpdir(), "judge-o-"));
     let judged = 0;
