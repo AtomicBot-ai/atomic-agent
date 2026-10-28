@@ -55,6 +55,12 @@ test("checklists, nested items and a loose numbered list that keeps counting", (
   assert.match(h, /<ol class="mdlist" start="3"><li>c<\/li><li>d<\/li><\/ol>/);
 });
 
+test("CRLF replies and tab-indented nesting render as lists", () => {
+  assert.equal(md("- a\r\n- b"), '<ul class="mdlist"><li>a</li><li>b</li></ul>');
+  assert.match(md("> [!NOTE]\r\n> hi"), /mdc-note/);
+  assert.equal(md("- a\n\t- nested\n- b"), '<ul class="mdlist"><li>a<ul class="mdlist"><li>nested</li></ul></li><li>b</li></ul>');
+});
+
 test("numbered items that lead with a bold name are steps", () => {
   assert.match(md("1. **Install** it\n2. **Run** it"), /^<ol class="mdlist mdsteps">/);
   assert.match(md("1. Install it\n2. **Run** it"), /^<ol class="mdlist">/);

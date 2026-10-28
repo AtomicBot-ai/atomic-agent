@@ -33,7 +33,7 @@ const MDR_EMOJI_CALLOUT = {'⚠️': 'warning', '⚠': 'warning', '❗': 'import
 const MDR_PROS = /^(?:#{1,6}\s+)?(?:\*\*)?\s*(?:✅\s*)?(pros|advantages|benefits|strengths|плюсы|преимущества|достоинства)\s*:?\s*(?:\*\*)?\s*:?$/i;
 const MDR_CONS = /^(?:#{1,6}\s+)?(?:\*\*)?\s*(?:❌\s*)?(cons|disadvantages|drawbacks|weaknesses|минусы|недостатки)\s*:?\s*(?:\*\*)?\s*:?$/i;
 const MDR_TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
-const MDR_ITEM = /^( *)([-*+]|\d{1,9}[.)])\s+(.*)$/;
+const MDR_ITEM = /^([ \t]*)([-*+]|\d{1,9}[.)])\s+(.*)$/;
 const MDR_URL_LINE = /^(?:https?:\/\/|www\.)[^\s<>"']+$/;
 const MDR_PATH_LINE = /^(?:~\/|\/|[A-Za-z]:[\\/])[^\s]*[^\s\/\\]\.[A-Za-z0-9]{1,10}$/;
 
@@ -189,7 +189,7 @@ function mdrListEnd(lines, at) {
       if (/\d/.test(item[2]) !== ordered) break;   // a bullet list after a numbered one is a new list
       end = i; continue;
     }
-    if (item || (l.trim() && /^\s{2,}/.test(l))) { end = i; continue; }   // nested, or a continuation line
+    if (item || (l.trim() && /^(?:\t| {2,})/.test(l))) { end = i; continue; }   // nested, or a continuation line
     // One blank line between two items of the same list keeps it one list (and its numbering).
     if (!l.trim() && i + 1 < lines.length) {
       const next = MDR_ITEM.exec(lines[i + 1]);
@@ -428,7 +428,8 @@ function mdrCompareAt(lines, at, held, links, depth) {
 /** renderMarkdown's body: escaped text in, {html, held} out (see the header). */
 function mdRender(escaped) {
   const held = [];
-  const {t, links} = mdrHoldInline(escaped, held);
+  // A CRLF reply reads as LF: every line pattern here ends at `$`, which a trailing \r would defeat.
+  const {t, links} = mdrHoldInline(escaped.replace(/\r\n?/g, '\n'), held);
   return {html: mdrBlocks(t.split('\n'), held, links, 0), held};
 }
 
