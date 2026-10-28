@@ -25,7 +25,7 @@ Owner: src/tools/browser/
   - navigate, tabs new and search (the engine host), before the browser moves;
   - click / type on a page, or in a frame, on a blocked host, and a link or form (click or Enter) whose target is on one;
   - after navigate, tabs new, click, Enter and search, the page the browser landed on: a blocked landing clears the tab to `about:blank` (best effort for navigations that start after the action returns);
-  - `browser.read_aria` and the world snapshot of a blocked page: no page content reaches the model.
+  - `browser.read_aria` and the world snapshot of a blocked page, or of a page that frames one (AI-mode snapshots include iframe content): no page content reaches the model.
 - With a non-empty allow-list, navigate, tabs new, search, and a link or form target outside it ask first (`browser_offsite`, level 3).
 
 ## Screenshots

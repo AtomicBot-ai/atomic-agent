@@ -6,7 +6,7 @@ import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, ScreenshotResult } from "./browser-backend.js";
 import {
   blockedDomainMessage,
-  checkBrowserUrl,
+  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
@@ -51,11 +51,8 @@ function errorResult(output: string, details: Record<string, unknown>) {
 
 /** The first blocked host among the page and its frames, or `null`. */
 function blockedHostIn(urls: readonly string[], policy: BrowserDomainPolicy): string | null {
-  for (const url of urls) {
-    const verdict = checkBrowserUrl(url, policy);
-    if (verdict.kind === "blocked") return verdict.host;
-  }
-  return null;
+  const [page = "", ...frames] = urls;
+  return blockedHostOfPage(page, frames, policy);
 }
 
 /**

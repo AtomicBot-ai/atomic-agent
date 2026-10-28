@@ -17,6 +17,11 @@ export interface AriaSnapshot {
   digest: string;
   /** Set of ref ids referenced in `text`. */
   refs: string[];
+  /**
+   * URL of every frame on the page. The ARIA text includes iframe
+   * content (cross-origin too), so the domain lists check these as well.
+   */
+  frameUrls?: string[];
 }
 
 export interface TabInfo {

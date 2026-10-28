@@ -3,7 +3,7 @@ import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend } from "./browser-backend.js";
 import {
   blockedDomainMessage,
-  checkBrowserUrl,
+  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
@@ -27,13 +27,14 @@ export function buildBrowserReadAriaTool(
       const snapshot = await backend.snapshot(
         { ...(depth !== undefined ? { depth } : {}), ...(ctx.modelMode === "cloud" ? { full: true } : {}) },
       );
-      const verdict = checkBrowserUrl(snapshot.url, policy);
-      if (verdict.kind === "blocked") {
+      // Frames too: the snapshot text includes iframe content.
+      const blocked = blockedHostOfPage(snapshot.url, snapshot.frameUrls, policy);
+      if (blocked !== null) {
         return compressToolResult({
           tool: "browser.read_aria",
           status: "error",
-          output: blockedDomainMessage("browser.read_aria", verdict.host),
-          details: { host: verdict.host, reason: "blocked_domain" },
+          output: blockedDomainMessage("browser.read_aria", blocked),
+          details: { host: blocked, reason: "blocked_domain" },
         });
       }
       // The ARIA tree is deliberately NOT duplicated in the tool_result

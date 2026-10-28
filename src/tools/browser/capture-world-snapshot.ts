@@ -1,6 +1,6 @@
 import type { BrowserBackend } from "./browser-backend.js";
 import {
-  checkBrowserUrl,
+  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
@@ -30,7 +30,7 @@ export async function captureWorldSnapshot(
 ): Promise<CapturedWorldSnapshot | undefined> {
   try {
     const snap = full ? await backend.snapshot({ full: true }) : await backend.snapshot();
-    if (checkBrowserUrl(snap.url, policy).kind === "blocked") return undefined;
+    if (blockedHostOfPage(snap.url, snap.frameUrls, policy) !== null) return undefined;
     return {
       kind: "browser",
       digest: snap.digest,
