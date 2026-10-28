@@ -138,6 +138,8 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-161: an empty key field — a saved key or a variable behind it? Yes or no.
   providerKeyPresent: (entry: { id?: string; kind: string; apiKeyEnvVar?: string; baseUrl?: string }) =>
     ipcRenderer.invoke("cli:providerKeyPresent", entry),
+  // ATO-756: {ok, status: {cli, installed, binPath, signedIn, apiKeyLogin?}} — never a token.
+  subscriptionStatus: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionStatus", cli),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
