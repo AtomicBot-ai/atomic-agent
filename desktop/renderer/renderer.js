@@ -1622,6 +1622,8 @@ const P = {
      beside each. It was the sidebar's panel glyph mirrored, and the owner
      took the inspector button for the sidebar toggle. */
   inspector:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
+  // ATO-1256: the chat's files — two sheets, one over the other.
+  files:'<path d="M5.5 4.5V3.5A1 1 0 0 1 6.5 2.5h4L13 5v6.5a1 1 0 0 1-1 1h-1"/><path d="M3 5.5a1 1 0 0 1 1-1h4l2.5 2.5v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   plus:'<path d="M8 3v10M3 8h10"/>',
   minus:'<path d="M3 8h10"/>',
@@ -1941,6 +1943,7 @@ const PAL = [
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
     ['sidebar','Hide or show the sidebar','','⌘ \\','toggle:sidebar'],
+    ['files','Files in this chat','','⌥ ⌘ F','toggle:files'],
     ['skills','Enable or disable a skill…','','','settings:skills'],
     ['tasks','Create, cancel or run a task…','','','settings:tasks'],
     ['key','Analytics','','','settings:general'],
@@ -2193,6 +2196,8 @@ function render() {
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
   renderToolbar(); renderSidebar(); renderContent();
+  // ATO-1256: the chat's file list follows the transcript (chat-files.js); before the toolbar's next paint reads it.
+  if (typeof chatFilesSync === 'function') chatFilesSync();
   renderInspector(); renderConsole();
   // Backlog 18: the download card measures the composer and the console it
   // keeps clear of, so it is painted once both are in place.
@@ -2242,12 +2247,20 @@ function renderToolbar() {
     + (open ? '' : sidebarToggleHTML() + searchBtnHTML())
     + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
+      /* ATO-1256: this chat's files in the panel beside it (chat-files.js, file-preview.js). */
+      + (S.room === 'chat' ? '<button class="iconbtn' + (filesPanelOpen() ? ' on' : '') + '" data-act="toggle:files"'
+        + ' aria-pressed="' + filesPanelOpen() + '"'
+        + ' title="Files in this chat ' + kbdText('(⌥ ⌘ F)') + '"'
+        + ' aria-label="Files in this chat ' + kbdText('(⌥ ⌘ F)') + '">' + ic('files') + '</button>' : '')
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
         + ' aria-pressed="' + !!S.inspector + '"'
         + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '"'
         + ' aria-label="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '">' + ic('inspector') + '</button>'
     + '</div>';
 }
+
+/** ATO-1256: whether the preview panel (a file, or the chat's files) is open. */
+function filesPanelOpen() { return typeof FP !== 'undefined' && !!FP.open; }
 
 /* ============================================================
    Item 6 — the side menu is two lists.
@@ -5354,7 +5367,7 @@ function shortcutsSheet() {
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
-    ['Toggle sidebar','⌘ \\','Ctrl \\'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    ['Toggle sidebar','⌘ \\','Ctrl \\'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],['Files in this chat','⌥ ⌘ F',''],
     // ATO-544: View menu zoom (menu.ts zoomItems). ATO-900: ⌘ 0 is Actual Size, as in every Mac app and browser.
     ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size','⌘ 0',''],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop (no approval on screen)','⌘ .','Ctrl .'],
@@ -6837,6 +6850,9 @@ function act(a) {
   // derives the class from it, so the toolbar button can read it and glow.
   // ATO-538: below 1000px the button and ⌘ \ open or close the drawer instead
   // (sidebar-nav.js toggleSidebar); S.sidebar keeps the wide window's collapse.
+  // ATO-1256: the Files button and ⌥⌘F open the panel on the chat's files, or close it.
+  if (a === 'toggle:files') { close(); if (S.room !== 'chat') { S.settings = null; S.room = 'chat'; render(); }
+                           if (typeof filePreviewToggle === 'function') filePreviewToggle(); render(); return; }
   if (k === 'toggle')    { close();
                            if (v === 'sidebar') {
                              const next = toggleSidebar({narrow: NARROW.matches, sidebar: S.sidebar, drawer: sidebarDrawerOpen()});
