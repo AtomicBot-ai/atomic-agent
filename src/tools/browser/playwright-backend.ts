@@ -21,6 +21,7 @@ import {
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
 import {
   collectSecretFieldValuesInPage,
+  ONE_TIME_CODE_HINT,
   redactSecretFieldValues,
   SECRET_AUTOCOMPLETE_TOKENS,
 } from "./redact-secret-fields.js";
@@ -106,6 +107,12 @@ export class PlaywrightBackend implements BrowserBackend {
   private readonly ownedPages = new Set<Page>();
   private userProfile = false;
   private openedRemoteDebugging = false;
+  /**
+   * The browser went away after an attach (the user quit or restarted
+   * Chrome, ATO-1260). The next call attaches afresh; in the user's
+   * Chrome it does not open the settings page or wait for the switch.
+   */
+  private lostConnection = false;
 
   constructor(private readonly options: PlaywrightBackendOptions) {}
 
@@ -414,6 +421,7 @@ export class PlaywrightBackend implements BrowserBackend {
       cdpUrl: this.options.cdpUrl ?? null,
       userDataDir: this.options.userChromeDataDir ?? null,
       waitMs: USER_CHROME_CONNECT_TIMEOUT_MS,
+      reconnect: this.lostConnection,
       openRemoteDebuggingPage: () => {
         // Once per backend: a retry after the user closed the page
         // should not keep popping it back up.
@@ -448,6 +456,7 @@ export class PlaywrightBackend implements BrowserBackend {
     }
     this.userProfile = true;
     this.context = context;
+    this.lostConnection = false;
   }
 
   /** Track a tab the agent opened in the user's Chrome, and its pop-ups. */
@@ -508,6 +517,14 @@ export class PlaywrightBackend implements BrowserBackend {
 
   private async requireContext(): Promise<PwBrowserContext> {
     await this.ensureReady();
+    if (this.context && isDisconnected(this.context)) {
+      // Chrome was quit or restarted under us: every call on the old
+      // handle would fail with "context closed". Drop it and attach
+      // again (re-reading `DevToolsActivePort` in the user's Chrome).
+      await this.shutdown();
+      this.lostConnection = true;
+      await this.ensureReady();
+    }
     if (!this.context) {
       throw new Error("browser backend is not initialised");
     }
@@ -523,6 +540,12 @@ export class PlaywrightBackend implements BrowserBackend {
     this.adopt(page);
     return page;
   }
+}
+
+/** The CDP connection behind `context` is gone (the browser quit). */
+function isDisconnected(context: PwBrowserContext): boolean {
+  const browser = context.browser();
+  return browser !== null && typeof browser.isConnected === "function" && !browser.isConnected();
 }
 
 interface ViewportMetrics {
@@ -594,10 +617,10 @@ async function setSecretFieldMask(page: Page, on: boolean): Promise<void> {
 
 /** Secret field values in every frame; a frame that cannot be read gives none. */
 async function collectSecretValues(page: Page): Promise<string[]> {
-  const tokens = [...SECRET_AUTOCOMPLETE_TOKENS];
+  const arg = { tokens: [...SECRET_AUTOCOMPLETE_TOKENS], codeHint: ONE_TIME_CODE_HINT };
   const perFrame = await Promise.all(
     page.frames().map((frame) =>
-      frame.evaluate(collectSecretFieldValuesInPage, tokens).catch(() => [] as string[]),
+      frame.evaluate(collectSecretFieldValuesInPage, arg).catch(() => [] as string[]),
     ),
   );
   return perFrame.flat();

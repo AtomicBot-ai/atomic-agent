@@ -18,6 +18,8 @@ import { resolveUserPath } from "../expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
 import {
+  checkBrowserBypassArgv,
+  checkBrowserBypassLine,
   checkShellCommandGuard,
   execWriteTargets,
   isGogCommand,
@@ -42,6 +44,7 @@ import {
 import { ShellJobRegistry } from "./shell-jobs.js";
 import {
   markRecoveredResult,
+  missingCmdMessage,
   recoverMissingShellCmd,
   type RecoveredShellCmd,
 } from "./recover-missing-cmd.js";
@@ -124,9 +127,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   ): Promise<CompressedToolResult> {
     const cmd = rawArgs.cmd;
     if (typeof cmd !== "string" || cmd.trim().length === 0) {
-      throw new Error(
-        'os.shell.run: `cmd` must be a non-empty string: the program, with its arguments in `args` (e.g. {"cmd":"git","args":["status"]}), or a full command line',
-      );
+      throw new Error(missingCmdMessage(rawArgs));
     }
     const rawArgList = coerceShellArgs(rawArgs.args);
     if (rawArgList === null) {
@@ -180,10 +181,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         : { cmd, rawArgs: execArgs, cwd };
     const gogProbe = guardInput.cmd;
 
-    const guardVerdict = checkShellCommandGuard(
-      guardInput,
-      options.shellPolicy,
-    );
+    // Driving a web browser from the shell (AppleScript, `open -a
+    // Chrome <url>`, DevTools) skips the browser tool's own asks, at any
+    // approval level (ATO-1260). Read from the real line or argv: the
+    // guard's whitespace split loses quotes and heredocs.
+    const guardVerdict =
+      (useShell
+        ? checkBrowserBypassLine(commandLine, cwd)
+        : checkBrowserBypassArgv(cmd, execArgs, cwd)) ??
+      checkShellCommandGuard(guardInput, options.shellPolicy);
     if (guardVerdict.action === "block") {
       return compressToolResult({
         tool: "os.shell.run",
@@ -421,7 +427,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin; a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. " +
+      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Not for controlling web browsers (`osascript` scripts that read or set tabs and URLs, `open -a <browser> <url>`): those are refused; use the browser tools. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin; a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. " +
       describeShellTimeoutDefault(defaultTimeoutMs),
     readonly: false,
     async run(rawArgs, ctx) {
@@ -447,6 +453,18 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         return runShellWait(jobCtx, form.id, rawArgs.timeoutMs, rawArgs.keep === true);
       }
       if (form.kind === "kill") return runShellKill(jobCtx, form.id);
+
+      // `{"cmd": ["git", "status"]}`: an argv in `cmd` is the program and
+      // its arguments (ATO-1259), when `args` does not also say them.
+      if (
+        Array.isArray(rawArgs.cmd) &&
+        rawArgs.cmd.length > 0 &&
+        rawArgs.cmd.every((v) => typeof v === "string") &&
+        (coerceShellArgs(rawArgs.args)?.length ?? 1) === 0
+      ) {
+        const [program, ...rest] = rawArgs.cmd as string[];
+        rawArgs = { ...rawArgs, cmd: program, args: rest };
+      }
 
       // A call that put the whole command in `args` and named no `cmd`
       // is read back from its argv when that is unambiguous (#901); the
