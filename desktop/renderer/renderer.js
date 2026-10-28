@@ -7556,6 +7556,11 @@ document.addEventListener('click', (e) => {
   if (cimg && openImageViewer(cimg.dataset.imgOpen)) return;
   const fchip = t.closest('[data-file]');
   // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
+  /* ATO-1053: a click previews the file beside the chat (file-preview.js); the
+     panel's Open goes through the same opener as before. ⌘/Ctrl-click, or a
+     build without the preview, opens it in its default app straight away. */
+  if (fchip && BR && !(e.metaKey || e.ctrlKey) && typeof filePreviewOpen === 'function'
+      && filePreviewOpen(fchip.dataset.file, {reply: !!fchip.dataset.reply})) return;
   if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
@@ -28365,7 +28370,9 @@ if (typeof window !== 'undefined') {
     const chip = document.querySelector('.attach .filechip');
     if (!chip) return null;
     LAST_OPEN_PATH = null; OPEN_PATH_DRYRUN = true;
-    try { chip.click(); } finally { OPEN_PATH_DRYRUN = false; }
+    // ATO-1053: the click opens the preview; its Open hands the path to the opener.
+    try { chip.click(); const o = document.querySelector('#fpreview .fp-head [data-fp="open"]'); if (o) o.click(); } finally { OPEN_PATH_DRYRUN = false; }
+    if (typeof filePreviewClose === 'function') filePreviewClose();
     return {file: chip.dataset.file, opened: LAST_OPEN_PATH, hasMenu: !!(BR && BR.fileMenu)};
   };
   /** Re-run the real collector over the current log (after a trash card). */

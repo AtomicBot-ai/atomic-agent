@@ -1,0 +1,52 @@
+/* ---------------- ATO-1053: the file preview panel (file-preview.js) ----------------
+   A floating panel like the inspector, between the chat and it. Its width is
+   dragged by the left edge; the chat column narrows and stays usable. */
+#fpreview{position:relative;flex:none;width:440px;min-width:300px;max-width:62%;display:flex;flex-direction:column;min-height:0;
+  margin:0 8px 8px 0;background:var(--lift);border-radius:var(--r-panel);box-shadow:var(--sh-card);overflow:hidden}
+#fpreview[hidden]{display:none}
+#fpreview.fp-dragging{user-select:none}
+#fpreview.fp-dragging iframe{pointer-events:none}   /* a frame under the pointer would swallow the drag */
+.fp-resize{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}
+.fp-resize:hover,#fpreview.fp-dragging .fp-resize{background:var(--brand-wash)}
+
+.fp-head{flex:none;display:flex;align-items:center;gap:4px;min-width:0;padding:8px 8px 8px 12px;border-bottom:1px solid var(--divider)}
+.fp-ic{flex:none;display:inline-flex;color:var(--blue)}
+.fp-ic svg{width:16px;height:16px}
+.fp-title{flex:1;min-width:0;display:flex;flex-direction:column;margin:0 4px}
+.fp-name{font:600 13px/18px var(--font-ui);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-meta{font:400 11px/15px var(--font-ui);color:var(--ink-3);white-space:nowrap}
+.fp-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;gap:4px;height:26px;min-width:26px;padding:0 8px;
+  border:0;border-radius:7px;background:none;color:var(--ink-2);font:500 12px/1 var(--font-ui);cursor:pointer;
+  transition:background var(--t-state) var(--ease)}
+.fp-btn svg{width:14px;height:14px}
+.fp-btn:hover{background:var(--hover);color:var(--ink)}
+.fp-btn:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.fp-btn.fp-primary{background:var(--brand);color:var(--on-strong)}
+.fp-btn.fp-primary:hover{background:var(--brand-press)}
+.fp-x{font-size:13px}
+
+.fp-body{flex:1;min-height:0;overflow:auto;display:flex;flex-direction:column}
+.fp-body:focus{outline:none}
+.fp-msg{padding:24px 16px;font:400 13px/19px var(--font-ui);color:var(--ink-2);text-align:center}
+.fp-note{flex:none;margin:8px 10px 0;padding:6px 10px;border-radius:var(--r-well);background:var(--warn-wash);
+  font:400 12px/17px var(--font-ui);color:var(--ink)}
+.fp-text{margin:0;padding:12px 14px;font:400 12px/1.6 var(--font-mono);color:var(--ink);white-space:pre-wrap;word-break:break-word}
+.fp-prose{padding:10px 14px 16px}
+.fp-prose .mdpre.fp-code{margin:0;width:100%;box-sizing:border-box;border-radius:var(--r-well)}
+.fp-prose .fp-tbl{margin:0}
+.fp-prose .fp-tbl th{position:sticky;top:0;background:var(--lift)}
+.fp-prose .fp-tbl tbody tr:nth-child(even) td{background:color-mix(in srgb, var(--panel-2) 55%, transparent)}
+.fp-prose .fp-tbl td,.fp-prose .fp-tbl th{white-space:nowrap;max-width:28em;overflow:hidden;text-overflow:ellipsis}
+.fp-img{flex:1;display:flex;align-items:center;justify-content:center;padding:12px;background:var(--panel-2)}
+.fp-img img{max-width:100%;max-height:100%;object-fit:contain;border-radius:6px}
+.fp-frame{flex:1;width:100%;min-height:0;border:0;display:block}
+.fp-html{background:#fff}   /* a page's own ground: most pages assume white behind them */
+
+.fp-other{display:flex;flex-direction:column;align-items:center;gap:6px;padding:40px 16px;text-align:center}
+.fp-other-ic{color:var(--blue)}
+.fp-other-ic svg{width:32px;height:32px}
+.fp-other-n{font:600 14px/20px var(--font-ui);color:var(--ink);overflow-wrap:anywhere}
+.fp-other-m{font:400 12px/17px var(--font-ui);color:var(--ink-3)}
+.fp-other-b{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:center}
+
+@media (max-width:900px){#fpreview{max-width:70%}}

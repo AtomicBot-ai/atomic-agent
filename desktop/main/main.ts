@@ -241,6 +241,7 @@ import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverla
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
+import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
@@ -2370,6 +2371,21 @@ function wireIpc(client: AgentClient): void {
   const imageRoots = (): string[] => imageRootsFor(process.platform, homedir(), DESKTOP_STATE_DIR, tmpdir());
   ipcMain.handle("app:imageDataUrl", (_event, p: unknown) =>
     imageDataUrl(p, imageRoots(), homedir(), process.platform));
+  /* ATO-1053: the file preview panel. The window hands a path and gets back
+     what it may show (file-preview.ts): only inside the picture roots plus
+     the agent's working folder, links resolved, the file opened once, text
+     capped, nothing run. Open and Reveal go through the same check, and Open
+     still never runs a file (openWithoutRunning). */
+  const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
+  ipcMain.handle("app:filePreview", (_event, p: unknown) =>
+    filePreview(p, previewRoots(), homedir(), process.platform));
+  ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
+    const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
+    if (!t.ok) return { ok: false, reason: t.reason };
+    if (action === "reveal") { shell.showItemInFolder(t.real); return { ok: true }; }
+    if (action === "open") return openWithoutRunning(t.real);
+    return { ok: false, reason: "unknown" };
+  });
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
