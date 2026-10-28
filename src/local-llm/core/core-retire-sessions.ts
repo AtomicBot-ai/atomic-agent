@@ -2,6 +2,7 @@ import { readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { CoreControlClient } from "./core-client.js";
 import { activeCoreVersion, coreSessionPath, readCoreJson, type CoreSessionRecord } from "./core-state.js";
+import { noteReleaseTimeout, RELEASE_WAIT_MS, waitForProcessRelease } from "../server/process-release.js";
 
 /**
  * An older Core that this build no longer runs can still hold a model
@@ -19,7 +20,7 @@ import { activeCoreVersion, coreSessionPath, readCoreJson, type CoreSessionRecor
  * a refused unload keeps the record. The caller holds the engine operation
  * lock.
  */
-export async function unloadRetiredCoreSessions(dataDir: string, client: CoreControlClient): Promise<void> {
+export async function unloadRetiredCoreSessions(dataDir: string, client: CoreControlClient, releaseWaitMs = RELEASE_WAIT_MS): Promise<void> {
   if (activeCoreVersion(dataDir) === client.version) return;
   let snapshot: Awaited<ReturnType<CoreControlClient["snapshot"]>> | null = null;
   for (const role of ["chat", "embedding"] as const) {
@@ -33,6 +34,12 @@ export async function unloadRetiredCoreSessions(dataDir: string, client: CoreCon
     const result = await client.call<{ success: boolean }>(`/models/${record.provider}/${encodeURIComponent(record.model_id)}/unload`, {}, { timeoutMs: 30_000 })
       .catch(() => ({ success: false }));
     if (!result.success) continue;
+    // Windows: the unload can answer before the old llama-server has freed the
+    // port the load that follows wants (ATO-304). Bounded; a timeout is noted.
+    if (process.platform === "win32") {
+      const released = await waitForProcessRelease(record.pid, record.port, { timeoutMs: releaseWaitMs });
+      noteReleaseTimeout(join(dataDir, role === "embedding" ? "llama-embed.log" : "llama-server.log"), record.pid, record.port, released);
+    }
     const pidPath = join(dataDir, role === "chat" ? "llama-server.pid" : "llama-embed.pid");
     try { if (readFileSync(pidPath, "utf8").trim() === String(record.pid)) unlinkSync(pidPath); } catch { /* no legacy mirror */ }
     try { unlinkSync(path); } catch { /* already gone */ }

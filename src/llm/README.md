@@ -11,6 +11,7 @@ This area owns inference protocols and model profiles. Read [AGENTS.md](AGENTS.m
 - [profile-invariants.ts](profile-invariants.ts)
 - [server-template-policy.ts](server-template-policy.ts)
 - [llama-server-client.ts](llama-server-client.ts)
+- [dry-sampler.ts](dry-sampler.ts): the opt-in DRY anti-repeat fields for `/completion` (`localModels.drySampler`)
 - [slot-manager.ts](slot-manager.ts)
 
 ## Ownership and dependencies
