@@ -14,12 +14,25 @@ import {
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 
+/** http(s) or `about:blank`: all the user's own Chrome may be sent to. */
+export function isUserProfileUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (trimmed.toLowerCase() === "about:blank") return true;
+  try {
+    const protocol = new URL(trimmed).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Domain-list gate for anything that opens a URL (`browser.navigate`,
  * `browser.tabs` new, `browser.search`). A blocked host comes back as a
  * tool error at every approval level; a host outside a non-empty
- * allow-list asks as `browser_offsite`. `null` means "go ahead" (the
- * caller still applies its own `browser_nonweb` gate).
+ * allow-list asks as `browser_offsite`. In the user's own Chrome
+ * (`policy.userProfile`) a non-web URL is refused as a tool error. `null`
+ * means "go ahead" (the caller still applies its own `browser_nonweb` gate).
  */
 export async function gateBrowserUrl(
   dangerous: DangerousToolOptions,
@@ -28,6 +41,14 @@ export async function gateBrowserUrl(
   url: string,
   ctx: Pick<ToolContext, "sessionId" | "signal">,
 ): Promise<CompressedToolResult | null> {
+  if (policy.userProfile && !isUserProfileUrl(url)) {
+    return compressToolResult({
+      tool,
+      status: "error",
+      output: `${tool}: in your own Chrome the agent opens only http(s) pages. chrome://, file:// and other browser pages (saved passwords, settings, history, local files) are off limits.`,
+      details: { url, reason: "user_profile_nonweb" },
+    });
+  }
   const verdict = checkBrowserUrl(url, policy);
   if (verdict.kind === "blocked") {
     return compressToolResult({

@@ -104,6 +104,7 @@ export function createRuntimeToolRegistry(
     const domainPolicy = {
       blockedDomains: config.browser.blockedDomains,
       allowedDomains: config.browser.allowedDomains,
+      userProfile: config.browser.connect === "user-chrome",
     };
     for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy)) {
       toolRegistry.register(tool);

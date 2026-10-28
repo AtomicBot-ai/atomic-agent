@@ -8,6 +8,14 @@
 export interface BrowserDomainPolicy {
   readonly blockedDomains: readonly string[];
   readonly allowedDomains: readonly string[];
+  /**
+   * The browser is the user's own signed-in Chrome
+   * (`browser.connect: "user-chrome"`). Non-web URLs (chrome://, file://,
+   * view-source:…) are refused outright, and a click / Enter that would
+   * be `browser_commit` asks as `browser_secret` instead: every time,
+   * never covered by a session grant.
+   */
+  readonly userProfile?: boolean;
 }
 
 export const EMPTY_DOMAIN_POLICY: BrowserDomainPolicy = {

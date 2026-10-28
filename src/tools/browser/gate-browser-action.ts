@@ -125,7 +125,8 @@ function blockedResult(tool: string, ref: string, host: string): CompressedToolR
  * operator says no; resolves `null` when the action may go ahead.
  *
  * Order: blocked page → blocked / off-site target (`browser_offsite`) →
- * the action's own category (`classify-browser-action.ts`).
+ * the action's own category (`classify-browser-action.ts`); in the
+ * user's own Chrome `browser_commit` asks as `browser_secret`.
  */
 export async function gateBrowserAction(
   backend: BrowserBackend,
@@ -163,13 +164,16 @@ export async function gateBrowserAction(
   }
   const verdict = classifyBrowserAction(request.kind, element);
   if (verdict.category === null) return null;
+  // In the user's own Chrome a submit acts as them, on their signed-in
+  // accounts: it asks every time and is never covered by a session grant.
+  const escalate = policy.userProfile === true && verdict.category === "browser_commit";
   await requireApproval(
     dangerous,
     {
       sessionId: ctx.sessionId,
       tool: request.tool,
-      category: verdict.category,
-      reason: verdict.reason,
+      category: escalate ? "browser_secret" : verdict.category,
+      reason: escalate ? `in your own Chrome: ${verdict.reason}` : verdict.reason,
       preview: buildBrowserActionPreview(
         request,
         element,
