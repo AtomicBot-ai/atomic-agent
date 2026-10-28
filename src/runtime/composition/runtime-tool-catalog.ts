@@ -581,10 +581,13 @@ export function registerRuntimeFusionAndReadScope(input: {
   slotManager: FusionDelegateDeps["slotManager"];
   workingDir: string;
   logger: StructuredLogger;
+  turnBudget?: FusionDelegateDeps["turnBudget"];
+  orchestratorTurnSpendUsd?: FusionDelegateDeps["orchestratorTurnSpendUsd"];
 }): void {
   const { config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest, declaredInputs,
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
-    llama, approvals, dangerous, slotManager, workingDir, logger } = input;
+    llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
+    orchestratorTurnSpendUsd } = input;
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -623,6 +626,12 @@ export function registerRuntimeFusionAndReadScope(input: {
           return null;
         }
       },
+      // The turn's $ / time caps (ATO-947), reset at each fusion turn's
+      // start by the loop; read only when a cap is configured.
+      ...(turnBudget === undefined ? {} : { turnBudget }),
+      ...(orchestratorTurnSpendUsd === undefined
+        ? {}
+        : { orchestratorTurnSpendUsd }),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,

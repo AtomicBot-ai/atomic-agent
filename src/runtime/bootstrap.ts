@@ -47,6 +47,7 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
+import { FusionTurnBudget } from "../tools/fusion/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -355,6 +356,7 @@ export async function createAgentRuntime(
   // behind the same analytics opt-out, since nothing is emitted unless
   // `captureMessageSent` fires.
   const turnUsageMeter = new TurnUsageMeter();
+  const fusionTurnBudget = new FusionTurnBudget();
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
@@ -485,8 +487,12 @@ export async function createAgentRuntime(
     // reads, so the tool the orchestrator is being pushed towards is
     // always in the catalog when the push happens.
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
-    clearFanoutTurnGrant: (sessionId: string) =>
-      approvals.fanoutScopes.clearTurnGrant(sessionId),
+    // A fusion turn starts: its fan-out grant is dropped and its $ /
+    // time caps (ATO-947) start from zero.
+    clearFanoutTurnGrant: (sessionId: string) => {
+      approvals.fanoutScopes.clearTurnGrant(sessionId);
+      fusionTurnBudget.begin(sessionId);
+    },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
     grammar: getGrammar(),
@@ -696,6 +702,8 @@ export async function createAgentRuntime(
     config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest: (id) => turnRequests.get(id),
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
+    turnBudget: fusionTurnBudget,
+    orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
 
   const scheduler = createRuntimeScheduler({

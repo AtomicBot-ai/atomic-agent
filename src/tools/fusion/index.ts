@@ -128,3 +128,8 @@ export {
   FUSION_DELEGATE_TOOL,
 } from "./fusion-delegate.js";
 export type { FusionDelegateDeps } from "./fusion-delegate.js";
+export {
+  FusionTurnBudget,
+  TURN_BUDGET_INSTRUCTION,
+} from "./turn-budget.js";
+export type { TurnBudgetLimits, TurnBudgetStop } from "./turn-budget.js";
