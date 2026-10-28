@@ -17,6 +17,11 @@ export interface AriaSnapshot {
   digest: string;
   /** Set of ref ids referenced in `text`. */
   refs: string[];
+  /**
+   * URL of every frame on the page. The ARIA text includes iframe
+   * content (cross-origin too), so the domain lists check these as well.
+   */
+  frameUrls?: string[];
 }
 
 export interface TabInfo {
@@ -117,6 +122,35 @@ export interface RefDescription {
   pageUrl: string;
 }
 
+export interface ScreenshotInput {
+  /** Shoot only this element (a ref from the latest snapshot). */
+  ref?: string;
+  /** The whole scrollable page instead of the viewport (capped in height). */
+  fullPage?: boolean;
+  /** Long side of the image in pixels; the backend never upscales. */
+  maxSide: number;
+  /** JPEG quality, 1–100. */
+  quality: number;
+}
+
+export interface ScreenshotResult {
+  buffer: Buffer;
+  width: number;
+  height: number;
+  mime: "image/jpeg";
+  /** Page the pixels came from, read right after the capture. */
+  url: string;
+  title: string;
+  /**
+   * URL of every frame on the page, read before and after the capture,
+   * so the caller can refuse a shot that shows a blocked site in an
+   * iframe or that raced a redirect.
+   */
+  frameUrls: string[];
+  /** A full-page shot was cut at the height cap (`screenshot-geometry.ts`). */
+  clipped: boolean;
+}
+
 export interface BrowserBackend {
   /** Lazy init; must be safe to call multiple times. */
   ensureReady(): Promise<void>;
@@ -153,4 +187,10 @@ export interface BrowserBackend {
    * fresh world read. This keeps the "one step, one effect" invariant.
    */
   scroll(input: ScrollInput): Promise<ScrollResult>;
+  /**
+   * JPEG of the active page: its viewport, the full page or one element.
+   * The values of card-number / one-time-code fields are drawn as dots
+   * for the capture (passwords already are). Never written to disk here.
+   */
+  screenshot(input: ScreenshotInput): Promise<ScreenshotResult>;
 }

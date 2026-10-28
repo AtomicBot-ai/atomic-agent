@@ -99,6 +99,9 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 
 - `browser.blockedDomains` (default `[]`): hosts the browser tools refuse at every approval level, subdomains included.
 - `browser.allowedDomains` (default `[]`): when non-empty, opening any other host asks first (`browser_offsite`).
+- `browser.connect` (default `"agent"`): `"agent"` uses the agent's own Chrome profile; `"user-chrome"` (opt-in) works in the user's own signed-in Chrome ([browser tools](../../tools/browser/README.md#your-own-chrome)).
+- `browser.cdpUrl` (default `null`): a DevTools address to attach to instead; loopback only. Env `ATOMIC_AGENT_BROWSER_CDP_URL` wins.
+- `browser.userDataDir` (default `null`): the user's Chrome data folder for `"user-chrome"` when it is not in a standard place.
 
 ## sessions
 

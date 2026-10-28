@@ -7,6 +7,7 @@ import {
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
 import type { ToolContext } from "../tool-registry.js";
+import { requireUserSite } from "./user-profile-sites.js";
 import type { BrowserBackend } from "./browser-backend.js";
 import {
   blockedDomainMessage,
@@ -14,12 +15,26 @@ import {
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 
+/** http(s) or `about:blank`: all the user's own Chrome may be sent to. */
+export function isUserProfileUrl(url: string): boolean {
+  const trimmed = url.trim();
+  if (trimmed.toLowerCase() === "about:blank") return true;
+  try {
+    const protocol = new URL(trimmed).protocol;
+    return protocol === "http:" || protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Domain-list gate for anything that opens a URL (`browser.navigate`,
  * `browser.tabs` new, `browser.search`). A blocked host comes back as a
  * tool error at every approval level; a host outside a non-empty
- * allow-list asks as `browser_offsite`. `null` means "go ahead" (the
- * caller still applies its own `browser_nonweb` gate).
+ * allow-list asks as `browser_offsite`. In the user's own Chrome
+ * (`policy.userProfile`) a non-web URL is refused as a tool error and a
+ * site not yet opened this session asks (`user-profile-sites.ts`). `null`
+ * means "go ahead" (the caller still applies its own `browser_nonweb` gate).
  */
 export async function gateBrowserUrl(
   dangerous: DangerousToolOptions,
@@ -28,6 +43,14 @@ export async function gateBrowserUrl(
   url: string,
   ctx: Pick<ToolContext, "sessionId" | "signal">,
 ): Promise<CompressedToolResult | null> {
+  if (policy.userProfile && !isUserProfileUrl(url)) {
+    return compressToolResult({
+      tool,
+      status: "error",
+      output: `${tool}: in your own Chrome the agent opens only http(s) pages. chrome://, file:// and other browser pages (saved passwords, settings, history, local files) are off limits.`,
+      details: { url, reason: "user_profile_nonweb" },
+    });
+  }
   const verdict = checkBrowserUrl(url, policy);
   if (verdict.kind === "blocked") {
     return compressToolResult({
@@ -36,6 +59,12 @@ export async function gateBrowserUrl(
       output: blockedDomainMessage(tool, verdict.host),
       details: { url, host: verdict.host, reason: "blocked_domain" },
     });
+  }
+  if (policy.userProfile) {
+    // The user's own Chrome: a new site asks once per session (stricter
+    // than `browser_offsite`, which it replaces here).
+    await requireUserSite(dangerous, policy, tool, verdict.host, url, ctx);
+    return null;
   }
   if (verdict.kind === "offsite") {
     await requireApproval(

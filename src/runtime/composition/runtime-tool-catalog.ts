@@ -18,7 +18,7 @@ import { isSecretEnvName } from "../../sandbox/command-env.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
-import { buildBrowserTools } from "../../tools/browser/index.js";
+import { buildBrowserTools, UserSiteApprovals } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
@@ -104,6 +104,8 @@ export function createRuntimeToolRegistry(
     const domainPolicy = {
       blockedDomains: config.browser.blockedDomains,
       allowedDomains: config.browser.allowedDomains,
+      userProfile: config.browser.connect === "user-chrome",
+      ...(config.browser.connect === "user-chrome" ? { userSites: new UserSiteApprovals() } : {}),
     };
     for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy)) {
       toolRegistry.register(tool);
