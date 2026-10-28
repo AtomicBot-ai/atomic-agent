@@ -8,6 +8,7 @@ import { buildBrowserReadAriaTool } from "./read-aria.js";
 import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
+import { buildBrowserScreenshotTool } from "./screenshot.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
@@ -19,6 +20,8 @@ export type {
   ClickInput,
   NavigateInput,
   RefDescription,
+  ScreenshotInput,
+  ScreenshotResult,
   ScrollDirection,
   ScrollInput,
   ScrollResult,
@@ -89,6 +92,13 @@ export { buildBrowserReadAriaTool } from "./read-aria.js";
 export { buildBrowserSearchTool } from "./search.js";
 export { buildBrowserTabsTool } from "./tabs.js";
 export { buildBrowserScrollTool } from "./scroll.js";
+export {
+  BROWSER_SCREENSHOT_TOOL,
+  BROWSER_SHOT_DIR,
+  browserShotDir,
+  buildBrowserScreenshotTool,
+} from "./screenshot.js";
+export type { BrowserScreenshotDeps } from "./screenshot.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -110,5 +120,6 @@ export function buildBrowserTools(
     buildBrowserSearchTool(backend, dangerous, policy),
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
+    buildBrowserScreenshotTool(backend, policy),
   ];
 }

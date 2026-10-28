@@ -5,6 +5,7 @@ import { loadPlaywrightCore } from "../../native/load-playwright-core.js";
 import { summariseAriaSnapshot } from "./aria-compressor.js";
 import { describeElementInPage, toRefDescription } from "./describe-element.js";
 import { searchUrlFor } from "./search-engines.js";
+import { planShot, type CssRect } from "./screenshot-geometry.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
 import {
@@ -23,6 +24,8 @@ import type {
   ClickInput,
   NavigateInput,
   RefDescription,
+  ScreenshotInput,
+  ScreenshotResult,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -231,6 +234,57 @@ export class PlaywrightBackend implements BrowserBackend {
     return result;
   }
 
+  async screenshot(input: ScreenshotInput): Promise<ScreenshotResult> {
+    const page = await this.requireActivePage();
+    const framesBefore = page.frames().map((frame) => frame.url());
+    if (input.ref) {
+      const locator = page.locator(`aria-ref=${input.ref}`).first();
+      await locator.scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => undefined);
+    }
+    const metrics = await page.evaluate(readViewportMetricsInPage);
+    let rect: CssRect;
+    if (input.ref) {
+      const box = await page
+        .locator(`aria-ref=${input.ref}`)
+        .first()
+        .boundingBox({ timeout: 2_000 });
+      if (!box) throw new Error(`ref '${input.ref}' is not visible on the page`);
+      rect = { x: box.x + metrics.pageX, y: box.y + metrics.pageY, width: box.width, height: box.height };
+    } else if (input.fullPage) {
+      rect = { x: 0, y: 0, width: metrics.scrollWidth, height: metrics.scrollHeight };
+    } else {
+      rect = { x: metrics.pageX, y: metrics.pageY, width: metrics.viewportWidth, height: metrics.viewportHeight };
+    }
+    const plan = planShot(rect, metrics.devicePixelRatio, input.maxSide, input.fullPage === true);
+    if (!plan) throw new Error(input.ref ? `ref '${input.ref}' has no visible area` : "the page has no visible area");
+    await setSecretFieldMask(page, true);
+    let data: string;
+    const session = await page.context().newCDPSession(page);
+    try {
+      const shot = (await session.send("Page.captureScreenshot", {
+        format: "jpeg",
+        quality: input.quality,
+        clip: { ...plan.clip, scale: plan.scale },
+        captureBeyondViewport: input.fullPage === true,
+      })) as { data: string };
+      data = shot.data;
+    } finally {
+      await session.detach().catch(() => undefined);
+      await setSecretFieldMask(page, false);
+    }
+    const framesAfter = page.frames().map((frame) => frame.url());
+    return {
+      buffer: Buffer.from(data, "base64"),
+      width: plan.width,
+      height: plan.height,
+      mime: "image/jpeg",
+      url: page.url(),
+      title: await page.title().catch(() => ""),
+      frameUrls: Array.from(new Set([...framesBefore, ...framesAfter])),
+      clipped: plan.clipped,
+    };
+  }
+
   async tabs(input: TabsInput): Promise<{ tabs: TabInfo[] }> {
     const context = await this.requireContext();
     const pages = context.pages();
@@ -344,6 +398,73 @@ export class PlaywrightBackend implements BrowserBackend {
     if (active) return active;
     return context.newPage();
   }
+}
+
+interface ViewportMetrics {
+  devicePixelRatio: number;
+  pageX: number;
+  pageY: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  scrollWidth: number;
+  scrollHeight: number;
+}
+
+/** Runs in the page: scroll offset, viewport and document size in CSS pixels. */
+function readViewportMetricsInPage(): ViewportMetrics {
+  const w = globalThis as unknown as {
+    devicePixelRatio: number;
+    scrollX: number;
+    scrollY: number;
+    innerWidth: number;
+    innerHeight: number;
+    visualViewport?: { pageLeft: number; pageTop: number; width: number; height: number } | null;
+    document: { documentElement: { scrollWidth: number; scrollHeight: number; clientWidth: number; clientHeight: number } };
+  };
+  const vv = w.visualViewport;
+  const root = w.document.documentElement;
+  return {
+    devicePixelRatio: w.devicePixelRatio || 1,
+    pageX: vv ? vv.pageLeft : w.scrollX,
+    pageY: vv ? vv.pageTop : w.scrollY,
+    viewportWidth: vv ? vv.width : root.clientWidth || w.innerWidth,
+    viewportHeight: vv ? vv.height : root.clientHeight || w.innerHeight,
+    scrollWidth: Math.max(root.scrollWidth, root.clientWidth),
+    scrollHeight: Math.max(root.scrollHeight, root.clientHeight),
+  };
+}
+
+const SECRET_MASK_STYLE_ID = "__atomic_agent_secret_mask";
+const SECRET_MASK_CSS =
+  'input[autocomplete~="cc-number"],input[autocomplete~="cc-csc"],input[autocomplete~="one-time-code"],' +
+  'input[autocomplete~="cc-exp"],input[autocomplete~="cc-exp-month"],input[autocomplete~="cc-exp-year"]' +
+  "{-webkit-text-security:disc!important}";
+
+/** Runs in each frame: add or remove the style that draws secret fields as dots. */
+function toggleSecretMaskInPage(arg: { on: boolean; id: string; css: string }): void {
+  const doc = (globalThis as unknown as {
+    document: {
+      getElementById: (id: string) => { remove: () => void } | null;
+      createElement: (tag: string) => { id: string; textContent: string };
+      documentElement: { appendChild: (node: unknown) => void };
+    };
+  }).document;
+  doc.getElementById(arg.id)?.remove();
+  if (!arg.on) return;
+  const style = doc.createElement("style");
+  style.id = arg.id;
+  style.textContent = arg.css;
+  doc.documentElement.appendChild(style);
+}
+
+async function setSecretFieldMask(page: Page, on: boolean): Promise<void> {
+  await Promise.all(
+    page.frames().map((frame) =>
+      frame
+        .evaluate(toggleSecretMaskInPage, { on, id: SECRET_MASK_STYLE_ID, css: SECRET_MASK_CSS })
+        .catch(() => undefined),
+    ),
+  );
 }
 
 async function enumerateTabs(pages: Page[]): Promise<TabInfo[]> {

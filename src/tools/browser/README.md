@@ -28,4 +28,12 @@ Owner: src/tools/browser/
   - `browser.read_aria` and the world snapshot of a blocked page: no page content reaches the model.
 - With a non-empty allow-list, navigate, tabs new, search, and a link or form target outside it ask first (`browser_offsite`, level 3).
 
+## Screenshots
+
+`browser.screenshot { ref?, fullPage? }` (`screenshot.ts`, `screenshot-geometry.ts`, ATO-515): a JPEG of the viewport, the whole page (cut at 8000 CSS px) or one element. Long side at most 1280 px, never upscaled; at most 900 KB, retaken smaller (quality 70 → 50 → 40) and refused if still over. Taken through CDP `Page.captureScreenshot` with a scaled clip, with card-number / one-time-code field values drawn as dots for the capture.
+
+Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working folder, inside the read roots). The model looks at it with `vision.describe`; the desktop and chat channels show it through `reply.attachments`. Read-only, no prompt: it shows only what `read_aria` already reads.
+
+A page on a blocked host is never captured. A capture is discarded, never saved, when the page or any of its frames is on a blocked host by the time the pixels are taken (a racing redirect, a blocked iframe).
+
 Read [tool instructions](../AGENTS.md) and the adjacent tests before changing the classifier or the gate order.
