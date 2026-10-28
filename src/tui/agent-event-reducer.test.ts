@@ -1,6 +1,7 @@
 import { withReportHint } from "./chat/format-agent-error-for-chat.js";
 import { describe, expect, it } from "vitest";
 import { attachFailedAttempts } from "../llm/fallback/failed-attempts.js";
+import { LocalOutOfMemoryError } from "../llm/index.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import { reduceTuiState, type TuiAction } from "./agent-event-reducer.js";
 import { providerRow } from "./composer-switch/composer-switch-fixtures.js";
@@ -2646,5 +2647,46 @@ describe("reduceTuiState composer_draft_replaced", () => {
     ]);
     expect(state.inputValue).toBe("fix login, and the logout");
     expect(state.composerNotice).toContain("not applied");
+  });
+});
+
+describe("reduceTuiState: local model out of memory (ATO-334)", () => {
+  const oom = (phase: "asking" | "restarting" | "restarted" | "stopped", message: string): TuiAction => ({
+    type: "agent_event",
+    event: {
+      type: "local_model_out_of_memory",
+      phase,
+      contextWindow: 262_144,
+      nextContextWindow: 131_072,
+      attempt: 1,
+      maxAttempts: 3,
+      message,
+    },
+  });
+
+  it("posts one chat note, when the model is back", () => {
+    const note = "The model ran out of memory, restarted it with a context window of 131072 tokens.";
+    const next = apply(createInitialTuiState(fakeSession()), [
+      oom("asking", "Restart it with a smaller window (131072 tokens)?"),
+      oom("restarting", "Restarting the model with a context window of 131072 tokens."),
+      oom("restarted", note),
+    ]);
+    const before = createInitialTuiState(fakeSession()).messages.length;
+    expect(next.messages).toHaveLength(before + 1);
+    expect(next.messages.at(-1)?.text).toBe(note);
+    expect(next.feed.at(-1)?.line).toContain("out of memory");
+  });
+
+  it("a stop shows the plain sentence, not the transport wording", () => {
+    const sentence = "The model ran out of memory 3 times in a row, even with a context window of 32768 tokens. Pick a smaller model.";
+    const next = apply(createInitialTuiState(fakeSession()), [{
+      type: "agent_event",
+      event: {
+        type: "loop_failed",
+        error: new LocalOutOfMemoryError(sentence, 32_768, null),
+        category: "transport",
+      },
+    }]);
+    expect(next.messages.at(-1)?.text).toContain(sentence);
   });
 });

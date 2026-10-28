@@ -5,6 +5,15 @@ import { readArgumentAliases, withAliasNote } from "./argument-aliases.js";
 import { coerceToolArgs } from "./coerce-tool-args.js";
 import { resolveUserPath } from "./os/expand-home.js";
 import { markUntrustedResult } from "./untrusted-tool-output.js";
+import {
+  maskErrorSecrets,
+  maskResultSecrets,
+  UNMASKED_TOOLS,
+} from "./tool-output-secrets.js";
+import {
+  knownSecretsFromEnv,
+  type KnownSecret,
+} from "../error-reporting/secret-detector.js";
 import type { ToolRole } from "./tool-roles.js";
 import type { FileReadVersions } from "./os/fs/fs-read-freshness.js";
 import type { ToolOutputSpill } from "./tool-output-spill.js";
@@ -93,14 +102,24 @@ export interface ToolRegistryOptions {
    * Absent ⇒ local results stay as the tool returned them.
    */
   outputSpill?: Pick<ToolOutputSpill, "spill">;
+  /**
+   * Exact secret values to mask in every tool result, read on each call
+   * so a key added mid-session is covered (`tool-output-secrets.ts`,
+   * ATO-1077). Shape-based masking applies regardless. Absent ⇒ the
+   * secret-looking variables of `process.env`, which carries the agent's
+   * `.env`.
+   */
+  knownSecrets?: () => readonly KnownSecret[];
 }
 
 export class ToolRegistry {
   private readonly tools = new Map<string, ToolDefinition>();
   private readonly outputSpill: Pick<ToolOutputSpill, "spill"> | undefined;
+  private readonly knownSecrets: () => readonly KnownSecret[];
 
   constructor(options: ToolRegistryOptions = {}) {
     this.outputSpill = options.outputSpill;
+    this.knownSecrets = options.knownSecrets ?? (() => knownSecretsFromEnv());
   }
 
   register(definition: ToolDefinition): void {
@@ -144,6 +163,7 @@ export class ToolRegistry {
     const aliased = readArgumentAliases(name, args, {
       isFile: (path) => isExistingFile(path, ctx.workingDir),
     });
+    const masks = !UNMASKED_TOOLS.has(name);
     let result: CompressedToolResult;
     try {
       // Models sometimes emit a JSON value one level over-encoded (a
@@ -162,9 +182,12 @@ export class ToolRegistry {
           // keep `err` as thrown
         }
       }
-      throw err;
+      throw masks ? maskErrorSecrets(err, this.knownSecrets()) : err;
     }
     if (aliased !== null) result = withAliasNote(result, aliased.note);
+    // Secrets are masked first, so the cloud promotion, the spill file
+    // and the untrusted framing below all see the marker, never the key.
+    if (masks) result = maskResultSecrets(result, this.knownSecrets());
     const shown =
       ctx.modelMode === "cloud"
         ? fullToolResult(result)

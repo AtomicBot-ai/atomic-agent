@@ -5327,7 +5327,7 @@
     {
       "path": "src/tui/local-models/local-models-orchestrator-pairing.test.ts",
       "code": 2345,
-      "message": "Argument of type '{ llm: { activeTextProvider: string; activeEmbeddingProvider: string; toolTransport: \"auto\"; providers: ({ id: string; kind: string; url: string; } | { id: string; kind: string; apiKey: string; defaultChatModel: string; })[]; }; ... 23 more ...; mcp?: { ...; } | undefined; }' is not assignable to parameter of type 'UserConfigFile'.   Types of property 'version' are incompatible.     Type 'number | undefined' is not assignable to type 'number'.       Type 'undefined' is not assignable to type 'number'.",
+      "message": "Argument of type '{ llm: { activeTextProvider: string; activeEmbeddingProvider: string; toolTransport: \"auto\"; providers: ({ id: string; kind: string; url: string; } | { id: string; kind: string; apiKey: string; defaultChatModel: string; })[]; }; ... 24 more ...; mcp?: { ...; } | undefined; }' is not assignable to parameter of type 'UserConfigFile'.   Types of property 'version' are incompatible.     Type 'number | undefined' is not assignable to type 'number'.       Type 'undefined' is not assignable to type 'number'.",
       "anchor": "{ ...file, llm: { activeTextProvider: \"openrouter\", activeEmbeddingProvider: \"local-llama\", toolTransport: \"auto\", providers: [ { id: \"local-llama\", kind: \"llama-server\", url: \"http://127.0.0.1:19091\", }, { id: \"openrouter\", kind: \"openrouter\", apiKey: \"test\", defaultChatModel: \"openai/gpt-5.5\", }, ], }, }",
       "line": 371,
       "count": 1

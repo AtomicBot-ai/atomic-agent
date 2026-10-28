@@ -2,11 +2,16 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import { listingResultCaps } from "../../compressor/listing-caps.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend, TabsInput } from "./browser-backend.js";
-import { isSafeUrl } from "./navigate.js";
+import { isSafeUrl, refuseScriptUrl } from "./navigate.js";
 import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+import {
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
+import { gateBrowserUrl, recheckLandedPage } from "./gate-browser-url.js";
 
 /**
  * Estimated width of one rendered tab line: `*[3] <title> — <url>`.
@@ -18,6 +23,7 @@ const TAB_CHARS = 512;
 export function buildBrowserTabsTool(
   backend: BrowserBackend,
   options: DangerousToolOptions,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): ToolDefinition {
   return {
     name: "browser.tabs",
@@ -47,6 +53,12 @@ export function buildBrowserTabsTool(
         input.url = rawArgs.url;
       }
 
+      if (action === "new" && input.url !== undefined) {
+        refuseScriptUrl("browser.tabs", input.url);
+        const refused = await gateBrowserUrl(options, policy, "browser.tabs", input.url, ctx);
+        if (refused) return refused;
+      }
+
       // Mirror browser.navigate: tabs.new with a URL is the same danger surface
       // (file://, javascript:, data:, chrome://). Without this gate the model
       // can exfiltrate local files or execute script by opening a secondary tab.
@@ -71,6 +83,10 @@ export function buildBrowserTabsTool(
 
       await backend.ensureReady();
       const result = await backend.tabs(input);
+      if (action === "new" && input.url !== undefined) {
+        const landed = await recheckLandedPage(backend, policy, "browser.tabs");
+        if (landed) return landed;
+      }
       const rendered = result.tabs
         .map(
           (t) =>

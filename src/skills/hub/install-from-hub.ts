@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,8 +12,8 @@ import {
   parseSkillIdentifier,
   type SkillIdentifier,
 } from "./skill-hub-source.js";
+import { scanSkillDir } from "./scan-skill-dir.js";
 import {
-  scanSkillFiles,
   summarizeScan,
   type SkillScanResult,
 } from "./skill-security-scanner.js";
@@ -98,9 +99,9 @@ export async function stageSkillFromHub(
       );
     }
     const { manifest } = parseSkillFile(manifestFile.content);
-    const scan = scanSkillFiles(
-      files.map((f) => ({ path: f.relativePath, content: f.content })),
-    );
+    // Scan the bytes on disk (what gets installed), not the in-memory copy.
+    const { verdict, findings } = await scanSkillDir(sourceDir);
+    const scan: SkillScanResult = { verdict, findings };
     return {
       identifier: options.identifier,
       manifest,
@@ -116,8 +117,16 @@ export async function stageSkillFromHub(
 export interface ScanGateOptions {
   /** Allow installing despite a `dangerous` verdict (implies caution). */
   acknowledgeRisk?: boolean;
-  /** Caution already approved up front (`--yes`, `confirm: true`). */
+  /** Caution already approved up front (`--yes`, HTTP `confirm`). */
   confirmCaution?: boolean;
+  /**
+   * Bind `acknowledgeRisk` / `confirmCaution` to one scan: they only count
+   * when {@link scanIdOf} of the current scan equals this id. HTTP and the
+   * sidecar always pass it, so a "yes" covers exactly the findings the
+   * person was shown; if the folder changed since, the scan id changes
+   * and the install asks again.
+   */
+  approvedScanId?: string;
   /**
    * Ask the operator about a `caution` verdict (interactive CLI). Returns
    * true to install. Not consulted when caution is already approved.
@@ -142,21 +151,64 @@ export async function enforceScanGate(
   options: ScanGateOptions,
 ): Promise<void> {
   if (scan.verdict === "ok") return;
+  const id = scanIdOf(scan);
+  const bound =
+    options.approvedScanId === undefined || options.approvedScanId === id;
+  const acknowledged = bound && options.acknowledgeRisk === true;
   if (scan.verdict === "dangerous") {
-    if (options.acknowledgeRisk) return;
+    if (acknowledged) return;
     throw new SkillHubInstallError(
-      `install blocked: ${identifier} flagged dangerous by the security scan (${summarizeScan(scan)})`,
+      `install blocked: ${identifier} flagged dangerous by the security scan (${summarizeScan(scan)}) [scanId ${id}]`,
       "dangerous_blocked",
       scan,
     );
   }
-  if (options.acknowledgeRisk || options.confirmCaution) return;
+  if (acknowledged || (bound && options.confirmCaution === true)) return;
   if (options.confirm && (await options.confirm(scan))) return;
   throw new SkillHubInstallError(
-    `install needs confirmation: ${identifier} — ${summarizeScan(scan)}`,
+    `install needs confirmation: ${identifier} — ${summarizeScan(scan)} [scanId ${id}]`,
     "needs_confirmation",
     scan,
   );
+}
+
+/**
+ * Gate options for a client that answers by scan id (HTTP `confirm` /
+ * `acknowledgeRisk`, sidecar `skill_install`). Only a string id counts;
+ * with none, `approvedScanId` is still set (to `""`), so a bare `true`
+ * can never approve anything. A dangerous approval also covers caution,
+ * but only for its own scan.
+ */
+export function scanApprovalFromIds(answer: {
+  confirm?: unknown;
+  acknowledgeRisk?: unknown;
+}): Required<Pick<ScanGateOptions, "confirmCaution" | "acknowledgeRisk" | "approvedScanId">> {
+  const ack = typeof answer.acknowledgeRisk === "string" ? answer.acknowledgeRisk : "";
+  const confirm = typeof answer.confirm === "string" ? answer.confirm : "";
+  return {
+    acknowledgeRisk: ack !== "",
+    confirmCaution: confirm !== "" && (ack === "" || ack === confirm),
+    approvedScanId: ack || confirm,
+  };
+}
+
+/**
+ * Stable id of a scan result: a hash of its verdict and findings (paths,
+ * lines, excerpts). Same folder bytes give the same id; any change to a
+ * finding gives a new one.
+ */
+export function scanIdOf(scan: SkillScanResult): string {
+  const canonical = JSON.stringify({
+    verdict: scan.verdict,
+    findings: scan.findings.map((f) => [
+      f.severity,
+      f.rule,
+      f.file,
+      f.line,
+      f.excerpt,
+    ]),
+  });
+  return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }
 
 export interface CommitInstallOptions {

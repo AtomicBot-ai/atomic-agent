@@ -5,6 +5,7 @@ import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   classifyLocalServerError,
   isLocalEngineDown,
+  isLocalOutOfMemory,
 } from "../llm/reliability/index.js";
 import {
   contextUsageFromPrompt,
@@ -482,6 +483,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
       };
     case "update_dismissed":
       return { ...state, updatePrompt: null };
+    case "project_trust_asked":
+      return { ...state, projectTrustPrompt: action.prompt };
+    case "project_trust_closed":
+      return { ...state, projectTrustPrompt: null };
     case "update_started":
       return appendFeed(
         { ...state, updatePrompt: null, updateStatus: "running" },
@@ -746,7 +751,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       const localServer = engineDown ? null : classifyLocalServerError(event.error);
       const badRequest =
         localServer !== null && localServer.code !== LOCAL_SERVER_NOT_FOUND_CODE ? localServer : null;
-      const chatError = engineDown
+      // ATO-334: the out-of-memory sentence is already plain and says
+      // what to do; the transport wording around it would not.
+      const chatError = isLocalOutOfMemory(event.error)
+        ? event.error.message
+        : engineDown
         ? formatLocalEngineDownForChat()
         : badRequest !== null
           ? formatLocalServerErrorForChat(badRequest, event.error.message)
@@ -869,6 +878,20 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         line: `» "${event.provider}" is out of credit (${event.code}) — task paused; top up, then say continue`,
         color: "yellow",
       });
+    case "local_model_out_of_memory": {
+      // ATO-334. The question itself is the approval prompt; the chat
+      // gets one note, when the model is back with the smaller window.
+      // A stop is told by the turn's failure line that follows.
+      const feed = appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: null,
+        line: `» local model out of memory (${event.phase}): ${event.message}`,
+        color: event.phase === "restarted" ? "green" : "yellow",
+      });
+      return event.phase === "restarted"
+        ? appendChatMessage(feed, { role: "system", text: event.message })
+        : feed;
+    }
     case "provider_recovered": {
       // Closes the wait notice `provider_waiting` posted — only when one
       // was posted, so a recovery the chat never heard about stays in
@@ -1252,6 +1275,20 @@ function reduceStepEvent(
         line:
           `  ~ batch trimmed to ${event.kept} (${event.dropped.length} of ${event.originalSize} deferred: ${event.reason}` +
           `${event.refused && event.refused.length > 0 ? `; ${event.refused.length} refused by the turn policy` : ""})`,
+        color: "yellow",
+      });
+    case "answer_continued":
+      // ATO-1031: the reply hit the length limit and the step asked for
+      // the rest once. Without the line, the second wait looks like a hang.
+      return appendFeed(state, {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line:
+          event.outcome === "completed"
+            ? "» the reply hit the length limit — continued it once"
+            : event.outcome === "cut_again"
+              ? "» the reply hit the length limit twice — showing what arrived"
+              : "» the reply hit the length limit — continuing it failed, retrying the step",
         color: "yellow",
       });
     case "batch_wave_split":

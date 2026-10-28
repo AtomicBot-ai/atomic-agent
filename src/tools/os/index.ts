@@ -80,6 +80,8 @@ export type { WebSearchKeyHelp } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
+export { OS_SCREEN_TOOL_NAMES, registerOsScreenTools } from "./screen/index.js";
+export type { RegisterOsScreenToolsOptions } from "./screen/index.js";
 export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 export { osFsHashTool } from "./fs/fs-hash.js";
 export { osFsDiffTool } from "./fs/fs-diff.js";
@@ -169,6 +171,8 @@ export interface RegisterOsToolsOptions extends DangerousToolOptions {
    * (embedders, tests) leaves only the F36 warn-and-save path.
    */
   resolveOriginalRequest?: (sessionId: string) => string | undefined;
+  /** The agent's reply before the turn's user message, for the same refusal (ATO-860). */
+  resolvePreviousReply?: (sessionId: string) => string | undefined;
   /** A fan-out's declared inputs per worker session (`fs-declared-inputs.ts`); omitted declares nothing. */
   declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
   /**
@@ -223,6 +227,9 @@ export function registerOsTools(
     ...(options.resolveOriginalRequest === undefined
       ? {}
       : { resolveOriginalRequest: options.resolveOriginalRequest }),
+    ...(options.resolvePreviousReply === undefined
+      ? {}
+      : { resolvePreviousReply: options.resolvePreviousReply }),
     ...(options.declaredInputs === undefined
       ? {}
       : { declaredInputs: options.declaredInputs }),

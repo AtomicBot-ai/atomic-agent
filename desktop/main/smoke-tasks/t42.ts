@@ -76,9 +76,10 @@ export async function checks42(_js: unknown, check: Check): Promise<void> {
       q({ ok: mac.ok, ctx: macCtx, expected: expectMac, fit: expectCard, ramMiB, launch: macLog.split("\n").filter((l) => l.includes("--ctx-size")).pop(), error: mac.error, stderr: mac.stderr.slice(-300) }),
     );
     check(
-      "T42: a GPU with memory of its own keeps the plain memory fit",
-      card.ok && cardCtx === expectCard,
-      q({ ok: card.ok, ctx: cardCtx, expected: expectCard, error: card.error }),
+      // ATO-848: an auto launch on a GPU with memory of its own is held to 131,072 tokens (GPU_AUTO_MAX_CONTEXT).
+      "T42: a GPU with memory of its own keeps the plain memory fit, held to 131,072 tokens",
+      card.ok && cardCtx === Math.min(expectCard, 131_072),
+      q({ ok: card.ok, ctx: cardCtx, expected: Math.min(expectCard, 131_072), fit: expectCard, error: card.error }),
     );
     check(
       "T42: a context set in config (262,144) stays as set on unified memory",

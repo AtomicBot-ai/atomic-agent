@@ -311,6 +311,12 @@ describe("item 40: the picked provider's account is empty and the local fallback
       error: SENTENCE,
       category: "transport",
       cause: { kind: "billing", status: 403 },
+      // The failure catalog's entry (ATO-384): the same cause, named for the host.
+      failure: {
+        cause: "out_of_credit",
+        phrase: "Your account with this provider is out of credit.",
+        action: "switch-model",
+      },
     });
     expect(rig.frames.some((f) => f.name === "provider_waiting")).toBe(false);
   });

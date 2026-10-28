@@ -33,6 +33,7 @@ export type TraceEvent =
   | TraceLlmCompletion
   | TraceToolInvocation
   | TraceParseRetry
+  | TraceAnswerContinued
   | TraceBatchTrimmed
   | TraceBatchApprovalBarriers
   | TraceLoopDetected
@@ -213,6 +214,27 @@ export interface TraceParseRetry extends TraceEventBase {
   stepIndex: number;
   attempt: number;
   reason: string;
+}
+
+/**
+ * The step's answer was cut at its length limit and the step asked the
+ * model once for the rest (ATO-1031). `outcome`: `completed` (joined
+ * into one reply), `cut_again` (the rest was cut too; the reply says
+ * so) or `abandoned` (the step fell back to the truncation error).
+ * `partialChars` is the length of the cut answer, never its text.
+ */
+export interface TraceAnswerContinued extends TraceEventBase {
+  type: "answer_continued";
+  turnIndex: number;
+  stepIndex: number;
+  cause:
+    | "reply_cap"
+    | "context_window"
+    | "output_limit"
+    | "provider_limit"
+    | "unknown";
+  partialChars: number;
+  outcome: "completed" | "cut_again" | "abandoned";
 }
 
 /**

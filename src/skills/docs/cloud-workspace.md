@@ -13,6 +13,8 @@ Discovery is bounded to 4,096 skill-directory entries, 1 MiB per manifest and 8 
 
 ## Disable scopes
 
+Project copies load only after the operator trusted that folder; a pending or declined one is listed with the reason `not trusted in this folder yet` or `declined in this folder`. See [project folder trust](project-trust.md).
+
 `skills.disabled` remains the global name denylist. `skills.cloudWorkspaces` contains `{ workingDir, projectSkillsEnabled, disabled }` policies; the command/UI stores canonical real paths in user config, never in the repository. Defaults are project skills on and no disabled names. A global ban wins over a workspace preference. A workspace ban blocks every copy of that name, including its global copy, only in cloud sessions of that workspace.
 
 Turning all project skills off excludes every project source, including Atomic. Global entries remain available unless that name is individually disabled. Turning project skills back on preserves individual bans. The operator sees effective state, source and reasons; disabled entries are absent from the model catalog.
@@ -26,8 +28,8 @@ atomic-agent skill list --workspace /path/to/repo
 atomic-agent skill show example --workspace /path/to/repo
 atomic-agent skill disable example --workspace /path/to/repo
 atomic-agent skill enable example --workspace /path/to/repo
-atomic-agent skill project off --workspace /path/to/repo
-atomic-agent skill project on --workspace /path/to/repo
+atomic-agent skill project off --workspace /path/to/repo  # also revokes trust
+atomic-agent skill project on --workspace /path/to/repo   # also trusts what the folder ships now
 atomic-agent skill disable example  # global, including every cloud workspace
 atomic-agent skill enable example   # global; workspace bans remain
 ```

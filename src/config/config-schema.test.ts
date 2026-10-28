@@ -1640,6 +1640,7 @@ describe("parseUserConfigFile", () => {
         maxJobs: 3,
         envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
       },
+      screen: { enabled: false },
     });
   });
 

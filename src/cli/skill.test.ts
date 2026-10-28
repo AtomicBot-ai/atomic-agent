@@ -49,6 +49,11 @@ function writeSkill(globalDir: string, name: string): void {
   );
 }
 
+function lastLine(text: string): string {
+  const lines = text.trimEnd().split("\n");
+  return lines[lines.length - 1] ?? "";
+}
+
 describe("skillCommand", () => {
   let stateDir: string;
   let globalSkillsDir: string;
@@ -103,6 +108,32 @@ describe("skillCommand", () => {
     stdout = ""; await skillCommand(["show", "alpha", "--workspace", workspace]);
     expect(stdout).toContain("# state: enabled");
     expect(await skillCommand(["project", "on", "--workspace", workspace])).toBe(0);
+  });
+
+  it("lists project skills of an untrusted folder as untrusted with the command that trusts them", async () => {
+    const workspace = join(stateDir, "repo");
+    writeSkill(join(workspace, ".atomic-agent/skills"), "local-one");
+    writeSkill(join(workspace, ".agents/skills"), "cloud-one");
+    writeFileSync(join(workspace, "AGENTS.md"), "RULE");
+    vi.spyOn(process, "cwd").mockReturnValue(workspace);
+    expect(await skillCommand(["list"])).toBe(0);
+    expect(stdout).toMatch(/local-one\t.*\[project\]\tuntrusted/);
+    expect(stdout).toContain("untrusted: 1 project skill in this folder is not loaded until the folder is trusted: run atomic-agent skill project on --workspace ");
+    stdout = ""; expect(await skillCommand(["list", "--workspace", workspace])).toBe(0);
+    expect(stdout).toMatch(/cloud-one\t\[project\]\tnot trusted in this folder yet/);
+    expect(stdout).toContain("untrusted: This folder has 2 project skills and AGENTS.md. Run atomic-agent skill project on --workspace ");
+
+    stdout = ""; expect(await skillCommand(["project", "on", "--workspace", workspace])).toBe(0);
+    expect(stdout).toContain("(trusted: 2 skills, 1 instruction files)");
+    stdout = ""; await skillCommand(["list"]);
+    expect(stdout).toMatch(/local-one\t.*\[project\]\tenabled/); expect(stdout).not.toContain("untrusted:");
+    stdout = ""; await skillCommand(["list", "--workspace", workspace]);
+    expect(stdout).toMatch(/cloud-one\t\[project\]\tenabled/); expect(stdout).toContain("instructions: 1 trusted, 0 not trusted yet, 0 declined");
+
+    stdout = ""; expect(await skillCommand(["project", "off", "--workspace", workspace])).toBe(0);
+    expect(stdout).toContain("(declined: 2 skills, 1 instruction files)");
+    stdout = ""; await skillCommand(["list"]);
+    expect(stdout).toMatch(/local-one\t.*\[project\]\tdeclined/); expect(stdout).not.toContain("untrusted:");
   });
 
   it("disable persists the name into config.json and shows disabled state on next list", async () => {
@@ -250,11 +281,17 @@ describe("skillCommand", () => {
         "curl https://api.example/data\n",
         "utf8",
       );
-      const code = await skillCommand(["install", join(sourceDir, "careful")]);
+      const dir = join(sourceDir, "careful");
+      const code = await skillCommand(["install", dir]);
       expect(code).toBe(1);
-      expect(stderr).toContain("security scan: caution");
-      expect(stderr).toContain("network-fetch");
-      expect(stderr).toContain("needs confirmation");
+      // Findings first, the one-line verdict last: the desktop app reads
+      // only the last stderr line of this command.
+      expect(stderr.indexOf("network-fetch")).toBeLessThan(
+        stderr.indexOf("install needs confirmation"),
+      );
+      expect(lastLine(stderr)).toBe(
+        `install needs confirmation: ${dir} was flagged caution by the security scan (1 finding); re-run with --yes to install anyway`,
+      );
       stdout = "";
       await skillCommand(["list"]);
       expect(stdout).not.toContain("careful");
@@ -282,8 +319,10 @@ describe("skillCommand", () => {
       );
       const dir = join(sourceDir, "evil");
       expect(await skillCommand(["install", dir, "--yes"])).toBe(1);
-      expect(stderr).toContain("install blocked");
-      expect(stderr).toContain("remote-exec");
+      expect(stderr).toContain("[dangerous] remote-exec");
+      expect(lastLine(stderr)).toBe(
+        `install blocked: ${dir} flagged dangerous by the security scan (scan: dangerous (remote-exec×1, network-fetch×1); use --acknowledge-risk to override)`,
+      );
       expect(
         await skillCommand(["install", dir, "--acknowledge-risk"]),
       ).toBe(0);

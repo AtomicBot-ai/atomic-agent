@@ -1,4 +1,5 @@
 import { handleUpdateKey } from "./update/update-key-bindings.js";
+import { handleProjectTrustKey } from "./project-trust/project-trust-key-bindings.js";
 import { CODING_MODES, type CodingMode } from "./coding-mode/coding-mode.js";
 import type { IssueReportLevel } from "./issue-report/report-levels.js";
 import { handleComposerSwitchKey } from "./composer-switch/composer-switch-key-bindings.js";
@@ -108,6 +109,8 @@ export interface AppKeyCallbacks {
   onSidebarTaskActivated?(taskId: string): void;
   /** Optional — called when the user accepts the startup update offer. */
   onUpdateConfirmed?(): void;
+  /** Optional — the startup folder trust question was answered: `y` trusts, `n` declines (ATO-298). */
+  onProjectTrustAnswered?(answer: "trust" | "decline"): void;
   /**
    * Optional — called when the user presses any key after a self-update
    * settled (`updateStatus === "done"`) to re-exec the freshly-installed
@@ -374,6 +377,11 @@ export function handleAppKey(
   if (state.updateStatus === "done") {
     callbacks.onUpdateRestart?.();
     dispatch({ type: "quit_requested" });
+    return true;
+  }
+  // The folder trust question claims only y / n / Esc, ahead of the
+  // update offer: it decides what the very first turn may load.
+  if (state.projectTrustPrompt && handleProjectTrustKey(input, key, ctx)) {
     return true;
   }
   // The update offer claims only y / n / Esc; anything else (Ctrl+C in

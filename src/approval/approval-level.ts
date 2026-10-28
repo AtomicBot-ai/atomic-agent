@@ -28,6 +28,23 @@ export type ApprovalCategory =
   | "proc_kill"
   | "git_remote"
   | "browser_nonweb"
+  /**
+   * A browser click or Enter that submits, sends, publishes or deletes
+   * something on a web page (`classify-browser-action.ts`). Level 4
+   * beside `publish`: it acts under the operator's logged-in accounts.
+   */
+  | "browser_commit"
+  /**
+   * Typing into a password / one-time-code / payment card field, or a
+   * click that pays. Level 5 and never granted: each one is its own
+   * decision.
+   */
+  | "browser_secret"
+  /**
+   * Browser navigation to a host outside a non-empty
+   * `browser.allowedDomains`. Level 3 beside `http`.
+   */
+  | "browser_offsite"
   | "trust_config"
   /**
    * Publishing under the operator's name — a pull request, an issue, a
@@ -59,11 +76,42 @@ export type ApprovalCategory =
    */
   | "fs_read_outside"
   /**
+   * A read of one of the agent's own secret files in its state directory
+   * (`.env`, `config.json`, the local server key, cached sessions), or a
+   * shell command that names one — to read it or to change it
+   * (`src/tools/read-scope/state-secrets.ts`). The read-side twin of
+   * `trust_config`: pinned at level 5 and never grantable, so a level-4
+   * operator whose shell runs unasked is still asked before
+   * `cat ~/.atomic-agent/.env` or `sed -i … config.json` runs.
+   */
+  | "state_secret"
+  /**
    * A generation billed to the operator's cloud account (`image.generate`
    * and `video.generate` on OpenRouter). Level 3 beside `http`: the lowest two levels ask
    * before money is spent; a local generation never asks.
    */
   | "paid_generation"
+  /**
+   * Driving the operator's real mouse and keyboard (`os.screen.click`,
+   * `os.screen.type`, `os.screen.key`, ATO-525). Level 4 beside `shell`:
+   * a click or a keystroke in an arbitrary app can do anything the
+   * operator could do there, so it never goes quiet below the rung where
+   * a shell command does.
+   */
+  | "screen_control"
+  /**
+   * A screenshot of the operator's screen (`os.screen.capture`): whatever
+   * is open, mail and chats included. Level 3 beside `http` — the lowest
+   * two levels ask before the picture is taken.
+   */
+  | "screen_capture"
+  /**
+   * Restart the local model with a smaller window after it ran out of
+   * memory (ATO-334). Its own category so that answering it never
+   * stands for an MCP tool or any other uncategorised request, and the
+   * reverse; never granted for the session, like `email`.
+   */
+  | "local_model_restart"
   | "other";
 
 /**
@@ -75,16 +123,20 @@ export type ApprovalCategory =
  *    session working directory (realpath containment).
  *  - level 3 (home): file writes anywhere under the home directory,
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
- *    is not part of the gate and stays on), paid cloud generation.
+ *    is not part of the gate and stays on), paid cloud generation,
+ *    browser navigation outside `browser.allowedDomains`, screenshots.
  *  - level 4 (operator): guarded shell commands, skill scripts,
- *    process kills, and network git (`os.git.{push,pull,fetch,clone}`
+ *    process kills, screen control (mouse and keyboard), and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
  *    through the shell, so the dedicated tools are never looser or
- *    stricter than the escape hatch. The remote-sync switch
+ *    stricter than the escape hatch. Browser clicks / Enter that
+ *    submit, publish or delete (`browser_commit`). The remote-sync switch
  *    (`git.remoteSync`) is checked before this ladder is consulted.
  *  - level 5 (full trust): everything, including browser navigation to
- *    non-web URLs, writes to the agent's own trust config, reads outside
- *    the working directory, and uncategorised requests.
+ *    non-web URLs, browser passwords and payments, writes to the agent's
+ *    own trust config, reads of the agent's own secret files
+ *    (`state_secret`), reads outside the working directory, and
+ *    uncategorised requests.
  *
  * `trust_config` is deliberately pinned at 5: a write to the file that
  * holds `agent.approvalLevel` (or the `.env` holding API tokens) is the
@@ -99,16 +151,23 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   fs_trash: 3,
   http: 3,
   paid_generation: 3,
+  browser_offsite: 3,
+  screen_capture: 3,
   shell: 4,
   script: 4,
   proc_kill: 4,
   publish: 4,
   git_remote: 4,
   fusion_fanout: 4,
+  browser_commit: 4,
+  screen_control: 4,
   browser_nonweb: 5,
+  browser_secret: 5,
   trust_config: 5,
+  state_secret: 5,
   email: 5,
   fs_read_outside: 5,
+  local_model_restart: 5,
   other: 5,
 };
 
@@ -168,7 +227,17 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   // point of the question is that the operator sees this task list.
   fusion_fanout: false,
   browser_nonweb: true,
+  // "Allow clicks that submit / post / delete in this chat" is a
+  // separate answer from any navigation grant.
+  browser_commit: true,
+  // A password or a payment is its own decision every time.
+  browser_secret: false,
+  browser_offsite: true,
   trust_config: false,
+  // The read-side twin of `trust_config`: "read my API keys for the
+  // rest of the session" is never a standing answer, and a `shell`
+  // grant (category or `[a]` shape) never reaches this category either.
+  state_secret: false,
   // A session grant would let the agent mail anyone for the rest of
   // the session; each mail is its own decision.
   email: false,
@@ -178,6 +247,13 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   fs_read_outside: true,
   // "Stop asking about paid images this session" is the operator's call.
   paid_generation: true,
+  // "Let it drive the screen for this session" is a legitimate answer
+  // while the operator watches it work; every call still shows its preview.
+  screen_control: true,
+  // "Stop asking before screenshots this session" is the operator's call.
+  screen_capture: true,
+  // Each out-of-memory restart is asked about when it happens.
+  local_model_restart: false,
   other: true,
 };
 
@@ -204,10 +280,17 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   git_remote: "git · remote",
   fusion_fanout: "fusion · fan-out",
   browser_nonweb: "browser · non-web URL",
+  browser_commit: "browser · submit / publish / delete",
+  browser_secret: "browser · password or payment",
+  browser_offsite: "browser · site outside the allow-list",
   trust_config: "agent trust config",
+  state_secret: "agent secret file",
   email: "e-mail send",
   fs_read_outside: "read outside the working directory",
   paid_generation: "paid generation · cloud",
+  screen_control: "screen · click / type",
+  screen_capture: "screen · screenshot",
+  local_model_restart: "local model · restart",
   other: "uncategorised",
 };
 
