@@ -44,6 +44,40 @@ function cfShotPath(out) {
   return m ? m[1] : '';
 }
 
+/** ATO-1258: the pictures a reply's text names (`/tmp/mac-screen.png`, `~/Desktop/shot.jpg`), once each. */
+function cfTextPictures(text) {
+  const found = [];
+  CF_TEXT_PATH.lastIndex = 0;
+  let m;
+  while ((m = CF_TEXT_PATH.exec(String(text || '')))) if (CF_PICTURE.test(m[1]) && !found.includes(m[1])) found.push(m[1]);
+  return found;
+}
+
+/**
+ * ATO-1258: the pictures a reply shows beyond its own files (`replyFiles`):
+ * the pictures its text names, and the turn's last screenshot
+ * (os.screen.capture, browser.screenshot) when the reply shows no picture of
+ * its own. Map reply id → paths. Each screenshot of the turn is also under
+ * its own card (renderer.js toolCard) and in the chat's files.
+ */
+function turnPictures(log) {
+  const out = new Map();
+  let shot = '';
+  for (const m of Array.isArray(log) ? log : []) {
+    if (!m) continue;
+    if (m.k === 'user' && !m.steered) { shot = ''; continue; }
+    if (m.k === 'tool' && CF_SHOTS.has(m.name) && m.ok === true && m.outcome == null) { shot = cfShotPath(m.out) || shot; continue; }
+    if (m.k !== 'assistant' || m.placeholder) continue;
+    const own = Array.isArray(m.replyFiles) ? m.replyFiles : [];
+    const named = cfTextPictures(m.text).filter((p) => !own.includes(p));
+    const pics = named.slice();
+    if (shot && !own.includes(shot) && !named.includes(shot) && !own.some((p) => CF_PICTURE.test(p)) && !named.length) pics.push(shot);
+    if (pics.length) out.set(m.id, pics);
+    shot = '';
+  }
+  return out;
+}
+
 /** The pictures image.generate's result lists (`- /path/to/x.png`). */
 function cfGeneratedPaths(out) {
   const found = [];
@@ -107,6 +141,8 @@ function chatFilesOf(log, deps) {
           if (v && v.ok && v.abs && v.kind === 'file') add(v.abs, 'reply');
         }
       }
+      // ATO-1258: a picture the reply's text names (main's stat drops it if it is not there).
+      cfTextPictures(m.text).forEach((p) => add(cfAbsolute(p, '', d.home), 'reply'));
       (Array.isArray(m.attach) ? m.attach : []).forEach((f) => { if (f && f.kind !== 'dir') add(f.path, 'agent'); });
       (Array.isArray(m.replyFiles) ? m.replyFiles : []).forEach((p) => add(p, 'reply'));
     }
@@ -214,5 +250,5 @@ function cfStatSoon() {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {chatFilesOf, cfShotPath, cfGeneratedPaths, cfAbsolute, cfKind, cfFolder, chatFilesTabsHTML, chatFilesListHTML};
+  module.exports = {chatFilesOf, cfShotPath, cfTextPictures, turnPictures, CF_SHOTS, cfGeneratedPaths, cfAbsolute, cfKind, cfFolder, chatFilesTabsHTML, chatFilesListHTML};
 }

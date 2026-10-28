@@ -601,6 +601,10 @@
 .chat-img.loading{width:240px;height:160px}
 .chat-img-pic{display:block;max-width:100%;max-height:320px;width:auto;height:auto}
 .chat-img:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+/* ATO-1258: a screenshot under the call that took it: small, the viewer a click away */
+.tl-shot{padding:0 12px 9px 32px}
+.chat-img.chat-img-sm.loading{width:180px;height:112px}
+.chat-img-sm .chat-img-pic{max-height:160px}
 /* a reply's video (chat-media.js puts the one <video> in) */
 .chat-vid{display:block;max-width:min(100%,560px);border-radius:var(--r-well);overflow:hidden;background:var(--well);
   line-height:0;box-shadow:inset 0 0 0 1px var(--line-hair)}
