@@ -21692,15 +21692,16 @@ function chatImageWhy(st, path) {
 
 /** A reply's own files: pictures and videos inline, anything else a chip.
     ATO-1258: then the pictures its text names and the turn's screenshot (`turnPics`, chat-files.js
-    turnPictures), drawn the same way, and left out, not made a chip, when main cannot show one. */
+    turnPictures), drawn the same way once main has read them, and left out, not made a chip, when it cannot. */
 function replyFilesStrip(m) {
   const files = m.replyFiles || [];
   const extra = (m.turnPics || []).filter((p) => !files.includes(p));
   if (!files.length && !extra.length) return '';
   const pics = [], chips = [], shown = [];
   for (const p of extra) {
+    // Drawn once main has read it: a path a reply merely names (an example, a typo) never shows an empty slot.
     const st = chatImage(p);
-    if (st.state === 'fail') continue;
+    if (st.state !== 'ok') continue;
     pics.push(chatPicHTML(p, st));
     shown.push(p);
   }

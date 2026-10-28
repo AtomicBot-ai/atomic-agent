@@ -107,3 +107,9 @@ test('the turn\'s last screenshot goes under a reply with no picture of its own,
   assert.equal(pics.has('r4'), false, 'a failed capture shows nothing');
   assert.deepEqual(CF.cfTextPictures('see ~/a.png, /b/c.JPG and /d.txt and ~/a.png'), ['~/a.png', '/b/c.JPG']);
 });
+
+test('image.generate paths written with ~ are listed expanded, as main stats them', () => {
+  const log = [{k: 'tool', name: 'image.generate', ok: true, out: 'Saved 1 picture:\n- ~/Pictures/a.png'}];
+  assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n'}).map((f) => f.path), ['/Users/n/Pictures/a.png']);
+  assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n', missing: new Set(['/Users/n/Pictures/a.png'])}), []);
+});
