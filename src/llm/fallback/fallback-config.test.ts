@@ -35,12 +35,30 @@ describe("resolveFallbackChain", () => {
     expect(resolved.timing).toEqual(DEFAULT_FALLBACK_TIMING);
   });
 
-  it("auto-appends the local llama-server provider to the tail by default", () => {
+  it("never appends a local model the person did not pick by default (ATO-349)", () => {
     const resolved = resolveFallbackChain(
       cfg({
         activeTextProvider: "cloud",
         providers: [P("cloud"), P("local-llama", "llama-server")],
         fallback: { chain: ["cloud"] },
+      }),
+    );
+    expect(resolved.chain).toEqual(["cloud"]);
+    const noBlock = resolveFallbackChain(
+      cfg({
+        activeTextProvider: "cloud",
+        providers: [P("cloud"), P("local-llama", "llama-server")],
+      }),
+    );
+    expect(noBlock.chain).toEqual(["cloud"]);
+  });
+
+  it("appends the local llama-server provider to the tail when appendLocal is on", () => {
+    const resolved = resolveFallbackChain(
+      cfg({
+        activeTextProvider: "cloud",
+        providers: [P("cloud"), P("local-llama", "llama-server")],
+        fallback: { chain: ["cloud"], appendLocal: true },
       }),
     );
     expect(resolved.chain).toEqual(["cloud", "local-llama"]);

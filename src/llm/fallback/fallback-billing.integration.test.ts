@@ -73,7 +73,7 @@ const FIELD_LLM: ResolvedLlmConfig = {
     },
     { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
   ],
-  fallback: { chain: ["dashscope"] },
+  fallback: { chain: ["dashscope"], appendLocal: true },
 };
 
 /** AI/ML API's answer for an account with no funds left. */

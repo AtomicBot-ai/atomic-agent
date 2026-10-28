@@ -11,6 +11,7 @@ import {
 const ACTIONS: readonly FailureAction[] = [
   "retry",
   "switch-model",
+  "fix-key",
   "new-chat-summary",
   "reduce-load",
   "add-search-key",

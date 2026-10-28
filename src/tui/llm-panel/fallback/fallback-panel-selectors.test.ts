@@ -80,7 +80,7 @@ describe("buildFallbackChainView", () => {
       }),
     );
     expect(view.links.map((l) => l.providerId)).toEqual(["cloud-a"]);
-    expect(view.appendLocal).toBe(true);
+    expect(view.appendLocal).toBe(false);
   });
 
   it("computes addable providers as those not in the chain", () => {

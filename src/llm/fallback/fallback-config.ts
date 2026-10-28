@@ -40,6 +40,17 @@ export interface ResolvedFallbackChain {
 const LOCAL_KIND = "llama-server";
 
 /**
+ * Whether the local llama-server provider is appended to the chain when
+ * `fallback.appendLocal` is not set. Off (ATO-349, ATO-892): a cloud
+ * failure used to drop the turn onto a local model the person never
+ * picked, often one that was not running, and the turn then waited on it
+ * ("Start it in Settings › Models") instead of saying what the cloud
+ * refused. A local link is now in the chain only when the person put it
+ * there (`fallback.chain`) or turned `appendLocal` on.
+ */
+export const DEFAULT_APPEND_LOCAL = false;
+
+/**
  * Which side of the local/cloud divide a provider sits on.
  *
  * Only `llama-server` is local — it is the one kind that runs the weights
@@ -65,7 +76,7 @@ function providerClass(kind: string | undefined): ProviderClass {
  *  - Reorder so `activeTextProvider` is the head: the active provider is
  *    the single source of truth for "primary", so a user hot-swapping the
  *    active provider re-primes the chain without editing `fallback.chain`.
- *  - When `appendLocal` (default true), append the configured
+ *  - When `appendLocal` (default `DEFAULT_APPEND_LOCAL`, off), append the configured
  *    llama-server provider id to the tail if it is not already present.
  *    When no local provider is configured, append nothing.
  *  - De-duplicate while preserving first-seen order.
@@ -121,7 +132,7 @@ export function resolveFallbackChain(
           ...filtered.filter((id) => id !== resolved.activeTextProvider),
         ];
 
-  const appendLocal = fallback?.appendLocal ?? true;
+  const appendLocal = fallback?.appendLocal ?? DEFAULT_APPEND_LOCAL;
   const chain = [...withPrimary];
   if (appendLocal) {
     const localId = resolved.providers.find((p) => p.kind === LOCAL_KIND)?.id;
