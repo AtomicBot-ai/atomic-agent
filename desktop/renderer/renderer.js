@@ -3558,6 +3558,8 @@ function toolCard(m) {
     + ((failed || soft) && !m.open ? '<div class="cardsum' + (soft ? '' : ' bad') + '">' + esc(toolErrLine(m)) + '</div>' : '')
     // A long call's progress (tool_update, chat-media.js), while it runs.
     + (running ? toolProgressHTML(m, esc) : '')
+    // ATO-1258: a screenshot the call took, small under its line; a click opens the viewer.
+    + toolShotHTML(m, st)
     + (m.open ? '<div class="cardbody">'
         + '<div class="tl-meta"><span class="mono">' + esc(m.name) + '</span>'
           + (failed ? '<span class="tl-bad">failed</span>' : soft ? '<span class="tl-soft">failed, the agent went on</span>' : '')
@@ -3565,6 +3567,16 @@ function toolCard(m) {
         + '<div class="micro">Arguments</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
         + '<div class="micro">Output</div><pre class="tk-out">' + esc(running ? 'Still running\u2026' : (m.out || '\u2014')) + '</pre></div>' : '')
     + '</div>';
+}
+
+/** ATO-1258: the picture under an os.screen.capture / browser.screenshot card that worked; '' when main cannot show it. */
+function toolShotHTML(m, st) {
+  if (st !== 'ok' || typeof CF_SHOTS === 'undefined' || !CF_SHOTS.has(m.name)) return '';
+  const p = cfShotPath(m.out);
+  m.shotPic = p || undefined;
+  if (!p) return '';
+  const pic = chatImage(p);
+  return pic.state === 'fail' ? '' : '<div class="tl-shot">' + chatPicHTML(p, pic, 'chat-img-sm') + '</div>';
 }
 
 function apprCard(m) {
@@ -20695,6 +20707,11 @@ async function wizActivate(k, id, model, unverified) {
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
+  // ATO-1258: the pictures each reply shows beyond its own files (chat-files.js turnPictures).
+  if (typeof turnPictures === 'function') {
+    const pics = turnPictures(items);
+    items.forEach((m) => { if (m.k === 'assistant') { if (pics.has(m.id)) m.turnPics = pics.get(m.id); else delete m.turnPics; } });
+  }
   // ATO-328: the one call the Exa key card goes under, below its row (or below the fold that holds it).
   const exaHost = exaKeyHost(items);
   /* ATO-464: a finished turn's steps fold into one line (turn-summary.js).
@@ -21579,7 +21596,11 @@ function replyFilesOf(list) {
 /** The pictures replies on screen show. */
 function chatImagesInUse() {
   const used = new Set();
-  for (const m of S.log) for (const p of (m.replyFiles || [])) used.add(p);
+  for (const m of S.log) {
+    for (const p of (m.replyFiles || [])) used.add(p);
+    for (const p of (m.turnPics || [])) used.add(p);   // ATO-1258
+    if (m.shotPic) used.add(m.shotPic);
+  }
   return used;
 }
 
@@ -21729,11 +21750,21 @@ function chatImageWhy(st, path) {
   return 'Not a picture this window can show, or no longer there.\n' + path;
 }
 
-/** A reply's own files: pictures and videos inline, anything else a chip. */
+/** A reply's own files: pictures and videos inline, anything else a chip.
+    ATO-1258: then the pictures its text names and the turn's screenshot (`turnPics`, chat-files.js
+    turnPictures), drawn the same way once main has read them, and left out, not made a chip, when it cannot. */
 function replyFilesStrip(m) {
   const files = m.replyFiles || [];
-  if (!files.length) return '';
+  const extra = (m.turnPics || []).filter((p) => !files.includes(p));
+  if (!files.length && !extra.length) return '';
   const pics = [], chips = [], shown = [];
+  for (const p of extra) {
+    // Drawn once main has read it: a path a reply merely names (an example, a typo) never shows an empty slot.
+    const st = chatImage(p);
+    if (st.state !== 'ok') continue;
+    pics.push(chatPicHTML(p, st));
+    shown.push(p);
+  }
   for (const p of files) {
     const name = pathBase(p) || p;
     // A video plays in the reply (chat-media.js); one that cannot is a chip like any file.
@@ -21741,23 +21772,30 @@ function replyFilesStrip(m) {
     if (vid) { pics.push(vid); shown.push(p); continue; }
     const st = CHAT_IMG_EXT.test(p) ? chatImage(p) : null;
     if (st && st.state !== 'fail') {
-      // A known size draws the slot at its size before the picture is put in.
-      const box = st.state === 'ok' && st.w && st.h ? ' style="aspect-ratio:' + st.w + ' / ' + st.h + '"' : '';
-      pics.push('<button class="chat-img' + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
-        + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
-        + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>');
+      pics.push(chatPicHTML(p, st));
       shown.push(p);
     } else {
       chips.push('<button class="filechip' + (st ? ' unshown' : '') + '" data-file="' + esc(p) + '" data-reply="1" title="' + esc(st ? chatImageWhy(st, p) : p) + '">'
         + ic(st ? 'image' : 'file') + '<span>' + esc(name) + '</span></button>');
     }
   }
+  if (!pics.length && !chips.length) return '';
   return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
     + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
     + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
     // Studio: the reply's pictures and clips open there, from its gallery or as "From chat" (studio/shell.js).
     + (shown.length && window.STUDIO ? STUDIO.openInStudioHTML(shown) : '')
     + '</div>';
+}
+
+/** One picture's slot (hydrateChatImages puts its <img> in); a click opens the viewer. `cls`: an extra class. */
+function chatPicHTML(p, st, cls) {
+  const name = pathBase(p) || p;
+  // A known size draws the slot at its size before the picture is put in.
+  const box = st.state === 'ok' && st.w && st.h ? ' style="aspect-ratio:' + st.w + ' / ' + st.h + '"' : '';
+  return '<button class="chat-img' + (cls ? ' ' + cls : '') + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
+    + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
+    + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>';
 }
 
 /* The full-screen viewer: the picture (the display copy at once, the full

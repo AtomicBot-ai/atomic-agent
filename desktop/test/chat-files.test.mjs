@@ -82,6 +82,32 @@ test('the panel starts closed and on no file', () => {
   assert.deepEqual(FPV.FP.files, []);
 });
 
+// ATO-1258: a screenshot the agent took is shown.
+test('«сделай скриншот на маке»: a picture the reply names is shown under it', () => {
+  const log = [{id: 'u', k: 'user', text: 'сделай скриншот'},
+    {id: 't', k: 'tool', name: 'os.shell.run', ok: true, out: '$ screencapture /tmp/mac-screen.png\nexit: 0'},
+    {id: 'r', k: 'assistant', text: 'Done. (attached: /tmp/mac-screen.png)'}];
+  assert.deepEqual(CF.turnPictures(log).get('r'), ['/tmp/mac-screen.png']);
+  assert.deepEqual(CF.chatFilesOf(log, {}).map((f) => f.path), ['/tmp/mac-screen.png']);
+});
+
+test('the turn\'s last screenshot goes under a reply with no picture of its own, once', () => {
+  const shot = (id, p) => ({id, k: 'tool', name: 'os.screen.capture', ok: true, out: 'saved ' + p + ' (10x10 px) of the screen'});
+  const log = [{id: 'u', k: 'user', text: 'x'}, shot('a', '/T/s1.jpg'), shot('b', '/T/s2.jpg'),
+    {id: 'r', k: 'assistant', text: 'Here it is.'},
+    {id: 'u2', k: 'user', text: 'again'}, {id: 'c', k: 'tool', name: 'browser.screenshot', ok: true, out: 'saved /T/b.jpg (1x1 px JPEG, 1 KB) of the page'},
+    {id: 'r2', k: 'assistant', text: 'Attached.', replyFiles: ['/T/b.jpg']},
+    {id: 'u3', k: 'user', text: 'and'}, {id: 'r3', k: 'assistant', text: 'Nothing new.'},
+    {id: 'u4', k: 'user', text: 'fail'}, {id: 'd', k: 'tool', name: 'os.screen.capture', ok: false, out: 'saved /T/x.jpg (1x1 px)'},
+    {id: 'r4', k: 'assistant', text: 'Could not.'}];
+  const pics = CF.turnPictures(log);
+  assert.deepEqual(pics.get('r'), ['/T/s2.jpg']);
+  assert.equal(pics.has('r2'), false, 'a reply that delivers the screenshot shows it once');
+  assert.equal(pics.has('r3'), false, 'a later turn does not repeat an earlier screenshot');
+  assert.equal(pics.has('r4'), false, 'a failed capture shows nothing');
+  assert.deepEqual(CF.cfTextPictures('see ~/a.png, /b/c.JPG and /d.txt and ~/a.png'), ['~/a.png', '/b/c.JPG']);
+});
+
 test('image.generate paths written with ~ are listed expanded, as main stats them', () => {
   const log = [{k: 'tool', name: 'image.generate', ok: true, out: 'Saved 1 picture:\n- ~/Pictures/a.png'}];
   assert.deepEqual(CF.chatFilesOf(log, {home: '/Users/n'}).map((f) => f.path), ['/Users/n/Pictures/a.png']);
