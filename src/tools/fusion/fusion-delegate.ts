@@ -36,6 +36,7 @@ import {
   applyJudgeVerdict,
   buildAcceptanceChecklist,
   judgeTask,
+  redItems,
   renderAcceptanceBlock,
   renderRetryFindings,
   type JudgeVerdict,
@@ -799,9 +800,15 @@ export function buildFusionDelegateTool(
             // A retry that did not come back judgeable (it failed or was
             // cancelled) keeps its own status; the first verdict stands
             // beside it.
-            return verdict === undefined
-              ? applyJudgeVerdict(r, first.get(r.id)!, true)
-              : applyJudgeVerdict(r, verdict, true);
+            if (verdict !== undefined) return applyJudgeVerdict(r, verdict, true);
+            const before = first.get(r.id)!;
+            return {
+              ...r,
+              notes: [
+                ...(r.notes ?? []),
+                `judge: ${redItems(before).length} of ${before.items.length} acceptance items were not met before the retry; the retry ended ${r.status} and was not judged`,
+              ],
+            };
           }
           const verdict = first.get(r.id);
           return verdict === undefined ? r : applyJudgeVerdict(r, verdict, false);
