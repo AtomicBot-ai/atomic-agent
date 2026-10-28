@@ -370,18 +370,24 @@ describe("runWorkerTasks", () => {
       maxWorkers: 1,
       signal: new AbortController().signal,
     });
-    expect(events.map((e) => e.sessionId)).toEqual(Array(4).fill("s-parent"));
+    // Every completion moves the worker's spent tokens (the row's
+    // `tok` figure), so each one is reported; the context size rides
+    // along unchanged until a completion measures a new one, and a
+    // completion that counted nothing never sets it to zero.
+    expect(events.map((e) => e.sessionId)).toEqual(Array(6).fill("s-parent"));
     expect(
       events.map((e) =>
         e.event.type === "fusion_worker"
-          ? [e.event.phase, e.event.contextTokens ?? null]
+          ? [e.event.phase, e.event.contextTokens ?? null, e.event.tokens ?? null]
           : null,
       ),
     ).toEqual([
-      ["started", null],
-      ["usage", 4_200],
-      ["usage", 12_345],
-      ["finished", null],
+      ["started", null, null],
+      ["usage", 4_200, 4_201],
+      ["usage", 4_200, 8_402],
+      ["usage", 4_200, 8_403],
+      ["usage", 12_345, 20_749],
+      ["finished", null, null],
     ]);
   });
 

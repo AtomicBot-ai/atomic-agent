@@ -595,6 +595,7 @@ export function buildFusionDelegateTool(
             ...budgetOptions,
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
+            ...(workerPricing === undefined ? {} : { workerPricing }),
           },
         );
 

@@ -556,6 +556,8 @@ export interface RunWorkerTasksOptions {
   escalation?: { target: FusionEscalationTarget; pricing?: WorkerPricing };
   /** What an escalation cost, as it lands, for the turn's cap. */
   onEscalationSpend?: (taskId: string, usd: number) => void;
+  /** The worker model's price, for the live $ on its row. Absent: tokens only. */
+  workerPricing?: WorkerPricing;
   /**
    * Text appended to a task's brief: its acceptance checklist and, on a
    * judge's retry, what was found not met (ATO-944). Absent: the brief
@@ -709,9 +711,16 @@ async function runOneTask(
   // a token is. One event per completion that moved it, and no feed
   // line — it would be one per step, per worker.
   let lastContextTokens = 0;
-  const announceUsage = (contextTokens: number): void => {
-    if (contextTokens <= 0 || contextTokens === lastContextTokens) return;
-    lastContextTokens = contextTokens;
+  // What this worker has spent so far, for its row: tokens always, $
+  // when the worker model is priced, escalations folded in.
+  let spentTokens = 0;
+  let spentUsd = 0;
+  let priced = options.workerPricing !== undefined;
+  const announceUsage = (contextTokens: number, spendMoved = false): void => {
+    const contextMoved =
+      contextTokens > 0 && contextTokens !== lastContextTokens;
+    if (!contextMoved && !spendMoved) return;
+    if (contextMoved) lastContextTokens = contextTokens;
     deps.emitEvent(options.parentSessionId, {
       type: "fusion_worker",
       taskId: task.id,
@@ -719,8 +728,17 @@ async function runOneTask(
       phase: "usage",
       role: "worker",
       model: options.workerModel,
-      contextTokens,
+      ...(lastContextTokens > 0 ? { contextTokens: lastContextTokens } : {}),
+      ...(spentTokens > 0 ? { tokens: spentTokens } : {}),
+      ...(priced ? { spentUsd } : {}),
     });
+  };
+  const addSpend = (tokens: number, usd: number | null): void => {
+    spentTokens += Math.max(0, tokens);
+    if (usd !== null) {
+      spentUsd += usd;
+      priced = true;
+    }
   };
   // The worker's session is armed and disarmed the same way for the
   // local turn and, when it runs, the escalation model's re-run.
@@ -1042,6 +1060,15 @@ async function runOneTask(
     if (outcome.costUsd !== null && outcome.costUsd > 0) {
       options.onEscalationSpend?.(task.id, outcome.costUsd);
     }
+    if (outcome.costUsd !== null || (outcome.ok && outcome.usage !== undefined)) {
+      addSpend(
+        outcome.ok && outcome.usage !== undefined
+          ? outcome.usage.promptTokens + outcome.usage.completionTokens
+          : 0,
+        outcome.costUsd,
+      );
+      announceUsage(0, true);
+    }
     if (!outcome.ok) {
       const line = `escalation to ${targetLabel} not used (${describeTrigger(trigger)}): ${outcome.reason}`;
       escalationNotes.push(line);
@@ -1150,10 +1177,23 @@ async function runOneTask(
           event.type === "llm_event" &&
           event.event.type === "llm_completed"
         ) {
-          announceUsage(event.event.completion.timing?.promptTokens ?? 0);
-          if (event.event.completion.usage !== undefined) {
-            options.onWorkerUsage?.(task.id, event.event.completion.usage);
+          const completed = event.event.completion;
+          if (completed.usage !== undefined) {
+            options.onWorkerUsage?.(task.id, completed.usage);
+            addSpend(
+              completed.usage.promptTokens + completed.usage.completionTokens,
+              options.workerPricing === undefined
+                ? null
+                : estimateUsageCostUsd(completed.usage, options.workerPricing),
+            );
+          } else {
+            addSpend(
+              (completed.timing?.promptTokens ?? 0) +
+                (completed.timing?.predictedTokens ?? 0),
+              null,
+            );
           }
+          announceUsage(completed.timing?.promptTokens ?? 0, true);
           // Counted rather than read off `finish_reason`: llama-server's
           // own endpoint reports none, and the count is what says the
           // cap, not the context window, was the wall.
@@ -1309,6 +1349,12 @@ async function runOneTask(
               );
               replaceSpent += usd;
               options.onEscalationSpend?.(task.id, usd);
+              addSpend(
+                event.event.completion.usage.promptTokens +
+                  event.event.completion.usage.completionTokens,
+                usd,
+              );
+              announceUsage(0, true);
               if (
                 replaceSpent >= target.maxUsd ||
                 options.shouldStart?.() !== undefined
