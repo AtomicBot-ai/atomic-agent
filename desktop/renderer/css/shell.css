@@ -23,11 +23,11 @@
   height:26px;flex:none;display:flex;align-items:center;gap:2px;padding:0 10px;
   background:var(--well);position:relative;z-index:30;
 }
-.mb-item{padding:0 8px;height:20px;display:flex;align-items:center;border-radius:var(--r-kbd);font-size:13px;color:var(--ink)}
+.mb-item{padding:0 8px;height:20px;display:flex;align-items:center;border-radius:var(--r-kbd);font-size:var(--fs-cap);color:var(--ink)}
 .mb-item.brand{font-weight:600}
 .mb-item:hover{background:var(--hover)}
 .mb-item.open{background:var(--brand);color:var(--on-strong)}
-#mb-clock{margin-left:auto;color:var(--ink-2);font-size:11px}
+#mb-clock{margin-left:auto;color:var(--ink-2);font-size:var(--fs-micro)}
 
 #stage{flex:1;min-height:0;display:flex;align-items:stretch;justify-content:center;padding:14px 16px 18px}
 #window{
@@ -57,7 +57,7 @@
 
 /* Title block: "Chat" and the session line on one baseline. */
 .tb-title{display:flex;align-items:baseline;gap:10px;min-width:0;margin-left:4px;flex:0 1 auto}
-.tb-title b{font-size:14px;line-height:20px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:56ch;color:var(--ink)}
+.tb-title b{font-size:var(--fs-ui);line-height:20px;font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;max-width:56ch;color:var(--ink)}
 .tb-right{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
 
 /* Search: since 13.10 a 32px icon button (.chromesearch) beside the sidebar
@@ -101,13 +101,13 @@
   transition:background var(--t-state) var(--ease);
 }
 .wschip:hover{background:var(--panel-2)}
-.wschip span{flex:1;min-width:0;font:600 13px/18px var(--font-ui);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wschip span{flex:1;min-width:0;font:600 var(--fs-cap)/18px var(--font-ui);letter-spacing:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .wschip svg{width:14px;height:14px;color:var(--ink-2)}
 
 /* New chat: a quiet full-width row under the workspace chip — plus, word. */
 .sb-new{
   flex:none;display:flex;align-items:center;gap:9px;width:100%;height:34px;margin-top:8px;padding:0 12px 0 11px;
-  border-radius:var(--r-pill);color:var(--ink);font-size:13.5px;font-weight:500;text-align:left;
+  border-radius:var(--r-pill);color:var(--ink);font-size:var(--fs-ui);font-weight:500;text-align:left;
   transition:background var(--t-state) var(--ease);
 }
 .sb-new:hover{background:var(--hover)}
@@ -127,20 +127,20 @@
 /* Group header: sentence case, bold, with the running count and the plus. */
 .sb-list-head{
   height:30px;flex:none;display:flex;align-items:center;gap:6px;margin-top:10px;padding:0 4px 0 10px;
-  font:600 12px/16px var(--font-ui);letter-spacing:0;color:var(--ink-3);text-transform:none;
+  font:600 var(--fs-label)/16px var(--font-ui);letter-spacing:0;color:var(--ink-3);text-transform:none;
 }
 .sb-list-head > span:first-child{flex:1;min-width:0}
-.sb-list-head .ct{font:500 12px/16px var(--font-ui);color:var(--ink-2)}
+.sb-list-head .ct{font:500 var(--fs-label)/16px var(--font-ui);color:var(--ink-2)}
 .sb-list-head .sb-add{width:26px;height:26px;color:var(--ink-2)}
 .sb-list-head .sb-add svg{width:14px;height:14px}
-.sb-empty{padding:4px 12px 6px;font-size:13px;line-height:18px;color:var(--ink-3)}
+.sb-empty{padding:4px 12px 6px;font-size:var(--fs-cap);line-height:18px;color:var(--ink-3)}
 /* ATO-1034: a folder — a header row (chevron, folder, name, count, "…") over
    its chats, indented one step. The header and the "Chats" heading light up
    as a chat is dragged over them (chat-folders.js). In the rail a folder is
    only its chats: the header has nothing to show at 52px. */
 .sb-folder{display:flex;flex-direction:column;gap:1px}
 .sb-fhead{display:flex;align-items:center;gap:6px;width:100%;height:30px;flex:none;padding:0 5px 0 8px;
-  border-radius:var(--r-pill);text-align:left;color:var(--ink-2);font-size:13px;font-weight:500;
+  border-radius:var(--r-pill);text-align:left;color:var(--ink-2);font-size:var(--fs-cap);font-weight:500;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .sb-fhead:hover{background:var(--hover);color:var(--ink)}
 .sb-fhead:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
@@ -148,7 +148,7 @@
 .sb-fchev{display:inline-flex;color:var(--ink-3)}
 .sb-fic{display:inline-flex;color:var(--ink-3)}
 .sb-fname{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sb-fhead .ct{font:500 12px/16px var(--font-ui);color:var(--ink-3)}
+.sb-fhead .ct{font:500 var(--fs-label)/16px var(--font-ui);color:var(--ink-3)}
 .sb-fhead .sesmore{visibility:hidden}
 .sb-fhead:hover .sesmore,.sb-fhead:focus-within .sesmore{visibility:visible}
 .sb-folder > .sesrow{padding-left:30px}
@@ -163,20 +163,26 @@
 .sesrow{
   position:relative;display:flex;align-items:center;gap:9px;width:100%;height:34px;flex:none;
   padding:0 5px 0 12px;border-radius:var(--r-pill);min-width:0;text-align:left;
-  color:var(--ink-2);font-size:13.5px;font-weight:500;
+  color:var(--ink-2);font-size:var(--fs-ui);font-weight:500;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease);
 }
 .sesrow:hover{background:var(--hover);color:var(--ink)}
 .sesrow.on{background:var(--brand-wash);color:var(--blue)}
 .sesrow.on:hover{background:var(--brand-wash-2);color:var(--blue)}
 .sesrow:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
-.sesrow .t1{flex:1;min-width:0;font-size:13.5px;line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sesrow .t1{flex:1;min-width:0;font-size:var(--fs-ui);line-height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sesrow[data-m]::after{
   content:attr(data-m);flex:none;max-width:88px;padding-right:5px;
-  font:400 11px/16px var(--font-mono);letter-spacing:0;color:var(--ink-2);
+  font:400 var(--fs-micro)/16px var(--font-mono);letter-spacing:0;color:var(--ink-2);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .sesrow.on[data-m]::after{color:var(--blue)}
+/* ATO-1032: a chat's age is quieter than a queued count, and gives way to the "…" control on hover. */
+.sesrow[data-age]::after{font-family:var(--font-ui);color:var(--ink-3)}
+.sesrow[data-age]:hover::after,.sesrow[data-age].on::after,.sesrow[data-age]:focus-within::after{display:none}
+/* ATO-1032: New chat shows its chord, drawn from data-kbd so the row's text stays "New chat". */
+.sb-new[data-kbd]::after{content:attr(data-kbd);margin-left:auto;padding-left:8px;font:400 var(--fs-label)/1 var(--font-ui);color:var(--ink-3)}
+#sidebar.rail .sb-new::after{display:none}
 
 /* The dot. Empty ring = read, filled brand = finished and not read, pulsing
    brand = running; tone classes carry waiting-for-you (amber) and failed
@@ -213,7 +219,7 @@
 
 .loadmore{
   align-self:flex-start;height:28px;margin-top:2px;padding:0 10px;border-radius:var(--r-pill);
-  font:600 12px/1 var(--font-ui);color:var(--blue);text-align:left;
+  font:600 var(--fs-label)/1 var(--font-ui);color:var(--blue);text-align:left;
 }
 .loadmore:hover{background:var(--brand-wash)}
 
@@ -258,7 +264,7 @@
    in the tooltip. A row with no glyph keeps the plain dot. */
 #sidebar.rail .sesrow[data-g]::before{
   content:attr(data-g);display:flex;align-items:center;justify-content:center;width:24px;height:24px;
-  border-radius:50%;background:var(--well);color:var(--ink-2);font:600 12px/1 var(--font-ui);
+  border-radius:50%;background:var(--well);color:var(--ink-2);font:600 var(--fs-label)/1 var(--font-ui);
 }
 #sidebar.rail .sesrow.on[data-g]::before{background:transparent;color:var(--blue)}
 #sidebar.rail .sesrow[data-g] .sdot{position:absolute;top:3px;right:3px}
@@ -287,9 +293,10 @@
   #sidebar:not(.drawer) .sb-footwrap{display:flex;justify-content:center}
   #sidebar:not(.drawer) .sb-settings{width:32px;height:32px;padding:0;justify-content:center}
   #sidebar:not(.drawer) .sb-new{width:32px;height:32px;padding:0;justify-content:center;align-self:center}
+  #sidebar:not(.drawer) .sb-new::after{display:none}
   #sidebar:not(.drawer) .sesrow[data-g]::before{
     content:attr(data-g);display:flex;align-items:center;justify-content:center;width:24px;height:24px;
-    border-radius:50%;background:var(--well);color:var(--ink-2);font:600 12px/1 var(--font-ui);
+    border-radius:50%;background:var(--well);color:var(--ink-2);font:600 var(--fs-label)/1 var(--font-ui);
   }
   #sidebar:not(.drawer) .sesrow.on[data-g]::before{background:transparent;color:var(--blue)}
   #sidebar:not(.drawer) .sesrow[data-g] .sdot{position:absolute;top:3px;right:3px}
@@ -314,7 +321,7 @@
 .insphead .seg{display:flex;width:100%}
 .insphead .seg button{flex:1}
 .inspbody{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding:4px 6px 10px}
-.inspbody > .cap{margin:0;padding:8px 10px;font-size:12.5px;line-height:18px;color:var(--ink-2)}
+.inspbody > .cap{margin:0;padding:8px 10px;font-size:var(--fs-cap);line-height:18px;color:var(--ink-2)}
 
 /* Steps: 38px rows — index · tool name · duration, all mono. */
 .step{
@@ -325,23 +332,23 @@
 .step:hover{background:var(--hover)}
 .step:active{background:var(--brand-wash)}
 .step:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
-.step .ix{width:18px;flex:none;font:400 11px/1 var(--font-mono);color:var(--ink-3)}
-.step .nm{flex:1;min-width:0;font:400 12px/16px var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.step .ix{width:18px;flex:none;font:400 var(--fs-micro)/1 var(--font-mono);color:var(--ink-3)}
+.step .nm{flex:1;min-width:0;font:400 var(--fs-label)/16px var(--font-mono);letter-spacing:0;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .step .hstack{flex:none;gap:0}
-.step .hstack .mono{display:flex;align-items:center;font-size:11px;line-height:16px;color:var(--ink-2)}
+.step .hstack .mono{display:flex;align-items:center;font-size:var(--fs-micro);line-height:16px;color:var(--ink-2)}
 .step .tk-spin{display:block;width:11px;height:11px;border-width:1.5px}
 
 /* Reasoning: labelled steps over mono wells. */
 .insp-rs{display:grid;gap:5px;padding:4px 10px}
 .insp-rs + .insp-rs{margin-top:8px}
-.insp-lbl{font:700 12px/16px var(--font-ui);color:var(--ink-2)}
-.insp-rs .tk-out{font-size:11.5px;line-height:1.6}
+.insp-lbl{font:700 var(--fs-label)/16px var(--font-ui);color:var(--ink-2)}
+.insp-rs .tk-out{font-size:var(--fs-label);line-height:1.6}
 
 /* World: a data plate, label over value, so long paths read in 292px. */
 .inspbody .insp-world{display:grid;grid-template-columns:minmax(0,1fr);gap:2px;padding:6px 10px}
-.inspbody .insp-world dt{font:700 12px/16px var(--font-ui);color:var(--ink-2)}
+.inspbody .insp-world dt{font:700 var(--fs-label)/16px var(--font-ui);color:var(--ink-2)}
 .inspbody .insp-world dt:not(:first-child){margin-top:10px}
-.inspbody .insp-world dd{font:400 11.5px/1.6 var(--font-mono);color:var(--ink);overflow-wrap:anywhere}
+.inspbody .insp-world dd{font:400 var(--fs-label)/1.6 var(--font-mono);color:var(--ink);overflow-wrap:anywhere}
 
 /* ---------------- console drawer ---------------- */
 #console{
@@ -354,7 +361,7 @@
 .conbody{flex:1;min-height:0;overflow:auto;padding:2px 0 8px}
 .logrow{
   display:grid;grid-template-columns:62px 42px minmax(0,1fr);gap:10px;align-items:center;padding:0 16px;
-  font:400 11.5px/20px var(--font-mono);letter-spacing:0;white-space:nowrap;
+  font:400 var(--fs-label)/20px var(--font-mono);letter-spacing:0;white-space:nowrap;
 }
 .logrow > span{min-width:0}
 .logrow > span:last-child{overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
@@ -363,8 +370,8 @@
 .logrow .lvl.warn{color:var(--amber-text)}
 .logrow .lvl.error{color:var(--critical)}
 .conbody > .tk-empty{height:100%;padding:12px 20px;gap:6px}
-.conbody > .tk-empty h4{font-size:13.5px}
-.conbody > .tk-empty p{font-size:12.5px}
+.conbody > .tk-empty h4{font-size:var(--fs-ui)}
+.conbody > .tk-empty p{font-size:var(--fs-cap)}
 
 /* ---------------- download card (backlog 18) ---------------- */
 /* Atomic Chat's DownloadPanel: a lifted card floating in the bottom-right
@@ -383,13 +390,13 @@
   background:var(--lift);border-radius:var(--r-pop);box-shadow:var(--sh-pop);overflow:hidden;
   color:var(--ink);user-select:none}
 .dlc-head{flex:none;display:flex;align-items:center;gap:8px;padding:8px 8px 4px 14px}
-.dlc-ttl{flex:1;min-width:0;display:flex;align-items:center;gap:7px;font:600 13px/18px var(--font-ui);color:var(--ink)}
+.dlc-ttl{flex:1;min-width:0;display:flex;align-items:center;gap:7px;font:600 var(--fs-cap)/18px var(--font-ui);color:var(--ink)}
 .dlc-ttl > svg{width:14px;height:14px;flex:none;color:var(--blue)}
 .dlc-ttl.is-failed > svg{color:var(--critical)}
 .dlc-ttl.is-done > svg{color:var(--success)}
 .dlc-ttl > span:first-of-type{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dlc-count{flex:none;min-width:20px;height:18px;padding:0 6px;border-radius:var(--r-badge);background:var(--hover);
-  font:600 11px/18px var(--font-ui);text-align:center;color:var(--ink-2);font-variant-numeric:tabular-nums}
+  font:600 var(--fs-micro)/18px var(--font-ui);text-align:center;color:var(--ink-2);font-variant-numeric:tabular-nums}
 .dlc-fold svg,.dlc-x svg{width:14px;height:14px}
 .dlc-list{list-style:none;margin:0;padding:2px 8px 8px;display:flex;flex-direction:column;gap:6px;
   overflow-y:auto;min-height:0}
@@ -397,10 +404,10 @@
    one line of figures that never wraps (an overlong one loses its end). */
 .dlc-row{flex:none;display:grid;gap:7px;padding:8px 6px 9px 12px;border-radius:var(--r-well);background:var(--well)}
 .dlc-top{display:flex;align-items:center;gap:4px;min-width:0;min-height:26px}
-.dlc-name{flex:1;min-width:0;font:600 13px/18px var(--font-ui);color:var(--ink);
+.dlc-name{flex:1;min-width:0;font:600 var(--fs-cap)/18px var(--font-ui);color:var(--ink);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dlc-bar{flex:none;height:6px;margin-right:6px}
-.dlc-line{margin:0 6px 0 0;font-size:12px;line-height:16px;color:var(--ink-2);font-variant-numeric:tabular-nums;
+.dlc-line{margin:0 6px 0 0;font-size:var(--fs-label);line-height:16px;color:var(--ink-2);font-variant-numeric:tabular-nums;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .dlc-row.is-failed{background:color-mix(in srgb, var(--critical) 8%, var(--well))}
 .dlc-row.is-failed .dlc-line{color:var(--critical);white-space:normal;overflow-wrap:anywhere;
@@ -415,7 +422,7 @@
 .dlc-x:focus-visible,.dlc-fold:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 /* The setup screen's cloud offer, now a quiet link under the rows. */
 .dlc-cloud{flex:none;align-self:flex-start;margin:0 8px 10px;padding:4px 6px;border-radius:var(--r-pill);
-  font:500 12.5px/16px var(--font-ui);color:var(--blue);text-align:left;
+  font:500 var(--fs-cap)/16px var(--font-ui);color:var(--blue);text-align:left;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .dlc-cloud:hover{background:var(--brand-wash);color:var(--blue-deep)}
 .dlc-cloud:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
@@ -427,7 +434,7 @@
 .dlc-badge:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .dlc-badge > svg{width:17px;height:17px}
 .dlc-n{position:absolute;top:-4px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:var(--r-pill);
-  background:var(--brand);color:var(--on-strong);font:700 11px/20px var(--font-ui);text-align:center;
+  background:var(--brand);color:var(--on-strong);font:700 var(--fs-micro)/20px var(--font-ui);text-align:center;
   font-variant-numeric:tabular-nums}
 .dlc-badge.has-failed .dlc-n{background:var(--critical);color:var(--on-fill)}
 

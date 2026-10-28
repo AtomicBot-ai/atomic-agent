@@ -85,6 +85,9 @@ contextBridge.exposeInMainWorld("atomic", {
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),
   config: () => ipcRenderer.invoke("agent:config"),
   skills: (sessionId?: string | null) => ipcRenderer.invoke("agent:skills", sessionId),
+  /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
+  projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),
+  projectTrustAnswer: (body: unknown) => ipcRenderer.invoke("agent:projectTrustAnswer", body),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
@@ -164,6 +167,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // Chat review Д23: which paths a reply names are files in the home folder, and opening one
   replyPaths: (paths: string[]) => ipcRenderer.invoke("app:replyPaths", paths),
   openReplyPath: (path: string) => ipcRenderer.invoke("app:openReplyPath", path),
+  // ATO-1053: the preview panel reads a file through main (file-preview.ts), never the disk itself.
+  filePreview: (path: string) => ipcRenderer.invoke("app:filePreview", path),
+  filePreviewAction: (path: string, action: "open" | "reveal") => ipcRenderer.invoke("app:filePreviewAction", path, action),
   // Studio's "From chat" clip: Show in Finder / Save As… for a reply's file in the home folder.
   // {ok:true[, path]} | {ok:false, reason:'missing'|'outside'|'not-a-file'|'canceled'|'failed'}
   replyReveal: (path: string) => ipcRenderer.invoke("app:replyReveal", path),
