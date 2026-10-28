@@ -206,6 +206,9 @@ test('the overlay window takes no click, no focus and no key, and stays out of s
     'setAlwaysOnTop(true, "screen-saver")',
   ]) assert.ok(src.includes(needle), needle);
   assert.ok(!/\.focus\(\)|\.show\(\)/.test(src), 'never focus() or show() — only showInactive()');
+  assert.ok(src.includes('overlayWindows.add(win)') && /export function appWindows/.test(src), 'overlays are not app windows');
+  const main = readFileSync(new URL('../main/main.ts', import.meta.url), 'utf8');
+  assert.ok(!/getAllWindows()/.test(main), 'main.ts counts app windows through appWindows()');
   const page = readFileSync(new URL('../renderer/screen-overlay.js', import.meta.url), 'utf8');
   assert.ok(!/addEventListener|onclick|onkey|innerHTML/.test(page), 'the page reads no input and parses no HTML');
 });

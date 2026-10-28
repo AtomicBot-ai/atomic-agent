@@ -19,6 +19,18 @@ import { ScreenMarksOverlay, type DisplayInfo, type LocalMark, type OverlayWindo
  * - Bounds are the display's bounds in DIP, which are points on macOS:
  *   the page draws in points and Retina needs no factor.
  */
+const overlayWindows = new WeakSet<BrowserWindow>();
+
+/** True for a marks overlay: never "a window of the app" (Dock reopen, quit on last window, focus). */
+export function isScreenOverlayWindow(win: BrowserWindow): boolean {
+  return overlayWindows.has(win);
+}
+
+/** The app's own windows, without the marks overlays. */
+export function appWindows(): BrowserWindow[] {
+  return BrowserWindow.getAllWindows().filter((w) => !overlayWindows.has(w));
+}
+
 function openOverlayWindow(display: DisplayInfo): OverlayWindow {
   const { x, y, width, height } = display.bounds;
   const win = new BrowserWindow({
@@ -49,6 +61,7 @@ function openOverlayWindow(display: DisplayInfo): OverlayWindow {
       spellcheck: false,
     },
   });
+  overlayWindows.add(win);
   win.setIgnoreMouseEvents(true);
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
@@ -76,7 +89,7 @@ function openOverlayWindow(display: DisplayInfo): OverlayWindow {
     if (pending) paint(pending);
     pending = null;
   });
-  void win.loadFile(join(__dirname, "..", "renderer", "screen-overlay.html"));
+  win.loadFile(join(__dirname, "..", "renderer", "screen-overlay.html")).catch(() => {});
   return {
     draw(marks) {
       if (loaded) paint(marks);
@@ -124,5 +137,13 @@ export function createScreenMarksOverlay(log: (line: string) => void): ScreenMar
   screen.on("display-removed", onDisplays);
   screen.on("display-metrics-changed", onDisplays);
   app.on("before-quit", () => overlay.clear("quit"));
+  /* The last app window closing takes the marks with it, so an overlay
+     never holds back window-all-closed (and the quit off macOS). */
+  app.on("browser-window-created", (_event, created) => {
+    created.once("closed", () => {
+      if (overlayWindows.has(created) || !overlay.showing) return;
+      if (appWindows().every((w) => w === created || w.isDestroyed())) overlay.clear("quit");
+    });
+  });
   return overlay;
 }
