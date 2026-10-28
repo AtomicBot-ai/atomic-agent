@@ -151,6 +151,11 @@ export interface ShellDetachRender {
   evicted?: ShellJobRecord | null;
   maxJobs?: number;
   notices?: readonly string[];
+  /**
+   * Replaces the "still running after …" line: a job started with
+   * `background: true` or kept for a sign-in was never waited out.
+   */
+  detachNotice?: string;
 }
 
 /** A job given back still running: the notice, the tail, the id. */
@@ -168,12 +173,13 @@ export function renderShellDetached(
     );
   }
   notices.push(
-    formatShellDetachNotice({
-      jobId: record.id,
-      waitedMs: input.waitedMs,
-      again: input.again,
-      defaultTimeoutMs: input.defaultTimeoutMs,
-    }),
+    input.detachNotice ??
+      formatShellDetachNotice({
+        jobId: record.id,
+        waitedMs: input.waitedMs,
+        again: input.again,
+        defaultTimeoutMs: input.defaultTimeoutMs,
+      }),
   );
   return renderShellResult({
     facts: record.facts,
