@@ -56,22 +56,65 @@ const SECRET_AUTOCOMPLETE = [
 ];
 
 /**
- * Runs in the page (`frame.evaluate`): the non-empty values of secret
- * fields in this frame. Values stay inside the backend; they are only
- * used to mask the snapshot text.
+ * A one-time code field that does not say so with
+ * `autocomplete="one-time-code"` (ATO-1260: an 8-digit sign-in code went
+ * into a field named only "Verification code"), read from its name, id,
+ * placeholder and label text, lowercased. A bare "code" counts unless a
+ * word before it makes it a postal, promo or similar code.
  */
-export function collectSecretFieldValuesInPage(autocompleteTokens: string[]): string[] {
+export const ONE_TIME_CODE_HINT =
+  "one.?time|\\botp\\b|\\btotp\\b|\\b2fa\\b|\\bmfa\\b|two.?(factor|step)|passcode|\\bpin\\b|" +
+  "(verif\\w*|confirm\\w*|auth\\w*|security|access|login|sign.?in|sms|text|email|e-mail|backup|recovery|6.?digit|8.?digit)[\\s_-]*code|" +
+  "(?<![\\p{L}\\p{N}_-])(?<!(zip|postal|post|promo|coupon|discount|gift|voucher|area|country|referral|invite|invitation|source|tracking|product|qr|bar|color|colour|currency|language|region|tax|sort|swift|bank|routing|reference)[\\s_-]*)code(?![\\p{L}\\p{N}])|" +
+  "(?<![\\p{L}\\p{N}])(?<!(почтов\\p{L}*|промо)[\\s_-]*)(код|kod)(?![\\p{L}]*[\\s_-]*(товар|купон|промо|город|стран|регион|почт))";
+
+const ONE_TIME_CODE_FIELD = new RegExp(ONE_TIME_CODE_HINT, "iu");
+
+/** `fieldHints` (lowercased name / id / placeholder / labels) name a one-time code. */
+export function isOneTimeCodeHint(fieldHints: string): boolean {
+  return ONE_TIME_CODE_FIELD.test(fieldHints);
+}
+
+/**
+ * Runs in the page (`frame.evaluate`): the non-empty values of secret
+ * fields in this frame (by type, autocomplete, or a one-time code's
+ * name/label, `codeHint` being {@link ONE_TIME_CODE_HINT}). Values stay
+ * inside the backend; they are only used to mask the snapshot text.
+ */
+export function collectSecretFieldValuesInPage(arg: {
+  tokens: string[];
+  codeHint: string;
+}): string[] {
+  type Field = {
+    type?: string;
+    value?: string;
+    labels?: ArrayLike<{ textContent: string | null }> | null;
+    getAttribute: (n: string) => string | null;
+  };
   const doc = (globalThis as unknown as {
-    document: { querySelectorAll: (s: string) => ArrayLike<{ type?: string; value?: string; getAttribute: (n: string) => string | null }> };
+    document: { querySelectorAll: (s: string) => ArrayLike<Field> };
   }).document;
+  const codeField = new RegExp(arg.codeHint, "iu");
   const out: string[] = [];
   const inputs = doc.querySelectorAll("input, textarea");
   for (let i = 0; i < inputs.length; i += 1) {
     const el = inputs[i]!;
+    if (typeof el.value !== "string" || el.value.length === 0) continue;
     const type = (el.type ?? "").toLowerCase();
     const auto = (el.getAttribute("autocomplete") ?? "").toLowerCase().split(/\s+/);
-    const secret = type === "password" || auto.some((t) => autocompleteTokens.includes(t));
-    if (secret && typeof el.value === "string" && el.value.length > 0) out.push(el.value);
+    let secret = type === "password" || auto.some((t) => arg.tokens.includes(t));
+    if (!secret) {
+      const labels = el.labels ? Array.from(el.labels, (l) => l.textContent ?? "") : [];
+      const hints = [
+        el.getAttribute("name"),
+        el.getAttribute("id"),
+        el.getAttribute("placeholder"),
+        el.getAttribute("aria-label"),
+        ...labels,
+      ].filter(Boolean).join(" ").toLowerCase();
+      secret = codeField.test(hints);
+    }
+    if (secret) out.push(el.value);
   }
   return out;
 }
