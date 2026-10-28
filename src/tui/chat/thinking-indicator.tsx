@@ -6,6 +6,7 @@ import {
   fanoutExpectation,
   formatElapsed,
   formatFusionLiveWorker,
+  fusionWorkerActionsHint,
 } from "../fusion-live-workers.js";
 import { theme } from "../theme/theme.js";
 import type { TuiState } from "../tui-state.js";
@@ -89,6 +90,14 @@ export function ThinkingIndicator({
             </Text>
           </Box>
         )))(fanoutExpectation(state.fusionLiveWorkers))}
+      {((hint) =>
+        compacting || hint === null ? null : (
+          <Box marginLeft={4}>
+            <Text color={theme.colors.muted} wrap="truncate">
+              {hint}
+            </Text>
+          </Box>
+        ))(fusionWorkerActionsHint(state.fusionLiveWorkers))}
     </Box>
   );
 }

@@ -6,6 +6,7 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import { emptyFusionOrchestratorState } from "../policies/fusion-orchestrator-mode.js";
 import { createReviewStallState, type ReviewStallState } from "../review-stall.js";
+import { createReplanState, type ReplanState } from "../fusion-replan.js";
 import { DEFAULT_FUSION_REVIEW_STALL_STEPS } from "../../config/llm-run-mode-config.js";
 import { createProgressNoteNoticeState } from "../progress-note-reply.js";
 import { createUnknownToolStreak } from "../policies/unknown-tool.js";
@@ -162,6 +163,13 @@ export function prepareTurnPolicies(
         options.userMessage,
       )
     : null;
+  // Automatic replanning (ATO-941): a fan-out with tasks that did not
+  // close holds the next step to `fusion.delegate`. `null` when off.
+  const replan: ReplanState | null =
+    fusionOrchestratorTurn &&
+    (getConfig().llm?.runMode?.fusion?.autoReplan ?? 0) > 0
+      ? createReplanState()
+      : null;
   // A fan-out approval stands for the turn that asked for it and no
   // longer. Cleared here rather than when the turn ends so an aborted
   // or crashed turn cannot leave authority behind for the next one.
@@ -202,7 +210,7 @@ export function prepareTurnPolicies(
   // on; this many unknown-only steps in a row still end it.
   const unknownTools = createUnknownToolStreak();
   return {
-    fusionOrchestratorTurn, fusionState, reviewStall, toolRole,
+    fusionOrchestratorTurn, fusionState, reviewStall, replan, toolRole,
     claimEvidence, linkEvidence, progressNotes, unknownTools,
   };
 }

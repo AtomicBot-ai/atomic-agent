@@ -579,6 +579,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.worker",
+    label: "Stop or escalate a fusion worker",
+    group: "run",
+    slash: {
+      name: "worker",
+      description:
+        "act on one running fusion worker: `/worker stop <id>` · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
+      rank: 46,
+    },
+  },
+  {
+    kind: "action",
     id: "run.expand",
     label: "Expand all tool cards",
     group: "run",

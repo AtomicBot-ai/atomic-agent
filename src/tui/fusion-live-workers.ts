@@ -37,6 +37,14 @@ export interface FusionLiveWorker {
    * "which worker ate the window".
    */
   readonly contextTokens: number | null;
+  /**
+   * Tokens this leg has spent so far (prompt + reply, every completion)
+   * and what they cost when its model is priced, escalations included.
+   * `null` until the first `phase: "usage"` that carries one; never
+   * estimated here — the runner prices them.
+   */
+  readonly tokens?: number | null;
+  readonly spentUsd?: number | null;
 }
 
 /**
@@ -82,6 +90,8 @@ export function reduceFusionLiveWorkers(
     // every one, so it is kept rather than overwritten with undefined.
     etaSeconds: event.etaSeconds ?? previous?.etaSeconds ?? null,
     contextTokens: event.contextTokens ?? previous?.contextTokens ?? null,
+    tokens: event.tokens ?? previous?.tokens ?? null,
+    spentUsd: event.spentUsd ?? previous?.spentUsd ?? null,
   };
   if (at < 0) return [...current, next];
   const copy = [...current];
@@ -363,11 +373,12 @@ export function formatFusionLiveWorker(
     worker.contextTokens === null
       ? ""
       : ` · ${formatTokens(worker.contextTokens)} ctx`;
+  const spend = describeSpend(worker);
   return `${worker.title} · ${model} — ${what} · ${elapsed}${describeExpectation(
     worker,
     elapsedMs,
     measured,
-  )}${stuck}${context}`;
+  )}${stuck}${spend}${context}`;
 }
 
 /**
@@ -394,4 +405,30 @@ function describeExpectation(
     return ` (past the ~${formatElapsed(expectedMs)} expected)`;
   }
   return ` (~${formatElapsed(expectedMs)} expected)`;
+}
+
+/** ` · 41.2k tok · $0.031`, or less of it when that is all that is known. */
+function describeSpend(worker: FusionLiveWorker): string {
+  const tokens =
+    worker.tokens == null || worker.tokens <= 0
+      ? ""
+      : ` · ${formatTokens(worker.tokens)} tok`;
+  const usd =
+    worker.spentUsd == null
+      ? ""
+      : ` · ${worker.spentUsd > 0 && worker.spentUsd < 0.01 ? `$${worker.spentUsd.toFixed(4)}` : `$${worker.spentUsd.toFixed(2)}`}`;
+  return `${tokens}${usd}`;
+}
+
+/**
+ * The actions line under a fan-out's running rows, naming the ids the
+ * `/worker` command takes; `null` when nothing is running.
+ */
+export function fusionWorkerActionsHint(
+  workers: readonly FusionLiveWorker[],
+): string | null {
+  const running = workers.filter((w) => !w.done).map((w) => w.taskId);
+  return running.length === 0
+    ? null
+    : `/worker stop <id> · /worker escalate <id> — running: ${running.join(", ")}`;
 }
