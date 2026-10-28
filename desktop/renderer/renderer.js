@@ -2121,7 +2121,7 @@ function providerSwitchedLine(p) {
   if (!p || typeof p !== 'object') return '';
   if (typeof p.notice === 'string' && p.notice.trim()) return p.notice.trim();
   if (typeof p.from !== 'string' || typeof p.to !== 'string' || !p.from || !p.to) return '';
-  return p.from + ' failed, answered with ' + p.to + (typeof p.to_model === 'string' && p.to_model ? ' (' + p.to_model + ')' : '') + '.';
+  return p.from + ' failed, switched to ' + p.to + (typeof p.to_model === 'string' && p.to_model ? ' (' + p.to_model + ')' : '') + '.';
 }
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
@@ -10376,7 +10376,7 @@ function onChatEvent(ev) {
     return;
   }
   /* ATO-483: the person's fallback provider answered instead of the one they
-     picked. The agent words it ("OpenRouter is rate-limited, answered with
+     picked. The agent words it ("OpenRouter is rate-limited, switched to
      Gemini (gemini-2.5-flash)."); one line in the transcript, before the
      reply, so a switch is never silent. An agent without a `notice` (none
      sends this frame yet) is worded here from the ids. */

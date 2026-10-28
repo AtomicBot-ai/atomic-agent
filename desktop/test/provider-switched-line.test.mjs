@@ -11,12 +11,12 @@ const ctx = createContext({});
 runInContext(renderer.slice(start, end) + ';this.line = providerSwitchedLine;', ctx);
 
 test("the agent's own sentence is shown as it is", () => {
-  assert.equal(ctx.line({ notice: 'OpenRouter is rate-limited, answered with Gemini (gemini-2.5-flash).', from: 'openrouter', to: 'gemini' }),
-    'OpenRouter is rate-limited, answered with Gemini (gemini-2.5-flash).');
+  assert.equal(ctx.line({ notice: 'OpenRouter is rate-limited, switched to Gemini (gemini-2.5-flash).', from: 'openrouter', to: 'gemini' }),
+    'OpenRouter is rate-limited, switched to Gemini (gemini-2.5-flash).');
 });
 
 test('without a notice the ids still say who answered; nothing to say gives an empty line', () => {
-  assert.equal(ctx.line({ from: 'openrouter', to: 'gemini', to_model: 'gemini-2.5-flash' }), 'openrouter failed, answered with gemini (gemini-2.5-flash).');
+  assert.equal(ctx.line({ from: 'openrouter', to: 'gemini', to_model: 'gemini-2.5-flash' }), 'openrouter failed, switched to gemini (gemini-2.5-flash).');
   assert.equal(ctx.line({}), '');
   assert.equal(ctx.line(null), '');
 });
