@@ -39,6 +39,14 @@
 #   afterPack cannot run the arm64 agent on an x64 host, so its database
 #   probe is skipped there; it ran in agent-win32-arm64 instead.
 #
+# Linux (linux-x64 on ubuntu-22.04, linux-arm64 on ubuntu-24.04-arm) produces
+# an AppImage, a deb and an rpm per arch, all unsigned, named
+# Atomic-Agent-<version>-<arch>.<ext> with the arch spelled the format's way:
+# x86_64/arm64 for the AppImage, amd64/arm64 for the deb, x86_64/aarch64 for
+# the rpm. The rpm needs rpmbuild on the runner ("Install rpmbuild"); the
+# apt/dnf repository on main (scripts/linux-repo.ts) picks the deb and the
+# rpm out of the release and signs the rpm itself.
+#
 # App updates (ATO-229): the repository variable ATAG_UPDATE_FEED_URL, when
 # set, goes into the build (desktop/electron-builder.cjs) and electron-builder
 # also writes the update files (stable-mac.yml + the mac zip, stable.yml,
@@ -107,8 +115,8 @@ jobs:
           - { slug: win32-x64, os: windows-2022, builder: "--win --x64", artifacts: "desktop/release/*.exe\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
           # win32-arm64 is not a row here: it is built by agent-win32-arm64 and
           # package-win32-arm64 below (see the header).
-          - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
-          - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          - { slug: linux-x64, os: ubuntu-22.04, builder: "--linux --x64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.rpm\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
+          - { slug: linux-arm64, os: ubuntu-24.04-arm, builder: "--linux --arm64", artifacts: "desktop/release/*.AppImage\ndesktop/release/*.deb\ndesktop/release/*.rpm\ndesktop/release/*.blockmap\ndesktop/release/*.yml\n!desktop/release/builder-*.yml" }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     defaults:
@@ -346,6 +354,17 @@ jobs:
           fi
           npm pkg set version="$VERSION_OVERRIDE"
           node -p "'app version for this build: ' + require('./package.json').version"
+
+      # electron-builder builds the rpm through fpm, which calls rpmbuild;
+      # the Ubuntu runners do not have it. The deb and the AppImage need
+      # nothing extra.
+      - name: Install rpmbuild (Linux)
+        if: startsWith(matrix.slug, 'linux-')
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends rpm
+          rpmbuild --version
 
       - name: Package desktop app
         working-directory: desktop
