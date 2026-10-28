@@ -254,9 +254,15 @@ export class ToolCallArgumentsParseError extends Error {
  * intentional empty call.
  */
 function parseArguments(
-  raw: string,
+  raw: unknown,
   repair?: (report: JsonRepairReport) => void,
 ): Record<string, unknown> {
+  // A non-streamed `message.tool_calls` can carry the object itself
+  // (ATO-1259); it is the arguments, not a string to parse.
+  if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+    return raw as Record<string, unknown>;
+  }
+  if (typeof raw !== "string") return {};
   const trimmed = raw.trim();
   if (!trimmed) return {};
   let parsed: unknown;
