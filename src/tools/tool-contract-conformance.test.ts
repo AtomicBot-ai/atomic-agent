@@ -88,6 +88,7 @@ const browser: BrowserBackend = {
   snapshot: async () => unexpected(), hasRef: async () => unexpected(), describeRef: async () => unexpected(), currentUrl: async () => unexpected(),
   navigate: async () => unexpected(), click: async () => unexpected(),
   type: async () => unexpected(), search: async () => unexpected(),
+  screenshot: async () => unexpected(),
   tabs: async () => unexpected(), scroll: async () => unexpected(),
 };
 

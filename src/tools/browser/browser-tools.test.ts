@@ -130,6 +130,9 @@ class FakeBackend implements BrowserBackend {
     };
   }
 
+  async screenshot(): Promise<never> {
+    throw new Error("FakeBackend: screenshot not used here");
+  }
   async scroll(input: ScrollInput): Promise<ScrollResult> {
     this.lastScroll = input;
     const vh = this.scrollState.viewportHeight;
