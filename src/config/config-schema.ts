@@ -1068,6 +1068,8 @@ export interface UserConfigFile {
 // never escalates automatically.
 // Unversioned, additive: `llm.runMode.fusion.judge` (`off|on`, default
 // `off`) and `judgeProvider` (default the orchestrator leg), ATO-944.
+// Unversioned, additive: `llm.runMode.fusion.autoReplan` (0..5, default
+// 0 = off), ATO-941.
 export const USER_CONFIG_VERSION = 79;
 
 /**

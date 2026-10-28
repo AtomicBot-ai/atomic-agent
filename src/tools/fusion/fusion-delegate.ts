@@ -30,8 +30,14 @@ import {
   contractForWave,
   dependencyWarnings,
   planWaves,
+  UNDELIVERED_STATUSES,
 } from "./contract-waves.js";
-import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
+import {
+  notStartedResult,
+  runWorkerTasks,
+  type WorkerRunnerDeps,
+} from "./worker-runner.js";
+import { describeReplan, renderReplanBlock } from "./replan.js";
 import {
   applyJudgeVerdict,
   buildAcceptanceChecklist,
@@ -232,6 +238,7 @@ export function buildFusionDelegateTool(
           : { timeMs: mode.turnTimeBudgetMs }),
       };
       const capped = limits.usd !== undefined || limits.timeMs !== undefined;
+      const autoReplan = mode.autoReplan ?? 0;
       const budgetStop = (): TurnBudgetStop | undefined =>
         capped
           ? turnBudget.check(
@@ -392,6 +399,7 @@ export function buildFusionDelegateTool(
           }
         }
         deps.approvals.fanoutScopes?.grantForTurn(ctx.sessionId, writeScope);
+
       } catch (err) {
         // The user's own no already says what happened and what to do,
         // and so does a repeat of one they declined earlier in the turn.
@@ -604,8 +612,41 @@ export function buildFusionDelegateTool(
             ...waveWarnings,
             ...completedWaveNotes(finished),
           ]);
+          // With autoReplan on (ATO-941), a task whose provider did not
+          // close is held for the replan rather than run against inputs
+          // that are not there; its own dependents are held with it.
+          const held =
+            autoReplan > 0
+              ? wave.filter((id) =>
+                  (plan.dependencies.get(id) ?? []).some((provider) => {
+                    const done = finished.get(provider);
+                    return (
+                      done !== undefined &&
+                      UNDELIVERED_STATUSES.has(done.status)
+                    );
+                  }),
+                )
+              : [];
+          for (const id of held) {
+            const task = parsed.tasks.find((t) => t.id === id)!;
+            const waitingOn = (plan.dependencies.get(id) ?? []).filter(
+              (provider) => {
+                const done = finished.get(provider);
+                return done !== undefined && UNDELIVERED_STATUSES.has(done.status);
+              },
+            );
+            finished.set(
+              id,
+              notStartedResult(
+                task,
+                `held for the replan: it depends on ${waitingOn.join(", ")}, which did not close`,
+              ),
+            );
+          }
           const waveResults = await runTasks(
-            parsed.tasks.filter((t) => wave.includes(t.id)),
+            parsed.tasks.filter(
+              (t) => wave.includes(t.id) && !held.includes(t.id),
+            ),
             contract,
             acceptanceSuffix,
           );
@@ -625,6 +666,16 @@ export function buildFusionDelegateTool(
         );
       } finally {
         if (budgetTimer !== undefined) clearTimeout(budgetTimer);
+      }
+      // Each task this call actually started is one attempt at it this
+      // turn; the replan bound (ATO-941) is counted against these. A task
+      // held or kept from starting has not been tried.
+      if (autoReplan > 0) {
+        for (const r of results) {
+          if (!(r.error ?? "").startsWith("not started:")) {
+            turnBudget.noteAttempt(ctx.sessionId, r.id);
+          }
+        }
       }
       // Rows a cap cut short say so, so a cancelled worker is not read
       // as the operator's doing.
@@ -807,6 +858,18 @@ export function buildFusionDelegateTool(
           return verdict === undefined ? r : applyJudgeVerdict(r, verdict, false);
         });
       }
+      // Automatic replanning (ATO-941): what did not close, from the
+      // facts above, with the attempts it has left. The planner's next
+      // step is held to `fusion.delegate` by the loop while any task is
+      // pending (`fusion-replan.ts`); exhausted tasks are to be reported.
+      const replan =
+        autoReplan > 0 && stoppedBy === undefined && !ctx.signal.aborted
+          ? describeReplan(
+              results,
+              (id) => turnBudget.attempts(ctx.sessionId, id),
+              autoReplan,
+            )
+          : undefined;
       const contractLine =
         contract === undefined ? undefined : renderContractLine(contract);
 
@@ -867,7 +930,7 @@ export function buildFusionDelegateTool(
             judgeSpendUsd > 0
               ? `\n\nThe judge (${judgeTarget?.model ?? judgeTarget?.providerId}) cost ${formatUsd(judgeSpendUsd)} this fan-out.`
               : ""
-          }${budgetNote}`,
+          }${replan === undefined ? "" : renderReplanBlock(replan)}${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -881,6 +944,10 @@ export function buildFusionDelegateTool(
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
             ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
+            ...(replan === undefined ||
+            (replan.pending.length === 0 && replan.exhausted.length === 0)
+              ? {}
+              : { replan }),
             ...(budgetStopped === undefined
               ? {}
               : {

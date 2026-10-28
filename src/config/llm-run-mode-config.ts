@@ -143,6 +143,18 @@ export type UserLlmFusionConfig = {
   judge?: "off" | "on";
   /** The judge's model: a configured provider. Default: the orchestrator leg. */
   judgeProvider?: string;
+  /**
+   * Automatic replanning (ATO-941): how many times one task may be sent
+   * back to the planner after it did not close (failed, judged red,
+   * handed back, out of steps or time). After a fan-out with such tasks
+   * the planner's next step admits only `fusion.delegate`, with the
+   * facts in front of it, so the turn goes on without the person typing
+   * "continue"; tasks that depend on a failed one in a later wave are
+   * held for the replan instead of run against missing inputs. Once a
+   * task's attempts are used, the planner is told to report it plainly.
+   * `0` (default): off, as before.
+   */
+  autoReplan?: number;
 };
 
 export type FusionEscalationMode = "off" | "advisor";
@@ -201,6 +213,8 @@ export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
  */
 export const DEFAULT_FUSION_REVIEW_STALL_STEPS = 6;
 export const FUSION_REVIEW_STALL_STEPS_MAX = 1000;
+/** Upper bound on `autoReplan`: replans per task in one turn. */
+export const FUSION_AUTO_REPLAN_MAX = 5;
 /** Upper bound on `turnBudgetUsd`; anything larger is a typo. */
 export const FUSION_TURN_BUDGET_USD_MAX = 10_000;
 
@@ -434,6 +448,14 @@ function parseFusion(
       obj.judgeProvider,
       providers,
       `${field}.judgeProvider`,
+    );
+  }
+  if (obj.autoReplan !== undefined) {
+    out.autoReplan = parseBoundedInt(
+      obj.autoReplan,
+      `${field}.autoReplan`,
+      0,
+      FUSION_AUTO_REPLAN_MAX,
     );
   }
   if (obj.turnTimeBudgetMs !== undefined) {

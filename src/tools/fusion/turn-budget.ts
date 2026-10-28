@@ -33,6 +33,8 @@ export interface TurnBudgetStop {
 interface TurnState {
   startedAt: number;
   workerUsd: number;
+  /** Task id → how many times it was run this turn (ATO-941's replans). */
+  attempts: Map<string, number>;
 }
 
 export class FusionTurnBudget {
@@ -42,7 +44,11 @@ export class FusionTurnBudget {
 
   /** A fusion turn starts on `sessionId`: its spend and clock start at zero. */
   begin(sessionId: string): void {
-    this.turns.set(sessionId, { startedAt: this.now(), workerUsd: 0 });
+    this.turns.set(sessionId, {
+      startedAt: this.now(),
+      workerUsd: 0,
+      attempts: new Map(),
+    });
   }
 
   private turn(sessionId: string): TurnState {
@@ -50,7 +56,7 @@ export class FusionTurnBudget {
     if (state === undefined) {
       // No turn start was seen (an embedder, a test): the clock starts
       // at the first fan-out instead.
-      state = { startedAt: this.now(), workerUsd: 0 };
+      state = { startedAt: this.now(), workerUsd: 0, attempts: new Map() };
       this.turns.set(sessionId, state);
     }
     return state;
@@ -59,6 +65,18 @@ export class FusionTurnBudget {
   addWorkerSpend(sessionId: string, usd: number): void {
     if (!Number.isFinite(usd) || usd <= 0) return;
     this.turn(sessionId).workerUsd += usd;
+  }
+
+  /** Count one run of `taskId` this turn; returns the count so far. */
+  noteAttempt(sessionId: string, taskId: string): number {
+    const attempts = this.turn(sessionId).attempts;
+    const count = (attempts.get(taskId) ?? 0) + 1;
+    attempts.set(taskId, count);
+    return count;
+  }
+
+  attempts(sessionId: string, taskId: string): number {
+    return this.turns.get(sessionId)?.attempts.get(taskId) ?? 0;
   }
 
   workerSpend(sessionId: string): number {
