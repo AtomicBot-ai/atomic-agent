@@ -27,7 +27,7 @@ function capturingClient(
   bodies: Array<Record<string, unknown>>,
   drySampler?: boolean,
 ): LlamaServerClient {
-  const fetchImpl = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+  const fetchImpl = (async (_input: string | URL | Request, init?: RequestInit) => {
     bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
     return new Response(JSON.stringify({ content: "x", stop: true }), {
       status: 200,
