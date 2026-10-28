@@ -5658,9 +5658,10 @@ const PT = createProjectTrust({
   read: (id) => BR && BR.projectTrust ? BR.projectTrust(id) : {supported: false},
   answer: (body) => BR && BR.projectTrustAnswer ? BR.projectTrustAnswer(body) : {supported: false},
 });
-let PT_KEY = null;
+let PT_KEY = null, PT_GEN = null;
 async function projectTrustCheck(force) {
   const key = skillContextKey();
+  if (PT_GEN !== AGENT_GEN) { PT_GEN = AGENT_GEN; PT.reset(); }   // what one agent lacked says nothing about the next
   if (!force && PT_KEY === key) return;
   PT_KEY = key;
   const before = JSON.stringify([PT.state.question, PT.state.status]);

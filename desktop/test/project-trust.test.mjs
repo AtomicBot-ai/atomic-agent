@@ -96,6 +96,16 @@ test('an agent without the route shows nothing and never asks again', async () =
   assert.deepEqual(await pt.setAll(true, 'ses-1'), {ok: false});
 });
 
+test('a new agent is asked again after an older one had no route', async () => {
+  const api = fakeApi([{supported: false}, {supported: true, ok: true, status: asking()}]);
+  const pt = createProjectTrust(api);
+  assert.equal(await pt.check('ses-1'), null);
+  assert.equal(pt.state.supported, false);
+  pt.reset();
+  assert.equal((await pt.check('ses-1')).questionId, 'q1');
+  assert.equal(pt.state.supported, true);
+});
+
 test('a failed read keeps the last question and says why; a late answer for another chat is dropped', async () => {
   let release;
   const slow = new Promise((r) => { release = r; });

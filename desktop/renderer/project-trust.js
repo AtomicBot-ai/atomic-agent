@@ -56,6 +56,10 @@ function createProjectTrust(api) {
       st.error = null; apply(res.status);
       return st.question;
     },
+    /* Another agent is on the wire (a remote one, or the local one again): it may have the route the last one lacked. */
+    reset() {
+      st.supported = null; st.serial++; st.busy = false; st.error = null; apply(null);
+    },
     /* "Not now": closed until the app starts again, as the TUI's Esc. Nothing is recorded. */
     dismiss() {
       if (st.question) st.dismissed.add(st.question.workingDir);
