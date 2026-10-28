@@ -198,7 +198,6 @@ export function isLoopbackListenHost(host: string): boolean {
   if (kind === 4) return h.split(".")[0] === "127";
   if (kind === 6) {
     // The URL parser prints the canonical compressed form, so every
-    // spelling of one address compares equal.
     // spelling of one address compares equal. A zone id (`fe80::1%eth0`)
     // passes isIP but not the URL parser, and is never loopback.
     if (h.includes("%")) return false;
