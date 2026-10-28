@@ -1057,6 +1057,17 @@ export interface UserConfigFile {
 // llama-server engine's older rescue wrote `"cpu"` there on any health
 // timeout, and such a file must keep Core's GPU build. An older file has
 // no field and takes `auto`, Core's recommendation, as before.
+// Unversioned, additive: `llm.runMode.fusion.turnBudgetUsd` and
+// `turnTimeBudgetMs` (ATO-947), unset by default. A fusion turn that
+// reaches either starts no new delegation or worker. An older file has
+// neither field and runs uncapped, as before.
+// Unversioned, additive: `llm.runMode.fusion.escalation` (`off|advisor`,
+// default `off`), `escalationReplace` (default false),
+// `escalationProvider` (default the orchestrator leg) and
+// `escalationMaxUsd` (default 0.25), ATO-942. An older file has none and
+// never escalates automatically.
+// Unversioned, additive: `llm.runMode.fusion.judge` (`off|on`, default
+// `off`) and `judgeProvider` (default the orchestrator leg), ATO-944.
 export const USER_CONFIG_VERSION = 79;
 
 /**

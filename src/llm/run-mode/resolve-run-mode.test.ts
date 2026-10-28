@@ -270,3 +270,47 @@ describe("resolveRunMode with the legs swapped", () => {
     expect(rm.effective).toBe("fusion");
   });
 });
+
+describe("fusion escalation target (ATO-942)", () => {
+  it("defaults to the orchestrator leg, off for automatic use", () => {
+    const rm = resolveRunMode(llm("openrouter", { mode: "fusion" }));
+    expect(rm.escalation).toEqual({
+      providerId: "openrouter",
+      model: "anthropic/claude-sonnet-4.5",
+      auto: false,
+      replace: false,
+      maxUsd: 0.25,
+    });
+  });
+
+  it("is null when the only candidate is the worker leg itself", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: { escalationProvider: "local-llama", escalation: "advisor" },
+      }),
+    );
+    expect(rm.escalation).toBeNull();
+  });
+
+  it("honours a pinned provider, the advisor switch, the replace flag and the cap", () => {
+    const rm = resolveRunMode(
+      llm("openrouter", {
+        mode: "fusion",
+        fusion: {
+          escalation: "advisor",
+          escalationProvider: "groq",
+          escalationReplace: true,
+          escalationMaxUsd: 1,
+        },
+      }),
+    );
+    expect(rm.escalation).toEqual({
+      providerId: "groq",
+      model: "llama-3.3",
+      auto: true,
+      replace: true,
+      maxUsd: 1,
+    });
+  });
+});
