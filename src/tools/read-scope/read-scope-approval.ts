@@ -179,4 +179,34 @@ export class ReadOutsideApprover {
       return null;
     });
   }
+
+  /**
+   * Ask about a call that touches the agent's own secret files
+   * (`state-secrets.ts`) as `state_secret`, in the same per-session queue
+   * as the scope question so a batch never shows two prompts at once.
+   * Resolves when approved; a denial throws `ApprovalDeniedError`, as
+   * every gated tool's does. Nothing is remembered: the category is never
+   * granted, and no read root is widened by the answer.
+   */
+  confirmStateSecret(
+    tool: string,
+    ctx: ScopedContext,
+    prompt: ReadOutsidePrompt,
+    paths: readonly string[],
+  ): Promise<void> {
+    return this.queue.run(ctx.sessionId, async () => {
+      await requireApproval(
+        this.options,
+        {
+          sessionId: ctx.sessionId,
+          tool,
+          category: "state_secret",
+          reason: prompt.reason,
+          ...(prompt.preview !== undefined ? { preview: prompt.preview } : {}),
+          affectedResources: [...paths],
+        },
+        ctx.signal,
+      );
+    });
+  }
 }

@@ -51,7 +51,11 @@ describe("loop_failed for a cancelled turn over SSE", () => {
     expect(sse.written).toEqual([
       {
         name: "error",
-        payload: { error: "This operation was aborted", category: "cancelled" },
+        payload: {
+          error: "This operation was aborted",
+          category: "cancelled",
+          failure: { cause: "cancelled", phrase: "You stopped this turn.", action: "none" },
+        },
       },
     ]);
   });

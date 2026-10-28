@@ -10,6 +10,7 @@ import {
 } from "./fs-read-coverage.js";
 import type { FileReadVersions } from "./fs-read-freshness.js";
 import { notARegularFileMessage } from "./fs-read-not-a-file.js";
+import { orMissing } from "./fs-missing-path.js";
 import type { ToolDefinition } from "../../tool-registry.js";
 
 export const osFsReadTool: ToolDefinition = {
@@ -20,7 +21,10 @@ export const osFsReadTool: ToolDefinition = {
   async run(rawArgs, ctx) {
     const args = parseArgs(rawArgs);
     const absolute = resolveUserPath(args.path, ctx.workingDir);
-    const info = await stat(absolute);
+    const info = await orMissing("os.fs.read", absolute, ctx, () =>
+      stat(absolute),
+    );
+    if ("missing" in info) return info.missing;
     if (!info.isFile()) {
       throw new Error(notARegularFileMessage(absolute, info));
     }

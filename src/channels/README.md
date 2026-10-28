@@ -8,6 +8,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 ## Entry points
 
 - [model-command.ts](model-command.ts)
+- [model-switch.ts](model-switch.ts)
 - [chat-session-map.ts](chat-session-map.ts)
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
@@ -15,7 +16,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 
 ## Ownership and dependencies
 
-Each channel adapter owns its connection, pairing/control state and outbound delivery. Inbound handlers translate messages into runtime turns or durable tasks; approval bridges route decisions to the owning session. Shared backoff and sender identity helpers are used across transports. Runtime owns construction and teardown. Model commands use [shared provider persistence](../config/llm-provider-commands.ts), independently of TUI.
+Each channel adapter owns its connection, pairing/control state and outbound delivery. Inbound handlers translate messages into runtime turns or durable tasks; approval bridges route decisions to the owning session. Shared backoff and sender identity helpers are used across transports. Runtime owns construction and teardown. Model commands use [shared provider persistence](../config/llm-provider-commands.ts), independently of TUI; the live switch itself ([model-switch.ts](model-switch.ts)) is shared with the HTTP `POST /api/llm/active` route.
 
 ## Task-specific reading
 

@@ -1,0 +1,54 @@
+# Maintainer: Atomic Chat <support@atomic.chat>
+#
+# Generated from packaging/PKGBUILD.in in https://github.com/AtomicBot-ai/atomic-agent by the
+# release workflow (scripts/linux-packages.ts pkgbuild); change the template there, not this copy.
+
+pkgname=atomic-agent-bin
+pkgver=@PKGVER@
+_version=@VERSION@
+pkgrel=1
+pkgdesc='Local-first AI agent for the terminal: browses, edits files, runs approved commands, remembers (https://atomicagent.io)'
+arch=('x86_64' 'aarch64')
+url='https://github.com/AtomicBot-ai/atomic-agent'
+license=('MIT')
+depends=('glibc' 'gcc-libs')
+optdepends=('git: git tools'
+            'wmctrl: window control on X11'
+            'xclip: clipboard on X11'
+            'wl-clipboard: clipboard on Wayland'
+            'libnotify: desktop notifications')
+provides=('atomic-agent')
+conflicts=('atomic-agent')
+# A Node SEA binary carries its program in a section of the executable, and the bundle ships
+# prebuilt native addons; stripping either breaks them.
+options=('!strip' '!debug')
+
+# The release archive of each architecture: the SEA binary and the directories the runtime resolves
+# next to it. The asset names carry no version, so the local name does (makepkg caches by it).
+_base='@SOURCE_BASE@'
+source_x86_64=("atomic-agent-${_version}-@SLUG_X86_64@.tar.gz::${_base}/@ARCHIVE_X86_64@")
+source_aarch64=("atomic-agent-${_version}-@SLUG_AARCH64@.tar.gz::${_base}/@ARCHIVE_AARCH64@")
+sha256sums_x86_64=('@SHA_X86_64@')
+sha256sums_aarch64=('@SHA_AARCH64@')
+
+package() {
+  local slug
+  case "${CARCH}" in
+    x86_64) slug='@SLUG_X86_64@' ;;
+    aarch64) slug='@SLUG_AARCH64@' ;;
+  esac
+
+  # The whole tree under /usr/lib/atomic-agent, as the deb and rpm lay it out; /usr/bin holds
+  # symlinks, which Node resolves through /proc/self/exe so the runtime finds its assets.
+  install -dm755 "${pkgdir}/usr/lib/atomic-agent" "${pkgdir}/usr/bin"
+  cp -a "${srcdir}/${slug}/." "${pkgdir}/usr/lib/atomic-agent/"
+  chmod 755 "${pkgdir}/usr/lib/atomic-agent/atomic-agent"
+  ln -s ../lib/atomic-agent/atomic-agent "${pkgdir}/usr/bin/atomic-agent"
+  ln -s ../lib/atomic-agent/atomic-agent "${pkgdir}/usr/bin/atag"
+
+  # Tells `atomic-agent update` and `atomic-agent uninstall` that pacman owns the tree.
+  printf 'aur\n' >"${pkgdir}/usr/lib/atomic-agent/install-source"
+
+  install -Dm644 "${pkgdir}/usr/lib/atomic-agent/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

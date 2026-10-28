@@ -155,6 +155,20 @@ describe("LocalModelsOrchestrator CPU-backend fallback", () => {
     ).toBe(true);
   });
 
+  it("keeps a one-run window (out-of-memory restart) on the CPU retry", async () => {
+    prepareManagedWindowsInstall();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons)
+      .mockRejectedValueOnce(healthError())
+      .mockResolvedValueOnce({ chat: { pid: 4242 }, embedding: { skipped: true } } as never);
+    const { orchestrator } = makeOrchestrator();
+    await expect(
+      orchestrator.startDaemon({ backendAlreadyChecked: true, contextSize: 65_536 }),
+    ).resolves.toBe(true);
+    const calls = vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls;
+    expect(calls).toHaveLength(2);
+    expect((calls[1]![0] as { chat: { contextSize?: unknown } }).chat.contextSize).toBe(65_536);
+  });
+
   it("falls back at most once — a CPU build that also fails to serve stops", async () => {
     prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(

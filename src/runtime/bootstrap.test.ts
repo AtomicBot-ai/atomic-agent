@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { recordProjectTrust } from "../config/skill-policy-commands.js";
 import {
   existsSync,
   mkdtempSync,
@@ -47,6 +48,7 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -93,6 +95,15 @@ class FakeBackend implements BrowserBackend {
   }
   async hasRef(): Promise<boolean> {
     return false;
+  }
+  async describeRef(): Promise<RefDescription | null> {
+    return null;
+  }
+  async currentUrl(): Promise<string> {
+    return "https://example.com/";
+  }
+  async screenshot(): Promise<never> {
+    throw new Error("FakeBackend: screenshot not used here");
   }
   async scroll(_input: ScrollInput): Promise<ScrollResult> {
     return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
@@ -180,6 +191,8 @@ describe("createAgentRuntime", () => {
     };
     writeProjectSkill("budget-a");
     writeProjectSkill("budget-b");
+    // Project skills load once the folder is trusted (ATO-298).
+    recordProjectTrust(workingDir, "trusted", { skills: ["budget-a", "budget-b", "budget-c"], instructions: [] });
 
     // 4 tokens x 8 chars/token = 32 chars: far below one rendered entry,
     // so an honored budget collapses the catalog to the single
@@ -244,6 +257,7 @@ describe("createAgentRuntime", () => {
     };
     writeProjectSkill("dropped-a");
     writeProjectSkill("dropped-b");
+    recordProjectTrust(workingDir, "trusted", { skills: ["dropped-a", "dropped-b", "dropped-c"], instructions: [] });
 
     // Same 4-token budget the wiring test above uses: everything past
     // the always-kept first entry is cut, so `dropped` is knowable

@@ -34,10 +34,15 @@ export type {
   SkillScanVerdict,
 } from "./skill-security-scanner.js";
 
+export { scanSkillDir } from "./scan-skill-dir.js";
+
 export {
   commitStagedInstall,
   discardStagedInstall,
+  enforceScanGate,
   installSkillFromHub,
+  scanApprovalFromIds,
+  scanIdOf,
   SkillHubInstallError,
   stageSkillFromHub,
 } from "./install-from-hub.js";
@@ -45,6 +50,7 @@ export type {
   CommitInstallOptions,
   InstallFromHubOptions,
   InstallFromHubResult,
+  ScanGateOptions,
   SkillHubInstallErrorCode,
   StagedSkillInstall,
   StageSkillOptions,

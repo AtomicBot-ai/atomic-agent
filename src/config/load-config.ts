@@ -13,7 +13,10 @@ import { ensureUserConfigFileSync, getUserConfigPath } from "./config-file.js";
 import { setCustomLocalModels } from "../local-llm/catalog/models-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
-import { setConfiguredBackendVariant } from "../local-llm/backend/windows-backend-variant.js";
+import {
+  setConfiguredBackendVariant,
+  setConfiguredCoreBackendVariant,
+} from "../local-llm/backend/windows-backend-variant.js";
 import { resolveLocalLlamaApiKey } from "../local-llm/server/managed-api-key.js";
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
@@ -104,6 +107,11 @@ function resolveAssetDir(envKey: string, relativeDefault: string): string {
   return resolve(process.cwd(), relativeDefault);
 }
 
+/** `<stateDir>` as `loadConfig` resolves it, without reading config.json (which may be the broken thing). */
+export function resolveStateDir(): string {
+  return resolvePath(readEnv("ATOMIC_AGENT_STATE_DIR"), ENV_DEFAULTS.STATE_DIR);
+}
+
 /**
  * Assemble the full runtime config. User-facing keys (llama.url,
  * log.level, agent.tokenBudget/maxSteps/toolTimeoutMs/approvalLevel)
@@ -111,10 +119,7 @@ function resolveAssetDir(envKey: string, relativeDefault: string): string {
  * variables.
  */
 export function loadConfig(): AtomicAgentConfig {
-  const stateDir = resolvePath(
-    readEnv("ATOMIC_AGENT_STATE_DIR"),
-    ENV_DEFAULTS.STATE_DIR,
-  );
+  const stateDir = resolveStateDir();
   const dotenv = loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
   const user = ensureUserConfigFileSync(userConfigFile);
@@ -126,6 +131,8 @@ export function loadConfig(): AtomicAgentConfig {
   // visible to `resolveDownloadAsset`, which runs deep inside the
   // config-free local-llm layer.
   setConfiguredBackendVariant(user.localModels.managed.backendVariant);
+  // Atomic Core's own build choice, read by `installCoreBackend`.
+  setConfiguredCoreBackendVariant(user.localModels.managed.coreBackendVariant);
   // And the download fan-out: `downloadFile` is reached from the CLI, the
   // TUI and the detached pull worker, none of which should have to
   // thread a config value down to it.
@@ -339,7 +346,15 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_BROWSER_HEADLESS",
         ENV_DEFAULTS.BROWSER_HEADLESS,
       ),
-      cdpUrl: readEnv("ATOMIC_AGENT_BROWSER_CDP_URL") ?? null,
+      // Env wins over the file, as before the file key existed. Only the
+      // file value is held to loopback (browser-config.ts): the env var
+      // is the operator's own shell, the file can be written over HTTP.
+      cdpUrl: readEnv("ATOMIC_AGENT_BROWSER_CDP_URL") ?? user.browser.cdpUrl,
+      connect: user.browser.connect,
+      userChromeDataDir:
+        user.browser.userDataDir === null
+          ? null
+          : resolvePath(user.browser.userDataDir, user.browser.userDataDir),
       executablePath: readEnv("ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH") ?? null,
       noSandbox: readBool(
         "ATOMIC_AGENT_BROWSER_NO_SANDBOX",
@@ -349,6 +364,8 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_BROWSER_LAUNCH_TIMEOUT_MS",
         ENV_DEFAULTS.BROWSER_LAUNCH_TIMEOUT_MS,
       ),
+      blockedDomains: [...user.browser.blockedDomains],
+      allowedDomains: [...user.browser.allowedDomains],
     },
     skills: {
       // File value is the default, env var overrides it — the same
@@ -363,6 +380,7 @@ export function loadConfig(): AtomicAgentConfig {
       ),
       disabled: user.skills.disabled,
       cloudWorkspaces: user.skills.cloudWorkspaces,
+      projectTrust: user.skills.projectTrust,
       taps: user.skills.taps,
       clawhub: user.skills.clawhub,
     },
@@ -387,6 +405,7 @@ export function loadConfig(): AtomicAgentConfig {
         maxJobs: user.tools.shell.maxJobs,
         envPassthrough: [...user.tools.shell.envPassthrough],
       },
+      screen: { enabled: user.tools.screen.enabled },
     },
     log: { level: logLevel },
     tasks: {
