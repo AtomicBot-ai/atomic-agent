@@ -7572,6 +7572,16 @@ document.addEventListener('click', (e) => {
   // ATO-728: a CRLF reply's lines go out as plain \n, with no stray \r at their ends.
   const mdc = t.closest('[data-mdcopy]');
   if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '', 'Code copied'); return; }
+  // ATO-1251: a table's Copy (TSV, pastes into a spreadsheet) and Markdown, read off the drawn cells.
+  const mdt = t.closest('[data-mdtcopy]');
+  if (mdt) {
+    e.preventDefault();
+    const tbl = mdt.closest('.mdtblx')?.querySelector('table');
+    const rows = tbl ? [...tbl.rows].map((r) => [...r.cells].map((c) => c.textContent)) : [];
+    const aligns = tbl && tbl.rows[0] ? [...tbl.rows[0].cells].map((c) => c.style.textAlign || '') : [];
+    copyText(rows.length ? mdTableText(rows, aligns, mdt.dataset.mdtcopy) : '', 'Table copied', mdt.dataset.mdtcopy === 'md' ? 'as markdown' : 'paste it into a spreadsheet');
+    return;
+  }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -21073,86 +21083,15 @@ async function applyTraceDurations() {
    nothing a model writes can become markup. Code spans and fences are lifted
    out first and put back last: markdown inside code is not markdown.
    --------------------------------------------------------------- */
-function mdInline(t) {
-  return t
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
-    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
-    .replace(/~~([^~]+)~~/g, '<s>$1</s>');
-}
-
-/* ATO-163: GitHub-style tables. Cells are split on `|` (a `\\|` stays a
-   pipe; code spans are already held out, so a pipe inside code is safe); the
-   separator row's colons set each column's alignment. A row may leave out
-   the outer pipes. Rows with fewer cells than the header are padded, extra
-   cells dropped, as GitHub does. */
-const MD_TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
-function mdCells(line) {
-  const body = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
-  return body.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
-}
-function mdTableAt(lines, at) {
-  const head = (lines[at] || '').trim();
-  const sep = lines[at + 1];
-  if (!head.includes('|') || sep === undefined || !MD_TABLE_SEP.test(sep) || !sep.includes('|') && !head.startsWith('|')) return null;
-  const cols = mdCells(head);
-  const seps = mdCells(sep);
-  // As GitHub: the separator has as many cells as the header, or this is prose and a rule, not a table.
-  if (seps.length !== cols.length || (cols.length < 2 && !head.startsWith('|'))) return null;
-  const aligns = seps.map((c) => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : /^:-/.test(c) ? 'left' : '');
-  const cell = (tag, text, i) => '<' + tag + (aligns[i] ? ' style="text-align:' + aligns[i] + '"' : '') + '>' + mdInline(text || '') + '</' + tag + '>';
-  let end = at + 1;
-  const rows = [];
-  while (end + 1 < lines.length && lines[end + 1].trim() && lines[end + 1].includes('|')) {
-    end++;
-    const c = mdCells(lines[end]);
-    rows.push('<tr>' + cols.map((_, i) => cell('td', c[i], i)).join('') + '</tr>');
-  }
-  const html = '<div class="mdtbl"><table><thead><tr>' + cols.map((c, i) => cell('th', c, i)).join('') + '</tr></thead>'
-    + (rows.length ? '<tbody>' + rows.join('') + '</tbody>' : '') + '</table></div>';
-  return { html, end };
-}
-
+/* ATO-1251 / ATO-664: the block parser lives in md-render.js (loaded first):
+   tables with Copy, nested and task lists, callouts, key/value fields,
+   Pros/Cons comparisons, link and file cards. Its contract is this
+   function's: escaped text in, tags of its own out, code held as
+   placeholders that renderProseFresh restores after its link and chip
+   passes — a path in backticks is a path the model wrote literally, not a
+   file to offer a button for, unless the span holds nothing else. */
 function renderMarkdown(escaped) {
-  const held = [];
-  let t = escaped
-    // ATO-430: the fence's info string (```js) is the language, not code: it moves to a small label.
-    .replace(/```(?:([\w+#.-]+)[ \t]*(?=\r?\n))?([\s\S]*?)```/g, (m, lang, code) =>
-      '\u0000' + (held.push('<pre class="mdpre"' + (lang ? ' data-lang="' + lang + '"' : '') + '><code>' + code.replace(/^\r?\n/, '') + '</code></pre>') - 1) + '\u0000')
-    .replace(/`([^`\n]+)`/g, (m, code) =>
-      '\u0000' + (held.push('<code class="mdcode">' + code + '</code>') - 1) + '\u0000');
-
-  const out = [];
-  let list = null;                       // 'ul' | 'ol' | null
-  const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
-  const lines = t.split('\n');
-  for (let at = 0; at < lines.length; at++) {
-    const line = lines[at].replace(/\s+$/, '');
-    /* ATO-163: a table — a row of cells, then a dashed separator row — was
-       printed as its pipes and dashes. The whole table is one line of markup
-       (no newlines inside it for `pre-wrap` to keep), in a wrapper that
-       scrolls sideways instead of pushing the reply wider. */
-    const table = mdTableAt(lines, at);
-    if (table) { closeList(); out.push(table.html); at = table.end; continue; }
-    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
-    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    const quote = /^&gt;\s?(.*)$/.exec(line);
-    if (heading) { closeList(); out.push('<h' + heading[1].length + ' class="mdh">' + mdInline(heading[2]) + '</h' + heading[1].length + '>'); continue; }
-    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { closeList(); out.push('<hr class="mdhr">'); continue; }
-    if (bullet) { if (list !== 'ul') { closeList(); out.push('<ul class="mdlist">'); list = 'ul'; } out.push('<li>' + mdInline(bullet[1]) + '</li>'); continue; }
-    if (numbered) { if (list !== 'ol') { closeList(); out.push('<ol class="mdlist">'); list = 'ol'; } out.push('<li>' + mdInline(numbered[1]) + '</li>'); continue; }
-    if (quote) { closeList(); out.push('<blockquote class="mdquote">' + mdInline(quote[1]) + '</blockquote>'); continue; }
-    closeList();
-    out.push(line ? mdInline(line) : '');
-  }
-  closeList();
-  /* The held code is NOT restored here. renderProse turns bare paths into
-     file chips and bare URLs into links, and both would happily rewrite the
-     inside of a code span — a path in backticks is a path the model wrote
-     literally, not a file to offer a button for. The placeholders survive
-     that pass and are put back afterwards. */
-  return { html: out.join('\n'), held };
+  return mdRender(escaped);
 }
 
 /* ATO-1023: a finished message's markup is the same on every paint, so it is
