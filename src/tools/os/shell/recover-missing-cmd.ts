@@ -123,3 +123,28 @@ export function markRecoveredResult(
   }
   return marked;
 }
+
+/** Keys of the command form a model may have sent beside a missing `cmd`. */
+const KEPT_IN_EXAMPLE = ["cwd", "timeoutMs", "keep", "background"] as const;
+
+/**
+ * The one-line refusal for a command-form call with no usable `cmd`,
+ * with a working example built from the keys the model did send, so
+ * the retry keeps its own shape (ATO-1259). A call that arrived with
+ * no arguments at all says so: over some providers the arguments are
+ * lost on the way, and the model's reasoning then read "the tool is
+ * dropping the `cmd` field" and resent the same empty call.
+ */
+export function missingCmdMessage(rawArgs: Record<string, unknown>): string {
+  const example: Record<string, unknown> = { cmd: "git status" };
+  for (const key of KEPT_IN_EXAMPLE) {
+    if (rawArgs[key] !== undefined && rawArgs[key] !== null) example[key] = rawArgs[key];
+  }
+  const shown = JSON.stringify(example);
+  const keys = Object.keys(rawArgs).filter((key) => rawArgs[key] !== undefined);
+  if (keys.length === 0) {
+    return `os.shell.run: the call arrived with no arguments, so there was no command to run (if you wrote one, it did not reach the tool; send the whole call again). Put the command line in \`cmd\`, e.g. ${shown} or {"cmd":"git","args":["status"]}.`;
+  }
+  const got = rawArgs.cmd === undefined ? "no `cmd`" : `\`cmd\` = ${JSON.stringify(rawArgs.cmd)}`;
+  return `os.shell.run: \`cmd\` must be a non-empty string (got ${got} with ${keys.map((k) => `\`${k}\``).join(", ")}): put the program or the whole command line in \`cmd\`, e.g. ${shown}, and its arguments, if separate, in \`args\`.`;
+}

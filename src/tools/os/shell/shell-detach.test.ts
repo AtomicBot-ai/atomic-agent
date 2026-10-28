@@ -279,7 +279,7 @@ describe.skipIf(process.platform === "win32")(
       expect(unknown.status).toBe("error");
       expect(unknown.summary).toContain("unknown job 9 in this session");
       // No form at all is the pre-existing `cmd` refusal.
-      await expect(tool.run({}, ctx())).rejects.toThrow(/`cmd` must be a non-empty string/);
+      await expect(tool.run({}, ctx())).rejects.toThrow(/arrived with no arguments/);
     });
 
     it("runs a cmd whose unused job fields come filled with zero values (ATO-891)", async () => {

@@ -230,12 +230,23 @@ function renderShellKilled(
   });
 }
 
-function unknownJob(id: number): CompressedToolResult {
+/**
+ * No job `id` in this session. Seen (ATO-1259): a model that had never
+ * started a job polled "job 1" twice. Said so that it stops: which ids
+ * exist now, that a job exists only once a command came back with its
+ * id, and that one not kept ends with the turn that started it.
+ */
+function unknownJob(ctx: ShellJobCallContext, id: number): CompressedToolResult {
+  const ids = ctx.jobs.list(ctx.sessionId).map((record) => record.id);
+  const now =
+    ids.length === 0
+      ? "this session has no jobs now"
+      : `this session's jobs now: ${ids.join(", ")}`;
   return compressToolResult({
     tool: "os.shell.run",
     status: "error",
-    output: `unknown job ${id} in this session — os.shell.run {"jobs": true} lists the jobs it has (a job that was not kept is dropped when its turn ends)`,
-    details: { jobId: id, unknownJob: true },
+    output: `unknown job ${id} in this session; ${now}. A job id exists only after an os.shell.run command came back with it, and a job that was not kept (\`background: true\` or \`keep: true\`) ends with the turn that started it, so do not poll for it again: run the command with {"cmd": …} if it is still needed.`,
+    details: { jobId: id, unknownJob: true, jobIds: ids },
   });
 }
 
@@ -263,7 +274,7 @@ export async function runShellWait(
   keep: boolean,
 ): Promise<CompressedToolResult> {
   const record = ctx.jobs.get(ctx.sessionId, id);
-  if (!record) return unknownJob(id);
+  if (!record) return unknownJob(ctx, id);
   if (keep) ctx.jobs.markKeep(record);
   const timeout = resolveShellTimeout(rawTimeoutMs, ctx.defaultTimeoutMs);
   if (record.state === "running") {
@@ -287,7 +298,7 @@ export async function runShellKill(
   id: number,
 ): Promise<CompressedToolResult> {
   const record = ctx.jobs.get(ctx.sessionId, id);
-  if (!record) return unknownJob(id);
+  if (!record) return unknownJob(ctx, id);
   ctx.jobs.stop(record, "kill");
   return collect(ctx.jobs, record);
 }

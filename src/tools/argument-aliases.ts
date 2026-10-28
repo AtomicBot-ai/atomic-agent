@@ -1,5 +1,6 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
 import { readMoveAliases } from "./os/fs/fs-move-aliases.js";
+import { readShellAliases } from "./os/shell/shell-aliases.js";
 
 /**
  * Argument shapes a tool reads as its canonical form, with the one-line
@@ -41,6 +42,7 @@ type AliasReader = (
 
 const READERS: ReadonlyMap<string, AliasReader> = new Map<string, AliasReader>([
   ["os.fs.move", (args, options) => readMoveAliases(args, options)],
+  ["os.shell.run", (args) => readShellAliases(args)],
 ]);
 
 /**
