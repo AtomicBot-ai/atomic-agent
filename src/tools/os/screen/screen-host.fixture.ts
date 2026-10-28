@@ -48,7 +48,7 @@ export function fakeHost(options: FakeHostOptions = {}): FakeHost {
   const calls: RecordedCall[] = [];
   const sizes = [...(options.pixelSizes ?? [{ width: 2880, height: 1800 }])];
   const front: App = options.frontmost === undefined
-    ? { name: "Safari", bundleId: "com.apple.Safari" }
+    ? { name: "TextEdit", bundleId: "com.apple.TextEdit" }
     : options.frontmost;
   const run = async (
     command: string,

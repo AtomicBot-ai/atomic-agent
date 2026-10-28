@@ -22,6 +22,8 @@ import {
   protectedAppReason,
   protectedBundleIds,
   refusedChordReason,
+  screenAppClass,
+  type ScreenInputKind,
 } from "./screen-protected.js";
 
 export const OS_SCREEN_CLICK_TOOL = "os.screen.click";
@@ -62,10 +64,13 @@ type Planner = (args: Record<string, unknown>, ctx: ToolContext) => PlannedActio
  * The target is the app that would receive the input: for a click the
  * owner of the topmost window under the point (it may be the Dock or a
  * background window, not the frontmost app), otherwise the frontmost
- * app. A protected target (`screen-protected.ts`: the agent's own
- * terminal or app, any terminal, settings, credentials) is refused at
- * every level without a prompt — typing a slash command into the
- * agent's own terminal would let it raise its approval level. Missing
+ * app. It is classed on every call (`screen-protected.ts`): the agent's
+ * own terminal or app, settings and credentials take no input at all
+ * (a slash command typed into the agent's own terminal would raise its
+ * approval level); a web browser is look-only (pages ask for secrets and
+ * submits through the browser tool); a terminal or IDE takes clicks but
+ * no typing or keys (`os.shell.run` runs commands). A refusal comes at
+ * every level without a prompt. Missing
  * Accessibility answers before anyone is asked. Otherwise the approval
  * names the target, and the action is pinned to it: the script brings
  * it back to the front if the approval UI took focus, re-checks the
@@ -73,6 +78,7 @@ type Planner = (args: Record<string, unknown>, ctx: ToolContext) => PlannedActio
  */
 function buildInputTool(
   name: string,
+  kind: ScreenInputKind,
   description: string,
   options: OsScreenInputOptions,
   plan: Planner,
@@ -97,9 +103,10 @@ function buildInputTool(
         return result(name, "error", `${name}: ${(error as Error).message}`);
       }
       const target = action.point ? (probe.ownerAtPoint ?? null) : probe.frontmost;
-      const refusal = protectedAppReason(target?.bundleId, deps.env);
+      const refusal = protectedAppReason(target?.bundleId, deps.env, kind);
       if (refusal !== null || !target?.bundleId) {
-        return refusedResult(name, `${action.summary} in ${describeApp(target)}`, refusal ?? "unknown target", action.details);
+        return refusedResult(name, `${action.summary} in ${describeApp(target)}`, refusal ?? "unknown target",
+          { ...action.details, appClass: screenAppClass(target?.bundleId, deps.env) });
       }
       const app = describeApp(target);
       await requireApproval(
@@ -114,20 +121,22 @@ function buildInputTool(
         },
         ctx.signal,
       );
-      const pin: Pin = { expectBundleId: target.bundleId, protectedIds: protectedBundleIds(deps.env) };
+      // Pinned: the script posts only into this app, and refuses this kind's protected ids once more at that moment.
+      const pin: Pin = { expectBundleId: target.bundleId, protectedIds: protectedBundleIds(deps.env, kind) };
       let after: ScreenProbe;
       try {
         after = await runScreenOp(deps, action.operation(pin), ctx);
       } catch (error) {
         return result(name, "error", `${name}: ${(error as Error).message}`);
       }
-      return actionResult(name, app, action, after, deps);
+      return actionResult(name, kind, app, action, after, deps);
     },
   };
 }
 
 function actionResult(
   name: string,
+  kind: ScreenInputKind,
   app: string,
   action: PlannedAction,
   after: ScreenProbe,
@@ -140,7 +149,7 @@ function actionResult(
     case "accessibility":
       return permissionResult(name, deps);
     case "protected":
-      return refusedResult(name, action.summary, `the input would reach ${describeApp(after.ownerAtPoint ?? after.frontmost)}, a protected app`, details);
+      return refusedResult(name, action.summary, `the input would reach ${describeApp(after.ownerAtPoint ?? after.frontmost)}, which screen control may not ${kind === "click" ? "click" : "type"} into`, details);
     case "not-frontmost":
       return result(name, "error", `${name} did nothing: ${app} could not be brought back to the front (now: ${describeApp(after.frontmost)}). Take a new os.screen.capture.`, { ...details, reason: "not-frontmost" });
     case "owner-mismatch":
@@ -155,7 +164,8 @@ function actionResult(
 export function buildOsScreenClickTool(options: OsScreenInputOptions): ToolDefinition {
   return buildInputTool(
     OS_SCREEN_CLICK_TOOL,
-    "Click on the primary display (macOS) at x,y in the pixels of the last os.screen.capture image. Asks the user first; never clicks into a terminal, the agent itself, settings or a password manager.",
+    "click",
+    "Click on the primary display (macOS) at x,y in the pixels of the last os.screen.capture image. Asks the user first; never clicks into a web browser (use the browser tool for web pages), the agent itself, settings or a password manager.",
     options,
     (args, ctx) => {
       const x = requireNumber(args.x, "x");
@@ -190,7 +200,8 @@ export function buildOsScreenClickTool(options: OsScreenInputOptions): ToolDefin
 export function buildOsScreenTypeTool(options: OsScreenInputOptions): ToolDefinition {
   return buildInputTool(
     OS_SCREEN_TYPE_TOOL,
-    "Type text into the focused field of the frontmost app (macOS), as keystrokes or (via: \"paste\") through the clipboard. Asks the user first, showing the whole text; never types into a terminal, the agent itself, settings or a password manager.",
+    "type",
+    "Type text into the focused field of the frontmost app (macOS), as keystrokes or (via: \"paste\") through the clipboard. Asks the user first, showing the whole text; never types into a web browser (use the browser tool), a terminal or code editor (use os.shell.run), the agent itself, settings or a password manager.",
     options,
     (args) => {
       const text = args.text;
@@ -217,7 +228,8 @@ export function buildOsScreenTypeTool(options: OsScreenInputOptions): ToolDefini
 export function buildOsScreenKeyTool(options: OsScreenInputOptions): ToolDefinition {
   return buildInputTool(
     OS_SCREEN_KEY_TOOL,
-    'Press a key or shortcut in the frontmost app (macOS), e.g. "return", "escape", "down", "cmd+l". Asks the user first; app and space switchers (cmd+tab, ctrl+arrows, cmd+space) are refused.',
+    "key",
+    'Press a key or shortcut in the frontmost app (macOS), e.g. "return", "escape", "down", "cmd+l". Asks the user first; refused in web browsers (use the browser tool), terminals and code editors (use os.shell.run), and for app and space switchers (cmd+tab, ctrl+arrows, cmd+space).',
     options,
     (args) => {
       if (typeof args.keys !== "string") {
@@ -276,8 +288,9 @@ function refusedResult(
   return result(
     tool,
     "error",
-    `${tool} refused (${what}): ${why}. Screen control never sends input to a terminal, Atomic Agent itself, ` +
-      "system settings, the keychain or a password manager, at any approval level. Do not try another way; " +
+    `${tool} refused (${what}): ${why}. Screen control never clicks or types into a web browser, Atomic Agent ` +
+      "itself, system settings, the keychain or a password manager, and never types or presses keys in a terminal " +
+      "or code editor, at any approval level. Do not retry through screen control; use the tool named above, or " +
       "tell the user to do this step themselves.",
     { ...details, retryable: false, reason: "protected-app" },
   );
