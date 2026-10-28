@@ -1645,7 +1645,14 @@ export class AgentClient extends EventEmitter {
         // Opt into atomic's named SSE frames (session_id, reasoning_progress,
         // tool_progress). Without this header the stream is plain OpenAI
         // chunks and the UI has no tool cards to draw.
-        headers: { ...this.headers(), "x-atomic-extensions": "1" },
+        headers: {
+          ...this.headers(),
+          "x-atomic-extensions": "1",
+          /* ATO-1018: this window draws os.screen.point marks on THIS
+             computer's screen, so only its own agent is told it can. A
+             remote agent's points belong to another machine. */
+          ...(this.remote ? {} : { "x-atomic-screen-overlay": "1" }),
+        },
         // `session_id` continues the session the agent already holds, and is
         // ALWAYS sent: without one the agent derives the id from the first
         // message, and a new chat opened with an old chat's question would
