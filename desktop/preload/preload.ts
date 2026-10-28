@@ -84,6 +84,8 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Read-only resources, each `{ok, data}` or `{ok:false, error}`. */
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),
   config: () => ipcRenderer.invoke("agent:config"),
+  // ATO-32: {ok, data: {tiers: {<key>: [{tier, label, model}]}}}; ok:false on a core without the route.
+  modelTiers: () => ipcRenderer.invoke("agent:modelTiers"),
   skills: (sessionId?: string | null) => ipcRenderer.invoke("agent:skills", sessionId),
   /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
   projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),

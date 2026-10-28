@@ -14233,9 +14233,39 @@ function obProbeAtomicChat() {
    There are two of them — the first-run flow's and the composer popover's —
    and every time something is added to one and not the other they drift; the
    error slot on the key screen had drifted that way already. One function. */
+/* ATO-32: the agent's Cheap / Balanced / Best picks (GET /api/model-tiers, one
+   data file in the agent: presets/model-tiers.ts). Asked once; a core without
+   the route answers ok:false and the list stays as it was. */
+let MODEL_TIERS = null;
+let MODEL_TIERS_ASKED = false;
+function modelTiers() {
+  if (!MODEL_TIERS_ASKED && BR && BR.modelTiers) {
+    MODEL_TIERS_ASKED = true;
+    Promise.resolve(BR.modelTiers())
+      .then((r) => { if (r && r.ok && r.data && r.data.tiers) { MODEL_TIERS = r.data.tiers; render(); } })
+      .catch(() => {});
+  }
+  return MODEL_TIERS;
+}
+/** The tier key of a provider row or entry: its kind, or `<cli>-cli` for a subscription. */
+function modelTierKey(p) {
+  if (!p) return '';
+  const cli = typeof p.subscriptionCli === 'string' ? p.subscriptionCli : p.subscriptionCli && p.subscriptionCli.cli;
+  return p.kind === 'subscription-cli' && cli ? cli + '-cli' : (p.kind || '');
+}
+/** Models with their tier label, the tiered ones first in Cheap, Balanced, Best order; the rest as they were. */
+function withModelTiers(models, key) {
+  const tiers = (modelTiers() || {})[key];
+  if (!Array.isArray(tiers) || !tiers.length) return models;
+  const byId = new Map(models.map((m) => [m.id, m]));
+  const first = tiers.filter((t) => byId.has(t.model)).map((t) => Object.assign({}, byId.get(t.model), {tier: t.label}));
+  const picked = new Set(first.map((m) => m.id));
+  return first.concat(models.filter((m) => !picked.has(m.id)));
+}
+
 function wizModelStepHTML(withFoot) {
   const q = (WIZ.modelFilter || '').trim().toLowerCase();
-  const all = WIZ.models || [];
+  const all = withModelTiers(WIZ.models || [], modelTierKey(WIZ.row));
   const rows = q ? all.filter((m) => (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)) : all;
   const shown = rows.slice(0, 200);
   /* Soft Tactile: every row wears its model's mark. On the first-run layer
@@ -14265,6 +14295,7 @@ function wizModelStepHTML(withFoot) {
           + modelMark(m.id, 'sm')
           + '<span class="col"><span class="nm">' + esc(m.name || m.id) + '</span>'
           + '<span class="ep">' + esc(m.id) + '</span></span>'
+          + (m.tier ? '<span class="ann lit">' + esc(m.tier) + '</span>' : '')
           + (m.id === WIZ.defaultModel ? '<span class="ann lit">Default</span>' : '')
           // r2: the picked row carries a tick on the right; a double click uses it.
           + (m.id === WIZ.modelPick ? '<span class="prow-tick" aria-hidden="true">' + ic('check') + '</span>' : '')
