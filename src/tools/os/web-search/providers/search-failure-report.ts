@@ -4,6 +4,7 @@ import {
   type CooldownReason,
 } from "../transport/provider-cooldown.js";
 import {
+  DEFAULT_EXA_KEY_ENV,
   EXA_GET_KEY_URL,
   WebSearchRateLimitedError,
   type WebSearchKeyHelp,
@@ -195,7 +196,10 @@ export function buildUnavailableMessage(input: {
       "None of the search sites could be reached: check the internet connection, VPN or proxy.",
     );
   }
-  if (input.keyRequired && input.keyHelp === "integrations-hub") {
+  if (
+    input.keyRequired &&
+    usesIntegrationsHub(input.keyHelp, input.keyRequired)
+  ) {
     lines.push(integrationsHubKeyAdvice(input.keyRequired));
   } else if (input.keyRequired) {
     const envVar = input.keyRequired.envVar;
@@ -218,17 +222,53 @@ export function buildUnavailableMessage(input: {
 }
 
 /**
+ * Whether `/integrations` can fix this: the process is the terminal UI and
+ * web search reads the variable that screen writes. A custom
+ * `web.search.exa.apiKeyEnv` gets the `.env` advice naming that variable.
+ */
+function usesIntegrationsHub(
+  keyHelp: WebSearchKeyHelp | undefined,
+  keyRequired: WebSearchKeyRequired,
+): boolean {
+  return (
+    keyHelp === "integrations-hub" && keyRequired.envVar === DEFAULT_EXA_KEY_ENV
+  );
+}
+
+/**
  * The terminal UI's advice: its `/integrations` screen writes the key into
  * the running process, so there is no file to edit and no restart. "Ran
  * out" only when it did; an unreachable or failing free tier did not.
+ * "In the terminal app" because a Telegram or Discord chat served by the
+ * same process reads this text too.
  */
 function integrationsHubKeyAdvice(
   keyRequired: WebSearchKeyRequired,
 ): string {
-  const action = `Open /integrations and add an Exa key (${keyRequired.getKeyUrl}).`;
+  const action = `Open /integrations in the terminal app and add an Exa key (${keyRequired.getKeyUrl}).`;
   return keyRequired.reason === "rate_limited"
     ? `Free Exa searches ran out. ${action}`
     : `To fix it: ${action.charAt(0).toLowerCase()}${action.slice(1)}`;
+}
+
+/**
+ * One note line for a search a fallback answered because keyless Exa ran
+ * out (ATO-345), in the terminal UI only: the search worked, but the user
+ * can fix the cause. `undefined` when there is nothing to say.
+ */
+export function buildFallbackKeyHint(
+  keyHelp: WebSearchKeyHelp | undefined,
+  keyRequired: WebSearchKeyRequired | undefined,
+): string | undefined {
+  if (keyHelp !== "integrations-hub") return undefined;
+  if (keyRequired?.reason !== "rate_limited") return undefined;
+  if (usesIntegrationsHub(keyHelp, keyRequired)) {
+    return `Free Exa searches ran out. Tell the user: open /integrations in the terminal app and add an Exa key (${keyRequired.getKeyUrl}).`;
+  }
+  return (
+    `Free Exa searches ran out. Tell the user: get a free Exa API key at ${keyRequired.getKeyUrl}, ` +
+    `add \`${keyRequired.envVar}=...\` to the agent's .env file and restart the agent.`
+  );
 }
 
 export function errorMessage(err: unknown): string {

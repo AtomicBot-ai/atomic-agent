@@ -36,4 +36,7 @@ export {
   EXA_INTEGRATION_ID,
   EXA_KEY_FIELD,
   exaIntegration,
+  exaKeyUnusedReason,
+  readExaSearchSetup,
 } from "./exa-integration.js";
+export type { ExaSearchSetup } from "./exa-integration.js";

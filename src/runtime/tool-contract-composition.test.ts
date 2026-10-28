@@ -17,6 +17,7 @@ const backend: BrowserBackend = {
   navigate: async () => externalOperation(), click: async () => externalOperation(),
   type: async () => externalOperation(), search: async () => externalOperation(),
   tabs: async () => externalOperation(), scroll: async () => externalOperation(),
+  screenshot: async () => externalOperation(),
 };
 
 // Observe bootstrap itself: registry builders alone cannot prove that callers wire their gates.

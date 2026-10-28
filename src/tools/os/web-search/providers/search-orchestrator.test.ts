@@ -651,7 +651,7 @@ describe("an Exa primary without a key", () => {
 
     expect(err).toBeInstanceOf(WebSearchUnavailableError);
     expect(err.message).toContain(
-      "Free Exa searches ran out. Open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys)",
+      "Free Exa searches ran out. Open /integrations in the terminal app and add an Exa key (https://dashboard.exa.ai/api-keys)",
     );
     // No desktop card, no file to edit, no restart in the terminal UI.
     expect(err.message).not.toContain("key card");
@@ -682,7 +682,7 @@ describe("an Exa primary without a key", () => {
     expect(err.keyRequired?.reason).toBe("unreachable");
     expect(err.message).not.toContain("ran out");
     expect(err.message).toContain(
-      "To fix it: open /integrations and add an Exa key (https://dashboard.exa.ai/api-keys)",
+      "To fix it: open /integrations in the terminal app and add an Exa key (https://dashboard.exa.ai/api-keys)",
     );
   });
 

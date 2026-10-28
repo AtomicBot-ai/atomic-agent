@@ -22,7 +22,7 @@ const unexpected = (): never => { throw new Error("No external operation in chan
 const browser: BrowserBackend = {
   ensureReady: async () => unexpected(), shutdown: async () => {}, snapshot: async () => unexpected(),
   hasRef: async () => unexpected(), describeRef: async () => unexpected(), currentUrl: async () => unexpected(), navigate: async () => unexpected(), click: async () => unexpected(),
-  type: async () => unexpected(), search: async () => unexpected(), tabs: async () => unexpected(), scroll: async () => unexpected(),
+  type: async () => unexpected(), search: async () => unexpected(), tabs: async () => unexpected(), scroll: async () => unexpected(), screenshot: async () => unexpected(),
 };
 const metrics = new AgentMetrics(new MetricsCollector({ sinks: [] }));
 const logs: LogRecord[] = [];

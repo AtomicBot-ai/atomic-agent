@@ -7,14 +7,21 @@ import {
   EXA_API_KEY_ENV,
   EXA_KEY_FIELD,
   exaIntegration,
+  readExaSearchSetup,
 } from "./exa-integration.js";
 
-function ctx(present: string[]) {
+function ctx(present: string[], search?: Record<string, unknown>) {
   return {
     presentFields: new Set(present),
     configured: present.includes(EXA_KEY_FIELD),
+    ...(search === undefined ? {} : { config: { web: { search } } }),
   };
 }
+
+const DEFAULT_SEARCH = createWebSearchDefaults() as unknown as Record<
+  string,
+  unknown
+>;
 
 describe("exaIntegration (ATO-345)", () => {
   it("is listed in the hub as Web search (Exa)", () => {
@@ -39,6 +46,46 @@ describe("exaIntegration (ATO-345)", () => {
     expect(exaIntegration.status(ctx([])).level).toBe("not_configured");
     expect(exaIntegration.status(ctx([EXA_KEY_FIELD])).level).toBe(
       "configured",
+    );
+  });
+
+  it("says the saved key is not used when web search reads another variable", () => {
+    const search = {
+      ...DEFAULT_SEARCH,
+      exa: { ...createWebSearchDefaults().exa, apiKeyEnv: "MY_EXA" },
+    };
+    const status = exaIntegration.status(ctx([EXA_KEY_FIELD], search));
+    expect(status.detail).toBe(
+      "key saved, but web search reads MY_EXA (web.search.exa.apiKeyEnv), not EXA_API_KEY",
+    );
+    expect(status.detail).not.toMatch(/used by web search/);
+  });
+
+  it("does not promise the key is used when Exa is not in the provider chain", () => {
+    const search = { ...DEFAULT_SEARCH, provider: "duckduckgo", fallback: [] };
+    const saved = exaIntegration.status(ctx([EXA_KEY_FIELD], search));
+    expect(saved.detail).toBe(
+      "key saved, but web search is set to duckduckgo; Exa is used only when it is web.search.provider or in web.search.fallback",
+    );
+    expect(exaIntegration.status(ctx([], search)).detail).toBe(
+      "no key; web search is set to duckduckgo, not Exa",
+    );
+    // Exa as a fallback is in the chain.
+    expect(
+      readExaSearchSetup({
+        web: { search: { ...search, fallback: ["exa"] } },
+      }).inChain,
+    ).toBe(true);
+  });
+
+  it("reads the shipped defaults as Exa primary on EXA_API_KEY", () => {
+    expect(readExaSearchSetup({ web: { search: DEFAULT_SEARCH } })).toEqual({
+      apiKeyEnv: "EXA_API_KEY",
+      provider: "exa",
+      inChain: true,
+    });
+    expect(exaIntegration.status(ctx([EXA_KEY_FIELD], DEFAULT_SEARCH)).detail).toBe(
+      "key saved, used by web search",
     );
   });
 

@@ -29,7 +29,7 @@ import { createVerifyWorkspace, type VerifyWorkspace } from "./verify-workspace-
 const NODE = process.execPath;
 const REAL_TSC = realpathSync(resolve(process.cwd(), "node_modules/.bin/tsc"));
 const CONFIG: Pick<AtomicAgentConfig, "browser"> = {
-  browser: { enabled: false, channel: "chrome", headless: true, cdpUrl: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1_000, blockedDomains: [], allowedDomains: [] },
+  browser: { enabled: false, channel: "chrome", headless: true, cdpUrl: null, connect: "agent", userChromeDataDir: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1_000, blockedDomains: [], allowedDomains: [] },
 };
 
 let work: string;
