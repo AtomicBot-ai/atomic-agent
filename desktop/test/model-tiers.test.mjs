@@ -37,10 +37,15 @@ test('tiered models lead, labelled, in Cheap / Balanced / Best order; the rest k
   assert.equal(asked(), 1, 'asked once');
 });
 
-test('a core without the route leaves the list alone', async () => {
-  const { ctx } = load({ ok: false, error: '/api/model-tiers → HTTP 404' });
+test('a core without the route, or not up yet, leaves the list alone and is asked again later, not on every render', async () => {
+  const { ctx, asked } = load({ ok: false, error: '/api/model-tiers → HTTP 404' });
   ctx.withModelTiers(MODELS, 'openrouter'); await tick();
   assert.deepEqual(plain(ctx.withModelTiers(MODELS, 'openrouter')), plain(MODELS));
+  await tick();
+  assert.equal(asked(), 1, 'no second ask straight away');
+  runInContext('MODEL_TIERS_NEXT = 0;', ctx);
+  ctx.withModelTiers(MODELS, 'openrouter');
+  assert.equal(asked(), 2, 'asked again once the wait is over');
 });
 
 test('a subscription row is keyed by its CLI', () => {

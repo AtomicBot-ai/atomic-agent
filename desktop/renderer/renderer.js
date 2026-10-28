@@ -14237,13 +14237,16 @@ function obProbeAtomicChat() {
    data file in the agent: presets/model-tiers.ts). Asked once; a core without
    the route answers ok:false and the list stays as it was. */
 let MODEL_TIERS = null;
-let MODEL_TIERS_ASKED = false;
+/* When the next ask may go out: an agent still starting answers ok:false, so a
+   failed ask is tried again a little later rather than never. */
+let MODEL_TIERS_NEXT = 0;
 function modelTiers() {
-  if (!MODEL_TIERS_ASKED && BR && BR.modelTiers) {
-    MODEL_TIERS_ASKED = true;
+  if (MODEL_TIERS === null && Date.now() >= MODEL_TIERS_NEXT && BR && BR.modelTiers) {
+    MODEL_TIERS_NEXT = Infinity;
+    const retry = () => { MODEL_TIERS_NEXT = Date.now() + 15000; };
     Promise.resolve(BR.modelTiers())
-      .then((r) => { if (r && r.ok && r.data && r.data.tiers) { MODEL_TIERS = r.data.tiers; render(); } })
-      .catch(() => {});
+      .then((r) => { if (r && r.ok && r.data && r.data.tiers) { MODEL_TIERS = r.data.tiers; render(); } else retry(); })
+      .catch(retry);
   }
   return MODEL_TIERS;
 }
