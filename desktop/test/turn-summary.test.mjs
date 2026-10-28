@@ -121,5 +121,6 @@ test('the page loads turn-summary.js before renderer.js, which draws with it', a
   const renderer = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
   // The click goes through the document-level delegation, never a listener on the line itself.
   assert.match(renderer, /t\.closest\('\[data-turnsum\]'\)/);
-  assert.match(renderer, /turnFoldsOf\(items, \{runningId: S\.turnId \? S\.streamId : null, always: STEPS\.always,\s*failedOf: \(t\) => toolState\(t\) === 'err'\}\)/);
+  // ATO-1257: a failure the agent went on from (TOOL_QUIET) is not counted red on the line.
+  assert.match(renderer, /turnFoldsOf\(items, \{runningId: S\.turnId \? S\.streamId : null, always: STEPS\.always,\s*failedOf: \(t\) => toolState\(t\) === 'err' && !TOOL_QUIET\.has\(t\.id\)\}\)/);
 });

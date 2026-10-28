@@ -196,8 +196,10 @@ export async function checks109(js: Js, check: Check): Promise<void> {
       show(live.running),
     );
     check(
-      "T109 (ATO-197): a failed call stops spinning at once: red mark, its error line, its time in words; the calls still running keep spinning",
-      live.failed[1]?.state === "err" && live.failed[1]?.glyph === "err" && !live.failed[1]?.spin
+      /* ATO-1257: while its turn runs, a failure is one the agent may still get
+         past, so its mark is the quiet one (red is for the failure that ends a turn). */
+      "T109 (ATO-197): a failed call stops spinning at once: a failure mark (quiet while its turn runs, ATO-1257), its error line, its time in words; the calls still running keep spinning",
+      live.failed[1]?.state === "err" && live.failed[1]?.glyph === "soft" && !live.failed[1]?.spin
         && live.failed[1]?.sum === "The FSUTIL utility requires administrative privileges." && live.failed[1]?.du === "1.2 s"
         && live.failed[0]?.spin === true && live.failed[2]?.spin === true,
       show(live.failed),
