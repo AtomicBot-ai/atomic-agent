@@ -3,6 +3,7 @@ import type {
   RunModeName,
 } from "../../config/llm-run-mode-config.js";
 import {
+  DEFAULT_FUSION_ESCALATION_MAX_USD,
   DEFAULT_FUSION_CLOUD_WORKERS,
   DEFAULT_FUSION_WORKER_MAX_STEPS,
   DEFAULT_FUSION_WORKER_TIMEOUT_MS,
@@ -62,6 +63,13 @@ export type ResolvedRunMode = {
   workersPinned: boolean;
   workerMaxSteps: number;
   workerTimeoutMs: number;
+  /**
+   * Where a stuck worker can be escalated (ATO-942, ATO-66), or `null`
+   * when no configured provider other than the worker leg can take it.
+   * `auto` is the operator's `escalation: "advisor"`; a manual escalate
+   * needs only a non-null value. Optional so hand-built fixtures stay valid.
+   */
+  escalation?: FusionEscalationTarget | null;
   /** `llm.runMode.fusion.turnBudgetUsd`, present only when set above 0. */
   turnBudgetUsd?: number;
   /** `llm.runMode.fusion.turnTimeBudgetMs`, present only when set above 0. */
@@ -73,6 +81,17 @@ export type ResolvedRunMode = {
    */
   primaryProviderId: string;
   degraded: RunModeDegradation | null;
+};
+
+export type FusionEscalationTarget = {
+  providerId: string;
+  /** Display and pricing label; `null` when the entry names no model. */
+  model: string | null;
+  /** Automatic advisor escalation on stuck triggers. */
+  auto: boolean;
+  /** The replacement path (`escalationReplace`). */
+  replace: boolean;
+  maxUsd: number;
 };
 
 export type ResolveRunModeOptions = {
@@ -168,6 +187,28 @@ export function resolveRunMode(
     (effective === "local" ? workerProviderId : orchestratorProviderId) ??
     resolved.activeTextProvider;
 
+  // Escalation only ever goes to a provider the operator configured, and
+  // never to the worker leg itself (nothing would be gained). The
+  // orchestrator leg is the default: it is the model already paid for.
+  const escalationEntry =
+    byId(fusion?.escalationProvider) ?? orchestrator ?? undefined;
+  const escalation: FusionEscalationTarget | null =
+    escalationEntry === undefined || escalationEntry.id === workerProviderId
+      ? null
+      : {
+          providerId: escalationEntry.id,
+          model:
+            (escalationEntry.id === orchestrator?.id
+              ? fusion?.orchestratorModel
+              : undefined) ??
+            escalationEntry.defaultChatModel ??
+            escalationEntry.model ??
+            null,
+          auto: fusion?.escalation === "advisor",
+          replace: fusion?.escalationReplace === true,
+          maxUsd: fusion?.escalationMaxUsd ?? DEFAULT_FUSION_ESCALATION_MAX_USD,
+        };
+
   return {
     stored,
     effective,
@@ -200,6 +241,7 @@ export function resolveRunMode(
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
     workerTimeoutMs:
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+    escalation,
     ...(fusion?.turnBudgetUsd !== undefined && fusion.turnBudgetUsd > 0
       ? { turnBudgetUsd: fusion.turnBudgetUsd }
       : {}),

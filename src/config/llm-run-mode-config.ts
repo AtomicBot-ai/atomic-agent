@@ -110,7 +110,37 @@ export type UserLlmFusionConfig = {
    * or `0`: no cap.
    */
   turnTimeBudgetMs?: number;
+  /**
+   * Automatic escalation of a stuck worker (ATO-942). `"advisor"`: when a
+   * worker stalls (same result 3x, read-only for 6 steps) or its first
+   * answer is cut by its time limit, the escalation model reads a
+   * compressed trace of that node and sends the worker a short hint; the
+   * worker carries on. At most one automatic escalation per worker.
+   * Default `"off"`: nothing is escalated unless the person asks for it.
+   */
+  escalation?: FusionEscalationMode;
+  /**
+   * Behind a flag, default `false`: a worker that stays stuck after its
+   * advisor hint is stopped and its task re-run on the escalation model
+   * with what was found so far. Needs a priced escalation model, so the
+   * per-escalation cap can be enforced.
+   */
+  escalationReplace?: boolean;
+  /**
+   * The model escalations go to. Must name a configured provider that is
+   * not the worker leg. Default: the orchestrator leg.
+   */
+  escalationProvider?: string;
+  /** Spend cap for one escalation, in USD. Default 0.25. */
+  escalationMaxUsd?: number;
 };
+
+export type FusionEscalationMode = "off" | "advisor";
+export const FUSION_ESCALATION_MODES: readonly FusionEscalationMode[] = [
+  "off",
+  "advisor",
+];
+export const DEFAULT_FUSION_ESCALATION_MAX_USD = 0.25;
 
 export type UserLlmRunModeConfig = {
   mode?: RunModeName;
@@ -345,6 +375,42 @@ function parseFusion(
       `${field}.turnBudgetUsd`,
       0,
       FUSION_TURN_BUDGET_USD_MAX,
+    );
+  }
+  if (obj.escalation !== undefined) {
+    if (
+      typeof obj.escalation !== "string" ||
+      !FUSION_ESCALATION_MODES.includes(obj.escalation as FusionEscalationMode)
+    ) {
+      throw new ConfigValidationError(
+        `${field}.escalation`,
+        `expected ${FUSION_ESCALATION_MODES.join("|")}`,
+      );
+    }
+    out.escalation = obj.escalation as FusionEscalationMode;
+  }
+  if (obj.escalationReplace !== undefined) {
+    if (typeof obj.escalationReplace !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.escalationReplace`,
+        "expected boolean",
+      );
+    }
+    out.escalationReplace = obj.escalationReplace;
+  }
+  if (obj.escalationProvider !== undefined) {
+    out.escalationProvider = parseLegProviderId(
+      obj.escalationProvider,
+      providers,
+      `${field}.escalationProvider`,
+    );
+  }
+  if (obj.escalationMaxUsd !== undefined) {
+    out.escalationMaxUsd = parseBoundedNumber(
+      obj.escalationMaxUsd,
+      `${field}.escalationMaxUsd`,
+      0,
+      1_000,
     );
   }
   if (obj.turnTimeBudgetMs !== undefined) {

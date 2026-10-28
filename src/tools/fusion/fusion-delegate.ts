@@ -35,6 +35,7 @@ import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
   FusionTurnBudget,
   TURN_BUDGET_INSTRUCTION,
+  formatUsd,
   type TurnBudgetLimits,
   type TurnBudgetStop,
 } from "./turn-budget.js";
@@ -490,6 +491,34 @@ export function buildFusionDelegateTool(
             },
           }
         : {};
+      // Escalation (ATO-942): only to the configured target, priced with
+      // the same resolver as the workers, and counted in the turn's cap.
+      const escalationTarget = mode.escalation ?? null;
+      const escalationPricing =
+        escalationTarget === null
+          ? undefined
+          : deps.resolveWorkerPricing?.(
+              escalationTarget.providerId,
+              escalationTarget.model ?? escalationTarget.providerId,
+            );
+      let escalationSpendUsd = 0;
+      const escalationOptions =
+        escalationTarget === null || deps.escalationComplete === undefined
+          ? {}
+          : {
+              escalation: {
+                target: escalationTarget,
+                ...(escalationPricing === undefined
+                  ? {}
+                  : { pricing: escalationPricing }),
+              },
+              onEscalationSpend: (_taskId: string, usd: number): void => {
+                escalationSpendUsd += usd;
+                turnBudget.addWorkerSpend(ctx.sessionId, usd);
+                const stop = budgetStop();
+                if (stop !== undefined) stopForBudget(stop);
+              },
+            };
       const runSignal = capped
         ? AbortSignal.any([ctx.signal, budgetAbort.signal])
         : ctx.signal;
@@ -529,6 +558,7 @@ export function buildFusionDelegateTool(
             writeScope,
             signal: runSignal,
             ...budgetOptions,
+            ...escalationOptions,
           });
           for (const result of waveResults) finished.set(result.id, result);
         }
@@ -656,7 +686,11 @@ export function buildFusionDelegateTool(
             ...(contractLine === undefined ? {} : { contractLine }),
             spend,
             ...(ordered ? { waves: plan.waves } : {}),
-          })}${hint}${budgetNote}`,
+          })}${hint}${
+            escalationSpendUsd > 0
+              ? `\n\nEscalations to ${escalationTarget?.model ?? escalationTarget?.providerId ?? "the escalation model"} cost ${formatUsd(escalationSpendUsd)} this fan-out (each worker's row says what for).`
+              : ""
+          }${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -668,6 +702,7 @@ export function buildFusionDelegateTool(
             ...(ordered ? { waves: plan.waves } : {}),
             ...(contract === undefined ? {} : { contract }),
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
+            ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
             ...(budgetStopped === undefined
               ? {}
               : {

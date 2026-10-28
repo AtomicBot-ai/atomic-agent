@@ -47,7 +47,7 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
-import { FusionTurnBudget } from "../tools/fusion/index.js";
+import { FusionLiveWorkers, FusionTurnBudget } from "../tools/fusion/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -357,6 +357,7 @@ export async function createAgentRuntime(
   // `captureMessageSent` fires.
   const turnUsageMeter = new TurnUsageMeter();
   const fusionTurnBudget = new FusionTurnBudget();
+  const fusionLiveWorkers = new FusionLiveWorkers();
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
@@ -703,6 +704,8 @@ export async function createAgentRuntime(
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
     turnBudget: fusionTurnBudget,
+    liveWorkers: fusionLiveWorkers,
+    steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
     orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
 
@@ -732,6 +735,13 @@ export async function createAgentRuntime(
     turnController,
     steeringInbox,
     steer,
+    fusionWorkers: {
+      running: (parentSessionId: string) => fusionLiveWorkers.running(parentSessionId),
+      stop: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.stop(parentSessionId, taskId),
+      escalate: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.escalate(parentSessionId, taskId),
+    },
     profileStore,
     notesStore,
     lessonStore,
