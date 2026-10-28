@@ -1,5 +1,6 @@
 import { runCommand } from "../../../sandbox/command-runner.js";
-import { cliChildEnv } from "./cli-child-env.js";
+import { cliChildEnv, withBinaryDirOnPath } from "./cli-child-env.js";
+import { hostPlatform } from "./host-environment.js";
 import {
   isEnoent,
   isSpawnEinval,
@@ -68,7 +69,7 @@ export const runCliCommand: CliRunner = async (options) => {
       // subscription — the agent's own provider keys among it
       // (`cliChildEnv`). Nothing is ever set: the CLI authenticates
       // from its own session.
-      env: cliChildEnv(options.stripEnv),
+      env: withBinaryDirOnPath(cliChildEnv(options.stripEnv), options.binary, hostPlatform()),
       ...(options.input === undefined ? {} : { input: options.input }),
       ...(options.signal ? { signal: options.signal } : {}),
       ...(invocation.windowsVerbatimArguments

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { claudeCliAdapter } from "./claude-cli-adapter.js";
-import { cliChildEnv } from "./cli-child-env.js";
+import { cliChildEnv, withBinaryDirOnPath } from "./cli-child-env.js";
 import { codexCliAdapter } from "./codex-cli-adapter.js";
 
 describe("cliChildEnv", () => {
@@ -57,5 +57,28 @@ describe("billingEnvKeys", () => {
   it("keeps codex on the ChatGPT login", () => {
     expect(codexCliAdapter.billingEnvKeys).toContain("OPENAI_API_KEY");
     expect(codexCliAdapter.billingEnvKeys).toContain("CODEX_API_KEY");
+  });
+});
+
+describe("withBinaryDirOnPath (ATO-756)", () => {
+  it("appends a pathed CLI's folder, so its `env node` shebang finds node", () => {
+    const env = { PATH: "/usr/bin:/bin", HOME: "/Users/n" };
+    expect(withBinaryDirOnPath(env, "/opt/homebrew/bin/claude", "darwin")).toEqual({
+      PATH: "/usr/bin:/bin:/opt/homebrew/bin",
+      HOME: "/Users/n",
+    });
+    expect(env.PATH).toBe("/usr/bin:/bin");
+  });
+
+  it("leaves a bare name, and a folder already on PATH, alone", () => {
+    const env = { PATH: "/usr/bin:/opt/homebrew/bin" };
+    expect(withBinaryDirOnPath(env, "claude", "darwin")).toBe(env);
+    expect(withBinaryDirOnPath(env, "/opt/homebrew/bin/claude", "darwin")).toBe(env);
+  });
+
+  it("uses Windows' Path key and separator", () => {
+    expect(
+      withBinaryDirOnPath({ Path: "C:\\Windows" }, "C:\\Users\\n\\AppData\\Roaming\\npm\\codex.cmd", "win32"),
+    ).toEqual({ Path: "C:\\Windows;C:\\Users\\n\\AppData\\Roaming\\npm" });
   });
 });

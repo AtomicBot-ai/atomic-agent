@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { isBrokenPipe } from "../../../sandbox/index.js";
 import { killProcessTree } from "../../../sandbox/kill-process-tree.js";
-import { cliChildEnv } from "./cli-child-env.js";
+import { cliChildEnv, withBinaryDirOnPath } from "./cli-child-env.js";
 import { hostPlatform } from "./host-environment.js";
 import type { CliRunOptions } from "./run-cli-completion.js";
 import {
@@ -53,7 +53,7 @@ export const streamCliCommand: CliStreamRunner = async function* (options) {
     child = spawn(invocation.command, invocation.args, {
       cwd: options.cwd,
       // See `runCliCommand`: never the agent's own provider keys.
-      env: cliChildEnv(options.stripEnv),
+      env: withBinaryDirOnPath(cliChildEnv(options.stripEnv), options.binary, hostPlatform()),
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       // `hostPlatform()`, not `process.platform`: the same seam the shim
