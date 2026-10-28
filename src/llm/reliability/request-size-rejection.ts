@@ -1,6 +1,7 @@
 import { LlamaServerError } from "../llama-server-client.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { TransportError } from "./llm-failures.js";
+import { readContextOverflowCounts, type ContextOverflowCounts } from "./context-overflow-counts.js";
 
 /**
  * Did the provider refuse the request for its *size* — a 400 or 413
@@ -70,7 +71,46 @@ export function readContextLengthFromRejection(error: unknown): number | null {
     const value = Number.parseInt(match[1]!.replace(/[,_]/g, ""), 10);
     if (Number.isFinite(value) && value > 0) return value;
   }
-  return null;
+  // Current llama.cpp builds keep the numbers out of the sentence
+  // ("the request exceeds the available context size, try increasing
+  // it") and put them in the body's `n_ctx` instead.
+  return readServerContextCounts(error).contextWindow ?? null;
+}
+
+/**
+ * The counts a llama.cpp `exceed_context_size_error` body carries
+ * (`n_ctx`, `n_prompt_tokens`), from the first link of the `cause`
+ * chain that has them: a `LlamaServerError` keeps them on its parsed
+ * body, an `OpenAiHttpError` (llama.cpp behind an OpenAI-compatible
+ * entry) in its raw body text. Empty when no link has either.
+ */
+export function readServerContextCounts(error: unknown): ContextOverflowCounts {
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    depth < MAX_CAUSE_DEPTH && current !== undefined && current !== null;
+    depth += 1
+  ) {
+    const counts =
+      current instanceof LlamaServerError
+        ? pickCounts(current.body)
+        : current instanceof OpenAiHttpError && current.body !== undefined
+          ? readContextOverflowCounts(current.body.text)
+          : {};
+    if (counts.contextWindow !== undefined || counts.promptTokens !== undefined) {
+      return counts;
+    }
+    current = current instanceof Error ? (current as { cause?: unknown }).cause : undefined;
+  }
+  return {};
+}
+
+function pickCounts(body: ContextOverflowCounts | undefined): ContextOverflowCounts {
+  if (body === undefined) return {};
+  return {
+    ...(body.contextWindow !== undefined ? { contextWindow: body.contextWindow } : {}),
+    ...(body.promptTokens !== undefined ? { promptTokens: body.promptTokens } : {}),
+  };
 }
 
 const CONTEXT_LENGTH_PATTERNS: readonly RegExp[] = [

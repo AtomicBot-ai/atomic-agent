@@ -71,12 +71,16 @@ describe("input guard rules (F51)", () => {
     expect(requestAsksToReplace("Clean sales.csv and save clean.csv", "sales.csv")).toBe(false);
   });
 
-  it("lifts the rule for a short follow-up that points at the replacement (ATO-851)", () => {
+  it("reads a short follow-up that points at the replacement (ATO-851, ATO-860)", () => {
     const followUp = (latest: string): string =>
       `Clean sales.csv and save clean.csv\n\n${REQUEST_FOLLOW_UP_MARKER}\n${latest}`;
     expect(followUpAsksToReplace(followUp("yes, replace it"))).toBe(true);
     expect(followUpAsksToReplace(followUp("Go ahead and overwrite the file."))).toBe(true);
     expect(followUpAsksToReplace(followUp("ok rewrite that"))).toBe(true);
+    expect(followUpAsksToReplace(followUp("overwrite this file"))).toBe(true);
+    // A demonstrative with a noun after it points at that noun (ATO-860).
+    expect(followUpAsksToReplace(followUp("replace that line"))).toBe(false);
+    expect(followUpAsksToReplace(followUp("rewrite this paragraph"))).toBe(false);
     // Negated, or no replace verb: the follow-up did not agree.
     expect(followUpAsksToReplace(followUp("no, do not replace it"))).toBe(false);
     expect(followUpAsksToReplace(followUp("yes"))).toBe(false);
@@ -122,6 +126,7 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
   let prompts: ApprovalRequest[];
   let gate: ApprovalGate;
   let request: string | undefined;
+  let previousReply: string | undefined;
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "atomic-input-guard-"));
@@ -135,6 +140,7 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
       },
     });
     request = "Clean sales.csv: drop rows with an empty amount and save the result to clean.csv";
+    previousReply = undefined;
   });
 
   afterEach(async () => {
@@ -157,6 +163,7 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
       approvalRequired: true,
       ...(restore === null ? {} : { restore }),
       resolveOriginalRequest: () => request,
+      resolvePreviousReply: () => previousReply,
     };
     return {
       write: buildOsFsWriteTool(options),
@@ -171,7 +178,7 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
   }
 
   const REFUSAL =
-    "refused: sales.csv is an input the request names (2,402 lines → 10); leave it as it is and write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). If the user wants this file itself replaced, ask them in your reply first";
+    'refused: sales.csv is an input the request names (2,402 lines → 10); write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). To replace the file itself, stop and reply with one yes/no question: "Replace sales.csv?" A write before the user answers yes is refused again';
 
   it("refuses before the approval prompt, leaves the file alone, and names the way onward", async () => {
     const before = csv(2401);
@@ -212,7 +219,8 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
     expect(prompts).toHaveLength(0);
   });
 
-  it("lands once the user's next message asks for it, through the approval and the F36 note", async () => {
+  it("lands once the user answers the agent's question, through the approval and the F36 note", async () => {
+    previousReply = "sales.csv is the input you gave me. Replace sales.csv?";
     request = `${request}\n\n${REQUEST_FOLLOW_UP_MARKER}\nyes, replace it`;
     await writeFile(join(dir, "sales.csv"), csv(2401), "utf8");
     const after = csv(9, "sku,qty");
@@ -308,14 +316,14 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
       ctx(),
     );
     expect(spelled.summary).toBe(
-      `refused: ${join(dir, "data.csv")} is an input the request names (6 lines → 1); leave it as it is and write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). If the user wants this file itself replaced, ask them in your reply first`,
+      `refused: ${join(dir, "data.csv")} is an input the request names (6 lines → 1); write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). To replace the file itself, stop and reply with one yes/no question: "Replace data.csv?" A write before the user answers yes is refused again`,
     );
 
     await writeFile(join(dir, "huge.bin"), Buffer.alloc(RESTORE_MAX_BYTES + 1, 0x61));
     request = "Inspect huge.bin";
     const huge = await tools().write.run({ path: "huge.bin", content: "tiny\n" }, ctx());
     expect(huge.summary).toBe(
-      "refused: huge.bin is an input the request names (5.0 MB → 1 line); leave it as it is and write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). If the user wants this file itself replaced, ask them in your reply first",
+      'refused: huge.bin is an input the request names (5.0 MB → 1 line); write the result to a new file, or edit it in place (os.fs.edit / os.fs.patch). To replace the file itself, stop and reply with one yes/no question: "Replace huge.bin?" A write before the user answers yes is refused again',
     );
     expect(existsSync(join(dir, "huge.bin"))).toBe(true);
   });
@@ -399,7 +407,7 @@ describe("os.fs.write refuses to replace an input the request names (F51)", () =
   it("keeps the way onward when the path is long enough to reach the compressor's cap", async () => {
     // A worker writes by absolute path into a nested workspace, and
     // `display` is the path as the call spelled it. The declared-input
-    // wording is the longer of the two — 224 characters before the path
+    // wording is 224 characters before the path
     // and the counts go in — so an ordinary nested path takes the whole
     // message past the compressor's 400-character default, and what the
     // head slice eats is the end: the `os.fs.edit` / `os.fs.patch`

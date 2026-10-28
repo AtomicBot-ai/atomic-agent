@@ -1,4 +1,5 @@
 import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
+import { canonicalArgs } from "./argument-aliases.js";
 import { nearestKey } from "./argument-error-hint.js";
 import { normalizeArgKeys } from "./coerce-tool-args.js";
 
@@ -23,6 +24,10 @@ import { normalizeArgKeys } from "./coerce-tool-args.js";
  * normalisation (`normalizeArgKeys`: a key wrapped in its own quotes, a
  * key fused with a prompt fragment) has had its chance — a key that
  * normalises into the schema is renamed at dispatch and is not unknown.
+ * So has a tool's alias reading (`argument-aliases.ts`): `os.fs.move`
+ * `{paths, destination}` is read as `{from, to}` at dispatch, so those
+ * keys are not unknown either; a call the reading leaves alone (an
+ * alias beside a canonical key, say) is checked as sent.
  * A tool with no registered schema (an MCP tool, an unregistered name)
  * is exempt: there is nothing to check against.
  */
@@ -49,7 +54,8 @@ export function findUnknownArguments(
   const properties = schemaProperties(tool);
   if (properties === null) return null;
   const expectedKeys = Object.keys(properties);
-  const unknownKeys = Object.keys(normalizeArgKeys(args, properties)).filter(
+  const canonical = canonicalArgs(tool, args);
+  const unknownKeys = Object.keys(normalizeArgKeys(canonical, properties)).filter(
     (key) => !Object.hasOwn(properties, key),
   );
   if (unknownKeys.length === 0) return null;

@@ -19,7 +19,21 @@ describe("describeServerFault", () => {
     // beside a `daemon: stopped` line, and "the server is up" there was
     // simply false.
     expect(fault?.summary).not.toContain("is up");
-    expect(fault?.summary).toContain("localModels.managed.contextSize");
+    expect(fault?.kind).toBe("out_of_memory");
+    // ATO-334: the remedy is something the person can do from the chat,
+    // not a config key to edit.
+    expect(fault?.summary).toContain("smaller context window");
+    expect(fault?.summary).toContain("pick a smaller model");
+    expect(fault?.summary).not.toMatch(/localModels|config\.json|swaFull/);
+  });
+
+  it("names a backend out-of-memory with the same remedy", () => {
+    const fault = describeServerFault(
+      "E ggml_backend_cuda_buffer_type_alloc_buffer: allocating 9000 MiB on device 0: cudaMalloc failed: out of memory",
+    );
+    expect(fault?.kind).toBe("out_of_memory");
+    expect(fault?.summary).toContain("pick a smaller model");
+    expect(fault?.summary).not.toContain("localModels");
   });
 
   it("prefers the cause over the symptom it produces", () => {
@@ -35,9 +49,9 @@ describe("describeServerFault", () => {
   it("names a port collision", () => {
     const log =
       "E srv start: couldn't bind HTTP server socket, hostname: 127.0.0.1, port: 19091";
-    expect(describeServerFault(log)?.summary).toContain(
-      "could not take its port",
-    );
+    const fault = describeServerFault(log);
+    expect(fault?.kind).toBe("port_in_use");
+    expect(fault?.summary).toContain("could not take its port");
   });
 
   it("says nothing about a healthy log", () => {

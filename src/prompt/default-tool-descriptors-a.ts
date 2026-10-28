@@ -34,8 +34,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "browser.read_aria",
-    summary: "Capture the page as a compact ARIA text snapshot.",
-    argsSchema: "{}",
+    summary:
+      "Capture the page as an ARIA text snapshot. mode: full (whole page), interactive (controls only), diff (changes since the last snapshot of this tab), region (the part under ref).",
+    argsSchema: "{ mode?: string, ref?: string }",
   },
   {
     name: "browser.search",
@@ -55,11 +56,17 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
     argsSchema: `{ direction: "up" | "down" | "top" | "bottom", amount?: "page" | "half" | number }`,
   },
   {
+    name: "browser.screenshot",
+    summary:
+      "JPEG of the page (viewport), the whole page (fullPage) or one element (ref); returns a path for vision.describe or reply.attachments.",
+    argsSchema: "{ ref?: string, fullPage?: boolean }",
+  },
+  {
     name: "os.shell.run",
     summary:
-      "Run a shell command in the working directory (may require approval). Not for deleting user files (use os.fs.trash when the user wants paths removed) or for moving, renaming or sorting them into folders (use os.fs.move). A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs.",
+      "Run a shell command in the working directory (may require approval). Not for deleting user files (use os.fs.trash when the user wants paths removed) or for moving, renaming or sorting them into folders (use os.fs.move). To run a command, `cmd` is required: the program, with its arguments in `args`, or a full command line. Run task steps (installs, clones, builds) yourself rather than telling the user to type them; hand over only a step the result says needs the user. A command still running at the default timeout comes back as a job: wait for it, kill it, or list jobs; `background: true` starts a server or watcher as a kept job at once.",
     argsSchema:
-      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
+      "{ cmd: string, args: string[], cwd?: string, timeoutMs?: number, keep?: boolean, background?: boolean } | { wait: number /* job id */, timeoutMs?: number, keep?: boolean } | { kill: number } | { jobs: true }",
   },
   OS_FS_READ_CONTRACT.descriptor,
   OS_FS_WRITE_CONTRACT.descriptor,

@@ -4,6 +4,7 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -80,6 +81,17 @@ class FakeBackend implements BrowserBackend {
     return this.liveRefs.has(ref);
   }
 
+  /** Element facts for the click / type gate; unknown refs read as `null`. */
+  public descriptions: Map<string, RefDescription> = new Map();
+
+  async describeRef(ref: string): Promise<RefDescription | null> {
+    return this.descriptions.get(ref) ?? null;
+  }
+
+  async currentUrl(): Promise<string> {
+    return this.snap.url;
+  }
+
   async navigate(
     input: NavigateInput,
   ): Promise<{ url: string; title: string }> {
@@ -118,6 +130,9 @@ class FakeBackend implements BrowserBackend {
     };
   }
 
+  async screenshot(): Promise<never> {
+    throw new Error("FakeBackend: screenshot not used here");
+  }
   async scroll(input: ScrollInput): Promise<ScrollResult> {
     this.lastScroll = input;
     const vh = this.scrollState.viewportHeight;
@@ -217,21 +232,21 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("click forwards the ref", async () => {
-    const tool = buildBrowserClickTool(backend);
+    const tool = buildBrowserClickTool(backend, autoApprove());
     const result = await tool.run({ ref: "e1" }, CTX);
     expect(result.status).toBe("ok");
     expect(backend.lastClick?.ref).toBe("e1");
   });
 
   it("click rejects non-alphanumeric ref", async () => {
-    const tool = buildBrowserClickTool(backend);
+    const tool = buildBrowserClickTool(backend, autoApprove());
     await expect(tool.run({ ref: "e 1" }, CTX)).rejects.toThrow(/ref/);
     await expect(tool.run({ ref: 1 }, CTX)).rejects.toThrow(/ref/);
   });
 
   it("click fails fast with a helpful message when the ref is stale", async () => {
     backend.liveRefs = new Set(["e1"]);
-    const tool = buildBrowserClickTool(backend);
+    const tool = buildBrowserClickTool(backend, autoApprove());
     const result = await tool.run({ ref: "e337" }, CTX);
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/ref 'e337' is not present/);
@@ -241,7 +256,7 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("type records text length and pressEnter flag", async () => {
-    const tool = buildBrowserTypeTool(backend);
+    const tool = buildBrowserTypeTool(backend, autoApprove());
     const result = await tool.run(
       { ref: "e2", text: "hello", pressEnter: true },
       CTX,
@@ -253,7 +268,7 @@ describe("browser tools on a fake backend", () => {
 
   it("type fails fast with a helpful message when the ref is stale", async () => {
     backend.liveRefs = new Set(["e1"]);
-    const tool = buildBrowserTypeTool(backend);
+    const tool = buildBrowserTypeTool(backend, autoApprove());
     const result = await tool.run({ ref: "e2", text: "x" }, CTX);
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/ref 'e2' is not present/);
@@ -287,7 +302,7 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("search builds a search URL via the backend", async () => {
-    const tool = buildBrowserSearchTool(backend);
+    const tool = buildBrowserSearchTool(backend, autoApprove());
     const result = await tool.run(
       { query: "atomic agent", engine: "bing" },
       CTX,
@@ -298,7 +313,7 @@ describe("browser tools on a fake backend", () => {
   });
 
   it("search attaches a worldSnapshot for the results page", async () => {
-    const tool = buildBrowserSearchTool(backend);
+    const tool = buildBrowserSearchTool(backend, autoApprove());
     const result = await tool.run({ query: "hermes" }, CTX);
     const snap = result.details.worldSnapshot as
       { kind: string; digest: string; text: string } | undefined;
@@ -316,7 +331,7 @@ describe("browser tools on a fake backend", () => {
     expect(navResult.status).toBe("ok");
     expect(navResult.details.worldSnapshot).toBeUndefined();
 
-    const search = buildBrowserSearchTool(flaky);
+    const search = buildBrowserSearchTool(flaky, autoApprove());
     const searchResult = await search.run({ query: "q" }, CTX);
     expect(searchResult.status).toBe("ok");
     expect(searchResult.details.worldSnapshot).toBeUndefined();
@@ -387,9 +402,11 @@ describe("browser tools on a fake backend", () => {
     expect(backend.readyCalls).toBe(1);
   });
 
-  it("tabs new with javascript: URL is gated the same way", async () => {
+  it("tabs new with javascript: URL is refused before any prompt", async () => {
     const gate = new ApprovalGate({
-      emit: (req) => gate.reject(req.approvalId, "denied js scheme"),
+      emit: () => {
+        throw new Error("a javascript: URL must not reach the approval gate");
+      },
     });
     const tool = buildBrowserTabsTool(backend, {
       approvals: gate,
@@ -397,7 +414,7 @@ describe("browser tools on a fake backend", () => {
     });
     await expect(
       tool.run({ action: "new", url: "javascript:alert(1)" }, CTX),
-    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    ).rejects.toThrow(/runs code in the page/);
     expect(backend.lastTabs).toBeNull();
   });
 
@@ -428,6 +445,7 @@ describe("browser tools on a fake backend", () => {
       "browser.click",
       "browser.navigate",
       "browser.read_aria",
+      "browser.screenshot",
       "browser.scroll",
       "browser.search",
       "browser.tabs",

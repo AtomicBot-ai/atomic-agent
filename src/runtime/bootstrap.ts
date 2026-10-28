@@ -5,7 +5,7 @@ import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
 import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
-import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
+import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
 import { createRuntimeTaskStores, createRuntimeTaskRunner, createRuntimeScheduler } from "./composition/runtime-task-services.js";
@@ -56,6 +56,7 @@ import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
 import { isLocalLinkWithoutModel } from "./local-link-availability.js";
 import { readLocalEngineState } from "./local-engine-state.js";
+import { createLocalOutOfMemoryPort, type LocalModelRestarter } from "./local-out-of-memory.js";
 import { createRuntimePromptPreview, buildRuntimePromptInput } from "./composition/runtime-prompt-preview.js";
 import { captureModelModePolicy, resolveModelMode } from "../llm/model-mode.js";
 export { SessionNotFoundError } from "./session-not-found-error.js";
@@ -201,6 +202,8 @@ export async function createAgentRuntime(
       noSandbox: config.browser.noSandbox,
       launchTimeoutMs: config.browser.launchTimeoutMs,
       cdpUrl: config.browser.cdpUrl,
+      connect: config.browser.connect,
+      userChromeDataDir: config.browser.userChromeDataDir,
     });
   const preparedSkills = await prepareRuntimeSkills(config, workingDir, logger);
   const { skillRegistry } = preparedSkills;
@@ -303,13 +306,23 @@ export async function createAgentRuntime(
   // call a tool on the session (the controller runs one turn per
   // session), so a read always finds its own turn's request.
   const turnRequests = new Map<string, string>();
+  // The agent's reply just before the message that started the turn (a
+  // worker's: its parent's), for the same guard: a plain yes to
+  // "Replace sales.csv?" replaces that file (ATO-860). Kept beside
+  // `turnRequests`, set and cleared with it.
+  const turnPreviousReplies = new Map<string, string>();
   // The files a fan-out's contract declared as inputs, per worker
   // session: the worker runner declares them, `os.fs.write` refuses to
   // replace them (`fs-declared-inputs.ts`).
   const declaredInputs = new DeclaredInputsRegistry();
   registerRuntimeCoreTools({
     config, toolRegistry, dangerous, sessionStore, logger, resolveOriginalRequest: (id) => turnRequests.get(id),
+    resolvePreviousReply: (id) => turnPreviousReplies.get(id),
     declaredInputs, shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore,
+    // Only the terminal UI has an `/integrations` screen that saves an Exa
+    // key into this process; every other entry point keeps the desktop /
+    // `.env` advice (ATO-345).
+    ...(options.analyticsSurface === "tui" ? { webSearchKeyHelp: "integrations-hub" as const } : {}),
   });
 
   // Vision provider wiring is deferred until after `profileManager` is
@@ -352,6 +365,7 @@ export async function createAgentRuntime(
   const mcpCatalog = await connectRuntimeMcpCatalog({
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode,
+    ...mcpGrammarHookFor(profileManager),
   });
   const { mcpManager, getGrammar, effectiveToolDescriptors } = mcpCatalog;
 
@@ -375,7 +389,7 @@ export async function createAgentRuntime(
   });
 
   const promptPreviewDeps = {
-    prepareWorkspace: createWorkspaceLoader(config),
+    prepareWorkspace: createWorkspaceLoader(config, logger),
     workingDir, sessionStore, profileStore, capabilities, effectiveToolDescriptors,
     getSkillCatalog: skillCatalogState.getSkillCatalog,
     getLiveProfile: connectedLocal.getLiveProfile,
@@ -441,6 +455,11 @@ export async function createAgentRuntime(
     },
   });
 
+  // Who can restart the managed model after it ran out of memory
+  // (ATO-334): the TUI registers itself; a headless `serve` leaves it
+  // empty, because the desktop owns the model there.
+  let localModelRestarter: LocalModelRestarter | null = null;
+
   // Plan mode. Session state, deliberately not config: it is a stance
   // for the next few turns, not a setting, and a "look but do not touch"
   // that survived a restart would be a mystery rather than a memory.
@@ -496,6 +515,15 @@ export async function createAgentRuntime(
       const config = getConfig();
       return readLocalEngineState(providerId, config, resolveLlmConfig(config).activeTextProvider);
     },
+    // A managed local model that ran out of memory is restarted with a
+    // smaller window instead of waited on (ATO-334). Read live, like the
+    // engine state above.
+    localOutOfMemory: createLocalOutOfMemoryPort({
+      readConfig: () => getConfig(),
+      activeTextProvider: () => resolveLlmConfig(getConfig()).activeTextProvider,
+      approvals,
+      restarter: () => localModelRestarter,
+    }),
     // A pinned turn (`RunTurnOptions.providerId`, a fusion worker on the
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
@@ -652,7 +680,7 @@ export async function createAgentRuntime(
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
-    sessions: { sessionStore, turnContext, turnRequests },
+    sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
     traces, telemetry: { observability, analyticsStateStore, turnUsageMeter },
@@ -758,6 +786,9 @@ export async function createAgentRuntime(
     reportOnboardingStep,
     reportModelConfigured,
     reportLocalEngineFailed,
+    setLocalModelRestarter: (restarter: LocalModelRestarter | null) => {
+      localModelRestarter = restarter;
+    },
     getApprovalLevel: () => approvals.getLevel(),
     setApprovalLevel: (level) => approvals.setLevel(level),
     getPlanMode: () => planMode,

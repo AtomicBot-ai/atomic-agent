@@ -9,14 +9,22 @@ import {
   type ProviderWaitCause,
   type ProviderWaitFailure,
 } from "../llm/reliability/provider-wait-cause.js";
-import { LOCAL_ENGINE_DOWN_CODE, classifyFailure, isLocalEngineDown } from "../llm/reliability/index.js";
+import {
+  classifyFailure,
+  classifyFailureCause,
+  isLocalEngineDown,
+  type FailureVerdict,
+} from "../llm/reliability/index.js";
+import { currentLlamaUrl, failureReasonFields } from "./failure-reason-frame.js";
 import { readFailedAttempts } from "../llm/fallback/index.js";
 import { describeFailedLinks } from "../llm/fallback/failed-links.js";
 import {
   createEmptySessionState,
   type SessionState,
 } from "../session/index.js";
+import { getConfig } from "../config/index.js";
 
+import { checkWorkingDir } from "./session-working-dir.js";
 import { openaiError } from "./openai-errors.js";
 import {
   beginSse,
@@ -32,6 +40,9 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { createTurnPhaseTracker } from "./stream-turn-phase.js";
+import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
+import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
 import type { UndeliveredSteer } from "./undelivered-steers.js";
 import {
   buildFinalAssistantPayload,
@@ -65,6 +76,8 @@ interface ChatCompletionRequest {
   stream?: boolean;
   stream_options?: { include_usage?: boolean };
   session_id?: string;
+  /** ATO-731: the folder a NEW session works in (absolute); an existing one keeps its own. */
+  working_dir?: string;
 }
 
 interface ParsedRequest {
@@ -76,6 +89,8 @@ interface ParsedRequest {
   userMessage: string;
   firstUserMessage: string;
   sessionIdOverride: string | null;
+  /** ATO-731: `working_dir`, checked; null for the server's own folder. */
+  workingDir: string | null;
   extensionsEnabled: boolean;
 }
 
@@ -142,6 +157,10 @@ async function handleNonStream(
     result = await ctx.runtime.runTurn(env.session, env.request.userMessage, {
       signal: controller.signal,
       origin: "http",
+      // An extensions client (the desktop) draws approval prompts, so a
+      // person can be asked before an out-of-memory restart (ATO-334); a
+      // plain OpenAI client cannot answer and gets the automatic one.
+      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -255,7 +274,28 @@ async function handleStream(
     });
   }
 
-  const hook = buildStreamEventHook(sse, env);
+  const frames = buildStreamEventHook(sse, env);
+  // ATO-1027: what the turn is doing while no text shows, and a word
+  // when a local model is slow to start. Extensions-only.
+  const phases = env.request.extensionsEnabled
+    ? createTurnPhaseTracker({
+        sessionId: env.session.id,
+        write: (name, payload) => {
+          if (!sse.closed) sse.writeEvent(name, payload);
+        },
+        slowFirstTokenHint: () => buildSlowFirstTokenHint(getConfig()),
+      })
+    : null;
+  const hook = phases
+    ? (event: AgentLoopEvent): void => {
+        phases.onEvent(event);
+        frames(event);
+      }
+    : frames;
+  phases?.start();
+  // Only this stream's turn asks the model server for prompt progress;
+  // the TUI, channels and workers stream as before.
+  const releaseProgress = phases ? claimTurnProgress(env.session.id) : null;
 
   let result: RunTurnResult | null = null;
   let error: Error | null = null;
@@ -264,6 +304,9 @@ async function handleStream(
       signal: controller.signal,
       origin: "http",
       eventHook: hook,
+      // See the non-stream path: only a client that draws approval
+      // prompts is asked before an out-of-memory restart (ATO-334).
+      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
@@ -271,6 +314,8 @@ async function handleStream(
     // catch only fires for unclassified exceptions.
     error = err instanceof Error ? err : new Error(String(err));
   } finally {
+    phases?.dispose();
+    releaseProgress?.();
     ctx.completionRegistry.unregister(env.completionId);
   }
 
@@ -387,6 +432,8 @@ async function handleStream(
 export function buildStreamEventHook(
   sse: SseWriter,
   env: TurnEnv,
+  /** `localModels.url`, for the local-server failure codes. Test seam. */
+  llamaUrl: () => string | null = currentLlamaUrl,
 ): (event: AgentLoopEvent) => void {
   /* Reply text already streamed as deltas: `turnStreamed` for the whole
      turn, `stepStreamed` since the current step began. A terminal
@@ -540,6 +587,10 @@ export function buildStreamEventHook(
         const failedBefore = describeFailedLinks(inner.error);
         emitStreamError(sse, env, inner.error.message, inner.category, {
           ...billingCauseFrame(inner.error),
+          failure: failureFrame(classifyFailureCause(inner.error, inner.category)),
+          /* ATO-708 / ATO-737: the held first frame needs the local-server
+             code too, or the host never offers Reconnect. */
+          ...failureReasonFields(inner.error, inner.error, llamaUrl()),
           ...(failedBefore.length > 0
             ? { fallback_failures: failedLinksFrame(failedBefore) }
             : {}),
@@ -603,6 +654,28 @@ export function buildStreamEventHook(
           object: "atomic.provider_recovered",
           session_id: env.session.id,
           waited_ms: event.waitedMs,
+        });
+      }
+      return;
+    }
+    /* ATO-334: the managed local model ran out of memory. `asking` comes
+       with the approval prompt the person answers (`question_id` is its
+       `approvalId`); `restarted` is the chat note; `stopped` precedes the
+       turn's error frame and names the window a restart would use, for a
+       host that owns the model (the desktop) to restart it. */
+    if (event.type === "local_model_out_of_memory") {
+      if (env.request.extensionsEnabled) {
+        sse.writeEvent("local_model_out_of_memory", {
+          object: "atomic.local_model_out_of_memory",
+          session_id: env.session.id,
+          phase: event.phase,
+          context_window: event.contextWindow,
+          next_context_window: event.nextContextWindow,
+          attempt: event.attempt,
+          max_attempts: event.maxAttempts,
+          message: event.message,
+          ...(event.questionId !== undefined ? { question_id: event.questionId } : {}),
+          ...(event.options !== undefined ? { options: [...event.options] } : {}),
         });
       }
       return;
@@ -694,9 +767,18 @@ export function buildStreamEventHook(
           : event.error.message;
         emitStreamError(sse, env, message, classifyFailure(primary), {
           ...billingCauseFrame(primary),
+          /* ATO-384: the catalog entry for the story this frame tells —
+             the first link's, unless the turn ended on a local model
+             that is not running, which is what the host can act on. */
+          failure: failureFrame(
+            isLocalEngineDown(event.error)
+              ? classifyFailureCause(event.error, event.category)
+              : classifyFailureCause(primary),
+          ),
           // The chain fell over to the managed local link and its model
           // process is gone: the host still needs the code to offer a start.
-          ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
+          // A local server that answered 404/405/400 gets its own code.
+          ...failureReasonFields(primary, event.error, llamaUrl()),
           fallback_failures: failedLinksFrame(describeFailedLinks(event.error)),
         });
         return;
@@ -704,10 +786,18 @@ export function buildStreamEventHook(
       const failedBefore = event.category === "cancelled" ? [] : describeFailedLinks(event.error);
       emitStreamError(sse, env, event.error.message, event.category, {
         ...ended,
+        /* ATO-384: cause → plain phrase → button, from the one shared
+           list (`failure-catalog.ts`). Extensions frame only. */
+        failure: failureFrame(
+          event.failure ?? classifyFailureCause(event.error, event.category),
+        ),
         /* ATO-772: the managed local model's process is gone, so the turn
            ended without the outage wait. `code` lets a host offer to start
-           it (the desktop's "Start model") instead of reading the words. */
-        ...(isLocalEngineDown(event.error) ? { code: LOCAL_ENGINE_DOWN_CODE } : {}),
+           it (the desktop's "Start model") instead of reading the words.
+           ATO-708 / ATO-873 / ATO-737: a local server that answered
+           404/405 or a typed 400 gets a code and plain `advice`, so a host
+           can offer "Reconnect" (POST /api/local-model/recheck). */
+        ...failureReasonFields(event.error, event.error, llamaUrl()),
         ...(failedBefore.length > 0
           ? { fallback_failures: failedLinksFrame(failedBefore) }
           : {}),
@@ -795,6 +885,18 @@ function billingCauseFrame(
   return cause.kind === "billing"
     ? { cause: { kind: "billing", status: cause.status } }
     : {};
+}
+
+/**
+ * A failure-catalog entry as frames carry it: `{cause, phrase, action}`.
+ * A fresh plain object, so the frame never shares the catalog's own.
+ */
+function failureFrame(verdict: FailureVerdict): {
+  cause: FailureVerdict["cause"];
+  phrase: string;
+  action: FailureVerdict["action"];
+} {
+  return { cause: verdict.cause, phrase: verdict.phrase, action: verdict.action };
 }
 
 /**
@@ -965,6 +1067,15 @@ async function parseRequestBody(
     sendError(res, 400, openaiError("Invalid session ID"));
     return null;
   }
+  let workingDir: string | null = null;
+  if (body.working_dir !== undefined && body.working_dir !== null) {
+    const check = checkWorkingDir(body.working_dir);
+    if (!check.ok) {
+      sendError(res, 400, openaiError(check.error, "invalid_request_error", "working_dir"));
+      return null;
+    }
+    workingDir = check.dir;
+  }
   return {
     model:
       typeof body.model === "string" && body.model.length > 0
@@ -976,6 +1087,7 @@ async function parseRequestBody(
     userMessage: lastUser.content,
     firstUserMessage: firstUser?.content ?? lastUser.content,
     sessionIdOverride,
+    workingDir,
     extensionsEnabled: isExtensionsHeaderTruthy(
       getHeader(req, EXTENSIONS_HEADER),
     ),
@@ -1016,7 +1128,7 @@ function resolveSession(
   if (existing) return existing;
   const state = createEmptySessionState({
     id: desiredId,
-    workingDir: ctx.runtime.capabilities.workingDir,
+    workingDir: parsed.workingDir ?? ctx.runtime.capabilities.workingDir,
     metadata: { source: "openai-chat", model: parsed.model },
   });
   ctx.runtime.sessionStore.save(state);

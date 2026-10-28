@@ -5,6 +5,7 @@ Scope: `src/skills/`. Inherit the root instructions; read [README.md](README.md)
 ## Constraints
 
 - Preserve manifest validation, platform filtering, installed files and disabled-name filtering. Disabled skills disappear from discovery without deleting their directories.
+- Project skills stay out of the catalog until the operator trusts the folder (docs/project-trust.md). Never auto-trust from code, prompt text or a headless path.
 - Keep catalog descriptions in the prefix and loaded bodies in session tail. Changing enabled/catalog contents invalidates the stable prefix deliberately.
 - Script execution keeps its approval policy; starter seeding must remain idempotent.
 

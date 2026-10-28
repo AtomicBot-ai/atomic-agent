@@ -42,6 +42,13 @@ export interface FsDangerousToolOptions extends DangerousToolOptions {
    */
   resolveOriginalRequest?: (sessionId: string) => string | undefined;
   /**
+   * The agent's reply just before the user's message that started the
+   * turn now running on a session (a worker's: its parent's), read by
+   * `os.fs.write` so a plain yes to "Replace sales.csv?" replaces that
+   * file (ATO-860). Omitted: only the user's own words lift the refusal.
+   */
+  resolvePreviousReply?: (sessionId: string) => string | undefined;
+  /**
    * The files a fan-out's contract declared as inputs for a worker
    * session (`fs-declared-inputs.ts`), which `os.fs.write` never
    * replaces. Omitted declares nothing.

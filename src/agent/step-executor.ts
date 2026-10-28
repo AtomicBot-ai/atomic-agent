@@ -15,6 +15,8 @@ import { toLlmFailure } from "./step/step-errors.js";
 export { BatchValidationError } from "./step/step-errors.js";
 import { completionAssumesOpenReasoning, resolveReasoning } from "./step/step-reasoning.js";
 import { runInitialCompletion } from "./step/step-inference.js";
+import { continueCutAnswer, type ContinuedAnswer } from "./step/step-answer-continuation.js";
+import type { ToolCallBatchParseResult } from "./step/step-parsing.js";
 import { isNativeToolsEmptyCompletionHandledByParser, isGrammarEmptyCompletionWorthRepairing, parseDepsFor, replyCapSent, prepareStepRepair, finishStepRepair } from "./step/step-parsing.js";
 export { REPAIR_MAX_TOKENS } from "./step/step-parsing.js";
 import { prepareStepInference } from "./step/step-inference.js";
@@ -140,20 +142,39 @@ async function executeStepInner(
     stage: "initial",
     contextWindow: deps.contextWindow ?? null,
   });
+  const policy = createStepBatchPolicy(ctx, deps, assumesOpenReasoning);
+  // Set when a reply cut at its length limit was continued (ATO-1031):
+  // the continuation's batch replaces the parse below.
+  let continued: ContinuedAnswer | null = null;
   if (initialModelFailure !== null) {
     const initialParseDeps = parseDepsFor(completion, deps);
     const repairable = isGrammarEmptyCompletionWorthRepairing(
       initialParseDeps,
       initialModelFailure.reason,
     );
-    if (
+    const terminal =
       !repairable &&
       !isNativeToolsEmptyCompletionHandledByParser(
         initialParseDeps,
         initialModelFailure.reason,
         completion,
-      )
-    ) {
+      );
+    // An answer cut at its length limit is continued once before the
+    // cut is reported; at most one continuation per step, never chained.
+    if (terminal && initialModelFailure.reason === "truncated") {
+      continued = await continueCutAnswer({
+        ctx,
+        deps,
+        prepared,
+        completion,
+        failure: initialModelFailure,
+        transport: initialParseDeps.toolTransport,
+        assumesOpenReasoning,
+        parse: (next, rewrite) =>
+          parseStepBatch({ ctx, deps, prepared, completion: next, assumesOpenReasoning, policy, rewrite }),
+      });
+    }
+    if (terminal && continued === null) {
       deps.logger?.warn("model-side completion defect", {
         sessionId: ctx.session.id,
         stepIndex: ctx.stepIndex,
@@ -189,9 +210,12 @@ async function executeStepInner(
       });
     }
   }
-  const policy = createStepBatchPolicy(ctx, deps, assumesOpenReasoning);
+  if (continued !== null) completion = continued.completion;
   const parsingArgs = { ctx, deps, prepared, completion, assumesOpenReasoning, policy };
-  let parsed = parseStepBatch(parsingArgs);
+  let parsed: ToolCallBatchParseResult =
+    continued !== null
+      ? { ok: true, batch: continued.batch }
+      : parseStepBatch(parsingArgs);
   if (!parsed.ok) {
     const repairArgs = { ctx, deps, ...prepared, parsed, assumesOpenReasoning, onRetryReasoning: (retryReasoning: string) => { reasoning = retryReasoning; } };
     const repair = prepareStepRepair(repairArgs);
@@ -234,8 +258,15 @@ async function executeStepInner(
       : policy.runInOrder
         ? executeCallsInOrder
         : executeBatch;
+  // The window of the model serving this step: the probed profile unless
+  // the step runs on another link (fusion cloud leg), then the catalogue.
+  const stepWindow =
+    deps.profileWindowApplies === false
+      ? deps.contextWindow
+      : (deps.profile.contextWindow ?? deps.contextWindow);
   const batchOutcome = await runBatch(inputs, deps.registry, {
     ...(ctx.workspace ? { workspaceSkills: ctx.workspace.skills } : {}),
+    ...(typeof stepWindow === "number" && stepWindow > 0 ? { contextWindowTokens: stepWindow } : {}),
     ...(completion.servedModelMode ?? deps.modelMode ? { modelMode: (completion.servedModelMode ?? deps.modelMode)!.mode } : {}),
     workingDir: ctx.session.workingDir,
     sessionId: ctx.session.id,

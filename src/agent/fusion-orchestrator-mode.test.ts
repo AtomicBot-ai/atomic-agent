@@ -21,9 +21,13 @@ const verifyRunReadonly = buildVerifyRunTool({
       channel: "chrome",
       headless: true,
       cdpUrl: null,
+      connect: "agent",
+      userChromeDataDir: null,
       executablePath: null,
       noSandbox: false,
       launchTimeoutMs: 1_000,
+      blockedDomains: [],
+      allowedDomains: [],
     },
   },
 }).readonly;

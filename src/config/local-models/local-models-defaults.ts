@@ -34,6 +34,7 @@ export function createLocalModelsDefaults(): UserLocalModelsConfig {
       autoRestart: true,
       device: "auto",
       backendVariant: "auto",
+      coreBackendVariant: "auto",
       contextSize: 0,
       tensorSplit: [],
       parallel: "auto",

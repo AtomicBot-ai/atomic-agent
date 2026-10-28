@@ -28,6 +28,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
   tasks: { enabled: true, agentToolsEnabled: true },
   mcp: { servers: [{}] },
   llm: { runMode: { mode: "fusion" } },
+  tools: { screen: { enabled: true } },
 };
 
 /** The env the GitHub gate reads; a token means `github.*` is listed. */
@@ -64,7 +65,7 @@ describe("effectiveToolDescriptors", () => {
     process.env.ATOMIC_MAIL_API_KEY = "k";
     try {
       // ...and an OpenRouter key, which opens the image and video gates.
-      const names = effectiveToolDescriptors(ALL_ENABLED, { ...WITH_GITHUB, OPENROUTER_API_KEY: "sk-or-test" }).map(
+      const names = effectiveToolDescriptors(ALL_ENABLED, { ...WITH_GITHUB, OPENROUTER_API_KEY: "sk-or-test" }, "darwin").map(
         (d) => d.name,
       );
       expect(names).toEqual(DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name));

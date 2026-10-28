@@ -47,6 +47,19 @@ describe("toolLogFields", () => {
     expect(toolLogFields(undefined, result())).toEqual({});
   });
 
+  it("logs an aliased move's source and its error, not the alias note (ATO-899)", () => {
+    expect(
+      toolLogFields(
+        { src: "a.txt", dest: "b.txt" },
+        result({
+          tool: "os.fs.move",
+          status: "error",
+          summary: "os.fs.move: nothing at `a.txt`\nnote: read `src` as `from` and `dest` as `to`; …",
+        }),
+      ),
+    ).toEqual({ path: "a.txt", reason: "os.fs.move: nothing at `a.txt`" });
+  });
+
   it("skips the compressor's key: signature so a later quoted line stays out", () => {
     const fields = toolLogFields(
       { path: "a.py" },
@@ -77,6 +90,27 @@ describe("toolLogFields", () => {
     expect(
       toolLogFields({ path: "notes" }, result({ tool: "mcp.drive.get" })),
     ).toEqual({});
+  });
+
+  it("logs a code-style error code and nothing else under that key", () => {
+    const missing = toolLogFields(
+      { path: "backlinks_demo" },
+      result({
+        status: "error",
+        summary: "os.fs.read: /w/backlinks_demo does not exist (ENOENT: no such file or directory).",
+        details: { path: "/w/backlinks_demo", errorCode: "ENOENT" },
+      }),
+    );
+    expect(missing).toEqual({
+      path: "backlinks_demo",
+      reason: "os.fs.read: /w/backlinks_demo does not exist (ENOENT: no such file or directory).",
+      errorCode: "ENOENT",
+    });
+    const odd = toolLogFields(
+      {},
+      result({ tool: "mcp.x", status: "error", details: { errorCode: "token=SECRET" } }),
+    );
+    expect(odd).toEqual({});
   });
 
   it("clips a long path and a long reason", () => {

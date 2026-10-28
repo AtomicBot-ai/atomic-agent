@@ -18,6 +18,13 @@ import {
   type ShellScopeEnv,
 } from "./read-scope-shell.js";
 import { READ_TOOL_TARGETS, SHELL_TOOL } from "./read-scope-targets.js";
+import {
+  findShellStateSecrets,
+  findStateSecretReads,
+  stateSecretReadPrompt,
+  stateSecretShellPrompt,
+  type StateSecrets,
+} from "./state-secrets.js";
 
 export interface ConfineReadsOptions {
   /** The directories a fusion worker's fan-out may write in. */
@@ -39,6 +46,13 @@ export interface ConfineReadsOptions {
   approvals?: DangerousToolOptions;
   /** The shell check's notion of home and platform; a test seam. */
   shellEnv?: ShellScopeEnv;
+  /**
+   * The agent's own secret files (`state-secrets.ts`). A read-class call
+   * targeting one, or a shell command naming one, asks as `state_secret`
+   * for every session and whatever `readScope` says. Requires
+   * `approvals`; omitted, nothing is checked (embedders, tests).
+   */
+  stateSecrets?: StateSecrets;
 }
 
 /** Definitions this module produced, so a second install does not wrap twice. */
@@ -52,9 +66,11 @@ const CONFINED = new WeakSet<ToolDefinition>();
  * Wrapping at the registry rather than inside each tool keeps the rule
  * in one place, and `registry.invoke` is the single path every call —
  * native, batched, or recovered from text — takes. A worker session
- * gets the worker check first (always on, a refusal); then, when the
- * scope is `working-dir`, every other session's call outside the roots
- * is asked about, and runs or is refused by the answer.
+ * gets the worker check first (always on, a refusal); then a call that
+ * touches one of the agent's own secret files asks as `state_secret`
+ * (`state-secrets.ts`, any scope); then, when the scope is
+ * `working-dir`, every other session's call outside the roots is asked
+ * about, and runs or is refused by the answer.
  */
 export function confineReads(
   registry: Pick<ToolRegistry, "has" | "get" | "register">,
@@ -65,10 +81,16 @@ export function confineReads(
       "confineReads: a session read scope asks through the approval ladder; pass `approvals` with `readScope`",
     );
   }
+  if (options.stateSecrets !== undefined && options.approvals === undefined) {
+    throw new Error(
+      "confineReads: the secret-file guard asks through the approval ladder; pass `approvals` with `stateSecrets`",
+    );
+  }
   const asker =
     options.approvals === undefined
       ? null
       : new ReadOutsideApprover(options.approvals);
+  const secrets = options.stateSecrets ?? null;
   const confined: string[] = [];
   const scoped = () => options.readScope?.() === "working-dir";
   const install = (name: string, run: ToolDefinition["run"]): void => {
@@ -91,11 +113,27 @@ export function confineReads(
         options.grantedDirs(ctx.sessionId),
       );
       if (worker !== null) return worker;
+      // Before the scope: a secret file asks even where reads are
+      // unrestricted. Once approved, that file needs no scope question
+      // on top for this call (and is not remembered for the next one).
+      const secretPaths =
+        asker === null || secrets === null
+          ? []
+          : findStateSecretReads(name, args, ctx, secrets);
+      if (asker !== null && secretPaths.length > 0) {
+        await asker.confirmStateSecret(
+          name,
+          ctx,
+          { reason: stateSecretReadPrompt(secretPaths) },
+          secretPaths,
+        );
+      }
       if (asker === null || !scoped()) return inner.run(args, ctx);
       const refusal = await asker.admit(
         name,
         ctx,
-        (roots) => findSessionReadOutside(name, args, ctx, roots),
+        (roots) =>
+          findSessionReadOutside(name, args, ctx, [...roots, ...secretPaths]),
         (path, root) => readOutsidePrompt(path, ctx.workingDir, root),
       );
       return refusal ?? inner.run(args, ctx);
@@ -105,6 +143,28 @@ export function confineReads(
   if (asker !== null && registry.has(SHELL_TOOL)) {
     const inner = registry.get(SHELL_TOOL);
     install(SHELL_TOOL, async (args, ctx) => {
+      // A command naming a secret file asks at every level below full
+      // trust, though the shell itself runs unasked from level 4 and a
+      // fan-out's directory scope would let it through: neither a level
+      // nor a `shell` grant speaks for the agent's keys (ATO-877,
+      // ATO-760). A fusion worker's question is refused by its session
+      // policy, like any other it cannot have answered.
+      const secretPaths =
+        secrets === null
+          ? []
+          : findShellStateSecrets(args, ctx, secrets, options.shellEnv);
+      if (secretPaths.length > 0) {
+        const commandLine = shellCommandLine(args);
+        await asker.confirmStateSecret(
+          SHELL_TOOL,
+          ctx,
+          {
+            reason: stateSecretShellPrompt(commandLine, secretPaths),
+            preview: commandLine,
+          },
+          secretPaths,
+        );
+      }
       if (!scoped()) return inner.run(args, ctx);
       if (isFusionWorkerSessionId(ctx.sessionId)) {
         // A worker's world is its task's directories, and there is
@@ -113,7 +173,7 @@ export function confineReads(
         const outside = findShellPathOutsideScope(
           args,
           ctx,
-          [ctx.workingDir, ...granted],
+          [ctx.workingDir, ...granted, ...secretPaths],
           options.shellEnv,
         );
         return outside === null
@@ -123,7 +183,13 @@ export function confineReads(
       const refusal = await asker.admit(
         SHELL_TOOL,
         ctx,
-        (roots) => findShellPathOutsideScope(args, ctx, roots, options.shellEnv),
+        (roots) =>
+          findShellPathOutsideScope(
+            args,
+            ctx,
+            [...roots, ...secretPaths],
+            options.shellEnv,
+          ),
         (path, root) =>
           shellReadOutsidePrompt(
             shellCommandLine(args),

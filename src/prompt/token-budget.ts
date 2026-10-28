@@ -203,11 +203,12 @@ export const CONVERSATION_CAP_SAFETY_MARGIN = 512;
 /**
  * Approximate token cost of the agent's fixed prompt scaffolding — the
  * stable prefix (persona + tool catalog + capabilities + instructions),
- * measured at ~5.2k and rounded up for drift. Only used for the startup
+ * measured at ~7.7k with the default tools (it was ~5.2k when this was
+ * first set) and rounded up for drift. Only used for the startup
  * sanity check on a model's context window; nothing depends on it being
  * exact, and the real per-build figure comes from `checkBudget`.
  */
-export const AGENT_FIXED_PROMPT_TOKENS = 6000;
+export const AGENT_FIXED_PROMPT_TOKENS = 8000;
 
 /**
  * Most of the window the prompt budget will hold back for the reply.
@@ -229,12 +230,37 @@ export const AGENT_FIXED_PROMPT_TOKENS = 6000;
 export const REPLY_RESERVE_MAX_WINDOW_SHARE = 0.5;
 
 /**
+ * Prompt room a small window keeps before the reply reserve may take
+ * its full {@link REPLY_RESERVE_MAX_WINDOW_SHARE}.
+ *
+ * Half the window is fine from 32k up, but on a 16k local model the
+ * agent's own scaffolding (persona, tool catalog, instructions: about
+ * 7.7k with the default tools) plus an 8k reply reserve plus the safety
+ * margin already exceed the window. The transcript then sat on
+ * `CONVERSATION_CAP_FLOOR`, automatic compaction never found a cut, and a
+ * manual `/compact` had about 100 tokens for its summary. Below
+ * 2 x this figure the reserve shrinks so the prompt keeps this much,
+ * down to {@link SMALL_WINDOW_REPLY_SHARE} of the window.
+ */
+export const SMALL_WINDOW_PROMPT_ROOM = 16_384;
+
+/** Smallest share of a small window the reply reserve keeps. */
+export const SMALL_WINDOW_REPLY_SHARE = 0.25;
+
+/** The reply reserve never shrinks below this on a small window (unless the cap or half the window is lower). */
+export const MIN_SMALL_WINDOW_REPLY_RESERVE = 1024;
+
+/**
  * The reply reservation the prompt budget actually uses on a given
  * window: `completionMaxTokens`, never more than
- * {@link REPLY_RESERVE_MAX_WINDOW_SHARE} of a known window. An unknown
- * window keeps the configured figure (nothing to compare it against),
- * and a non-positive cap (`0`, "no client-side cap") reserves nothing,
- * as before.
+ * {@link REPLY_RESERVE_MAX_WINDOW_SHARE} of a known window, and on a
+ * window under 2 x {@link SMALL_WINDOW_PROMPT_ROOM} no more than leaves
+ * the prompt that room (but at least {@link SMALL_WINDOW_REPLY_SHARE} of
+ * the window, and at least {@link MIN_SMALL_WINDOW_REPLY_RESERVE}). The
+ * figures: 8k window 2048, 16k 4096, 24k 8192, 32k and up half the
+ * window, as before. An unknown window keeps the configured figure
+ * (nothing to compare it against), and a non-positive cap (`0`, "no
+ * client-side cap") reserves nothing, as before.
  *
  * This is the budget's reservation, not `n_predict`: the request still
  * carries the configured cap, and a local reply may run past this figure
@@ -248,9 +274,15 @@ export function effectiveReplyReserve(
     return 0;
   }
   if (!contextWindow || contextWindow <= 0) return completionMaxTokens;
+  const smallWindowCap = Math.max(
+    MIN_SMALL_WINDOW_REPLY_RESERVE,
+    Math.floor(contextWindow * SMALL_WINDOW_REPLY_SHARE),
+    contextWindow - SMALL_WINDOW_PROMPT_ROOM,
+  );
   return Math.min(
     completionMaxTokens,
     Math.floor(contextWindow * REPLY_RESERVE_MAX_WINDOW_SHARE),
+    smallWindowCap,
   );
 }
 

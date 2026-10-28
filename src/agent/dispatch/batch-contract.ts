@@ -85,6 +85,8 @@ export interface BatchCallInput {
 export interface BatchExecutionContext {
   workspaceSkills?: import("../../skills/workspace-skills.js").WorkspaceSkills;
   modelMode?: "local" | "cloud";
+  /** Context window of the model serving the step; see `ToolContext`. */
+  contextWindowTokens?: number;
   workingDir: string;
   sessionId: string;
   stepIndex: number;

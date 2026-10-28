@@ -1,4 +1,5 @@
 import type { CompressedToolResult } from "../compressor/result-compressor.js";
+import { canonicalArgs } from "../tools/argument-aliases.js";
 
 /** Longest path or reason a `tool executed` log line carries. */
 export const TOOL_LOG_FIELD_MAX_CHARS = 200;
@@ -21,9 +22,24 @@ const PATH_ARG_KEYS = ["path", "from"] as const;
 const LOGGABLE_TOOL_PREFIX = "os.fs.";
 
 /**
+ * A code-style error code (`ENOENT`, `EACCES`). Dispatch keeps a thrown
+ * error's `code` only when it has this shape, and the log logs
+ * `errorCode` only when it does; anything else may be free text.
+ */
+export const ERROR_CODE_PATTERN = /^[A-Z][A-Z0-9_]{0,31}$/;
+
+export interface ToolLogFields {
+  path?: string;
+  reason?: string;
+  errorName?: string;
+  /** A code-style error code such as `ENOENT`; never a message. */
+  errorCode?: string;
+}
+
+/**
  * Extra fields for the `tool executed` log line: for an os.fs call, the
  * path it named (never any file contents) and, when it failed, the first
- * line of its error; for any failed call, its error name. Without them a loop of failing calls (ATO-308: a planner
+ * line of its error; for any failed call, its error name and code. Without them a loop of failing calls (ATO-308: a planner
  * reading /dev/null step after step) shows in the log only as a tool
  * name and a status. Both are clipped so one long argument cannot bloat
  * the local log.
@@ -31,16 +47,22 @@ const LOGGABLE_TOOL_PREFIX = "os.fs.";
 export function toolLogFields(
   args: Readonly<Record<string, unknown>> | undefined,
   result: CompressedToolResult,
-): { path?: string; reason?: string; errorName?: string } {
-  const fields: { path?: string; reason?: string; errorName?: string } = {};
+): ToolLogFields {
+  const fields: ToolLogFields = {};
   const loggable = result.tool.startsWith(LOGGABLE_TOOL_PREFIX);
-  const path = loggable ? pathOf(args) : undefined;
+  // As the tool read them: an aliased `os.fs.move` ran with `from`.
+  const read = args === undefined ? undefined : canonicalArgs(result.tool, { ...args });
+  const path = loggable ? pathOf(read) : undefined;
   if (path !== undefined) fields.path = path;
   if (result.status !== "error") return fields;
   const reason = loggable ? firstLine(result.summary) : undefined;
   if (reason !== undefined) fields.reason = reason;
   if (typeof result.details.errorName === "string") {
     fields.errorName = result.details.errorName;
+  }
+  const code = result.details.errorCode;
+  if (typeof code === "string" && ERROR_CODE_PATTERN.test(code)) {
+    fields.errorCode = code;
   }
   return fields;
 }
