@@ -18,6 +18,7 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -46,6 +47,12 @@ export class FakeBrowserBackend implements BrowserBackend {
   async shutdown(): Promise<void> {}
   async hasRef(): Promise<boolean> {
     return false;
+  }
+  async describeRef(): Promise<RefDescription | null> {
+    return null;
+  }
+  async currentUrl(): Promise<string> {
+    return "https://example.com/";
   }
   async snapshot(): Promise<AriaSnapshot> {
     return {

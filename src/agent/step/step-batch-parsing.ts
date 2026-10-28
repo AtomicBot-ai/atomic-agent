@@ -16,6 +16,13 @@ export interface StepBatchParsingArgs {
   completion: CompletionResult;
   policy: StepBatchPolicy;
   assumesOpenReasoning: (completion: CompletionResult) => boolean;
+  /**
+   * Rewrites the parsed batch before the step's policies see it; `null`
+   * rejects it. The cut-answer continuation (ATO-1031) joins its reply
+   * text here, so a reply batched with work is still read as a
+   * progress note on the joined text.
+   */
+  rewrite?: (batch: ToolCallBatch) => ToolCallBatch | null;
 }
 
 export function parseStepBatch(args: StepBatchParsingArgs): ToolCallBatchParseResult {
@@ -32,6 +39,13 @@ export function parseStepBatch(args: StepBatchParsingArgs): ToolCallBatchParseRe
     thinkingOff,
   );
   parsed = admitRepairedJson(args, completion, parsed);
+  if (parsed.ok && args.rewrite !== undefined) {
+    const rewritten = args.rewrite(parsed.batch);
+    parsed =
+      rewritten === null
+        ? { ok: false, error: new Error("the batch was not accepted by the step's rewrite") }
+        : { ok: true, batch: rewritten };
+  }
   if (parsed.ok) {
     const taken = policy.takeProgressNote(parsed.batch, completion);
     policy.setProgressNote(taken.note);

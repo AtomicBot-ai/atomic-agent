@@ -4,12 +4,10 @@ import {
   type SearchCache,
 } from "../transport/search-cache.js";
 import {
-  formatCooldown,
   type CooldownTag,
   type ProviderCooldown,
 } from "../transport/provider-cooldown.js";
 import {
-  EXA_GET_KEY_URL,
   WebSearchBlockedError,
   WebSearchRateLimitedError,
   WebSearchUnavailableError,
@@ -26,7 +24,14 @@ import { resolveProviderByName } from "./provider-registry.js";
 import {
   buildUnavailableMessage,
   describeFailure,
+  describeUnusable,
+  errorMessage,
+  exaKeyRequired,
   isConnectFailure,
+  keyReasonOf,
+  parkedSkipLines,
+  rateLimitedNote,
+  unreachableNote,
 } from "./search-failure-report.js";
 
 export interface WebSearchOrchestratorInput {
@@ -92,20 +97,16 @@ export async function runWebSearchWithFallback(
   // Plain-words line per provider that did not answer, for the error the
   // tool returns when none did (ATO-325).
   const failures: string[] = [];
+  // Chain providers that could not be asked (no key, no instance URL).
+  const skipped: string[] = [];
   let connectFailures = 0;
   // Exa without a key goes through its free tier, which runs out fast.
   // What happened to it decides whether a key is worth asking for.
   const keylessExa =
     chain.includes("exa") && !hasEnvKey(env, search.exa.apiKeyEnv);
   let exaOutcome: WebSearchKeyRequired["reason"] | undefined;
-  const keyRequired = (
-    reason: WebSearchKeyRequired["reason"],
-  ): WebSearchKeyRequired => ({
-    provider: "exa",
-    reason,
-    getKeyUrl: EXA_GET_KEY_URL,
-    envVar: search.exa.apiKeyEnv,
-  });
+  const keyRequired = (reason: WebSearchKeyRequired["reason"]) =>
+    exaKeyRequired(reason, search.exa.apiKeyEnv);
   // A result can be built before Exa's outcome is known (an empty answer
   // kept while the chain goes on), so the signal is attached on return.
   const finish = (
@@ -115,8 +116,23 @@ export async function runWebSearchWithFallback(
       ? { ...result, keyRequired: keyRequired("rate_limited") }
       : result;
 
+  // Exa's keyless and keyed tiers have separate quotas: a park from the
+  // other tier (persisted across the restart a new key needs) is dropped
+  // first, before anything below reads the cooldown (ATO-327).
+  const exaTier: CooldownTag = keylessExa ? "keyless" : "keyed";
+  const parkedTier = chain.includes("exa") ? cooldown?.tagOf("exa") : null;
+  if (parkedTier && parkedTier !== exaTier) cooldown?.clear("exa");
+  // All usable providers unreachable: the first is tried again at most
+  // every 30 s, or a network that came back stays unused (ATO-315).
+  let probeUnreachable = chain
+    .filter((n) => isProviderUsable(n, input.config, env))
+    .every((n) => cooldown?.reasonOf(n, now()) === "unreachable");
+
   for (const name of chain) {
-    if (!isProviderUsable(name, input.config, env)) continue;
+    if (!isProviderUsable(name, input.config, env)) {
+      skipped.push(`${name}: skipped (${describeUnusable(name, search)})`);
+      continue;
+    }
 
     // Parked for a rate limit it hit earlier. Skipping it here is the
     // whole point: against a standing quota the alternative is three
@@ -126,15 +142,7 @@ export async function runWebSearchWithFallback(
     //
     // The cache is still consulted first — a parked provider's earlier
     // answers are not stale just because its quota ran out.
-    //
-    // Exa's keyless and keyed tiers have separate quotas. A park from the
-    // free tier must not hold back a key the user has just added (and was
-    // told to restart for, which the persisted cooldown survives), so a
-    // park tagged with the other tier is dropped here (ATO-327).
-    const tier: CooldownTag | undefined =
-      name === "exa" ? (keylessExa ? "keyless" : "keyed") : undefined;
-    const parkedTier = tier !== undefined ? cooldown?.tagOf(name) : undefined;
-    if (parkedTier !== undefined && parkedTier !== tier) cooldown?.clear(name);
+    const tier = name === "exa" ? exaTier : undefined;
     const parkedFor = cooldown?.remainingMs(name, now()) ?? 0;
 
     const cacheKey = buildSearchCacheKey(
@@ -161,19 +169,18 @@ export async function runWebSearchWithFallback(
       continue;
     }
 
-    if (parkedFor > 0) {
+    let parked = parkedFor > 0 ? cooldown?.reasonOf(name, now()) : undefined;
+    if (parked === "unreachable" && probeUnreachable) {
+      probeUnreachable = false;
+      if (cooldown?.takeProbe(name, now())) parked = undefined;
+    }
+    if (parked !== undefined) {
       const freeTier = keylessExa && name === "exa";
-      degraded.push(
-        freeTier
-          ? `${name} skipped: free limit reached, retrying in ${formatCooldown(parkedFor)}`
-          : `${name} skipped: rate limited, retrying in ${formatCooldown(parkedFor)}`,
-      );
-      failures.push(
-        freeTier
-          ? `${name}: free limit reached, next try in ${formatCooldown(parkedFor)}`
-          : `${name}: rate limited, next try in ${formatCooldown(parkedFor)}`,
-      );
-      if (freeTier) exaOutcome = "rate_limited";
+      const lines = parkedSkipLines(name, parked, parkedFor, freeTier);
+      degraded.push(lines.note);
+      failures.push(lines.failure);
+      if (parked === "unreachable") connectFailures++;
+      if (freeTier) exaOutcome = parked;
       continue;
     }
 
@@ -196,26 +203,22 @@ export async function runWebSearchWithFallback(
       const freeTier = keylessExa && name === "exa";
       failures.push(describeFailure(name, err, freeTier));
       if (isConnectFailure(err)) connectFailures++;
-      if (freeTier) {
-        exaOutcome =
-          err instanceof WebSearchRateLimitedError
-            ? "rate_limited"
-            : isConnectFailure(err)
-              ? "unreachable"
-              : "missing";
-      }
+      if (freeTier) exaOutcome = keyReasonOf(err);
       if (err instanceof WebSearchRateLimitedError && cooldown) {
-        const parked = cooldown.park(name, now(), err.retryAfterMs, tier);
+        const parkedMs = cooldown.park(name, now(), err.retryAfterMs, tier);
         degraded.push(
-          freeTier
-            ? `${name} free limit reached (HTTP 429, no ${search.exa.apiKeyEnv}), parked for ${formatCooldown(parked)}`
-            : `${name} rate limited (HTTP 429), parked for ${formatCooldown(parked)}`,
+          rateLimitedNote(name, parkedMs, freeTier, search.exa.apiKeyEnv),
         );
+      } else if (isConnectFailure(err) && cooldown) {
+        // Never reached the host. Searches that start after this skip it
+        // for a while instead of each paying the connect timeout (ATO-315).
+        const parkedMs = cooldown.parkUnreachable(name, now(), tier);
+        degraded.push(unreachableNote(name, parkedMs, errorMessage(err)));
       } else {
         // Recorded, not raised: if a later provider answers, this search
         // succeeded and the tool reports ok. The failure stays readable
         // in the notes instead of becoming the tool's error (ATO-120).
-        degraded.push(`${name} failed: ${describeError(err)}`);
+        degraded.push(`${name} failed: ${errorMessage(err)}`);
       }
       // WebSearchBlockedError and transport throws both advance the chain.
     }
@@ -227,15 +230,16 @@ export async function runWebSearchWithFallback(
     // gives the chain a provider with its own quota, whatever Exa's
     // failure was (`missing` when it was not a 429 or a connect failure).
     const signal = keylessExa ? keyRequired(exaOutcome ?? "missing") : undefined;
+    const report = [...failures, ...skipped];
     throw new WebSearchUnavailableError(
       search.provider,
       buildUnavailableMessage({
-        failures,
+        failures: report,
         keyRequired: signal,
         allUnreachable: connectFailures > 0 && connectFailures === failures.length,
         keyHelp: input.keyHelp,
       }),
-      failures,
+      report,
       signal,
     );
   }
@@ -312,8 +316,4 @@ function isProviderUsable(
 function hasEnvKey(env: NodeJS.ProcessEnv, name: string): boolean {
   const key = env[name]?.trim();
   return typeof key === "string" && key.length > 0;
-}
-
-function describeError(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

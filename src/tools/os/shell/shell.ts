@@ -8,6 +8,7 @@ import {
   startCommandJob,
 } from "../../../sandbox/command-job.js";
 import { buildCommandEnv } from "../../../sandbox/command-env.js";
+import { withToolchainEnv } from "../../../sandbox/command-toolchain-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
@@ -52,8 +53,14 @@ import {
 } from "./shell-result.js";
 import {
   describeShellTimeoutDefault,
+  formatShellBackgroundNotice,
   resolveShellTimeout,
 } from "./shell-timeout.js";
+import {
+  detectInteractivePrompt,
+  formatInteractiveHandoff,
+} from "./interactive-prompt.js";
+import { waitWatchingForPrompt } from "./wait-watching-for-prompt.js";
 
 export {
   isOpaqueInterpreterShape,
@@ -88,11 +95,24 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * none, so embedders and tests get the filtered environment too.
    */
   envPassthrough?: readonly string[];
+  /** Test seam: the prompt watch's poll and quiet intervals. */
+  promptWatch?: { pollMs?: number; quietMs?: number };
+  /** Test seam: how long a `background: true` command is watched. */
+  backgroundSettleMs?: number;
 }
+
+/**
+ * How long a `background: true` command is watched before it is handed
+ * back as a job: long enough for a dev server to print its URL or fail
+ * on a busy port, short enough not to hold the step.
+ */
+export const SHELL_BACKGROUND_SETTLE_MS = 3_000;
 
 export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
   const defaultTimeoutMs = options.defaultTimeoutMs ?? 0;
   const jobs = options.jobs ?? new ShellJobRegistry();
+  const backgroundSettleMs =
+    options.backgroundSettleMs ?? SHELL_BACKGROUND_SETTLE_MS;
   /**
    * The command form: guard, approval, run. `recovered` is set when the
    * call's `cmd` was read back from its `args` (#901).
@@ -239,6 +259,11 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           category: "shell",
           reason:
             `${guardVerdict.reason} in ${cwd}` +
+            // The user approves the lifetime too: a background command
+            // outlives the turn (ATO-1252).
+            (rawArgs.background === true
+              ? " (starts in the background and keeps running until the session ends or it is stopped)"
+              : "") +
             (recovered === null
               ? ""
               : " (command reconstructed from args: the call had no cmd)"),
@@ -273,22 +298,88 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // started too (`sleep 30 &` behind a subshell used to outlive the
     // shell and hold the result until it ended).
     // Built per call, from the live env, so a key added to `.env`
-    // mid-session is filtered the same way.
+    // mid-session is filtered the same way. The toolchain additions
+    // (non-interactive switches, PATH folders) are fixed values applied
+    // after the filter, never read from the call.
     const job = startCommandJob(spawnSpec.command, spawnSpec.args, {
       cwd,
-      env: buildCommandEnv(process.env, options.envPassthrough ?? []),
+      env: withToolchainEnv(
+        buildCommandEnv(process.env, options.envPassthrough ?? []),
+      ),
       ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
       ...(spawnSpec.windowsVerbatimArguments
         ? { windowsVerbatimArguments: true }
         : {}),
     });
-    // A spawn failure (ENOENT) rejects here, as the runner's always did.
-    const outcome = await job.waitFor(timeout.timeoutMs, ctx.signal);
     // `node --check a b c` exits 0 having read only `a`. Said first,
     // because nothing in node's own output says it — and a reply built
     // on that exit code claims a check that never ran.
     const checkNotice = nodeCheckMultiFileNotice(commandLine, cwd);
     const notices = checkNotice === null ? [] : [checkNotice];
+
+    // `background: true` (a dev server, a watcher): watched briefly for
+    // an early failure, then handed back as a kept job. It went through
+    // the same guard and approval above; only the wait differs.
+    if (rawArgs.background === true) {
+      const early = await job.waitFor(backgroundSettleMs, ctx.signal);
+      if (early === "elapsed") {
+        const { record, evicted } = jobs.register(ctx.sessionId, job, facts, true);
+        return renderShellDetached(record, {
+          waitedMs: backgroundSettleMs,
+          again: false,
+          defaultTimeoutMs,
+          evicted,
+          maxJobs: jobs.maxJobs,
+          notices,
+          detachNotice: formatShellBackgroundNotice(record.id),
+        });
+      }
+      if (early === "aborted") job.kill();
+      const exit = await awaitJobExit(job);
+      return renderShellExit(facts, exit, job.output(), { notices });
+    }
+
+    // A spawn failure (ENOENT) rejects here, as the runner's always did.
+    // While it runs, a command that went quiet at a prompt only a person
+    // can answer is caught here rather than at the timeout (ATO-1252).
+    const { outcome, prompt } = await waitWatchingForPrompt(
+      job,
+      timeout.timeoutMs,
+      ctx.signal,
+      options.promptWatch,
+    );
+    if (
+      prompt !== null &&
+      prompt.kind === "sign_in" &&
+      timeout.source === "default"
+    ) {
+      // A sign-in completes in the user's browser while the command
+      // listens for it: kept as a job so it can finish there. Not when
+      // the model set its own `timeoutMs` — that bound still kills.
+      const { record, evicted } = jobs.register(ctx.sessionId, job, facts, true);
+      return renderShellDetached(record, {
+        waitedMs: Date.now() - job.startedAt,
+        again: false,
+        defaultTimeoutMs,
+        evicted,
+        maxJobs: jobs.maxJobs,
+        notices,
+        detachNotice: formatInteractiveHandoff(prompt, commandLine, {
+          jobId: record.id,
+        }),
+      });
+    }
+    if (prompt !== null) {
+      // Waiting on input that will never come: stopped at once.
+      job.stop();
+      const exit = await awaitJobExit(job);
+      return renderShellExit(facts, exit, job.output(), {
+        notices: [
+          formatInteractiveHandoff(prompt, commandLine, { ended: "stopped" }),
+          ...notices,
+        ],
+      });
+    }
     if (outcome === "elapsed" && timeout.source === "default") {
       const { record, evicted } = jobs.register(
         ctx.sessionId,
@@ -312,13 +403,25 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     if (outcome === "elapsed") {
       return renderShellTimedOut(facts, exit, output, timeout, notices);
     }
+    // A command that failed because it wanted a terminal, a password or
+    // sudo: the result says which one step needs the user.
+    const failedPrompt =
+      outcome === "exited" && exit.exitCode !== 0
+        ? (detectInteractivePrompt(output.stderr, "exited") ??
+          detectInteractivePrompt(output.stdout, "exited"))
+        : null;
+    if (failedPrompt !== null) {
+      notices.unshift(
+        formatInteractiveHandoff(failedPrompt, commandLine, { ended: "failed" }),
+      );
+    }
     return renderShellExit(facts, exit, output, { notices });
   }
 
   return {
     name: "os.shell.run",
     description:
-      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. " +
+      "Run an OS command in the session working directory. Prefer the structured form `{cmd, args:[...]}` (argv globs `*`/`?` are expanded). Shell metacharacters (`|`, `&&`, `;`, `>`, `<`, `$`, backticks) are interpreted via the OS subshell (`sh -c` on macOS/Linux, `cmd.exe /c` on Windows) — a full command line passed as `cmd` (e.g. `\"ffprobe -v quiet … f.mp3\"` or `\"pip3 list | grep foo\"`) runs as written. Do not use for deleting user files — use `os.fs.trash` unless the user explicitly requests permanent shell deletion. Runs through a pre-exec guard: safe commands run directly, risky commands require approval, catastrophic commands are blocked without execution. Run the steps of a task yourself (installs such as `brew install`, `npm i -g`, `pip install`, `git clone`, builds, `make`, `docker run`) instead of printing them for the user to type: the approval prompt is how the user keeps control. The command has no terminal and no stdin; a command that stops at a sign-in, a password, sudo or a terminal question comes back with \"this step needs the user: …\" — hand over only that step. Pass `background: true` for a command that keeps running (a dev server, a watcher): it is started, watched for 3 s, and returned as a kept job. " +
       describeShellTimeoutDefault(defaultTimeoutMs),
     readonly: false,
     async run(rawArgs, ctx) {

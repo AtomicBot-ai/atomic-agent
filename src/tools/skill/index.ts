@@ -6,12 +6,20 @@ import { buildSkillRunScriptTool } from "./skill-run-script.js";
 
 export { buildSkillViewTool } from "./skill-view.js";
 export { buildSkillRunScriptTool } from "./skill-run-script.js";
+export type { SkillRunScriptToolOptions } from "./skill-run-script.js";
 
 export function registerSkillTools(
   registry: ToolRegistry,
   skillRegistry: SkillRegistry,
   dangerous: DangerousToolOptions,
+  /** `tools.shell.envPassthrough`; see `SkillRunScriptToolOptions`. */
+  envPassthrough?: readonly string[],
 ): void {
   registry.register(buildSkillViewTool(skillRegistry));
-  registry.register(buildSkillRunScriptTool(skillRegistry, dangerous));
+  registry.register(
+    buildSkillRunScriptTool(skillRegistry, {
+      ...dangerous,
+      ...(envPassthrough !== undefined ? { envPassthrough } : {}),
+    }),
+  );
 }

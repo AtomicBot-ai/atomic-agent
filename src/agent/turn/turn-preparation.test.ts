@@ -121,6 +121,8 @@ describe("turn preparation ownership", () => {
     expect(second.claimEvidence.noticed()).toBe(false);
     expect(second.linkEvidence.noticed()).toBe(false);
     expect(second.progressNotes).not.toBe(first.progressNotes);
+    expect(first.unknownTools.record(true)).toBe(1);
+    expect(second.unknownTools.record(true)).toBe(1);
     expect(clear).toHaveBeenCalledTimes(1);
     expect(clear).toHaveBeenCalledWith("turn");
   });

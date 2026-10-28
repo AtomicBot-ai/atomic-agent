@@ -15,6 +15,7 @@ import type { SessionState } from "../../session/session-state.js";
 import type { ToolDescriptor, CapabilitiesSummary, SkillCatalogEntry } from "../../prompt/stable-prefix.js";
 import type { ProfileFact } from "../../memory/profile-store.js";
 import type { StepToolSet } from "../policies/step-tool-set.js";
+import type { UnknownToolStreak } from "../policies/unknown-tool.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import type { ToolCallPayload } from "../../llm/grammar/tool-call-grammar.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
@@ -82,6 +83,12 @@ export interface LlmStreamParams {
    * failure mode (see `REPAIR_MAX_TOKENS` and the call-site comment).
    */
   maxTokens?: number;
+  /**
+   * The reply cap for a grammar (local llama-server) link when the
+   * request carries no `maxTokens`: a thinking profile's lifted cap
+   * (`thinkingReplyCap`, ATO-1031). A native or cloud link never sees it.
+   */
+  localReplyCap?: number;
   /**
    * The turn's output ceiling (`RunTurnOptions.maxOutputTokens`), below
    * the per-step `maxTokens` above and above the provider's own. A
@@ -171,6 +178,13 @@ export interface StepDependencies {
    * carried a link no tool result holds. Absent ⇒ links are not checked.
    */
   linkEvidence?: { noticed: () => boolean; markNoticed: () => void };
+  /**
+   * Per-turn streak of steps whose every call named a tool the registry
+   * does not hold (`unknown-tool.ts`). Such a call gets an error result
+   * and the turn goes on; the streak's limit ends it. Absent ⇒ an
+   * unknown-only step throws at once.
+   */
+  unknownTools?: UnknownToolStreak;
   /**
    * Per-turn state for the progress-note notice
    * (`progress-note-reply.ts`): whether this turn was already told that

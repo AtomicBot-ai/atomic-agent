@@ -41,6 +41,35 @@ export function getTrustConfigPaths(paths: {
 }
 
 /**
+ * Every file in the agent's state that holds a secret or the trust
+ * config: the trust surface above, plus the bearer key the managed
+ * llama-server is launched with (`resolveApiKeyFilePath`), the session
+ * records Atomic Chat Core writes with their per-session key
+ * (`coreSessionPath`) and the cached Atomic Mail session
+ * (`resolveSessionPath`). Reading one of these through an agent tool,
+ * or naming one in a shell command, asks as `state_secret` (pinned at
+ * level 5, never grantable; `src/tools/read-scope/state-secrets.ts`).
+ *
+ * The file names are spelled here rather than imported because config
+ * sits below `local-llm/` and `atomic-mail/`; `config-file.test.ts`
+ * pins them against the owners' own path helpers so the list cannot
+ * drift from where those files really are.
+ */
+export function getStateSecretPaths(paths: {
+  userConfigFile: string;
+  stateDir: string;
+  localModelsDataDir: string;
+}): readonly string[] {
+  return [
+    ...getTrustConfigPaths(paths),
+    join(paths.localModelsDataDir, "llama-server.key"),
+    join(paths.localModelsDataDir, "core", "chat.json"),
+    join(paths.localModelsDataDir, "core", "embedding.json"),
+    join(paths.stateDir, "atomic-mail", "session.json"),
+  ];
+}
+
+/**
  * Synchronously read and validate the user config file.
  * Returns `null` if the file does not exist. Throws `ConfigValidationError`
  * if the file is present but malformed.
@@ -68,8 +97,8 @@ export function readUserConfigFileSync(path: string): UserConfigFile | null {
  * build that opens a newer file relabels it on the first settings
  * toggle, and the version field is load-bearing — `version < 41` forces
  * `localModels.managed.autoUpdate` back on, `version < 22` overrides an
- * explicit `memory.*` opt-out, `version < 25` rewrites
- * `http.approvalMode`. Downgrading the label silently reverts choices
+ * explicit `memory.*` opt-out, `version < 79` rewrites a stored
+ * `http.approvalMode: "never"`. Downgrading the label silently reverts choices
  * the user made.
  *
  * For the same reason, keys this build does not know inside fixed blocks

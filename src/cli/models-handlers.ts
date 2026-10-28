@@ -43,6 +43,7 @@ import {
   probeManagedDevices,
   readBackendVersion,
   readDownloadJob,
+  readLaunchRecord,
   DEFAULT_HF_ENDPOINT,
   huggingFaceEndpointHost,
   readPartialDownload,
@@ -59,6 +60,12 @@ import {
   resolveServerBinPath,
   shouldFallBackToCpuBackend,
   coreEmbeddingEngineRequired,
+  CORE_CPU_FALLBACK_LINE,
+  CORE_CPU_RECORDED_LINE,
+  coreCpuFallbackApplies,
+  fallBackToCoreCpuBuild,
+  revertCoreCpuFallback,
+  type CoreCpuSwap,
   holdEmbeddingForLowMemory,
   LOW_MEMORY_EMBEDDING_NOTE,
   startChatAndEmbeddingDaemons,
@@ -162,6 +169,7 @@ export {
   renderPullRetry,
 } from "./pull-progress.js";
 import { renderPullProgress, renderPullRetry } from "./pull-progress.js";
+import { formatStatusContextLine } from "./models-status-context.js";
 import { roundTokensPerSecond } from "../prompt/fusion-machine-facts.js";
 import { resolveLocalLegRole, resolveRunMode } from "../llm/run-mode/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/provider-types.js";
@@ -512,6 +520,10 @@ export async function runLocalModelsStatus(): Promise<number> {
     `daemon:         ${st.running ? `running (pid ${st.pid})` : "stopped"}  ${cfg.localModels.url}\n`,
   );
   process.stdout.write(`health:         ${health}\n`);
+  const contextLine = formatStatusContextLine(
+    st.running ? readLaunchRecord(dataDir, st.pid) : null,
+  );
+  if (contextLine) process.stdout.write(contextLine);
   if (st.authMismatch) {
     process.stdout.write(
       "note:           a model server answers on this port but rejects the running model's key, so every request would fail. Run 'atomic-agent models stop', then 'models start'.\n",
@@ -542,7 +554,27 @@ export async function runLocalModelsStatus(): Promise<number> {
 }
 
 export async function runLocalModelsStart(
-  opts: { interactive?: boolean; signal?: AbortSignal } = {},
+  opts: {
+    interactive?: boolean;
+    signal?: AbortSignal;
+    /**
+     * `--grow-context`: opt in to the growing auto window
+     * (`DaemonStartOptions.growContext`) — only for a client that grows
+     * it between turns.
+     */
+    growContext?: boolean;
+    /**
+     * `--context-at-least`: with `growContext`, start the window at least
+     * this large (`DaemonStartOptions.autoContextAtLeast`).
+     */
+    contextAtLeast?: number;
+    /**
+     * `--ctx-size` for this start only, in place of
+     * `localModels.managed.contextSize`; the config is not written. The
+     * desktop's restart after the model ran out of memory (ATO-334).
+     */
+    contextSize?: number;
+  } = {},
 ): Promise<number> {
   const { signal } = opts;
   // Re-read after a fallback from Atomic Core switches the engine.
@@ -719,7 +751,10 @@ export async function runLocalModelsStart(
         dataDir,
         modelId: mid,
         port: cfg.localModels.managed.port,
-        contextSize: cfg.localModels.managed.contextSize,
+        contextSize: opts.contextSize ?? cfg.localModels.managed.contextSize,
+        // A one-run window (out-of-memory restart) is a fixed size: no growth.
+        ...(opts.growContext && opts.contextSize === undefined ? { growContext: true } : {}),
+        ...(opts.contextAtLeast && opts.contextSize === undefined ? { autoContextAtLeast: opts.contextAtLeast } : {}),
         parallel: cfg.localModels.managed.parallel,
         localLegRole,
         swaFull: cfg.localModels.managed.swaFull,
@@ -756,37 +791,82 @@ export async function runLocalModelsStart(
     try {
       result = await startWithDevice(device);
     } catch (e) {
-      // Windows iGPU-only rescue: the installed GPU build spawned but
-      // never became healthy (its compute backend cannot load a model
-      // on this machine — e.g. Vulkan on an AMD APU), so swap in the
-      // CPU build the nightly also publishes and retry once.
+      // The same rescue on the Atomic Core engine (ATO-344/372): Core's
+      // GPU build crashed while loading the model, so install Core's CPU
+      // build and retry once on device cpu. The choice is recorded only
+      // once the CPU build served the model; otherwise it is undone and
+      // the original failure is the one reported.
       if (
-        !shouldFallBackToCpuBackend({
-          installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
-          configuredVariant: getConfiguredBackendVariant(),
-          error: e,
-        })
+        getConfig().localModels.managed.engine === "atomic-core" &&
+        coreCpuFallbackApplies(dataDir, e)
       ) {
-        throw e;
+        process.stderr.write(`${CORE_CPU_FALLBACK_LINE}\n`);
+        let swap: CoreCpuSwap;
+        try {
+          swap = await fallBackToCoreCpuBuild(dataDir, {
+            signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+            onProgress: (p: number, t: number, tot: number) => {
+              const line = renderPullProgress("Atomic Core CPU build", p, t, tot);
+              if (process.stderr.isTTY)
+                process.stderr.write(`\r${line.padEnd(79)}`);
+              else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+            },
+          });
+        } catch (installErr) {
+          if (process.stderr.isTTY) process.stderr.write("\n");
+          process.stderr.write(
+            `could not install the CPU build (${installErr instanceof Error ? installErr.message : String(installErr)}); the GPU build stays\n`,
+          );
+          throw e;
+        }
+        if (process.stderr.isTTY) process.stderr.write("\n");
+        // The rescue stopped the embedding model with the rest: start it again.
+        embRunningPid = null;
+        process.stderr.write("retrying start on the CPU build…\n");
+        try {
+          result = await startWithDevice("cpu");
+        } catch (retryErr) {
+          revertCoreCpuFallback(dataDir, swap);
+          process.stderr.write(
+            `the CPU build failed too (${retryErr instanceof Error ? retryErr.message : String(retryErr)}), so the GPU build was not the cause and stays selected\n`,
+          );
+          throw e;
+        }
+        persistCoreBackendVariantCpu(cfg.paths.userConfigFile);
+      } else {
+        // Windows iGPU-only rescue: the installed GPU build spawned but
+        // never became healthy (its compute backend cannot load a model
+        // on this machine — e.g. Vulkan on an AMD APU), so swap in the
+        // CPU build the nightly also publishes and retry once.
+        if (
+          getConfig().localModels.managed.engine === "atomic-core" ||
+          !shouldFallBackToCpuBackend({
+            installedAsset: readBackendVersion(dataDir, getConfig().localModels.managed.engine)?.asset,
+            configuredVariant: getConfiguredBackendVariant(),
+            error: e,
+          })
+        ) {
+          throw e;
+        }
+        process.stderr.write(
+          "the GPU llama.cpp build failed to serve on this machine — falling back to the CPU build…\n",
+        );
+        persistBackendVariantCpu(cfg.paths.userConfigFile);
+        await fallBackToCpuBackend(dataDir, {
+          signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
+          onProgress: (p: number, t: number, tot: number) => {
+            const line = renderPullProgress("cpu backend zip", p, t, tot);
+            if (process.stderr.isTTY)
+              process.stderr.write(`\r${line.padEnd(79)}`);
+            else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
+          },
+        });
+        if (process.stderr.isTTY) process.stderr.write("\n");
+        // The GPU device picked against the old binary is meaningless to
+        // the CPU build (it would reject `--device Vulkan0`).
+        process.stderr.write("retrying start on the CPU build…\n");
+        result = await startWithDevice("cpu");
       }
-      process.stderr.write(
-        "the GPU llama.cpp build failed to serve on this machine — falling back to the CPU build…\n",
-      );
-      persistBackendVariantCpu(cfg.paths.userConfigFile);
-      await fallBackToCpuBackend(dataDir, {
-        signal: AbortSignal.timeout(BACKEND_DOWNLOAD_TIMEOUT_MS),
-        onProgress: (p: number, t: number, tot: number) => {
-          const line = renderPullProgress("cpu backend zip", p, t, tot);
-          if (process.stderr.isTTY)
-            process.stderr.write(`\r${line.padEnd(79)}`);
-          else if (p % 5 === 0 || p === 100) process.stderr.write(`${line}\n`);
-        },
-      });
-      if (process.stderr.isTTY) process.stderr.write("\n");
-      // The GPU device picked against the old binary is meaningless to
-      // the CPU build (it would reject `--device Vulkan0`).
-      process.stderr.write("retrying start on the CPU build…\n");
-      result = await startWithDevice("cpu");
     }
     const visionLine = mmprojFile && result.chat.projectorDropped
       ? `, vision disabled (Atomic Chat could not load ${m.mmprojFilename}; the model runs text-only)`
@@ -973,6 +1053,33 @@ function persistBackendVariantCpu(path: string): void {
   } catch (e) {
     process.stderr.write(
       `note: could not persist backendVariant — ${e instanceof Error ? e.message : String(e)}; the CPU build is used for this session only\n`,
+    );
+  }
+}
+
+/**
+ * Record Atomic Core's CPU fallback as `localModels.managed.coreBackendVariant
+ * = "cpu"`, after the CPU build served the model, so a Core update or
+ * "Download again" does not reinstall the GPU build that crashed.
+ * Best-effort, like `persistBackendVariantCpu`: a failed write keeps the
+ * CPU build for this session only, with a note.
+ */
+function persistCoreBackendVariantCpu(path: string): void {
+  try {
+    const user = ensureUserConfigFileSync(path);
+    const next: UserConfigFile = {
+      ...user,
+      localModels: {
+        ...user.localModels,
+        managed: { ...user.localModels.managed, coreBackendVariant: "cpu" },
+      },
+    };
+    writeUserConfigFileSync(path, next);
+    resetConfigCache();
+    process.stderr.write(`${CORE_CPU_RECORDED_LINE}\n`);
+  } catch (e) {
+    process.stderr.write(
+      `note: could not persist coreBackendVariant — ${e instanceof Error ? e.message : String(e)}; the CPU build is used for this session only\n`,
     );
   }
 }

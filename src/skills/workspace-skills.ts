@@ -2,10 +2,11 @@ import { createHash } from "node:crypto";
 import { readdirSync, realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { readUserConfigFileSync } from "../config/config-file.js";
-import type { RuntimeSkillsConfig } from "../config/skills-config.js";
+import type { ProjectTrustRecord, RuntimeSkillsConfig } from "../config/skills-config.js";
 import type { SkillRecord } from "./skill-loader.js";
 import { isSkillEligibleForPlatform } from "./skill-loader.js";
 import { parseSkillFile } from "./skill-manifest.js";
+import { findProjectTrust, skillTrust, untrustedSkillReason } from "./project-trust.js";
 import { readWorkspaceFile, isWithinWorkspace } from "./workspace-files.js";
 
 export interface WorkspaceSkill {
@@ -20,6 +21,12 @@ export interface WorkspaceSkills {
   projectSkillsEnabled: boolean;
   entries: WorkspaceSkill[];
   diagnostics: string[];
+  /**
+   * The folder's trust answers read with this policy snapshot; undefined
+   * when there are none (everything the project ships is pending). The
+   * instruction loader uses the same snapshot.
+   */
+  projectTrust: ProjectTrustRecord | undefined;
   /** Read live policy and validate the chosen source, including after approval. */
   assertAvailable(name: string): WorkspaceSkill;
 }
@@ -39,7 +46,7 @@ export function loadWorkspaceSkills(workingDir: string, options: WorkspaceSkills
   try { return loadSkills(workingDir, options, compatibility); }
   catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return { workingDir: resolve(workingDir), projectSkillsEnabled: false, entries: [], diagnostics: [`Workspace skills unavailable: ${reason}`],
+    return { workingDir: resolve(workingDir), projectSkillsEnabled: false, entries: [], diagnostics: [`Workspace skills unavailable: ${reason}`], projectTrust: undefined,
       assertAvailable(name) { throw new Error(`Skill ${name} unavailable: workspace skills could not be loaded (${reason})`); } };
   }
 }
@@ -56,6 +63,8 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
   }
   const policy = compatibility ? config.cloudWorkspaces?.find(p => p.workingDir === root) : undefined;
   const enabled = policy?.projectSkillsEnabled ?? true;
+  // Project skills are untrusted until the operator answers for this folder (ATO-298).
+  const trust = findProjectTrust(config.projectTrust, root);
   let globalRoot = resolve(options.globalDir);
   try { globalRoot = realpathSync(globalRoot); } catch { /* Missing/error diagnostics are handled below. */ }
   const byName = new Map<string, WorkspaceSkill[]>();
@@ -111,6 +120,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
           ...(config.disabled.includes(parsed.manifest.name) ? ["disabled globally"] : []),
           ...(policy?.disabled.includes(parsed.manifest.name) ? ["disabled in workspace"] : []),
           ...(source.source === "project" && !enabled ? ["project skills disabled"] : []),
+          ...(source.source === "project" ? [untrustedSkillReason(skillTrust(trust, parsed.manifest.name))].filter((r): r is string => r !== null) : []),
           ...(parsed.disableModelInvocation ? ["disable-model-invocation"] : []),
         ];
         const entry: WorkspaceSkill = { record: { manifest: parsed.manifest, manifestPath: file.path, rootDir: dirname(file.path), source: source.source },
@@ -129,7 +139,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
     if (copies.some(e => e.fingerprint !== chosen.fingerprint)) diagnostics.push(`Skill ${chosen.record.manifest.name}: using ${chosen.record.manifestPath}; shadowed ${sources.filter(p => p !== chosen.record.manifestPath).join(", ")}`);
     return { ...chosen, sources };
   }).sort((a, b) => a.record.manifest.name.localeCompare(b.record.manifest.name));
-  return { workingDir: root, projectSkillsEnabled: enabled, entries, diagnostics,
+  return { workingDir: root, projectSkillsEnabled: enabled, entries, diagnostics, projectTrust: trust,
     assertAvailable(name: string) {
       const original = entries.find(e => e.record.manifest.name === name);
       const current = loadWorkspaceSkills(root, options, compatibility).entries.find(e => e.record.manifest.name === name);

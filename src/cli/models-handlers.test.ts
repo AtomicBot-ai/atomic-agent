@@ -124,6 +124,17 @@ describe("runLocalModelsStart CPU-backend fallback", () => {
     await runLocalModelsStart();
     expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.throughputProbe).toBeUndefined();
   });
+  it("starts with a one-off context size without writing it to the config (ATO-334)", async () => {
+    prepareManagedWindowsInstall();
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockRejectedValue(new Error("test stop"));
+    const configured = getConfig().localModels.managed.contextSize;
+    await runLocalModelsStart({ interactive: true, contextSize: 65_536 });
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.contextSize).toBe(65_536);
+    // The next plain start is back on the configured window.
+    vi.mocked(localLlm.startChatAndEmbeddingDaemons).mockClear();
+    await runLocalModelsStart();
+    expect(vi.mocked(localLlm.startChatAndEmbeddingDaemons).mock.calls[0]![0].chat.contextSize).toBe(configured);
+  });
   it("retries once on the CPU device and persists the variant", async () => {
     const dataDir = prepareManagedWindowsInstall();
     vi.mocked(localLlm.startChatAndEmbeddingDaemons)

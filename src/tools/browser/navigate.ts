@@ -6,6 +6,11 @@ import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+import {
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
+import { gateBrowserUrl, recheckLandedPage } from "./gate-browser-url.js";
 
 const SAFE_SCHEMES = new Set(["http:", "https:"]);
 
@@ -23,9 +28,32 @@ export function isSafeUrl(url: string): boolean {
   }
 }
 
+const SCRIPT_SCHEMES = new Set(["javascript:", "vbscript:"]);
+
+/**
+ * A `javascript:` URL runs its code in the page already open — a form
+ * submit, a payment, a typed password — so a `browser_nonweb` grant must
+ * not cover it: the click/type gates (`browser_commit`, `browser_secret`)
+ * would be skipped. Refused outright; nothing needs it.
+ */
+export function refuseScriptUrl(tool: string, url: string): void {
+  let protocol: string;
+  try {
+    protocol = new URL(url.trim()).protocol.toLowerCase();
+  } catch {
+    return;
+  }
+  if (SCRIPT_SCHEMES.has(protocol)) {
+    throw new Error(
+      `${tool}: a ${protocol} URL runs code in the page and is refused. Use browser.click or browser.type on the page instead.`,
+    );
+  }
+}
+
 export function buildBrowserNavigateTool(
   backend: BrowserBackend,
   options: DangerousToolOptions,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): ToolDefinition {
   return {
     name: "browser.navigate",
@@ -37,6 +65,9 @@ export function buildBrowserNavigateTool(
       if (typeof url !== "string" || url.length === 0) {
         throw new Error("browser.navigate: `url` must be a non-empty string");
       }
+      refuseScriptUrl("browser.navigate", url);
+      const refused = await gateBrowserUrl(options, policy, "browser.navigate", url, ctx);
+      if (refused) return refused;
       if (!isSafeUrl(url)) {
         await requireApproval(
           options,
@@ -59,7 +90,9 @@ export function buildBrowserNavigateTool(
         ...(waitUntil !== undefined ? { waitUntil } : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
       });
-      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud");
+      const landed = await recheckLandedPage(backend, policy, "browser.navigate", result.url);
+      if (landed) return landed;
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud", policy);
       return compressToolResult({
         tool: "browser.navigate",
         status: "ok",

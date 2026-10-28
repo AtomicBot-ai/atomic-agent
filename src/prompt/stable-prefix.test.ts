@@ -61,11 +61,12 @@ describe("the inputs line of the persona (F51)", () => {
 
   it("costs one short line, and the persona stays under its ceiling", () => {
     // Every persona byte is paid on every turn of every session. The
-    // personas stand at ~1,310 estimated tokens; the ceiling is a guard
+    // personas stand at ~1,440 estimated tokens (the "run commands
+    // yourself" line, ATO-1252, added ~60); the ceiling is a guard
     // against runaway growth, the same kind as `### fusion`'s length pin.
     expect(estimateTokens(SYSTEM_PERSONA_INPUTS_LINE)).toBeLessThan(70);
-    expect(estimateTokens(DEFAULT_SYSTEM_PERSONA)).toBeLessThan(1400);
-    expect(estimateTokens(NATIVE_TOOLS_SYSTEM_PERSONA)).toBeLessThan(1400);
+    expect(estimateTokens(DEFAULT_SYSTEM_PERSONA)).toBeLessThan(1500);
+    expect(estimateTokens(NATIVE_TOOLS_SYSTEM_PERSONA)).toBeLessThan(1500);
   });
 });
 
@@ -121,5 +122,22 @@ describe("the ### skills truncation marker", () => {
     }
     expect(skillsBlock(base)).toHaveLength(2);
     expect(base).not.toContain("skills.catalogTokenBudget");
+  });
+});
+
+/**
+ * ATO-1252 / ATO-1237: asked to "set up gog", a small local model printed
+ * three "run this in your terminal" steps although none needed the user.
+ * Both transports (local grammar models and cloud native-tools models)
+ * carry the line that says to run task steps and hand over only the
+ * person-only ones.
+ */
+describe("the run-commands-yourself line (ATO-1252)", () => {
+  it("is in both personas and names the only steps to hand over", () => {
+    for (const persona of [DEFAULT_SYSTEM_PERSONA, NATIVE_TOOLS_SYSTEM_PERSONA]) {
+      expect(persona).toContain("run task steps yourself with `os.shell.run`");
+      expect(persona).toContain("never print commands for the user to type");
+      expect(persona).toMatch(/Hand over only a step that needs them \(browser sign-in, password or `sudo`, keychain, a terminal question\)/);
+    }
   });
 });

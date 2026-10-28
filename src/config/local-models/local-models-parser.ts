@@ -21,8 +21,11 @@ import { parseCustomLocalModels } from "../custom-models-schema.js";
 import { isKnownLocalModelId, type LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
 import {
   BACKEND_VARIANT_PREFERENCES,
+  CORE_BACKEND_VARIANTS,
   isBackendVariantPreference,
+  isCoreBackendVariant,
   type BackendVariantPreference,
+  type CoreBackendVariant,
 } from "../../local-llm/backend/windows-backend-variant.js";
 import { MAX_DOWNLOAD_CONNECTIONS } from "../../local-llm/downloads/download-settings.js";
 import { normalizeHuggingFaceEndpoint } from "../../local-llm/catalog/huggingface-endpoint.js";
@@ -86,6 +89,17 @@ export function parseBackendVariant(
   throw new ConfigValidationError(
     field,
     `expected ${BACKEND_VARIANT_PREFERENCES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
+}
+
+export function parseCoreBackendVariant(
+  raw: unknown,
+  field: string,
+): CoreBackendVariant {
+  if (isCoreBackendVariant(raw)) return raw;
+  throw new ConfigValidationError(
+    field,
+    `expected ${CORE_BACKEND_VARIANTS.join("|")}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -386,6 +400,11 @@ export function prepareLocalModelsInputs(
       rawManaged.backendVariant ??
         readDefaults().managed.backendVariant,
       readDefaults,
+    ),
+    coreBackendVariant: parseCoreBackendVariant(
+      rawManaged.coreBackendVariant ??
+        readDefaults().managed.coreBackendVariant,
+      "localModels.managed.coreBackendVariant",
     ),
     contextSize: parseNonNegativeInt(
       rawManaged.contextSize ??

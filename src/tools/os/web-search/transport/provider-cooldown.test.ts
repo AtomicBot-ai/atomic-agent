@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -99,6 +99,64 @@ describe("createProviderCooldown", () => {
     const cooldown = createProviderCooldown();
     expect(cooldown.park("exa", T0, -5000)).toBe(60_000);
   });
+
+  it("parks an unreachable provider for two minutes, then lets it go (ATO-315)", () => {
+    const cooldown = createProviderCooldown();
+    expect(cooldown.parkUnreachable("duckduckgo", T0)).toBe(120_000);
+    expect(cooldown.reasonOf("duckduckgo", T0)).toBe("unreachable");
+    expect(cooldown.remainingMs("duckduckgo", T0 + 119_000)).toBe(1000);
+    expect(cooldown.isParked("duckduckgo", T0 + 120_001)).toBe(false);
+    expect(cooldown.reasonOf("duckduckgo", T0 + 120_001)).toBeUndefined();
+  });
+
+  it("does not escalate unreachable parks, nor touch the 429 ladder", () => {
+    const cooldown = createProviderCooldown();
+    cooldown.park("exa", T0, null);
+    expect(cooldown.parkUnreachable("exa", T0)).toBe(120_000);
+    expect(cooldown.parkUnreachable("exa", T0)).toBe(120_000);
+    // The ladder continues from its one strike, it did not gain two more.
+    expect(cooldown.park("exa", T0, null)).toBe(120_000);
+    // A live 429 park is the reason to report while both are live.
+    expect(cooldown.reasonOf("exa", T0)).toBe("rate_limited");
+  });
+
+  it("names the live park, and clears both kinds on success", () => {
+    const cooldown = createProviderCooldown();
+    expect(cooldown.reasonOf("exa", T0)).toBeUndefined();
+    cooldown.park("exa", T0, null);
+    expect(cooldown.reasonOf("exa", T0)).toBe("rate_limited");
+    // The 429 park lapsed; an unreachable one taken later is what is live.
+    cooldown.parkUnreachable("exa", T0 + 61_000);
+    expect(cooldown.reasonOf("exa", T0 + 61_000)).toBe("unreachable");
+    cooldown.clear("exa");
+    expect(cooldown.reasonOf("exa", T0 + 61_000)).toBeUndefined();
+    expect(cooldown.isParked("exa", T0 + 61_000)).toBe(false);
+  });
+
+  it("tags an unreachable park with its tier (ATO-327)", () => {
+    const cooldown = createProviderCooldown();
+    cooldown.parkUnreachable("exa", T0, "keyless");
+    expect(cooldown.tagOf("exa")).toBe("keyless");
+  });
+
+  it("allows one probe of an unreachable park per 30 s, counted from the failure", () => {
+    const cooldown = createProviderCooldown();
+    expect(cooldown.takeProbe("duckduckgo", T0)).toBe(false);
+    cooldown.parkUnreachable("duckduckgo", T0);
+    expect(cooldown.takeProbe("duckduckgo", T0 + 29_999)).toBe(false);
+    expect(cooldown.takeProbe("duckduckgo", T0 + 30_000)).toBe(true);
+    // The probe itself restarts the interval.
+    expect(cooldown.takeProbe("duckduckgo", T0 + 30_001)).toBe(false);
+    expect(cooldown.takeProbe("duckduckgo", T0 + 60_000)).toBe(true);
+    // A 429 park is never probed.
+    cooldown.park("exa", T0, null);
+    expect(cooldown.takeProbe("exa", T0 + 30_000)).toBe(false);
+  });
+
+  it("takes the unreachable park length from the options", () => {
+    const cooldown = createProviderCooldown({ unreachableMs: 30_000 });
+    expect(cooldown.parkUnreachable("duckduckgo", T0)).toBe(30_000);
+  });
 });
 
 describe("createPersistentProviderCooldown (#256)", () => {
@@ -115,6 +173,24 @@ describe("createPersistentProviderCooldown (#256)", () => {
 
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("a second process does not inherit an unreachable park (ATO-315)", () => {
+    // One DNS or VPN blip must not keep search off in the next process.
+    const first = createPersistentProviderCooldown({ filePath, now: () => T0 });
+    first.park("exa", T0, null);
+    first.parkUnreachable("duckduckgo", T0);
+    expect(first.isParked("duckduckgo", T0 + 30_000)).toBe(true);
+
+    const second = createPersistentProviderCooldown({
+      filePath,
+      now: () => T0 + 30_000,
+    });
+    expect(second.isParked("duckduckgo", T0 + 30_000)).toBe(false);
+    expect(second.reasonOf("duckduckgo", T0 + 30_000)).toBeUndefined();
+    // The 429 park next to it is still carried over.
+    expect(second.isParked("exa", T0 + 30_000)).toBe(true);
+    expect(readFileSync(filePath, "utf8")).not.toContain("duckduckgo");
   });
 
   it("a second process inherits a live park", () => {

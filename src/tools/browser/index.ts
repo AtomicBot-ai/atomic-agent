@@ -8,12 +8,17 @@ import { buildBrowserReadAriaTool } from "./read-aria.js";
 import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
+import {
+  EMPTY_DOMAIN_POLICY,
+  type BrowserDomainPolicy,
+} from "./browser-domain-policy.js";
 
 export type {
   AriaSnapshot,
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollDirection,
   ScrollInput,
   ScrollResult,
@@ -57,6 +62,26 @@ export type {
   AriaCompressionOptions,
   AriaSnapshotSummary,
 } from "./aria-compressor.js";
+export {
+  EMPTY_DOMAIN_POLICY,
+  checkBrowserHost,
+  checkBrowserUrl,
+  hostMatchesAny,
+  hostMatchesDomain,
+  normalizeDomainEntry,
+  webHostOf,
+} from "./browser-domain-policy.js";
+export type { BrowserDomainPolicy, DomainVerdict } from "./browser-domain-policy.js";
+export {
+  classifyBrowserAction,
+  isPaymentPage,
+  PAYMENT_HOSTS,
+} from "./classify-browser-action.js";
+export type {
+  BrowserActionCategory,
+  BrowserActionKind,
+  BrowserActionVerdict,
+} from "./classify-browser-action.js";
 export { buildBrowserNavigateTool, isSafeUrl } from "./navigate.js";
 export { buildBrowserClickTool } from "./click.js";
 export { buildBrowserTypeTool } from "./type.js";
@@ -67,20 +92,23 @@ export { buildBrowserScrollTool } from "./scroll.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
- * responsible for `backend.shutdown()` on process exit. `dangerous` is
- * used by `browser.navigate` to gate non-http(s) schemes.
+ * responsible for `backend.shutdown()` on process exit. `dangerous` gates
+ * non-http(s) navigation, clicks / Enter that commit something, password
+ * and payment input, and hosts outside the allow-list; `policy` carries
+ * `browser.blockedDomains` / `browser.allowedDomains`.
  */
 export function buildBrowserTools(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
+  policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
 ): ToolDefinition[] {
   return [
-    buildBrowserNavigateTool(backend, dangerous),
-    buildBrowserClickTool(backend),
-    buildBrowserTypeTool(backend),
-    buildBrowserReadAriaTool(backend),
-    buildBrowserSearchTool(backend),
-    buildBrowserTabsTool(backend, dangerous),
+    buildBrowserNavigateTool(backend, dangerous, policy),
+    buildBrowserClickTool(backend, dangerous, policy),
+    buildBrowserTypeTool(backend, dangerous, policy),
+    buildBrowserReadAriaTool(backend, policy),
+    buildBrowserSearchTool(backend, dangerous, policy),
+    buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
   ];
 }

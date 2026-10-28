@@ -1,7 +1,9 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname } from "node:path";
-
 import type { WebSearchProviderName } from "../web-search-provider.js";
+import {
+  loadCooldownFile,
+  saveCooldownFile,
+  type CooldownEntry,
+} from "./provider-cooldown-file.js";
 
 /**
  * Which tier of a provider a park was earned on. Exa has two with separate
@@ -12,6 +14,12 @@ import type { WebSearchProviderName } from "../web-search-provider.js";
  * existed) apply to every tier.
  */
 export type CooldownTag = "keyless" | "keyed";
+
+/**
+ * Why a provider is parked: out of quota (a 429), or not reachable from
+ * this network at all (DNS, refused, connect timeout; ATO-315).
+ */
+export type CooldownReason = "rate_limited" | "unreachable";
 
 /**
  * Which providers are parked, and until when.
@@ -60,8 +68,37 @@ export interface ProviderCooldown {
     retryAfterMs: number | null,
     tag?: CooldownTag,
   ): number;
+  /**
+   * Park a provider whose host could not be reached (ATO-315). A fixed,
+   * short park that does not escalate and is never written to disk: a
+   * blocked host costs every search the connect timeout, so searches that
+   * start after the failure skip it for a while, but one network blip
+   * must not outlive the process that saw it. Kept apart from the 429
+   * record, whose strikes it neither raises nor resets. Returns the
+   * park length.
+   */
+  parkUnreachable(
+    name: WebSearchProviderName,
+    now: number,
+    tag?: CooldownTag,
+  ): number;
   /** The tier the current record was parked on, if it was tagged. */
   tagOf(name: WebSearchProviderName): CooldownTag | undefined;
+  /**
+   * Why `name` is parked at `now`: a live 429 park wins over an
+   * unreachable one; `undefined` when neither is live.
+   */
+  reasonOf(
+    name: WebSearchProviderName,
+    now: number,
+  ): CooldownReason | undefined;
+  /**
+   * May an unreachable-parked `name` be asked anyway, now? True at most
+   * once per `UNREACHABLE_PROBE_INTERVAL_MS` since it last failed or was
+   * last probed, and records the probe. The orchestrator asks only when
+   * every provider is parked unreachable (ATO-315).
+   */
+  takeProbe(name: WebSearchProviderName, now: number): boolean;
   /** A provider answered. Forget its history so the next park starts small. */
   clear(name: WebSearchProviderName): void;
 }
@@ -71,6 +108,8 @@ export interface ProviderCooldownOptions {
   baseMs?: number;
   /** Ceiling on the doubling. */
   maxMs?: number;
+  /** Park after a connect failure; fixed, no doubling. */
+  unreachableMs?: number;
 }
 
 export interface PersistentProviderCooldownOptions extends ProviderCooldownOptions {
@@ -107,12 +146,28 @@ const DEFAULT_MAX_MS = 15 * 60_000;
  */
 const MAX_HONOURED_RETRY_AFTER_MS = DEFAULT_MAX_MS;
 
-interface CooldownEntry {
+/**
+ * Two minutes. Searches that start after a connect failure skip the host
+ * for this long instead of each waiting out the connect timeout; short
+ * enough that a network that comes back is used again within the same
+ * task (ATO-315).
+ */
+const DEFAULT_UNREACHABLE_MS = 2 * 60_000;
+
+/**
+ * How often a chain whose every provider is parked unreachable gets one
+ * request anyway. A firewall that drops packets costs the full connect
+ * timeout per try, so not on every search; a network that came back is
+ * still found within half a minute (ATO-315).
+ */
+export const UNREACHABLE_PROBE_INTERVAL_MS = 30_000;
+
+/** An unreachable park: in memory only, no strikes. */
+interface UnreachableEntry {
   until: number;
-  /** Consecutive parks, for the doubling. */
-  strikes: number;
-  /** Tier the park was earned on; absent for an untagged park. */
   tag?: CooldownTag;
+  /** When it last failed or was probed. */
+  triedAt: number;
 }
 
 export function createProviderCooldown(
@@ -153,11 +208,19 @@ function buildCooldown(
 ): ProviderCooldown {
   const baseMs = options.baseMs ?? DEFAULT_BASE_MS;
   const maxMs = options.maxMs ?? DEFAULT_MAX_MS;
+  const unreachableMs = options.unreachableMs ?? DEFAULT_UNREACHABLE_MS;
+  // Never persisted: a blip one process saw is not the next one's fact.
+  const unreachable = new Map<WebSearchProviderName, UnreachableEntry>();
+
+  function left(entry: { until: number } | undefined, now: number): number {
+    return entry ? Math.max(0, entry.until - now) : 0;
+  }
 
   function remainingMs(name: WebSearchProviderName, now: number): number {
-    const entry = entries.get(name);
-    if (!entry) return 0;
-    return Math.max(0, entry.until - now);
+    return Math.max(
+      left(entries.get(name), now),
+      left(unreachable.get(name), now),
+    );
   }
 
   return {
@@ -166,7 +229,28 @@ function buildCooldown(
       return remainingMs(name, now) > 0;
     },
     tagOf(name) {
-      return entries.get(name)?.tag;
+      return entries.get(name)?.tag ?? unreachable.get(name)?.tag;
+    },
+    reasonOf(name, now) {
+      if (left(entries.get(name), now) > 0) return "rate_limited";
+      if (left(unreachable.get(name), now) > 0) return "unreachable";
+      return undefined;
+    },
+    parkUnreachable(name, now, tag) {
+      unreachable.set(name, {
+        until: now + unreachableMs,
+        ...(tag !== undefined ? { tag } : {}),
+        triedAt: now,
+      });
+      return unreachableMs;
+    },
+    takeProbe(name, now) {
+      const entry = unreachable.get(name);
+      if (!entry || now - entry.triedAt < UNREACHABLE_PROBE_INTERVAL_MS) {
+        return false;
+      }
+      entry.triedAt = now;
+      return true;
     },
     park(name, now, retryAfterMs, tag) {
       // Strikes earned on another tier are another quota's history: a
@@ -203,69 +287,10 @@ function buildCooldown(
       return parkMs;
     },
     clear(name) {
+      unreachable.delete(name);
       if (entries.delete(name)) persist?.();
     },
   };
-}
-
-function loadCooldownFile(
-  filePath: string,
-  now: number,
-  maxMs: number,
-): Map<WebSearchProviderName, CooldownEntry> {
-  const entries = new Map<WebSearchProviderName, CooldownEntry>();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(readFileSync(filePath, "utf8"));
-  } catch {
-    // Missing on the very first run, or corrupt. A cold cooldown is the
-    // pre-#256 behaviour, so it is always a safe recovery.
-    return entries;
-  }
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    return entries;
-  }
-  for (const [name, raw] of Object.entries(parsed)) {
-    const entry = raw as Partial<CooldownEntry> | null;
-    if (
-      typeof entry?.until !== "number" ||
-      !Number.isFinite(entry.until) ||
-      typeof entry.strikes !== "number" ||
-      !Number.isFinite(entry.strikes)
-    ) {
-      continue;
-    }
-    // Strikes outlive an expired park in-process (see `park`), and they
-    // survive a restart the same way — but not forever. A record whose
-    // park ended more than two ceilings ago is yesterday's evidence, and
-    // restoring it would restart the ladder near the top against a quota
-    // that has long since reset.
-    if (entry.until + 2 * maxMs <= now) continue;
-    entries.set(name as WebSearchProviderName, {
-      until: entry.until,
-      strikes: entry.strikes,
-      // Files from before tags existed have none: untagged, as before.
-      ...(entry.tag === "keyless" || entry.tag === "keyed"
-        ? { tag: entry.tag }
-        : {}),
-    });
-  }
-  return entries;
-}
-
-function saveCooldownFile(
-  filePath: string,
-  entries: Map<WebSearchProviderName, CooldownEntry>,
-): void {
-  try {
-    mkdirSync(dirname(filePath), { recursive: true });
-    const tmp = `${filePath}.tmp-${process.pid}`;
-    writeFileSync(tmp, JSON.stringify(Object.fromEntries(entries)), "utf8");
-    renameSync(tmp, filePath);
-  } catch {
-    // Persistence is best-effort: a read-only stateDir or a full disk
-    // costs the next process its warm start, never this search.
-  }
 }
 
 /** `90000` -> `1m 30s`, for the line the model reads. */

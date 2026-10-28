@@ -52,6 +52,7 @@ import { LlmHealthPoller } from "./llm-health/llm-health-poller.js";
 import { LocalModelsOrchestrator } from "./local-models/local-models-orchestrator.js";
 import { TasksOrchestrator } from "./tasks/tasks-orchestrator.js";
 import { SkillsOrchestrator } from "./skills/skills-orchestrator.js";
+import { ProjectTrustOrchestrator } from "./project-trust/project-trust-orchestrator.js";
 import { MemoryOrchestrator } from "./memory/memory-orchestrator.js";
 import { McpOrchestrator } from "./mcp/mcp-orchestrator.js";
 import { ImportOrchestrator } from "./import/import-orchestrator.js";
@@ -275,6 +276,7 @@ export class ChatOrchestrator {
   public exitCode = 0;
   public readonly tasks: TasksOrchestrator;
   public readonly skills: SkillsOrchestrator;
+  public readonly projectTrust: ProjectTrustOrchestrator;
   public readonly memory: MemoryOrchestrator;
   public readonly mcp: McpOrchestrator;
   public readonly import: ImportOrchestrator;
@@ -301,6 +303,11 @@ export class ChatOrchestrator {
       switchSession: (id) => this.switchSession(id),
     });
     this.skills = new SkillsOrchestrator(runtime, bus, { currentSession: () => this.session });
+    this.projectTrust = new ProjectTrustOrchestrator({
+      config: () => runtime.config, workingDir: () => runtime.capabilities.workingDir,
+      emit: (action) => bus.emit(action),
+      refresh: async () => { await runtime.refreshSkills(); this.skills.refresh(); },
+    });
     this.memory = new MemoryOrchestrator(runtime, bus);
     this.mcp = new McpOrchestrator(runtime, bus);
     this.import = new ImportOrchestrator(runtime, bus, {
@@ -1574,6 +1581,19 @@ export class ChatOrchestrator {
         if (readyGate.kind === "block") throw new Error(readyGate.text);
         if (readyGate.kind === "notice" && this.session?.id === turnSessionId) this.notify(readyGate.text);
       }
+      // ATO-848: a conversation that has filled the local auto window gets
+      // a bigger one before this turn is sent (one step per turn) — never
+      // while another turn (a background thread, the scheduler, HTTP,
+      // Telegram) is using the server the restart would take down.
+      const othersBusy = this.detachedTurns.size > 0 ||
+        (this.runtime.turnController?.busySessionIds?.() ?? []).some(id => id !== turnSessionId);
+      // Awaited only when the conversation has a prompt to measure: the
+      // first turn of a thread is dispatched at once, as before.
+      const promptTokens = turnSession.contextUsage?.tokens;
+      if (typeof promptTokens === "number" && promptTokens > 0 &&
+        gateFacts.activeProviderIsLocal && gateFacts.managedMode && !othersBusy) {
+        await this.localModels.growContextForPrompt?.(promptTokens);
+      }
       controller.signal.throwIfAborted();
       this.waitingModelMessages.delete(turnSessionId);
       dispatched = true;
@@ -1585,6 +1605,9 @@ export class ChatOrchestrator {
           : { maxSteps: this.options.maxSteps }),
         signal: controller.signal,
         origin: "tui",
+        // The operator is at the chat: a model that runs out of memory
+        // is restarted only after they answer (ATO-334).
+        interactive: true,
       });
       const attached = this.session?.id === turnSessionId;
       // A detached turn's result must not clobber the thread the
