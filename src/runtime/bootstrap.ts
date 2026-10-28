@@ -491,7 +491,14 @@ export async function createAgentRuntime(
     // time caps (ATO-947) start from zero.
     clearFanoutTurnGrant: (sessionId: string) => {
       approvals.fanoutScopes.clearTurnGrant(sessionId);
-      fusionTurnBudget.begin(sessionId);
+      // A turn that did not come through `runTurn` (sidecar, scheduler)
+      // has no meter bucket; open one so the cap sees the planner's own
+      // spend, measured from what it reads now.
+      turnUsageMeter.ensureOpen(sessionId);
+      fusionTurnBudget.begin(
+        sessionId,
+        turnUsageMeter.peekCostUsd(sessionId) ?? 0,
+      );
     },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
