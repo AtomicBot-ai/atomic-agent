@@ -28,4 +28,15 @@ Owner: src/tools/browser/
   - `browser.read_aria` and the world snapshot of a blocked page: no page content reaches the model.
 - With a non-empty allow-list, navigate, tabs new, search, and a link or form target outside it ask first (`browser_offsite`, level 3).
 
+## Page views
+
+`browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):
+
+- `full`: the whole tree, as before.
+- `interactive`: one line per control (interactive roles, plus any other ref'd node Playwright marks clickable) under landmark / heading headers; page text hidden. Refs are Playwright's own, so click / type resolve them exactly as from the full tree. Names that would read the same once clipped are shown longer.
+- `diff`: changes by ref since this tab's last snapshot (`+` added, `~` changed with `was:`, `-` gone). Falls back to `interactive` on a new URL or without history.
+- `region` with `ref`: the subtree under one ref.
+
+Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering, and a blocked page is neither rendered nor remembered for `diff`.
+
 Read [tool instructions](../AGENTS.md) and the adjacent tests before changing the classifier or the gate order.

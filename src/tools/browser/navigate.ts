@@ -2,6 +2,7 @@ import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend } from "./browser-backend.js";
 import { captureWorldSnapshot } from "./capture-world-snapshot.js";
+import type { AriaSnapshotStore } from "./aria-view.js";
 import {
   requireApproval,
   type DangerousToolOptions,
@@ -54,6 +55,7 @@ export function buildBrowserNavigateTool(
   backend: BrowserBackend,
   options: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  store?: AriaSnapshotStore,
 ): ToolDefinition {
   return {
     name: "browser.navigate",
@@ -92,7 +94,7 @@ export function buildBrowserNavigateTool(
       });
       const landed = await recheckLandedPage(backend, policy, "browser.navigate", result.url);
       if (landed) return landed;
-      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud", policy);
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx, policy, store);
       return compressToolResult({
         tool: "browser.navigate",
         status: "ok",

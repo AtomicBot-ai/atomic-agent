@@ -34,8 +34,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
   },
   {
     name: "browser.read_aria",
-    summary: "Capture the page as a compact ARIA text snapshot.",
-    argsSchema: "{}",
+    summary:
+      "Capture the page as an ARIA text snapshot. mode: full (whole page), interactive (controls only), diff (changes since the last snapshot of this tab), region (the part under ref).",
+    argsSchema: "{ mode?: string, ref?: string }",
   },
   {
     name: "browser.search",

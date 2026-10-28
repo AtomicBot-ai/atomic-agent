@@ -245,6 +245,7 @@ export async function executeBatch(
       return await registry.invoke(input.call.tool, input.call.args, {
         ...(ctx.workspaceSkills ? { workspaceSkills: ctx.workspaceSkills } : {}),
         ...(ctx.modelMode ? { modelMode: ctx.modelMode } : {}),
+        ...(ctx.contextWindowTokens !== undefined ? { contextWindowTokens: ctx.contextWindowTokens } : {}),
         workingDir: ctx.workingDir,
         sessionId: ctx.sessionId,
         stepIndex: ctx.stepIndex,

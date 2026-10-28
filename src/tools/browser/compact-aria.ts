@@ -64,6 +64,8 @@ const NOISE_ROLES: ReadonlySet<string> = new Set([
 const KEPT_FLAGS = /^(checked|checked=mixed|disabled|expanded|selected|pressed|pressed=mixed|required|invalid)$/;
 
 const MAX_NAME_CHARS = 80;
+/** Names of two controls that would read the same when clipped are shown up to this. */
+const MAX_DISAMBIGUATED_NAME_CHARS = 240;
 const MAX_INLINE_CHARS = 60;
 
 export interface AriaNode {
@@ -144,10 +146,10 @@ function clip(value: string, max: number): string {
 }
 
 /** `[e12] button "Send" [disabled]` — one compact line per ref'd node. */
-export function renderCompactNode(node: AriaNode): string {
+export function renderCompactNode(node: AriaNode, maxName = MAX_NAME_CHARS): string {
   const parts = [`[${node.ref ?? "?"}]`, node.role];
   if (node.name !== null && node.name.length > 0) {
-    parts.push(JSON.stringify(clip(node.name, MAX_NAME_CHARS)));
+    parts.push(JSON.stringify(clip(node.name, maxName)));
   }
   for (const flag of node.flags) {
     if (KEPT_FLAGS.test(flag)) parts.push(`[${flag}]`);
@@ -214,6 +216,18 @@ function finish(
   };
 }
 
+/**
+ * Something the model can click: an interactive role, or any other ref'd
+ * node Playwright marks `cursor=pointer` (a clickable `div`, an icon)
+ * that is not already inside a control shown on its own line. Leaving
+ * those out would hide a click target the model can still be steered to.
+ */
+function isClickTarget(node: AriaNode, insideControl: boolean): boolean {
+  if (node.ref === null) return false;
+  if (INTERACTIVE_ROLES.has(node.role)) return true;
+  return !insideControl && node.flags.includes("cursor=pointer");
+}
+
 /** The ref'd interactive controls, each tagged with its group header. */
 export function interactiveEntries(
   body: readonly string[],
@@ -221,11 +235,16 @@ export function interactiveEntries(
   const out: Array<{ group: string; node: AriaNode }> = [];
   const root: Frame = { indent: -1, label: null, heading: null };
   const stack: Frame[] = [root];
+  /** Indents of the enclosing controls already listed. */
+  const controls: number[] = [];
   body.forEach((raw, index) => {
     const node = parseAriaNode(raw, index);
     if (!node) return;
     while (stack.length > 1 && stack[stack.length - 1]!.indent >= node.indent) {
       stack.pop();
+    }
+    while (controls.length > 0 && controls[controls.length - 1]! >= node.indent) {
+      controls.pop();
     }
     if (LANDMARK_ROLES.has(node.role)) {
       stack.push({ indent: node.indent, label: landmarkLabel(node), heading: null });
@@ -237,7 +256,8 @@ export function interactiveEntries(
       if (text) scope.heading = clip(text, 60);
       return;
     }
-    if (node.ref === null || !INTERACTIVE_ROLES.has(node.role)) return;
+    if (!isClickTarget(node, controls.length > 0)) return;
+    controls.push(node.indent);
     const landmark = [...stack].reverse().find((f) => f.label !== null)?.label ?? null;
     const group = [landmark, scope.heading].filter((p) => p !== null).join(" › ");
     out.push({ group, node });
@@ -253,13 +273,15 @@ export function interactiveView(text: string, maxChars: number): CompactView {
   const split = splitSnapshotText(text);
   const entries = interactiveEntries(split.body);
   const lines: string[] = [];
+  const ambiguous = ambiguousClippedNames(entries.map((e) => e.node));
   let currentGroup: string | null = null;
   for (const { group, node } of entries) {
     if (group !== currentGroup) {
       if (group.length > 0) lines.push(`## ${group}`);
       currentGroup = group;
     }
-    lines.push(renderCompactNode(node));
+    const long = node.name !== null && ambiguous.has(clip(node.name, MAX_NAME_CHARS));
+    lines.push(renderCompactNode(node, long ? MAX_DISAMBIGUATED_NAME_CHARS : MAX_NAME_CHARS));
   }
   if (entries.length === 0) lines.push("(no interactive elements with refs on this page)");
   return finish(
@@ -268,6 +290,23 @@ export function interactiveView(text: string, maxChars: number): CompactView {
     maxChars,
     `… [${entries.length} controls of ${split.body.length} tree lines; page text hidden — read_aria mode "full" or "region" to read it]`,
   );
+}
+
+/**
+ * Clipped names shared by controls whose full names differ ("Delete …
+ * draft" vs "Delete … account" cut at the same place): those are shown
+ * longer so the model can tell them apart.
+ */
+function ambiguousClippedNames(nodes: readonly AriaNode[]): Set<string> {
+  const fullByClip = new Map<string, Set<string>>();
+  for (const node of nodes) {
+    if (!node.name) continue;
+    const key = clip(node.name, MAX_NAME_CHARS);
+    const set = fullByClip.get(key) ?? new Set<string>();
+    set.add(node.name.replace(/\s+/g, " ").trim());
+    fullByClip.set(key, set);
+  }
+  return new Set([...fullByClip].filter(([, full]) => full.size > 1).map(([key]) => key));
 }
 
 /** The subtree under `ref`, noise containers dropped; `null` when the ref is absent. */
