@@ -1,5 +1,6 @@
 import { stat } from "node:fs/promises";
 import { extname, isAbsolute, relative, resolve } from "node:path";
+import { buildCommandEnv } from "../sandbox/command-env.js";
 import { runCommand, type CommandResult } from "../sandbox/command-runner.js";
 import {
   buildSubshellInvocation,
@@ -14,6 +15,13 @@ export interface RunSkillScriptParams {
   signal?: AbortSignal;
   /** Revalidate live workspace policy after asynchronous file checks, before spawn. */
   beforeRun?: (scriptPath: string) => void;
+  /**
+   * `tools.shell.envPassthrough`: secret-looking names the script still
+   * inherits. Everything else secret-looking is stripped from its
+   * environment, exactly as for `os.shell.run` (`buildCommandEnv`,
+   * ATO-347). Omitted means none.
+   */
+  envPassthrough?: readonly string[];
 }
 
 export interface SkillScriptOutcome extends CommandResult {
@@ -40,6 +48,11 @@ export class SkillScriptError extends Error {
  * Node binary, `.sh` with `bash`, `.ps1` with PowerShell, `.cmd`/`.bat`
  * through the Windows subshell, anything else is run directly (so a `#!`
  * shebang on an executable file also works).
+ *
+ * The script gets the same filtered environment as a shell command: a
+ * skill is third-party code the model chose to run, so it must not
+ * inherit the provider keys and bot tokens `.env` loaded into the
+ * agent's own process (ATO-877).
  */
 export async function runSkillScript(
   skill: SkillRecord,
@@ -115,6 +128,9 @@ export async function runSkillScript(
     params.beforeRun?.(scriptPath);
     result = await runCommand(cmd, args, {
       cwd: skill.rootDir,
+      // Built per call from the live env, so a key added mid-session is
+      // filtered the same way.
+      env: buildCommandEnv(process.env, params.envPassthrough ?? []),
       timeoutMs: params.timeoutMs ?? 30_000,
       ...(params.signal ? { signal: params.signal } : {}),
       ...(windowsVerbatimArguments ? { windowsVerbatimArguments } : {}),

@@ -12,3 +12,5 @@ Entry point: [main.ts](main.ts). Read the root instruction route and the underly
 Checks: `npx vitest run src/sidecar` when tests are present; `npm run lint`; `npm run docs:check`.
 
 Context controls: `compact_session` and `get_compaction` take `{sessionId}` and use normal response correlation. Session compaction lifecycle and part-progress events are forwarded with their session ID. `send_message` reloads saved state inside its existing FIFO lock, preserving checkpoints written between turns. See [context compaction](../runtime/docs/compaction.md).
+
+`skill_install` security-scans the folder before copying ([install scan](../skills/docs/skill-format.md#install-security-scan)). A `caution` verdict fails the request (its message lists the findings summary and ends with `[scanId <id>]`) unless the payload has `confirm: "<id>"`; a `dangerous` one fails unless `acknowledgeRisk: "<id>"`. `true` or an older scan's id is not a yes.

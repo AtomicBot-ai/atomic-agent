@@ -68,8 +68,37 @@ describe("applyMcpToolNameRule", () => {
     'browser-tool ::= "\\"browser.open\\""',
   ].join("\n");
 
-  it("returns the grammar unchanged when rule is null", () => {
-    expect(applyMcpToolNameRule(baseGrammar, null)).toBe(baseGrammar);
+  it("drops the mcp-server-tool reference when rule is null (ATO-1029)", () => {
+    const out = applyMcpToolNameRule(baseGrammar, null);
+    expect(out).toContain('tool-name ::= browser-tool | "\\"reply\\""');
+    // The definition stays, unreferenced; applying null again is a no-op.
+    expect(out).toContain("mcp-server-tool ::= ");
+    expect(applyMcpToolNameRule(out, null)).toBe(out);
+  });
+
+  it("adds the reference back after mcp-native-tool when a rule arrives", () => {
+    const unreferenced = [
+      "root ::= tool-call-array",
+      'tool-name ::= os-tool | mcp-native-tool | "\\"finish\\""',
+      'mcp-server-tool ::= "\\"mcp." [a-z0-9-]+ "." [a-zA-Z0-9._-]+ "\\""',
+    ].join("\n");
+    const dyn = 'mcp-server-tool ::= "\\"mcp.docs.search\\""';
+    const out = applyMcpToolNameRule(unreferenced, dyn);
+    expect(out).toContain('tool-name ::= os-tool | mcp-native-tool | mcp-server-tool | "\\"finish\\""');
+    expect(applyMcpToolNameRule(out, dyn)).toBe(out);
+    expect(applyMcpToolNameRule(out, null)).toBe(applyMcpToolNameRule(unreferenced, null).replace(/^mcp-server-tool ::= .*$/m, dyn));
+  });
+
+  it("drops and restores mcp-native-tool with nativeTools, in place", () => {
+    const g = 'tool-name ::= verify-tool | mcp-native-tool | "\\"finish\\""';
+    const off = applyMcpToolNameRule(g, null, false);
+    expect(off).toBe('tool-name ::= verify-tool | "\\"finish\\""');
+    expect(applyMcpToolNameRule(off, null, false)).toBe(off);
+    expect(applyMcpToolNameRule(off, null, true)).toBe(g);
+    const dyn = 'mcp-server-tool ::= "\\"mcp.docs.search\\""';
+    expect(applyMcpToolNameRule(off, dyn, true)).toBe(
+      'tool-name ::= verify-tool | mcp-native-tool | mcp-server-tool | "\\"finish\\""\n' + dyn + "\n",
+    );
   });
 
   it("replaces the static placeholder with the dynamic rule", () => {

@@ -10,8 +10,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
+import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
+import { coreSessionPath } from "../local-llm/core/core-state.js";
 import {
   ensureUserConfigFileSync,
+  getDotenvPath,
+  getStateSecretPaths,
+  getTrustConfigPaths,
   getUserConfigPath,
   readUserConfigFileSync,
   readUserConfigSnapshotSync,
@@ -918,5 +924,27 @@ describe("config file sha256", () => {
     writeFileSync(path, "{nope");
     expect(() => readUserConfigSnapshotSync(path)).toThrow(ConfigValidationError);
     expect(() => readUserConfigSnapshotSync(path)).toThrow(/not valid JSON/);
+  });
+});
+
+describe("the state's secret files (ATO-877)", () => {
+  it("lists the trust surface and every key file, where their owners put them", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    // Spelled out in config (it sits below local-llm/ and atomic-mail/),
+    // so pin each name against the helper the owning module really uses.
+    expect(getStateSecretPaths(paths)).toEqual([
+      ...getTrustConfigPaths(paths),
+      resolveApiKeyFilePath(paths.localModelsDataDir),
+      coreSessionPath(paths.localModelsDataDir, "chat"),
+      coreSessionPath(paths.localModelsDataDir, "embedding"),
+      resolveSessionPath(stateDir),
+    ]);
+    expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
+    expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);
   });
 });

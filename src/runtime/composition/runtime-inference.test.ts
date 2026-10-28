@@ -102,6 +102,15 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(context.resolveCatalogContextWindow()).toBe(10000);
   });
 
+  it("files a window a pinned link revealed under that link, never the active model (ATO-1028)", () => {
+    // Fusion: the cloud orchestrator is active, a local worker overflowed.
+    const context = createRuntimeModelContext(config, providers);
+    context.observeContextWindow(8192, "local");
+    expect(context.resolveCatalogContextWindow()).toBeNull();
+    expect(context.resolveCatalogContextWindow("cloud")).toBeNull();
+    expect(context.resolveCatalogContextWindow("local")).toBe(8192);
+  });
+
   it("vision wiring follows live providers while retaining the original boot enable snapshot", async () => {
     const context = createRuntimeModelContext(config, providers);
     expect(context.visionOnLiveRoute()).toBe(false);

@@ -8,6 +8,7 @@ import {
 import * as schema from "../config-schema.js";
 import { ConfigValidationError as OwnedValidationError } from "../config-validation-error.js";
 import { parseCustomLocalModel } from "../custom-models-schema.js";
+import { setConfigNoticeSink } from "../config-primitives.js";
 
 const CUSTOM_MODEL = {
   id: "custom-stage05i-fixture",
@@ -53,7 +54,7 @@ describe("local model configuration domain seams", () => {
     expect(parsed).toStrictEqual(defaults);
     expect(root).toStrictEqual(defaults);
     expect(Object.keys(defaults)).toEqual(["url", "mode", "completionMaxTokens", "useServerTemplate", "thinking", "reasoningBudgetTokens", "drySampler", "managed", "embeddings", "download", "customModels"]);
-    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
+    expect(Object.keys(defaults.managed)).toEqual(["engine", "modelId", "port", "dataDirOverride", "autoUpdate", "stopOnExit", "autoRestart", "device", "backendVariant", "coreBackendVariant", "contextSize", "tensorSplit", "parallel", "swaFull"]);
     expect(defaults.managed).not.toBe(other.managed);
     expect(defaults.embeddings).not.toBe(other.embeddings);
     expect(defaults.download).not.toBe(other.download);
@@ -78,11 +79,28 @@ describe("local model configuration domain seams", () => {
     const root = schema.parseUserConfigFile({ localModels: raw }).localModels;
     expect(root.managed.modelId).toBe(CUSTOM_MODEL.id);
     expect(root.customModels[0]?.id).toBe(CUSTOM_MODEL.id);
-    const field = "localModels.managed.modelId";
-    for (const error of [thrownError(() => parseLocal({ managed: { modelId: CUSTOM_MODEL.id } })), thrownError(() => schema.parseUserConfigFile({ localModels: { managed: { modelId: CUSTOM_MODEL.id } } }))]) {
-      expect(error).toBeInstanceOf(OwnedValidationError);
-      expect(error).toMatchObject({ field, reason: `unknown managed local model id: ${JSON.stringify(CUSTOM_MODEL.id)}` });
+    // ATO-1239: without its customModels entry the id is unknown here: set aside (null), not a broken file.
+    expect(parseLocal({ managed: { modelId: CUSTOM_MODEL.id } }).managed.modelId).toBeNull();
+    expect(schema.parseUserConfigFile({ localModels: { managed: { modelId: CUSTOM_MODEL.id } } }).localModels.managed.modelId).toBeNull();
+  });
+
+  it("ATO-1239: a model, engine or variant a newer build wrote reads as unselected / the default, with a notice", () => {
+    const notices: string[] = [];
+    setConfigNoticeSink((line) => notices.push(line));
+    try {
+      const parsed = parseLocal({ managed: { modelId: "qwen-9.9-from-the-future", engine: "atomic-core-next", backendVariant: "future-gpu" } });
+      expect(parsed.managed.modelId).toBeNull();
+      expect(parsed.managed.engine).toBe(createLocalModelsDefaults().managed.engine);
+      expect(parsed.managed.backendVariant).toBe(createLocalModelsDefaults().managed.backendVariant);
+      expect(notices.join("\n")).toMatch(/qwen-9\.9-from-the-future.*does not know/);
+      expect(notices.join("\n")).toMatch(/atomic-core-next/);
+      expect(notices.join("\n")).toMatch(/future-gpu/);
+    } finally {
+      setConfigNoticeSink(null);
     }
+    // A wrong type is still a broken file.
+    expect(() => parseLocal({ managed: { engine: 7 } })).toThrow();
+    expect(() => parseLocal({ managed: { backendVariant: 7 } })).toThrow();
   });
 
   it("accepts nonempty unknown embedding ids without introducing a historical migration", () => {
@@ -256,7 +274,7 @@ describe("local model configuration domain seams", () => {
   it.each([
     { raw: { webhooks: [], localModels: { managed: { port: 0 } } }, field: "webhooks" },
     { raw: { localModels: { customModels: "bad", managed: { modelId: "unknown" } } }, field: "localModels.customModels" },
-    { raw: { localModels: { managed: { modelId: "unknown", port: 0 } } }, field: "localModels.managed.modelId" },
+    { raw: { localModels: { managed: { modelId: 7, port: 0 } } }, field: "localModels.managed.modelId" },
     { raw: { localModels: { managed: { port: 0 }, embeddings: { port: 0 } } }, field: "localModels.managed.port" },
     { raw: { localModels: { embeddings: { port: 0, enabled: "bad" } } }, field: "localModels.embeddings.port" },
     { raw: { localModels: { embeddings: { enabled: "bad" }, download: { connections: 0 } } }, field: "localModels.embeddings.enabled" },
@@ -321,9 +339,10 @@ describe("local model configuration domain seams", () => {
       .toMatchObject({ field: "localModels.reasoningBudgetTokens" });
   });
 
-  it("still rejects an unknown engine, before and after the migration", () => {
+  it("ATO-1239: an engine name this build does not know reads as the default; a wrong type is still rejected", () => {
     for (const version of [76, 77]) {
-      expect(thrownError(() => schema.parseUserConfigFile({ version, localModels: { managed: { engine: "ollama" } } })))
+      expect(schema.parseUserConfigFile({ version, localModels: { managed: { engine: "ollama" } } }).localModels.managed.engine).toBe("atomic-core");
+      expect(thrownError(() => schema.parseUserConfigFile({ version, localModels: { managed: { engine: 7 } } })))
         .toMatchObject({ field: "localModels.managed.engine" });
     }
   });
@@ -333,5 +352,21 @@ describe("local model configuration domain seams", () => {
     expect(migrated.version).toBe(schema.USER_CONFIG_VERSION);
     migrated.localModels.managed.engine = "llama-server";
     expect(schema.parseUserConfigFile(JSON.parse(JSON.stringify(migrated))).localModels.managed.engine).toBe("llama-server");
+  });
+
+  it("keeps Atomic Core on its recommended build for a file whose llama-server rescue recorded backendVariant cpu", () => {
+    // The llama-server engine's rescue wrote "cpu" on any health timeout;
+    // version 77 moved these files to atomic-core. Core reads only its own key.
+    const migrated = schema.parseUserConfigFile({ version: 76, localModels: { managed: { backendVariant: "cpu" } } });
+    expect(migrated.localModels.managed.engine).toBe("atomic-core");
+    expect(migrated.localModels.managed.backendVariant).toBe("cpu");
+    expect(migrated.localModels.managed.coreBackendVariant).toBe("auto");
+  });
+
+  it("keeps an explicit coreBackendVariant and rejects an unknown one", () => {
+    const parsed = schema.parseUserConfigFile({ version: schema.USER_CONFIG_VERSION, localModels: { managed: { coreBackendVariant: "cpu" } } });
+    expect(parsed.localModels.managed.coreBackendVariant).toBe("cpu");
+    expect(thrownError(() => schema.parseUserConfigFile({ version: schema.USER_CONFIG_VERSION, localModels: { managed: { coreBackendVariant: "vulkan" } } })))
+      .toMatchObject({ field: "localModels.managed.coreBackendVariant" });
   });
 });

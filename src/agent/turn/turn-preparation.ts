@@ -8,6 +8,7 @@ import { emptyFusionOrchestratorState } from "../policies/fusion-orchestrator-mo
 import { createReviewStallState, type ReviewStallState } from "../review-stall.js";
 import { DEFAULT_FUSION_REVIEW_STALL_STEPS } from "../../config/llm-run-mode-config.js";
 import { createProgressNoteNoticeState } from "../progress-note-reply.js";
+import { createUnknownToolStreak } from "../policies/unknown-tool.js";
 import { ToolLoopTracker } from "../loop-detector.js";
 import { getConfig } from "../../config/index.js";
 
@@ -197,9 +198,12 @@ export function prepareTurnPolicies(
   // work is kept as a note and the turn goes on; the model is told
   // why once per turn (`progress-note-reply.ts`).
   const progressNotes = createProgressNoteNoticeState();
+  // A call to a tool that does not exist is answered and the turn goes
+  // on; this many unknown-only steps in a row still end it.
+  const unknownTools = createUnknownToolStreak();
   return {
     fusionOrchestratorTurn, fusionState, reviewStall, toolRole,
-    claimEvidence, linkEvidence, progressNotes,
+    claimEvidence, linkEvidence, progressNotes, unknownTools,
   };
 }
 

@@ -428,7 +428,7 @@ describe("LlmHealthPoller", () => {
       kind: "llama-server",
     } satisfies HealthResult);
     const urls: string[] = [];
-    const fetchImpl = (async (input: RequestInfo | URL) => {
+    const fetchImpl = (async (input: string | URL | Request) => {
       urls.push(String(input));
       return new Response(JSON.stringify({ model_alias: "my-model" }), {
         status: 200,

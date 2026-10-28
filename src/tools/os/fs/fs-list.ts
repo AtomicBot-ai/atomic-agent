@@ -4,6 +4,7 @@ import { extname, join } from "node:path";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import type { ToolDefinition } from "../../tool-registry.js";
+import { orMissing } from "./fs-missing-path.js";
 const TOP_EXTENSIONS_IN_HEADER = 5;
 
 /**
@@ -57,7 +58,10 @@ export const osFsListTool: ToolDefinition = {
     const args = parseArgs(rawArgs);
     const absolute = resolveUserPath(args.path, ctx.workingDir);
 
-    const names = await readdir(absolute);
+    const names = await orMissing("os.fs.list", absolute, ctx, () =>
+      readdirOrRefuseFile(absolute),
+    );
+    if ("missing" in names) return names.missing;
     const entries = await statEntries(absolute, names);
 
     const matched = entries.filter((e) => entryMatches(e, args));
@@ -256,4 +260,23 @@ function topExtensions(all: readonly RawEntry[], limit: number): string[] {
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .slice(0, limit)
     .map(([ext, n]) => `${ext}=${n}`);
+}
+
+/**
+ * `readdir` answers ENOTDIR both for a path through a file (nothing is
+ * there) and for a path that IS a file. Only the first is a missing
+ * path; listing an existing file says what it is instead.
+ */
+async function readdirOrRefuseFile(absolute: string): Promise<string[]> {
+  try {
+    return await readdir(absolute);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "ENOTDIR") throw err;
+    const info = await stat(absolute).catch(() => null);
+    if (info === null) throw err;
+    throw new Error(
+      `os.fs.list: ${absolute} is a file, not a folder. Read it with os.fs.read, or list its folder.`,
+      { cause: err },
+    );
+  }
 }

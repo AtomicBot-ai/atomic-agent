@@ -31,3 +31,12 @@ export {
   ATOMIC_MAIL_INTEGRATION_ID,
   atomicMailIntegration,
 } from "./atomic-mail-integration.js";
+export {
+  EXA_API_KEY_ENV,
+  EXA_INTEGRATION_ID,
+  EXA_KEY_FIELD,
+  exaIntegration,
+  exaKeyUnusedReason,
+  readExaSearchSetup,
+} from "./exa-integration.js";
+export type { ExaSearchSetup } from "./exa-integration.js";

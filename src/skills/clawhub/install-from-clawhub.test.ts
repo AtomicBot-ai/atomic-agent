@@ -21,8 +21,41 @@ describe("mergeRegistryVerdict", () => {
     expect(mergeRegistryVerdict(clean, "clean")).toBe(clean);
   });
 
-  it("leaves the heuristic result untouched on an unknown verdict", () => {
-    expect(mergeRegistryVerdict(caution, "unknown")).toBe(caution);
+  it("escalates a clean heuristic to caution on an unknown verdict", () => {
+    const merged = mergeRegistryVerdict(clean, "unknown");
+    expect(merged.verdict).toBe("caution");
+    expect(merged.findings[0]).toMatchObject({
+      severity: "caution",
+      rule: "clawhub-unscanned",
+    });
+  });
+
+  it("keeps heuristic findings and caution on an unknown verdict", () => {
+    const merged = mergeRegistryVerdict(caution, "unknown");
+    expect(merged.verdict).toBe("caution");
+    expect(merged.findings.map((f) => f.rule)).toEqual([
+      "clawhub-unscanned",
+      "network-fetch",
+    ]);
+  });
+
+  it("keeps dangerous when a heuristic-dangerous meets an unknown verdict", () => {
+    const merged = mergeRegistryVerdict(
+      {
+        verdict: "dangerous",
+        findings: [
+          {
+            severity: "dangerous",
+            rule: "remote-exec",
+            file: "run.sh",
+            line: 1,
+            excerpt: "curl x | sh",
+          },
+        ],
+      },
+      "unknown",
+    );
+    expect(merged.verdict).toBe("dangerous");
   });
 
   it("escalates a clean heuristic to dangerous on a malicious verdict", () => {

@@ -18,6 +18,7 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -47,6 +48,12 @@ export class FakeBrowserBackend implements BrowserBackend {
   async hasRef(): Promise<boolean> {
     return false;
   }
+  async describeRef(): Promise<RefDescription | null> {
+    return null;
+  }
+  async currentUrl(): Promise<string> {
+    return "https://example.com/";
+  }
   async snapshot(): Promise<AriaSnapshot> {
     return {
       url: "https://example.com/",
@@ -75,6 +82,9 @@ export class FakeBrowserBackend implements BrowserBackend {
   }
   async scroll(_input: ScrollInput): Promise<ScrollResult> {
     return { scrollY: 0, scrollHeight: 0, viewportHeight: 800 };
+  }
+  async screenshot(): Promise<never> {
+    throw new Error("FakeBrowserBackend: screenshot not supported");
   }
 }
 

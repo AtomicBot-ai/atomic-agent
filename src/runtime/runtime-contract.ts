@@ -420,6 +420,13 @@ export interface AgentRuntime {
       reasoningEffort?: ReasoningEffort;
       /** See `RunTurnOptions.maxOutputTokens` — a fusion worker's cap. */
       maxOutputTokens?: number;
+      /**
+       * A person is watching this chat and can answer a question (the
+       * TUI's chat, the desktop's): the turn asks before restarting a
+       * local model that ran out of memory (`RunTurnOptions.localOutOfMemory`,
+       * ATO-334). Absent: unattended, the window is halved without asking.
+       */
+      interactive?: boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -447,6 +454,8 @@ export interface AgentRuntime {
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
+      /** See `runTurn`'s `interactive`. */
+      interactive?: boolean;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -580,6 +589,19 @@ export interface AgentRuntime {
     stage: string;
     reasonCode: string;
   }): void;
+  /**
+   * Register what restarts the managed local model with a smaller context
+   * window after it ran out of memory (ATO-334), or `null` to clear it.
+   * The process that owns the model registers one (the TUI); with none, a
+   * turn that hits out of memory ends at once with the window to restart
+   * with instead of restarting. Optional so test doubles and older hosts
+   * need not implement it.
+   */
+  setLocalModelRestarter?(
+    restarter:
+      | ((contextWindow: number, signal: AbortSignal) => Promise<boolean>)
+      | null,
+  ): void;
   /**
    * Live approval level (1 = every gated action asks … 5 = approve
    * everything). Reads the gate, not the boot-time config snapshot, so

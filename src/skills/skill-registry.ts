@@ -2,6 +2,14 @@ import { readFile } from "node:fs/promises";
 import { parseSkillFile } from "./skill-manifest.js";
 import type { LoadSkillsResult, SkillRecord } from "./skill-loader.js";
 import { loadSkills, type LoadSkillsOptions } from "./skill-loader.js";
+import type { ProjectItemTrust } from "./project-trust.js";
+
+/**
+ * Builds the per-refresh trust lookup for project skills. Absent, every
+ * project skill is listed (unit tests, tooling that builds a registry on
+ * purpose); the runtime and the CLI always pass one.
+ */
+export type ProjectSkillTrustGate = () => (name: string) => ProjectItemTrust;
 
 export type SkillChangeListener = (registry: SkillRegistry) => void;
 
@@ -48,6 +56,10 @@ function describeInstalled(installed: readonly string[] | undefined): string {
  *   exclusively by CLI / TUI rendering so operators can see what is
  *   installed-but-off.
  *
+ * A project skill whose folder the operator has not trusted (see
+ * `project-trust.ts`) is treated like a disabled one: absent from the
+ * filtered view, listed by `listAll()` with `trust` set.
+ *
  * Editing `disabledNames` (via `setDisabledNames`) invalidates KV-cache
  * once because the rendered `### skills` block changes; the SkillRegistry
  * does not own KV management itself, it only emits `change` so callers
@@ -61,16 +73,20 @@ export class SkillRegistry {
   private loadErrors: Array<{ path: string; error: string }> = [];
   private listeners: SkillChangeListener[] = [];
   private disabledNames: ReadonlySet<string>;
+  /** Trust lookup captured at the last refresh; null means no gate. */
+  private projectTrust: ((name: string) => ProjectItemTrust) | null = null;
 
   constructor(
     private readonly options: LoadSkillsOptions,
     disabledNames: Iterable<string> = [],
+    private readonly projectTrustGate?: ProjectSkillTrustGate,
   ) {
     this.disabledNames = new Set(disabledNames);
   }
 
   async refresh(): Promise<LoadSkillsResult> {
     const result = await loadSkills(this.options);
+    this.projectTrust = this.projectTrustGate?.() ?? null;
     this.allRecords = new Map(result.skills.map((s) => [s.manifest.name, s]));
     this.loadErrors = result.errors;
     this.applyFilter();
@@ -102,11 +118,12 @@ export class SkillRegistry {
    * Unfiltered list — every successfully-parsed skill on disk including
    * those flagged `disabled`. Consumed by CLI / TUI rendering only.
    */
-  listAll(): Array<{ record: SkillRecord; disabled: boolean }> {
+  listAll(): Array<{ record: SkillRecord; disabled: boolean; trust?: ProjectItemTrust }> {
     return Array.from(this.allRecords.values())
       .map((record) => ({
         record,
         disabled: this.disabledNames.has(record.manifest.name),
+        ...(record.source === "project" && this.projectTrust ? { trust: this.projectTrust(record.manifest.name) } : {}),
       }))
       .sort((a, b) =>
         a.record.manifest.name.localeCompare(b.record.manifest.name),
@@ -160,6 +177,7 @@ export class SkillRegistry {
     this.records = new Map();
     for (const [name, record] of this.allRecords) {
       if (this.disabledNames.has(name)) continue;
+      if (record.source === "project" && this.projectTrust && this.projectTrust(name) !== "trusted") continue;
       this.records.set(name, record);
     }
   }

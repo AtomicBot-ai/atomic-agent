@@ -12,6 +12,8 @@ import type { TraceEvent } from "../tracing/trace/index.js";
 import { Scheduler } from "../scheduler/index.js";
 import * as skills from "./composition/runtime-skills.js";
 import * as tools from "./composition/runtime-tool-catalog.js";
+import * as osTools from "../tools/os/index.js";
+import type { AnalyticsSurface } from "../analytics/resolve-surface.js";
 import * as local from "./composition/runtime-local-profile.js";
 import * as inference from "./composition/runtime-inference.js";
 import * as sessions from "./composition/runtime-session-services.js";
@@ -26,8 +28,8 @@ const externalOperation = (): never => { throw new Error("Assembly fixture must 
 function browser(): BrowserBackend {
   return {
     ensureReady: async () => externalOperation(), shutdown: vi.fn(async () => {}), snapshot: async () => externalOperation(),
-    hasRef: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
-    type: async () => externalOperation(), search: async () => externalOperation(), tabs: async () => externalOperation(), scroll: async () => externalOperation(),
+    hasRef: async () => externalOperation(), describeRef: async () => externalOperation(), currentUrl: async () => externalOperation(), navigate: async () => externalOperation(), click: async () => externalOperation(),
+    type: async () => externalOperation(), search: async () => externalOperation(), tabs: async () => externalOperation(), scroll: async () => externalOperation(), screenshot: async () => externalOperation(),
   };
 }
 const completion = async (): Promise<CompletionResult> => ({
@@ -75,6 +77,24 @@ describe("complete runtime composition", () => {
     });
     runtimes.push(runtime); return runtime;
   }
+
+  it("gives only the terminal UI the /integrations advice for a missing Exa key (ATO-345)", async () => {
+    const registration = vi.spyOn(osTools, "registerOsTools");
+    const hintFor = async (analyticsSurface?: AnalyticsSurface) => {
+      registration.mockClear();
+      const runtime = await createAgentRuntime({
+        workingDir, approvalLevel: 5,
+        ...(analyticsSurface === undefined ? {} : { analyticsSurface }),
+        overrides: { browserBackend: browser(), skipLlamaHealthCheck: true, llamaComplete: completion },
+      });
+      runtimes.push(runtime);
+      expect(registration).toHaveBeenCalledTimes(1);
+      return registration.mock.calls[0]?.[1].webSearchKeyHelp;
+    };
+    expect(await hintFor("tui")).toBe("integrations-hub");
+    expect(await hintFor("cli")).toBeUndefined();
+    expect(await hintFor(undefined)).toBeUndefined();
+  });
 
   it("allocates distinct owners for two boots and keeps the second usable after the first shuts down", async () => {
     const firstBrowser = browser(), secondBrowser = browser();

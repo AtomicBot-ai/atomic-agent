@@ -194,7 +194,7 @@ describe("localModels.customModels in a whole config file", () => {
           },
         },
       }),
-    ).toThrow(/unknown managed local model id/);
+    ).not.toThrow();
   });
 
   // The key is additive, so a file written before it existed has to read
