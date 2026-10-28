@@ -7,6 +7,7 @@ import {
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
 import type { ToolContext } from "../tool-registry.js";
+import { requireUserSite } from "./user-profile-sites.js";
 import type { BrowserBackend } from "./browser-backend.js";
 import {
   blockedDomainMessage,
@@ -31,7 +32,8 @@ export function isUserProfileUrl(url: string): boolean {
  * `browser.tabs` new, `browser.search`). A blocked host comes back as a
  * tool error at every approval level; a host outside a non-empty
  * allow-list asks as `browser_offsite`. In the user's own Chrome
- * (`policy.userProfile`) a non-web URL is refused as a tool error. `null`
+ * (`policy.userProfile`) a non-web URL is refused as a tool error and a
+ * site not yet opened this session asks (`user-profile-sites.ts`). `null`
  * means "go ahead" (the caller still applies its own `browser_nonweb` gate).
  */
 export async function gateBrowserUrl(
@@ -57,6 +59,12 @@ export async function gateBrowserUrl(
       output: blockedDomainMessage(tool, verdict.host),
       details: { url, host: verdict.host, reason: "blocked_domain" },
     });
+  }
+  if (policy.userProfile) {
+    // The user's own Chrome: a new site asks once per session (stricter
+    // than `browser_offsite`, which it replaces here).
+    await requireUserSite(dangerous, policy, tool, verdict.host, url, ctx);
+    return null;
   }
   if (verdict.kind === "offsite") {
     await requireApproval(

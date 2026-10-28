@@ -25,7 +25,7 @@ Owner: src/tools/browser/
   - navigate, tabs new and search (the engine host), before the browser moves;
   - click / type on a page, or in a frame, on a blocked host, and a link or form (click or Enter) whose target is on one;
   - after navigate, tabs new, click, Enter and search, the page the browser landed on: a blocked landing clears the tab to `about:blank` (best effort for navigations that start after the action returns);
-  - `browser.read_aria` and the world snapshot of a blocked page: no page content reaches the model.
+  - `browser.read_aria` and the world snapshot of a blocked page, or of a page that frames one (AI-mode snapshots include iframe content): no page content reaches the model.
 - With a non-empty allow-list, navigate, tabs new, search, and a link or form target outside it ask first (`browser_offsite`, level 3).
 
 ## Your own Chrome
@@ -35,6 +35,7 @@ Owner: src/tools/browser/
 - Attach order: `browser.cdpUrl` (a Chrome the user started with `--remote-debugging-port`, loopback only), else the `DevToolsActivePort` file Chrome 144+ writes while remote debugging is on (Chrome / Beta / Canary / Chromium / Brave / Edge on macOS, Windows, Linux, or `browser.userDataDir`). Otherwise Chrome is opened once on `chrome://inspect/#remote-debugging` and the agent waits up to 60 s for the user to turn it on and allow Chrome's dialog. Chrome 136+ ignores a debugging port on the default profile, so the agent never launches it with one.
 - Not reachable: a plain error with those steps; the next browser call retries.
 - The agent opens its own tab and only sees, switches to or closes its tabs and their pop-ups. Shutdown disconnects; the user's windows stay.
+- Opening or reading a site the agent has not opened this session asks as `browser_secret` (`user-profile-sites.ts`): navigate, tabs new, search, a link or form to a new host, and `read_aria` on a page that landed elsewhere. Once per site per session; hosts in `browser.allowedDomains` do not ask. Reading a signed-in site is reading the account, and a URL can carry what was read to another host.
 - Every `browser_commit` (submit, send, post, delete, Enter in a form) asks as `browser_secret`: every time, never covered by a session grant. Non-web URLs (chrome://, file://, view-source:, data:…) are refused outright.
 - Cookies, saved passwords and storage are never read. Values of password, one-time-code and card fields are masked in every snapshot, in both modes (`redact-secret-fields.ts`).
 

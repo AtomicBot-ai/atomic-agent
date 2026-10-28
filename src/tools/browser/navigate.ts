@@ -92,7 +92,7 @@ export function buildBrowserNavigateTool(
       });
       const landed = await recheckLandedPage(backend, policy, "browser.navigate", result.url);
       if (landed) return landed;
-      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud", policy);
+      const worldSnapshot = await captureWorldSnapshot(backend, ctx.modelMode === "cloud", policy, ctx.sessionId);
       return compressToolResult({
         tool: "browser.navigate",
         status: "ok",

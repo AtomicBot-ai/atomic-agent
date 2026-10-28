@@ -15,6 +15,7 @@ import {
   webHostOf,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
+import { requireUserSite } from "./user-profile-sites.js";
 import {
   classifyBrowserAction,
   type BrowserActionKind,
@@ -147,7 +148,16 @@ export async function gateBrowserAction(
   if (targetUrl !== null) {
     const target = checkBrowserUrl(targetUrl, policy);
     if (target.kind === "blocked") return blockedResult(request.tool, request.ref, target.host);
-    if (target.kind === "offsite") {
+    if (policy.userProfile) {
+      await requireUserSite(
+        dangerous,
+        policy,
+        request.tool,
+        target.host,
+        `${buildBrowserActionPreview(request, element, host, true)} → ${targetUrl}`,
+        ctx,
+      );
+    } else if (target.kind === "offsite") {
       await requireApproval(
         dangerous,
         {

@@ -5,6 +5,8 @@
  * asks first (`browser_offsite`). Matching is by host: an entry matches
  * itself and every subdomain, case-insensitively.
  */
+import type { UserSiteApprovals } from "./user-profile-sites.js";
+
 export interface BrowserDomainPolicy {
   readonly blockedDomains: readonly string[];
   readonly allowedDomains: readonly string[];
@@ -16,6 +18,12 @@ export interface BrowserDomainPolicy {
    * never covered by a session grant.
    */
   readonly userProfile?: boolean;
+  /**
+   * With `userProfile`: the sites the user let the agent open this
+   * session (`user-profile-sites.ts`). Each other site asks once, hosts
+   * in `allowedDomains` excepted. Absent ⇒ every site asks.
+   */
+  readonly userSites?: UserSiteApprovals;
 }
 
 export const EMPTY_DOMAIN_POLICY: BrowserDomainPolicy = {
@@ -82,6 +90,24 @@ export function checkBrowserUrl(url: string, policy: BrowserDomainPolicy): Domai
   const host = webHostOf(url);
   if (host === null) return { kind: "ok", host: null };
   return checkBrowserHost(host, policy);
+}
+
+/**
+ * The first blocked host among a page and the frames it embeds, or
+ * `null`. A snapshot or screenshot shows iframe content too, so an
+ * allowed page framing a blocked site is refused as a whole.
+ */
+export function blockedHostOfPage(
+  url: string,
+  frameUrls: readonly string[] | undefined,
+  policy: BrowserDomainPolicy,
+): string | null {
+  if (policy.blockedDomains.length === 0) return null;
+  for (const candidate of [url, ...(frameUrls ?? [])]) {
+    const verdict = checkBrowserUrl(candidate, policy);
+    if (verdict.kind === "blocked") return verdict.host;
+  }
+  return null;
 }
 
 export function checkBrowserHost(host: string, policy: BrowserDomainPolicy): DomainVerdict {

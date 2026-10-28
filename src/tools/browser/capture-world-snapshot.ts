@@ -1,7 +1,9 @@
 import type { BrowserBackend } from "./browser-backend.js";
+import { userSiteCleared } from "./user-profile-sites.js";
 import {
-  checkBrowserUrl,
+  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
+  webHostOf,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
 
@@ -20,17 +22,23 @@ export interface CapturedWorldSnapshot {
  * search, …) already succeeded, and we do not want an ARIA timeout to
  * flip the tool status to `error`. Callers just skip the field when
  * `undefined` is returned. A page on a blocked host
- * (`browser.blockedDomains`) is never captured: its content must not
- * reach the model.
+ * (`browser.blockedDomains`), or embedding one in a frame, is never
+ * captured: its content must not reach the model.
  */
 export async function captureWorldSnapshot(
   backend: BrowserBackend,
   full = false,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  sessionId?: string,
 ): Promise<CapturedWorldSnapshot | undefined> {
   try {
     const snap = full ? await backend.snapshot({ full: true }) : await backend.snapshot();
-    if (checkBrowserUrl(snap.url, policy).kind === "blocked") return undefined;
+    if (blockedHostOfPage(snap.url, snap.frameUrls, policy) !== null) return undefined;
+    // The user's own Chrome: a site not cleared this session (a redirect
+    // went elsewhere) is not captured; browser.read_aria asks for it.
+    if (policy.userProfile && (sessionId === undefined || !userSiteCleared(policy, webHostOf(snap.url), sessionId))) {
+      return undefined;
+    }
     return {
       kind: "browser",
       digest: snap.digest,

