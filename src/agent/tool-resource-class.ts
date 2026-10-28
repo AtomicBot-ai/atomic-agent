@@ -171,6 +171,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.screen.click": "approval_gated",
   "os.screen.type": "approval_gated",
   "os.screen.key": "approval_gated",
+  // Draws marks through the desktop overlay and asks nothing; serialised
+  // like `os.notify`, a small side effect on a shared OS resource.
+  "os.screen.point": "memory_write",
 
   // discovery
   "skill.view": "pure_read",

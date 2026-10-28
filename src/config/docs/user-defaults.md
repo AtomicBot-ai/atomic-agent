@@ -95,6 +95,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tools.shell.maxJobs` (default `3`).
 - `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
 - `tools.screen.enabled` (default `false`): the macOS `os.screen.*` computer-use tools ([OS tools](../../tools/os/README.md)); read at start.
+- `tools.screen.point` (default `true`): `os.screen.point`, which only draws marks through the desktop app, plus `os.screen.capture`, on macOS, independent of `tools.screen.enabled`; read at start.
 
 ## browser
 

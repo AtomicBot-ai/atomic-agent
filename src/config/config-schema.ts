@@ -1051,6 +1051,9 @@ export interface UserConfigFile {
 // Unversioned, additive: `tools.screen.enabled` (default `false`,
 // ATO-525). Turns on the macOS `os.screen.*` tools; an older file has no
 // field and keeps them off.
+// Unversioned, additive: `tools.screen.point` (default `true`, ATO-1018).
+// Registers `os.screen.point` (draws marks, never clicks or types) and
+// `os.screen.capture` on macOS; an older file has no field and gets them.
 // Unversioned, additive: `localModels.managed.coreBackendVariant`
 // (`auto` | `cpu`, default `auto`, ATO-372/373) — the build Atomic Core
 // installs on Windows x64. Its own key, not `backendVariant`: the

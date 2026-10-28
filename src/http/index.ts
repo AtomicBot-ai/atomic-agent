@@ -34,6 +34,7 @@ export {
   SESSION_ID_HEADER,
   COMPLETION_ID_HEADER,
   EXTENSIONS_HEADER,
+  SCREEN_OVERLAY_HEADER,
   createChatCompletionsHandler,
 } from "./openai-chat-completions.js";
 

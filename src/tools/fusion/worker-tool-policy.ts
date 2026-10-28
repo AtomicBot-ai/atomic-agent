@@ -42,6 +42,7 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "os.screen.click",
   "os.screen.type",
   "os.screen.key",
+  "os.screen.point",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */

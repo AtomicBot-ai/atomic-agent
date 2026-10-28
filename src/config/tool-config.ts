@@ -51,6 +51,8 @@ export interface RuntimeToolsConfig {
   screen: {
     /** Registers `os.screen.*` (macOS only). Mirrors `UserToolsConfig.screen`. */
     enabled: boolean;
+    /** Registers `os.screen.{capture,point}` (macOS only). Mirrors `UserToolsConfig.screen.point`. */
+    point: boolean;
   };
 }
 
@@ -101,6 +103,14 @@ export interface UserToolsConfig {
      * Recording and Accessibility permission for the host app.
      */
     enabled: boolean;
+    /**
+     * "Show where to click" on macOS (ATO-1018): `os.screen.point` draws
+     * arrows, boxes and labels through the desktop app's overlay and
+     * never clicks or types, and `os.screen.capture` comes with it (still
+     * asking as `screen_capture`) so the model can see what it points at.
+     * Default `true`; independent of `enabled`. Read at start.
+     */
+    point: boolean;
   };
 }
 
@@ -125,7 +135,8 @@ export function createToolsDefaults(): UserToolsConfig {
     },
     // Off until the operator asks for it: a model that can click and
     // type anywhere is not a default.
-    screen: { enabled: false },
+    // Pointing only draws, so it is on; clicking and typing stay off.
+    screen: { enabled: false, point: true },
   };
 }
 
@@ -170,6 +181,10 @@ export function parseToolsConfig(
       enabled: parseBool(
         rawScreen.enabled ?? readDefaults().screen.enabled,
         "tools.screen.enabled",
+      ),
+      point: parseBool(
+        rawScreen.point ?? readDefaults().screen.point,
+        "tools.screen.point",
       ),
     },
   };

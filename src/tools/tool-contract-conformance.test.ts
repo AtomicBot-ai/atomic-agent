@@ -258,7 +258,7 @@ const gates: ToolGateConfig = {
   tasks: { agentToolsEnabled: true }, email: { available: true }, mcp: { enabled: true }, github: { connected: true }, fusion: { enabled: true },
   image: { available: true },
   video: { available: true },
-  screen: { enabled: true },
+  screen: { enabled: true, point: true },
 };
 
 let directory: string;
@@ -290,7 +290,7 @@ beforeAll(() => {
     http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: USER_CONFIG_DEFAULTS.tools,
     web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
   } });
-  registerOsScreenTools(registry, { ...dangerous, enabled: true, platform: "darwin" });
+  registerOsScreenTools(registry, { ...dangerous, enabled: true, point: true, platform: "darwin" });
   registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, connect: "agent", userChromeDataDir: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000, blockedDomains: [], allowedDomains: [] } } });
   registerGithubTools(registry, dangerous);
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
@@ -331,8 +331,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(96);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(93);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(94);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
@@ -444,7 +444,7 @@ describe("whole built-in tool catalog conformance", () => {
     const tasks = new RecordingRegistry(); registerTaskTools(tasks, taskOptions(true));
     expect(new Set(names(tasks.registrations))).toEqual(new Set(GATED_TOOL_NAMES.tasks));
     expect(new Set(names(buildBrowserTools(browser, dangerous)))).toEqual(new Set(GATED_TOOL_NAMES.browser));
-    const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, platform: "darwin" });
+    const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, point: true, platform: "darwin" });
     expect(names(screen.registrations)).toEqual([...GATED_TOOL_NAMES.screen]);
   });
 
