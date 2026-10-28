@@ -11,16 +11,26 @@
  *            every folder, so automatic sorting leaves it alone
  *   autoSort: false when the person turned off sorting imported chats into a
  *            folder per app (on by default)
+ *   projects: {folderId: projectPath}   ATO-1253: the folder kept for each
+ *            Claude Code project, so a renamed folder keeps its chats
+ *   auto:    {sessionId: true}   chats the sorting placed, which it may move
+ *            again; the person's own placements are never in it
+ *   projectSort: false in a file from before ATO-1253, whose one "Claude
+ *            Code" folder is split into project folders once
  */
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export interface ChatFolder { id: string; name: string; collapsed: boolean }
-export interface ChatFolders { version: 1; folders: ChatFolder[]; chats: Record<string, string | null>; autoSort: boolean }
+export interface ChatFolders {
+  version: 1; folders: ChatFolder[]; chats: Record<string, string | null>; autoSort: boolean;
+  projects: Record<string, string>; auto: Record<string, true>; projectSort: boolean;
+}
 
 const MAX_FOLDERS = 200;
 const MAX_CHATS = 20000;
 const MAX_NAME = 80;
+const MAX_PATH = 4096;
 const ID_RE = /^f[a-z0-9]{1,24}$/;
 
 export function chatFoldersPath(stateDir: string): string {
@@ -28,14 +38,14 @@ export function chatFoldersPath(stateDir: string): string {
 }
 
 export function emptyChatFolders(): ChatFolders {
-  return { version: 1, folders: [], chats: {}, autoSort: true };
+  return { version: 1, folders: [], chats: {}, autoSort: true, projects: {}, auto: {}, projectSort: true };
 }
 
 /** Whatever was read or sent, as a valid value: unknown keys, bad ids and dangling links dropped. */
 export function coerceChatFolders(raw: unknown): ChatFolders {
   const out = emptyChatFolders();
   if (!raw || typeof raw !== "object") return out;
-  const r = raw as { folders?: unknown; chats?: unknown; autoSort?: unknown };
+  const r = raw as { folders?: unknown; chats?: unknown; autoSort?: unknown; projects?: unknown; auto?: unknown; projectSort?: unknown };
   const ids = new Set<string>();
   if (Array.isArray(r.folders)) {
     for (const f of r.folders.slice(0, MAX_FOLDERS)) {
@@ -59,6 +69,17 @@ export function coerceChatFolders(raw: unknown): ChatFolders {
     }
   }
   out.autoSort = r.autoSort !== false;
+  if (r.projects && typeof r.projects === "object" && !Array.isArray(r.projects)) {
+    for (const [fid, dir] of Object.entries(r.projects as Record<string, unknown>)) {
+      if (ids.has(fid) && typeof dir === "string" && dir && dir.length <= MAX_PATH) out.projects[fid] = dir;
+    }
+  }
+  if (r.auto && typeof r.auto === "object" && !Array.isArray(r.auto)) {
+    for (const [sid, on] of Object.entries(r.auto as Record<string, unknown>)) {
+      if (on === true && typeof out.chats[sid] === "string") out.auto[sid] = true;
+    }
+  }
+  out.projectSort = r.projectSort === true;
   return out;
 }
 
