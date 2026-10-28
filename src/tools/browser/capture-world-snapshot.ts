@@ -23,8 +23,10 @@ export interface CapturedWorldSnapshot {
  * search, …) already succeeded, and we do not want an ARIA timeout to
  * flip the tool status to `error`. Callers just skip the field when
  * `undefined` is returned. A page on a blocked host
- * (`browser.blockedDomains`) is never captured: its content must not
- * reach the model.
+ * (`browser.blockedDomains`), or embedding one in a frame, is never
+ * captured: its content must not reach the model. In the user's own
+ * Chrome a site not cleared this session (a redirect went elsewhere) is
+ * not captured either; browser.read_aria asks for it (`gate-page-read.ts`).
  */
 export async function captureWorldSnapshot(
   backend: BrowserBackend,

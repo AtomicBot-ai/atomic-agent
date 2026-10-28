@@ -65,6 +65,7 @@ export type {
 } from "./aria-compressor.js";
 export {
   EMPTY_DOMAIN_POLICY,
+  blockedHostOfPage,
   checkBrowserHost,
   checkBrowserUrl,
   hostMatchesAny,
@@ -96,6 +97,7 @@ export { buildBrowserNavigateTool, isSafeUrl } from "./navigate.js";
 export { buildBrowserClickTool } from "./click.js";
 export { buildBrowserTypeTool } from "./type.js";
 export { buildBrowserReadAriaTool } from "./read-aria.js";
+export { requireUserSite, userSiteCleared, UserSiteApprovals } from "./user-profile-sites.js";
 export { buildBrowserSearchTool } from "./search.js";
 export { buildBrowserTabsTool } from "./tabs.js";
 export { buildBrowserScrollTool } from "./scroll.js";
@@ -118,7 +120,7 @@ export function buildBrowserTools(
     buildBrowserNavigateTool(backend, dangerous, policy, store),
     buildBrowserClickTool(backend, dangerous, policy),
     buildBrowserTypeTool(backend, dangerous, policy),
-    buildBrowserReadAriaTool(backend, policy, store),
+    buildBrowserReadAriaTool(backend, policy, store, dangerous),
     buildBrowserSearchTool(backend, dangerous, policy, store),
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),

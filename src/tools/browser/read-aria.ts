@@ -1,6 +1,7 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserBackend } from "./browser-backend.js";
+import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import {
   blockedDomainMessage,
   EMPTY_DOMAIN_POLICY,
@@ -11,8 +12,10 @@ import { AriaSnapshotStore, parseAriaViewMode, readAriaView } from "./aria-view.
 const REF_PATTERN = /^[a-zA-Z0-9]+$/;
 
 /**
- * A page on a blocked host is refused: none of its content reaches the
- * model. `mode` picks the view (ATO-956, `aria-view.ts`): `full` (the
+ * A page on a blocked host, or framing one, is refused: none of its
+ * content reaches the model. In the user's own Chrome a site not yet
+ * cleared this session asks first (`dangerous`; without it, refused;
+ * `gate-page-read.ts`). `mode` picks the view (ATO-956, `aria-view.ts`): `full` (the
  * whole tree), `interactive` (controls only), `diff` (changes by ref
  * since this tab's last snapshot) or `region` (the subtree under `ref`).
  * Without `mode`, a local or small-window model gets `interactive`.
@@ -21,6 +24,7 @@ export function buildBrowserReadAriaTool(
   backend: BrowserBackend,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
   store: AriaSnapshotStore = new AriaSnapshotStore(),
+  dangerous?: DangerousToolOptions,
 ): ToolDefinition {
   return {
     name: "browser.read_aria",
@@ -53,6 +57,7 @@ export function buildBrowserReadAriaTool(
         },
         policy,
         store,
+        dangerous ? { dangerous, tool: "browser.read_aria", signal: ctx.signal } : undefined,
       );
       if (result.kind === "blocked") {
         return compressToolResult({
@@ -60,6 +65,14 @@ export function buildBrowserReadAriaTool(
           status: "error",
           output: blockedDomainMessage("browser.read_aria", result.host),
           details: { host: result.host, reason: "blocked_domain" },
+        });
+      }
+      if (result.kind === "user_site_not_cleared") {
+        return compressToolResult({
+          tool: "browser.read_aria",
+          status: "error",
+          output: `browser.read_aria: ${result.host} has not been opened in your own Chrome this session`,
+          details: { host: result.host, reason: "user_site_not_cleared" },
         });
       }
       if (result.kind === "error") {

@@ -290,7 +290,7 @@ beforeAll(() => {
     web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
   } });
   registerOsScreenTools(registry, { ...dangerous, enabled: true, platform: "darwin" });
-  registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000, blockedDomains: [], allowedDomains: [] } } });
+  registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, connect: "agent", userChromeDataDir: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000, blockedDomains: [], allowedDomains: [] } } });
   registerGithubTools(registry, dangerous);
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());

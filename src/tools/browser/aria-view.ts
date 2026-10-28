@@ -2,10 +2,10 @@ import { createHash } from "node:crypto";
 import { DEFAULT_ARIA_MAX_CHARS, packLinesToCharBudget } from "./aria-compressor.js";
 import type { AriaSnapshot, BrowserBackend } from "./browser-backend.js";
 import {
-  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
+import { gatePageRead, type PageReadAsk } from "./gate-page-read.js";
 import {
   diffView,
   interactiveView,
@@ -165,6 +165,7 @@ export function renderAriaView(input: {
 
 export type ReadAriaViewResult =
   | { kind: "blocked"; host: string }
+  | { kind: "user_site_not_cleared"; host: string | null }
   | { kind: "error"; message: string }
   | { kind: "ok"; snapshot: AriaSnapshot; view: RenderedAriaView };
 
@@ -182,8 +183,9 @@ async function tabKey(backend: BrowserBackend, sessionId: string): Promise<strin
  * Snapshot the active page and render the requested (or default) view.
  * Compact views read the whole tree (`full: true`) so no control is lost
  * to the backend's own size cut before filtering. A blocked page, or one
- * framing a blocked site, is refused before anything is rendered or
- * remembered.
+ * framing a blocked site, and in the user's own Chrome a site not
+ * cleared this session (`gate-page-read.ts`; `ask` asks for it), is
+ * refused before anything is rendered or remembered.
  */
 export async function readAriaView(
   backend: BrowserBackend,
@@ -191,6 +193,7 @@ export async function readAriaView(
   view: AriaViewContext,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
   store?: AriaSnapshotStore,
+  ask?: PageReadAsk,
 ): Promise<ReadAriaViewResult> {
   const mode = request.mode ?? defaultAriaViewMode(view);
   const cloud = view.modelMode === "cloud";
@@ -200,8 +203,8 @@ export async function readAriaView(
     ...(wantsWholeTree ? { full: true } : {}),
   });
   // Frames too: the snapshot text includes iframe content.
-  const blocked = blockedHostOfPage(snapshot.url, snapshot.frameUrls, policy);
-  if (blocked !== null) return { kind: "blocked", host: blocked };
+  const gate = await gatePageRead(snapshot, policy, view.sessionId, ask);
+  if (gate.kind !== "ok") return gate;
   const key = store && view.sessionId !== undefined ? await tabKey(backend, view.sessionId) : null;
   const rendered = renderAriaView({
     snapshot,
