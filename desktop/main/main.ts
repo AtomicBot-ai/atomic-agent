@@ -239,6 +239,7 @@ import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiIm
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
+import { createScreenMarksOverlay } from "./screen-overlay-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
@@ -3144,6 +3145,10 @@ function wireIpc(client: AgentClient): void {
   });
   client.on("chat", (event) => send("agent:chat", event));
   client.on("chat", (event) => turnNotifier.observe(event));
+  /* ATO-1018: the agent's os.screen.point marks, drawn over every app by a
+     click-through overlay; the next turn's first frame clears them. */
+  const screenMarks = createScreenMarksOverlay(sayDesktop);
+  client.on("chat", (event) => screenMarks.observe(event));
   /* ATO-123: a turn waiting on the managed model server because it refuses
      connections is the agent seeing the server gone; the supervisor looks at
      once instead of after its next two looks. Its notices go to the window
