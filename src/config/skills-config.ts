@@ -10,8 +10,28 @@ export interface CloudWorkspaceSkillsPolicy {
   disabled: string[];
 }
 
+/**
+ * The operator's answer for one project folder (ATO-298 soft trust).
+ * Project skills and instruction files a repository ships are untrusted
+ * until the person says yes. Items are remembered by skill name and by
+ * workspace-relative instruction path, so an edit of a trusted file is
+ * not asked about again while a new name or a new file is. Items that
+ * are in neither list are pending: they stay unloaded until answered.
+ */
+export interface ProjectTrustRecord {
+  /** Canonical real path of the folder (see `canonicalTrustWorkspace`). */
+  workingDir: string;
+  trustedSkills: string[];
+  declinedSkills: string[];
+  /** Workspace-relative paths with forward slashes, e.g. `AGENTS.md`, `pkg/CLAUDE.md`. */
+  trustedInstructions: string[];
+  declinedInstructions: string[];
+}
+
 export interface RuntimeSkillsConfig {
   cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
+  /** Per-folder trust answers for project skills and instruction files. Mirrors `UserConfigFile.skills.projectTrust`. */
+  projectTrust: ProjectTrustRecord[];
   /**
    * Soft budget for the `### skills` catalog in the stable prefix,
    * in tokens. `buildSkillCatalog` converts it to a char cap at
@@ -52,6 +72,7 @@ export interface RuntimeSkillsConfig {
 
 export interface UserSkillsConfig {
   cloudWorkspaces: CloudWorkspaceSkillsPolicy[];
+  projectTrust: ProjectTrustRecord[];
   catalogTokenBudget: number;
   disabled: string[];
   taps: string[];
@@ -192,6 +213,7 @@ export function createSkillsDefaults(): UserSkillsConfig {
     catalogTokenBudget: DEFAULT_SKILLS_CATALOG_BUDGET,
     disabled: [],
     cloudWorkspaces: [],
+    projectTrust: [],
     taps: ["anthropics/skills", "openai/skills", "vercel-labs/agent-skills"],
     clawhub: {
       enabled: true,
@@ -208,6 +230,7 @@ export function parseSkillsConfig(
 ): UserSkillsConfig {
   return {
     cloudWorkspaces: parseCloudWorkspaces(skills.cloudWorkspaces),
+    projectTrust: parseProjectTrust(skills.projectTrust),
     catalogTokenBudget: parseBoundedPositiveInt(
       skills.catalogTokenBudget ??
         readDefaults().catalogTokenBudget,
@@ -241,4 +264,51 @@ function parseCloudWorkspaces(raw: unknown): CloudWorkspaceSkillsPolicy[] {
     return { workingDir: value.workingDir, projectSkillsEnabled: parseBool(value.projectSkillsEnabled ?? true, `${field}.projectSkillsEnabled`),
       disabled: parseSkillNameArray(value.disabled, `${field}.disabled`) };
   });
+}
+
+function parseProjectTrust(raw: unknown): ProjectTrustRecord[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new ConfigValidationError("skills.projectTrust", "expected an array");
+  const seen = new Set<string>();
+  return raw.map((entry, index) => {
+    const field = `skills.projectTrust[${index}]`;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new ConfigValidationError(field, "expected an object");
+    const value = entry as Record<string, unknown>;
+    if (typeof value.workingDir !== "string" || !value.workingDir.trim()) throw new ConfigValidationError(`${field}.workingDir`, "expected a non-empty path");
+    if (seen.has(value.workingDir)) throw new ConfigValidationError(field, "duplicate workspace");
+    seen.add(value.workingDir);
+    return {
+      workingDir: value.workingDir,
+      trustedSkills: parseSkillNameArray(value.trustedSkills, `${field}.trustedSkills`),
+      declinedSkills: parseSkillNameArray(value.declinedSkills, `${field}.declinedSkills`),
+      trustedInstructions: parseInstructionPathArray(value.trustedInstructions, `${field}.trustedInstructions`),
+      declinedInstructions: parseInstructionPathArray(value.declinedInstructions, `${field}.declinedInstructions`),
+    };
+  });
+}
+
+/**
+ * Workspace-relative instruction paths. A stored path never names a file
+ * outside the folder: absolute paths, backslashes, empty and `.`/`..`
+ * segments are rejected, so a hand-edited entry cannot widen trust.
+ */
+function parseInstructionPathArray(raw: unknown, field: string): string[] {
+  if (raw === undefined || raw === null) return [];
+  if (!Array.isArray(raw)) throw new ConfigValidationError(field, `expected string[], got ${JSON.stringify(raw)}`);
+  const seen = new Set<string>();
+  const result: string[] = [];
+  raw.forEach((entry, i) => {
+    if (typeof entry !== "string" || !isRelativeInstructionPath(entry)) {
+      throw new ConfigValidationError(`${field}[${i}]`, `expected a workspace-relative path, got ${JSON.stringify(entry)}`);
+    }
+    if (seen.has(entry)) return;
+    seen.add(entry);
+    result.push(entry);
+  });
+  return result;
+}
+
+export function isRelativeInstructionPath(path: string): boolean {
+  if (!path || path.length > 4096 || path.includes("\\") || path.includes("\0") || path.startsWith("/") || /^[A-Za-z]:/.test(path)) return false;
+  return path.split("/").every(part => part !== "" && part !== "." && part !== "..");
 }

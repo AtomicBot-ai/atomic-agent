@@ -558,10 +558,10 @@ describe("toStrictJsonSchema", () => {
       "vision.describe",
     ]);
     expect(converted).toBe(DEFAULT_TOOL_NAMES.length - refused.length);
-    // 88 registered schemas, 81 of them strict. Pinned as a number so
+    // 92 registered schemas, 85 of them strict. Pinned as a number so
     // the sample cannot quietly shrink.
-    expect(DEFAULT_TOOL_NAMES.length).toBe(88);
-    expect(converted).toBe(81);
+    expect(DEFAULT_TOOL_NAMES.length).toBe(92);
+    expect(converted).toBe(85);
   });
 
   /**
@@ -654,6 +654,10 @@ const DEFAULT_TOOL_NAMES: readonly string[] = [
   "os.notify",
   "os.email.inbox",
   "os.email.send",
+  "os.screen.capture",
+  "os.screen.click",
+  "os.screen.type",
+  "os.screen.key",
   "skill.view",
   "tool.view",
   "skill.run_script",

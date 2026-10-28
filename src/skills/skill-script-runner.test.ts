@@ -100,4 +100,67 @@ describe("runSkillScript", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout.trim()).toBe("hi-bash");
   });
+
+  describe("the script's environment (ATO-877)", () => {
+    // A skill script is third-party code: it gets the shell's filtered
+    // environment, not the agent's own keys.
+    const NAMES = {
+      OPENROUTER_API_KEY: "ato877-openrouter-key",
+      ATO877_PASS_TOKEN: "ato877-passed-token",
+      ATO877_PLAIN: "ato877-plain",
+    } as const;
+    const previous = new Map<string, string | undefined>();
+
+    beforeEach(() => {
+      for (const [name, value] of Object.entries(NAMES)) {
+        previous.set(name, process.env[name]);
+        process.env[name] = value;
+      }
+    });
+
+    afterEach(() => {
+      for (const [name, value] of previous) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      previous.clear();
+    });
+
+    async function printEnv(envPassthrough?: readonly string[]) {
+      const skill = await makeSkill(dir, { requiresScripts: ["env.js"] });
+      await writeFile(
+        join(dir, "scripts", "env.js"),
+        "process.stdout.write(JSON.stringify({" +
+          "key: process.env.OPENROUTER_API_KEY ?? null," +
+          "pass: process.env.ATO877_PASS_TOKEN ?? null," +
+          "plain: process.env.ATO877_PLAIN ?? null}));",
+        "utf8",
+      );
+      const result = await runSkillScript(skill, {
+        script: "env.js",
+        timeoutMs: 5000,
+        ...(envPassthrough !== undefined ? { envPassthrough } : {}),
+      });
+      expect(result.exitCode).toBe(0);
+      return JSON.parse(result.stdout) as Record<string, string | null>;
+    }
+
+    it("does not hand the script a provider key, and keeps ordinary variables", async () => {
+      expect(await printEnv()).toEqual({
+        key: null,
+        pass: null,
+        plain: "ato877-plain",
+      });
+      // The agent's own environment is untouched.
+      expect(process.env.OPENROUTER_API_KEY).toBe("ato877-openrouter-key");
+    });
+
+    it("passes a name listed in envPassthrough, and only that one", async () => {
+      expect(await printEnv(["ATO877_PASS_TOKEN"])).toEqual({
+        key: null,
+        pass: "ato877-passed-token",
+        plain: "ato877-plain",
+      });
+    });
+  });
 });

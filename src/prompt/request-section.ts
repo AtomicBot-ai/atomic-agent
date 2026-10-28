@@ -1,4 +1,7 @@
-import type { ConversationTurn } from "../session/conversation-turn.js";
+import {
+  isStoppedTurnMarker,
+  type ConversationTurn,
+} from "../session/conversation-turn.js";
 
 /**
  * The operator's request stays in view across repairs.
@@ -46,6 +49,64 @@ export function quotedRequestText(request: string): string {
   const start = begin + ORIGINAL_REQUEST_BEGIN_MARKER.length;
   const end = request.indexOf(ORIGINAL_REQUEST_END_MARKER, start);
   return end === -1 ? request.slice(start) : request.slice(start, end);
+}
+
+/**
+ * What a worker turn records as its request when its brief has no
+ * ORIGINAL REQUEST block (a fan-out started with no operator message on
+ * record). Without the block the brief is the orchestrator's words
+ * only, so nothing in it may stand for the operator agreeing to a
+ * replacement (ATO-860): the input guard still reads it for the files
+ * it names, never for consent.
+ */
+export const NO_OPERATOR_WORDS_MARKER =
+  "[a worker brief without an ORIGINAL REQUEST block: no operator words]";
+
+/** The record `executeTurn` keeps for a worker turn, from its brief. */
+export function workerRequestRecord(brief: string): string {
+  return brief.includes(ORIGINAL_REQUEST_BEGIN_MARKER)
+    ? brief
+    : `${NO_OPERATOR_WORDS_MARKER}\n${brief}`;
+}
+
+/**
+ * The two readings of a pinned request the input guard needs: `names`,
+ * the text whose file names are inputs, and `consent`, the operator's
+ * own words that may ask for one to be replaced. The same text, except
+ * for a worker brief without a quoted request (`workerRequestRecord`):
+ * its names still count, its words do not.
+ */
+export function requestWords(request: string): {
+  names: string;
+  consent: string;
+} {
+  if (request.startsWith(NO_OPERATOR_WORDS_MARKER)) {
+    return { names: request.slice(NO_OPERATOR_WORDS_MARKER.length), consent: "" };
+  }
+  const quoted = quotedRequestText(request);
+  return { names: quoted, consent: quoted };
+}
+
+/**
+ * The agent's last reply before the user's message that starts this
+ * turn, when that message answers it: the final `assistant_reply` of the
+ * previous macro-turn, read back past its tool rows. Nothing when a user
+ * row comes first (two user messages in a row), when the previous turn
+ * was stopped, or for an interim progress note. The input guard reads
+ * it to see which file the agent asked about replacing (ATO-860).
+ */
+export function previousReplyText(
+  earlierTurns: readonly ConversationTurn[],
+): string | undefined {
+  for (let i = earlierTurns.length - 1; i >= 0; i -= 1) {
+    const turn = earlierTurns[i]!;
+    if (turn.kind === "user") return undefined;
+    if (turn.kind !== "assistant_reply" || turn.progressNote === true) continue;
+    if (isStoppedTurnMarker(turn)) return undefined;
+    const text = turn.text.trim();
+    return text.length === 0 ? undefined : text;
+  }
+  return undefined;
 }
 
 /**

@@ -24,6 +24,7 @@ const ALL_OPEN: ToolGateConfig = {
   fusion: { enabled: true },
   image: { available: true },
   video: { available: true },
+  screen: { enabled: true },
 };
 
 function nameSet(
@@ -215,6 +216,7 @@ describe("filterToolDescriptorsByConfig", () => {
       fusion: { enabled: false },
       image: { available: false },
       video: { available: false },
+      screen: { enabled: false },
     });
     const names = nameSet(filtered);
     const allGated = [
@@ -230,6 +232,7 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.fusion,
       ...GATED_TOOL_NAMES.image,
       ...GATED_TOOL_NAMES.video,
+      ...GATED_TOOL_NAMES.screen,
     ];
     for (const dropped of allGated) {
       expect(names.has(dropped)).toBe(false);
@@ -253,10 +256,28 @@ describe("filterToolDescriptorsByConfig", () => {
       ...GATED_TOOL_NAMES.fusion,
       ...GATED_TOOL_NAMES.image,
       ...GATED_TOOL_NAMES.video,
+      ...GATED_TOOL_NAMES.screen,
     ];
     for (const name of allGated) {
       expect(known.has(name)).toBe(true);
     }
+  });
+});
+
+describe("screen gate", () => {
+  it("drops os.screen.* unless screen control is on (opt-in, macOS only)", () => {
+    const on = nameSet(filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, ALL_OPEN));
+    const off = nameSet(
+      filterToolDescriptorsByConfig(DEFAULT_TOOL_DESCRIPTORS, {
+        ...ALL_OPEN,
+        screen: { enabled: false },
+      }),
+    );
+    for (const name of GATED_TOOL_NAMES.screen) {
+      expect(on.has(name), name).toBe(true);
+      expect(off.has(name), name).toBe(false);
+    }
+    expect(off.has("os.window.list")).toBe(true);
   });
 });
 

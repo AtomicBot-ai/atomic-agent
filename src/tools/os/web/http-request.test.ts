@@ -5,6 +5,7 @@ import type {
   CommandResult,
 } from "../../../sandbox/command-runner.js";
 import type { AtomicAgentConfig } from "../../../config/index.js";
+import { createHttpDefaults } from "../../../config/http-config.js";
 import type { ToolContext } from "../../tool-registry.js";
 import {
   buildOsHttpRequestTool,
@@ -264,6 +265,32 @@ describe("os.http.request", () => {
         makeCtx(),
       ),
     ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+  });
+
+  it("asks before a POST and not before a GET with the default config (ATO-760)", async () => {
+    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
+      {};
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: denyAll(),
+      approvalRequired: true,
+      config: { http: createHttpDefaults() },
+      runCommand: fakeRun(capture, {
+        stdout: "ok\n__ATOMIC_CURL_META__200|text/plain|2|0.01",
+      }),
+    });
+    await expect(
+      tool.run(
+        { url: "https://example.com/upload", method: "POST", body: "secret" },
+        makeCtx(),
+      ),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    // The denied POST never reached curl.
+    expect(capture.cmd).toBeUndefined();
+
+    const result = await tool.run({ url: "https://example.com" }, makeCtx());
+    expect(result.status).toBe("ok");
+    expect(capture.cmd).toBeDefined();
   });
 
   it("requires approval for GET when approvalMode=always", async () => {

@@ -30,10 +30,10 @@ export function createListSessionsHandler(): HttpHandler {
       limit = Math.min(parsed, 200);
     }
     const workingDir = ctx.runtime.capabilities.workingDir;
-    const sessions = ctx.runtime.sessionStore.listByWorkingDir(
-      workingDir,
-      limit,
-    );
+    // ATO-731: chats keep their own folders, so `scope=all` lists them from every folder.
+    const sessions = url.searchParams.get("scope") === "all"
+      ? ctx.runtime.sessionStore.listRecent(limit)
+      : ctx.runtime.sessionStore.listByWorkingDir(workingDir, limit);
     sendJson(res, 200, {
       sessions: sessions.map((s) => ({
         id: s.id,

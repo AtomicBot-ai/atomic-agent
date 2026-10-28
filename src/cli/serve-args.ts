@@ -5,6 +5,7 @@
  */
 
 import { isIP } from "node:net";
+import { networkInterfaces } from "node:os";
 import { resolve } from "node:path";
 
 export interface ServeArgs {
@@ -31,7 +32,9 @@ export const HELP =
     "  --port <p>          Listen port (default 8787)",
     "  --cwd <dir>         Working directory for OS tools / sessions (default: cwd)",
     "  --api-key <k>       Require this bearer token on all routes except /health and /v1/models",
-    "                      (falls back to env ATOMIC_AGENT_API_KEY when flag is omitted)",
+    "                      (falls back to env ATOMIC_AGENT_API_KEY when flag is omitted).",
+    "                      On a network host it must be at least 16 characters, and an address",
+    "                      that sends 10 wrong keys in a minute waits a minute",
     "  --no-approval       Force approval level 5: auto-approve every dangerous tool call (dev / trusted use only)",
     "  --parent-pid <p>    Watch this pid instead of the actual parent (for spawners that double-fork)",
     "  --no-parent-exit    Keep running after the parent exits — the way to daemonise from a shell,",
@@ -108,10 +111,7 @@ export function parseArgs(
       case "--api-key": {
         const value = args[++i];
         if (value === undefined) return { error: "--api-key requires a value" };
-        // `--api-key "$ATOMIC_AGENT_API_KEY"` with the variable unset
-        // passes "": that is no key, not an empty one, so the env
-        // fallback below applies and loopback still starts.
-        if (value.length === 0) break;
+        if (value.length === 0) return { error: "--api-key needs a non-empty token" };
         apiKey = value;
         apiKeyProvided = true;
         break;
@@ -144,7 +144,10 @@ export function parseArgs(
     const envKey = process.env.ATOMIC_AGENT_API_KEY;
     apiKey = envKey && envKey.length > 0 ? envKey : null;
   }
-  if (apiKey !== null && apiKey.trim().length === 0) {
+  // A bearer header is trimmed before it is compared, so a key of only
+  // whitespace could never be sent back: serve would start and refuse
+  // every request.
+  if (!reapOnly && apiKey !== null && apiKey.trim().length === 0) {
     return {
       error:
         "the API key is only whitespace (--api-key or ATOMIC_AGENT_API_KEY); set a real token",
@@ -152,6 +155,14 @@ export function parseArgs(
   }
   if (!reapOnly && apiKey === null && !isLoopbackListenHost(host)) {
     return { error: missingKeyOnNetworkError(host) };
+  }
+  // ATO-1126: on the network the key is all that stands between a stranger and the agent's tools.
+  if (!reapOnly && apiKey !== null && apiKey.length < MIN_NETWORK_KEY_LENGTH && !isLoopbackListenHost(host)) {
+    return {
+      error:
+        `--host ${host} accepts connections from other machines, and an API key of ${apiKey.length} characters can be guessed. ` +
+        `Use at least ${MIN_NETWORK_KEY_LENGTH} (for example: export ATOMIC_AGENT_API_KEY=$(openssl rand -hex 24)).`,
+    };
   }
   return {
     host,
@@ -164,6 +175,9 @@ export function parseArgs(
     reapOnly,
   };
 }
+
+/** ATO-1126: the shortest API key serve takes on a network host. */
+export const MIN_NETWORK_KEY_LENGTH = 16;
 
 /**
  * Whether a `--host` value only accepts connections from this machine.
@@ -185,6 +199,9 @@ export function isLoopbackListenHost(host: string): boolean {
   if (kind === 6) {
     // The URL parser prints the canonical compressed form, so every
     // spelling of one address compares equal.
+    // spelling of one address compares equal. A zone id (`fe80::1%eth0`)
+    // passes isIP but not the URL parser, and is never loopback.
+    if (h.includes("%")) return false;
     const canonical = new URL(`http://[${h}]/`).hostname;
     return canonical === "[::1]" || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(canonical);
   }
@@ -219,4 +236,25 @@ export function serveAuthWarning(args: Pick<ServeArgs, "apiKey">): string | null
     "[atomic-agent] serve: no API key, so any program on this machine can run the agent and its tools; " +
     "pass --api-key <token> or set ATOMIC_AGENT_API_KEY\n"
   );
+}
+
+/**
+ * ATO-1126: the addresses other devices on the network use, when serve
+ * listens on every interface (`0.0.0.0`, `::`): this machine's non-internal
+ * IPv4 addresses. None for a loopback or a single named host.
+ */
+export function lanUrls(
+  host: string,
+  port: number,
+  interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces(),
+): string[] {
+  const h = host.replace(/^\[|\]$/g, "");
+  if (h !== "0.0.0.0" && h !== "::") return [];
+  const out: string[] = [];
+  for (const list of Object.values(interfaces)) {
+    for (const a of list ?? []) {
+      if (a.family === "IPv4" && !a.internal) out.push(`http://${a.address}:${port}`);
+    }
+  }
+  return out;
 }
