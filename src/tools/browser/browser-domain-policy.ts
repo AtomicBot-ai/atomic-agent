@@ -76,6 +76,24 @@ export function checkBrowserUrl(url: string, policy: BrowserDomainPolicy): Domai
   return checkBrowserHost(host, policy);
 }
 
+/**
+ * The first blocked host among a page and the frames it embeds, or
+ * `null`. A snapshot or screenshot shows iframe content too, so an
+ * allowed page framing a blocked site is refused as a whole.
+ */
+export function blockedHostOfPage(
+  url: string,
+  frameUrls: readonly string[] | undefined,
+  policy: BrowserDomainPolicy,
+): string | null {
+  if (policy.blockedDomains.length === 0) return null;
+  for (const candidate of [url, ...(frameUrls ?? [])]) {
+    const verdict = checkBrowserUrl(candidate, policy);
+    if (verdict.kind === "blocked") return verdict.host;
+  }
+  return null;
+}
+
 export function checkBrowserHost(host: string, policy: BrowserDomainPolicy): DomainVerdict {
   if (hostMatchesAny(host, policy.blockedDomains)) return { kind: "blocked", host };
   const allowed = policy.allowedDomains.filter((d) => normalizeDomainEntry(d) !== null);

@@ -92,10 +92,30 @@ const NODE_PATTERN = /^-\s+([A-Za-z][A-Za-z0-9_-]*)(.*)$/;
 const QUOTED_NAME = /^\s+"((?:[^"\\]|\\.)*)"/;
 const FLAG = /^\s*\[([^\]]*)\]/;
 
+/**
+ * Playwright writes a line's key in single quotes when it would not be
+ * plain YAML (a name holding ": ", " #", a brace or a backtick):
+ * `- 'button "Pay: $5" [ref=e7]': …`. Undo that so such a control is
+ * parsed like any other instead of vanishing from the compact views.
+ */
+export function unquoteYamlKey(line: string): string {
+  if (!line.startsWith("- '")) return line;
+  for (let i = 3; i < line.length; i += 1) {
+    if (line[i] !== "'") continue;
+    if (line[i + 1] === "'") {
+      i += 1;
+      continue;
+    }
+    const key = line.slice(3, i).replace(/''/g, "'");
+    return `- ${key}${line.slice(i + 1)}`;
+  }
+  return line;
+}
+
 /** Parse one tree line, or `null` for text / url / property lines. */
 export function parseAriaNode(raw: string, index = 0): AriaNode | null {
   const indent = raw.length - raw.trimStart().length;
-  const match = NODE_PATTERN.exec(raw.slice(indent));
+  const match = NODE_PATTERN.exec(unquoteYamlKey(raw.slice(indent)));
   if (!match) return null;
   const role = match[1]!;
   let rest = match[2]!;

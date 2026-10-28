@@ -94,6 +94,33 @@ describe("interactiveView", () => {
   });
 });
 
+describe("names Playwright writes as quoted YAML keys", () => {
+  const QUOTED = [
+    "url: https://shop.example/pay",
+    "title: Pay",
+    "",
+    "- main [ref=e1]:",
+    `  - 'button "Pay: $5" [ref=e7] [cursor=pointer]'`,
+    `  - 'link "Item #3" [ref=e8]':`,
+    "    - /url: /item/3",
+    `  - 'button "It''s {fine}" [ref=e9]'`,
+  ].join("\n");
+
+  it("keeps them in the interactive view", () => {
+    const view = interactiveView(QUOTED, 10_000);
+    expect(view.text).toContain('[e7] button "Pay: $5"');
+    expect(view.text).toContain('[e8] link "Item #3"');
+    expect(view.text).toContain(`[e9] button "It's {fine}"`);
+    expect(view.refs).toEqual(expect.arrayContaining(["e7", "e8", "e9"]));
+  });
+
+  it("reports them in the diff view", () => {
+    const before = QUOTED.replace(`  - 'button "Pay: $5" [ref=e7] [cursor=pointer]'\n`, "");
+    const view = diffView({ url: "https://shop.example/pay", text: before }, QUOTED, 10_000);
+    expect(view.text).toContain('+ [e7] button "Pay: $5"');
+  });
+});
+
 describe("regionView", () => {
   it("returns the subtree under a ref", () => {
     const view = regionView(PAGE, "e3", 10_000);

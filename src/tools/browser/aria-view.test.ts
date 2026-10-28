@@ -110,6 +110,20 @@ describe("browser.read_aria views", () => {
     expect(store.size).toBe(0);
   });
 
+  it("a page framing a blocked site renders no view", async () => {
+    const backend = new PageBackend();
+    backend.url = "https://news.example/";
+    const original = backend.snapshot.bind(backend);
+    backend.snapshot = async (o) => ({ ...(await original(o)), frameUrls: ["https://bank.example/widget"] });
+    const result = await readAriaView(
+      backend,
+      { mode: "interactive" },
+      { sessionId: "s" },
+      { blockedDomains: ["bank.example"], allowedDomains: [] },
+    );
+    expect(result).toMatchObject({ kind: "blocked", host: "bank.example" });
+  });
+
   it("a cloud model with a large window keeps the whole tree after navigate", async () => {
     const backend = new PageBackend();
     backend.pages = [TREE];

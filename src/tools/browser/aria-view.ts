@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { DEFAULT_ARIA_MAX_CHARS, packLinesToCharBudget } from "./aria-compressor.js";
 import type { AriaSnapshot, BrowserBackend } from "./browser-backend.js";
 import {
-  checkBrowserUrl,
+  blockedHostOfPage,
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
 } from "./browser-domain-policy.js";
@@ -181,8 +181,9 @@ async function tabKey(backend: BrowserBackend, sessionId: string): Promise<strin
 /**
  * Snapshot the active page and render the requested (or default) view.
  * Compact views read the whole tree (`full: true`) so no control is lost
- * to the backend's own size cut before filtering. A blocked page is
- * refused before anything is rendered or remembered.
+ * to the backend's own size cut before filtering. A blocked page, or one
+ * framing a blocked site, is refused before anything is rendered or
+ * remembered.
  */
 export async function readAriaView(
   backend: BrowserBackend,
@@ -198,8 +199,9 @@ export async function readAriaView(
     ...(request.depth !== undefined ? { depth: request.depth } : {}),
     ...(wantsWholeTree ? { full: true } : {}),
   });
-  const verdict = checkBrowserUrl(snapshot.url, policy);
-  if (verdict.kind === "blocked") return { kind: "blocked", host: verdict.host };
+  // Frames too: the snapshot text includes iframe content.
+  const blocked = blockedHostOfPage(snapshot.url, snapshot.frameUrls, policy);
+  if (blocked !== null) return { kind: "blocked", host: blocked };
   const key = store && view.sessionId !== undefined ? await tabKey(backend, view.sessionId) : null;
   const rendered = renderAriaView({
     snapshot,

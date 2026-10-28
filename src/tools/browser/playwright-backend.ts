@@ -143,6 +143,7 @@ export class PlaywrightBackend implements BrowserBackend {
       text: summary.text,
       digest: summary.digest,
       refs: summary.refs,
+      frameUrls: page.frames().map((frame) => frame.url()),
     };
   }
 

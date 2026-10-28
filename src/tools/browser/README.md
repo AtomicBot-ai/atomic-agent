@@ -37,6 +37,6 @@ Owner: src/tools/browser/
 - `diff`: changes by ref since this tab's last snapshot (`+` added, `~` changed with `was:`, `-` gone). Falls back to `interactive` on a new URL or without history.
 - `region` with `ref`: the subtree under one ref.
 
-Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering, and a blocked page is neither rendered nor remembered for `diff`.
+Without `mode`, a local model or a window ≤ 32k tokens gets `interactive`; others get `full`. The same default applies to the world snapshot after navigate / search. The size budget is 4% of the window (2k–24k chars). Compact views read the whole tree before filtering; a name Playwright writes as a quoted YAML key (`- 'button "Pay: $5" [ref=e7]'`) is unquoted first, so such a control is never dropped. A blocked page, or one framing a blocked site (AI-mode snapshots include iframe content), is neither rendered nor remembered for `diff`.
 
 Read [tool instructions](../AGENTS.md) and the adjacent tests before changing the classifier or the gate order.
