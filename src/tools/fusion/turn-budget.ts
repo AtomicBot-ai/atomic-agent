@@ -33,6 +33,8 @@ export interface TurnBudgetStop {
 interface TurnState {
   startedAt: number;
   workerUsd: number;
+  /** The orchestrator's meter reading when the turn began; spend is the delta. */
+  orchestratorBaseUsd: number;
   /** Task id → how many times it was run this turn (ATO-941's replans). */
   attempts: Map<string, number>;
 }
@@ -42,11 +44,16 @@ export class FusionTurnBudget {
 
   constructor(private readonly now: () => number = Date.now) {}
 
-  /** A fusion turn starts on `sessionId`: its spend and clock start at zero. */
-  begin(sessionId: string): void {
+  /**
+   * A fusion turn starts on `sessionId`: its spend and clock start at
+   * zero. `orchestratorBaseUsd` is what the orchestrator's meter already
+   * reads (non-zero when the bucket outlives a turn, as on the sidecar).
+   */
+  begin(sessionId: string, orchestratorBaseUsd = 0): void {
     this.turns.set(sessionId, {
       startedAt: this.now(),
       workerUsd: 0,
+      orchestratorBaseUsd,
       attempts: new Map(),
     });
   }
@@ -56,7 +63,12 @@ export class FusionTurnBudget {
     if (state === undefined) {
       // No turn start was seen (an embedder, a test): the clock starts
       // at the first fan-out instead.
-      state = { startedAt: this.now(), workerUsd: 0, attempts: new Map() };
+      state = {
+        startedAt: this.now(),
+        workerUsd: 0,
+        orchestratorBaseUsd: 0,
+        attempts: new Map(),
+      };
       this.turns.set(sessionId, state);
     }
     return state;
@@ -93,12 +105,16 @@ export class FusionTurnBudget {
   check(
     sessionId: string,
     limits: TurnBudgetLimits,
-    orchestratorUsd = 0,
+    orchestratorMeterUsd = 0,
   ): TurnBudgetStop | undefined {
     if (limits.usd === undefined && limits.timeMs === undefined) {
       return undefined;
     }
     const state = this.turn(sessionId);
+    const orchestratorUsd = Math.max(
+      0,
+      orchestratorMeterUsd - state.orchestratorBaseUsd,
+    );
     const elapsedMs = this.now() - state.startedAt;
     const spentUsd = orchestratorUsd + state.workerUsd;
     if (limits.usd !== undefined && spentUsd >= limits.usd) {
