@@ -203,7 +203,6 @@ export function registerOsTools(
       approvalRequired: options.approvalRequired,
       defaultTimeoutMs: options.config.tools.shell.defaultTimeoutMs,
       envPassthrough: options.config.tools.shell.envPassthrough,
-      probeLoginShell: true,
       ...(options.shellPolicy === undefined
         ? {}
         : { shellPolicy: options.shellPolicy }),

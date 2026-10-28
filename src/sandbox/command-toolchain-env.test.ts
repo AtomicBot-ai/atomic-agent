@@ -14,7 +14,7 @@ describe("withToolchainEnv (ATO-1252)", () => {
   it("fills the non-interactive switches, keeping a value the user set", () => {
     const env = withToolchainEnv(
       { PATH: "/usr/bin", HOMEBREW_NO_AUTO_UPDATE: "0" },
-      { platform: "darwin", home: "/nohome", exists: () => false },
+      { platform: "darwin", home: "/nohome", exists: () => false, systemPaths: [] },
     );
     expect(env.HOMEBREW_NO_AUTO_UPDATE).toBe("0");
     expect(env.DEBIAN_FRONTEND).toBe("noninteractive");
@@ -25,17 +25,19 @@ describe("withToolchainEnv (ATO-1252)", () => {
   it("appends Homebrew on Apple Silicon after the inherited PATH, never before it", () => {
     const env = withToolchainEnv(
       { PATH: "/usr/bin:/bin" },
-      { platform: "darwin", home: "/Users/u", exists: (p) => p === "/opt/homebrew/bin" || p === "/Users/u/.pyenv/shims" },
+      { platform: "darwin", home: "/Users/u", systemPaths: [], exists: (p) => p === "/opt/homebrew/bin" || p === "/Users/u/.pyenv/shims" },
     );
     expect(env.PATH).toBe("/usr/bin:/bin:/opt/homebrew/bin:/Users/u/.pyenv/shims");
   });
 
-  it("adds the login shell's entries and does not repeat one already there", () => {
+  it("adds the macOS system PATH list and does not repeat one already there", () => {
     const env = withToolchainEnv(
       { PATH: "/usr/bin:/opt/homebrew/bin" },
-      { platform: "darwin", home: "/Users/u", exists: () => false, loginShellPath: "/opt/homebrew/bin:/Users/u/.nvm/versions/node/v22.1.0/bin:relative/dir" },
+      { platform: "darwin", home: "/Users/u", exists: (p) => p !== "/missing", systemPaths: ["/opt/homebrew/bin", "/Library/TeX/texbin", "/missing", "relative/dir"] },
     );
-    expect(env.PATH).toBe("/usr/bin:/opt/homebrew/bin:/Users/u/.nvm/versions/node/v22.1.0/bin");
+    expect(env.PATH?.split(":").slice(0, 3)).toEqual(["/usr/bin", "/opt/homebrew/bin", "/Library/TeX/texbin"]);
+    expect(env.PATH).not.toContain("/missing");
+    expect(env.PATH).not.toContain("relative/dir");
   });
 
   it("adds no secret back: a key the filter removed stays removed", () => {

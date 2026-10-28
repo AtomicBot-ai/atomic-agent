@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -20,10 +19,16 @@ import { delimiter, join } from "node:path";
  *  - PATH entries a desktop-launched agent misses: GUI apps on macOS
  *    start with `/usr/bin:/bin:/usr/sbin:/sbin`, so `brew`, `node` from
  *    nvm and `python` from pyenv were "command not found" although the
- *    user's terminal has them. The login shell's PATH (read once, when
- *    the bootstrap allows it) and the well-known toolchain folders that
- *    exist on disk are APPENDED after the inherited PATH: a binary the
- *    agent already found keeps winning, nothing new shadows it.
+ *    user's terminal has them. The system's own PATH list (`/etc/paths`
+ *    and `/etc/paths.d` on macOS, root-owned) and the well-known
+ *    toolchain folders that exist on disk are APPENDED after the
+ *    inherited PATH: a binary the agent already found keeps winning,
+ *    nothing new shadows it.
+ *
+ * The user's login shell is deliberately NOT asked for its PATH:
+ * `$SHELL -lic` runs `~/.zshrc` / `~/.profile`, files the agent can
+ * write without a shell approval at level 3, so the probe would run
+ * whatever was planted there with no prompt.
  *
  * Secret filtering is untouched: this runs after `buildCommandEnv` and
  * adds no variable read from the agent's own environment except PATH.
@@ -77,10 +82,10 @@ const SYSTEM_TOOLCHAIN_DIRS: Partial<Record<NodeJS.Platform, readonly string[]>>
 export interface ToolchainEnvOptions {
   platform?: NodeJS.Platform;
   home?: string;
-  /** PATH as the user's login shell sets it, when known. */
-  loginShellPath?: string;
   /** Test seam for the existence check. */
   exists?: (path: string) => boolean;
+  /** Test seam: the lines of `/etc/paths` and `/etc/paths.d/*` (macOS). */
+  systemPaths?: readonly string[];
 }
 
 /**
@@ -109,11 +114,9 @@ export function withToolchainEnv(
     seen.add(dir);
     extra.push(dir);
   };
-  for (const dir of (options.loginShellPath ?? "").split(delimiter)) {
-    // The login shell's own entries need no existence check: it is the
-    // user's PATH, read from their shell.
-    if (dir.startsWith("/")) add(dir, false);
-  }
+  const systemPaths =
+    options.systemPaths ?? (platform === "darwin" ? readEtcPaths() : []);
+  for (const dir of systemPaths) if (dir.startsWith("/")) add(dir, true);
   for (const dir of SYSTEM_TOOLCHAIN_DIRS[platform] ?? []) add(dir, true);
   if (home.length > 0) {
     const nvmBin = nvmDefaultBin(env.NVM_DIR ?? join(home, ".nvm"), exists);
@@ -167,48 +170,30 @@ function compareVersionsDesc(a: string, b: string): number {
   return 0;
 }
 
-const LOGIN_PATH_MARKER = "__ATOMIC_AGENT_PATH__";
-const LOGIN_SHELL_TIMEOUT_MS = 3_000;
-let loginShellPathPromise: Promise<string | undefined> | null = null;
-
 /**
- * PATH as the user's login shell builds it (`$SHELL -lic`), read once
- * per process and cached; `undefined` on Windows, without `$SHELL`, on
- * any error, or after 3 s (an rc file that prompts or hangs). The shell
- * gets the filtered environment, and only PATH is read back.
+ * What macOS `path_helper` would put on PATH for a terminal: the lines of
+ * `/etc/paths` and of each file in `/etc/paths.d` (Homebrew, MacTeX,
+ * Wireshark and others install there). Root-owned files; nothing runs.
  */
-export function readLoginShellPath(
-  env: NodeJS.ProcessEnv,
-): Promise<string | undefined> {
-  if (loginShellPathPromise !== null) return loginShellPathPromise;
-  loginShellPathPromise = new Promise((resolve) => {
-    const shell = env.SHELL;
-    if (process.platform === "win32" || shell === undefined || !shell.startsWith("/")) {
-      resolve(undefined);
-      return;
+function readEtcPaths(): string[] {
+  const files = ["/etc/paths"];
+  try {
+    for (const name of readdirSync("/etc/paths.d").sort()) {
+      files.push(join("/etc/paths.d", name));
     }
+  } catch {
+    // no paths.d
+  }
+  const out: string[] = [];
+  for (const file of files) {
     try {
-      execFile(
-        shell,
-        ["-lic", `printf '%s%s%s' ${LOGIN_PATH_MARKER} "$PATH" ${LOGIN_PATH_MARKER}`],
-        { env, timeout: LOGIN_SHELL_TIMEOUT_MS, encoding: "utf8", maxBuffer: 1024 * 1024 },
-        (err, stdout) => {
-          if (err) {
-            resolve(undefined);
-            return;
-          }
-          const parts = String(stdout).split(LOGIN_PATH_MARKER);
-          resolve(parts.length >= 3 && parts[1]!.length > 0 ? parts[1] : undefined);
-        },
-      ).stdin?.end();
+      for (const line of readFileSync(file, "utf8").split("\n")) {
+        const dir = line.trim();
+        if (dir.length > 0 && !dir.startsWith("#")) out.push(dir);
+      }
     } catch {
-      resolve(undefined);
+      // unreadable: skip
     }
-  });
-  return loginShellPathPromise;
-}
-
-/** Test seam: forget the cached login-shell PATH. */
-export function resetLoginShellPathCache(): void {
-  loginShellPathPromise = null;
+  }
+  return out;
 }

@@ -8,10 +8,7 @@ import {
   startCommandJob,
 } from "../../../sandbox/command-job.js";
 import { buildCommandEnv } from "../../../sandbox/command-env.js";
-import {
-  readLoginShellPath,
-  withToolchainEnv,
-} from "../../../sandbox/command-toolchain-env.js";
+import { withToolchainEnv } from "../../../sandbox/command-toolchain-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
@@ -98,13 +95,6 @@ export interface OsShellToolOptions extends DangerousToolOptions {
    * none, so embedders and tests get the filtered environment too.
    */
   envPassthrough?: readonly string[];
-  /**
-   * Read the user's login-shell PATH once (`$SHELL -lic`) and append its
-   * missing entries to every command's PATH. The bootstrap turns it on;
-   * omitted (embedders, tests) ⇒ only the well-known toolchain folders
-   * that exist on disk are appended.
-   */
-  probeLoginShell?: boolean;
   /** Test seam: the prompt watch's poll and quiet intervals. */
   promptWatch?: { pollMs?: number; quietMs?: number };
   /** Test seam: how long a `background: true` command is watched. */
@@ -311,19 +301,10 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // mid-session is filtered the same way. The toolchain additions
     // (non-interactive switches, PATH folders) are fixed values applied
     // after the filter, never read from the call.
-    const filteredEnv = buildCommandEnv(
-      process.env,
-      options.envPassthrough ?? [],
-    );
-    const loginShellPath =
-      options.probeLoginShell === true
-        ? await readLoginShellPath(filteredEnv)
-        : undefined;
     const job = startCommandJob(spawnSpec.command, spawnSpec.args, {
       cwd,
       env: withToolchainEnv(
-        filteredEnv,
-        loginShellPath === undefined ? {} : { loginShellPath },
+        buildCommandEnv(process.env, options.envPassthrough ?? []),
       ),
       ...(facts.gog ? { maxOutputBytes: GOG_MAX_OUTPUT_BYTES } : {}),
       ...(spawnSpec.windowsVerbatimArguments
