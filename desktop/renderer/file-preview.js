@@ -20,6 +20,12 @@
    file's size and time every few seconds (app:statPaths) and a change
    reloads it, keeping the scroll. Refresh does the same by hand.
 
+   ATO-1256: the panel also opens on its own (the toolbar's Files button,
+   ⌥⌘F), on the list of the chat's files (chat-files.js); a file previewed
+   has that list as a row of tabs over it. A file picked from the list opens
+   and reveals through main's preview check (app:filePreviewAction), the same
+   roots the preview reads. Another chat brings its own list.
+
    Shared with the Node checks (test/file-preview.test.mjs): parseDelimited,
    fpFormatSize, fpHtmlDoc, fpLangFor. Everything that touches the DOM is
    behind `typeof document`. */
@@ -92,20 +98,22 @@ function fpHtmlDoc(text) {
   return '<!doctype html><meta http-equiv="Content-Security-Policy" content="' + FP_HTML_CSP + '"><meta charset="utf-8">' + String(text);
 }
 
-const FP = {open: false, path: '', reply: false, data: null, view: 'render', seq: 0, timer: 0, blobUrl: '', stamp: ''};
+/* `path` '' while open: the list of the chat's files (ATO-1256). `listed`: the file was picked from that list. */
+const FP = {open: false, path: '', reply: false, listed: false, data: null, view: 'render', seq: 0, timer: 0, blobUrl: '', stamp: '', files: []};
 
 function fpEsc(s) { return String(s).replace(/[&<>"]/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c])); }
 function fpIcon(n) { return typeof ic === 'function' ? ic(n) : ''; }
 function fpBridge() { return typeof window !== 'undefined' ? window.atomic : null; }
 function fpEl() { return typeof document !== 'undefined' ? document.getElementById('fpreview') : null; }
 
-/** Open the panel on `path`. `reply`: the path came from a reply's text (its Open asks main's reply check). */
+/** Open the panel on `path`. `reply`: the path came from a reply's text (its Open asks main's reply check).
+    `listed`: picked from the chat's files (its Open and Reveal ask main's preview check). */
 function filePreviewOpen(path, opts) {
   const el = fpEl();
   const br = fpBridge();
-  if (!el || !br || !br.filePreview) return false;
+  if (!el || !br || !br.filePreview || !path) return false;
   const same = FP.open && FP.path === path;
-  FP.open = true; FP.path = path; FP.reply = !!(opts && opts.reply);
+  FP.open = true; FP.path = path; FP.reply = !!(opts && opts.reply); FP.listed = !!(opts && opts.listed);
   if (!same) { FP.data = null; FP.view = 'render'; }
   el.hidden = false;
   fpApplyWidth();
@@ -113,14 +121,51 @@ function filePreviewOpen(path, opts) {
   if (!same) fpPaintBody('<div class="fp-msg">Loading…</div>');
   fpLoad(false);
   fpPoll();
+  fpSyncButton();
   return true;
+}
+/** ATO-1256: the panel on the chat's file list, with no file picked. */
+function filePreviewShowList() {
+  const el = fpEl();
+  if (!el) return false;
+  FP.seq++;   // a load still out for a file is not shown now
+  if (FP.timer) { clearTimeout(FP.timer); FP.timer = 0; }
+  FP.open = true; FP.path = ''; FP.reply = false; FP.listed = false; FP.data = null;
+  el.hidden = false;
+  fpApplyWidth();
+  fpPaintHead();
+  fpPaintBody(fpListHtml());
+  fpSyncButton();
+  return true;
+}
+/** ATO-1256: the Files button and ⌥⌘F. */
+function filePreviewToggle() {
+  if (FP.open) filePreviewClose(); else filePreviewShowList();
+}
+/** ATO-1256: chat-files.js says the open chat's files changed, or another chat is on screen (`away`: none is). */
+function filePreviewFilesChanged(files, chatChanged, away) {
+  FP.files = Array.isArray(files) ? files : [];
+  if (!FP.open) return;
+  if (away) { filePreviewClose(); return; }
+  // Another chat: its own list, never the last chat's file.
+  if (chatChanged || !FP.path) { filePreviewShowList(); return; }
+  fpPaintTabs();
 }
 function filePreviewClose() {
   const el = fpEl();
-  FP.open = false; FP.data = null; FP.path = '';
+  FP.open = false; FP.data = null; FP.path = ''; FP.listed = false;
   if (FP.timer) { clearTimeout(FP.timer); FP.timer = 0; }
   fpRevoke();
   if (el) { el.hidden = true; el.innerHTML = ''; }
+  fpSyncButton();
+}
+/** The toolbar's Files button says whether the panel is open (render() redraws it too). */
+function fpSyncButton() {
+  if (typeof document === 'undefined') return;
+  const b = document.querySelector('#toolbar [data-act="toggle:files"]');
+  if (!b) return;
+  b.classList.toggle('on', FP.open);
+  b.setAttribute('aria-pressed', String(FP.open));
 }
 function fpRevoke() { if (FP.blobUrl) { try { URL.revokeObjectURL(FP.blobUrl); } catch (e) { /* gone */ } FP.blobUrl = ''; } }
 
@@ -133,6 +178,8 @@ async function fpLoad(keepScroll) {
   if (seq !== FP.seq || !FP.open || FP.path !== path) return;   // a newer open won
   if (res && res.ok === false && res.reason === 'dir') {
     // A folder is not previewed: it opens in the file manager, as a click on its chip always did.
+    // ATO-1256: one picked from the chat's list goes back to the list (its path came from the transcript).
+    if (FP.listed) { filePreviewShowList(); return; }
     filePreviewClose();
     fpOpenOutside(path);
     return;
@@ -169,7 +216,16 @@ function fpPaintHead() {
   if (!el) return;
   if (!el.querySelector('.fp-head')) {
     el.innerHTML = '<div class="fp-resize" data-fp="resize" title="Drag to resize" aria-hidden="true"></div>'
-      + '<div class="fp-head"></div><div class="fp-body" tabindex="0"></div>';
+      + '<div class="fp-head"></div><div class="fp-tabsrow"></div><div class="fp-body" tabindex="0"></div>';
+  }
+  fpPaintTabs();
+  if (!FP.path) {
+    // ATO-1256: the list of the chat's files.
+    el.querySelector('.fp-head').innerHTML = '<span class="fp-ic">' + fpIcon('files') + '</span>'
+      + '<span class="fp-title"><span class="fp-name">Files in this chat</span>'
+      + '<span class="fp-meta">' + (FP.files.length ? FP.files.length + (FP.files.length === 1 ? ' file' : ' files') : 'None yet') + '</span></span>'
+      + '<button class="fp-btn fp-x" data-fp="close" title="Close the panel" aria-label="Close the panel">✕</button>';
+    return;
   }
   const d = FP.data && FP.data.ok ? FP.data : null;
   const name = d ? d.name : String(FP.path).split(/[\\/]/).pop();
@@ -183,6 +239,26 @@ function fpPaintHead() {
     + '<button class="fp-btn" data-fp="open" title="Open in its default app">Open</button>'
     + '<button class="fp-btn" data-fp="reveal" title="' + fpEsc(fpRevealLabel()) + '" aria-label="' + fpEsc(fpRevealLabel()) + '">' + fpIcon('folder') + '</button>'
     + '<button class="fp-btn fp-x" data-fp="close" title="Close the preview" aria-label="Close the preview">✕</button>';
+}
+/** ATO-1256: the row of the chat's files over a previewed file (none over the list itself). */
+function fpPaintTabs() {
+  const el = fpEl();
+  const row = el && el.querySelector('.fp-tabsrow');
+  if (!row) return;
+  const html = FP.path && typeof chatFilesTabsHTML === 'function' ? chatFilesTabsHTML(FP.files, FP.path, {esc: fpEsc, icon: fpIcon}) : '';
+  if (row.innerHTML === html) return;
+  const x = row.firstElementChild ? row.firstElementChild.scrollLeft : 0;
+  row.innerHTML = html;
+  const tabs = row.firstElementChild;
+  if (tabs) {
+    tabs.scrollLeft = x;
+    const on = tabs.querySelector('.fp-tab.on');
+    if (on && typeof on.scrollIntoView === 'function') on.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  }
+}
+function fpListHtml() {
+  if (typeof chatFilesListHTML !== 'function') return '';
+  return chatFilesListHTML(FP.files, {esc: fpEsc, icon: fpIcon, home: typeof homeDir === 'function' ? homeDir() : ''});
 }
 function fpRevealLabel() {
   const p = typeof navigator !== 'undefined' ? String(navigator.platform || '') : '';
@@ -276,7 +352,9 @@ function fpBodyHtml(res) {
 /** Open or Reveal from the panel: the same checks the chip's own opener used. */
 function fpOpenOutside(path) {
   const p = path || FP.path;
-  const done = (r) => { if (r && r.ok === false && typeof toast === 'function') toast('Could not open', r.error || ''); };
+  const done = (r) => { if (r && r.ok === false && typeof toast === 'function') toast('Could not open', r.error || (r.reason === 'outside' ? 'It is outside the folders the preview can read.' : '')); };
+  // ATO-1256: a file from the chat's list opens through main's preview check, the roots the preview read it from.
+  if (FP.listed) { const br = fpBridge(); return br && br.filePreviewAction ? br.filePreviewAction(p, 'open').then(done) : Promise.resolve(); }
   if (FP.reply && typeof openReplyPath === 'function') return openReplyPath(p).then(done);
   if (typeof openFilePath === 'function') return openFilePath(typeof homeDir === 'function' ? p.replace(/^~/, homeDir() || '~') : p).then(done);
   const br = fpBridge();
@@ -313,6 +391,8 @@ if (typeof document !== 'undefined') {
     if (what === 'resize') return;
     e.preventDefault(); e.stopPropagation();
     if (what === 'close') filePreviewClose();
+    else if (what === 'list') filePreviewShowList();
+    else if (what === 'pick') { if (b.dataset.fpPath) filePreviewOpen(b.dataset.fpPath, {listed: true}); }
     else if (what === 'refresh') { if (FP.open) fpLoad(true); }
     else if (what === 'open') fpOpenOutside();
     else if (what === 'reveal') fpReveal();
@@ -345,4 +425,4 @@ if (typeof document !== 'undefined') {
   window.addEventListener('resize', () => { if (FP.open) fpApplyWidth(); });
 }
 
-if (typeof module !== 'undefined') module.exports = {parseDelimited, fpCsvDelim, fpFormatSize, fpHtmlDoc, fpLangFor, fpBodyHtml, FP_HTML_CSP};
+if (typeof module !== 'undefined') module.exports = {parseDelimited, fpCsvDelim, fpFormatSize, fpHtmlDoc, fpLangFor, fpBodyHtml, FP_HTML_CSP, FP};

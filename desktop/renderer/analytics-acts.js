@@ -53,7 +53,7 @@ const ANX_ACTS = (() => {
       dl:{cancel:L}, dlc:{cloud:L, dismiss:L, fold:L, keep:L, retry:L, switch:L, unfold:L},
       appr:{y:L, n:L, esc:L, s:L, a:L}, selector:{model:L}, cards:{expand:L, collapse:L},
       room:{chat:L, tasks:L, skills:L}, insp:{steps:L, reasoning:L, world:L}, console:{agent:L, llm:L},
-      toggle:{sidebar:L, inspector:L, console:L},
+      toggle:{sidebar:L, inspector:L, console:L, files:L},
       theme:{light:L, dark:L, system:L},
       runmode:{local:L, cloud:L, fusion:L, swap:L, status:L,
         workers:{1:L, 2:L, 3:L, 4:L, 5:L, 6:L, 7:L, 8:L}},
