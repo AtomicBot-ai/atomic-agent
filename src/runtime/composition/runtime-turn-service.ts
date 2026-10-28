@@ -12,6 +12,7 @@ import type { ProviderFallbackChain } from "../../llm/fallback/index.js";
 import type { SessionStore } from "../../session/session-store.js";
 import { readFusionWorkerMeta, SESSION_LLM_METADATA_KEY, SESSION_ROUTE_METADATA_KEY, readSessionRoute, resolveTurnRoute, SESSION_TITLE_METADATA_KEY, SESSION_TITLE_TIMEOUT_MS, generateSessionTitle, readSessionTitle, shouldNameSession, type SessionLlmStamp, type SessionState } from "../../session/index.js";
 import { renderRouteChangeNote } from "../../prompt/route-change-note.js";
+import { previousReplyText, workerRequestRecord } from "../../prompt/request-section.js";
 import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
@@ -61,6 +62,12 @@ export interface RuntimeTurnDependencies {
     sessionStore: Pick<SessionStore, "save" | "load" | "beginTurn" | "releaseTurn" | "finishTurn">;
     turnContext: RuntimeTraces["turnContext"];
     turnRequests: Map<string, string>;
+    /**
+     * The agent's reply before the message that started each running
+     * turn, for the input guard (ATO-860). Omitted (tests, embedders):
+     * nothing is recorded and only the user's own words lift it.
+     */
+    turnPreviousReplies?: Map<string, string>;
   };
   execution: {
     loop: Pick<AgentLoop, "runTurn">;
@@ -93,7 +100,7 @@ export function createRuntimeTurnService(
   config: AtomicAgentConfig,
   deps: RuntimeTurnDependencies,
 ) {
-  const { sessionStore, turnContext, turnRequests } = deps.sessions;
+  const { sessionStore, turnContext, turnRequests, turnPreviousReplies } = deps.sessions;
   const { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete } = deps.execution;
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain } = deps.inference;
   const { traces, lifecycle, logger } = deps;
@@ -120,7 +127,11 @@ export function createRuntimeTurnService(
     toolRole?: ToolRole;
     reasoningEffort?: ReasoningEffort;
     maxOutputTokens?: number;
+    interactive?: boolean;
   }) => ({
+    // A person is watching this chat: a model that runs out of memory
+    // is restarted only after they say so (ATO-334).
+    ...(runOptions.interactive === true ? { localOutOfMemory: "ask" as const } : {}),
     ...(runOptions.reasoningEffort === undefined
       ? {}
       : { reasoningEffort: runOptions.reasoningEffort }),
@@ -312,6 +323,7 @@ export function createRuntimeTurnService(
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
+      interactive?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -330,8 +342,15 @@ export function createRuntimeTurnService(
         try {
           // The worker's request is its brief: the operator's words sit
           // in its ORIGINAL REQUEST block, which is what the input guard
-          // reads (`quotedRequestText`).
-          turnRequests.set(session.id, userMessage);
+          // reads (`requestWords`). A brief without the block carries
+          // none, so it is recorded as names only: the orchestrator's
+          // words never stand for the user agreeing (ATO-860).
+          turnRequests.set(session.id, workerRequestRecord(userMessage));
+          // The question a yes in that block answers was the parent's.
+          const parentReply = turnPreviousReplies?.get(worker.parentSessionId);
+          if (parentReply !== undefined) {
+            turnPreviousReplies?.set(session.id, parentReply);
+          }
           return await loop.runTurn(session, {
             userMessage,
             modelModePolicy,
@@ -340,6 +359,7 @@ export function createRuntimeTurnService(
           });
         } finally {
           turnRequests.delete(session.id);
+          turnPreviousReplies?.delete(session.id);
           // The prompt_captured hook still records the worker's window
           // occupancy under its id; nothing persists it, so drop it.
           traces.clearContextUsage(session.id);
@@ -422,6 +442,12 @@ export function createRuntimeTurnService(
         if (turnRequest !== undefined) {
           turnRequests.set(session.id, turnRequest);
         }
+        // What the user's message answers: the input guard reads its
+        // question ("Replace sales.csv?") to scope a plain yes (ATO-860).
+        const previousReply = previousReplyText(session.turns);
+        if (previousReply !== undefined) {
+          turnPreviousReplies?.set(session.id, previousReply);
+        }
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -485,6 +511,7 @@ export function createRuntimeTurnService(
         shellJobs.endTurn(session.id);
         traces.clearContextUsage(session.id);
         turnRequests.delete(session.id);
+        turnPreviousReplies?.delete(session.id);
         traces.releaseSession(session.id);
       }
     });
@@ -525,6 +552,7 @@ export function createRuntimeTurnService(
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
+      interactive?: boolean;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after

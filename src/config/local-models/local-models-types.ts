@@ -1,5 +1,5 @@
 import type { LocalModelDef } from "../../local-llm/catalog/models-catalog.js";
-import type { BackendVariantPreference } from "../../local-llm/backend/windows-backend-variant.js";
+import type { BackendVariantPreference, CoreBackendVariant } from "../../local-llm/backend/windows-backend-variant.js";
 import type { SwaFullPreference } from "../../local-llm/server/swa-full.js";
 
 export type LocalLlmMode = "external" | "managed";
@@ -59,15 +59,33 @@ export interface UserManagedLocalLlmConfig {
    */
   backendVariant: BackendVariantPreference;
   /**
+   * Which build Atomic Core installs on Windows x64 (the `atomic-core`
+   * engine; `backendVariant` above is the llama-server engine's).
+   *   - `"auto"` (default) — Core's recommendation for this hardware.
+   *   - `"cpu"` — Core's CPU build. Written only after a start found
+   *     Core's GPU build crashing on load and the CPU build then served
+   *     the model; every later Core install, update and "Download again"
+   *     keeps it. Set back to `"auto"` and run `atomic-agent models
+   *     update` to try the GPU build again.
+   * Ignored on every other platform. Older files inherit `"auto"`.
+   */
+  coreBackendVariant: CoreBackendVariant;
+  /**
    * llama-server context window (`--ctx-size`) for the managed chat
    * daemon.
    *   - `0` (default) — auto: fit the context to the target device's
    *     free VRAM at start (see `estimateContextSize`); on a device that
    *     shares the system's RAM (Apple silicon, an integrated GPU) also
    *     leaving the system its headroom and the cache within its share of
-   *     physical memory (`resolveContextKvBudgetMiB`).
+   *     physical memory (`resolveContextKvBudgetMiB`). On a GPU with
+   *     memory of its own the fit is held to 131,072, and a launch whose
+   *     owner grows it starts at 32,768 and grows toward that as the
+   *     conversation does (`context-growth.ts`).
    *   - a positive value — pin `--ctx-size` exactly, clamped only to the
-   *     model's trained context ceiling.
+   *     model's trained context ceiling. The settings list offers 32,768,
+   *     65,536, 131,072 and `CONTEXT_SIZE_MODEL_MAX` (1,048,576: "the
+   *     model's maximum", which that clamp turns into the trained
+   *     context of whichever model is loaded).
    */
   contextSize: number;
   /**

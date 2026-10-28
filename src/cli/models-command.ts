@@ -1,6 +1,7 @@
 import { modelsEngineCommand, modelsStopEmbedding } from "./models-engine.js";
 import { getConfig } from "../config/index.js";
 import {
+  readCliOption,
   runLocalModelsDevices,
   runLocalModelsList,
   runLocalModelsListEmbeddings,
@@ -42,6 +43,11 @@ const HELP =
     "  check [--json]                Ask localModels.url what answers there (llama.cpp, Ollama,",
     "                                still loading, not a model server); exit 1 unless llama.cpp",
     "  start                         Spawn detached llama-server daemon (writes .pid)",
+    "                                --grow-context: on a GPU with its own memory, start the",
+    "                                auto window at 32768 and record how far it may grow",
+    "                                (for a client that grows it between turns)",
+    "                                --context-at-least <n>: with --grow-context, after",
+    "                                `models stop`, start the window at least this large",
     "  stop [--chat-only]            Stop daemon (SIGTERM → SIGKILL after 3s); --chat-only",
     "                                keeps the embedding model running for memory search",
     "  engine [status|check|atomic-core|llama-server]  Inspect or choose the local engine",
@@ -78,10 +84,25 @@ const HELP =
     "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
     "  atomic-agent models use-embedding nomic-embed-text-v1.5",
     "  atomic-agent models update",
-    "  atomic-agent models start [--interactive]",
+    "  atomic-agent models start [--interactive] [--context-size <tokens>]",
     "  atomic-agent models status",
     "  atomic-agent models check",
   ].join("\n") + "\n";
+
+/**
+ * `models start` window flags: `--grow-context`, and
+ * `--context-at-least <n>` (a positive integer; anything else is ignored).
+ */
+export function parseStartContextFlags(
+  args: readonly string[],
+): { growContext?: true; contextAtLeast?: number } {
+  const raw = readCliOption([...args], "--context-at-least");
+  const n = raw === undefined ? NaN : Number(raw);
+  return {
+    ...(args.includes("--grow-context") ? { growContext: true as const } : {}),
+    ...(Number.isInteger(n) && n > 0 ? { contextAtLeast: n } : {}),
+  };
+}
 
 export async function modelsCommand(args: string[]): Promise<number> {
   getConfig();
@@ -116,11 +137,21 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsStatus();
       case "check":
         return await runLocalModelsCheck(args.slice(1));
-      case "start":
+      case "start": {
+        // `--context-size N`: this start only, not written to the config —
+        // the desktop's restart after the model ran out of memory (ATO-334).
+        const contextSize = readContextSizeFlag(args);
+        if (contextSize === "invalid") {
+          process.stderr.write("--context-size needs a whole number of tokens above 0\n");
+          return 2;
+        }
         return await runLocalModelsStart({
           interactive: args.includes("--interactive"),
           signal: cancel.signal,
+          ...parseStartContextFlags(args),
+          ...(contextSize !== null ? { contextSize } : {}),
         });
+      }
       case "stop":
         return runLocalModelsStop({ chatOnly: args.includes("--chat-only") });
       case "update":
@@ -151,4 +182,17 @@ export async function modelsCommand(args: string[]): Promise<number> {
   } finally {
     if (handlesCancellation) { process.off("SIGINT", cancelCore); process.off("SIGTERM", cancelCore); }
   }
+}
+
+/**
+ * The `--context-size <tokens>` of `models start`: `null` when absent,
+ * `"invalid"` when it is not a whole number above 0.
+ */
+export function readContextSizeFlag(args: readonly string[]): number | null | "invalid" {
+  const at = args.indexOf("--context-size");
+  if (at === -1) return null;
+  const raw = args[at + 1]?.trim() ?? "";
+  if (!/^[1-9]\d*$/.test(raw)) return "invalid";
+  const value = Number(raw);
+  return Number.isSafeInteger(value) ? value : "invalid";
 }

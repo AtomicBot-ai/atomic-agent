@@ -3,11 +3,11 @@
 Status: current
 Owner: src/config/
 
-Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
+Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79. Environment overrides and migrations can change an installed value. This is the documented default surface checked by the defaults test; the parser and [schema](../config-schema.ts) remain the implementation authority. Objects and array contents are not flattened into invented config keys. Read [compatibility](compatibility.md) for migration and precedence.
 
 ## version
 
-- `version` (default `78`).
+- `version` (default `79`).
 
 ## localModels
 
@@ -26,6 +26,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 - `localModels.managed.autoRestart` (default `true`).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).
+- `localModels.managed.coreBackendVariant` (default `"auto"`).
 - `localModels.managed.contextSize` (default `0`).
 - `localModels.managed.parallel` (default `"auto"`).
 - `localModels.managed.swaFull` (default `"auto"`).
@@ -62,7 +63,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 ## http
 
 - `http.enabled` (default `true`).
-- `http.approvalMode` (default `"never"`).
+- `http.approvalMode` (default `"writes"`: a POST asks, a GET does not).
 - `http.hostAllowlist` (default `null`).
 - `http.maxResponseBytes` (default `1048576`).
 - `http.defaultTimeoutMs` (default `30000`).
@@ -92,6 +93,12 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 78.
 - `tools.shell.jobMaxMs` (default `3600000`).
 - `tools.shell.maxJobs` (default `3`).
 - `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
+- `tools.screen.enabled` (default `false`): the macOS `os.screen.*` computer-use tools ([OS tools](../../tools/os/README.md)); read at start.
+
+## browser
+
+- `browser.blockedDomains` (default `[]`): hosts the browser tools refuse at every approval level, subdomains included.
+- `browser.allowedDomains` (default `[]`): when non-empty, opening any other host asks first (`browser_offsite`).
 
 ## sessions
 

@@ -84,6 +84,12 @@ function grammarRequestFields(params: LlmStreamParams) {
     // own template (F31). Built by the step executor only when the
     // primary is a grammar link, so it always matches `params.prompt`.
     ...(params.chat ? { chat: params.chat } : {}),
+    // A thinking profile's lifted reply cap (ATO-1031), for a grammar
+    // link only and only when the request names no cap of its own.
+    ...(typeof params.localReplyCap === "number" &&
+    typeof params.maxTokens !== "number"
+      ? { maxTokens: params.localReplyCap }
+      : {}),
     // How far the prompt got before the first token (ATO-1027); only a
     // llama-server stream reports it.
     ...(params.onPromptProgress

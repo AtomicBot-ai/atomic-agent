@@ -1,5 +1,5 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { getConfig, getTrustConfigPaths } from "../../config/index.js";
+import { getConfig, getStateSecretPaths, getTrustConfigPaths } from "../../config/index.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
@@ -13,12 +13,14 @@ import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
+import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
+import { isSecretEnvName } from "../../sandbox/command-env.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
 import { buildBrowserTools } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
-import { registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
+import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
 import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
@@ -40,6 +42,50 @@ import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
 import { resolveComposioServerConfig } from "../../composio/index.js";
 
+/** Header names whose value is a credential (`Authorization`, `X-Api-Key`, `Cookie`, ...). */
+const SECRET_HEADER = /authorization|api[-_]?key|token|secret|password|cookie|auth/i;
+
+/**
+ * The exact secrets masked in tool output (ATO-1077): the agent's `.env`
+ * (loaded into `process.env`) and the credentials stored in the config
+ * file: provider keys and secret headers, the local server's key,
+ * webhook secrets, and MCP servers' secret env values and headers. Read
+ * per call, so a key added through `/providers` mid-session is covered.
+ */
+export function runtimeKnownSecrets(
+  config: Partial<Pick<AtomicAgentConfig, "llm" | "localModels" | "webhooks" | "mcp">>,
+  env: NodeJS.ProcessEnv = process.env,
+): KnownSecret[] {
+  const out = knownSecretsFromEnv(env);
+  const add = (label: string, value: unknown): void => {
+    if (typeof value === "string" && value.length > 0) out.push({ label, value });
+  };
+  const addHeaders = (label: string, headers: Readonly<Record<string, string>> | undefined): void => {
+    for (const [name, value] of Object.entries(headers ?? {})) {
+      if (!SECRET_HEADER.test(name)) continue;
+      add(label, value);
+      // `Bearer <token>` also appears without its scheme.
+      const token = /^\S+\s+(\S{8,})$/.exec(value)?.[1];
+      if (token !== undefined) add(label, token);
+    }
+  };
+  for (const entry of config.llm?.providers ?? []) {
+    add(`${entry.id}-key`, entry.apiKey);
+    addHeaders(`${entry.id}-header`, entry.headers);
+  }
+  add("local-models-key", config.localModels?.apiKey);
+  for (const [name, hook] of Object.entries(config.webhooks ?? {})) {
+    add(`webhook-${name}-secret`, hook.secret);
+  }
+  for (const server of config.mcp?.servers ?? []) {
+    for (const [name, value] of Object.entries(server.env ?? {})) {
+      if (isSecretEnvName(name)) add(`mcp-${server.name}-${name}`, value);
+    }
+    if (server.transport.kind !== "stdio") addHeaders(`mcp-${server.name}-header`, server.transport.headers);
+  }
+  return out;
+}
+
 export function createRuntimeToolRegistry(
   config: AtomicAgentConfig,
   browserBackend: BrowserBackend,
@@ -48,11 +94,18 @@ export function createRuntimeToolRegistry(
 ) {
 
 
-  const toolRegistry = new ToolRegistry(outputSpill ? { outputSpill } : {});
+  const toolRegistry = new ToolRegistry({
+    ...(outputSpill ? { outputSpill } : {}),
+    knownSecrets: () => runtimeKnownSecrets(getConfig()),
+  });
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);
   if (config.browser.enabled) {
-    for (const tool of buildBrowserTools(browserBackend, dangerous)) {
+    const domainPolicy = {
+      blockedDomains: config.browser.blockedDomains,
+      allowedDomains: config.browser.allowedDomains,
+    };
+    for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy)) {
       toolRegistry.register(tool);
     }
   }
@@ -66,13 +119,14 @@ export function registerRuntimeCoreTools(input: {
   sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines">;
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
+  resolvePreviousReply?: (sessionId: string) => string | undefined;
   declaredInputs: DeclaredInputsRegistry;
   shellJobs: ShellJobRegistry;
   skillRegistry: SkillRegistry;
   /** Where the user adds an Exa key, for the web-search error (ATO-345). */
   webSearchKeyHelp?: WebSearchKeyHelp;
 } & Pick<RegisterMemoryToolsOptions, "profileStore" | "notesStore" | "lessonStore" | "procedureStore">): void {
-  const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, declaredInputs,
+  const { config, toolRegistry, dangerous, sessionStore, resolveOriginalRequest, resolvePreviousReply, declaredInputs,
     shellJobs, skillRegistry, profileStore, notesStore, lessonStore, procedureStore, logger,
     webSearchKeyHelp } = input;
 
@@ -86,6 +140,7 @@ export function registerRuntimeCoreTools(input: {
     },
     listRecentSessionDirs: (limit) => sessionStore.listRecentWorkingDirs(limit),
     resolveOriginalRequest: resolveOriginalRequest,
+    resolvePreviousReply,
     declaredInputs,
     // The trust surface (`config.json` + `.env`) is resolved once, here,
     // and injected into the fs tools — the tools layer must not know
@@ -107,6 +162,14 @@ export function registerRuntimeCoreTools(input: {
     shellJobs,
     ...(webSearchKeyHelp === undefined ? {} : { webSearchKeyHelp }),
   });
+  // Computer use (ATO-525): screenshot, click, type, key — macOS only and
+  // opt-in (`tools.screen.enabled`, default off). A screenshot asks as
+  // `screen_capture`, every input action as `screen_control`; the
+  // descriptors follow the same gate below.
+  registerOsScreenTools(toolRegistry, {
+    ...dangerous,
+    enabled: config.tools.screen.enabled,
+  });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the
   // working directory. Registered next to the OS tools because it is
@@ -121,7 +184,14 @@ export function registerRuntimeCoreTools(input: {
   // `rebuildToolDescriptorsFromMcp`) so the model never sees tools it
   // cannot exercise.
   registerGithubTools(toolRegistry, dangerous);
-  registerSkillTools(toolRegistry, skillRegistry, dangerous);
+  // Skill scripts inherit the shell's filtered environment and its
+  // passthrough list (ATO-877): one answer to "which keys reach a child".
+  registerSkillTools(
+    toolRegistry,
+    skillRegistry,
+    dangerous,
+    config.tools.shell.envPassthrough,
+  );
   toolRegistry.register(buildToolViewTool());
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.
@@ -407,6 +477,9 @@ export async function connectRuntimeMcpCatalog(input: {
       image: { available: openRouterImageKey(getConfig()) !== undefined },
       // Same key, same reason: every clip is made on OpenRouter.
       video: { available: openRouterImageKey(getConfig()) !== undefined },
+      // Boot-time, like the registration above: the tools exist only when
+      // they were switched on before start and the host is a Mac.
+      screen: { enabled: config.tools.screen.enabled && process.platform === "darwin" },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -585,9 +658,16 @@ export function registerRuntimeFusionAndReadScope(input: {
   // scope as a token check. Installed here, after every native
   // filesystem tool and the shell are registered. The scope is re-read
   // per call, so `agent.readScope: "unrestricted"` needs no restart.
+  // The agent's own secret files (`.env`, `config.json`, local server
+  // keys) ask as `state_secret` on any read or shell command naming
+  // them, whatever the scope and below full trust (ATO-877).
   confineReads(toolRegistry, {
     grantedDirs: (sessionId) => approvals.fanoutScopes.scopeFor(sessionId),
     readScope: () => getConfig().agent.readScope,
     approvals: dangerous,
+    stateSecrets: {
+      stateDir: config.paths.stateDir,
+      files: getStateSecretPaths(config.paths),
+    },
   });
 }

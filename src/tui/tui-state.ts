@@ -1,3 +1,4 @@
+import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
 import {
   clampApprovalLevel,
   type ApprovalLevel,
@@ -607,6 +608,11 @@ export interface TuiState {
    */
   updatePrompt: { current: string; latest: string } | null;
   /**
+   * Startup question about the opened folder's untrusted project skills
+   * and instruction files (ATO-298). Drives the ProjectTrustModal.
+   */
+  projectTrustPrompt: ProjectTrustPrompt | null;
+  /**
    * Persistent "a newer release exists" fact behind the status-bar
    * banner. Set alongside {@link updatePrompt} and — unlike the prompt —
    * NOT cleared by `update_dismissed`: skipping the modal means "not
@@ -932,6 +938,7 @@ export function createInitialTuiState(
     themePickerOriginal: "",
     aborting: false,
     updatePrompt: null,
+    projectTrustPrompt: null,
     updateBanner: null,
     updateStatus: "idle",
     ringBufferSize,

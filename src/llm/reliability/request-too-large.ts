@@ -36,6 +36,8 @@ export class RequestTooLargeError extends LlmFailure {
     /** The context window the server named, in tokens, or null. */
     readonly contextWindow: number | null,
     options?: LlmFailureOptions,
+    /** The refusal was about the context window (named or not). */
+    readonly aboutContext: boolean = contextWindow !== null,
   ) {
     super(message, options);
     this.name = "RequestTooLargeError";
@@ -86,5 +88,5 @@ export function toRequestTooLargeError(err: LlamaServerError): RequestTooLargeEr
       : "The model server refused the request as too large.";
   return new RequestTooLargeError(`${head} ${err.message}`, window, {
     cause: err,
-  });
+  }, aboutContext || window !== null);
 }

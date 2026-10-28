@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { setProjectSkillsEnabled, setSkillDisabled } from "../config/skill-policy-commands.js";
+import { recordProjectTrust, setProjectSkillsEnabled, setSkillDisabled } from "../config/skill-policy-commands.js";
 import { readUserConfigFileSync } from "../config/config-file.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { reconcileCloudSkills } from "../session/workspace-context.js";
@@ -26,6 +26,8 @@ describe("session workspace skills and live policy", () => {
     const path = join(dir, name, "SKILL.md"); mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, `---\nname: ${name}\ndescription: Example skill\n${extra}\n---\n${body}`); return path;
   }
+  /** Project skills load only once the operator trusted the folder (ATO-298). */
+  function trust(dir: string, ...skills: string[]) { recordProjectTrust(dir, "trusted", { skills, instructions: [] }); }
   function load(dir = a, compatible = true) {
     const c = getConfig(); return loadWorkspaceSkills(dir, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile, defaults: c.skills }, compatible);
   }
@@ -74,7 +76,7 @@ describe("session workspace skills and live policy", () => {
   });
 
   it("rereads changed bodies, deactivates switched/deleted sources and never mutates local loads", () => {
-    const path = put(join(a, ".agents/skills"), "example", "old");
+    const path = put(join(a, ".agents/skills"), "example", "old"); trust(a, "example");
     const loader = createWorkspaceLoader(getConfig());
     let session = createEmptySessionState({ id: "a", workingDir: a });
     session.loadedSkills = [{ name: "example", version: "1", body: "legacy", loadedAt: 1 }];
@@ -93,7 +95,7 @@ describe("session workspace skills and live policy", () => {
 
   it("binds view, references and scripts to the winner and rechecks after approval", async () => {
     const path = put(join(a, ".agents/skills"), "example", "Read references/data.md", "requires_scripts: [run.js]");
-    put(join(a, ".claude/skills"), "example", "wrong lower-priority project copy");
+    put(join(a, ".claude/skills"), "example", "wrong lower-priority project copy"); trust(a, "example");
     mkdirSync(join(dirname(path), "scripts"));
     writeFileSync(join(dirname(path), "scripts/run.js"), "process.stdout.write('PROJECT SCRIPT')");
     const registry = new SkillRegistry({ globalDir: getConfig().paths.globalSkillsDir, projectDir: null }); await registry.refresh();
@@ -156,6 +158,7 @@ describe("session workspace skills and live policy", () => {
   it("does not give a project copy of gog-workspace the built-in approval exception", async () => {
     const path = put(join(a, ".agents/skills"), "gog-workspace", "project code", "requires_scripts: [check-gog.sh]\nallowed-tools: Bash");
     mkdirSync(join(dirname(path), "scripts")); writeFileSync(join(dirname(path), "scripts/check-gog.sh"), "echo should-not-run");
+    trust(a, "gog-workspace");
     let approvals = 0;
     const gate = new ApprovalGate({ emit(req) { approvals++; gate.resolve({ approvalId: req.approvalId, approved: false }); } });
     const registry = new SkillRegistry({ globalDir: getConfig().paths.globalSkillsDir, projectDir: null });
@@ -163,6 +166,21 @@ describe("session workspace skills and live policy", () => {
     await expect(tool.run({ skill: "gog-workspace", script: "check-gog.sh" }, { sessionId: "a", stepIndex: 0, workingDir: a, modelMode: "cloud", workspaceSkills: load(), signal: new AbortController().signal })).rejects.toThrow();
     expect(approvals).toBe(1);
   });
+  it("keeps project skills of an untrusted folder out and rechecks trust when one is used", () => {
+    put(join(a, ".agents/skills"), "example"); put(join(b, ".agents/skills"), "example");
+    expect(load().entries[0]?.disabledReasons).toEqual(["not trusted in this folder yet"]);
+    expect(() => load().assertAvailable("example")).toThrow(/not trusted in this folder yet/);
+    trust(a, "example");
+    const trusted = load(); expect(trusted.entries[0]?.disabledReasons).toEqual([]);
+    // Trust is per folder: the same name elsewhere is still pending.
+    expect(load(b).entries[0]?.disabledReasons).toEqual(["not trusted in this folder yet"]);
+    // Local (non-compatibility) discovery is gated the same way.
+    put(join(a, ".atomic-agent/skills"), "native");
+    expect(load(a, false).entries.find(e => e.record.manifest.name === "native")?.disabledReasons).toEqual(["not trusted in this folder yet"]);
+    recordProjectTrust(a, "declined", { skills: ["example"], instructions: [] });
+    expect(() => trusted.assertAvailable("example")).toThrow(/declined in this folder/);
+  });
+
   it("degrades a missing workspace to a diagnostic instead of throwing", () => {
     const skills = load(join(base, "gone"));
     expect(skills.entries).toEqual([]);
@@ -175,7 +193,8 @@ describe("session workspace skills and live policy", () => {
     const c = getConfig();
     mkdirSync(dirname(c.paths.userConfigFile), { recursive: true }); writeFileSync(c.paths.userConfigFile, "{ not json");
     const skills = loadWorkspaceSkills(a, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName,
-      configFile: c.paths.userConfigFile, defaults: { ...c.skills, disabled: ["banned"] } });
+      configFile: c.paths.userConfigFile, defaults: { ...c.skills, disabled: ["banned"],
+        projectTrust: [{ workingDir: realpathSync.native(a), trustedSkills: ["banned", "kept"], declinedSkills: [], trustedInstructions: [], declinedInstructions: [] }] } });
     expect(skills.entries.find(e => e.record.manifest.name === "kept")?.disabledReasons).toEqual([]);
     expect(skills.entries.find(e => e.record.manifest.name === "banned")?.disabledReasons).toEqual(["disabled globally"]);
     expect(skills.diagnostics.join("\n")).toMatch(/config unreadable/);
