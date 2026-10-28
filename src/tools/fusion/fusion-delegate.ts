@@ -31,6 +31,7 @@ import {
   planWaves,
 } from "./contract-waves.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
+import { LocalLegHealth } from "./local-leg-health.js";
 import {
   delegateOutcome,
   fanoutSpend,
@@ -170,8 +171,14 @@ export function describeFanoutPreview(
 }
 
 export function buildFusionDelegateTool(
-  deps: FusionDelegateDeps,
+  input: FusionDelegateDeps,
 ): ToolDefinition {
+  // One per tool, so per runtime: a local server wedged by one fan-out's
+  // cut-off worker is still wedged for the next fan-out (ATO-917).
+  const deps: FusionDelegateDeps = {
+    ...input,
+    localLegHealth: input.localLegHealth ?? new LocalLegHealth(),
+  };
   return {
     name: FUSION_DELEGATE_TOOL,
     description:

@@ -35,6 +35,12 @@ import {
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
+import {
+  LOCAL_LEG_UNRESPONSIVE_ERROR,
+  LOCAL_LEG_UNRESPONSIVE_HINT,
+  type LocalHealthAnswer,
+  type LocalLegHealth,
+} from "./local-leg-health.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -450,6 +456,14 @@ export interface WorkerRunnerDeps {
   probeSlotOccupancy?: () => Promise<SlotOccupancy | null>;
   /** Where a raised task budget is logged. Absent, it is only noted on the row. */
   logger?: Pick<StructuredLogger, "info">;
+  /**
+   * The local leg's dispatch health across fan-outs (ATO-917): marked
+   * when a local worker is cut off, checked before the next local worker
+   * is sent. Absent (tests, embedders, a cloud leg) nothing is checked.
+   */
+  localLegHealth?: LocalLegHealth;
+  /** `LlamaServerClient.probeHealth`, the question the check above asks. */
+  probeLocalHealth?: () => Promise<LocalHealthAnswer>;
 }
 
 export interface RunWorkerTasksOptions {
@@ -578,6 +592,49 @@ async function runOneTask(
       durationMs: 0,
       error: "worker session id collided with the parent session id",
     });
+  }
+
+  // A local leg that went silent after a worker on it was cut off is not
+  // sent another worker to wait out its queue budget on (ATO-917): the
+  // server is asked first, and a server that does not answer fails the
+  // task now, saying so.
+  if (
+    options.localLeg === true &&
+    deps.localLegHealth !== undefined &&
+    !(await deps.localLegHealth.readyForDispatch(
+      deps.probeLocalHealth,
+      undefined,
+      options.signal,
+    ))
+  ) {
+    const cause = deps.localLegHealth.cause();
+    const refused: WorkerTaskResult = {
+      ...collector.finish({
+        id: task.id,
+        title: task.title,
+        reason: null,
+        stepCount: 0,
+        durationMs: Date.now() - startedAt,
+        error: LOCAL_LEG_UNRESPONSIVE_ERROR,
+      }),
+      hint: LOCAL_LEG_UNRESPONSIVE_HINT,
+      notes: [
+        `not sent: the local server did not answer /health${cause === null ? "" : ` after ${cause}`}`,
+      ],
+      queueWaitMs: null,
+    };
+    deps.emitEvent(options.parentSessionId, {
+      type: "fusion_worker",
+      taskId: task.id,
+      title: task.title,
+      phase: "failed",
+      role: "worker",
+      model: options.workerModel,
+      stepCount: 0,
+      durationMs: refused.durationMs,
+      summary: summarise(refused),
+    });
+    return refused;
   }
 
   // `started` fires when the turn actually begins stepping, not when it
@@ -1047,6 +1104,21 @@ async function runOneTask(
     // drop: a worker never gets a grant of its own.
     deps.approvals.clearSessionGrants?.(session.id);
     deps.declaredInputs?.clear(session.id);
+  }
+
+  // A local worker that ended by an abort — its clock, its queue wait,
+  // its hand-back or the operator — may have left the server wedged
+  // (ATO-917); the next local dispatch asks the server first.
+  if (
+    options.localLeg === true &&
+    (timedOutOutcome ||
+      queuedOutcome ||
+      stoppedByHandBack ||
+      options.signal.aborted)
+  ) {
+    deps.localLegHealth?.noteCut(
+      `task ${task.id} was ${timedOutOutcome ? "timed out" : queuedOutcome ? "never served" : stoppedByHandBack ? "handed back" : "cancelled"}`,
+    );
   }
 
   // How long the server took to say anything. The one number that tells
