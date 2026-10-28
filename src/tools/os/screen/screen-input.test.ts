@@ -21,7 +21,7 @@ const BROWSERS = [
   ["Safari", "com.apple.Safari"], ["Google Chrome", "com.google.Chrome"], ["Arc", "company.thebrowser.Browser"],
   ["Microsoft Edge", "com.microsoft.edgemac"], ["Firefox", "org.mozilla.firefox"], ["Brave Browser", "com.brave.Browser"],
   ["Opera", "com.operasoftware.Opera"], ["Vivaldi", "com.vivaldi.Vivaldi"], ["Chromium", "org.chromium.Chromium"],
-  ["Orion", "com.kagi.kagimacOS"], ["DuckDuckGo", "com.duckduckgo.macos.browser"],
+  ["Orion", "com.kagi.kagimacOS"], ["DuckDuckGo", "com.duckduckgo.macos.browser"], ["Waterfox", "net.waterfox.waterfox"],
   // Sub-ids: a Chrome web app and a Safari web app (Add to Dock) are the browser too.
   ["Gmail", "com.google.Chrome.app.fmgjjmmmlfnkbppncabfkddbjimcfncm"], ["Web App", "com.apple.Safari.WebApp.1234-ABCD"],
 ].map(([name, bundleId]) => ({ name: name!, bundleId: bundleId! }));
@@ -29,6 +29,7 @@ const CODE_APPS = [
   ["Terminal", "com.apple.Terminal"], ["iTerm2", "com.googlecode.iterm2"], ["Warp", "dev.warp.Warp-Stable"],
   ["Ghostty", "com.mitchellh.ghostty"], ["Visual Studio Code", "com.microsoft.VSCode"], ["Cursor", "com.todesktop.230313mzl4w4u92"],
   ["IntelliJ IDEA", "com.jetbrains.intellij"], ["PyCharm", "com.jetbrains.pycharm"], ["WebStorm", "com.jetbrains.WebStorm"],
+  ["Warp Preview", "dev.warp.Warp-Preview"], ["Sublime Text 3", "com.sublimetext.3"], ["MacVim", "org.vim.MacVim"], ["Emacs", "org.gnu.Emacs"],
 ].map(([name, bundleId]) => ({ name: name!, bundleId: bundleId! }));
 /** An agent started outside any terminal (the desktop's own launch is `io.atomicagent.desktop`, blocked anyway). */
 const NO_HOST = { PATH: "/usr/bin" };
@@ -209,6 +210,15 @@ describe("terminals and IDEs take clicks but no typing or keys", () => {
     expect(request).not.toHaveBeenCalled();
   });
 
+  it("launchers and script runners take no input: typing a command into Alfred or Raycast runs it", async () => {
+    for (const bundleId of ["com.runningwithcrayons.Alfred", "com.raycast.macos", "org.hammerspoon.Hammerspoon", "com.stairways.keyboardmaestro.engine"]) {
+      const { request, options } = setup({ frontmost: { name: bundleId, bundleId }, env: NO_HOST });
+      const result = await buildOsScreenTypeTool(options).run({ text: "> rm -rf ~" }, screenCtx());
+      expect(result.details.appClass, bundleId).toBe("blocked");
+      expect(request, bundleId).not.toHaveBeenCalled();
+    }
+  });
+
   it("an unknown app is allowed behind the approval; an unidentified one is refused", async () => {
     const known = setup({ frontmost: { name: "Notes", bundleId: "com.apple.Notes" } });
     expect((await buildOsScreenTypeTool(known.options).run({ text: "a" }, screenCtx())).status).toBe("ok");
@@ -263,6 +273,13 @@ describe("os.screen.type", () => {
     expect(previewText("line\nbreak")).toBe('text (10 chars): "line\\nbreak"');
   });
 
+  it("the paste route saves and restores every clipboard item and type, not only plain text", () => {
+    expect(SCREEN_JXA_SOURCE).toContain("pb.pasteboardItems");
+    expect(SCREEN_JXA_SOURCE).toContain("copy.setDataForType(data, type)");
+    expect(SCREEN_JXA_SOURCE).toContain("pb.writeObjects($(saved))");
+    expect(SCREEN_JXA_SOURCE).not.toContain("pb.setStringForType($(saved)");
+  });
+
   it("passes the paste route through and rejects unknown ones", async () => {
     const { fake, options } = setup();
     await buildOsScreenTypeTool(options).run({ text: "привет 👋", via: "paste" }, screenCtx());
@@ -290,7 +307,7 @@ describe("os.screen.key", () => {
   });
 
   it("refuses app and space switchers before probing", async () => {
-    for (const keys of ["cmd+tab", "cmd+shift+tab", "cmd+`", "ctrl+left", "cmd+space"]) {
+    for (const keys of ["cmd+tab", "cmd+shift+tab", "cmd+`", "ctrl+left", "cmd+space", "alt+space"]) {
       const { fake, request, options } = setup();
       const result = await buildOsScreenKeyTool(options).run({ keys }, screenCtx());
       expect(result.status, keys).toBe("error");

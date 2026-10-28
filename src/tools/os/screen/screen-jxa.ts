@@ -108,17 +108,34 @@ function typeChunk(chunk) {
   post(up);
   delay(0.01);
 }
+function savePasteboard(pb) {
+  var out = [];
+  var items = pb.pasteboardItems;
+  if (!items || items.isNil()) return out;
+  for (var i = 0; i < items.count; i++) {
+    var item = items.objectAtIndex(i);
+    var types = item.types;
+    var copy = $.NSPasteboardItem.alloc.init;
+    for (var j = 0; j < types.count; j++) {
+      var type = types.objectAtIndex(j);
+      var data = item.dataForType(type);
+      if (data && !data.isNil()) copy.setDataForType(data, type);
+    }
+    out.push(copy);
+  }
+  return out;
+}
 function pasteText(text) {
   var pb = $.NSPasteboard.generalPasteboard;
-  var previous = pb.stringForType($.NSPasteboardTypeString);
-  var had = previous && !previous.isNil();
-  var saved = had ? ObjC.unwrap(previous) : null;
+  // Every item in every type (an image, files, rich text), not only plain text, comes back afterwards.
+  var saved = safe(function () { return savePasteboard(pb); }, []);
   pb.clearContents;
   pb.setStringForType($(text), $.NSPasteboardTypeString);
   pressKey(9, 0x100000);
-  delay(0.3);
+  // A busy app reads the pasteboard late; restoring too soon would paste the old clipboard instead.
+  delay(0.8);
   pb.clearContents;
-  if (had) pb.setStringForType($(saved), $.NSPasteboardTypeString);
+  if (saved.length) pb.writeObjects($(saved));
 }
 function typeText(text, via) {
   if (via === "paste") { pasteText(text); return "paste"; }
