@@ -547,9 +547,10 @@ export function createOpenAiAttemptBudget(): OpenAiAttemptBudget {
 const OPENAI_BACKOFF_BASE_MS = 150;
 /**
  * Ceiling on how long a provider's `retry-after` can stall one attempt.
- * Interactive turns cannot absorb a "come back in 60s" wait; a provider
- * asking for more than this gets the capped wait and then the next
- * attempt (or the typed error, which the caller can act on).
+ * Interactive turns cannot absorb a "come back in 60s" wait here; a
+ * provider asking for more than this gets the typed error at once, and
+ * the turn's outage wait (or a configured fallback link) takes it from
+ * there.
  */
 const OPENAI_RETRY_AFTER_CAP_MS = 5_000;
 
@@ -1007,6 +1008,12 @@ async function runOpenAiWithRetry<T>(
       // surfaced as.
       if (signal?.aborted) throw err;
       if (!isRetryableOpenAiError(err) || budget.remaining <= 0) throw err;
+      // A provider asking for a longer cooldown than this layer will wait
+      // gets it from the turn (the outage wait honours the whole hint) or
+      // from the person's fallback link, not from a quick retry it already
+      // said it will refuse: that only spends requests against the same
+      // rate limit (ATO-483).
+      if (asksLongerThanCap(err)) throw err;
       await sleep(resolveWaitMs(err, attemptNumber), signal);
     }
   }
@@ -1017,8 +1024,8 @@ async function runOpenAiWithRetry<T>(
 /**
  * Wait between attempts: exponential backoff with ±20% jitter (matching
  * the llama client), stretched to a provider-requested `retry-after`
- * when one was sent — capped so a long server-side cooldown cannot
- * stall an interactive turn.
+ * when one was sent. A cooldown past the cap is never slept here: the
+ * caller throws instead (`asksLongerThanCap`).
  */
 function resolveWaitMs(err: unknown, attemptNumber: number): number {
   const exp = OPENAI_BACKOFF_BASE_MS * Math.pow(2, attemptNumber - 1);
@@ -1029,6 +1036,14 @@ function resolveWaitMs(err: unknown, attemptNumber: number): number {
       ? Math.min(err.retryAfterMs, OPENAI_RETRY_AFTER_CAP_MS)
       : 0;
   return Math.max(backoff, retryAfter);
+}
+
+function asksLongerThanCap(err: unknown): boolean {
+  return (
+    err instanceof OpenAiHttpError &&
+    err.retryAfterMs !== null &&
+    err.retryAfterMs > OPENAI_RETRY_AFTER_CAP_MS
+  );
 }
 
 /**

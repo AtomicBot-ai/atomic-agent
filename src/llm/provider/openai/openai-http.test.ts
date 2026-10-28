@@ -304,20 +304,37 @@ describe("openAiPostJson", () => {
       await expectSecondFetchAfter(pending, fetchImpl, 500);
     });
 
-    it("caps a long structured delay like a header-declared one", async () => {
-      vi.useFakeTimers();
-      vi.spyOn(Math, "random").mockReturnValue(0.5);
+    it("does not retry at once when the provider asks for longer than the cap (ATO-483)", async () => {
+      // A quick retry against a 39 s cooldown is a refused request and a
+      // spent rate-limit slot; the error goes up with the hint instead.
       const fetchImpl = vi
         .fn()
         .mockResolvedValueOnce(errorResponse(429, retryInfoBody("39s")))
         .mockResolvedValueOnce(jsonResponse({ ok: true }));
-      const pending = openAiPostJson(
+      const err = await openAiPostJson(
         depsWith(fetchImpl as unknown as typeof fetch),
         "/x",
         {},
         {},
-      );
-      await expectSecondFetchAfter(pending, fetchImpl, 5_000);
+      ).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(OpenAiHttpError);
+      expect((err as OpenAiHttpError).retryAfterMs).toBe(39_000);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry a header-declared long retry-after either", async () => {
+      const fetchImpl = vi
+        .fn()
+        .mockResolvedValueOnce(errorResponse(503, "busy", { "retry-after": "60" }))
+        .mockResolvedValueOnce(jsonResponse({ ok: true }));
+      const err = await openAiPostJson(
+        depsWith(fetchImpl as unknown as typeof fetch),
+        "/x",
+        {},
+        {},
+      ).catch((e: unknown) => e);
+      expect((err as OpenAiHttpError).status).toBe(503);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
     it("reads the metadata only on throttling statuses", async () => {
@@ -343,7 +360,7 @@ describe("openAiPostJson", () => {
       const controller = new AbortController();
       const fetchImpl = vi
         .fn()
-        .mockResolvedValueOnce(errorResponse(429, retryInfoBody("39s")));
+        .mockResolvedValueOnce(errorResponse(429, retryInfoBody("4s")));
       const pending = openAiPostJson(
         depsWith(fetchImpl as unknown as typeof fetch),
         "/x",
