@@ -1331,6 +1331,7 @@ function wireIpc(client: AgentClient): void {
   };
   resource("capabilities", () => client.capabilities());
   resource("config", () => client.config());
+  resource("modelTiers", () => client.modelTiers());
   const skillSession = (value: unknown): string | null => {
     if (value == null || value === "") return null;
     if (typeof value !== "string" || value.length > 256) throw new Error("invalid session id");
