@@ -137,7 +137,11 @@
      either; ui-monospace / Menlo catch it. */
   --font-ui:"Figtree","Inter",system-ui,sans-serif;
   --font-mono:"DM Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
-  --fs-label:12px; --fs-cap:13px; --fs-body:14.5px; --fs-sub:17px;
+  /* ATO-1025: the type scale. Every font size below the tokens is one of
+     these; the half sizes (11.5, 12.5, 13.5…) were rounded to the nearest
+     step, so there are nine sizes where there were thirty. Sizes above 20px
+     (onboarding and empty-state headlines) stay as written. */
+  --fs-micro:11px; --fs-label:12px; --fs-cap:13px; --fs-ui:14px; --fs-body:14.5px; --fs-lead:15px; --fs-sub:17px;
   --fs-title:20px; --fs-display:34px;
   --tr-display:-0.04em; --tr-sub:-0.02em; --tr-label:0;
 
@@ -228,7 +232,7 @@
 html,body{height:100%}
 body{
   margin:0; background:var(--well); color:var(--ink);
-  font-family:var(--font-ui); font-size:14px; line-height:1.45; letter-spacing:-.003em;
+  font-family:var(--font-ui); font-size:var(--fs-ui); line-height:1.45; letter-spacing:-.003em;
   -webkit-font-smoothing:antialiased; overflow:hidden;
 }
 /* Resets sit inside :where() so they never outrank a component rule — a
@@ -240,15 +244,15 @@ body{
 ::selection{background:var(--brand-wash-2);color:var(--ink)}
 svg{display:block;flex:none}
 .tnum{font-variant-numeric:tabular-nums}
-.mono,.t-mono{font-family:var(--font-mono);font-size:12px;line-height:18px;letter-spacing:0;font-variant-numeric:tabular-nums}
+.mono,.t-mono{font-family:var(--font-mono);font-size:var(--fs-label);line-height:18px;letter-spacing:0;font-variant-numeric:tabular-nums}
 /* The 0.5.5 uppercase micro label is retired: sentence case, a weight step
    and a quieter ink carry "this names what follows". */
-.micro{font-size:12px;line-height:16px;font-weight:600;color:var(--ink-2);letter-spacing:0;text-transform:none}
-.cap{font-size:12px;line-height:16px;color:var(--ink-2)}
+.micro{font-size:var(--fs-label);line-height:16px;font-weight:600;color:var(--ink-2);letter-spacing:0;text-transform:none}
+.cap{font-size:var(--fs-label);line-height:16px;color:var(--ink-2)}
 .sec{color:var(--ink-2)} .ter{color:var(--ink-3)}
-.hd{font-size:15px;line-height:20px;font-weight:600;letter-spacing:-.015em}
-.ttl{font-size:17px;line-height:22px;font-weight:600;letter-spacing:-.02em}
-.t-label{font-size:12px;font-weight:600;color:var(--ink-2);line-height:1.45}
+.hd{font-size:var(--fs-lead);line-height:20px;font-weight:600;letter-spacing:-.015em}
+.ttl{font-size:var(--fs-sub);line-height:22px;font-weight:600;letter-spacing:-.02em}
+.t-label{font-size:var(--fs-label);font-weight:600;color:var(--ink-2);line-height:1.45}
 .t-body{font-size:var(--fs-body);line-height:1.5;color:var(--ink)}
 .t-sub{font-size:var(--fs-sub);letter-spacing:var(--tr-sub);font-weight:600;line-height:1.25}
 .t-title{font-size:var(--fs-title);letter-spacing:-.03em;font-weight:600;line-height:1.2}
@@ -303,12 +307,12 @@ body{scrollbar-color:color-mix(in srgb, var(--ink) 24%, transparent) transparent
    indigo and brand fills. Sizes: default 34 · .sm 30 · .xs 26 · .lg 44. */
 .btn,.b{display:inline-flex;align-items:center;justify-content:center;gap:6px;height:34px;padding:0 14px;
   border-radius:var(--r-pill);border:0;background:var(--hover);color:var(--ink);
-  font:600 13.5px/1 var(--font-ui);letter-spacing:-.003em;white-space:nowrap;cursor:pointer;flex:none;position:relative;
+  font:600 var(--fs-ui)/1 var(--font-ui);letter-spacing:-.003em;white-space:nowrap;cursor:pointer;flex:none;position:relative;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease),transform var(--t-state) var(--ease)}
 .btn:hover,.b:hover{background:var(--press)}
-.btn.sm,.b.sm{height:30px;padding:0 12px;font-size:12.5px}
-.btn.xs{height:26px;padding:0 10px;font-size:12px}
-.btn.lg{height:44px;padding:0 22px;font-size:14.5px}
+.btn.sm,.b.sm{height:30px;padding:0 12px;font-size:var(--fs-cap)}
+.btn.xs{height:26px;padding:0 10px;font-size:var(--fs-label)}
+.btn.lg{height:44px;padding:0 22px;font-size:var(--fs-body)}
 .btn.icon{width:34px;padding:0}.btn.icon.sm{width:30px}.btn.icon.xs{width:26px}
 .btn svg{width:15px;height:15px}
 .btn-p,.b-primary{background:var(--ink);color:var(--paper)}
@@ -341,7 +345,7 @@ body{scrollbar-color:color-mix(in srgb, var(--ink) 24%, transparent) transparent
 /* ---- Keycap ---- */
 .kc,.tk-kbd{min-width:18px;height:18px;display:inline-flex;align-items:center;justify-content:center;padding:0 5px;
   border:1px solid var(--bd-2);border-radius:var(--r-kbd);background:transparent;
-  font:400 10.5px/1 var(--font-mono);color:var(--ink-3);letter-spacing:0;white-space:nowrap;flex:none}
+  font:400 var(--fs-micro)/1 var(--font-mono);color:var(--ink-3);letter-spacing:0;white-space:nowrap;flex:none}
 .btn .kc{margin-left:2px}
 .btn-p .kc{color:color-mix(in srgb, var(--paper) 72%, transparent);border-color:color-mix(in srgb, var(--paper) 30%, transparent)}
 .btn-blue .kc,.btn-df .kc,.btn-glass .kc{color:var(--on-strong);border-color:var(--glass-20)}
@@ -362,12 +366,12 @@ body{scrollbar-color:color-mix(in srgb, var(--ink) 24%, transparent) transparent
 .seg,.tk-seg{display:inline-flex;align-items:center;gap:2px;padding:3px;border-radius:var(--r-pill);
   background:var(--hover);height:auto;border:0}
 .seg button,.tk-seg button{height:28px;padding:0 13px;border:0;border-radius:var(--r-pill);background:transparent;
-  color:var(--ink-2);font:600 12.5px/1 var(--font-ui);display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
+  color:var(--ink-2);font:600 var(--fs-cap)/1 var(--font-ui);display:inline-flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap;
   box-shadow:none;transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .seg button:hover,.tk-seg button:hover{color:var(--ink)}
 .seg button.on,.seg.spend button.on,.tk-seg button.on,.tk-seg button[aria-pressed="true"]{background:var(--lift);color:var(--ink);box-shadow:var(--sh-soft)}
 .seg button[disabled],.tk-seg button[disabled]{color:var(--ink-3);cursor:default}
-.tk-seg.lg button{height:34px;padding:0 18px;font-size:13.5px}
+.tk-seg.lg button{height:34px;padding:0 18px;font-size:var(--fs-ui)}
 .tk-seg.full{display:flex}.tk-seg.full button{flex:1}
 
 /* ---- Dots, spinner ---- */
@@ -387,10 +391,10 @@ body{scrollbar-color:color-mix(in srgb, var(--ink) 24%, transparent) transparent
    a tag, a count) is a rounded rectangle; only a chip that is a button is a
    pill, so a badge is never taken for a button (Danya, 01.10). */
 .tk-chip,.ann{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:var(--r-badge);
-  background:var(--hover);color:var(--ink-2);font:500 12.5px/1 var(--font-ui);letter-spacing:0;text-transform:none;
+  background:var(--hover);color:var(--ink-2);font:500 var(--fs-cap)/1 var(--font-ui);letter-spacing:0;text-transform:none;
   white-space:nowrap;max-width:100%;flex:none}
 .tk-chip svg{width:14px;height:14px}
-.tk-chip--sm,.ann{height:22px;padding:0 8px;font-size:11.5px}
+.tk-chip--sm,.ann{height:22px;padding:0 8px;font-size:var(--fs-label)}
 .tk-chip--blue{background:var(--brand-wash);color:var(--blue)}
 .tk-chip--amber,.ann.caution{background:var(--amber-wash);color:var(--amber-text)}
 .tk-chip--red,.ann.critical{background:var(--critical-wash);color:var(--critical)}
@@ -431,26 +435,26 @@ button.tk-chip:hover{background:var(--press)}
    A pill well that lifts on focus. Put .tk-inp on the <input> itself;
    .tk-field stacks label · input · help. */
 .tk-inp,.field-inp{height:38px;min-width:0;padding:0 15px;border-radius:var(--r-pill);border:1px solid transparent;
-  background:var(--well);color:var(--ink);font:400 14px/1 var(--font-ui);outline:none;
+  background:var(--well);color:var(--ink);font:400 var(--fs-ui)/1 var(--font-ui);outline:none;
   transition:background var(--t-state) var(--ease),border-color var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease)}
 .tk-inp::placeholder,.field-inp::placeholder{color:var(--ink-3)}
 .tk-inp:hover:not(:disabled){border-color:var(--bd)}
 .tk-inp:focus,.field-inp:focus{background:var(--lift);border-color:var(--brand);box-shadow:var(--focus-ring)}
 .tk-inp:disabled{color:var(--ink-3);cursor:not-allowed}
-.tk-inp.sm{height:32px;padding:0 12px;font-size:13px}
-.tk-inp.lg{height:48px;padding:0 18px;font-size:15px}
-.tk-inp.mono{font-family:var(--font-mono);font-size:12.5px}
+.tk-inp.sm{height:32px;padding:0 12px;font-size:var(--fs-cap)}
+.tk-inp.lg{height:48px;padding:0 18px;font-size:var(--fs-lead)}
+.tk-inp.mono{font-family:var(--font-mono);font-size:var(--fs-cap)}
 .tk-inp.is-error{background:var(--lift);border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
 .tk-inp.is-warn{border-color:var(--amber)}
 textarea.tk-inp,.tk-area{height:auto;min-height:88px;padding:11px 15px;border-radius:18px;line-height:1.5;resize:vertical}
 .tk-inpwrap{display:flex;align-items:center;gap:8px;height:38px;padding:0 6px 0 14px;border-radius:var(--r-pill);
   background:var(--well);border:1px solid transparent;color:var(--ink-3);min-width:0}
 .tk-inpwrap:focus-within{background:var(--lift);border-color:var(--brand);box-shadow:var(--focus-ring)}
-.tk-inpwrap input{flex:1;min-width:0;height:100%;border:0;background:transparent;outline:none;color:var(--ink);font-size:14px}
+.tk-inpwrap input{flex:1;min-width:0;height:100%;border:0;background:transparent;outline:none;color:var(--ink);font-size:var(--fs-ui)}
 .tk-inpwrap input::placeholder{color:var(--ink-3)}
 .tk-field{display:grid;gap:7px;min-width:0}
-.tk-lbl{font-size:12.5px;font-weight:600;color:var(--ink-2)}
-.tk-help{font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.tk-lbl{font-size:var(--fs-cap);font-weight:600;color:var(--ink-2)}
+.tk-help{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 .tk-help--err{color:var(--critical)}.tk-help--warn{color:var(--amber-text)}.tk-help--ok{color:var(--success)}
 
 /* Switch, check, radio, progress. Use real buttons with aria-checked. */
@@ -477,9 +481,9 @@ textarea.tk-inp,.tk-area{height:auto;min-height:88px;padding:11px 15px;border-ra
 .tk-card.pad,.panelcard{padding:18px;display:flex;flex-direction:column;gap:var(--s4)}
 .tk-well{background:var(--well);border-radius:var(--r-well);padding:10px 12px}
 .tk-out{margin:0;padding:10px 12px;border-radius:var(--r-well);background:var(--well);color:var(--ink);
-  font:400 12px/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto}
+  font:400 var(--fs-label)/1.6 var(--font-mono);white-space:pre-wrap;overflow-wrap:anywhere;overflow:auto}
 .tk-notice{display:flex;align-items:center;gap:10px;padding:10px 12px 10px 14px;border-radius:18px;
-  background:var(--lift);box-shadow:var(--sh-card);font-size:13px;line-height:1.45;color:var(--ink);min-width:0}
+  background:var(--lift);box-shadow:var(--sh-card);font-size:var(--fs-cap);line-height:1.45;color:var(--ink);min-width:0}
 .tk-notice > svg{flex:none}
 .tk-notice--amber{background:color-mix(in srgb, var(--amber) 13%, var(--lift));box-shadow:none}
 .tk-notice--amber > svg{color:var(--amber-text)}
@@ -490,7 +494,7 @@ textarea.tk-inp,.tk-area{height:auto;min-height:88px;padding:11px 15px;border-ra
 .tk-notice--green{background:color-mix(in srgb, var(--success) 9%, var(--lift));box-shadow:none}
 .tk-notice--green > svg{color:var(--success)}
 .tk-notice .grow{flex:1;min-width:0}
-.tk-divider{display:flex;align-items:center;gap:12px;font-size:12px;color:var(--ink-2)}
+.tk-divider{display:flex;align-items:center;gap:12px;font-size:var(--fs-label);color:var(--ink-2)}
 .tk-divider::before,.tk-divider::after{content:"";flex:1;height:1px;background:var(--bd)}
 
 /* ---- Lists ----
@@ -508,19 +512,19 @@ button.tk-li:hover,.tk-li.is-hover,.rows > .row:hover{background:var(--hover)}
 .tk-li.dim{color:var(--ink-3)}
 .tk-li:focus-visible,.rows > .row:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .tk-li .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.tk-li .t{font-size:14px;font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk-li .t{font-size:var(--fs-ui);font-weight:600;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tk-li.on .t{color:var(--blue)}
-.tk-li .d{font-size:12.5px;line-height:1.4;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis}
-.tk-li .m{font:400 11.5px/1 var(--font-mono);color:var(--ink-3);flex:none;white-space:nowrap}
+.tk-li .d{font-size:var(--fs-cap);line-height:1.4;color:var(--ink-2);overflow:hidden;text-overflow:ellipsis}
+.tk-li .m{font:400 var(--fs-label)/1 var(--font-mono);color:var(--ink-3);flex:none;white-space:nowrap}
 .rows{display:flex;flex-direction:column}
 .rows .row .nm{font-weight:600}
-.rows .row .sub{font-family:var(--font-mono);font-size:11.5px;color:var(--ink-3)}
+.rows .row .sub{font-family:var(--font-mono);font-size:var(--fs-label);color:var(--ink-3)}
 .row{display:flex;align-items:center;gap:var(--s4);min-height:40px;padding:0 var(--s5);width:100%;border-radius:var(--r-row)}
 .row:hover{background:var(--hover)}
 .row.on{background:var(--brand-wash)}
 .row .main{flex:1;min-width:0;display:flex;align-items:center;gap:var(--s3)}
 .row .t{font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.row .meta{font-size:12px;color:var(--ink-2);white-space:nowrap}
+.row .meta{font-size:var(--fs-label);color:var(--ink-2);white-space:nowrap}
 .row .acts{display:none;gap:var(--s1)}
 .row:hover .acts{display:flex}
 
@@ -528,24 +532,24 @@ button.tk-li:hover,.tk-li.is-hover,.rows > .row:hover{background:var(--hover)}
 .tk-setrow{display:flex;align-items:center;gap:16px;min-height:50px;padding:8px 16px;min-width:0}
 .tk-setrow + .tk-setrow{box-shadow:0 -1px 0 var(--divider)}
 .tk-setrow .body{flex:1;min-width:0}
-.tk-setrow .t{font-weight:600;font-size:14px;color:var(--ink)}
-.tk-setrow .d{font-size:12.5px;line-height:1.45;color:var(--ink-2);margin-top:2px;max-width:62ch}
+.tk-setrow .t{font-weight:600;font-size:var(--fs-ui);color:var(--ink)}
+.tk-setrow .d{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2);margin-top:2px;max-width:62ch}
 
 /* Section header inside a pane: sentence case, never uppercase. */
 .tk-sh,.legend{display:flex;align-items:center;gap:8px;min-height:28px;padding:0 6px;
-  font:600 13px/1.3 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;background:transparent;border:0}
-.tk-sh .c{font-weight:500;font-size:12px;color:var(--ink-3)}
+  font:600 var(--fs-cap)/1.3 var(--font-ui);color:var(--ink-2);letter-spacing:0;text-transform:none;background:transparent;border:0}
+.tk-sh .c{font-weight:500;font-size:var(--fs-label);color:var(--ink-3)}
 .tk-sh .grow,.legend .spacer{flex:1}
 
 /* ---- Tables ---- */
 .tbl-wrap{overflow-x:auto}
-.tk-tbl,.tbl,.matrix{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
-.tk-tbl th,.tbl th,.matrix th{text-align:left;height:32px;padding:0 14px;font:600 12px/1.2 var(--font-ui);color:var(--ink-2);
+.tk-tbl,.tbl,.matrix{width:100%;border-collapse:collapse;font-size:var(--fs-cap);font-variant-numeric:tabular-nums}
+.tk-tbl th,.tbl th,.matrix th{text-align:left;height:32px;padding:0 14px;font:600 var(--fs-label)/1.2 var(--font-ui);color:var(--ink-2);
   letter-spacing:0;text-transform:none;border:0;white-space:nowrap}
 .tk-tbl td,.tbl td,.matrix td{height:38px;padding:0 14px;border:0;border-top:1px solid var(--divider);color:var(--ink-2);white-space:nowrap;box-shadow:none}
 .tk-tbl td:first-child,.tbl td:first-child,.matrix td:first-child{color:var(--ink);font-weight:600}
 .tk-tbl .num,.tbl .num{text-align:right;font-family:var(--font-mono)}
-.tk-tbl .mono{font-size:12px}
+.tk-tbl .mono{font-size:var(--fs-label)}
 .tk-tbl tbody tr{cursor:default}
 .tk-tbl tbody tr.click{cursor:pointer}
 .tk-tbl tbody tr.click:hover td{background:var(--hover)}
@@ -555,30 +559,30 @@ button.tk-li:hover,.tk-li.is-hover,.rows > .row:hover{background:var(--hover)}
 .mdot.auto{background:var(--brand);box-shadow:none}
 
 /* ---- Data plate: dt sans / dd mono ---- */
-.plate,.tk-plate{border:0;background:transparent;padding:0;font:400 12.5px/1.5 var(--font-ui);color:var(--ink-2)}
+.plate,.tk-plate{border:0;background:transparent;padding:0;font:400 var(--fs-cap)/1.5 var(--font-ui);color:var(--ink-2)}
 .plate dl,.tk-plate{display:grid;grid-template-columns:auto minmax(0,1fr);gap:6px 18px;margin:0}
-.plate dt,.tk-plate dt{color:var(--ink-2);text-transform:none;letter-spacing:0;font:400 12.5px/1.5 var(--font-ui);margin:0}
-.plate dd,.tk-plate dd{margin:0;font:400 12px/1.5 var(--font-mono);color:var(--ink);overflow-wrap:anywhere;min-width:0}
-.kvgrid{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 18px;font-size:13px;margin:0}
+.plate dt,.tk-plate dt{color:var(--ink-2);text-transform:none;letter-spacing:0;font:400 var(--fs-cap)/1.5 var(--font-ui);margin:0}
+.plate dd,.tk-plate dd{margin:0;font:400 var(--fs-label)/1.5 var(--font-mono);color:var(--ink);overflow-wrap:anywhere;min-width:0}
+.kvgrid{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 18px;font-size:var(--fs-cap);margin:0}
 .kvgrid dt{color:var(--ink-2)} .kvgrid dd{margin:0;min-width:0;overflow-wrap:anywhere}
 
 /* Readout: machine text that counts in place. */
 .readout{display:inline-block;padding:0;background:transparent;color:var(--ink-2);
-  font:400 12px/20px var(--font-mono);text-align:left;border-radius:0}
+  font:400 var(--fs-label)/20px var(--font-mono);text-align:left;border-radius:0}
 
 /* Checklist card. */
 .chk{display:flex;flex-direction:column;background:var(--lift);border-radius:var(--r-card);box-shadow:var(--sh-card);padding:6px}
 .chk .ln{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:var(--s4);padding:8px 12px;border-radius:var(--r-row)}
 .chk .ln + .ln{box-shadow:0 -1px 0 var(--divider)}
-.chk .ix{font:400 11px/1 var(--font-mono);color:var(--ink-3)}
-.chk .st{font:500 12px/1 var(--font-ui);color:var(--ink-2)}
+.chk .ix{font:400 var(--fs-micro)/1 var(--font-mono);color:var(--ink-3)}
+.chk .st{font:500 var(--fs-label)/1 var(--font-ui);color:var(--ink-2)}
 .chk .st.done{color:var(--success)}
 .chk .st.failed{color:var(--critical)}
 
 /* ---- Popover and menu items ---- */
 .tk-pop{background:var(--lift);border-radius:var(--r-pop);box-shadow:var(--sh-pop);padding:6px;display:flex;flex-direction:column;gap:1px;min-width:0}
-.tk-pop-h{display:flex;align-items:center;gap:8px;padding:8px 10px 4px;font:600 12px/1.3 var(--font-ui);color:var(--ink-2)}
-.tk-mi{display:flex;align-items:center;gap:10px;min-height:34px;padding:5px 10px;border-radius:12px;font-size:13.5px;
+.tk-pop-h{display:flex;align-items:center;gap:8px;padding:8px 10px 4px;font:600 var(--fs-label)/1.3 var(--font-ui);color:var(--ink-2)}
+.tk-mi{display:flex;align-items:center;gap:10px;min-height:34px;padding:5px 10px;border-radius:12px;font-size:var(--fs-ui);
   color:var(--ink);min-width:0;width:100%;text-align:left;cursor:pointer;background:transparent;border:0}
 .tk-mi:hover,.tk-mi.is-hover{background:var(--hover)}
 .tk-mi.on{background:var(--brand-wash)}
@@ -587,7 +591,7 @@ button.tk-li:hover,.tk-li.is-hover,.rows > .row:hover{background:var(--hover)}
 .tk-mi > svg{color:var(--ink-3)}.tk-mi.on > svg{color:var(--blue)}
 .tk-mi .body{flex:1;min-width:0}
 .tk-mi .t{display:block;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.tk-mi .d{display:block;font-size:12px;line-height:1.35;color:var(--ink-2);margin-top:1px}
+.tk-mi .d{display:block;font-size:var(--fs-label);line-height:1.35;color:var(--ink-2);margin-top:1px}
 .tk-mi .r{margin-left:auto;display:flex;align-items:center;gap:6px;flex:none}
 .tk-mi--danger{color:var(--critical)}.tk-mi--danger > svg{color:var(--critical)}
 .tk-sep{height:1px;background:var(--bd);margin:4px 8px;flex:none}
@@ -596,29 +600,32 @@ button.tk-li:hover,.tk-li.is-hover,.rows > .row:hover{background:var(--hover)}
 .tk-modal{background:var(--lift);border-radius:var(--r-card);box-shadow:var(--sh-pop);padding:18px 18px 14px;display:flex;flex-direction:column;gap:10px;min-width:0}
 .tk-modal--danger{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--critical) 55%, transparent),var(--sh-pop)}
 .tk-modal--warn{box-shadow:0 0 0 1.5px color-mix(in srgb, var(--amber) 70%, transparent),var(--sh-pop)}
-.tk-modal h4{margin:0;font-size:16px;font-weight:600;letter-spacing:-.02em;color:var(--ink)}
-.tk-modal p{margin:0;font-size:13.5px;line-height:1.5;color:var(--ink-2)}
+.tk-modal h4{margin:0;font-size:var(--fs-sub);font-weight:600;letter-spacing:-.02em;color:var(--ink)}
+.tk-modal p{margin:0;font-size:var(--fs-ui);line-height:1.5;color:var(--ink-2)}
 .tk-modal .acts{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-top:4px}
 
 /* ---- Keycap hint strip: every hint is also a button ---- */
-.tk-hints{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;font-size:12px;color:var(--ink-2)}
-.tk-hint{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 6px;border-radius:8px;color:var(--ink-2);font-size:12px;background:transparent}
+.tk-hints{display:flex;align-items:center;flex-wrap:wrap;gap:4px 14px;font-size:var(--fs-label);color:var(--ink-2)}
+.tk-hint{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 6px;border-radius:8px;color:var(--ink-2);font-size:var(--fs-label);background:transparent}
 button.tk-hint:hover{background:var(--hover);color:var(--ink)}
 .tk-hint .kc + .kc{margin-left:-2px}
 
 /* ---- Empty state ---- */
 .tk-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;padding:36px 20px;color:var(--ink-2)}
-.tk-empty h4{margin:0;font-size:15px;font-weight:600;color:var(--ink)}
-.tk-empty p{margin:0;font-size:13px;line-height:1.5;max-width:44ch}
+.tk-empty h4{margin:0;font-size:var(--fs-lead);font-weight:600;color:var(--ink)}
+.tk-empty p{margin:0;font-size:var(--fs-cap);line-height:1.5;max-width:44ch}
 
 /* ---- Tooltip ---- */
 .tk-tip{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:10px;background:var(--ink);color:var(--paper);
-  font-size:12px;white-space:nowrap;box-shadow:0 8px 20px -8px var(--shade-40)}
+  font-size:var(--fs-label);white-space:nowrap;box-shadow:0 8px 20px -8px var(--shade-40)}
 .tk-tip .kc{color:var(--paper);border-color:color-mix(in srgb, var(--paper) 35%, transparent)}
 
 /* ---- Pane toolbar: a row of filters, search and actions above a list ---- */
 .tk-bar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0}
 .tk-bar .grow{flex:1;min-width:0}
 .tk-crumb{display:flex;align-items:baseline;gap:6px;min-width:0}
-.tk-crumb .k{font-size:12.5px;color:var(--ink-2)}
-.tk-crumb h3{margin:0;font-size:20px;font-weight:600;letter-spacing:-.03em;color:var(--ink);white-space:nowrap}
+.tk-crumb .k{font-size:var(--fs-cap);color:var(--ink-2)}
+.tk-crumb h3{margin:0;font-size:var(--fs-title);font-weight:600;letter-spacing:-.03em;color:var(--ink);white-space:nowrap}
+
+/* ATO-1250: the folder the trust question is about, under its plain line. */
+.ptrust .ptrust-dir { font-size: var(--fs-micro, 11px); opacity: .7; word-break: break-all; margin-top: -4px; }

@@ -1035,8 +1035,8 @@ const SWXBR = {
   // Each stamps SWX.route so swxRun's `finally` can file the measurement
   // under the route that was actually taken (r5 review, minor).
   switchBackend: (kind) => { SWX.route = 'switchBackend'; return BR.switchBackend(kind); },
-  activateProvider: (id) => { SWX.route = 'activateProvider'; return BR.activateProvider(id); },
-  selectCloudModel: (id, model) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model); },
+  activateProvider: (id, opts) => { SWX.route = 'activateProvider'; return BR.activateProvider(id, opts); },
+  selectCloudModel: (id, model, opts) => { SWX.route = 'selectCloudModel'; return BR.selectCloudModel(id, model, opts); },
   selectLocalModel: (id) => { SWX.route = 'selectLocalModel'; return BR.selectLocalModel(id); },
   codingMode: (id) => { SWX.route = 'codingMode'; return BR.codingMode(id); },
   // Run mode — Fusion: the TUI's RunModeOrchestrator writes (main/backend-switch.ts).
@@ -2299,7 +2299,8 @@ function renderSidebar() {
     (sidebarExpanded() ? '<div class="sb-top">' + searchBtnHTML() + sidebarToggleHTML() + '</div>' : '')
     + '<div class="sb-head">' + MARK_COLOR
       + '<button class="wschip" data-act="workspace" title="' + esc(BR ? WORKSPACE : '~/Teletubbies') + '"><span>' + esc(wsName(BR ? WORKSPACE : '~/Teletubbies')) + '</span>' + ic('chevD') + '</button></div>'
-    + '<button class="sb-new" data-act="session:new" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
+    // ATO-1032: the chord is shown on the row (drawn by CSS from data-kbd, so the row's text stays "New chat").
+    + '<button class="sb-new" data-act="session:new" data-kbd="' + esc(IS_MAC ? '⌘N' : kbd('⌘ N')) + '" title="' + kbdText('New chat (⌘ N)') + '" aria-label="New chat">'
       + '<span class="sb-new-ic">' + ic('plus') + '</span><span class="sb-new-lb">New chat</span></button>'
     + sidebarNavHTML()
     // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
@@ -2506,9 +2507,12 @@ function chatRow(s) {
   // ATO-538: the rail paints this glyph (the title's first letter or emoji) with the dot as its badge.
   const glyph = railGlyph(s.t);
   // Studio: no chat is "open" while a Studio page is on screen.
+  // ATO-1032: how long ago the chat last moved ("5m", "2h", "3d"), where nothing is queued.
+  const age = queued ? '' : chatAgeShort(s.updatedAt);
+  if (age) ensureChatAgeTick();
   // ATO-1034: draggable onto a folder (chat-folders.js).
   return '<button class="sesrow' + (s.id === S.sessionId && S.room !== 'studio' ? ' on' : '') + (pinned ? ' pinned' : '') + '" data-ses="' + esc(s.id) + '" draggable="true"'
-    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : '')
+    + (queued ? ' data-m="' + queued + ' queued" data-queued="' + queued + '"' : age ? ' data-m="' + age + '" data-age="1" data-at="' + Number(s.updatedAt) + '"' : '')
     + (glyph ? ' data-g="' + esc(glyph) + '"' : '')
     + ' title="' + esc(s.t + ' · ' + tip + (queued ? ' · ' + queued + ' queued' : '') + (pinned ? ' · pinned' : '')) + '">'
     + '<span class="sdot ' + state + (tone ? ' ' + tone : '') + '"></span>'
@@ -2524,6 +2528,32 @@ function chatRow(s) {
       + ' aria-haspopup="menu" aria-expanded="' + (S.overlay === 'sesmenu' && SESMENU.id === s.id ? 'true' : 'false') + '"'
       + ' role="button" tabindex="0">' + ic('dots') + '</span>'
     + '</button>';
+}
+
+/* ATO-1032: the ages move on while nothing re-renders the sidebar, so a
+   minute tick rewrites them in place (no re-render: scroll and focus stay). */
+let CHAT_AGE_TICK = 0;
+function ensureChatAgeTick() {
+  if (CHAT_AGE_TICK || typeof setInterval !== 'function') return;
+  CHAT_AGE_TICK = setInterval(refreshChatAges, 60000);
+}
+
+function refreshChatAges(root) {
+  for (const el of (root || document).querySelectorAll('.sesrow[data-age][data-at]')) {
+    const age = chatAgeShort(Number(el.dataset.at));
+    if (age && el.dataset.m !== age) el.dataset.m = age;
+  }
+}
+
+/** ATO-1032: a chat row's age, short: "now", "5m", "2h", "3d", "6w"; '' with no time. */
+function chatAgeShort(at) {
+  if (!(at > 0)) return '';
+  const m = Math.floor(Math.max(0, Date.now() - at) / 60000);
+  if (m < 1) return 'now';
+  if (m < 60) return m + 'm';
+  const h = Math.floor(m / 60); if (h < 24) return h + 'h';
+  const d = Math.floor(h / 24); if (d < 7) return d + 'd';
+  return Math.floor(d / 7) + 'w';
 }
 
 /* ATO-165: the chat row's menu. `point` is where a right-click landed; null
@@ -2669,7 +2699,9 @@ function emptyChat() {
      suggestions stay: they are the cheapest way into a first turn. */
   return '<div class="emptychat">' + sharedSetupNoticeHTML() + (typeof starterNoticeHTML === 'function' ? starterNoticeHTML() : '') + emptyPlateHTML()
     + '<div class="ghost">'
-      + ['What can you do?','Summarise the files in this folder','Check the disk space on ' + THIS_MACHINE]
+      /* ATO-1032: one suggestion, as Codex, Jan and Ollama keep it: the
+         question above is the screen; three chips competed with it. */
+      + ['Summarise the files in this folder']
           .map((g) => '<button class="ghostchip" data-fill="' + esc(g) + '">' + esc(g) + '</button>').join('')
     + '</div></div>';
 }
@@ -3917,7 +3949,7 @@ function downloadingChipHtml(slot) {
     + ' aria-label="Downloading ' + esc(what) + '">' + ic('download') + '<span class="cval">Downloading ' + esc(what) + '</span></span>';
 }
 function setupChipHtml() {
-  return '<button class="cchip setupchip" data-act="onboarding:choose" title="No model is set up yet. Open setup"'
+  return '<button class="cchip setupchip" data-act="settings:llm:local" title="No model is set up yet. Open Settings › Models › Local models"'
     + ' aria-label="Set up a model">' + ic('plus') + '<span class="cval">Set up a model</span></button>';
 }
 /** Where · Provider · Model (· Fusion's seats), as the route draws them. */
@@ -4045,7 +4077,8 @@ function sendButton() {
     // the next turn only when the agent refuses it, which is a fact the
     // route answers and this button cannot know in advance.
     if (S.draft.trim() || attHasReady()) return '<button class="sendbtn steer" data-act="send" title="Steer this turn">' + ic('up') + '</button>';
-    return '<button class="sendbtn stop" data-act="stop" title="Stop (Ctrl+.)">' + ic('stop') + '</button>';
+    // ATO-1032: the chord as this platform presses it (⌘ . on a Mac said Ctrl+. before).
+    return '<button class="sendbtn stop" data-act="stop" title="' + kbdText('Stop (⌘ .)') + '">' + ic('stop') + '</button>';
   }
   return '<button class="sendbtn' + (S.draft.trim() || attHasReady() ? '' : ' mute') + '" data-act="send" title="Send">' + ic('up') + '</button>';
 }
@@ -4813,6 +4846,7 @@ function overlaysHTML() {
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
   if (S.alert) html += alertHTML();
+  if (ptOnScreen()) html += projectTrustHTML();   // ATO-1250
   if (OB.open) html = obHTML();
   return html;
 }
@@ -5088,6 +5122,20 @@ function refreshDlProgress() {
  *  inspector. Its width (narrowed when the column is narrower) and the height
  *  the column leaves above the card are part of the returned style, so a
  *  caller's own `width:` in front of it is only the default. */
+/* ATO-1235: a popover under (or, short of room, over) a button inside
+   Settings, kept inside the window: on a 700 px window it scrolls rather
+   than run off the bottom. */
+function settingsAnchorStyle(el, width) {
+  const r = el.getBoundingClientRect();
+  const vw = window.innerWidth, vh = window.innerHeight, pad = 12;
+  const w = Math.round(Math.min(width, vw - pad * 2));
+  const left = Math.round(Math.max(pad, Math.min(r.right - w, vw - pad - w)));
+  const below = vh - r.bottom - pad - 6, above = r.top - pad - 6;
+  if (below >= 260 || below >= above) {
+    return 'position:fixed;left:' + left + 'px;top:' + Math.round(Math.min(r.bottom + 6, vh - pad - 160)) + 'px;bottom:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, Math.min(below, vh - pad * 2))) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 0';
+  }
+  return 'position:fixed;left:' + left + 'px;bottom:' + Math.round(vh - r.top + 6) + 'px;top:auto;right:auto;width:' + w + 'px;max-height:' + Math.round(Math.max(160, above)) + 'px;transform-origin:' + Math.round(r.right - left - r.width / 2) + 'px 100%';
+}
 function anchorStyle(sel, width) {
   const el = typeof sel === 'string' ? document.querySelector(sel) : sel;
   const winEl = $('#window');
@@ -5615,8 +5663,69 @@ function skillSessionId() {
 }
 function skillContextKey() { return JSON.stringify([AGENT_GEN, WORKSPACE, skillSessionId()]); }
 const SK_LOADER = createSkillCatalogLoader(id => { SK.calls++; return BR.skillList(id); });
+/* ATO-1250: "Trust this folder?" — asked once per folder, for the chat's own
+   folder (renderer/project-trust.js). Read again whenever the catalog's
+   context moves (another chat, another folder, a new agent); an agent
+   without /api/project-trust shows nothing. */
+const PT = createProjectTrust({
+  read: (id) => BR && BR.projectTrust ? BR.projectTrust(id) : {supported: false},
+  answer: (body) => BR && BR.projectTrustAnswer ? BR.projectTrustAnswer(body) : {supported: false},
+});
+let PT_KEY = null, PT_GEN = null;
+async function projectTrustCheck(force) {
+  const key = skillContextKey();
+  if (PT_GEN !== AGENT_GEN) { PT_GEN = AGENT_GEN; PT.reset(); }   // what one agent lacked says nothing about the next
+  if (!force && PT_KEY === key) return;
+  PT_KEY = key;
+  const before = JSON.stringify([PT.state.question, PT.state.status]);
+  await PT.check(skillSessionId());
+  if (key !== skillContextKey()) return;
+  if (before !== JSON.stringify([PT.state.question, PT.state.status])) {
+    if (S.settings && settingsPaneId(S.settingsPane) === 'skills') { if (!tkTyping() && !skpTyping()) render(); }
+    else renderOverlays();
+  }
+}
+/* The dialog waits under any other dialog, menu, picker, Settings or first-run setup, and appears once they close. */
+function ptOnScreen() {
+  return !!PT.state.question && !S.overlay && !S.alert && !SEL.open && !WIZ.phase && !OB.open && !S.settings;
+}
+function projectTrustHTML() {
+  const q = PT.state.question;
+  return '<div class="sheetwrap alertwrap ptrustwrap"><div class="alertbox ptrust" role="alertdialog" aria-label="Trust this folder?">'
+    + '<span class="alertmark">' + MARK_COLOR.replace('width="16" height="16"', 'width="44" height="44"') + '</span>'
+    + '<div class="ttl">' + esc(q.question) + '</div>'
+    + '<p class="alertmsg">' + esc(projectTrustLine(q)) + '</p>'
+    + '<p class="alertmsg mono ptrust-dir">' + esc(q.workingDir) + '</p>'
+    + (PT.state.error ? '<p class="alertmsg tuierr">' + esc(PT.state.error) + '</p>' : '')
+    + '<div class="alertacts">'
+      + '<button class="btn btn-s" data-act="ptrust:decline"' + (PT.state.busy ? ' disabled' : '') + ' autofocus>Don’t trust</button>'
+      + '<button class="btn btn-df" data-act="ptrust:trust"' + (PT.state.busy ? ' disabled' : '') + '>Trust</button></div></div></div>';
+}
+/* Settings › Skills: where the folder stands, and the switch that changes an earlier answer. */
+function projectTrustRowHTML() {
+  const sum = PT.state.supported ? projectTrustSummary(PT.state.status) : null;
+  if (!sum || sum.state === 'none') return '';
+  const busy = PT.state.busy ? ' disabled' : '';
+  return '<div class="tk-notice set-softnote ptrust-row" data-ptrust="' + sum.state + '"><span class="grow">Folder trust: ' + esc(sum.text) + '</span>'
+    + (sum.canTrust ? '<button class="btn btn-s sm" data-act="ptrust:all:trust"' + busy + '>Trust this folder</button>' : '')
+    + (sum.canDecline ? '<button class="btn btn-s sm" data-act="ptrust:all:decline"' + busy + '>Stop trusting</button>' : '')
+    + '</div>';
+}
+async function projectTrustAct(v) {
+  if (v === 'later') { PT.dismiss(); render(); return; }
+  const all = v.indexOf('all:') === 0;
+  const kind = all ? v.slice(4) : v;
+  const pending = all ? PT.setAll(kind === 'trust', skillSessionId()) : PT.answer(kind, skillSessionId());
+  render();
+  const res = await pending;
+  render();
+  if (res && res.ok) { await skpReloadRows(); toast(kind === 'trust' ? 'Folder trusted' : 'Folder not trusted',
+    kind === 'trust' ? 'Its project skills and instructions load from the next message' : 'Nothing from this folder is loaded'); }
+  else if (res && res.conflict) toast('The folder changed', 'Something new appeared in it; the question shows what is there now');
+}
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
+  projectTrustCheck();
   const key = skillContextKey();
   if (SK.for !== key) {
     SK.for = key; SK.rows = null; SK.err = null; SK.workingDir = null; SK.errors = []; SKILLS.length = 0;
@@ -6496,6 +6605,8 @@ function act(a) {
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
+  // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
+  if (k === 'ptrust') { projectTrustAct(v || ''); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -7277,7 +7388,7 @@ function apprChordOf(e, k) {
    underneath. */
 function apprOnScreen() {
   const req = S.pending;
-  if (!approvalOpen(req) || S.settings || S.overlay) return null;
+  if (!approvalOpen(req) || S.settings || S.overlay || ptOnScreen()) return null;
   if (S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open) return null;
   const card = document.querySelector('#scroller .appr[data-appr-id="' + CSS.escape(req.approvalId || '') + '"]');
   return card ? req : null;
@@ -7285,7 +7396,7 @@ function apprOnScreen() {
 /* ATO-224: whether a dialog, a popover, a sheet, Settings or the menu is
    open over the chat — the layers ⌘↩ must not send the composer from under. */
 function layerOverChat() {
-  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open);
+  return !!(S.overlay || S.settings || S.alert || SEL.open || WIZ.phase || S.menuOpen !== null || OB.open || ptOnScreen());
 }
 /** 05.10: the keys named on the card's buttons and in the shortcuts sheet. */
 function apprKeyLabel(which) {
@@ -7474,6 +7585,16 @@ document.addEventListener('click', (e) => {
   // ATO-728: a CRLF reply's lines go out as plain \n, with no stray \r at their ends.
   const mdc = t.closest('[data-mdcopy]');
   if (mdc) { e.preventDefault(); const code = mdc.closest('.mdblock')?.querySelector('pre code'); copyText(code ? code.textContent.replace(/\r\n?/g, '\n').replace(/\n$/, '') : '', 'Code copied'); return; }
+  // ATO-1251: a table's Copy (TSV, pastes into a spreadsheet) and Markdown, read off the drawn cells.
+  const mdt = t.closest('[data-mdtcopy]');
+  if (mdt) {
+    e.preventDefault();
+    const tbl = mdt.closest('.mdtblx')?.querySelector('table');
+    const rows = tbl ? [...tbl.rows].map((r) => [...r.cells].map((c) => c.textContent)) : [];
+    const aligns = tbl && tbl.rows[0] ? [...tbl.rows[0].cells].map((c) => c.style.textAlign || '') : [];
+    copyText(rows.length ? mdTableText(rows, aligns, mdt.dataset.mdtcopy) : '', 'Table copied', mdt.dataset.mdtcopy === 'md' ? 'as markdown' : 'paste it into a spreadsheet');
+    return;
+  }
   // a real control always wins over the dismiss-on-scrim handler behind it
   const a = t.closest('[data-act]'); if (a) { e.preventDefault(); act(a.dataset.act); return; }
   // Item 1 (plan hand-off): checked BEFORE the dismiss-on-scrim line below, so
@@ -7545,6 +7666,11 @@ document.addEventListener('click', (e) => {
   if (cimg && openImageViewer(cimg.dataset.imgOpen)) return;
   const fchip = t.closest('[data-file]');
   // Chat review (Д23): a chip from a reply's text opens through main's own check again (openReplyPath).
+  /* ATO-1053: a click previews the file beside the chat (file-preview.js); the
+     panel's Open goes through the same opener as before. ⌘/Ctrl-click, or a
+     build without the preview, opens it in its default app straight away. */
+  if (fchip && BR && !(e.metaKey || e.ctrlKey) && typeof filePreviewOpen === 'function'
+      && filePreviewOpen(fchip.dataset.file, {reply: !!fchip.dataset.reply})) return;
   if (fchip && BR) { (fchip.dataset.reply ? openReplyPath(fchip.dataset.file) : openFilePath(fchip.dataset.file.replace(/^~/, homeDir() || '~'))).then((r) => { if (r && r.ok === false) toast('Could not open', r.error || ''); }); return; }
   const mlink = t.closest('[data-url]');
   if (mlink && BR) { e.preventDefault(); BR.openExternal(mlink.dataset.url); return; }
@@ -8813,6 +8939,8 @@ document.addEventListener('keydown', (e) => {
 
   if (k === 'Escape') {
     e.preventDefault();
+    // ATO-1250: Escape is "not now" on the folder-trust dialog: nothing recorded, asked again at the next start.
+    if (ptOnScreen()) { act('ptrust:later'); return; }
     /* ATO-167 review: with Done gone from the model and mode popovers, Escape
        is a keyboard way out of them — so an open popover closes FIRST, before
        the scroll-to-bottom and before Escape's stop of a running turn (which
@@ -9057,6 +9185,8 @@ function applySessions(res, askedAt) {
       updatedAt:x.updatedAt || 0,
       status:x.status || '',
       turnCount:x.turnCount || 0,
+      // ATO-1253: the folder the chat ran in; an imported Claude Code chat is filed under its project by it.
+      workingDir:typeof x.workingDir === 'string' ? x.workingDir : null,
     });
   });
   settlePendingChats();
@@ -9749,6 +9879,10 @@ function turnWaited() {
 /** ATO-380: a failed turn's row. `detail` keeps the agent's raw words under
     Details when the line is a short phrase; '' when the line is the reason. */
 function turnFailure(ev) {
+  /* ATO-1207: a local model whose context is full says so, with the agent's
+     words under Details, before any other wording of the same failure. */
+  const full = localContextFullLine(ev, selActiveProviderId());
+  if (full) return {text: esc(full), detail: String(ev.error || '')};
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
   /* ATO-391: the provider replied, with an error (a 404 for a model it does
@@ -9778,6 +9912,26 @@ function localWrongServerLine(ev, picked) {
   const host = localServerHost(id);
   return (host ?'The server at ' + host : 'The local server') + ' is not a model server, or no model is loaded there.'
     + ' Check the address in Settings › Models.';
+}
+/** ATO-1207: a local server that turned the request down because the
+    conversation outgrew the model's context window. A newer agent marks it
+    with `code: "local_context_exceeded"` and its words win; an older agent
+    only says it: llama.cpp's "exceeds the available context size" or its
+    `exceed_context_size_error` type, or the agent's own "no longer fits /
+    does not fit … model's context window" once compacting did not help.
+    Bare "context window" is too broad: a cut-off reply names "the model
+    server's context window" too. The sentence is the agent's for that code
+    (local-bad-request.ts). A 404/405 (localWrongServerLine) stays ahead; ''
+    on a cloud provider and for anything else. */
+function localContextFullLine(ev, picked) {
+  const words = /exceeds? the available context size|exceed_context_size_error|(?:no longer fits|does not fit)(?: in)? (?:this|the) (?:local )?model's context window/i;
+  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
+  if (!id || !waitIsLocalServer(id) || localWrongServerLine(ev, picked)) return '';
+  const p = (ev && ev.payload) || {};
+  const code = p.code || (ev && ev.code) || '';
+  if (code ? code !== 'local_context_exceeded' : !words.test(String((ev && ev.error) || ''))) return '';
+  return "The conversation no longer fits in the local model's context window."
+    + ' Compact this chat or start a new one, or give the model a larger context size.';
 }
 /** The host a llama-server entry talks to, or ''. Its address is `url`
     (its `baseUrl` is the embeddings server), and selProviders() leaves
@@ -16294,6 +16448,8 @@ if (BR) {
     if (a === 'onboarding') { openOnboarding(); return; }
     // Calm (S6): the composer's "Set up a model" chip — straight to the choice, no title card.
     if (a === 'onboarding:choose') { openOnboarding('choose'); return; }
+    // The composer's "Set up a model" chip: Settings › Models on the Local models tab (ATO-1232).
+    if (a === 'settings:llm:local') { act('settings:llm'); act('llm:mode:local'); return; }
     if (a === 'onboarding:openNow') { obOpenNow(); return; }
     if (a === 'dl:cancel') { dlCancel(); return; }
     /* r6 — three lanes found this one independently, and the operator
@@ -17831,6 +17987,19 @@ function selShell(title, body, foot, lead) {
     || document.querySelector('.modelchip') || document.querySelector('.modechip');
   const width = WIZ.phase ? 460 : SEL.addOpen ? 440 : SEL.pulling || SEL.kind === 'model' || SEL.kind === 'workers' ? 520
     : SEL.kind === 'provider' ? 420 : 440;
+  /* ATO-1235: opened from Settings › Models' Add provider, the list hangs off
+     that button over a dimmed Settings, not off the composer chip under it,
+     where it lay on top of the cards with nothing between. */
+  const fromSettings = S.settings && WIZ.phase ? document.querySelector('.setwin [data-act="llm:add"]') : null;
+  if (fromSettings) {
+    return '<div class="scrim selscrim--settings" data-close="1">'
+      + '<div class="popover selpop selpop--settings tk-pop" style="' + settingsAnchorStyle(fromSettings, width) + '">'
+      + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
+      + (SEL.busy ? '<span class="cap selbusy"><span class="tk-spin"></span>' + esc(BSW.line || 'saving…') + '</span>' : '') + '</div>'
+      + body
+      + (foot ? '<div class="popfoot">' + foot + '</div>' : '')
+      + '</div></div>';
+  }
   return '<div class="scrim" data-close="1" style="background:transparent">'
     + '<div class="popover selpop tk-pop" style="' + anchorStyle(anchor, width) + '">'
     + '<div class="selhead">' + (lead || '') + '<span class="selttl">' + esc(title) + '</span>'
@@ -20150,6 +20319,18 @@ async function wizNext() {
   }
 }
 
+/* ATO-1196: whether the agent's words about an empty model list mean the
+   server simply has none. `models search --refresh` on a local
+   openai-compatible server that answers with zero models prints "no
+   searchable cloud models: the configured providers ship no catalog...",
+   and the old `no models` test missed it, so an empty Ollama or LM Studio
+   read "didn't list its models". Only asked for a server on this machine:
+   for a cloud provider the same line is not about the server. A failure
+   ("could not list models from ...") is not an empty server. */
+function wizSaidNoModels(said) {
+  return !said || /\bno (?:searchable cloud )?models\b/.test(said);
+}
+
 async function wizNextStep() {
   const k = WIZ.row; if (!k) return;
   if (k.subscriptionCli) return wizSubscriptionStep(k);
@@ -20322,7 +20503,7 @@ async function wizNextStep() {
       ? wizService(k) + ' is limiting requests right now (429). Wait a moment, then try again.'
       : status >= 500
       ? wizService(k) + ' had a problem answering (HTTP ' + status + '). Try again in a moment.'
-      : local && (!said || /\bno models\b/.test(said))
+      : local && wizSaidNoModels(said)
       ? Name + ' at ' + where + ' has no models yet. ' + (k.custom ? 'Load a model into it' : 'Add one in ' + name) + ', then try again.'
       : local
       ? Name + ' at ' + where + ' didn\u2019t list its models.'
@@ -20920,86 +21101,15 @@ async function applyTraceDurations() {
    nothing a model writes can become markup. Code spans and fences are lifted
    out first and put back last: markdown inside code is not markdown.
    --------------------------------------------------------------- */
-function mdInline(t) {
-  return t
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/(^|[\s(])\*([^*\n]+)\*(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
-    .replace(/(^|[\s(])_([^_\n]+)_(?=$|[\s.,;:!?)])/g, '$1<em>$2</em>')
-    .replace(/~~([^~]+)~~/g, '<s>$1</s>');
-}
-
-/* ATO-163: GitHub-style tables. Cells are split on `|` (a `\\|` stays a
-   pipe; code spans are already held out, so a pipe inside code is safe); the
-   separator row's colons set each column's alignment. A row may leave out
-   the outer pipes. Rows with fewer cells than the header are padded, extra
-   cells dropped, as GitHub does. */
-const MD_TABLE_SEP = /^\s*\|?\s*:?-+:?\s*(?:\|\s*:?-+:?\s*)*\|?\s*$/;
-function mdCells(line) {
-  const body = line.trim().replace(/^\|/, '').replace(/(?<!\\)\|$/, '');
-  return body.split(/(?<!\\)\|/).map((c) => c.trim().replace(/\\\|/g, '|'));
-}
-function mdTableAt(lines, at) {
-  const head = (lines[at] || '').trim();
-  const sep = lines[at + 1];
-  if (!head.includes('|') || sep === undefined || !MD_TABLE_SEP.test(sep) || !sep.includes('|') && !head.startsWith('|')) return null;
-  const cols = mdCells(head);
-  const seps = mdCells(sep);
-  // As GitHub: the separator has as many cells as the header, or this is prose and a rule, not a table.
-  if (seps.length !== cols.length || (cols.length < 2 && !head.startsWith('|'))) return null;
-  const aligns = seps.map((c) => /^:-+:$/.test(c) ? 'center' : /-:$/.test(c) ? 'right' : /^:-/.test(c) ? 'left' : '');
-  const cell = (tag, text, i) => '<' + tag + (aligns[i] ? ' style="text-align:' + aligns[i] + '"' : '') + '>' + mdInline(text || '') + '</' + tag + '>';
-  let end = at + 1;
-  const rows = [];
-  while (end + 1 < lines.length && lines[end + 1].trim() && lines[end + 1].includes('|')) {
-    end++;
-    const c = mdCells(lines[end]);
-    rows.push('<tr>' + cols.map((_, i) => cell('td', c[i], i)).join('') + '</tr>');
-  }
-  const html = '<div class="mdtbl"><table><thead><tr>' + cols.map((c, i) => cell('th', c, i)).join('') + '</tr></thead>'
-    + (rows.length ? '<tbody>' + rows.join('') + '</tbody>' : '') + '</table></div>';
-  return { html, end };
-}
-
+/* ATO-1251 / ATO-664: the block parser lives in md-render.js (loaded first):
+   tables with Copy, nested and task lists, callouts, key/value fields,
+   Pros/Cons comparisons, link and file cards. Its contract is this
+   function's: escaped text in, tags of its own out, code held as
+   placeholders that renderProseFresh restores after its link and chip
+   passes — a path in backticks is a path the model wrote literally, not a
+   file to offer a button for, unless the span holds nothing else. */
 function renderMarkdown(escaped) {
-  const held = [];
-  let t = escaped
-    // ATO-430: the fence's info string (```js) is the language, not code: it moves to a small label.
-    .replace(/```(?:([\w+#.-]+)[ \t]*(?=\r?\n))?([\s\S]*?)```/g, (m, lang, code) =>
-      '\u0000' + (held.push('<pre class="mdpre"' + (lang ? ' data-lang="' + lang + '"' : '') + '><code>' + code.replace(/^\r?\n/, '') + '</code></pre>') - 1) + '\u0000')
-    .replace(/`([^`\n]+)`/g, (m, code) =>
-      '\u0000' + (held.push('<code class="mdcode">' + code + '</code>') - 1) + '\u0000');
-
-  const out = [];
-  let list = null;                       // 'ul' | 'ol' | null
-  const closeList = () => { if (list) { out.push('</' + list + '>'); list = null; } };
-  const lines = t.split('\n');
-  for (let at = 0; at < lines.length; at++) {
-    const line = lines[at].replace(/\s+$/, '');
-    /* ATO-163: a table — a row of cells, then a dashed separator row — was
-       printed as its pipes and dashes. The whole table is one line of markup
-       (no newlines inside it for `pre-wrap` to keep), in a wrapper that
-       scrolls sideways instead of pushing the reply wider. */
-    const table = mdTableAt(lines, at);
-    if (table) { closeList(); out.push(table.html); at = table.end; continue; }
-    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
-    const bullet = /^\s*[-*+]\s+(.*)$/.exec(line);
-    const numbered = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    const quote = /^&gt;\s?(.*)$/.exec(line);
-    if (heading) { closeList(); out.push('<h' + heading[1].length + ' class="mdh">' + mdInline(heading[2]) + '</h' + heading[1].length + '>'); continue; }
-    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { closeList(); out.push('<hr class="mdhr">'); continue; }
-    if (bullet) { if (list !== 'ul') { closeList(); out.push('<ul class="mdlist">'); list = 'ul'; } out.push('<li>' + mdInline(bullet[1]) + '</li>'); continue; }
-    if (numbered) { if (list !== 'ol') { closeList(); out.push('<ol class="mdlist">'); list = 'ol'; } out.push('<li>' + mdInline(numbered[1]) + '</li>'); continue; }
-    if (quote) { closeList(); out.push('<blockquote class="mdquote">' + mdInline(quote[1]) + '</blockquote>'); continue; }
-    closeList();
-    out.push(line ? mdInline(line) : '');
-  }
-  closeList();
-  /* The held code is NOT restored here. renderProse turns bare paths into
-     file chips and bare URLs into links, and both would happily rewrite the
-     inside of a code span — a path in backticks is a path the model wrote
-     literally, not a file to offer a button for. The placeholders survive
-     that pass and are put back afterwards. */
-  return { html: out.join('\n'), held };
+  return mdRender(escaped);
 }
 
 /* ATO-1023: a finished message's markup is the same on every paint, so it is
@@ -22993,6 +23103,7 @@ function skillsTabEntered() {
   ensureSkillsPoll();
   if (SK.workingDir) refreshSkillList();
   tpSkillsOmittedRefresh();
+  projectTrustCheck(true);   // ATO-1250: the folder-trust row reads the agent's current answer
 }
 function skpRender() { paneRepaintKeepFocus(skillsTab()); }
 /* `atag skill list` again after a mutation — behind any poll already in flight, never dropped by its SK.busy guard. */
@@ -23044,6 +23155,7 @@ function skillsTab() {
     view = bar
       + (SK.workingDir ? '<div class="tk-notice set-softnote"><span class="grow">Workspace: <span class="mono">' + esc(SK.workingDir) + '</span></span>'
         + '<button class="btn btn-s sm" data-act="skills:project"' + (SKP.busy ? ' disabled' : '') + '>' + (SK.projectSkillsEnabled ? 'Disable project skills' : 'Enable project skills') + '</button></div>' : '')
+      + (tools ? '' : projectTrustRowHTML())
       + (SK.errors.length && !tools ? '<details class="set-softnote"><summary>Skill diagnostics (' + SK.errors.length + ')</summary><pre>' + esc(SK.errors.join('\n')) + '</pre></details>' : '')
       + (SKP.lastError ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SKP.lastError) + '</span></div>' : '')
       + (SK.err && !tools ? '<div class="tuierr tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(SK.err) + '</span></div>' : '')
@@ -24655,7 +24767,7 @@ function llmCloudProviders() { return llmProviders().filter((p) => p.kind !== 'l
 function llmActiveTextId() { return llmBlock().activeTextProvider || 'local-llama'; }
 function llmActiveEmbId() { return llmBlock().activeEmbeddingProvider || 'local-llama'; }
 function llmProvider(id) { return llmProviders().find((p) => p.id === id) || null; }
-function llmLocalActive() { const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }
+function llmLocalActive() { if (LLMP.choosing) return false; const p = llmProvider(llmActiveTextId()); return !!p && p.kind === 'llama-server'; }   // ATO-1234: a cloud pick on its way is the choice
 function llmLocalEmbActive() { const p = llmProvider(llmActiveEmbId()); return !!p && p.kind === 'llama-server'; }
 function llmLocalModels() { return (LIVE_CONFIG && LIVE_CONFIG.localModels) || {}; }
 function llmManaged() { return llmLocalModels().managed || {}; }
@@ -25007,7 +25119,8 @@ function llmProviderRow(p) {
   // Backlog 32: a saved key the agent will not send is no key: its row says so and Enter opens the key screen.
   const badKey = p.kind !== 'subscription-cli' && savedKeyInvalid(p);
   const hasKey = !badKey && llmHasKey(p);
-  const active = p.id === llmActiveTextId();
+  // ATO-1234: a pick on its way shows as the choice already.
+  const active = LLMP.choosing ? LLMP.choosing.pid === p.id : p.id === llmActiveTextId();
   const auth = p.kind === 'subscription-cli' ? 'cli auth' : badKey ? 'invalid key' : llmHasRealKey(p) ? 'key ok' : hasKey ? 'no key needed' : 'missing key';
   return {kind:'cloudProvider', id:'cloud-provider:' + p.id, provider:p, active, available:hasKey, badKey,
     primaryAction: !hasKey ? 'configure' : active ? 'current' : 'use',
@@ -25016,7 +25129,9 @@ function llmProviderRow(p) {
 }
 function llmChatRow(p, modelId) {
   const hasKey = !savedKeyInvalid(p) && llmHasKey(p);
-  const active = p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
+  const choosing = LLMP.choosing;
+  const active = choosing ? choosing.pid === p.id && (choosing.modelId || p.defaultChatModel || p.model) === modelId
+    : p.id === llmActiveTextId() && (p.defaultChatModel || p.model) === modelId;
   // OpenRouter/AI-ML rows show formatOpenRouterChatModelDetails / formatAimlapiChatModelDetails in the TUI — an in-process catalogue
   // formatter the CLI does not print, so every kind gets the generic effect here.
   return {kind:'cloudChatModel', id:'cloud-text:' + p.id + ':' + modelId, provider:p, providerId:p.id, modelId, active, available:hasKey,
@@ -26321,17 +26436,26 @@ function llmRestartRefusal(held) {
    row, the selector and the wizard use — never a raw llmWrite of
    activeTextProvider. The serve process is restarted by main (applySwitch), so
    the message reports the switch instead of asking for a restart. */
+/* ATO-1234: what happened to the agent, said only when it did: a cloud pick is
+   usually taken live now, and the local server stops behind it. */
+function llmSwitchTail(res) {
+  return (res.daemon === 'stopping' && !res.daemonLine ? ' The local model stops in the background.' : '')
+    + (res.liveSwapped ? '' : res.restart ? ' The agent was restarted.' : '');
+}
 async function llmSwitchProvider(id) {
   const held = restartStopsTurn();   // Backlog 28: a turn in any chat
   if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return false; }
-  LLMP.busy = true; llmRepaint();
+  // ATO-1234: the row shows the pick at once; the switch lands behind it.
+  LLMP.busy = true; LLMP.choosing = {pid: id, modelId: null}; llmRepaint();
   // r5 item 10: Settings is an in-window overlay, so this locks the same
   // composer the selector does. The refusal keeps the tab's own llmReport
   // wording rather than the selector's toast.
-  const res = await swxRun('switching…', {providerId: id},
-    () => SWXBR.activateProvider(id),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: id},
+      () => SWXBR.activateProvider(id, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return false; }
   // U29: no model yet; the provider's setup ends on its model step.
   if (res && res.needsChatModel) { const p = llmProvider(id); if (p) { llmOpenWizard(p); return false; } }
@@ -26347,19 +26471,21 @@ async function llmSwitchProvider(id) {
   const transport = res.transport || (id === 'local-llama' ? 'grammar+llama-server' : 'native_tools');
   // providers-orchestrator.ts setActiveText: the providers_status line + the feed's runtime_info.
   llmReport('Active text: ' + id + (model ? ' · ' + model : '') + ' · ' + transport, 'cloud');
-  LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + ' The agent was restarted.'};
+  LLMP.msg = {text:'Switched active text provider to "' + id + '". New messages use ' + transport + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
   return true;
 }
 async function llmSelectChatModel(pid, modelId) {
   const held = restartStopsTurn();   // Backlog 28: a turn in any chat
   if (held) { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); return; }
-  LLMP.busy = true; llmRepaint();
+  LLMP.busy = true; LLMP.choosing = {pid, modelId}; llmRepaint();   // ATO-1234: the pick shows at once
   // providers-orchestrator.ts selectChatModel: the model, then setActiveText(providerId) — lane B's selectCloudModel is exactly that pair, plus the restart.
-  const res = await swxRun('switching…', {providerId: pid, model: modelId},
-    () => SWXBR.selectCloudModel(pid, modelId),
-    (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
-  LLMP.busy = false;
+  let res;
+  try {
+    res = await swxRun('switching…', {providerId: pid, model: modelId},
+      () => SWXBR.selectCloudModel(pid, modelId, {background: true}),
+      (held) => { llmReport(llmRestartRefusal(held), 'cloud'); llmRepaint(); });
+  } finally { LLMP.busy = false; LLMP.choosing = null; }
   if (swxSaid(res)) { llmRepaint(); return; }
   if (!res || !res.ok) {
     llmReport(res && res.needsKey && res.keyInvalid ? savedKeyLine(pid)
@@ -26370,7 +26496,7 @@ async function llmSelectChatModel(pid, modelId) {
   // r5 item 10: swxRun re-read the live config before it resolved.
   const transport = res.transport || 'native_tools';
   llmReport('Active text: ' + pid + ' · ' + modelId + ' · ' + transport, 'cloud');
-  LLMP.msg = {text:'Selected chat model ' + pid + '/' + modelId + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + ' The agent was restarted.'};
+  LLMP.msg = {text:'Selected chat model ' + pid + '/' + modelId + '.' + (res.daemonLine ? ' ' + res.daemonLine : '') + llmSwitchTail(res)};
   llmRefresh();
 }
 async function llmSelectEmbeddingModel(pid, modelId) {
@@ -28005,7 +28131,7 @@ function impFormHTML(f) {
        kept in chat-folders.json, so it holds for every import and for chats
        imported before. */
     + '<div class="tk-card sd-rows"><div class="tk-setrow sd-frow">'
-      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">A folder per app, such as “Claude Code” or “Codex”. '
+      + '<div class="body"><div class="t">Put imported chats into folders</div><div class="d">Claude Code chats go into a folder per project, other apps’ chats into a folder per app, such as “Codex”. '
       + 'Chats imported earlier are sorted too. A chat you move yourself stays where you put it.</div></div>'
       + '<button class="tk-switch" role="switch" aria-checked="' + !!FOLDERS.state.autoSort + '" aria-label="Put imported chats into folders" data-act="fautosort:"></button></div></div>'
     /* ATO-531: Overwrite is the one option that can lose data, so it sits in its own card with an amber tag.
@@ -28360,7 +28486,9 @@ if (typeof window !== 'undefined') {
     const chip = document.querySelector('.attach .filechip');
     if (!chip) return null;
     LAST_OPEN_PATH = null; OPEN_PATH_DRYRUN = true;
-    try { chip.click(); } finally { OPEN_PATH_DRYRUN = false; }
+    // ATO-1053: the click opens the preview; its Open hands the path to the opener.
+    try { chip.click(); const o = document.querySelector('#fpreview .fp-head [data-fp="open"]'); if (o) o.click(); } finally { OPEN_PATH_DRYRUN = false; }
+    if (typeof filePreviewClose === 'function') filePreviewClose();
     return {file: chip.dataset.file, opened: LAST_OPEN_PATH, hasMenu: !!(BR && BR.fileMenu)};
   };
   /** Re-run the real collector over the current log (after a trash card). */

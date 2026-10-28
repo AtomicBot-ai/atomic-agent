@@ -204,6 +204,34 @@ export function requestErrorText(err: unknown): string {
   return detail && !err.message.includes(detail) ? `${err.message} (${detail})` : err.message;
 }
 
+/** ATO-1250: the agent's `GET /api/project-trust` answer (src/runtime/project-trust.ts). */
+export interface ProjectTrustStatus {
+  workingDir: string;
+  pending: { skills: string[]; instructions: string[] };
+  trusted: { skills: string[]; instructions: string[] };
+  declined: { skills: string[]; instructions: string[] };
+  questionId: string | null;
+  question: string | null;
+  hasEarlierAnswer: boolean;
+  hint: string;
+}
+export interface ProjectTrustAnswerBody {
+  sessionId?: string;
+  workingDir?: string;
+  answer: "trust" | "decline";
+  questionId?: string;
+  scope?: "all";
+}
+
+/** The `error.message` of an agent's JSON error body, else the HTTP status. */
+function errorMessage(text: string, status: number): string {
+  try {
+    return (JSON.parse(text) as { error?: { message?: string } }).error?.message ?? `HTTP ${status}`;
+  } catch {
+    return `HTTP ${status}`;
+  }
+}
+
 /**
  * Where the agent might be, in order of preference.
  *
@@ -1404,6 +1432,57 @@ export class AgentClient extends EventEmitter {
       return { supported: true, error: message };
     } catch {
       return { supported: false };
+    }
+  }
+
+  /**
+   * ATO-1250: `GET /api/project-trust` — the agent's one-time question about
+   * a folder's own skills and instruction files (ATO-298). An agent from
+   * before the route answers "No route for", reported as unsupported so the
+   * window shows nothing and changes nothing. Never throws.
+   */
+  async projectTrust(sessionId?: string | null): Promise<{ supported: false } | { supported: true; ok: true; status: ProjectTrustStatus } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/project-trust${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, status: JSON.parse(text) as ProjectTrustStatus };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1250: `POST /api/project-trust` — the person's answer. `409
+   * question_changed` (something new appeared in the folder) records
+   * nothing and carries the fresh status to ask again with.
+   */
+  async answerProjectTrust(body: ProjectTrustAnswerBody): Promise<{ supported: false } | { ok: true; status: ProjectTrustStatus } | { ok: false; conflict: true; status: ProjectTrustStatus } | { ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/project-trust`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true, status: JSON.parse(text) as ProjectTrustStatus };
+      if (res.status === 409) {
+        try {
+          const parsed = JSON.parse(text) as { error?: { code?: string }; status?: ProjectTrustStatus };
+          if (parsed.error?.code === "question_changed" && parsed.status) return { ok: false, conflict: true, status: parsed.status };
+        } catch { /* not JSON */ }
+      }
+      // An agent with the route but before `scope: "all"` asks for a questionId.
+      if (res.status === 400 && body.scope === "all" && /questionId/.test(text)) return { ok: false, error: "This agent version can only answer the question; update it to change the choice here." };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
     }
   }
 

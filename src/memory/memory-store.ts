@@ -140,6 +140,13 @@ export interface MemoryListOptions {
    * drop out of the hot index view that competes for prompt budget.
    */
   excludeArchived?: boolean;
+  /**
+   * Only return rows with `updated_at <= updatedBefore` (epoch ms).
+   * Applied in SQL before `LIMIT`, so a caller that wants "rows older
+   * than X" gets up to `limit` of them instead of the newest `limit`
+   * rows with the young ones filtered out afterwards.
+   */
+  updatedBefore?: number;
 }
 
 /**
@@ -742,6 +749,15 @@ export class MemoryStore {
     }
     if (opts.excludeArchived) {
       where.push(`consolidated_into IS NULL`);
+    }
+    if (opts.updatedBefore !== undefined) {
+      if (!Number.isFinite(opts.updatedBefore)) {
+        throw new Error(
+          `MemoryStore.list: updatedBefore must be a finite number, got ${opts.updatedBefore}`,
+        );
+      }
+      where.push(`updated_at <= ?`);
+      params.push(opts.updatedBefore);
     }
     const whereClause = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     const sql = `

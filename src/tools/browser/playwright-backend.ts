@@ -3,6 +3,8 @@ import type { BrowserContext as PwBrowserContext, Page } from "playwright-core";
 import type { BrowserChannel } from "../../config/index.js";
 import { loadPlaywrightCore } from "../../native/load-playwright-core.js";
 import { summariseAriaSnapshot } from "./aria-compressor.js";
+import { describeElementInPage, toRefDescription } from "./describe-element.js";
+import { searchUrlFor } from "./search-engines.js";
 import { buildChromeLaunchArgs } from "./build-chrome-launch-args.js";
 import { clearStaleChromeLocks } from "./clear-stale-chrome-locks.js";
 import {
@@ -20,6 +22,7 @@ import type {
   BrowserBackend,
   ClickInput,
   NavigateInput,
+  RefDescription,
   ScrollInput,
   ScrollResult,
   SearchInput,
@@ -43,12 +46,6 @@ export interface PlaywrightBackendOptions {
   /** Pass `--no-sandbox`; required in some containerised environments. */
   noSandbox?: boolean;
 }
-
-const SEARCH_URLS: Record<NonNullable<SearchInput["engine"]>, string> = {
-  google: "https://www.google.com/search?q=",
-  duckduckgo: "https://duckduckgo.com/?q=",
-  bing: "https://www.bing.com/search?q=",
-};
 
 /**
  * Playwright-backed implementation with "openclaw-style" stealth: we
@@ -112,6 +109,23 @@ export class PlaywrightBackend implements BrowserBackend {
     return matched > 0;
   }
 
+  async describeRef(ref: string): Promise<RefDescription | null> {
+    const page = await this.requireActivePage();
+    const locator = page.locator(`aria-ref=${ref}`);
+    if ((await locator.count()) === 0) return null;
+    // Short timeout: this is a read before the real action, and the
+    // gate treats a failure as "could not inspect" (asks), not as safe.
+    const raw = await locator.first().evaluate(describeElementInPage, undefined, {
+      timeout: 2_000,
+    });
+    return toRefDescription(raw, page.url());
+  }
+
+  async currentUrl(): Promise<string> {
+    const page = await this.requireActivePage();
+    return page.url();
+  }
+
   async snapshot(options: { depth?: number; full?: boolean } = {}): Promise<AriaSnapshot> {
     const page = await this.requireActivePage();
     const bodyLocator = page.locator("body");
@@ -167,8 +181,7 @@ export class PlaywrightBackend implements BrowserBackend {
   }
 
   async search(input: SearchInput): Promise<{ url: string }> {
-    const base = SEARCH_URLS[input.engine ?? "google"];
-    const url = `${base}${encodeURIComponent(input.query)}`;
+    const url = searchUrlFor(input.engine ?? "google", input.query);
     await this.navigate({ url });
     return { url };
   }

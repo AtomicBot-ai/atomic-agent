@@ -1,3 +1,4 @@
+import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -348,6 +349,10 @@ export type TuiAction =
   | { type: "update_available"; current: string; latest: string }
   /** User declined the update offer (or it was otherwise cleared). */
   | { type: "update_dismissed" }
+  /** The opened folder ships project skills or instruction files nobody trusted yet. */
+  | { type: "project_trust_asked"; prompt: ProjectTrustPrompt }
+  /** The trust question was answered or put off. */
+  | { type: "project_trust_closed" }
   /** User accepted: the install script is now running. */
   | { type: "update_started" }
   /** The install script settled. */

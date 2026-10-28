@@ -16,7 +16,7 @@
    ============================================================ */
 
 .llm-pane{display:flex;flex-direction:column;gap:14px;min-width:0;position:relative;
-  font:400 13.5px/1.45 var(--font-ui);letter-spacing:-.003em;color:var(--ink);white-space:normal;padding-bottom:4px;
+  font:400 var(--fs-ui)/1.45 var(--font-ui);letter-spacing:-.003em;color:var(--ink);white-space:normal;padding-bottom:4px;
   container:llmpane / inline-size}
 
 /* ---- The setup tabs (Д30): a heading and the segment, under where chats run ---- */
@@ -24,12 +24,12 @@
 .llm-pane .llm-srcbar{flex-wrap:wrap;gap:8px 14px;margin-top:6px}
 .llm-pane .llm-seg{display:inline-block;white-space:nowrap;font-size:0;line-height:0;vertical-align:middle}
 .llm-pane .llm-seg .llmmode{display:inline-flex;align-items:center;vertical-align:top;height:28px;padding:0 13px;border-radius:var(--r-pill);
-  background:transparent;color:var(--ink-2);font:600 12.5px/1 var(--font-ui);letter-spacing:0;white-space:nowrap;box-shadow:none;
+  background:transparent;color:var(--ink-2);font:600 var(--fs-cap)/1 var(--font-ui);letter-spacing:0;white-space:nowrap;box-shadow:none;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .llm-pane .llm-seg .llmmode + .llmmode{margin-left:2px}
 .llm-pane .llm-seg .llmmode:hover{background:transparent;color:var(--ink)}
 .llm-pane .llm-seg .llmmode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-soft)}
-.llm-pane .llm-status{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-status{display:inline-flex;align-items:center;gap:7px;min-width:0;font-size:var(--fs-cap);color:var(--ink-2)}
 .llm-pane .llm-status .tk-spin{width:12px;height:12px}
 
 /* ---- Notices the pane raises ---- */
@@ -38,9 +38,9 @@
 .llm-pane .tk-notice > .logo{margin-top:-2px}
 .llm-pane .llm-msg{background:var(--well);box-shadow:none}
 .llm-pane .llm-msg > svg{color:var(--ink-2)}
-.llm-pane .llm-note{font-size:12.5px;line-height:1.45;color:var(--ink-2);margin:0}
+.llm-pane .llm-note{font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2);margin:0}
 .llm-pane .llm-start .grow,.llm-pane .llm-dl-body{display:flex;flex-direction:column;gap:2px;min-width:0}
-.llm-pane .llm-start b,.llm-pane .llm-dl-body b{font-size:13.5px;font-weight:600}
+.llm-pane .llm-start b,.llm-pane .llm-dl-body b{font-size:var(--fs-ui);font-weight:600}
 .llm-pane .llm-dl .tk-ico{margin-top:-2px}
 .llm-pane .llm-dl .btn{margin:-4px -2px 0 0}
 .llm-pane .llm-dl-prog{flex:none;width:100%;margin:8px 0 4px}
@@ -50,9 +50,9 @@
 
 /* ---- Route card: what answers now ---- */
 .llm-pane .llm-route{display:flex;flex-direction:column;gap:3px;min-width:0;padding:13px 18px 14px;border-radius:var(--r-block);background:var(--well)}
-.llm-pane .llm-kv{display:block;min-width:0;padding-left:136px;text-indent:-136px;font-size:12.5px;line-height:24px;color:var(--ink);overflow-wrap:anywhere}
+.llm-pane .llm-kv{display:block;min-width:0;padding-left:136px;text-indent:-136px;font-size:var(--fs-cap);line-height:24px;color:var(--ink);overflow-wrap:anywhere}
 .llm-pane .llm-k{display:inline-block;width:136px;text-indent:0;color:var(--ink-2);vertical-align:top}
-.llm-pane .llm-kv .mono{font-size:12px;line-height:24px}
+.llm-pane .llm-kv .mono{font-size:var(--fs-label);line-height:24px}
 .llm-pane .llm-kv b.mono{font-weight:500}
 .llm-pane .llm-kv .logo,.llm-pane .llm-kv .tk-ico{vertical-align:middle;margin:-3px 6px 0 0;text-indent:0}
 .llm-pane .llm-slash{color:var(--ink-3);padding:0 2px}
@@ -63,49 +63,49 @@
 
 /* ---- Sections and lists ---- */
 .llm-pane .llm-section{display:flex;flex-direction:column;gap:8px;min-width:0;margin:0}
-.llm-pane .llm-sh{min-height:30px;padding:0 2px;gap:10px;color:var(--ink);font-size:13.5px}
+.llm-pane .llm-sh{min-height:30px;padding:0 2px;gap:10px;color:var(--ink);font-size:var(--fs-ui)}
 .llm-pane .llm-sh-t{font-weight:600;color:var(--ink);white-space:nowrap}
 .llm-pane .llm-sh .btn .logo{margin-left:-4px}
-.llm-pane .llm-ram{margin:-6px 2px 2px;font-size:12.5px;line-height:1.45;color:var(--ink-2)}
+.llm-pane .llm-ram{margin:-6px 2px 2px;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 .llm-pane .llm-list{padding:4px}
-.llm-pane .llm-empty{padding:14px 16px;border-radius:var(--r-card);background:var(--well);color:var(--ink-2);font-size:13px;font-weight:400;white-space:normal}
+.llm-pane .llm-empty{padding:14px 16px;border-radius:var(--r-card);background:var(--well);color:var(--ink-2);font-size:var(--fs-cap);font-weight:400;white-space:normal}
 .llm-pane .llm-empty.is-strong{color:var(--ink);font-weight:500}
 .llm-pane .llm-empty-acts{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .llm-pane .llm-empty-acts .btn .logo{margin-left:-4px}
-.llm-pane .llm-counter{margin:0;padding:0 6px;font:400 11.5px/1.5 var(--font-mono);color:var(--ink-2)}
+.llm-pane .llm-counter{margin:0;padding:0 6px;font:400 var(--fs-label)/1.5 var(--font-mono);color:var(--ink-2)}
 /* ATO-318: the caption over a model list that is the app's built-in one, not the provider's live list. */
-.llm-pane .llm-stale{font:400 12px/1.5 var(--font-ui)}
-.llm-pane .llm-loading{display:flex;align-items:center;gap:8px;padding:6px 6px;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-stale{font:400 var(--fs-label)/1.5 var(--font-ui)}
+.llm-pane .llm-loading{display:flex;align-items:center;gap:8px;padding:6px 6px;font-size:var(--fs-cap);color:var(--ink-2)}
 
 /* ---- Rows ---- */
 .llm-pane .tuirow.llm-row{display:flex;align-items:center;gap:12px;width:100%;height:auto;min-height:46px;margin:0;padding:8px 12px;
   border-radius:var(--r-row);background:transparent;color:var(--ink);text-align:left;
-  font:400 13.5px/1.35 var(--font-ui);letter-spacing:-.003em;white-space:normal;overflow:visible;text-overflow:clip}
+  font:400 var(--fs-ui)/1.35 var(--font-ui);letter-spacing:-.003em;white-space:normal;overflow:visible;text-overflow:clip}
 .llm-pane .tuirow.llm-row:hover{background:var(--hover)}
 .llm-pane .tuirow.llm-row.on{background:var(--brand-wash);color:var(--ink)}
 .llm-pane .tuirow.llm-model{align-items:flex-start;padding:10px 12px}
 .llm-pane .llm-model .tk-radio{margin-top:6px}
 .llm-pane .llm-model > .logo,.llm-pane .llm-model > .tk-ico{margin-top:1px}
 .llm-pane .llm-row .body{flex:1;min-width:0;display:flex;flex-direction:column;gap:1px}
-.llm-pane .llm-row .t{display:block;white-space:normal;overflow:visible;font-size:13.5px;font-weight:500;line-height:24px;color:var(--ink)}
+.llm-pane .llm-row .t{display:block;white-space:normal;overflow:visible;font-size:var(--fs-ui);font-weight:500;line-height:24px;color:var(--ink)}
 .llm-pane .llm-row.on .t{color:var(--ink)}
-.llm-pane .llm-id{font-size:13px;line-height:20px;font-weight:500;color:var(--ink)}
-.llm-pane .llm-size{font:400 12px/1 var(--font-mono);color:var(--ink-2);white-space:nowrap}
-.llm-pane .llm-k2{font-size:12px;color:var(--ink-2)}
+.llm-pane .llm-id{font-size:var(--fs-cap);line-height:20px;font-weight:500;color:var(--ink)}
+.llm-pane .llm-size{font:400 var(--fs-label)/1 var(--font-mono);color:var(--ink-2);white-space:nowrap}
+.llm-pane .llm-k2{font-size:var(--fs-label);color:var(--ink-2)}
 .llm-pane .llm-ib{display:inline-block;line-height:22px;vertical-align:1px;white-space:nowrap}
 .llm-pane .llm-row .t .tk-chip{margin-left:2px}
-.llm-pane .llm-row .d{display:block;font-size:12.5px;line-height:1.45;color:var(--ink-2);white-space:normal;overflow:visible;text-overflow:clip}
+.llm-pane .llm-row .d{display:block;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2);white-space:normal;overflow:visible;text-overflow:clip}
 /* The blurb line is prose now, not a mono TUI line with a 2ch indent. The
    fit verdict is a badge on the first line (Д32: Fits well / Tight fit / Too
    big / Installed, the shared chip, its reasons in the tooltip), so every
    model row keeps one height. */
 .llm-pane .llm-row .llm-sub{font-family:var(--font-ui);padding-left:0}
 /* ATO-491: why the best-fit chip is on this row, one plain line under the blurb. */
-.llm-pane .llm-row .llm-best-why{display:block;font:400 12.5px/1.45 var(--font-ui);color:var(--ink-2);white-space:normal}
+.llm-pane .llm-row .llm-best-why{display:block;font:400 var(--fs-cap)/1.45 var(--font-ui);color:var(--ink-2);white-space:normal}
 /* Calm (S5): a row's action is a quiet pill in the UI face ("Download 5.3 GB",
    "Use"). The row is the button. */
 .llm-pane .llm-effect{flex:none;display:inline-flex;align-items:center;gap:6px;height:26px;margin-left:auto;padding:0 11px;border-radius:var(--r-pill);
-  box-shadow:inset 0 0 0 1px var(--bd);font:500 12.5px/1 var(--font-ui);color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}
+  box-shadow:inset 0 0 0 1px var(--bd);font:500 var(--fs-cap)/1 var(--font-ui);color:var(--ink);white-space:nowrap;font-variant-numeric:tabular-nums}
 /* Backlog 37: the hover fill is for a pill that does something. "In use" and
    "Downloading…" are labels — plain words, no fill behind them on any row,
    the selected (brand-wash) one included, where a --lift fill read as a
@@ -127,10 +127,10 @@
 .llm-pane .llm-row .llm-memline--failed,.llm-pane .llm-row .llm-memline--engine{color:var(--critical)}
 /* A second verb on a row (Remove, Edit): quiet text, a fill on hover. */
 .llm-pane .llm-rowact{flex:none;display:inline-flex;align-items:center;height:26px;padding:0 9px;border-radius:var(--r-pill);
-  font:500 12.5px/1 var(--font-ui);color:var(--ink-2);cursor:pointer;transition:background-color var(--t-state) var(--ease),color var(--t-state) var(--ease)}
+  font:500 var(--fs-cap)/1 var(--font-ui);color:var(--ink-2);cursor:pointer;transition:background-color var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .llm-pane .llm-rowact:hover{background:var(--hover);color:var(--ink)}
-.llm-pane .llm-name{font-size:13.5px;line-height:20px;font-weight:600;color:var(--ink)}
-.llm-pane .llm-name + .llm-id{font-size:11.5px;font-weight:400;color:var(--ink-2)}
+.llm-pane .llm-name{font-size:var(--fs-ui);line-height:20px;font-weight:600;color:var(--ink)}
+.llm-pane .llm-name + .llm-id{font-size:var(--fs-label);font-weight:400;color:var(--ink-2)}
 
 /* ---- Where chats run (ST-20, ST-22; Д30: the pane's first and main choice) ----
    Three cards, a title and a line each; the one in effect wears the brand
@@ -142,13 +142,13 @@
 .llm-pane .llm-rm-grid{display:grid;grid-template-columns:repeat(3, minmax(0, 1fr));gap:8px}
 @container llmpane (max-width:560px){.llm-pane .llm-rm-grid{grid-template-columns:minmax(0, 1fr)}}
 .llm-pane .llm-rm{display:flex;align-items:flex-start;gap:10px;min-width:0;padding:11px 12px;border-radius:var(--r-row);text-align:left;
-  background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink);font:400 13px/1.35 var(--font-ui);
+  background:transparent;box-shadow:inset 0 0 0 1px var(--bd);color:var(--ink);font:400 var(--fs-cap)/1.35 var(--font-ui);
   transition:background-color var(--t-state) var(--ease),box-shadow var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 .llm-pane .llm-rm-ico{display:grid;place-items:center;flex:none;width:28px;height:28px;border-radius:50%;background:var(--hover);color:var(--ink-2)}
 .llm-pane .llm-rm-ico > svg{width:15px;height:15px}
 .llm-pane .llm-rm-body{display:flex;flex-direction:column;gap:2px;min-width:0}
-.llm-pane .llm-rm-t{font-size:13.5px;font-weight:600;line-height:1.3;color:var(--ink)}
-.llm-pane .llm-rm-d{font-size:12px;line-height:1.35;color:var(--ink-2)}
+.llm-pane .llm-rm-t{font-size:var(--fs-ui);font-weight:600;line-height:1.3;color:var(--ink)}
+.llm-pane .llm-rm-d{font-size:var(--fs-label);line-height:1.35;color:var(--ink-2)}
 .llm-pane .llm-rm:hover{background:var(--hover)}
 .llm-pane .llm-rm.on{background:var(--lift);box-shadow:0 0 0 1.5px var(--brand)}
 .llm-pane .llm-rm.on .llm-rm-ico{background:var(--brand-wash);color:var(--blue)}
@@ -159,7 +159,7 @@
 .llm-pane .llm-rm-need{display:inline-flex;align-items:center;gap:4px}
 .llm-pane .llm-rm-need > svg{flex:none;width:12px;height:12px}
 .llm-pane .llm-rm.blocked:hover .llm-rm-need{text-decoration:underline;text-underline-offset:2px}
-.llm-pane .llm-now{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:30px;margin:0;font-size:13px;line-height:1.45;color:var(--ink-2)}
+.llm-pane .llm-now{display:flex;align-items:center;flex-wrap:wrap;gap:4px 8px;min-height:30px;margin:0;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 .llm-pane .llm-now b{font-weight:600;color:var(--ink)}
 .llm-pane .llm-nowst{display:inline-flex;align-items:center;gap:6px;margin-left:4px;color:var(--ink-2)}
 .llm-pane .llm-nowst .tk-dot{width:7px;height:7px}
@@ -173,42 +173,42 @@
 .llm-pane .llm-workers .tk-help{flex:1;min-width:220px}
 .llm-pane .llm-workerseg button{min-width:34px;padding:0 10px}
 /* /runmode status, only around Fusion — machine text. */
-.llm-pane .llm-rm-status{margin:0;font:400 12px/1.45 var(--font-mono);letter-spacing:0;color:var(--ink-2);overflow-wrap:anywhere}
+.llm-pane .llm-rm-status{margin:0;font:400 var(--fs-label)/1.45 var(--font-mono);letter-spacing:0;color:var(--ink-2);overflow-wrap:anywhere}
 
 /* ---- Advanced (Calm S5; Д35): the Engine card, the local models' knobs,
    and the route's internals folded under Details ---- */
 .llm-pane .llm-adv{border-top:1px solid var(--divider);padding-top:10px}
 .llm-pane :is(.llm-adv, .llm-details) > summary{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px 0 6px;border-radius:var(--r-pill);
-  list-style:none;cursor:pointer;font-size:13px;font-weight:500;color:var(--ink-2);transition:background-color var(--t-state) var(--ease)}
+  list-style:none;cursor:pointer;font-size:var(--fs-cap);font-weight:500;color:var(--ink-2);transition:background-color var(--t-state) var(--ease)}
 .llm-pane :is(.llm-adv, .llm-details) > summary::-webkit-details-marker{display:none}
 .llm-pane :is(.llm-adv, .llm-details) > summary:hover{background:var(--hover);color:var(--ink)}
 .llm-pane :is(.llm-adv, .llm-details) > summary > svg{width:14px;height:14px;transition:transform var(--t-state) var(--ease)}
 .llm-pane :is(.llm-adv, .llm-details)[open] > summary > svg{transform:rotate(90deg)}
 .llm-pane .llm-adv-body{display:flex;flex-direction:column;gap:10px;padding:10px 0 4px}
-.llm-pane .llm-adv-h{font-size:12.5px;font-weight:600;color:var(--ink-2)}
-.llm-pane .llm-details > summary{font-size:12.5px}
+.llm-pane .llm-adv-h{font-size:var(--fs-cap);font-weight:600;color:var(--ink-2)}
+.llm-pane .llm-details > summary{font-size:var(--fs-cap)}
 .llm-pane .llm-details > .llm-route{margin-top:8px}
 
 /* ---- Cloud: provider, filter, price facet ---- */
-.llm-pane .llm-prov{min-width:0;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-prov{min-width:0;font-size:var(--fs-cap);color:var(--ink-2)}
 .llm-pane .llm-prov .logo,.llm-pane .llm-prov .tk-ico{vertical-align:middle;margin:-2px 5px 0 2px}
 .llm-pane .llm-prov b{font-weight:500;color:var(--ink)}
 .llm-pane .llm-filter{flex:1;min-width:200px}
 .llm-pane .llm-filterbox{display:inline-flex;width:100%;height:36px;vertical-align:middle}
 .llm-pane .llm-filterbox > svg{width:15px;height:15px;color:var(--ink-3)}
 .llm-pane #llm-filter{flex:1;width:auto;min-width:0;height:100%;padding:0;border:0;border-radius:0;background:transparent;outline:none;
-  color:var(--ink);font:400 13.5px/1 var(--font-ui)}
+  color:var(--ink);font:400 var(--fs-ui)/1 var(--font-ui)}
 .llm-pane #llm-filter::placeholder{color:var(--ink-3)}
 .llm-pane .btn.llm-ib{display:inline-block;line-height:26px;text-align:center}
 
 /* ---- External ---- */
-.llm-pane .llm-back{margin:0;padding:0 4px;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-back{margin:0;padding:0 4px;font-size:var(--fs-cap);color:var(--ink-2)}
 .llm-pane .llm-link{display:inline-block;color:var(--blue);font-weight:600;font-size:inherit;text-decoration:underline;text-underline-offset:2px}
 .llm-pane .llm-link:hover{color:var(--blue-deep)}
 
 /* ---- Fallback (ST-25) ---- */
 .llm-pane .llm-idx{display:inline-block;width:24px;height:24px;margin-right:10px;border-radius:50%;background:var(--hover);
-  font:500 11.5px/24px var(--font-mono);color:var(--ink-2);text-align:center;vertical-align:middle}
+  font:500 var(--fs-label)/24px var(--font-mono);color:var(--ink-2);text-align:center;vertical-align:middle}
 .llm-pane .llm-fb-row .t .logo,.llm-pane .llm-fb-row .t .tk-ico{vertical-align:middle;margin:-2px 8px 0 0}
 /* A mark inside a line of text (the route card's "aimlapi / gpt-5.5",
    "provider: aimlapi", a fallback link): an atomic inline that holds a
@@ -223,7 +223,7 @@
 .llm-pane .llm-mv.is-off{color:var(--ink-3);cursor:default;background:transparent}
 .llm-pane .llm-lock{display:grid;place-items:center;width:26px;height:26px;color:var(--ink-3)}
 .llm-pane .llm-fbl{display:flex;align-items:center;gap:10px;min-height:44px;padding:2px 4px}
-.llm-pane .llm-fbl-t{font-size:13.5px;color:var(--ink)}
+.llm-pane .llm-fbl-t{font-size:var(--fs-ui);color:var(--ink)}
 .llm-pane .llm-fbl-t b{font-weight:600}
 
 /* ---- Confirms and prompts float over the inert pane (ST-24, ST-27) ---- */
@@ -232,13 +232,13 @@
 .llm-pane .llm-behind{display:flex;flex-direction:column;gap:14px;min-width:0;opacity:.42;filter:blur(2px) saturate(.7);pointer-events:none;user-select:none}
 .llm-pane .llm-modal{gap:12px;padding:20px 20px 16px;border-radius:var(--r-sheet)}
 .llm-pane .llm-modal-h{display:flex;align-items:center;gap:10px}
-.llm-pane .llm-modal-h h4{font-size:16.5px;line-height:1.3;overflow-wrap:anywhere}
-.llm-pane .llm-modal p .mono{font-size:12.5px}
+.llm-pane .llm-modal-h h4{font-size:var(--fs-sub);line-height:1.3;overflow-wrap:anywhere}
+.llm-pane .llm-modal p .mono{font-size:var(--fs-cap)}
 .llm-pane .llm-modal .tk-help{margin:0}
 .llm-pane .llm-modal .acts .kc{margin-left:4px}
-.llm-pane .llm-working{display:flex;align-items:center;gap:8px;margin:0;font-size:12.5px;color:var(--ink-2)}
+.llm-pane .llm-working{display:flex;align-items:center;gap:8px;margin:0;font-size:var(--fs-cap);color:var(--ink-2)}
 .llm-pane .llm-modal #llm-url{width:100%;height:40px;padding:0 15px;border:1px solid transparent;border-radius:var(--r-pill);outline:none;
-  background:var(--well);color:var(--ink);font:400 13px/1 var(--font-mono)}
+  background:var(--well);color:var(--ink);font:400 var(--fs-cap)/1 var(--font-mono)}
 .llm-pane .llm-modal #llm-url:focus{background:var(--lift);border-color:var(--brand);box-shadow:var(--focus-ring)}
 .llm-pane .llm-modal #llm-url.is-error{background:var(--lift);border-color:var(--critical);box-shadow:0 0 0 4px var(--critical-wash)}
 
@@ -247,18 +247,18 @@
 .llm-pane .llm-hf-card{display:flex;flex-direction:column;gap:14px;padding:18px 18px 16px;border-radius:var(--r-block);background:var(--well)}
 .llm-pane .llm-hf-head{display:flex;align-items:flex-start;gap:14px}
 .llm-pane .llm-hf-title{min-width:0}
-.llm-pane .llm-h{margin:2px 0 0;font-size:17px;font-weight:600;line-height:1.3;letter-spacing:-.02em;color:var(--ink)}
-.llm-pane .llm-h-tail{font-size:13.5px;font-weight:400;letter-spacing:-.003em;color:var(--ink-2)}
-.llm-pane .llm-hf-ex{margin:4px 0 0;font:400 12px/1.5 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
+.llm-pane .llm-h{margin:2px 0 0;font-size:var(--fs-sub);font-weight:600;line-height:1.3;letter-spacing:-.02em;color:var(--ink)}
+.llm-pane .llm-h-tail{font-size:var(--fs-ui);font-weight:400;letter-spacing:-.003em;color:var(--ink-2)}
+.llm-pane .llm-hf-ex{margin:4px 0 0;font:400 var(--fs-label)/1.5 var(--font-mono);color:var(--ink-2);overflow-wrap:anywhere}
 .llm-pane .llm-hf-row{display:flex;align-items:center;gap:8px}
 .llm-pane .llm-hf-inp{flex:1;height:44px;background:var(--lift)}
 .llm-pane .llm-hf-inp > svg{width:15px;height:15px;color:var(--ink-3)}
-.llm-pane .llm-hf-inp input{width:auto;max-width:none;height:100%;padding:0;border:0;border-radius:0;background:transparent;color:var(--ink);font:400 13.5px/1 var(--font-mono)}
+.llm-pane .llm-hf-inp input{width:auto;max-width:none;height:100%;padding:0;border:0;border-radius:0;background:transparent;color:var(--ink);font:400 var(--fs-ui)/1 var(--font-mono)}
 .llm-pane .llm-hf-inp input:disabled{color:var(--ink-3)}
 .llm-pane .llm-hf-err .grow{white-space:pre-wrap}
 .llm-pane .llm-hf-acts{display:flex;align-items:center;justify-content:flex-end;gap:8px}
 .llm-pane .llm-hf-repo{gap:8px}
-.llm-pane .llm-hf-file .llm-id{font-size:12.5px}
+.llm-pane .llm-hf-file .llm-id{font-size:var(--fs-cap)}
 .llm-pane .llm-mmproj{display:flex;align-items:center;gap:8px}
 .llm-pane .llm-mmproj > svg{width:15px;height:15px;color:var(--ink-2)}
 
@@ -267,7 +267,7 @@
 .hfm-fold{min-width:0}
 .llm-pane .hfm-fold{padding-top:14px;border-top:1px solid var(--bd)}
 #onboarding .hfm-fold{width:100%;max-width:var(--ob-col);margin-top:18px}
-.hfm-sum{cursor:pointer;width:max-content;font-size:12.5px;font-weight:600;color:var(--ink-2);user-select:none}
+.hfm-sum{cursor:pointer;width:max-content;font-size:var(--fs-cap);font-weight:600;color:var(--ink-2);user-select:none}
 /* ATO-728: the same turning chevron as the Models pane's Advanced fold, not the system triangle. */
 .hfm-sum{display:inline-flex;align-items:center;gap:6px;list-style:none}
 .hfm-sum::-webkit-details-marker{display:none}
@@ -278,12 +278,12 @@
 #onboarding .hfm{width:100%;max-width:var(--ob-col);margin-top:18px}
 /* Inside the Advanced fold the fold carries the rule and the column width. */
 .llm-pane .hfm-fold .hfm,#onboarding .hfm-fold .hfm{margin-top:10px;padding-top:0;border-top:0}
-.hfm-lbl{font-size:12.5px;font-weight:600;color:var(--ink)}
+.hfm-lbl{font-size:var(--fs-cap);font-weight:600;color:var(--ink)}
 .hfm-row{display:flex;align-items:center;gap:8px}
 .hfm-inp{flex:1;min-width:0;background:var(--lift)}
-.hfm-inp input{font:400 13px/1 var(--font-mono)}
+.hfm-inp input{font:400 var(--fs-cap)/1 var(--font-mono)}
 .hfm-inp input:disabled{color:var(--ink-3)}
-.hfm-note{margin:0;font-size:12.5px;line-height:1.45;color:var(--ink-2);overflow-wrap:anywhere}
+.hfm-note{margin:0;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2);overflow-wrap:anywhere}
 .hfm-err .grow{white-space:pre-wrap;overflow-wrap:anywhere}
 
 /* ---- Thinking (gap 11): three knobs, a title and one help line each, the choice on the right ---- */
@@ -291,15 +291,15 @@
 .llm-pane .llm-tune-row{display:flex;align-items:center;gap:8px 16px;flex-wrap:wrap;min-height:46px;padding:10px 12px 10px 16px}
 .llm-pane .llm-tune-row + .llm-tune-row{box-shadow:inset 0 1px 0 var(--bd)}
 .llm-pane .llm-tune-body{flex:1;min-width:220px;display:flex;flex-direction:column;gap:2px}
-.llm-pane .llm-tune-t{font-size:13.5px;font-weight:600;line-height:1.3}
+.llm-pane .llm-tune-t{font-size:var(--fs-ui);font-weight:600;line-height:1.3}
 .llm-pane .llm-tuneseg button{min-width:44px;padding:0 10px}
 .llm-pane .llm-tune .tk-sh .tk-spin{width:12px;height:12px;margin-left:8px}
 
 /* `fault:` from atag models status (tui-parity.js). */
 .llm-pane .llm-fault{margin-top:8px;align-items:flex-start}
-.llm-pane .llm-fault .grow{font-size:12.5px;line-height:1.45}
+.llm-pane .llm-fault .grow{font-size:var(--fs-cap);line-height:1.45}
 /* The local engine is not ready (engfCardHTML): title, the plain why, the agent's own line, then Download again. */
 .llm-pane .llm-engfail .grow{display:flex;flex-direction:column;gap:2px;min-width:0}
-.llm-pane .llm-engfail b{font-size:13.5px;font-weight:600}
+.llm-pane .llm-engfail b{font-size:var(--fs-ui);font-weight:600}
 .llm-pane .llm-engfail-detail{overflow-wrap:anywhere;opacity:.8}
 .llm-pane .llm-engfail-acts{display:flex;gap:6px;flex:none;align-self:center}

@@ -41,6 +41,8 @@ export {
   discardStagedInstall,
   enforceScanGate,
   installSkillFromHub,
+  scanApprovalFromIds,
+  scanIdOf,
   SkillHubInstallError,
   stageSkillFromHub,
 } from "./install-from-hub.js";

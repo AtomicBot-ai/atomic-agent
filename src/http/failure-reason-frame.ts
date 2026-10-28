@@ -1,8 +1,10 @@
 import { getConfig } from "../config/index.js";
 import {
   LOCAL_ENGINE_DOWN_CODE,
+  LOCAL_OUT_OF_MEMORY_CODE,
   classifyLocalServerError,
   isLocalEngineDown,
+  isLocalOutOfMemory,
 } from "../llm/reliability/index.js";
 
 /** The machine-readable reason fields a turn's failure frame may carry. */
@@ -12,7 +14,9 @@ export interface FailureReasonFields {
    * `localModels.url`, the address the Reconnect check probes),
    * `local_provider_not_found` (the same from another llama-server
    * address: no Reconnect), `local_context_exceeded` or
-   * `local_request_invalid` (ATO-708, ATO-873, ATO-737). Hosts branch on
+   * `local_request_invalid` (ATO-708, ATO-873, ATO-737);
+   * `local_out_of_memory` (ATO-334: the managed model ran out of memory
+   * and was not brought back). Hosts branch on
    * it instead of reading the words.
    */
   code?: string;
@@ -49,6 +53,8 @@ export function failureReasonFields(
   llamaUrl: string | null,
 ): FailureReasonFields {
   if (isLocalEngineDown(ending)) return { code: LOCAL_ENGINE_DOWN_CODE };
+  // ATO-334: a host can offer a smaller model or a restart with a smaller window.
+  if (isLocalOutOfMemory(ending)) return { code: LOCAL_OUT_OF_MEMORY_CODE };
   const local = classifyLocalServerError(shown, { llamaUrl });
   if (local === null) return {};
   return { code: local.code, advice: `${local.message} ${local.advice}` };

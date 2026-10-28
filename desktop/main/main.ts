@@ -5,7 +5,7 @@
    take their own side effects. */
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
@@ -28,7 +28,7 @@ import { createServer } from "node:http";
 import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
-import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent } from "./agent-client.js";
+import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
@@ -241,6 +241,7 @@ import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverla
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
+import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
@@ -1336,6 +1337,24 @@ function wireIpc(client: AgentClient): void {
     return value;
   };
   ipcMain.handle("agent:skills", (_event, sessionId: unknown) => wrap(() => client.skills(skillSession(sessionId))));
+  // ATO-1250: the project-trust question (renderer/project-trust.js). Every field is checked here; the agent checks them again.
+  ipcMain.handle("agent:projectTrust", async (_event, sessionId: unknown) => {
+    try { return await client.projectTrust(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:projectTrustAnswer", async (_event, raw: unknown) => {
+    const body = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+    if (body.answer !== "trust" && body.answer !== "decline") return { ok: false, error: "answer must be trust or decline" };
+    const out: ProjectTrustAnswerBody = { answer: body.answer };
+    try {
+      const sessionId = skillSession(body.sessionId);
+      if (sessionId) out.sessionId = sessionId;
+    } catch (err) { return { ok: false, error: String(err) }; }
+    if (!out.sessionId && typeof body.workingDir === "string" && body.workingDir.length < 4096) out.workingDir = body.workingDir;
+    if (body.scope === "all") out.scope = "all";
+    else if (typeof body.questionId === "string" && body.questionId.length <= 128) out.questionId = body.questionId;
+    else return { ok: false, error: "questionId required" };
+    return client.answerProjectTrust(out);
+  });
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());
@@ -2145,8 +2164,13 @@ function wireIpc(client: AgentClient): void {
     }
     /* ATO-1021: a cloud pick on an agent already on a single-mode cloud route,
        with no daemon stopped or started, is swapped live instead of restarted. */
-    const live = !!boot && !drifted && res.transport === "native_tools"
-      && (res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" && boot.mode !== "fusion";
+    /* ATO-1234: Settings › Models' Use (daemon "stopping": the local server
+       stops in the background) is taken live from a local route too — the
+       agent drops nothing it needs to reach a cloud provider. The reverse,
+       cloud → local, still restarts: a local route has a model profile serve
+       sets up at boot. */
+    const live = !!boot && !drifted && res.transport === "native_tools" && boot.mode !== "fusion"
+      && ((res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" || res.daemon === "stopping");
     const { restart, restartHeld, liveSwapped } = await restartAfterSwitch(res, wanted || drifted, drifted, live);
     return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), ...(liveSwapped ? { liveSwapped } : {}), status: client.status };
   };
@@ -2171,14 +2195,16 @@ function wireIpc(client: AgentClient): void {
     if (kind !== "cloud" && kind !== "local") return { ok: false, error: "backend must be cloud or local" };
     return switched(() => switchBackend(kind), { explicit: true });
   });
-  ipcMain.handle("cli:activateProvider", async (_event, id: unknown) => {
+  ipcMain.handle("cli:activateProvider", async (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
-    return switched(() => activateProvider(id));
+    // ATO-1234: Settings › Models' Use asks for the local server to stop in the background.
+    const background = !!opts && typeof opts === "object" && (opts as { background?: unknown }).background === true;
+    return switched(() => activateProvider(id, { stopInBackground: background }));
   });
   ipcMain.handle("cli:selectCloudModel", async (_event, payload: unknown) => {
     const { id, model } = (payload ?? {}) as { id?: unknown; model?: unknown };
     if (typeof id !== "string" || typeof model !== "string") return { ok: false, error: "id and model are required" };
-    return switched(() => selectCloudModel(id, model));
+    return switched(() => selectCloudModel(id, model, { stopInBackground: (payload as { background?: unknown }).background === true }));
   });
   ipcMain.handle("cli:selectLocalModel", async (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
@@ -2363,6 +2389,21 @@ function wireIpc(client: AgentClient): void {
   const imageRoots = (): string[] => imageRootsFor(process.platform, homedir(), DESKTOP_STATE_DIR, tmpdir());
   ipcMain.handle("app:imageDataUrl", (_event, p: unknown) =>
     imageDataUrl(p, imageRoots(), homedir(), process.platform));
+  /* ATO-1053: the file preview panel. The window hands a path and gets back
+     what it may show (file-preview.ts): only inside the picture roots plus
+     the agent's working folder, links resolved, the file opened once, text
+     capped, nothing run. Open and Reveal go through the same check, and Open
+     still never runs a file (openWithoutRunning). */
+  const previewRoots = (): string[] => previewRootsFor(imageRoots(), client.isRemote ? null : client.status.workingDir);
+  ipcMain.handle("app:filePreview", (_event, p: unknown) =>
+    filePreview(p, previewRoots(), homedir(), process.platform));
+  ipcMain.handle("app:filePreviewAction", async (_event, p: unknown, action: unknown) => {
+    const t = await previewTarget(p, previewRoots(), homedir(), process.platform);
+    if (!t.ok) return { ok: false, reason: t.reason };
+    if (action === "reveal") { shell.showItemInFolder(t.real); return { ok: true }; }
+    if (action === "open") return openWithoutRunning(t.real);
+    return { ok: false, reason: "unknown" };
+  });
   ipcMain.handle("app:imageSaveAs", async (event, p: unknown) => {
     const opened = await openImage(p, imageRoots(), homedir(), process.platform);
     if (!opened.ok) return { ok: false, reason: opened.reason };
@@ -5839,6 +5880,14 @@ async function settingsTest(
   // Skills count suffix: N = every installed skill incl. disabled, from `atag skill list`.
   let skillCount: number | null = null;
   for (let i = 0; i < 20 && skillCount === null; i++) { await wait(500); skillCount = await js<number | null>("window.__skillCount()"); }
+  // ATO-1250: the folder-trust route answers (or, on an agent from before it, is reported as absent and nothing shows),
+  // and a question, when there is one, is about a folder and carries the id an answer must echo.
+  const trust = await js<{ supported?: boolean; ok?: boolean; status?: { workingDir?: string; question?: string | null; questionId?: string | null }; error?: string }>("window.atomic.projectTrust()");
+  check(
+    "folder trust: GET /api/project-trust answers or is absent",
+    trust.supported === false || (trust.ok === true && !!trust.status?.workingDir && (trust.status.question == null) === (trust.status.questionId == null)),
+    trust.supported === false ? "agent without the route" : `ok=${String(trust.ok)} dir=${trust.status?.workingDir ?? "?"} question=${JSON.stringify(trust.status?.question ?? null)} ${trust.error ?? ""}`,
+  );
   const skillsCli = await js<{ ok: boolean; rows?: unknown[]; error?: string }>("window.atomic.skillList()");
   // The nav row a person reads: the label alone (Calm S5: no count badge; the pane's own tabs carry the counts, Д43).
   const skillsLabel = await js<{ act: string; label: string; count: string | null }>(
@@ -13842,10 +13891,15 @@ let remoteWindow: BrowserWindow | null = null;
 /** Agent › Connect to Another Computer…: a small window over the main one (renderer/remote-connect.html). */
 function openRemoteConnect(): void {
   if (remoteWindow && !remoteWindow.isDestroyed()) { remoteWindow.focus(); return; }
+  /* ATO-1240: tall enough for the http note and an error line, never taller
+     than the screen it opens on; resizable, with the buttons pinned (the
+     page scrolls its body). */
+  const workHeight = screen.getDisplayMatching(win && !win.isDestroyed() ? win.getBounds() : { x: 0, y: 0, width: 1, height: 1 }).workArea.height;
   remoteWindow = new BrowserWindow({
     width: 480,
-    height: 380,
-    resizable: false,
+    height: Math.max(300, Math.min(460, workHeight - 40)),
+    minHeight: 260,
+    resizable: true,
     minimizable: false,
     title: "Connect to another computer",
     ...(win && !win.isDestroyed() ? { parent: win, modal: true } : {}),

@@ -4389,6 +4389,21 @@ export function noLocalModelsHere(stderr: string): string | null {
   return stderr.match(NO_LOCAL_MODELS_HERE)?.[0].trim() ?? null;
 }
 
+/* ATO-1233: what the agent said when `models update` failed, in place of
+   "exited with code 1": the last line of stderr that reads like a reason
+   (an error, a refusal, "ownership changed"), else its last line. Log
+   prefixes and timestamps are dropped; at most 300 characters. Null when
+   stderr is empty. A killed child (code null, a cancel) keeps its old
+   words, which the window reads as a cancel. */
+export function updateFailureCause(stderr: string): string | null {
+  const lines = stderr.split(/\r?\n/)
+    .map((l) => l.replace(/^\[atomic-agent\]\s*/, "").replace(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\s+(ERROR|WARN|INFO)\s+/, "").replace(/^(error|Error):\s*/, "").trim())
+    .filter((l) => l.length > 0 && !/^\d{1,3}%|^current:|^latest:|^downloading/i.test(l));
+  if (!lines.length) return null;
+  const reason = [...lines].reverse().find((l) => /error|fail|cannot|can't|could not|changed|refus|denied|not (installed|available|found)|no space|stop /i.test(l)) ?? lines[lines.length - 1]!;
+  return reason.length > 300 ? `${reason.slice(0, 297)}...` : reason;
+}
+
 export function modelsUpdateStream(
   onLine: (line: string) => void,
   limits: { firstProgressMs?: number; stallMs?: number } = {},
@@ -4411,6 +4426,8 @@ export function modelsUpdateStream(
      OPERATOR's ~/.atomic-agent — it writes the llama.cpp backend into whatever
      state dir the child resolves, which is exactly what item 9 exists to stop.
      The isolation lane's source scan is what caught it. */
+  // A cancel ends with code 1 on Windows (no signal): it keeps its cancel wording there too.
+  let cancelledByUs = false;
   const child = spawn(binary, ["models", "update"], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
@@ -4459,13 +4476,13 @@ export function modelsUpdateStream(
     };
     child.on("exit", (code) => {
       if (code === 0) return finish({ ok: true, stdout, stderr });
-      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? `models update exited with code ${code ?? "null"}` });
+      if (timedOut === null) return finish({ ok: false, stdout, stderr, error: noLocalModelsHere(stderr) ?? (code === null || cancelledByUs ? null : updateFailureCause(stderr)) ?? `models update exited with code ${code ?? "null"}` });
       const keptBackend = kept();
       finish({ ok: false, stdout, stderr, error: updateTimedOutError(timedOut, keptBackend) }, keptBackend);
     });
     child.on("error", (err) => finish({ ok: false, stdout, stderr, error: err.message }));
   });
-  return { done, cancel: () => child.kill("SIGTERM") };
+  return { done, cancel: () => { cancelledByUs = true; child.kill("SIGTERM"); } };
 }
 
 /**

@@ -13,8 +13,27 @@ export {
   ToolExecutionError,
   TransportError,
 } from "./llm-failures.js";
-export type { LlmFailureOptions, ModelErrorOptions } from "./llm-failures.js";
+export type {
+  LlmFailureOptions,
+  ModelErrorOptions,
+  ToolExecutionErrorKind,
+  ToolExecutionErrorOptions,
+  UnregisteredToolNameClass,
+} from "./llm-failures.js";
 export { classifyFailure } from "./classify-failure.js";
+export { classifyFailureCause } from "./classify-failure-cause.js";
+export {
+  FAILURE_CATALOG,
+  failureVerdict,
+  loopDetectorVerdict,
+} from "./failure-catalog.js";
+export type {
+  FailureAction,
+  FailureCatalogEntry,
+  FailureCauseId,
+  FailureVerdict,
+  LoopDetectorName,
+} from "./failure-catalog.js";
 export {
   LOCAL_ENGINE_DOWN_CODE,
   LOCAL_ENGINE_DOWN_MESSAGE,
@@ -22,6 +41,11 @@ export {
   LocalEngineDownError,
   isLocalEngineDown,
 } from "./local-engine-down.js";
+export {
+  LOCAL_OUT_OF_MEMORY_CODE,
+  LocalOutOfMemoryError,
+  isLocalOutOfMemory,
+} from "./local-out-of-memory.js";
 export {
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_PROVIDER_NOT_FOUND_CODE,

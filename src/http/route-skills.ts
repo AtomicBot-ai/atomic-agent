@@ -4,6 +4,8 @@ import { SessionNotFoundError } from "../runtime/session-not-found-error.js";
 
 import {
   installLocalSkill,
+  scanApprovalFromIds,
+  scanIdOf,
   SkillHubInstallError,
   SkillInstallError,
   SkillNotFoundError,
@@ -22,10 +24,13 @@ interface InstallBody {
   sourcePath?: string;
   force?: boolean;
   source?: "global" | "project";
-  /** Install despite a `caution` scan verdict (the user confirmed). */
-  confirm?: boolean;
-  /** Install despite a `dangerous` scan verdict (implies `confirm`). */
-  acknowledgeRisk?: boolean;
+  /**
+   * The `scanId` of the caution scan the user confirmed. Only that exact
+   * scan is approved; `true` or a stale id is not a confirmation.
+   */
+  confirm?: unknown;
+  /** The `scanId` of the dangerous scan the user accepted (implies confirm). */
+  acknowledgeRisk?: unknown;
 }
 
 interface UninstallBody {
@@ -127,11 +132,13 @@ export function createGetSkillHandler(): HttpHandler {
  * the project-local dir explicitly.
  *
  * The folder goes through the same security scan as hub installs. A
- * `caution` verdict answers 428 with `error.code: "needs_confirmation"`
- * and the `scan` (verdict + findings) for the UI to show; the client
- * re-sends with `confirm: true` once the user agrees. A `dangerous`
- * verdict answers 403 `dangerous_blocked`; only `acknowledgeRisk: true`
- * installs it. Nothing is copied before the gate passes.
+ * `caution` verdict answers 428 with `error.code: "needs_confirmation"`,
+ * the `scan` (verdict + findings) and its `scanId`; the client re-sends
+ * with `confirm: "<scanId>"` once the user agrees. A `dangerous` verdict
+ * answers 403 `dangerous_blocked`; only `acknowledgeRisk: "<scanId>"`
+ * installs it. The ids bind the "yes" to the findings shown: if the
+ * folder changed, the new scan has a new id and the route asks again.
+ * Nothing is copied before the gate passes.
  */
 export function createInstallSkillHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -153,8 +160,7 @@ export function createInstallSkillHandler(): HttpHandler {
         sourceDir: body.sourcePath,
         targetRoot,
         ...(body.force === true ? { force: true } : {}),
-        confirmCaution: body.confirm === true,
-        acknowledgeRisk: body.acknowledgeRisk === true,
+        ...scanApprovalFromIds(body),
       });
       await ctx.runtime.refreshSkills();
       sendJson(res, 200, {
@@ -162,6 +168,7 @@ export function createInstallSkillHandler(): HttpHandler {
         manifest: result.manifest,
         installedAt: result.installedAt,
         scan: result.scan,
+        scanId: result.scanId,
       });
     } catch (err) {
       if (err instanceof SkillHubInstallError && err.scan) {
@@ -175,6 +182,7 @@ export function createInstallSkillHandler(): HttpHandler {
           ),
           installed: false,
           scan: err.scan,
+          scanId: scanIdOf(err.scan),
         });
         return;
       }

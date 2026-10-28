@@ -138,9 +138,18 @@ function banner(lines: number, chars: number, kept: string): string {
   return `… [omitted ${lines} earlier lines, ${chars} characters]\n${kept}`;
 }
 
+export interface SkillRunScriptToolOptions extends DangerousToolOptions {
+  /**
+   * `tools.shell.envPassthrough`, so a skill script and a shell command
+   * inherit the same secret-looking names. Omitted means none: the
+   * script still gets the filtered environment.
+   */
+  envPassthrough?: readonly string[];
+}
+
 export function buildSkillRunScriptTool(
   registry: SkillRegistry,
-  options: DangerousToolOptions,
+  options: SkillRunScriptToolOptions,
 ): ToolDefinition {
   return {
     name: "skill.run_script",
@@ -206,6 +215,9 @@ export function buildSkillRunScriptTool(
         args: scriptArgs,
         timeoutMs,
         signal: ctx.signal,
+        ...(options.envPassthrough !== undefined
+          ? { envPassthrough: options.envPassthrough }
+          : {}),
         ...(ctx.workspaceSkills ? { beforeRun: (scriptPath: string) => {
           ctx.workspaceSkills!.assertAvailable(skillName);
           if (!isWithinWorkspace(record.rootDir, realpathSync(scriptPath))) throw new Error("Skill script resolves outside its selected source");

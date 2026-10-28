@@ -6,6 +6,8 @@ import * as configuration from "../../config/index.js";
 import * as analytics from "../../analytics/index.js";
 import { AnalyticsStateStore, TurnUsageMeter } from "../../analytics/index.js";
 import { createEmptySessionState, createFusionWorkerSession, SESSION_TITLE_TIMEOUT_MS, type SessionState } from "../../session/index.js";
+import { assistantReplyTurn, userTurn } from "../../session/conversation-turn.js";
+import { NO_OPERATOR_WORDS_MARKER } from "../../prompt/request-section.js";
 import type { RunTurnOptions, RunTurnResult } from "../../agent/agent-loop.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import { LlamaServerClient } from "../../llm/llama-server-client.js";
@@ -54,6 +56,7 @@ describe("runtime turn ownership recipes", () => {
     const events: string[] = [];
     const rows = new Map<string, SessionState>();
     const turnRequests = new Map<string, string>();
+    const turnPreviousReplies = new Map<string, string>();
     const sessionStore: RuntimeTurnDependencies["sessions"]["sessionStore"] = {
       save: value => { events.push("save"); rows.set(value.id, value); },
       load: id => rows.get(id) ?? null,
@@ -74,7 +77,7 @@ describe("runtime turn ownership recipes", () => {
     const steeringInbox = new SteeringInbox();
     let closing = false;
     const deps: RuntimeTurnDependencies = {
-      sessions: { sessionStore, turnContext: traces.turnContext, turnRequests },
+      sessions: { sessionStore, turnContext: traces.turnContext, turnRequests, turnPreviousReplies },
       execution: {
         loop, turnController, steeringInbox,
         shellJobs: { endSession: id => { events.push(`shell-session:${id}`); return []; }, endTurn: () => { events.push("shell-turn"); return []; } },
@@ -92,7 +95,7 @@ describe("runtime turn ownership recipes", () => {
       state, lifecycle: { isShutdown: () => closing }, logger,
     };
     const service = createRuntimeTurnService(config, deps);
-    return { config, traces, providers, state, events, rows, turnRequests, sessionStore, loop, turnController, steeringInbox, deps, service, setClosing: (value: boolean) => { closing = value; } };
+    return { config, traces, providers, state, events, rows, turnRequests, turnPreviousReplies, sessionStore, loop, turnController, steeringInbox, deps, service, setClosing: (value: boolean) => { closing = value; } };
   }
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "atomic-runtime-turns-")); fixture = await makeFixture(); });
   afterEach(async () => {
@@ -186,6 +189,27 @@ describe("runtime turn ownership recipes", () => {
     expect(begin).not.toHaveBeenCalled();
     expect(fixture.events).toEqual(["loop", `clear:${worker.id}`, `shell-session:${worker.id}`, `slot-release:${worker.id}`]);
     expect(fixture.rows.size).toBe(0);
+    expect(fixture.turnRequests.size).toBe(0);
+  });
+
+  it("records the reply a turn answers for the input guard, hands it to workers, and clears both (ATO-860)", async () => {
+    const parent = { ...session("parent"), turns: [userTurn("Clean sales.csv"), assistantReplyTurn("Replace sales.csv?")] };
+    const worker = createFusionWorkerSession({ workingDir: dir, meta: { parentSessionId: "parent", taskId: "task" } });
+    const seen: Array<{ reply: string | undefined; request: string | undefined }> = [];
+    fixture.loop.runTurn.mockImplementationOnce(async (value, options) => {
+      seen.push({ reply: fixture.turnPreviousReplies.get(value.id), request: fixture.turnRequests.get(value.id) });
+      await fixture.service.executeTurn(worker, "brief without a quoted request");
+      return result(value, options);
+    }).mockImplementationOnce(async (value, options) => {
+      seen.push({ reply: fixture.turnPreviousReplies.get(value.id), request: fixture.turnRequests.get(value.id) });
+      return result(value, options);
+    });
+    await fixture.service.executeTurn(parent, "yes");
+    expect(seen[0]?.reply).toBe("Replace sales.csv?");
+    // The worker reads its parent's question; its block-less brief agrees to nothing.
+    expect(seen[1]?.reply).toBe("Replace sales.csv?");
+    expect(seen[1]?.request?.startsWith(NO_OPERATOR_WORDS_MARKER)).toBe(true);
+    expect(fixture.turnPreviousReplies.size).toBe(0);
     expect(fixture.turnRequests.size).toBe(0);
   });
 

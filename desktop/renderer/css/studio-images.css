@@ -6,7 +6,7 @@
    Each tab takes its label's width and the row wraps (Create Edit Reference Transform / Inpaint Extend Upscale),
    the tabs of a row stretching to fill it, so every label shows whole. */
 .st-modes{display:flex;flex-wrap:wrap;gap:4px;padding:4px;border-radius:var(--r-panel);background:var(--well)}
-.st-mode{flex:1 1 auto;min-width:56px;height:30px;border:0;border-radius:var(--r-pill);background:transparent;font-size:12.5px;color:var(--ink-2);position:relative;cursor:pointer;padding:0 10px;white-space:nowrap}
+.st-mode{flex:1 1 auto;min-width:56px;height:30px;border:0;border-radius:var(--r-pill);background:transparent;font-size:var(--fs-cap);color:var(--ink-2);position:relative;cursor:pointer;padding:0 10px;white-space:nowrap}
 .st-mode:hover{background:var(--hover)}
 .st-mode.on{background:var(--lift);color:var(--ink);box-shadow:var(--sh-card);font-weight:600}
 .st-mode.off{color:color-mix(in srgb,var(--ink-3) 60%,transparent);cursor:not-allowed}
@@ -16,7 +16,7 @@
 .st-mode.off:focus-visible{outline:1px dashed var(--ink-3);outline-offset:-3px}
 
 .st-aspects{display:grid;grid-template-columns:repeat(5,1fr);gap:6px}
-.st-asp{height:58px;border-radius:var(--r-well);background:var(--well);border:1px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:11px;color:var(--ink-2);cursor:pointer}
+.st-asp{height:58px;border-radius:var(--r-well);background:var(--well);border:1px solid transparent;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:var(--fs-micro);color:var(--ink-2);cursor:pointer}
 .st-asp i{display:block;border:1.6px solid currentColor;border-radius:3px;opacity:.8}
 .st-asp svg{width:16px;height:16px;opacity:.8}
 .st-asp:hover{background:var(--hover)}
@@ -27,8 +27,8 @@
 .st-drop.over,.st-drop.picking{border-color:var(--brand);background:var(--brand-wash)}
 .st-di{width:40px;height:40px;border-radius:12px;background:var(--lift);display:grid;place-items:center;box-shadow:var(--sh-card);color:var(--accent);flex:none}
 .st-dropt{min-width:0;flex:1}
-.st-dropt .dt{font-size:13px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.st-dropt .ds{font-size:11.5px;color:var(--ink-3)}
+.st-dropt .dt{font-size:var(--fs-cap);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.st-dropt .ds{font-size:var(--fs-label);color:var(--ink-3)}
 .st-droplinks{display:flex;gap:12px;margin-top:4px}
 .st-drop.filled{border-style:solid;border-color:transparent;padding:8px}
 .st-src{width:56px;height:56px;border-radius:10px;flex:none;position:relative;overflow:hidden;background:var(--panel-2)}

@@ -111,6 +111,10 @@ describe("step batch lifecycle owner seams", () => {
   it("replaces an initial progress note with the note from the repaired batch", async () => {
     const { ctx, deps } = fixture();
     register(deps, "os.fs.read");
+    // Registered but with no resource class: the batch shape is what
+    // fails. An unregistered name would no longer force a repair — it
+    // is answered with an error result at dispatch instead.
+    register(deps, "unclassified.fixture");
     const initial = result([
       { tool: "unclassified.fixture", args: {} },
       { tool: "os.fs.read", args: { path: "/fixture/initial" } },

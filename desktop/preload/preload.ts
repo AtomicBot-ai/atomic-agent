@@ -85,6 +85,9 @@ contextBridge.exposeInMainWorld("atomic", {
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),
   config: () => ipcRenderer.invoke("agent:config"),
   skills: (sessionId?: string | null) => ipcRenderer.invoke("agent:skills", sessionId),
+  /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
+  projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),
+  projectTrustAnswer: (body: unknown) => ipcRenderer.invoke("agent:projectTrustAnswer", body),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
@@ -164,6 +167,9 @@ contextBridge.exposeInMainWorld("atomic", {
   // Chat review Д23: which paths a reply names are files in the home folder, and opening one
   replyPaths: (paths: string[]) => ipcRenderer.invoke("app:replyPaths", paths),
   openReplyPath: (path: string) => ipcRenderer.invoke("app:openReplyPath", path),
+  // ATO-1053: the preview panel reads a file through main (file-preview.ts), never the disk itself.
+  filePreview: (path: string) => ipcRenderer.invoke("app:filePreview", path),
+  filePreviewAction: (path: string, action: "open" | "reveal") => ipcRenderer.invoke("app:filePreviewAction", path, action),
   // Studio's "From chat" clip: Show in Finder / Save As… for a reply's file in the home folder.
   // {ok:true[, path]} | {ok:false, reason:'missing'|'outside'|'not-a-file'|'canceled'|'failed'}
   replyReveal: (path: string) => ipcRenderer.invoke("app:replyReveal", path),
@@ -379,8 +385,8 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Lane B — backend switch: whole-file config writes + agent restart, main-process side. */
   switchBackend: (kind: "cloud" | "local") => ipcRenderer.invoke("cli:switchBackend", kind),
-  activateProvider: (id: string) => ipcRenderer.invoke("cli:activateProvider", id),
-  selectCloudModel: (id: string, model: string) => ipcRenderer.invoke("cli:selectCloudModel", { id, model }),
+  activateProvider: (id: string, opts?: { background?: boolean }) => ipcRenderer.invoke("cli:activateProvider", id, opts),
+  selectCloudModel: (id: string, model: string, opts?: { background?: boolean }) => ipcRenderer.invoke("cli:selectCloudModel", { id, model, background: opts?.background === true }),
   selectLocalModel: (id: string) => ipcRenderer.invoke("cli:selectLocalModel", id),
   /** Run mode — Fusion: RunModeOrchestrator's writes (enter / swap / workers / worker model), each a whole-file write + agent restart. */
   enterFusion: (pins?: { orchestratorProvider?: string; workerProvider?: string }) =>

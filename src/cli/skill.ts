@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setSkillDisabled, setProjectSkillsEnabled } from "../config/skill-policy-commands.js";
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
+import { projectTrustHint, readProjectTrust, skillTrust } from "../skills/project-trust.js";
+import { inspectProjectTrust, setProjectTrust, type ProjectTrustStatus } from "../runtime/project-trust.js";
 import {
   ensureUserConfigFileSync,
   getConfig,
@@ -32,6 +34,7 @@ import {
   SkillHubInstallError,
   type HubSkillEntry,
   type ScanGateOptions,
+  type SkillScanResult,
 } from "../skills/index.js";
 import {
   createInstallConfirm,
@@ -53,7 +56,7 @@ const HELP =
     "  enable <name>              Re-enable a previously disabled skill (mutates config.json)",
     "  disable <name>             Hide a skill from the registry without removing files (mutates config.json)",
     "  enable|disable <name> --workspace <dir>  Change cloud workspace policy only",
-    "  project on|off --workspace <dir>        Toggle all project skills in cloud",
+    "  project on|off --workspace <dir>        Trust (on) or revoke (off) the folder's project skills and AGENTS.md/CLAUDE.md files",
     "  list|show <name> --workspace <dir>      Inspect effective cloud workspace skills",
     "  browse [--source owner/repo]   Browse installable skills (ClawHub + configured GitHub taps)",
     "  search <query>             Search ClawHub + the configured GitHub taps",
@@ -115,8 +118,18 @@ function handleWorkspaceSkill(args: string[], workspace: string): number {
   }
   if (command === "project") {
     if ((value !== "on" && value !== "off") || args.length !== 2) throw new Error("Expected skill project on|off --workspace <dir>");
-    setProjectSkillsEnabled(workspace, value === "on");
-    process.stdout.write(`project skills ${value}: ${resolve(workspace)}\n`);
+    // Off declines what is there while it is still listed, then switches the folder off;
+    // on switches it back on first so its skills are counted when they are trusted.
+    let trust: ProjectTrustStatus;
+    if (value === "off") {
+      trust = setProjectTrust(getConfig(), workspace, false);
+      setProjectSkillsEnabled(workspace, false);
+    } else {
+      setProjectSkillsEnabled(workspace, true);
+      trust = setProjectTrust(getConfig(), workspace, true);
+    }
+    const items = value === "on" ? trust.trusted : trust.declined;
+    process.stdout.write(`project skills ${value}: ${resolve(workspace)} (${value === "on" ? "trusted" : "declined"}: ${items.skills.length} skills, ${items.instructions.length} instruction files)\n`);
     return 0;
   }
   if (command !== "list" && command !== "show") throw new Error("--workspace supports list, show, enable, disable and project");
@@ -130,6 +143,10 @@ function handleWorkspaceSkill(args: string[], workspace: string): number {
   } else {
     process.stdout.write(`workspace: ${view.workingDir}; project skills: ${view.projectSkillsEnabled ? "on" : "off"}\n`);
     for (const entry of view.entries) process.stdout.write(`${entry.record.manifest.name}\t[${entry.record.source}]\t${entry.disabledReasons.join(", ") || "enabled"}\t${entry.record.manifestPath}\n`);
+    const trust = inspectProjectTrust(config, workspace);
+    if (trust.trusted.instructions.length + trust.pending.instructions.length + trust.declined.instructions.length)
+      process.stdout.write(`instructions: ${trust.trusted.instructions.length} trusted, ${trust.pending.instructions.length} not trusted yet, ${trust.declined.instructions.length} declined\n`);
+    if (trust.question) process.stdout.write(`untrusted: ${trust.question.replace(/ Trust (it|them)\?$/, "")} Run ${trust.hint} to trust.\n`);
     for (const message of view.diagnostics) process.stderr.write(`WARN: ${message}\n`);
   }
   return 0;
@@ -183,12 +200,21 @@ async function handleInstall(args: string[]): Promise<number> {
     );
     return 0;
   } catch (err) {
-    return reportInstallError(err, gate);
+    return reportInstallError(err, gate, source);
   }
 }
 
-/** Print an install failure (with scan findings when the gate refused). */
-function reportInstallError(err: unknown, gate: ScanGateOptions): number {
+/**
+ * Print an install failure. When the scan gate refused, the findings come
+ * first and a one-line summary is the LAST stderr line: the desktop app
+ * runs this command without a TTY and reads only that last line (it marks
+ * a skill `blocked` on "flagged dangerous by the security scan").
+ */
+function reportInstallError(
+  err: unknown,
+  gate: ScanGateOptions,
+  identifier: string,
+): number {
   if (err instanceof SkillHubInstallError && err.scan) {
     if (err.code === "needs_confirmation" && gate.confirm) {
       // The findings were shown with the question; the operator said no.
@@ -196,17 +222,26 @@ function reportInstallError(err: unknown, gate: ScanGateOptions): number {
       return 1;
     }
     process.stderr.write(formatScanFindings(err.scan));
-    process.stderr.write(`${err.message}\n`);
     process.stderr.write(
-      err.code === "needs_confirmation"
-        ? "re-run with --yes to install anyway\n"
-        : "re-run with --acknowledge-risk to install anyway\n",
+      `${scanRefusalLine(err.code, err.scan, identifier)}\n`,
     );
     return 1;
   }
   const message = err instanceof Error ? err.message : String(err);
   process.stderr.write(`${message}\n`);
   return 1;
+}
+
+function scanRefusalLine(
+  code: SkillHubInstallError["code"],
+  scan: SkillScanResult,
+  identifier: string,
+): string {
+  if (code === "needs_confirmation") {
+    const n = scan.findings.length;
+    return `install needs confirmation: ${identifier} was flagged caution by the security scan (${n} ${n === 1 ? "finding" : "findings"}); re-run with --yes to install anyway`;
+  }
+  return `install blocked: ${identifier} flagged dangerous by the security scan (${summarizeScan(scan)}; use --acknowledge-risk to override)`;
 }
 
 async function handleHubInstall(
@@ -227,7 +262,7 @@ async function handleHubInstall(
     );
     return 0;
   } catch (err) {
-    return reportInstallError(err, gate);
+    return reportInstallError(err, gate, identifier);
   }
 }
 
@@ -252,7 +287,7 @@ async function handleClawHubInstall(
     );
     return 0;
   } catch (err) {
-    return reportInstallError(err, gate);
+    return reportInstallError(err, gate, identifier);
   }
 }
 
@@ -291,11 +326,16 @@ async function handleList(): Promise<number> {
     projectDir,
   });
   const disabled = new Set(config.skills.disabled);
+  // Project skills load only once this folder is trusted (ATO-298); show why one is off.
+  const trust = readProjectTrust(config.paths.userConfigFile, config.skills.projectTrust, process.cwd());
+  let untrusted = 0;
   if (skills.length === 0) {
     process.stdout.write("(no skills installed)\n");
   } else {
     for (const s of skills) {
-      const state = disabled.has(s.manifest.name) ? "disabled" : "enabled";
+      const projectTrust = s.source === "project" ? skillTrust(trust, s.manifest.name) : "trusted";
+      if (projectTrust === "pending") untrusted++;
+      const state = disabled.has(s.manifest.name) ? "disabled" : projectTrust === "pending" ? "untrusted" : projectTrust === "declined" ? "declined" : "enabled";
       process.stdout.write(
         `${s.manifest.name}\tv${s.manifest.version}\t[${s.source}]\t${state}\t${s.manifest.description}\n`,
       );
@@ -308,6 +348,9 @@ async function handleList(): Promise<number> {
   for (const name of disabled) {
     if (installedNames.has(name)) continue;
     process.stdout.write(`${name}\t-\t[missing]\tdisabled\t(not installed)\n`);
+  }
+  if (untrusted > 0) {
+    process.stdout.write(`untrusted: ${untrusted} project skill${untrusted === 1 ? "" : "s"} in this folder ${untrusted === 1 ? "is" : "are"} not loaded until the folder is trusted: run ${projectTrustHint(process.cwd())}\n`);
   }
   for (const e of errors) {
     process.stderr.write(`WARN: ${e.path}: ${e.error}\n`);

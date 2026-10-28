@@ -135,11 +135,13 @@ export interface SkillInstallPayload {
   force?: boolean;
   /**
    * The folder is security-scanned first. A `caution` verdict fails the
-   * request (message names the findings) unless `confirm` is true; a
-   * `dangerous` one fails unless `acknowledgeRisk` is true.
+   * request (the message names the findings and ends with
+   * `[scanId <id>]`) unless `confirm` is that id; a `dangerous` one fails
+   * unless `acknowledgeRisk` is. An id from an older scan, or `true`, is
+   * not a yes: if the folder changed, the request fails with the new id.
    */
-  confirm?: boolean;
-  acknowledgeRisk?: boolean;
+  confirm?: string;
+  acknowledgeRisk?: string;
 }
 
 export interface SkillUninstallPayload {

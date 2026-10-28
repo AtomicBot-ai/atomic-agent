@@ -1,7 +1,7 @@
 ---
 name: gog-workspace
 description: Use the `gog` CLI for Google Workspace tasks across Gmail, Calendar, Drive, Docs, Sheets, Contacts, and related services. Use when the user asks to check email, search Gmail, inspect calendar events, find Drive files, read Docs or Sheets, or manage Google Workspace data through `gog`.
-version: 0.1.7
+version: 0.1.8
 requires_tools:
   - os.shell.run
   - skill.run_script
@@ -45,15 +45,15 @@ Run the non-interactive diagnostic check only when the user asks to check setup/
 Outcome map:
 
 - `status: healthy` -> proceed with `gog`.
-- `status: install_required` -> stop and tell the user how to install `gog`.
-- `status: auth_required` -> stop and tell the exact auth commands from the check output. Prefer `gog auth credentials <credentials.json>` followed by `gog auth add <email>` when those are shown; use the user's known email if available.
+- `status: install_required` -> install it yourself (the user approves the command): `{"cmd": "brew", "args": ["install", "openclaw/tap/gogcli"]}`. Do not print the install command for the user to type. Only when `brew` itself is missing, point the user at https://github.com/openclaw/gogcli/releases.
+- `status: auth_required` -> do the steps that need no person yourself, and hand over only the browser sign-in. When the user has given you the Desktop OAuth client JSON (or its path), run `gog auth credentials <credentials.json>` yourself. Then run `gog auth add <email>` yourself with `background: true`: it opens the Google consent page in the user's browser. Tell the user to finish signing in there, then `{"wait": <job id>}`. If the result says "this step needs the user" for a keyring password or a terminal, hand over just that command.
 - `status: api_required` -> tell the user which Google API must be enabled, then stop.
 
 The check is diagnostic and may exit successfully even when setup is incomplete. Follow the `status:` line in its output, not only the tool success/failure marker. Do not run it before trying the requested read command.
 
-## Human Setup Only
+## Setup Script
 
-Never run `setup-gog.sh` or `setup-gog.ps1` through tools. OAuth, keyring prompts, and browser consent require a real user terminal.
+Do not run `setup-gog.sh` or `setup-gog.ps1` through tools: it bundles the install, the credentials and the browser sign-in into one interactive script. Run its steps one at a time yourself instead (see the outcome map above). Offer the script only when the user prefers to do the whole setup in their own terminal:
 
 macOS / Linux:
 
@@ -69,12 +69,7 @@ powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.atomic-agent\skills\
 
 The user needs a Desktop OAuth client JSON from Google Cloud Console. The setup script stores it with `gog auth credentials ...`, then runs `gog auth add ...`.
 
-If the check output says `config.path ... (missing)`, `run gog auth credentials <credentials.json>`, or `Auth setup is incomplete`, do not only say "run setup-gog.sh". Tell the user the direct commands:
-
-```bash
-gog auth credentials <credentials.json>
-gog auth add <email>
-```
+If the check output says `config.path ... (missing)`, `run gog auth credentials <credentials.json>`, or `Auth setup is incomplete`, ask the user for the Desktop OAuth client JSON from Google Cloud Console if you do not have it, then run `gog auth credentials <credentials.json>` and `gog auth add <email>` yourself as described above.
 
 ## Account Selection
 

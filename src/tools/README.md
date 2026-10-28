@@ -14,6 +14,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [control-marker-guard.ts](control-marker-guard.ts)
 - [tool-output-spill.ts](tool-output-spill.ts)
 - [untrusted-tool-output.ts](untrusted-tool-output.ts)
+- [tool-output-secrets.ts](tool-output-secrets.ts)
 
 ## Ownership and dependencies
 
@@ -22,6 +23,8 @@ ToolRegistry owns registered definitions and invocation; role predicates and dis
 [Core filesystem contracts](os/fs/docs/contracts.md) group 14 operations' metadata and pure argument semantics. [Global conformance](tool-contract-conformance.test.ts) inspects actual static registrations before replacement and catalog/schema/class surfaces; [runtime composition tests](../runtime/tool-contract-composition.test.ts) pin feature gates and read-scope decoration. See [contracts](docs/contracts.md) for validation limits and existing catalog debt.
 
 In local mode the registry hands a clipped result of an allowlisted tool (commands, listings, searches, diffs) to [the output spill](tool-output-spill.ts): the complete `fullOutput` is written to an owner-only temp folder of the session, bounded per file and per session, and the summary leads with the path so the model reads a slice with `os.fs.read` instead of re-running the command. The folder is in that session's read scope (a worker's too), is removed with the session and is swept at start once stale. Cloud mode keeps promoting the full output instead.
+
+Before any of that, the registry masks credentials in every result except `reply` and `finish` ([tool-output-secrets.ts](tool-output-secrets.ts), ATO-1077): summary, kept full output, the two details the step puts in the prompt (`worldSnapshot.text`, `skillLoaded.body`) and a thrown error or value. Vendor key shapes, bearer/basic/cookie headers, JWTs, PEM private keys, URL passwords and secret-named `NAME=value` pairs become `[redacted:<hint>]`, and so do the exact values of the agent's own `.env` variables and the credentials in its config (provider keys and secret headers, the local server key, webhook secrets, MCP servers' secret env values and headers). The detector is shared with the error scrubber ([secret-detector.ts](../error-reporting/secret-detector.ts)); because masking comes first, the cloud promotion, the spill file and the untrusted framing only ever see the marker. Other `details` are left as the tool wrote them; the prompt does not render them. `os.fs.write` / `edit` / `patch` refuse a change that adds a marker the file did not already hold ([guard](os/fs/fs-masked-secret-guard.ts)), so a rewrite of a masked `.env` cannot replace the real keys with markers.
 
 ## Task-specific reading
 

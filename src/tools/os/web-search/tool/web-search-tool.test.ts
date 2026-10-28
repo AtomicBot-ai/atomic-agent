@@ -449,7 +449,7 @@ describe("os.web.search with an Exa primary", () => {
         body: "",
         status: 0,
         exitCode: 28,
-        stderr: "curl: (28) Connection timed out after 15005 milliseconds",
+        stderr: "curl: (28) Connection timed out after 5002 milliseconds",
       },
     });
     const tool = buildOsWebSearchTool({
@@ -468,7 +468,7 @@ describe("os.web.search with an Exa primary", () => {
     expect(result.details.failures).toHaveLength(2);
     expect(result.summary).toContain("exa: free limit reached (HTTP 429)");
     expect(result.summary).toContain(
-      "duckduckgo: could not connect (site unreachable from this network)",
+      "duckduckgo: could not connect, the connection timed out after 5 s",
     );
     expect(result.summary).toContain("https://dashboard.exa.ai/api-keys");
     // The whole report reaches the model, action line included.
