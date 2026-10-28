@@ -1375,10 +1375,12 @@ export async function providerModels(
   if (!bundled || live) args.push("--refresh");
   const parse = parseModelList;
   // The bundled snapshot is local and quick; it is only read to tell a live list from the fallback.
-  const [res, snap] = await Promise.all([
+  const [ran, snapRan] = await Promise.all([
     cli(args, 90_000),
     bundled && live ? cli(["models", "search", " ", "--provider", providerId, "--limit", limit, "--json"], 30_000) : Promise.resolve(null),
   ]);
+  const res = answeredBeforeCrash(ran);
+  const snap = snapRan && answeredBeforeCrash(snapRan);
   const snapModels = snap && snap.ok ? parse(snap.stdout) : null;
   if (!res.ok) {
     // A bundled kind still has its snapshot when the refreshed call itself failed.
@@ -1396,6 +1398,23 @@ export async function providerModels(
   // A live list that cannot be read falls back to the built-in one (with Try again) rather than to the current model alone.
   if (!models) return snapModels && snapModels.length ? { ok: true, models: snapModels, stale: true } : { ok: false, error: notJson(res.stdout) };
   return { ok: true, models, ...(snapModels && sameIds(models, snapModels) ? { stale: true } : {}) };
+}
+/**
+ * #902: `models search --json` prints its list only on the way to exit 0
+ * (models-search-command.ts), so a whole, non-empty list on stdout means the
+ * search finished. On Windows the agent was seen to die after that, in
+ * Node's own exit (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING),
+ * file src\win\async.c`), and the non-zero exit threw the good list away: a
+ * valid DeepSeek key read "Could not check this key with DeepSeek", with the
+ * assertion as the Details. The list it printed is the answer; the crash
+ * after it is not about the provider or the key.
+ */
+export function answeredBeforeCrash(res: CliResult): CliResult {
+  if (res.ok) return res;
+  const listed = parseModelList(res.stdout);
+  if (!listed || listed.length === 0) return res;
+  console.error(`[desktop] models search exited ${res.exitCode ?? "non-zero"} after printing its list; using the list (${plainCliError(res.stderr).slice(0, 200)})`);
+  return { ok: true, stdout: res.stdout, stderr: res.stderr };
 }
 /** Two lists naming the same model ids (in any order). */
 function sameIds(a: readonly SearchedModel[], b: readonly SearchedModel[]): boolean {
