@@ -25,7 +25,7 @@ export function formatProviderFalloverNotice(
   to: string,
   reason: string,
   cause: FalloverCause = classifyFalloverReason(reason),
-  /** The plain "answered with" sentence (`falloverSentence`), when known. */
+  /** The plain "switched to" sentence (`falloverSentence`), when known. */
   headline?: string,
 ): string {
   return [

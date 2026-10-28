@@ -50,7 +50,7 @@ describe("provider_switched over SSE", () => {
           to: "gemini",
           to_model: "gemini-2.5-flash",
           cause: "rate_limited",
-          notice: "OpenRouter is rate-limited, answered with Gemini (gemini-2.5-flash).",
+          notice: "OpenRouter is rate-limited, switched to Gemini (gemini-2.5-flash).",
           reason: away.reason,
         },
       },

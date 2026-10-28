@@ -650,7 +650,7 @@ export function buildStreamEventHook(
     }
     /* ATO-483: the person's fallback link answered instead of the
        provider they picked. Said in the turn, one plain sentence ("OpenRouter is
-       rate-limited, answered with Gemini (gemini-2.5-flash)."), so a
+       rate-limited, switched to Gemini (gemini-2.5-flash)."), so a
        switch is never silent; `reason` keeps the provider's own words for
        Details. Extensions-only, like the wait frames. */
     if (event.type === "provider_switched") {

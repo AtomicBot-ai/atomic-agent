@@ -33,7 +33,7 @@ export interface ProviderSwitchNotice {
   cause?: "billing" | "auth" | "other";
   /**
    * The failure-catalog cause of the error behind an "away"
-   * (`classifyFailureCause`), for the plain "answered with" sentence
+   * (`classifyFailureCause`), for the plain "switched to" sentence
    * (`falloverSentence`, ATO-483).
    */
   failure?: FailureCauseId;

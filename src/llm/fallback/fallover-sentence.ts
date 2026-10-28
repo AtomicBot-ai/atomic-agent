@@ -2,10 +2,12 @@ import { providerServiceName } from "../provider/provider-service-name.js";
 import type { FailureCauseId } from "../reliability/failure-catalog.js";
 
 /**
- * The one sentence a turn shows when the person's fallback link answered
- * instead of the provider they picked (ATO-483): what happened to the
- * picked one, in plain words, and who answered. "OpenRouter is
- * rate-limited, answered with Gemini (gemini-2.5-flash)."
+ * The one sentence a turn shows when the chain moves off the provider the
+ * person picked to their fallback link (ATO-483): what happened to the
+ * picked one, in plain words, and which link the turn moved to. "Switched
+ * to", not "answered with": the chain announces the move before the
+ * fallback has answered, and that link can fail too. "OpenRouter is
+ * rate-limited, switched to Gemini (gemini-2.5-flash)."
  *
  * `failure` is the failure-catalog cause of the error that moved the
  * turn (`classifyFailureCause`); `toModel` the fallback entry's model,
@@ -19,10 +21,10 @@ export function falloverSentence(
   toModel?: string,
 ): string {
   const who = providerServiceName(from);
-  const answeredBy = toModel
+  const switchedTo = toModel
     ? `${providerServiceName(to)} (${toModel})`
     : providerServiceName(to);
-  return `${who} ${whatHappened(failure)}, answered with ${answeredBy}.`;
+  return `${who} ${whatHappened(failure)}, switched to ${switchedTo}.`;
 }
 
 function whatHappened(failure: FailureCauseId | undefined): string {

@@ -47,7 +47,7 @@ describe("ProviderFallbackChain", () => {
     expect(notices[0]).toMatchObject({ direction: "away", to: "backup" });
     // The notice carries the failure's kind, read off the error itself.
     expect(notices[0]!.cause).toBe("other");
-    // And its failure-catalog cause, for the "answered with" sentence.
+    // And its failure-catalog cause, for the "switched to" sentence.
     expect(notices[0]!.failure).toBe("rate_limited");
   });
 

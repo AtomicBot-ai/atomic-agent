@@ -154,7 +154,7 @@ export async function createAgentRuntime(
       logger,
     }),
     noticeSink: (notice) => {
-      // The model that answered, so the turn can say "answered with
+      // The fallback's model, so the turn can say "switched to
       // Gemini (gemini-2.5-flash)" (ATO-483).
       const to = resolveLlmConfig(getConfig()).providers.find((p) => p.id === notice.to);
       const toModel = to?.defaultChatModel ?? to?.model;
