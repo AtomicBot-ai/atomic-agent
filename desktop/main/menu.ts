@@ -105,6 +105,8 @@ export function menuTemplate(
            ⌘0 is Actual Size, as in every Mac app and browser. */
         item("Toggle Sidebar", "toggle:sidebar", "CommandOrControl+\\"),
         item("Toggle Inspector", "toggle:inspector", alt("0")),
+        // ATO-1256: the panel of this chat's files, beside the chat.
+        item("Toggle Chat Files", "toggle:files", alt("F")),
         item("Toggle Console", "toggle:console", "Shift+CommandOrControl+Y"),
         sep,
         item("Expand All Tool Cards", "cards:expand", alt("E")),

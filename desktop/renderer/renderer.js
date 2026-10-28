@@ -194,6 +194,8 @@ const KIND_ROWS = [
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
 const OPEN_GROUPS = new Set();
+/* ATO-1257: the failed cards drawn quietly, as renderItems last worked them out (tool-failures.js). `var`: toolCard may run first. */
+var TOOL_QUIET = new Set();
 /* item 5 review fix (attachment strip): every file chip — the inline ones and
    the strip's — opens through this one seam, so the smoke can assert that a
    strip chip really is clickable (which path the click hands to BR.openPath)
@@ -1622,6 +1624,8 @@ const P = {
      beside each. It was the sidebar's panel glyph mirrored, and the owner
      took the inspector button for the sidebar toggle. */
   inspector:'<rect x="2.5" y="3.5" width="11" height="9" rx="2"/><path d="M9.5 3.5v9"/>',
+  // ATO-1256: the chat's files — two sheets, one over the other.
+  files:'<path d="M5.5 4.5V3.5A1 1 0 0 1 6.5 2.5h4L13 5v6.5a1 1 0 0 1-1 1h-1"/><path d="M3 5.5a1 1 0 0 1 1-1h4l2.5 2.5v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   plus:'<path d="M8 3v10M3 8h10"/>',
   minus:'<path d="M3 8h10"/>',
@@ -1941,6 +1945,7 @@ const PAL = [
   ['Setup', [
     ['gear','Theme…','','','scope:theme'],
     ['sidebar','Hide or show the sidebar','','⌘ \\','toggle:sidebar'],
+    ['files','Files in this chat','','⌥ ⌘ F','toggle:files'],
     ['skills','Enable or disable a skill…','','','settings:skills'],
     ['tasks','Create, cancel or run a task…','','','settings:tasks'],
     ['key','Analytics','','','settings:general'],
@@ -2193,6 +2198,8 @@ function render() {
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
   renderToolbar(); renderSidebar(); renderContent();
+  // ATO-1256: the chat's file list follows the transcript (chat-files.js); before the toolbar's next paint reads it.
+  if (typeof chatFilesSync === 'function') chatFilesSync();
   renderInspector(); renderConsole();
   // Backlog 18: the download card measures the composer and the console it
   // keeps clear of, so it is painted once both are in place.
@@ -2242,12 +2249,20 @@ function renderToolbar() {
     + (open ? '' : sidebarToggleHTML() + searchBtnHTML())
     + (t ? '<div class="tb-title"><b title="' + esc(t) + '">' + esc(t) + '</b></div>' : '')
     + '<div class="tb-right">'
+      /* ATO-1256: this chat's files in the panel beside it (chat-files.js, file-preview.js). */
+      + (S.room === 'chat' ? '<button class="iconbtn' + (filesPanelOpen() ? ' on' : '') + '" data-act="toggle:files"'
+        + ' aria-pressed="' + filesPanelOpen() + '"'
+        + ' title="Files in this chat ' + kbdText('(⌥ ⌘ F)') + '"'
+        + ' aria-label="Files in this chat ' + kbdText('(⌥ ⌘ F)') + '">' + ic('files') + '</button>' : '')
       + '<button class="iconbtn' + (S.inspector ? ' on' : '') + '" data-act="toggle:inspector"'
         + ' aria-pressed="' + !!S.inspector + '"'
         + ' title="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '"'
         + ' aria-label="' + (S.inspector ? 'Hide' : 'Show') + ' steps and reasoning ' + kbdText('(⌥ ⌘ 0)') + '">' + ic('inspector') + '</button>'
     + '</div>';
 }
+
+/** ATO-1256: whether the preview panel (a file, or the chat's files) is open. */
+function filesPanelOpen() { return typeof FP !== 'undefined' && !!FP.open; }
 
 /* ============================================================
    Item 6 — the side menu is two lists.
@@ -3406,6 +3421,7 @@ function toolIcon(name) {
 function toolStatus(state) {
   return state === 'run' ? '<span class="tl-st run" title="Running"><span class="tk-spin"></span></span>'
     : state === 'err' ? '<span class="tl-st err" title="Failed">' + ic('alert') + '</span>'
+    : state === 'soft' ? '<span class="tl-st soft" title="Failed; the agent went on">' + ic('alert') + '</span>'
     : state === 'deny' ? '<span class="tl-st deny" title="Denied">' + ic('x') + '</span>'
     : state === 'skip' ? '<span class="tl-st skip" title="Not run: the turn ended first">' + ic('slash') + '</span>'
     : state === 'unk' ? '<span class="tl-st unk" title="The outcome was not recorded">' + ic('minus') + '</span>'
@@ -3514,13 +3530,15 @@ function toolTook(m) {
 function toolCard(m) {
   const st = toolState(m);
   const running = st === 'run';
-  const failed = st === 'err';
+  // ATO-1257: a failure the agent went on from is drawn quietly (tool-failures.js); red is for the one that ended the turn.
+  const soft = st === 'err' && TOOL_QUIET.has(m.id);
+  const failed = st === 'err' && !soft;
   const took = toolTook(m);
   // ATO-197: a denied call's time is the wait for the answer, and one not run has none.
   const ms = running || st === 'deny' || st === 'skip' || !took ? '' : dur(took.ms);
   /* `data-tool` is the raw id the drivers compare (turn-order.drive reads it);
      the same id is printed, visibly, inside the expanded part. */
-  return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
+  return '<div class="card' + (running ? ' running' : '') + (failed ? ' err' : '') + (soft ? ' soft' : '') + (m.open ? ' open' : '') + '" id="card-' + m.id + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-toggle="' + m.id + '" aria-expanded="' + (!!m.open) + '" title="' + esc(m.name) + '">'
       + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
       + '<span class="nm">' + (st === 'held' ? toolHeldLine(m) : toolTense(toolLine(m), running && toolAwaitsApproval(m) ? 'wait' : st)) + '</span>'
@@ -3533,20 +3551,32 @@ function toolCard(m) {
             : m.observedMs ? 'wall time observed by this window, from the call frame to the next frame'
             : 'no trace for this call')
             + (took && took.waited ? '; from your answer on (it waited ' + dur(took.waited) + ' for your approval before that)' : '')) + '">' + ms + '</span>'
-      + toolStatus(st)
+      + toolStatus(soft ? 'soft' : st)
       + '<span class="chev">' + ic(m.open ? 'chevD' : 'chevR') + '</span>'
     + '</button>'
-    // The failure stays readable without opening the card.
-    + (failed && !m.open ? '<div class="cardsum bad">' + esc(toolErrLine(m)) + '</div>' : '')
+    // The failure stays readable without opening the card (a quiet one in the muted ink).
+    + ((failed || soft) && !m.open ? '<div class="cardsum' + (soft ? '' : ' bad') + '">' + esc(toolErrLine(m)) + '</div>' : '')
     // A long call's progress (tool_update, chat-media.js), while it runs.
     + (running ? toolProgressHTML(m, esc) : '')
+    // ATO-1258: a screenshot the call took, small under its line; a click opens the viewer.
+    + toolShotHTML(m, st)
     + (m.open ? '<div class="cardbody">'
         + '<div class="tl-meta"><span class="mono">' + esc(m.name) + '</span>'
-          + (failed ? '<span class="tl-bad">failed</span>' : '')
+          + (failed ? '<span class="tl-bad">failed</span>' : soft ? '<span class="tl-soft">failed, the agent went on</span>' : '')
           + (m.truncated ? '<span>output shortened</span>' : '') + '</div>'
         + '<div class="micro">Arguments</div><pre class="tk-out">' + esc(argsBlock(m.args || m.arg)) + '</pre>'
         + '<div class="micro">Output</div><pre class="tk-out">' + esc(running ? 'Still running\u2026' : (m.out || '\u2014')) + '</pre></div>' : '')
     + '</div>';
+}
+
+/** ATO-1258: the picture under an os.screen.capture / browser.screenshot card that worked; '' when main cannot show it. */
+function toolShotHTML(m, st) {
+  if (st !== 'ok' || typeof CF_SHOTS === 'undefined' || !CF_SHOTS.has(m.name)) return '';
+  const p = cfShotPath(m.out);
+  m.shotPic = p || undefined;
+  if (!p) return '';
+  const pic = chatImage(p);
+  return pic.state === 'fail' ? '' : '<div class="tl-shot">' + chatPicHTML(p, pic, 'chat-img-sm') + '</div>';
 }
 
 function apprCard(m) {
@@ -5354,7 +5384,7 @@ function shortcutsSheet() {
   const rows = [
     ['Command palette','⌘ K','Ctrl K'],['Chat / Tasks / Skills / Memory','⌘ 1-4','Ctrl 1-4'],
     ['New session','⌘ N','Ctrl N'],['Switch session','⌘ O','Ctrl O'],
-    ['Toggle sidebar','⌘ \\','Ctrl \\'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],
+    ['Toggle sidebar','⌘ \\','Ctrl \\'],['Toggle console','⇧ ⌘ Y','Ctrl ⇧ Y'],['Files in this chat','⌥ ⌘ F',''],
     // ATO-544: View menu zoom (menu.ts zoomItems). ATO-900: ⌘ 0 is Actual Size, as in every Mac app and browser.
     ['Zoom in','⌘ =',''],['Zoom out','⌘ -',''],['Actual size','⌘ 0',''],
     ['Send','↩',''],['Newline','⇧ ↩',''],['Stop (no approval on screen)','⌘ .','Ctrl .'],
@@ -6837,6 +6867,9 @@ function act(a) {
   // derives the class from it, so the toolbar button can read it and glow.
   // ATO-538: below 1000px the button and ⌘ \ open or close the drawer instead
   // (sidebar-nav.js toggleSidebar); S.sidebar keeps the wide window's collapse.
+  // ATO-1256: the Files button and ⌥⌘F open the panel on the chat's files, or close it.
+  if (a === 'toggle:files') { close(); if (S.room !== 'chat') { S.settings = null; S.room = 'chat'; render(); }
+                           if (typeof filePreviewToggle === 'function') filePreviewToggle(); render(); return; }
   if (k === 'toggle')    { close();
                            if (v === 'sidebar') {
                              const next = toggleSidebar({narrow: NARROW.matches, sidebar: S.sidebar, drawer: sidebarDrawerOpen()});
@@ -7658,6 +7691,9 @@ document.addEventListener('click', (e) => {
   const mo = t.closest('[data-more]'); if (mo) { act('more:' + mo.dataset.more); return; }
   const tkr = t.closest('[data-task]'); if (tkr) { act('task:' + tkr.dataset.task); return; }
   const ss = t.closest('[data-ses]'); if (ss) { act('ses:' + ss.dataset.ses); return; }
+  // ATO-1257: "3 attempts failed" opens into its cards, the line kept under the pointer.
+  const frun = t.closest('[data-failrun]');
+  if (frun) { failRunOpen(frun.dataset.failrun); return; }
   const grp = t.closest('[data-group]');
   if (grp) { OPEN_GROUPS.add(grp.dataset.group); expandGroupInPlace(grp.dataset.group); return; }  // scroll-stable cards: in place, no scrollTop write
   // ATO-408: a picture in a reply opens full screen (its menu is the file chip's).
@@ -7694,6 +7730,7 @@ document.addEventListener('click', (e) => {
   const go = t.closest('[data-goto]');
   if (go) { let el = document.getElementById('card-' + go.dataset.goto);
             if (!el && turnSumReveal(go.dataset.goto)) el = document.getElementById('card-' + go.dataset.goto);   // ATO-464
+            if (!el && failRunMark(go.dataset.goto)) { render(); el = document.getElementById('card-' + go.dataset.goto); }   // ATO-1257
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
   // r5 item 4: real <button> elements inside a `.turn`, so no other selector in
   // this handler competes for them.
@@ -20670,12 +20707,30 @@ async function wizActivate(k, id, model, unverified) {
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
+  // ATO-1258: the pictures each reply shows beyond its own files (chat-files.js turnPictures).
+  if (typeof turnPictures === 'function') {
+    const pics = turnPictures(items);
+    items.forEach((m) => { if (m.k === 'assistant') { if (pics.has(m.id)) m.turnPics = pics.get(m.id); else delete m.turnPics; } });
+  }
   // ATO-328: the one call the Exa key card goes under, below its row (or below the fold that holds it).
   const exaHost = exaKeyHost(items);
   /* ATO-464: a finished turn's steps fold into one line (turn-summary.js).
      The turn still streaming is the one S.turnId is on; it is drawn live. */
+  // ATO-1257: which failures the agent went on from (tool-failures.js); toolCard and groupCard read it.
+  // Running: the turn on screen, not one in another chat (S.turnId follows the turn whichever chat it is in).
+  const liveHere = !!S.turnId && !!S.streamId && items.some((x) => x.id === S.streamId);
+  TOOL_QUIET = quietToolFailures(items, {running: liveHere, failed: (t) => toolState(t) === 'err', worked: (t) => toolState(t) === 'ok'});
+  // A same-tool run opened by a click stays open: its quiet members do not fold again.
+  const openRuns = new Set();
+  for (let i = 0; i < items.length; i++) {
+    const m = items[i];
+    if (m.k !== 'tool' || (i > 0 && items[i - 1].k === 'tool' && items[i - 1].name === m.name)) continue;
+    let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
+    if (j - i >= 2 && OPEN_GROUPS.has(m.id)) for (let x = i; x <= j; x++) openRuns.add(items[x].id);
+  }
+  const foldsQuiet = (x) => x && x.k === 'tool' && TOOL_QUIET.has(x.id) && !openRuns.has(x.id) && !OPEN_GROUPS.has('f:' + x.id);
   const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
-    failedOf: (t) => toolState(t) === 'err'});   // red only for what the card itself shows as an error
+    failedOf: (t) => toolState(t) === 'err' && !TOOL_QUIET.has(t.id)});   // red only for what the card itself shows as an error
   const hidden = new Set();
   for (let i = 0; i < items.length; i++) {
     const m = items[i];
@@ -20689,6 +20744,17 @@ function renderItems() {
       // The Exa key card asks for something, so it stays in sight under the line.
       if (exaHost && m.id === exaHost) html += exaKeyTurnHTML(m);
       continue;
+    }
+    // ATO-1257: two or more quiet failures in a row are one line, "3 attempts failed", until opened.
+    if (foldsQuiet(m)) {
+      let j = i; while (j + 1 < items.length && foldsQuiet(items[j + 1]) && !hidden.has(j + 1)) j++;
+      if (j > i) {
+        const run = items.slice(i, j + 1);
+        html += failRunHTML(run, {esc, ic});
+        const host = exaHost ? run.find((c) => c.id === exaHost) : null;
+        if (host) html += exaKeyTurnHTML(host);
+        i = j; continue;
+      }
     }
     if (m.k === 'tool') {
       let j = i; while (j + 1 < items.length && items[j + 1].k === 'tool' && items[j + 1].name === m.name) j++;
@@ -20749,6 +20815,30 @@ function turnSumToggle(replyId) {
   S.stick = false;   // the click is on this line: keep it under the pointer, not the bottom of the chat
   if (!repaintTranscript()) { render(); return; }
   const h1 = head();
+  const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
+  if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+/** ATO-1257: open a run of quiet failures in place. */
+/** The run of quiet failures `id` starts or sits in, opened for good: each member, and no same-tool fold over them. */
+function failRunMark(id) {
+  const at = S.log.findIndex((x) => x.id === id);
+  if (at < 0 || !TOOL_QUIET.has(id)) return false;
+  let i = at; while (i > 0 && S.log[i - 1].k === 'tool' && TOOL_QUIET.has(S.log[i - 1].id)) i--;
+  let j = at; while (j + 1 < S.log.length && S.log[j + 1].k === 'tool' && TOOL_QUIET.has(S.log[j + 1].id)) j++;
+  if (i === j) return false;
+  for (let x = i; x <= j; x++) { OPEN_GROUPS.add('f:' + S.log[x].id); OPEN_GROUPS.add(S.log[x].id); }
+  return true;
+}
+function failRunOpen(id) {
+  failRunMark(id);
+  const sc = $('#scroller');
+  const h0 = document.getElementById('failrun-' + id);
+  if (!sc || !h0) { render(); return; }
+  const before = h0.getBoundingClientRect().top;
+  S.stick = false;
+  if (!repaintTranscript()) { render(); return; }
+  const h1 = document.getElementById('turn-' + id);
   const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
   if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
   S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
@@ -20931,7 +21021,9 @@ function groupCard(run) {
   // ATO-197: a denied call's wait and a call not run are no time the run took.
   const measured = run.filter((c, i) => (c.msSource === 'trace' || c.observedMs) && states[i] !== 'deny' && states[i] !== 'skip');
   const ms = measured.reduce((n, c) => n + toolTook(c).ms, 0);   // ATO-237: each without its approval wait
-  const bad = states.filter((x) => x === 'err').length;
+  // ATO-1257: a member the agent went on from is counted, but not in red.
+  const bad = run.filter((c, i) => states[i] === 'err' && !TOOL_QUIET.has(c.id)).length;
+  const softBad = run.filter((c, i) => states[i] === 'err' && TOOL_QUIET.has(c.id)).length;
   const pending = states.includes('run');
   // The title says where the numbers come from: a fold of live cards is window-observed until the store lands.
   const observed = measured.filter((c) => c.msSource !== 'trace').length;
@@ -20943,18 +21035,19 @@ function groupCard(run) {
      phrase and how many times ("Listed files \u00b7 3 times"), the failures
      counted in red words, status and total time small on the right. The
      members' own lines are one click away (the run unfolds in place). */
-  return '<div class="turn tk-step" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : '') + '" data-tool="' + esc(m.name) + '">'
+  return '<div class="turn tk-step" id="group-' + m.id + '"><div></div><div><div class="card' + (pending ? ' running' : '') + (bad ? ' err' : softBad ? ' soft' : '') + '" data-tool="' + esc(m.name) + '">'
     + '<button class="cardhead" data-group="' + m.id + '" title="' + esc(m.name) + '">'
     + '<span class="tl-ic">' + ic(toolIcon(m.name)) + '</span>'
     /* Calm (S7): the head takes the run's tense like a single call does —
        "Couldn't list files · 3 times" when every member failed (and then no
        separate "3 failed"), "Listing files" while one still runs. */
-    + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad === run.length ? 'err'
+    + '<span class="nm">' + toolTense(esc(toolVerb(m.name)), pending ? 'run' : bad + softBad === run.length ? 'err'
         : states.every((x) => x === 'unk') ? 'unk' : states.every((x) => x === 'deny') ? 'deny'
         : states.every((x) => x === 'skip') ? 'skip' : states.every((x) => x === 'held') ? 'held' : 'ok') + ' \u00b7 ' + run.length + ' times</span>'
-    + (bad && bad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
+    + (bad && bad + softBad < run.length ? '<span class="tl-bad">' + bad + ' failed</span>' : '')
+    + (softBad && (bad || softBad < run.length) ? '<span class="tl-soft">' + softBad + (bad ? ' recovered' : ' failed') + '</span>' : '')
     + '<span class="du tnum" title="' + duTitle + '">' + (pending ? '' : measured.length ? dur(ms) : '') + '</span>'
-    + toolStatus(pending ? 'run' : bad ? 'err' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok')
+    + toolStatus(pending ? 'run' : bad ? 'err' : softBad ? 'soft' : states.includes('deny') ? 'deny' : states.includes('skip') ? 'skip' : states.includes('unk') ? 'unk' : states.every((x) => x === 'held') ? 'held' : 'ok')
     + '<span class="chev">' + ic('chevR') + '</span></button>'
     + '</div></div></div>';
 }
@@ -21503,7 +21596,11 @@ function replyFilesOf(list) {
 /** The pictures replies on screen show. */
 function chatImagesInUse() {
   const used = new Set();
-  for (const m of S.log) for (const p of (m.replyFiles || [])) used.add(p);
+  for (const m of S.log) {
+    for (const p of (m.replyFiles || [])) used.add(p);
+    for (const p of (m.turnPics || [])) used.add(p);   // ATO-1258
+    if (m.shotPic) used.add(m.shotPic);
+  }
   return used;
 }
 
@@ -21653,11 +21750,21 @@ function chatImageWhy(st, path) {
   return 'Not a picture this window can show, or no longer there.\n' + path;
 }
 
-/** A reply's own files: pictures and videos inline, anything else a chip. */
+/** A reply's own files: pictures and videos inline, anything else a chip.
+    ATO-1258: then the pictures its text names and the turn's screenshot (`turnPics`, chat-files.js
+    turnPictures), drawn the same way once main has read them, and left out, not made a chip, when it cannot. */
 function replyFilesStrip(m) {
   const files = m.replyFiles || [];
-  if (!files.length) return '';
+  const extra = (m.turnPics || []).filter((p) => !files.includes(p));
+  if (!files.length && !extra.length) return '';
   const pics = [], chips = [], shown = [];
+  for (const p of extra) {
+    // Drawn once main has read it: a path a reply merely names (an example, a typo) never shows an empty slot.
+    const st = chatImage(p);
+    if (st.state !== 'ok') continue;
+    pics.push(chatPicHTML(p, st));
+    shown.push(p);
+  }
   for (const p of files) {
     const name = pathBase(p) || p;
     // A video plays in the reply (chat-media.js); one that cannot is a chip like any file.
@@ -21665,23 +21772,30 @@ function replyFilesStrip(m) {
     if (vid) { pics.push(vid); shown.push(p); continue; }
     const st = CHAT_IMG_EXT.test(p) ? chatImage(p) : null;
     if (st && st.state !== 'fail') {
-      // A known size draws the slot at its size before the picture is put in.
-      const box = st.state === 'ok' && st.w && st.h ? ' style="aspect-ratio:' + st.w + ' / ' + st.h + '"' : '';
-      pics.push('<button class="chat-img' + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
-        + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
-        + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>');
+      pics.push(chatPicHTML(p, st));
       shown.push(p);
     } else {
       chips.push('<button class="filechip' + (st ? ' unshown' : '') + '" data-file="' + esc(p) + '" data-reply="1" title="' + esc(st ? chatImageWhy(st, p) : p) + '">'
         + ic(st ? 'image' : 'file') + '<span>' + esc(name) + '</span></button>');
     }
   }
+  if (!pics.length && !chips.length) return '';
   return '<div class="replyfiles" data-replyfiles="' + esc(m.id) + '">'
     + (pics.length ? '<div class="replyfiles-pics">' + pics.join('') + '</div>' : '')
     + (chips.length ? '<div class="attach-chips">' + chips.join('') + '</div>' : '')
     // Studio: the reply's pictures and clips open there, from its gallery or as "From chat" (studio/shell.js).
     + (shown.length && window.STUDIO ? STUDIO.openInStudioHTML(shown) : '')
     + '</div>';
+}
+
+/** One picture's slot (hydrateChatImages puts its <img> in); a click opens the viewer. `cls`: an extra class. */
+function chatPicHTML(p, st, cls) {
+  const name = pathBase(p) || p;
+  // A known size draws the slot at its size before the picture is put in.
+  const box = st.state === 'ok' && st.w && st.h ? ' style="aspect-ratio:' + st.w + ' / ' + st.h + '"' : '';
+  return '<button class="chat-img' + (cls ? ' ' + cls : '') + (st.state === 'ok' ? '' : ' loading') + '" data-img-open="' + esc(p) + '"'
+    + ' data-file="' + esc(p) + '" data-reply="1" data-chat-img="' + esc(p) + '"' + box
+    + ' title="' + esc(name) + '" aria-label="Open image ' + esc(name) + '"></button>';
 }
 
 /* The full-screen viewer: the picture (the display copy at once, the full

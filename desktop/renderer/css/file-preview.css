@@ -50,3 +50,32 @@
 .fp-other-b{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap;justify-content:center}
 
 @media (max-width:900px){#fpreview{max-width:70%}}
+
+/* ---------------- ATO-1256: the chat's files (chat-files.js) ----------------
+   Over a previewed file, a row of tabs: All files, then each file of the chat.
+   With no file picked, the body is the list. */
+.fp-tabsrow{flex:none}
+.fp-tabsrow:empty{display:none}
+.fp-tabs{display:flex;gap:4px;padding:6px 8px;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid var(--divider)}
+.fp-tabs::-webkit-scrollbar{display:none}
+.fp-tab{flex:none;display:inline-flex;align-items:center;gap:6px;max-width:200px;height:26px;padding:0 9px;border:0;border-radius:7px;
+  background:none;color:var(--ink-2);font:500 var(--fs-label)/1 var(--font-ui);cursor:pointer;transition:background var(--t-state) var(--ease)}
+.fp-tab span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-tab svg{flex:none;width:13px;height:13px;color:var(--ink-3)}
+.fp-tab:hover{background:var(--hover);color:var(--ink)}
+.fp-tab.on{background:var(--brand-wash);color:var(--ink)}
+.fp-tab.on svg{color:var(--blue)}
+.fp-tab:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.fp-tab .fp-tab-n{flex:none;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fp-list{list-style:none;margin:0;padding:6px}
+.fp-row{display:flex;align-items:center;gap:10px;width:100%;min-width:0;padding:7px 8px;border:0;border-radius:var(--r-row);
+  background:none;text-align:left;cursor:pointer;transition:background var(--t-state) var(--ease)}
+.fp-row:hover{background:var(--hover)}
+.fp-row:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.fp-row-ic{flex:none;display:inline-flex;color:var(--blue)}
+.fp-row-ic svg{width:16px;height:16px}
+.fp-row-t{flex:1;min-width:0;display:flex;flex-direction:column}
+.fp-row-n{font:500 var(--fs-cap)/18px var(--font-ui);color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-row-m{font:400 var(--fs-micro)/15px var(--font-ui);color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:48px 24px;text-align:center}
+.fp-empty .fp-other-m{max-width:28em}

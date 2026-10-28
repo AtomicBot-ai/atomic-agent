@@ -135,6 +135,8 @@ function fixture(over = {}) {
     // ATO-464 turn folds are covered in turn-summary tests; here no turn folds, so rows render as before.
     turnFoldsOf:() => new Map(), TURN_OPEN:new Set(), STEPS:{always:false}, toolState:() => 'ok',
     turnSumHTML:() => '', turnSumMs:() => 0, dur:() => '',
+    // ATO-1257: no quiet failures here (tool-failures.test.mjs covers them).
+    TOOL_QUIET:new Set(), quietToolFailures:() => new Set(), failRunHTML:() => '',
   }, over));
   vm.runInContext(exaSource, c);
   for (const name of ['sessionTurnsToLog', 'renderItems', 'exaKeyBusy', 'exaKeyState', 'exaKeyTurnHTML', 'exaKeySave', 'exaKeyAct', 'toolSettle']) {
