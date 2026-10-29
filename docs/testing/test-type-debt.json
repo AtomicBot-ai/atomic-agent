@@ -4349,14 +4349,6 @@
       "count": 1
     },
     {
-      "path": "src/tools/os/os-tools.test.ts",
-      "code": 2741,
-      "message": "Property 'persistCache' is missing in type '{ enabled: true; provider: \"duckduckgo\"; maxResults: number; timeoutMs: number; cacheTtlMinutes: number; fallback: never[]; searxng: { instanceUrl: null; }; exa: { endpoint: string; apiEndpoint: string; apiKeyEnv: string; }; brave: { ...; }; }' but required in type 'WebSearchConfig'.",
-      "anchor": "search",
-      "line": 558,
-      "count": 1
-    },
-    {
       "path": "src/tools/os/read-document/extractors/pdf-extractor.canvas-warnings.test.ts",
       "code": 2352,
       "message": "Conversion of type '{ data: Buffer<ArrayBuffer>; path: string; }' to type 'ExtractorInput' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.   Property 'sourcePath' is missing in type '{ data: Buffer<ArrayBuffer>; path: string; }' but required in type 'ExtractorInput'.",
@@ -4378,22 +4370,6 @@
       "message": "Cannot find module '../tool-registry.js' or its corresponding type declarations.",
       "anchor": "\"../tool-registry.js\"",
       "line": 12,
-      "count": 1
-    },
-    {
-      "path": "src/tools/os/web-search/providers/search-orchestrator.test.ts",
-      "code": 2322,
-      "message": "Type '{ enabled: boolean; provider: WebSearchProviderName; maxResults: number; timeoutMs: number; cacheTtlMinutes: number; persistCache?: boolean | undefined; fallback: WebSearchProviderName[]; searxng: { instanceUrl: string | null; }; exa: { endpoint: string; apiEndpoint: string; apiKeyEnv: string; }; brave: { apiKeyEnv:...' is not assignable to type 'WebSearchConfig'.   Types of property 'persistCache' are incompatible.     Type 'boolean | undefined' is not assignable to type 'boolean'.       Type 'undefined' is not assignable to type 'boolean'.",
-      "anchor": "search",
-      "line": 29,
-      "count": 1
-    },
-    {
-      "path": "src/tools/os/web-search/tool/web-search-tool.test.ts",
-      "code": 2741,
-      "message": "Property 'fetch' is missing in type '{ search: { enabled: boolean; provider: WebSearchProviderName; maxResults: number; timeoutMs: number; cacheTtlMinutes: number; persistCache: boolean; fallback: WebSearchProviderName[]; searxng: { instanceUrl: string | null; }; exa: { endpoint: string; apiEndpoint: string; apiKeyEnv: string; }; brave: { apiKeyEnv: st...' but required in type '{ search: WebSearchConfig; fetch: WebFetchConfig; }'.",
-      "anchor": "web",
-      "line": 20,
       "count": 1
     },
     {
