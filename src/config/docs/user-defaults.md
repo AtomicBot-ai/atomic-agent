@@ -82,6 +82,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `web.search.exa.apiEndpoint` (default `"https://api.exa.ai/search"`).
 - `web.search.exa.apiKeyEnv` (default `"EXA_API_KEY"`).
 - `web.search.brave.apiKeyEnv` (default `"BRAVE_SEARCH_API_KEY"`).
+- `web.search.keenable.apiKeyEnv` (default `"KEENABLE_API_KEY"`).
 - `web.fetch.timeoutMs` (default `30000`).
 - `web.fetch.connectTimeoutMs` (default `10000`).
 - `web.fetch.maxRetries` (default `2`).

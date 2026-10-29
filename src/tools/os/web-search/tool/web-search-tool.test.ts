@@ -33,7 +33,15 @@ function makeConfig(
           apiKeyEnv: "EXA_API_KEY",
         },
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+        keenable: { apiKeyEnv: "KEENABLE_API_KEY" },
         ...overrides,
+      },
+      fetch: {
+        timeoutMs: 30_000,
+        connectTimeoutMs: 10_000,
+        maxRetries: 2,
+        retryBaseDelayMs: 500,
+        retryMaxDelayMs: 5_000,
       },
     },
   };

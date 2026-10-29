@@ -7,7 +7,7 @@ import {
   parseNonEmptyString,
 } from "./config-primitives.js";
 
-export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave";
+export type WebSearchProviderName = "duckduckgo" | "searxng" | "exa" | "brave" | "keenable";
 
 /**
  * Tunables for `os.web.fetch` (config v38). Before v38 the tool hard-coded a
@@ -95,6 +95,8 @@ export interface WebSearchConfig {
    * configured; `exa` runs keyless without one. Set to `[]` to disable
    * fallback entirely (a keyless Exa primary still gets DuckDuckGo, see
    * `provider`). The primary is always deduped out of this list.
+   * `keenable` is used only when named here or as `provider`; it runs
+   * keyless without its API key.
    */
   fallback: WebSearchProviderName[];
   searxng: {
@@ -106,6 +108,13 @@ export interface WebSearchConfig {
     apiKeyEnv: string;
   };
   brave: {
+    apiKeyEnv: string;
+  };
+  /**
+   * Keenable's hosted search API. Without a key it uses the public
+   * endpoint; a key in `apiKeyEnv` only raises the rate limit.
+   */
+  keenable: {
     apiKeyEnv: string;
   };
 }
@@ -150,6 +159,9 @@ export function createWebSearchDefaults(): WebSearchConfig {
     brave: {
       apiKeyEnv: "BRAVE_SEARCH_API_KEY",
     },
+    keenable: {
+      apiKeyEnv: "KEENABLE_API_KEY",
+    },
   };
 }
 
@@ -171,13 +183,14 @@ export function parseWebSearchProviderName(
     raw === "duckduckgo" ||
     raw === "searxng" ||
     raw === "exa" ||
-    raw === "brave"
+    raw === "brave" ||
+    raw === "keenable"
   ) {
     return raw;
   }
   throw new ConfigValidationError(
     field,
-    `expected one of duckduckgo|searxng|exa|brave, got ${JSON.stringify(raw)}`,
+    `expected one of duckduckgo|searxng|exa|brave|keenable, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -215,6 +228,7 @@ export interface PreparedWebSearchInputs {
   searxng: Record<string, unknown>;
   exa: Record<string, unknown>;
   brave: Record<string, unknown>;
+  keenable: Record<string, unknown>;
 }
 
 export function prepareWebSearchInputs(
@@ -231,14 +245,16 @@ export function prepareWebSearchInputs(
     (raw.exa as Record<string, unknown> | undefined) ?? {};
   const brave =
     (raw.brave as Record<string, unknown> | undefined) ?? {};
-  return { raw, provider, searxng, exa, brave };
+  const keenable =
+    (raw.keenable as Record<string, unknown> | undefined) ?? {};
+  return { raw, provider, searxng, exa, brave, keenable };
 }
 
 export function parseWebSearchConfig(
   prepared: PreparedWebSearchInputs,
   readDefaults: () => WebSearchConfig,
 ): WebSearchConfig {
-  const { raw, provider, searxng, exa, brave } = prepared;
+  const { raw, provider, searxng, exa, brave, keenable } = prepared;
   return {
     enabled: parseBool(
       raw.enabled ?? readDefaults().enabled,
@@ -298,6 +314,12 @@ export function parseWebSearchConfig(
       apiKeyEnv: parseNonEmptyString(
         brave.apiKeyEnv ?? readDefaults().brave.apiKeyEnv,
         "web.search.brave.apiKeyEnv",
+      ),
+    },
+    keenable: {
+      apiKeyEnv: parseNonEmptyString(
+        keenable.apiKeyEnv ?? readDefaults().keenable.apiKeyEnv,
+        "web.search.keenable.apiKeyEnv",
       ),
     },
   };
