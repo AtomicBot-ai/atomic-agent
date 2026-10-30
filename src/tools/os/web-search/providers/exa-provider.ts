@@ -72,7 +72,7 @@ export function createExaProvider(
           lookup: deps.lookup,
         });
         assertProviderStatus(response, "exa", "Exa API");
-        return parseExaApiJson(response.body, options.maxResults);
+        return { results: parseExaApiJson(response.body, options.maxResults) };
       }
 
       // Keyless MCP tier: the free path the search chain takes without a
@@ -121,7 +121,7 @@ export function createExaProvider(
         }
         throw err;
       }
-      return parseExaTextResults(text, options.maxResults);
+      return { results: parseExaTextResults(text, options.maxResults) };
     },
   };
 }

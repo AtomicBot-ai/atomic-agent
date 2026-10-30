@@ -32,14 +32,36 @@ interface CacheEntry {
 
 /**
  * Builds a normalized cache key from the provider-selected search dimensions.
- * Distinct providers / result counts never collide.
+ * Distinct providers / result counts / routing extras never collide.
  */
 export function buildSearchCacheKey(
   provider: string,
   query: string,
   maxResults: number,
+  extras = "",
 ): string {
-  return `${provider}\u0000${query.trim().toLowerCase()}\u0000${maxResults}`;
+  const base = `${provider}\u0000${query.trim().toLowerCase()}\u0000${maxResults}`;
+  return extras ? `${base}\u0000${extras}` : base;
+}
+
+/** Stable extras segment for optional AnySearch routing fields. */
+export function buildSearchCacheExtras(options: {
+  tag?: string;
+  zone?: string;
+  language?: string;
+  params?: Record<string, string>;
+}): string {
+  const parts: string[] = [];
+  if (options.tag) parts.push(`tag=${options.tag}`);
+  if (options.zone) parts.push(`zone=${options.zone}`);
+  if (options.language) parts.push(`lang=${options.language}`);
+  if (options.params && Object.keys(options.params).length > 0) {
+    const keys = Object.keys(options.params).sort();
+    parts.push(
+      `params=${keys.map((k) => `${k}=${options.params![k] ?? ""}`).join("&")}`,
+    );
+  }
+  return parts.join("\u0001");
 }
 
 /**
