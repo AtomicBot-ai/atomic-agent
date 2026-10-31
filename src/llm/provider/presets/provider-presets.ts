@@ -240,6 +240,14 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "Qwen models direct from Alibaba Cloud (international endpoint)",
   },
   {
+    id: "runcrate",
+    label: "Runcrate",
+    baseUrl: "https://api.runcrate.ai",
+    envVar: "RUNCRATE_API_KEY",
+    listsModelsWithoutKey: true,
+    note: "open-weight models; models listed without a key",
+  },
+  {
     id: "sambanova",
     label: "SambaNova",
     baseUrl: "https://api.sambanova.ai",
