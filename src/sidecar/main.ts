@@ -144,6 +144,13 @@ export async function bootstrapSidecar(): Promise<{
               stepIndex: inner.stepIndex,
               text: inner.text,
             });
+          } else if (inner.type === "plan_updated") {
+            // ATO-486: the whole live checklist; `items: []` clears it.
+            protocol.emitEvent("plan_updated", {
+              sessionId,
+              stepIndex: inner.stepIndex,
+              plan: inner.plan,
+            });
           } else if (inner.type === "step_error") {
             protocol.emitEvent("error", {
               message: inner.error.message,

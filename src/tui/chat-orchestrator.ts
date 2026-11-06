@@ -9,8 +9,13 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { describeMemoryEmbeddingReconnect } from "./local-models/describe-memory-embedding-reconnect.js";
 import {
   isFailedSessionStatus,
+  recordPlan,
   type SessionState,
 } from "../session/session-state.js";
+import { planHasOpenItems } from "../agent/plan/plan-snapshot.js";
+import { seedPlanFromReply } from "../agent/plan/plan-seed.js";
+import { previousReplyText as lastAssistantReplyText } from "../prompt/request-section.js";
+import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import type { SessionSummary } from "../session/session-summary.js";
 import {
   sessionSummaryCursorAfter,
@@ -1001,6 +1006,8 @@ export class ChatOrchestrator {
       // turn (absent on threads that never ran one — the reducer then
       // resets the chip rather than keeping the old thread's figure).
       ...(loaded.contextUsage ? { contextUsage: loaded.contextUsage } : {}),
+      // The live checklist this thread persisted (ATO-486).
+      ...(loaded.plan ? { plan: loaded.plan } : {}),
     });
     // The stored snapshot above misses everything the still-running
     // turn has said (a turn saves only when it finishes — for a thread
@@ -1062,6 +1069,36 @@ export class ChatOrchestrator {
         id: plan.providerId,
       });
     }
+  }
+
+  /**
+   * Seed the live plan from the plan-mode reply the operator just
+   * approved (ATO-486). Only for the "run it" message, only when the
+   * reply holds a list, and never over a plan the model is already
+   * keeping open: that one is newer than the prose. The session is
+   * saved only when it is already persisted; a deferred one carries the
+   * seed into its first save.
+   */
+  private seedPlanForExecution(text: string): void {
+    const session = this.session;
+    if (!session || text !== EXECUTE_PLAN_MESSAGE) return;
+    if (planHasOpenItems(session.plan)) return;
+    const reply = lastAssistantReplyText(session.turns);
+    if (reply === undefined) return;
+    const seeded = seedPlanFromReply(reply, Date.now());
+    if (seeded === null) return;
+    this.session = recordPlan(session, seeded);
+    if (this.runtime.sessionStore.load(session.id) !== null) {
+      this.runtime.sessionStore.save(this.session);
+    }
+    this.bus.emit({
+      type: "agent_event",
+      sessionId: session.id,
+      event: {
+        type: "llm_event",
+        event: { type: "plan_updated", plan: seeded, stepIndex: -1 },
+      },
+    });
   }
 
   /**
@@ -1548,6 +1585,11 @@ export class ChatOrchestrator {
       return;
     }
     if (gate.kind === "notice") this.notify(gate.text);
+    // "Run it" on an approved plan: its steps become the live checklist
+    // before the turn starts (ATO-486). A model that calls `plan.update`
+    // replaces it; one that never does still leaves the operator a
+    // checklist of exactly the steps it proposed.
+    this.seedPlanForExecution(text);
     // The operator can switch threads while this runs; every
     // this-session decision below re-checks against the id the turn
     // started on rather than trusting the live pointer.
@@ -1720,6 +1762,7 @@ export class ChatOrchestrator {
         ...(this.session.contextUsage
           ? { contextUsage: this.session.contextUsage }
           : {}),
+        ...(this.session.plan ? { plan: this.session.plan } : {}),
       });
     }
     const next = this.queue.shift();

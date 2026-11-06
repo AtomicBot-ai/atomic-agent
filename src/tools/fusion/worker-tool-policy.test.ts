@@ -36,6 +36,7 @@ describe("worker tool policy", () => {
         "os.screen.click",
         "os.screen.key",
         "os.screen.type",
+        "plan.update",
         "tasks.cancel",
         "tasks.cron",
         "tasks.schedule",

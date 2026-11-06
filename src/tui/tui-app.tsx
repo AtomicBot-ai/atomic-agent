@@ -80,6 +80,7 @@ import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
 import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
+import { PlanStrip } from "./components/plan-strip.js";
 import { SessionDeleteModal } from "./session-rail/session-delete-modal.js";
 import { UninstallModal } from "./uninstall/uninstall-modal.js";
 import { answerDesktopQuestion } from "./uninstall/uninstall-key-bindings.js";
@@ -2463,6 +2464,9 @@ export function TuiApp({
                 ) : null}
                 {composerVisible ? (
                   <>
+                    {/* The live checklist (ATO-486): above the queue,
+                        so the composer's own strip stays next to it. */}
+                    <PlanStrip plan={state.plan} width={mainColumnWidth} />
                     <QueuedMessages
                       queued={state.queuedMessages}
                       width={mainColumnWidth}
