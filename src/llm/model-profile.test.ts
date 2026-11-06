@@ -12,6 +12,7 @@ import {
   GEMMA4_PROPS,
   GPT_OSS_PROPS,
   LLAMA3_PROPS,
+  NEMOTRON_BOLT_E4B_PROPS,
   NEMOTRON_PROPS,
   QWEN3_PROPS,
 } from "./model-profile.fixtures.js";
@@ -110,6 +111,112 @@ describe("detectModelProfile", () => {
 
   it("falls back to plain profile for gpt-oss style templates", () => {
     expect(detectModelProfile(GPT_OSS_PROPS)).toEqual(PLAIN_INSTRUCT_PROFILE);
+  });
+
+  // ATO-879. Bolt E4B is a Gemma 4 fine-tune named "nemotron": the old
+  // alias-gated detectors sent it to plain-instruct (the nemotron gate
+  // wants a `<think>` template, the gemma gate a `gemma` alias) and the
+  // thinking channel was lost. The Gemma 4 template alone decides now.
+  describe("Gemma 4 template under another name (Nemotron 3.5 Bolt E4B)", () => {
+    it("resolves gemma4-think for a file-path alias", () => {
+      expect(NEMOTRON_BOLT_E4B_PROPS.model_alias).toContain("Nemotron");
+      expect(NEMOTRON_BOLT_E4B_PROPS.model_alias).not.toMatch(/gemma/i);
+      expect(detectModelProfile(NEMOTRON_BOLT_E4B_PROPS)).toEqual(
+        GEMMA4_THINK_PROFILE,
+      );
+    });
+
+    it("resolves the same profile under the managed custom id, the old workaround alias and no alias", () => {
+      for (const model_alias of [
+        "custom-nvidia-nvidia-nemotron-3.5-bolt-e4b-4gb-nvidia-nemotron-3.5-bolt-e4b-q4_k_m",
+        "nemotron-bolt-e4b-gemma4",
+        "nemotron-bolt",
+        "",
+      ]) {
+        expect(
+          detectModelProfile({ ...NEMOTRON_BOLT_E4B_PROPS, model_alias }),
+        ).toEqual(GEMMA4_THINK_PROFILE);
+      }
+    });
+
+    it("wins over a qwen- or nemotron-named alias, which would mean a ChatML <think> prefill", () => {
+      expect(
+        detectModelProfile({
+          ...NEMOTRON_BOLT_E4B_PROPS,
+          model_alias: "qwen-nemotron-gemma-merge",
+          // A history-stripping mention of `<think>` and the Qwen switch must
+          // not pull a `<|turn>`-framed template onto the qwen profile.
+          chat_template:
+            NEMOTRON_BOLT_E4B_PROPS.chat_template +
+            "{%- set content = content.split('</think>')[-1] if '<think>' in content else content -%}",
+        }),
+      ).toEqual(GEMMA4_THINK_PROFILE);
+    });
+
+    it("needs the whole native framing — a template that only mentions the channel tags stays plain", () => {
+      // ChatML template that strips Gemma-style thought channels out of
+      // history: it names `<|channel>thought` and `<channel|>` but never
+      // writes `<|turn>system`, `<|think|>` or `<|turn>model`.
+      const mentionsOnly = {
+        model_alias: "/models/Some-Nemotron-Merge-Q4_K_M.gguf",
+        chat_template:
+          "{%- for m in messages -%}{{- '<|im_start|>' + m['role'] + '\\n' -}}" +
+          "{%- if '<|channel>thought' in m['content'] -%}{{- m['content'].split('<channel|>')[-1] -}}" +
+          "{%- else -%}{{- m['content'] -}}{%- endif -%}{{- '<|im_end|>\\n' -}}{%- endfor -%}" +
+          "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}",
+      };
+      expect(detectModelProfile(mentionsOnly)).toEqual(PLAIN_INSTRUCT_PROFILE);
+      // Missing just the `<|think|>` switch is enough to keep it plain.
+      expect(
+        detectModelProfile({
+          ...NEMOTRON_BOLT_E4B_PROPS,
+          chat_template: NEMOTRON_BOLT_E4B_PROPS.chat_template.replaceAll(
+            "<|think|>",
+            "",
+          ),
+        }).id,
+      ).toBe("plain-instruct");
+    });
+  });
+
+  // Managed serves a catalog id as the alias, external the model path or
+  // any `--alias`: the GGUF file name from `/props.model_path` is read as
+  // a name hint too, so the same file resolves the same profile.
+  describe("model_path as a name hint", () => {
+    it("classifies a nemotron GGUF served under a neutral alias", () => {
+      expect(
+        detectModelProfile({
+          ...NEMOTRON_PROPS,
+          model_alias: "my-local-model",
+          model_path: "/models/NVIDIA-Nemotron-3.5-30B-A3B-Q4_K_M.gguf",
+        }),
+      ).toEqual(QWEN_THINK_PROFILE);
+    });
+
+    it("reads a Windows path's file name", () => {
+      expect(
+        detectModelProfile({
+          ...QWEN3_PROPS,
+          model_alias: "local",
+          model_path: "C:\\models\\Qwen3.5-4B-Q4_K_M.gguf",
+        }),
+      ).toEqual(QWEN_THINK_PROFILE);
+    });
+
+    it("ignores directory names — only the file name counts", () => {
+      expect(
+        detectModelProfile({
+          ...NEMOTRON_PROPS,
+          model_alias: "some-other-chatml-think-model",
+          model_path: "/home/me/nemotron/llama-3.1-8b-instruct.gguf",
+        }).id,
+      ).toBe("plain-instruct");
+    });
+
+    it("keeps the alias-only result when model_path is absent", () => {
+      expect(detectModelProfile(NEMOTRON_PROPS)).toEqual(QWEN_THINK_PROFILE);
+      expect(detectModelProfile(GEMMA4_PROPS)).toEqual(GEMMA4_THINK_PROFILE);
+    });
   });
 
   it("reads context window from default_generation_settings.n_ctx", () => {
