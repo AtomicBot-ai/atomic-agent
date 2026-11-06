@@ -13,7 +13,23 @@ export interface CompactionRouteFacts {
   local?: boolean;
   /** That server's prefix reuse; `none` re-reads the whole prompt after any change. */
   prefixReuse?: "partial" | "none";
+  /**
+   * The step's resolved context window in tokens (probed or catalogued);
+   * `null` or absent when unknown.
+   */
+  contextWindow?: number | null;
 }
+
+/**
+ * Smallest context window on which `auto` asks the model for a summary on a
+ * local llama-server without prefix reuse. Below it (a 16k window)
+ * compaction fires every step or two and a model call each time would about
+ * double the step time, so the summary stays extractive. The window itself is
+ * the gate: the planned summary size depends on the fixed prompt scaffold,
+ * and with a small scaffold a 16k window can plan a summary above
+ * {@link NO_REUSE_MODEL_SUMMARY_MIN_TOKENS}.
+ */
+export const NO_REUSE_MODEL_SUMMARY_MIN_WINDOW = 32_768;
 
 /**
  * Smallest planned summary for which `auto` asks the model on a local
@@ -23,9 +39,9 @@ export interface CompactionRouteFacts {
  * extractive, on any window (ATO-895). Where the history allowance gives a
  * summary this large (about a 32k window and up) compaction is rare and
  * its source small enough that one summary call costs about one step,
- * which such a model already re-reads in full. Below it (a 16k window)
- * compaction fires every step or two, and a model call each time would
- * about double the step time, so the summary stays extractive.
+ * which such a model already re-reads in full. Below it the summary
+ * stays extractive. It applies together with
+ * {@link NO_REUSE_MODEL_SUMMARY_MIN_WINDOW}: both must hold.
  */
 export const NO_REUSE_MODEL_SUMMARY_MIN_TOKENS = 1024;
 
@@ -33,15 +49,17 @@ export const NO_REUSE_MODEL_SUMMARY_MIN_TOKENS = 1024;
  * Which method makes this checkpoint. `model` and `extractive` are taken
  * as configured. `auto` picks extractive for a local llama-server whose
  * source is at least {@link AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS}, or whose
- * prefix reuse is `none` and whose planned summary (`summaryMaxTokens`)
- * is under {@link NO_REUSE_MODEL_SUMMARY_MIN_TOKENS} (unknown counts as
- * under); a cloud or other route keeps the model summary. `sourceTokens`
+ * prefix reuse is `none` unless both its context window is at least
+ * {@link NO_REUSE_MODEL_SUMMARY_MIN_WINDOW} and its planned summary
+ * (`summaryMaxTokens`) is at least {@link NO_REUSE_MODEL_SUMMARY_MIN_TOKENS}
+ * (an unknown window or summary size counts as too small); a cloud or other route keeps the model summary. `sourceTokens`
  * is evaluated only for a local route that is not already decided, so
  * other routes never pay for serializing the source.
  */
 export function chooseCompactionMethod(mode: CompactionMode, route: CompactionRouteFacts, sourceTokens: () => number, summaryMaxTokens?: number): "model" | "extractive" {
   if (mode !== "auto") return mode;
   if (!route.local) return "model";
-  if (route.prefixReuse === "none" && (summaryMaxTokens ?? 0) < NO_REUSE_MODEL_SUMMARY_MIN_TOKENS) return "extractive";
+  if (route.prefixReuse === "none" && ((route.contextWindow ?? 0) < NO_REUSE_MODEL_SUMMARY_MIN_WINDOW
+    || (summaryMaxTokens ?? 0) < NO_REUSE_MODEL_SUMMARY_MIN_TOKENS)) return "extractive";
   return sourceTokens() >= AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS ? "extractive" : "model";
 }

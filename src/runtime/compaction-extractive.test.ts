@@ -3,7 +3,7 @@ import { estimateTokens } from "../prompt/token-budget.js";
 import { assistantReplyTurn, assistantToolCallTurn, steeredUserTurn, stoppedTurnMarker, toolResultTurn, userTurn, type ConversationTurn } from "../session/conversation-turn.js";
 import { buildExtractiveSummary, clipMiddle, EXTRACTIVE_USER_MAX_CHARS } from "./compaction-extractive.js";
 import { describeToolStep, firstErrorLine } from "./compaction-extractive-steps.js";
-import { AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS, chooseCompactionMethod } from "./compaction-mode.js";
+import { AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS, NO_REUSE_MODEL_SUMMARY_MIN_WINDOW, chooseCompactionMethod } from "./compaction-mode.js";
 
 /** A long tool-heavy task: about 150k tokens of serialized records. */
 function bigSession(): ConversationTurn[] {
@@ -120,18 +120,27 @@ describe("compaction method choice", () => {
     expect(chooseCompactionMethod("auto", { local: true }, () => AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS)).toBe("extractive");
   });
 
-  it("asks the model on a no-reuse local route once the planned summary is large enough (ATO-895)", () => {
-    const none = { local: true, prefixReuse: "none" as const };
-    // A 16k window plans about 600 summary tokens: compaction every step or two, kept extractive.
-    expect(chooseCompactionMethod("auto", none, small, 600)).toBe("extractive");
-    expect(chooseCompactionMethod("auto", none, small, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS - 1)).toBe("extractive");
+  it("asks the model on a no-reuse local route only from a 32k window with a large enough summary (ATO-895)", () => {
+    const none = (contextWindow?: number | null) => ({ local: true, prefixReuse: "none" as const, contextWindow });
+    // A 16k window stays extractive, even when a small prompt scaffold lets it plan a summary over the floor.
+    expect(chooseCompactionMethod("auto", none(16_384), small, 600)).toBe("extractive");
+    expect(chooseCompactionMethod("auto", none(16_384), small, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS)).toBe("extractive");
+    expect(chooseCompactionMethod("auto", none(16_384), small, 2048)).toBe("extractive");
+    expect(chooseCompactionMethod("auto", none(NO_REUSE_MODEL_SUMMARY_MIN_WINDOW - 1), small, 2048)).toBe("extractive");
+    // An unknown window keeps the extractive summary.
+    expect(chooseCompactionMethod("auto", none(), small, 2048)).toBe("extractive");
+    expect(chooseCompactionMethod("auto", none(null), small, 2048)).toBe("extractive");
     // 32k and 64k windows plan 1255 and 2048: the model writes the summary.
-    expect(chooseCompactionMethod("auto", none, small, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS)).toBe("model");
-    expect(chooseCompactionMethod("auto", none, small, 2048)).toBe("model");
-    // A large source still extracts, whatever the summary size.
-    expect(chooseCompactionMethod("auto", none, () => AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS, 2048)).toBe("extractive");
-    // The summary size does not change a route with prefix reuse, nor an explicit mode.
-    expect(chooseCompactionMethod("auto", { local: true, prefixReuse: "partial" }, small, 100)).toBe("model");
-    expect(chooseCompactionMethod("extractive", none, small, 2048)).toBe("extractive");
+    expect(chooseCompactionMethod("auto", none(32_768), small, 1255)).toBe("model");
+    expect(chooseCompactionMethod("auto", none(65_536), small, 2048)).toBe("model");
+    // The summary floor still holds on a large window.
+    expect(chooseCompactionMethod("auto", none(65_536), small, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS - 1)).toBe("extractive");
+    expect(chooseCompactionMethod("auto", none(65_536), small)).toBe("extractive");
+    // A large source still extracts, whatever the window and summary size.
+    expect(chooseCompactionMethod("auto", none(65_536), () => AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS, 2048)).toBe("extractive");
+    // The window does not change a route with prefix reuse, nor an explicit mode.
+    expect(chooseCompactionMethod("auto", { local: true, prefixReuse: "partial", contextWindow: 8192 }, small, 100)).toBe("model");
+    expect(chooseCompactionMethod("extractive", none(65_536), small, 2048)).toBe("extractive");
+    expect(chooseCompactionMethod("model", none(16_384), small, 600)).toBe("model");
   });
 });

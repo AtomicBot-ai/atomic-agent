@@ -216,10 +216,12 @@ progress events. Cloud state updates are not part of it.
 `auto` ([choice](../compaction-mode.ts)) extracts when the serving link is a
 llama-server whose serialized source is at least 32k estimated tokens (prompt
 evaluation speed is unknown in advance and that much input already takes minutes
-on a laptop model), or whose prefix reuse is `none` and whose planned summary is
-under 1024 tokens. That second rule covers small windows (16k), where compaction
-fires every step or two and a model call each time would about double the step
-time; from about a 32k window the model writes the summary, since most small
+on a laptop model), or whose prefix reuse is `none` unless its context window is
+at least 32768 tokens and its planned summary at least 1024 (an unknown window
+counts as too small). That second rule covers small windows (16k), where
+compaction fires every step or two and a model call each time would about double
+the step time. It gates on the window itself, since a small prompt scaffold can
+give a 16k window a summary over 1024. From a 32k window the model writes the summary, since most small
 local models (Qwen3.5, Gemma 4) report prefix reuse `none` and would otherwise
 never get one. Cloud and other routes keep the
 model summary. Under `auto`, a model summary that fails or times out (not a
