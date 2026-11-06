@@ -298,6 +298,11 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled, scope, sessionId }),
   skillProjectEnabled: (enabled: boolean, sessionId?: string | null) =>
     ipcRenderer.invoke("cli:skillProjectEnabled", { enabled, sessionId }),
+  /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
+  pluginList: () => ipcRenderer.invoke("cli:pluginList"),
+  pluginSet: (name: string, op: "enable" | "disable" | "allow-code" | "deny-code", part?: string) =>
+    ipcRenderer.invoke("cli:pluginSet", { name, op, part }),
+  pluginRemove: (name: string) => ipcRenderer.invoke("cli:pluginRemove", name),
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
   /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
   skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),
