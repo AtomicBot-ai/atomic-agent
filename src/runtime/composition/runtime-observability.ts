@@ -41,9 +41,6 @@ export function createRuntimeObservability(
   // `{ provider, model }` — never message content, paths, args, or IP
   // (see `src/analytics/`). Fire the one-time `app_installed` event on
   // the first boot of a fresh install.
-  const analyticsStateStore = new AnalyticsStateStore(
-    resolve(config.paths.stateDir, "analytics.json"),
-  );
   // Surface / arch / install channel / desktop version, stamped on every
   // event and error report. The install id is the machine-wide one
   // shared with the other surface (desktop <-> terminal).
@@ -51,6 +48,13 @@ export function createRuntimeObservability(
     stateDir: config.paths.stateDir,
     ...(options.analyticsSurface ? { surface: options.analyticsSurface } : {}),
   });
+  // The store knows the surface so `first_message_sent` and
+  // `model_configured` use that surface's own flag in the shared file
+  // (ATO-1262), the way `app_installed` does (ATO-1227).
+  const analyticsStateStore = new AnalyticsStateStore(
+    resolve(config.paths.stateDir, "analytics.json"),
+    { surface: analyticsDimensions.surface },
+  );
   // `surface` picks the "sent" flag: desktop and terminal share the state
   // file but each reports its own `app_installed` once (ATO-1227).
   const appInstalledContext = () => ({

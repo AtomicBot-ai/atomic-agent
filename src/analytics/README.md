@@ -15,6 +15,6 @@ Desktop (0.0.3 and later) and the terminal share one state folder, `~/.atomic-ag
 
 A file written before the desktop flag existed has only `appInstalledSent`; it reads as "terminal reported, desktop not". On a machine where the desktop ran first on an older build, the desktop therefore sends `app_installed` one more time after the upgrade.
 
-`first_message_sent` and `model_configured` still have one flag per file, shared by both surfaces.
+`first_message_sent` and `model_configured` are split the same way (ATO-1262): `firstMessageSent` / `modelConfiguredSent` for the terminal and `firstMessageSentDesktop` / `modelConfiguredSentDesktop` for the desktop. The store takes the process's surface at construction (`runtime-observability.ts`), so callers need not pass it. A file from before the split reads as "terminal reported, desktop not", so on a machine where the desktop already sent its first message on an older build, it sends `first_message_sent` and `model_configured` once more after the upgrade.
 
 Writes merge the file's current flags first (a flag only goes from `false` to `true`) and keep keys this build does not know, because both surfaces may have the file open at once. Older builds rewrite the file with only the keys they know, so an older terminal can drop `appInstalledSentDesktop`; the desktop then reports once more.
