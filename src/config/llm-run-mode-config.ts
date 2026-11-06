@@ -487,8 +487,11 @@ export function parseLlmRunModeConfig(
  * refuses a pin to an unknown id, so leaving one behind would make the
  * file unreadable on the next start. A leg's model pin goes with its
  * provider pin: it named a model of the removed provider, and left
- * behind it would label and price the leg that takes over. Returns the
- * input untouched when nothing is pinned to `removedId`.
+ * behind it would label and price the leg that takes over. The
+ * escalation and judge pins (ATO-1264) go the same way; both fall back
+ * to the orchestrator leg when unset, which is what the parser would
+ * have chosen had they never been pinned. Returns the input untouched
+ * when nothing is pinned to `removedId`.
  */
 export function scrubRunModeProviderPins(
   runMode: UserLlmRunModeConfig | undefined,
@@ -500,15 +503,23 @@ export function scrubRunModeProviderPins(
     orchestratorModel,
     workerProvider,
     workerModel,
+    escalationProvider,
+    judgeProvider,
     ...rest
   } = runMode.fusion;
   const keepOrchestrator = orchestratorProvider !== removedId;
   const keepWorker = workerProvider !== removedId;
-  if (keepOrchestrator && keepWorker) return runMode;
+  const keepEscalation = escalationProvider !== removedId;
+  const keepJudge = judgeProvider !== removedId;
+  if (keepOrchestrator && keepWorker && keepEscalation && keepJudge) {
+    return runMode;
+  }
   return {
     ...runMode,
     fusion: {
       ...rest,
+      ...(escalationProvider && keepEscalation ? { escalationProvider } : {}),
+      ...(judgeProvider && keepJudge ? { judgeProvider } : {}),
       ...(orchestratorProvider && keepOrchestrator
         ? { orchestratorProvider }
         : {}),
