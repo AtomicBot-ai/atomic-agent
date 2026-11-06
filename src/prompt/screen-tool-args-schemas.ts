@@ -27,7 +27,16 @@ export const SCREEN_TOOL_ARGS_SCHEMAS: readonly [string, Schema][] = [
     "os.screen.capture",
     // The region is flat (all four or none): no strict-converted schema
     // nests an object (openai-tool-call-adapter.test.ts pins it).
-    obj({ x: numberSchema, y: numberSchema, width: numberSchema, height: numberSchema }),
+    // `app` / `window` pick one app window instead (ATO-532); `text` also reads its text.
+    obj({
+      x: numberSchema,
+      y: numberSchema,
+      width: numberSchema,
+      height: numberSchema,
+      app: { type: "string" },
+      window: { type: "string" },
+      text: { type: "boolean" },
+    }),
   ],
   [
     "os.screen.click",

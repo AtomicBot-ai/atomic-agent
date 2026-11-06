@@ -1,7 +1,8 @@
-import { mkdir, stat } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { platform, tmpdir } from "node:os";
 import { runCommand } from "../../../sandbox/command-runner.js";
 import { buildScreenInvocation, type ScreenOp } from "./screen-jxa.js";
+import type { ScreenWindow } from "./screen-window.js";
 
 /**
  * Everything the screen tools need from the host, injectable so tests
@@ -31,6 +32,8 @@ export interface ScreenDeps {
   env: NodeJS.ProcessEnv;
   fileSize: (path: string) => Promise<number>;
   ensureDir: (path: string) => Promise<void>;
+  /** Saves a window's text next to its snapshot. */
+  writeText: (path: string, text: string) => Promise<void>;
   now: () => Date;
   /** Base for screenshots (`os.tmpdir()`): already a read root, never the working folder. */
   tmpDir: string;
@@ -55,6 +58,11 @@ export function resolveScreenDeps(overrides: Partial<ScreenDeps> = {}): ScreenDe
       (async (path) => {
         await mkdir(path, { recursive: true });
       }),
+    writeText:
+      overrides.writeText ??
+      (async (path, text) => {
+        await writeFile(path, text, "utf8");
+      }),
     now: overrides.now ?? (() => new Date()),
     tmpDir: overrides.tmpDir ?? tmpdir(),
   };
@@ -77,6 +85,11 @@ export interface ScreenProbe {
   /** Primary display in points, and its pixels per point. */
   screen: { width: number; height: number; scale: number };
   done: boolean;
+  /** On-screen app windows, front to back, when the probe asked for them. */
+  windows?: ScreenWindow[];
+  /** A window's text, read through Accessibility (`windowText`). */
+  text?: string;
+  textTruncated?: boolean;
   /** How `type` delivered the text: `keys`, `paste` or `keys+paste`. */
   via?: string;
   error?: string;
@@ -128,9 +141,34 @@ export function parseScreenProbe(stdout: string): ScreenProbe {
     ...("ownerAtPoint" in obj ? { ownerAtPoint: parseApp(obj.ownerAtPoint) } : {}),
     screen: { width, height, scale: scale > 0 ? scale : 1 },
     done: obj.done === true,
+    ...(Array.isArray(obj.windows) ? { windows: obj.windows.flatMap(parseWindow) } : {}),
+    ...(typeof obj.text === "string" ? { text: obj.text } : {}),
+    ...(typeof obj.textTruncated === "boolean" ? { textTruncated: obj.textTruncated } : {}),
     ...(typeof obj.via === "string" ? { via: obj.via } : {}),
     ...(typeof obj.error === "string" ? { error: obj.error } : {}),
   };
+}
+
+/** One window entry; a malformed one is dropped, not guessed. */
+export function parseWindow(raw: unknown): ScreenWindow[] {
+  if (!raw || typeof raw !== "object") return [];
+  const w = raw as Record<string, unknown>;
+  const nums = [w.id, w.pid, w.x, w.y, w.width, w.height].map(Number);
+  if (!nums.every(Number.isFinite) || !(nums[4]! > 0) || !(nums[5]! > 0)) return [];
+  const [id, pid, x, y, width, height] = nums as [number, number, number, number, number, number];
+  return [
+    {
+      id,
+      pid,
+      app: typeof w.app === "string" ? w.app : null,
+      bundleId: typeof w.bundleId === "string" ? w.bundleId : null,
+      title: typeof w.title === "string" ? w.title : "",
+      x,
+      y,
+      width,
+      height,
+    },
+  ];
 }
 
 function parseApp(raw: unknown): ScreenApp | null {

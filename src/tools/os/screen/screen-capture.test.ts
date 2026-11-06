@@ -101,6 +101,109 @@ describe("os.screen.capture", () => {
   });
 });
 
+const WINDOWS = [
+  { id: 301, pid: 77, app: "Notes", bundleId: "com.apple.Notes", title: "Groceries", x: 100, y: 50, width: 640, height: 400 },
+  { id: 302, pid: 88, app: "Safari", bundleId: "com.apple.Safari", title: "Error 500", x: 0, y: 25, width: 1440, height: 875 },
+  { id: 303, pid: 99, app: "1Password", bundleId: "com.1password.1password", title: "Vault", x: 10, y: 10, width: 900, height: 600 },
+];
+
+describe("os.screen.capture of one window (ATO-532)", () => {
+  it("captures the matching window by id, asks naming it and remembers its frame", async () => {
+    const { fake, geometry, prompts, tool } = capture({ windows: WINDOWS, pixelSizes: [{ width: 1280, height: 800 }] });
+    const result = await tool.run({ app: "notes" }, screenCtx());
+    expect(result.status).toBe("ok");
+    const path = "/tmp/t/atomic-agent-screens/s1/window-20261025-142233-417.jpg";
+    expect(fake.ops()[0]).toMatchObject({ op: "probe", windows: true });
+    expect(fake.calls[1]).toMatchObject({ command: "screencapture", args: ["-x", "-o", "-t", "jpg", "-l", "301", path] });
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toMatchObject({ tool: "os.screen.capture", category: "screen_capture" });
+    expect(String(prompts[0]!.preview)).toContain('Notes — "Groceries"');
+    expect(geometry.get("s1")).toEqual({ originX: 100, originY: 50, scale: 2, imageWidth: 1280, imageHeight: 800 });
+    // The desktop finds the picture by this line (chat-files.js cfShotPath).
+    expect(result.summary).toMatch(/^saved \/tmp\/t\/atomic-agent-screens\/s1\/window-\S+\.jpg \(/m);
+    expect(result.summary).toContain("reply.attachments");
+    expect(result.details).toMatchObject({ path, window: { app: "Notes", title: "Groceries" } });
+  });
+
+  it("captures a browser window: a snapshot only looks", async () => {
+    const { tool } = capture({ windows: WINDOWS, pixelSizes: [{ width: 1280, height: 778 }] });
+    const result = await tool.run({ app: "Safari", window: "error" }, screenCtx());
+    expect(result.status).toBe("ok");
+    expect(result.details).toMatchObject({ window: { bundleId: "com.apple.Safari" } });
+  });
+
+  it("lists the windows on screen when nothing matches, without asking", async () => {
+    const { fake, prompts, tool } = capture({ windows: WINDOWS });
+    const result = await tool.run({ app: "Figma" }, screenCtx());
+    expect(result.status).toBe("error");
+    expect(result.details.reason).toBe("no-window");
+    expect(result.summary).toContain('Notes — "Groceries"');
+    expect(prompts).toHaveLength(0);
+    expect(fake.calls.map((call) => call.command)).toEqual(["osascript"]);
+  });
+
+  it("refuses a password manager window without asking or capturing", async () => {
+    const { fake, prompts, tool } = capture({ windows: WINDOWS });
+    const result = await tool.run({ app: "1Password" }, screenCtx());
+    expect(result.status).toBe("error");
+    expect(result.details.reason).toBe("protected");
+    expect(prompts).toHaveLength(0);
+    expect(fake.calls.map((call) => call.command)).toEqual(["osascript"]);
+  });
+
+  it("takes no picture when the window snapshot is not approved", async () => {
+    const { fake, tool } = capture({ windows: WINDOWS }, false);
+    await expect(tool.run({ app: "Notes" }, screenCtx())).rejects.toBeInstanceOf(ApprovalDeniedError);
+    expect(fake.calls.map((call) => call.command)).toEqual(["osascript"]);
+  });
+
+  it("saves the window text next to the picture when asked", async () => {
+    const { fake, prompts, tool } = capture({
+      windows: WINDOWS,
+      pixelSizes: [{ width: 1280, height: 800 }],
+      actionReport: { done: true, text: "Milk\nBread", textTruncated: false },
+    });
+    const result = await tool.run({ app: "Notes", text: true }, screenCtx());
+    expect(result.status).toBe("ok");
+    expect(String(prompts[0]!.preview)).toContain("password fields are skipped");
+    const textOp = fake.ops().find((op) => op.op === "windowText");
+    expect(textOp).toMatchObject({ pid: 77, title: "Groceries", maxDepth: 12, maxElements: 800, maxChars: 20000 });
+    expect(textOp?.refusedIds).toContain("com.1password.1password");
+    const txt = "/tmp/t/atomic-agent-screens/s1/window-20261025-142233-417.txt";
+    expect(fake.written.get(txt)).toBe("Milk\nBread");
+    expect(result.details).toMatchObject({ textPath: txt, textChars: 10, textTruncated: false });
+  });
+
+  it("still returns the picture when Accessibility is missing for the text", async () => {
+    const { fake, tool } = capture({
+      windows: WINDOWS,
+      pixelSizes: [{ width: 1280, height: 800 }],
+      actionReport: { error: "accessibility" },
+    });
+    const result = await tool.run({ app: "Notes", text: true }, screenCtx());
+    expect(result.status).toBe("ok");
+    expect(result.summary).toContain("Accessibility");
+    expect(fake.written.size).toBe(0);
+  });
+
+  it("rejects a region together with a window, and text without a window", async () => {
+    const { fake, tool } = capture({ windows: WINDOWS });
+    const both = await tool.run({ x: 0, y: 0, width: 10, height: 10, app: "Notes" }, screenCtx());
+    expect(both.status).toBe("error");
+    expect(both.summary).toContain("not both");
+    const text = await tool.run({ text: true }, screenCtx());
+    expect(text.status).toBe("error");
+    expect(fake.calls).toEqual([]);
+  });
+
+  it("stops before listing when Screen Recording is not granted", async () => {
+    const { fake, tool } = capture({ windows: WINDOWS, screenRecording: false });
+    const result = await tool.run({ app: "Notes" }, screenCtx());
+    expect(result.details.reason).toBe("screen-recording-permission");
+    expect(fake.calls.map((call) => call.command)).toEqual(["osascript"]);
+  });
+});
+
 describe("capture helpers", () => {
   it("builds screencapture argv with and without a region", () => {
     expect(screencaptureArgs("/a.jpg")).toEqual(["-x", "-t", "jpg", "/a.jpg"]);
