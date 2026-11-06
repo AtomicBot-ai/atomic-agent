@@ -91,6 +91,9 @@
 <script src="dom-morph.js"></script>
 <!-- ATO-1025: colour in a reply's code blocks (no library, the theme's tokens). -->
 <script src="code-highlight.js"></script>
+<!-- ATO-664: marked parses a reply's markdown, DOMPurify checks the result (both vendored, licences beside them). -->
+<script src="vendor/marked.js"></script>
+<script src="vendor/purify.js"></script>
 <!-- ATO-1251: the reply's markdown blocks (renderMarkdown hands its text here). -->
 <script src="md-render.js"></script>
 <!-- ATO-1053: the file preview panel (main reads the file; this only draws it). -->

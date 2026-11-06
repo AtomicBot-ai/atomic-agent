@@ -1,7 +1,9 @@
 // ATO-1251 / ATO-664: a reply's markdown as the window's own blocks.
-// md-render.js is loaded as a CommonJS module; renderProseFresh (the pass
-// that adds links and file chips around it) is read from renderer.js as text
-// and run in a vm context with its neighbours stubbed. No deps, no build.
+// md-render.js is loaded as a CommonJS module after the vendored marked
+// (renderer/vendor/marked.js, a UMD build that sets a global, as in the
+// window); renderProseFresh (the pass that adds links and file chips around
+// it) is read from renderer.js as text and run in a vm context with its
+// neighbours stubbed. No deps, no build.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -9,10 +11,12 @@ import { createRequire } from "node:module";
 import vm from "node:vm";
 
 const require = createRequire(import.meta.url);
-const { mdRender, mdTableText } = require("../renderer/md-render.js");
+const markedSource = readFileSync(new URL("../renderer/vendor/marked.js", import.meta.url), "utf8");
+vm.runInThisContext(markedSource);
+const { mdRender, mdTableText, mdSanitize } = require("../renderer/md-render.js");
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-/** renderMarkdown's output with the held code put back, as renderProseFresh ends up showing it. */
-const md = (s) => { const o = mdRender(esc(s)); return o.html.replace(/\u0000(\d+)\u0000/g, (m, i) => o.held[+i]); };
+/** renderMarkdown's output (raw text in) with the held code put back, as renderProseFresh ends up showing it. */
+const md = (s) => { const o = mdRender(s); return o.html.replace(/\u0000(\d+)\u0000/g, (m, i) => o.held[+i]); };
 
 test("plain prose is unchanged: lines and blank lines stay as they were", () => {
   assert.equal(md("Hello there.\n\nSecond paragraph,\nsame paragraph."), "Hello there.\n\nSecond paragraph,\nsame paragraph.");
@@ -157,7 +161,7 @@ function fn(name) {
 }
 function prose() {
   const c = vm.createContext({});
-  vm.runInContext(readFileSync(new URL("../renderer/md-render.js", import.meta.url), "utf8")
+  vm.runInContext(markedSource + "\n" + readFileSync(new URL("../renderer/md-render.js", import.meta.url), "utf8")
     + "\nconst IS_WIN = false;\nconst esc = " + esc.toString() + ";\n"
     + "function ic() { return ''; }\n"
     + "function replyPathChip(raw, shown) { return '<button class=\"filechip\" data-file=\"' + esc(raw) + '\">' + esc(raw) + '</button>'; }\n"
@@ -178,4 +182,51 @@ test("renderProseFresh: a card's URL is not wrapped twice, a bare URL is still a
   const tbl = render("| a | b |\n|---|---|\n| https://ex.com | ~/x.md |");
   assert.match(tbl, /<td><a class="msglink"[^>]*>https:\/\/ex.com<\/a><\/td>/);
   assert.match(tbl, /<td><button class="filechip"/);
+});
+
+// ATO-664: marked parses, so CommonMark/GFM cases the regexes got wrong now come out right.
+test("nested lists of mixed kinds keep their structure and numbering", () => {
+  assert.equal(md("1. a\n   - b\n     1. c\n2. d"),
+    '<ol class="mdlist"><li>a<ul class="mdlist"><li>b<ol class="mdlist"><li>c</li></ol></li></ul></li><li>d</li></ol>');
+  assert.equal(md("5. five\n6. six"), '<ol class="mdlist" start="5"><li>five</li><li>six</li></ol>');
+});
+
+test("intraword underscores and bracket-then-paren code in prose stay as written", () => {
+  assert.equal(md("set my_var_name now"), "set my_var_name now");
+  assert.equal(md("call handlers[name](event) here"), "call handlers[name](event) here");
+  assert.equal(md("[mail](mailto:a@b.co) me"), "[mail](mailto:a@b.co) me");
+});
+
+test("raw HTML is shown as text, never as markup", () => {
+  assert.equal(md("<b>hi</b> & bye"), "&lt;b&gt;hi&lt;/b&gt; &amp; bye");
+  assert.equal(md("<div>\nx\n</div>"), "&lt;div&gt;\nx\n&lt;/div&gt;");
+});
+
+test("footnotes: the mark is a number, the notes come last", () => {
+  assert.equal(md("Fact[^1].\n\n[^1]: Source here"),
+    'Fact<sup class="mdfn">1</sup>.\n<ol class="mdlist mdfoot"><li>Source here</li></ol>');
+  const url = md("A[^a] and B[^b].\n\n[^a]: https://ex.com\n[^b]: second");
+  assert.match(url, /A<sup class="mdfn">1<\/sup> and B<sup class="mdfn">2<\/sup>\./);
+  assert.match(url, /<ol class="mdlist mdfoot"><li>https:\/\/ex.com<\/li><li>second<\/li><\/ol>$/);
+  // a mark with no note (yet, while streaming) is left as written
+  assert.equal(md("see [^9]"), "see [^9]");
+});
+
+test("streaming frames: no heading flash, a rule under text, no backticks for a fence just opened", () => {
+  assert.equal(md("Foo\n-"), "Foo\n-");
+  assert.equal(md("a | b\n---"), 'a | b\n<hr class="mdhr">');
+  const opened = md("Run:\n```py");
+  assert.match(opened, /<pre class="mdpre" data-open="1" data-lang="py"><code><\/code><\/pre>/);
+  assert.doesNotMatch(opened, /`/);
+});
+
+test("mdSanitize is a no-op where DOMPurify is not loaded", () => {
+  assert.equal(mdSanitize('<b class="x">y</b>'), '<b class="x">y</b>');
+});
+
+test("renderProseFresh: a path inside a fenced block is never a chip", () => {
+  const render = prose();
+  const h = render("```\ncat ~/notes/a.md\n```");
+  assert.doesNotMatch(h, /filechip/);
+  assert.match(h, /cat ~\/notes\/a.md/);
 });
