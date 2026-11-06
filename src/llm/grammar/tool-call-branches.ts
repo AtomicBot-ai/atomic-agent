@@ -37,6 +37,7 @@ const DEDICATED_BRANCHES: ReadonlyArray<{ tool: string; rule: string }> = [
   { tool: "os.http.request", rule: "http-request-call" },
   { tool: "skill.view", rule: "skill-view-call" },
   { tool: "tool.view", rule: "tool-view-call" },
+  { tool: "tool.search", rule: "tool-search-call" },
   { tool: "memory.notes.store", rule: "notes-store-call" },
   { tool: "memory.notes.recall", rule: "notes-recall-call" },
 ];

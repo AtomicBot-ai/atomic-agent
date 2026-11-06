@@ -176,6 +176,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // discovery
   "skill.view": "pure_read",
   "tool.view": "pure_read",
+  "tool.search": "pure_read",
   "skill.run_script": "approval_gated",
 
   // memory.*

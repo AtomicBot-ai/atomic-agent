@@ -333,6 +333,7 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "os.proc.list",
   "os.window.list",
   "tool.view",
+  "tool.search",
 ]);
 
 /**

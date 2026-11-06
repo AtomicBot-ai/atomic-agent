@@ -40,6 +40,7 @@ import { registerVerifyTools } from "./verify/index.js";
 import { registerGithubTools } from "./github/github-tools.js";
 import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
+import { buildToolSearchTool } from "./tool-search/index.js";
 import { registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerVisionTools } from "./vision/index.js";
@@ -306,6 +307,8 @@ beforeAll(() => {
   registerGithubTools(registry, dangerous);
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
+  // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
+  registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
   registerTaskTools(registry, taskOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
@@ -342,8 +345,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(94);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(98);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(95);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);

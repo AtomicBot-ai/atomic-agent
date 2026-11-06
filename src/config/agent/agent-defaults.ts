@@ -23,5 +23,6 @@ export function createAgentDefaults(): UserAgentConfig {
     sessionSectionsMaxTokens: 0,
     worldSnapshotMaxTokens: 8_000,
     prompt: createPromptDefaults(),
+    tools: { search: "auto" },
   };
 }
