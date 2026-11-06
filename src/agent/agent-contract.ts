@@ -827,6 +827,13 @@ export type AgentLoopEvent =
        * under-counted). Measured, never estimated.
        */
       contextTokens?: number;
+      /**
+       * `phase: "usage"`: tokens this worker has spent so far (prompt +
+       * reply, every completion), and what they cost when its model is
+       * priced — escalations included (ATO-947 / TUI row).
+       */
+      tokens?: number;
+      spentUsd?: number;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
       /**

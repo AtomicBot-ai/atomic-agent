@@ -552,6 +552,15 @@ export interface TuiAppCallbacks {
    * without changing the mode.
    */
   onFusionWorkersChangeRequested?(workers: number): void;
+  /**
+   * `/worker stop|escalate <id>`: the person's action on one running
+   * fusion worker of `sessionId` (ATO-66). The result is a feed line.
+   */
+  onFusionWorkerAction?(
+    sessionId: string,
+    taskId: string,
+    action: "stop" | "escalate",
+  ): void;
   /** Providers tab / LLM panel: select an exact chat model for a provider. */
   onProvidersSelectChatModel?(providerId: string, modelId: string): void;
   /**
