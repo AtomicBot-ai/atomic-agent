@@ -42,6 +42,12 @@
 .statusstrip.cpuonly{padding:4px 8px}
 .statusstrip.cpuonly .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}
 .statusstrip.cpuonly .ss-title{display:block;font-weight:500;color:var(--ink)}
+/* ATO-1044: the best model for this computer, downloading behind the starter, then the ask. */
+.statusstrip.upgrade-strip{padding:4px 8px;gap:6px}
+.statusstrip.upgrade-strip .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}
+.statusstrip.upgrade-strip .ss-ic.ok{color:var(--success)}
+.statusstrip.upgrade-strip .upg-bar{flex:0 0 72px;height:4px;border-radius:2px;background:var(--line, rgba(127,127,127,.25));overflow:hidden}
+.statusstrip.upgrade-strip .upg-bar>span{display:block;height:100%;background:var(--blue);transition:width .3s ease}
 /* The local engine did not download or start (engfNoticeHTML): its sentence, then Download again. */
 .statusstrip.engfail{padding:4px 8px;gap:6px}
 .statusstrip.engfail .ss-text{flex:1 1 auto;white-space:normal;color:var(--ink-2)}

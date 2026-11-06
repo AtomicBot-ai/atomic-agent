@@ -265,6 +265,11 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
   onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
   starterGet: () => ipcRenderer.invoke("app:starterGet"),
+  // ATO-1044: the best model for this computer, downloading behind the starter, then the ask.
+  onUpgradeModel: (cb: (ev: unknown) => void) => on("app:upgradeModel", cb),
+  upgradeGet: () => ipcRenderer.invoke("app:upgradeGet"),
+  upgradeSwitch: () => ipcRenderer.invoke("app:upgradeSwitch"),
+  upgradeLater: () => ipcRenderer.invoke("app:upgradeLater"),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),
