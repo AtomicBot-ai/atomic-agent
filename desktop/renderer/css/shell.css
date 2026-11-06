@@ -329,6 +329,11 @@
   color:var(--ink);text-align:left;min-width:0;transition:background var(--t-state) var(--ease);
 }
 .step + .step{margin-top:1px}
+/* ATO-1249: the order switch above Steps and Reasoning. */
+.insp-order{display:flex;justify-content:flex-end;padding:0 6px 4px}
+.insp-orderbtn{padding:2px 6px;border-radius:var(--r-well);font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-2)}
+.insp-orderbtn:hover{background:var(--hover);color:var(--ink)}
+.insp-orderbtn:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
 .step:hover{background:var(--hover)}
 .step:active{background:var(--brand-wash)}
 .step:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
