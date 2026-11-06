@@ -8,6 +8,7 @@ import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
+import { goalSummaryLine } from "../agent/goal/goal-state.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -204,6 +205,8 @@ export function reduceUiAction(
           (text) => !action.queued.includes(text),
         ),
       };
+    case "goal_changed":
+      return { ...state, goalLine: action.goal === null ? null : goalSummaryLine(action.goal) };
     case "plan_handoff_dismissed":
       // Mode untouched: dismissing a plan is declining this one, not
       // leaving the mode you are planning in.
@@ -491,6 +494,8 @@ export function reduceUiAction(
         sidebarDrag: null,
         sidebarTasksCursor: 0,
         queuedMessages: [],
+        // The orchestrator re-publishes the new thread's goal right after.
+        goalLine: null,
         // Both belong to the thread being left: its queue drains into
         // its own turns, and a steer aimed at its running turn is not
         // aimed at anything on this screen.

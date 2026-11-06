@@ -72,6 +72,9 @@ import {
 } from "./session-rail/index.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
+import { readGoalState, type GoalState } from "../agent/goal/index.js";
+import type { GoalCommand } from "./commands/goal-command.js";
+import { activeGoalSpec, createGoalProgressReporter, runGoalCommand } from "./goal/goal-commands.js";
 import {
   ChatPullMirror,
   evaluateLocalTurnGate,
@@ -1020,6 +1023,7 @@ export class ChatOrchestrator {
     // Each thread keeps the model it ran on: entering one whose stamp
     // differs from the active provider/model re-applies it.
     this.restoreSessionModel(loaded);
+    this.showGoal(readGoalState(loaded.metadata));
     // After `session_switched`, so they land in the new transcript
     // rather than the one that was just replaced.
     for (const notice of notices) this.notify(notice);
@@ -1296,6 +1300,7 @@ export class ChatOrchestrator {
       type: "runtime_info",
       line: `new session ${this.session.id} created`,
     });
+    this.showGoal(null);
     for (const notice of notices) this.notify(notice);
   }
 
@@ -1597,7 +1602,18 @@ export class ChatOrchestrator {
       controller.signal.throwIfAborted();
       this.waitingModelMessages.delete(turnSessionId);
       dispatched = true;
+      // An active goal (ATO-451) turns this message into goal rounds.
+      const goal = activeGoalSpec(turnSession);
       const result = await this.runtime.runTurn(turnSession, text, {
+        ...(goal === undefined
+          ? {}
+          : {
+              goal,
+              onGoalProgress: createGoalProgressReporter(
+                (line) => { if (this.session?.id === turnSessionId) this.bus.emit({ type: "system_message", text: line }); },
+                (state) => { if (this.session?.id === turnSessionId) this.showGoal(state); },
+              ),
+            }),
         // Only an operator-given ceiling. Absent, the runtime takes the
         // leg length and the task ceiling from config.
         ...(this.options.maxSteps === undefined
@@ -1614,6 +1630,7 @@ export class ChatOrchestrator {
       // operator switched to — its state is already saved to its own
       // session by `executeTurn`.
       if (attached) this.session = result.session;
+      if (attached && goal !== undefined) this.showGoal(readGoalState(result.session.metadata));
       // A cancelled turn means the operator stopped the agent — Esc,
       // Ctrl+C or /abort. Re-queueing its undelivered steers here would
       // make the post-abort drain START a turn out of them: the exact
@@ -1906,6 +1923,31 @@ export class ChatOrchestrator {
       );
     }
     this.currentController?.abort();
+  }
+
+  /** `/goal …` (ATO-451); the decisions live in `goal/goal-commands.ts`. */
+  goalCommand(command: GoalCommand): void {
+    if (this.quitting) return;
+    const session = this.ensureSession();
+    runGoalCommand(command, {
+      session,
+      turnRunning: this.currentController !== null,
+      ...(this.runtime.controlGoal
+        ? { controlGoal: (id: string, verb: "pause" | "clear") => this.runtime.controlGoal?.(id, verb) ?? false }
+        : {}),
+      save: (next) => {
+        this.session = next;
+        this.runtime.sessionStore.save(next);
+      },
+      send: (text) => this.sendMessage(text),
+      say: (text) => this.bus.emit({ type: "system_message", text }),
+      show: (goal) => this.showGoal(goal),
+      now: () => Date.now(),
+    });
+  }
+
+  private showGoal(goal: GoalState | null): void {
+    this.bus.emit({ type: "goal_changed", goal });
   }
 
   quit(): void {

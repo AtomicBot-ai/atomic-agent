@@ -90,7 +90,7 @@ export function StatusBar({
   // Reclaim the reservation when no tag renders.
   const bannerBudget = Math.max(
     0,
-    rawBudget(columns, brand, title) +
+    rawBudget(columns, brand, title, state.goalLine) +
       (state.session.sessionId ? 0 : SESSION_TAG),
   );
   const bannerPlan = banner
@@ -140,7 +140,7 @@ export function StatusBar({
             // The banner has already taken its cells from the same
             // leftover; hand the chip what genuinely remains or the two
             // meet in the middle and wrap the row.
-            chipBudget(columns, brand, title) -
+            chipBudget(columns, brand, title, state.goalLine) -
             (bannerPlan ? bannerPlan.width + 2 : 0)
           }
         />
@@ -152,6 +152,13 @@ export function StatusBar({
           <Text color={theme.colors.assistant} bold>
             {title}
           </Text>
+        </Text>
+      ) : null}
+      {/* Goal mode (ATO-451): where the chat's goal stands, one line. */}
+      {state.goalLine ? (
+        <Text color={theme.colors.muted}>
+          {"  "}
+          {theme.glyphs.dotSeparator} {state.goalLine}
         </Text>
       ) : null}
       {banner && bannerPlan ? (
@@ -187,8 +194,9 @@ function chipBudget(
   columns: number,
   brand: boolean,
   title: string | null,
+  goalLine: string | null = null,
 ): number {
-  return Math.max(0, rawBudget(columns, brand, title));
+  return Math.max(0, rawBudget(columns, brand, title, goalLine));
 }
 
 /**
@@ -200,6 +208,7 @@ function rawBudget(
   columns: number,
   brand: boolean,
   title: string | null,
+  goalLine: string | null = null,
 ): number {
   const BRAND = 22;
   const BREADCRUMB = 14;
@@ -207,7 +216,8 @@ function rawBudget(
     (brand ? BRAND : 0) +
     BREADCRUMB +
     SESSION_TAG +
-    (title ? title.length + 4 : 0);
+    (title ? title.length + 4 : 0) +
+    (goalLine ? goalLine.length + 4 : 0);
   return columns - used - 2;
 }
 

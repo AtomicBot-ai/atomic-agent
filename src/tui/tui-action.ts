@@ -18,6 +18,7 @@ import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { IntegrationsAction } from "./integrations/integrations-actions.js";
 import type { SwarmAction } from "./swarm/swarm-actions.js";
 import type { IssueReportAction } from "./issue-report/issue-report-state.js";
+import type { GoalState } from "../agent/goal/goal-types.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { OnboardingAction } from "./onboarding/onboarding-actions.js";
@@ -143,6 +144,11 @@ export type TuiAction =
   | { type: "message_queued"; text: string }
   /** Orchestrator re-published its pending-message queue (push/drain/clear). */
   | { type: "queue_changed"; queued: readonly string[] }
+  /**
+   * The open chat's goal changed (`/goal`, a goal round, a session
+   * switch); `null` when it has none. Drives the goal line (ATO-451).
+   */
+  | { type: "goal_changed"; goal: GoalState | null }
   /**
    * Flip (or set) what Enter does while a turn is running. `mode`
    * omitted toggles; the persist side-effect lives in the caller, like
