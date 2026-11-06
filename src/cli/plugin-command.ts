@@ -1,10 +1,16 @@
+import { resolve } from "node:path";
 import { getConfig } from "../config/index.js";
+import { SkillHubInstallError, summarizeScan } from "../skills/index.js";
+import { createCodeConsentPrompt, formatPermissionChanges } from "./plugin-install-confirm.js";
+import { createInstallConfirm, formatScanFindings } from "./skill-install-confirm.js";
 import {
   addMarketplace,
   bundleRunsCode,
   describeMarketplaceSource,
   installMarketplacePlugin,
-  installPluginFromDir,
+  createPluginInstallReview,
+  reviewAndCommit,
+  stagePluginCopy,
   listMarketplaces,
   loadMarketplace,
   looksLikePluginSpec,
@@ -32,13 +38,18 @@ const HELP = [
   "Subcommands:",
   "  list                       List installed plugins with what each one brings",
   "  show <name>                Print a plugin's skills, commands, MCP servers, hooks and notes",
-  "  install <path> [--force] [--accept-code]",
+  "  install <path> [--force] [--yes] [--acknowledge-risk] [--accept-code]",
   "                             Install a plugin from a local folder (copied into the data folder).",
   "                             Parts that run programs (local MCP servers, hooks, scripts) stay off",
   "                             until you allow them: --accept-code here, or allow-code later",
-  "  install <name>[@market] [--force] [--accept-code]",
+  "  install <name>[@market] [same flags]",
   "                             Install a plugin listed in an added marketplace",
-  "  update <name> [--force]    Reinstall a plugin from its marketplace or folder if it changed",
+  "  update <name> [--force] [same flags]",
+  "                             Reinstall a plugin from its marketplace or folder if it changed;",
+  "                             prints what changed and asks again if what it runs changed",
+  "",
+  "  Every install is security-scanned: a caution finding asks (or needs --yes without a",
+  "  terminal), a dangerous one needs --acknowledge-risk.",
   "  allow-code <name>          Let a plugin's local MCP servers, hooks and scripts run",
   "  deny-code <name>           Switch those parts off again (skills and remote servers keep working)",
   "  enable <name>              Switch an installed plugin on",
@@ -123,12 +134,11 @@ function show(stateDir: string, name: string | undefined): number {
 
 async function install(stateDir: string, args: string[]): Promise<number> {
   const force = args.includes("--force");
-  const acceptCode = args.includes("--accept-code");
-  const path = args.find(a => !a.startsWith("--"));
-  if (!path) { console.error("usage: atomic-agent plugin install <path | name[@marketplace]> [--force] [--accept-code]"); return 2; }
+  const path = args.find(a => !a.startsWith("-"));
+  if (!path) { console.error("usage: atomic-agent plugin install <path | name[@marketplace]> [--force] [--yes] [--acknowledge-risk] [--accept-code]"); return 2; }
   if (looksLikePluginSpec(path)) {
     try {
-      const res = await installMarketplacePlugin(stateDir, path, { force, ...(acceptCode ? { review: acceptAllCode } : {}) });
+      const res = await installMarketplacePlugin(stateDir, path, { force, review: buildReview(args) });
       const bundle = tryBundle(stateDir, res.record.name);
       console.log(`Installed ${res.record.name}@${res.record.version} from ${res.marketplace}${bundle ? `: ${summary(bundle)}` : ""}`);
       printCodeHint(res.record, bundle);
@@ -139,23 +149,23 @@ async function install(stateDir: string, args: string[]): Promise<number> {
     }
   }
   try {
-    const rec = installPluginFromDir(stateDir, path, { force, acceptCode });
+    const staged = stagePluginCopy(stateDir, path);
+    const rec = await reviewAndCommit(stateDir, staged, { mode: "install", source: { kind: "local", path: resolve(path) }, force, review: buildReview(args) });
     const bundle = tryBundle(stateDir, rec.name);
     console.log(`Installed ${rec.name}@${rec.version}${bundle ? `: ${summary(bundle)}` : ""}`);
     printCodeHint(rec, bundle);
     for (const note of bundle?.notes ?? []) console.log(`  note: ${note}`);
     return 0;
   } catch (err) {
-    if (err instanceof PluginInstallError || err instanceof PluginManifestError) { console.error(err.message); return 1; }
-    throw err;
+    return reportError(err);
   }
 }
 
 async function update(stateDir: string, args: string[]): Promise<number> {
-  const name = args.find(a => !a.startsWith("--"));
+  const name = args.find(a => !a.startsWith("-"));
   if (!name) { console.error("usage: atomic-agent plugin update <name> [--force] [--accept-code]"); return 2; }
   try {
-    const res = await updatePlugin(stateDir, name, { force: args.includes("--force"), ...(args.includes("--accept-code") ? { review: acceptAllCode } : {}) });
+    const res = await updatePlugin(stateDir, name, { force: args.includes("--force"), review: buildReview(args) });
     if (res.status === "up-to-date") { console.log(`${name}@${res.record.version} is up to date.`); return 0; }
     console.log(`Updated ${name}: ${res.previous.version} -> ${res.record.version}${res.record.enabled ? "" : " (disabled)"}`);
     printCodeHint(res.record, tryBundle(stateDir, name));
@@ -241,6 +251,18 @@ async function marketplace(stateDir: string, args: string[]): Promise<number> {
 }
 
 function reportError(err: unknown): number {
+  if (err instanceof SkillHubInstallError && err.scan) {
+    if (err.code === "needs_confirmation" && process.stdin.isTTY && process.stdout.isTTY) {
+      console.error("install cancelled");
+      return 1;
+    }
+    // Findings first, one summary line last: the desktop reads the last stderr line.
+    process.stderr.write(formatScanFindings(err.scan));
+    console.error(err.code === "needs_confirmation"
+      ? "install needs confirmation: the security scan flagged caution; re-run with --yes to install anyway"
+      : `install blocked: flagged dangerous by the security scan (${summarizeScan(err.scan)}; use --acknowledge-risk to override)`);
+    return 1;
+  }
   if (err instanceof PluginInstallError || err instanceof PluginManifestError || err instanceof MarketplaceError) { console.error(err.message); return 1; }
   throw err;
 }
@@ -262,8 +284,22 @@ function code(stateDir: string, name: string | undefined, allow: boolean): numbe
   return 0;
 }
 
-/** `--accept-code`: the person agreed up front, on the command line. */
-const acceptAllCode: PluginReview = async () => ({ runsCodeAccepted: true });
+/** Scan gate + permission diff + runs-code question, from the command-line flags. */
+function buildReview(args: string[]): PluginReview {
+  return createPluginInstallReview({
+    acknowledgeRisk: args.includes("--acknowledge-risk"),
+    confirmCaution: args.includes("--yes") || args.includes("-y"),
+    confirm: createInstallConfirm({ question: "Install this plugin anyway? [y/N] " }),
+    acceptCode: args.includes("--accept-code"),
+    confirmCode: createCodeConsentPrompt(),
+    onReport: (report) => {
+      const changes = formatPermissionChanges(report);
+      if (changes) process.stdout.write(changes);
+      if (report.scan.verdict === "ok") console.log(`${report.name}: ${summarizeScan(report.scan)}`);
+      if (report.consentCarriedOver) console.log(`${report.name}: what it runs did not change; your earlier OK still applies.`);
+    },
+  });
+}
 
 function printCodeHint(rec: InstalledPluginRecord, bundle: PluginBundle | null): void {
   if (!bundle || !bundleRunsCode(bundle) || rec.runsCodeAccepted) return;

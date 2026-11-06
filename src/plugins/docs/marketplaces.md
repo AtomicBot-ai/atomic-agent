@@ -39,5 +39,5 @@ With `strict: false`, or when the plugin folder has no `plugin.json`, the entry'
 - Fetching never runs code: `git` runs with `core.hooksPath=/dev/null`, `core.symlinks=false`, `protocol.file` and `protocol.ext` off, no submodules, no LFS, `GIT_TERMINAL_PROMPT=0`. Nothing is built or installed.
 - Git URLs must be https, `ssh://` or `user@host:path`; anything starting with `-` is refused.
 - Paths from an entry must stay inside the marketplace or the cloned repo, symlinks included.
-- Every install goes through `reviewAndCommit`: the staged copy is handed to a `PluginReview` before it replaces anything. Throwing cancels and the old copy stays.
+- Every install goes through `reviewAndCommit`: the staged copy is handed to a `PluginReview` before it replaces anything. Throwing cancels and the old copy stays. The CLI passes the install-safety review: [install-safety.md](install-safety.md).
 
