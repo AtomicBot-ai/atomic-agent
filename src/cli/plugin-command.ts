@@ -10,6 +10,7 @@ import {
   removePlugin,
   resetPluginCache,
   setPluginEnabled,
+  updatePluginRecord,
   type PluginBundle,
 } from "../plugins/index.js";
 
@@ -19,7 +20,12 @@ const HELP = [
   "Subcommands:",
   "  list                       List installed plugins with what each one brings",
   "  show <name>                Print a plugin's skills, commands, MCP servers, hooks and notes",
-  "  install <path> [--force]   Install a plugin from a local folder (copied into the data folder)",
+  "  install <path> [--force] [--accept-code]",
+  "                             Install a plugin from a local folder (copied into the data folder).",
+  "                             Parts that run programs (local MCP servers, hooks, scripts) stay off",
+  "                             until you allow them: --accept-code here, or allow-code later",
+  "  allow-code <name>          Let a plugin's local MCP servers, hooks and scripts run",
+  "  deny-code <name>           Switch those parts off again (skills and remote servers keep working)",
   "  enable <name>              Switch an installed plugin on",
   "  disable <name>             Switch a plugin off without removing it",
   "  remove <name>              Uninstall a plugin and delete its files",
@@ -42,6 +48,8 @@ export async function pluginCommand(args: string[]): Promise<number> {
       case "install": return install(stateDir, rest);
       case "enable":
       case "disable": return toggle(stateDir, rest[0], sub === "enable");
+      case "allow-code":
+      case "deny-code": return code(stateDir, rest[0], sub === "allow-code");
       case "remove":
       case "uninstall": return remove(stateDir, rest[0]);
       default:
@@ -75,7 +83,8 @@ function show(stateDir: string, name: string | undefined): number {
   console.log(`${name}@${rec.version} (${rec.enabled ? "enabled" : "disabled"}), source: ${describeSource(rec.source)}`);
   if (!bundle) { console.log("Plugin files are missing or unreadable; reinstall it."); return 1; }
   if (bundle.manifest.description) console.log(bundle.manifest.description);
-  console.log(`format: ${bundle.format}${bundleRunsCode(bundle) ? " · runs code on this computer" : ""}`);
+  console.log(`format: ${bundle.format}`);
+  if (bundleRunsCode(bundle)) console.log(`runs code: ${codeParts(bundle).join("; ")} — ${rec.runsCodeAccepted ? "allowed" : "off until you run: atomic-agent plugin allow-code " + name}`);
   const section = (title: string, items: string[]) => { if (items.length) console.log(`\n${title}:\n${items.map(i => `  ${i}`).join("\n")}`); };
   section("Skills", bundle.skills.map(s => (s.name ? `${name}:${s.name}` : name) + (s.hasScripts ? " (has scripts)" : "")));
   section("Commands", bundle.commands.map(c => `/${name}:${c.name}`));
@@ -88,12 +97,17 @@ function show(stateDir: string, name: string | undefined): number {
 
 function install(stateDir: string, args: string[]): number {
   const force = args.includes("--force");
+  const acceptCode = args.includes("--accept-code");
   const path = args.find(a => !a.startsWith("--"));
   if (!path) { console.error("usage: atomic-agent plugin install <path> [--force]"); return 2; }
   try {
-    const rec = installPluginFromDir(stateDir, path, { force });
+    const rec = installPluginFromDir(stateDir, path, { force, acceptCode });
     const bundle = tryBundle(stateDir, rec.name);
     console.log(`Installed ${rec.name}@${rec.version}${bundle ? `: ${summary(bundle)}` : ""}`);
+    if (bundle && bundleRunsCode(bundle) && !rec.runsCodeAccepted) {
+      console.log(`  This plugin can run programs on this computer (${codeParts(bundle).join(", ")}).`);
+      console.log(`  Those parts are off. Read them first, then: atomic-agent plugin allow-code ${rec.name}`);
+    }
     for (const note of bundle?.notes ?? []) console.log(`  note: ${note}`);
     return 0;
   } catch (err) {
@@ -107,6 +121,27 @@ function toggle(stateDir: string, name: string | undefined, enabled: boolean): n
   if (!setPluginEnabled(stateDir, name, enabled)) { console.error(`plugin not installed: ${name}`); return 1; }
   console.log(`${name} ${enabled ? "enabled" : "disabled"}. Restart running agents to pick up its MCP servers.`);
   return 0;
+}
+
+function code(stateDir: string, name: string | undefined, allow: boolean): number {
+  if (!name) { console.error(`usage: atomic-agent plugin ${allow ? "allow-code" : "deny-code"} <name>`); return 2; }
+  const rec = updatePluginRecord(stateDir, name, r => ({ ...r, runsCodeAccepted: allow }));
+  if (!rec) { console.error(`plugin not installed: ${name}`); return 1; }
+  console.log(allow
+    ? `${name} may now run its local MCP servers, hooks and scripts. Restart running agents to start its servers.`
+    : `${name}'s local MCP servers, hooks and scripts are off.`);
+  return 0;
+}
+
+/** Plain list of what would run, for the consent line. */
+export function codeParts(b: PluginBundle): string[] {
+  const out: string[] = [];
+  const stdio = Object.entries(b.mcpServers).filter(([, s]) => typeof s.command === "string").map(([n]) => n);
+  if (stdio.length) out.push(`local MCP servers: ${stdio.join(", ")}`);
+  if (b.hooksFile || b.manifest.hooksInline) out.push("hooks");
+  const scripted = b.skills.filter(s => s.hasScripts).map(s => s.name || b.name);
+  if (scripted.length) out.push(`skill scripts: ${scripted.join(", ")}`);
+  return out;
 }
 
 function remove(stateDir: string, name: string | undefined): number {

@@ -40,7 +40,7 @@ export function detectPluginFormat(root: string): DetectedPlugin | null {
     const p = join(root, m.path);
     if (isFile(p)) return { format: m.format, manifestPath: p };
   }
-  if (CONVENTIONAL_DIRS.some(d => isDir(join(root, d))) || isFile(join(root, ".mcp.json"))) {
+  if (CONVENTIONAL_DIRS.some(d => isDir(join(root, d))) || isFile(join(root, ".mcp.json")) || isFile(join(root, "SKILL.md"))) {
     return { format: "conventional" };
   }
   return null;
@@ -52,7 +52,7 @@ export function readPluginManifest(root: string): { format: PluginFormat; manife
   const detected = detectPluginFormat(absRoot);
   if (!detected) {
     throw new PluginManifestError(
-      `${absRoot} is not a plugin: no .claude-plugin/plugin.json, plugin.json, skills/, commands/, agents/, hooks/ or .mcp.json`,
+      `${absRoot} is not a plugin: no .claude-plugin/plugin.json, plugin.json, SKILL.md, skills/, commands/, agents/, hooks/ or .mcp.json`,
     );
   }
   if (!detected.manifestPath) {

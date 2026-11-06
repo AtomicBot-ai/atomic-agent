@@ -145,10 +145,12 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
       const parsed = parseSkillFile(file.content, { fallbackName: basename(plugin.dir) });
       const name = plugin.rootSkill ? plugin.plugin : `${plugin.plugin}:${parsed.manifest.name}`;
       if (!isSkillEligibleForPlatform(parsed.manifest, process.platform)) continue;
-      if (byName.get(name)?.some(e => e.record.source === "global")) {
-        diagnostics.push(`Skill ${name}: an installed skill already has this name; the plugin copy at ${file.path} is ignored.`);
+      const existing = byName.get(name);
+      if (existing?.some(e => e.record.source === "global")) {
+        diagnostics.push(`Skill ${name}: another installed or plugin skill already has this name; the plugin copy at ${file.path} is ignored.`);
         continue;
       }
+      if (++count > 4096) { diagnostics.push("Workspace skill discovery stopped at 4096 entries; later plugin skills were not loaded."); break; }
       const reasons = [
         ...(config.disabled.includes(name) ? ["disabled globally"] : []),
         ...(policy?.disabled.includes(name) ? ["disabled in workspace"] : []),
@@ -156,7 +158,9 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
       ];
       const entry: WorkspaceSkill = { record: { manifest: { ...parsed.manifest, name }, manifestPath: file.path, rootDir: dirname(file.path), source: "global", plugin: plugin.plugin },
         body: parsed.body, fingerprint: createHash("sha256").update(file.content).digest("hex"), disabledReasons: reasons, sources: [manifestPath] };
-      byName.set(name, [entry]);
+      // A project copy of the same name is shadowed, as with a skill the user installed.
+      if (existing?.length) diagnostics.push(`Skill ${name}: using the plugin copy ${file.path}; shadowed ${existing.flatMap(e => e.sources).join(", ")}`);
+      byName.set(name, [entry, ...(existing ?? [])]);
     } catch (error) {
       diagnostics.push(`${manifestPath}: ${String(error)}`);
     }

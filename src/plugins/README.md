@@ -12,7 +12,7 @@ A plugin is a folder that bundles skills, slash commands, subagent profiles, hoo
 - [plugin-install.ts](plugin-install.ts): stage (copy, drop symlinks), commit, remove, enable/disable a plugin or one of its parts.
 - [plugin-store.ts](plugin-store.ts): `<stateDir>/plugins/plugins.json`, shared by the terminal and the desktop.
 - [plugin-runtime.ts](plugin-runtime.ts): enabled plugins parsed and cached; skill folders for the skill loaders.
-- [plugin-mcp.ts](plugin-mcp.ts): plugin MCP servers for the runtime catalog, named `<plugin>-<server>`, always approval-gated.
+- [plugin-mcp.ts](plugin-mcp.ts): plugin MCP servers for the runtime catalog, named `<plugin>-<server>`. A plugin's own `trust` is dropped, and local (stdio) servers start only after `plugin allow-code`.
 - [plugin-subagents.ts](plugin-subagents.ts): `agents/*.md` profiles, listed for Fusion worker profiles; nothing runs them yet.
 - CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts).
 

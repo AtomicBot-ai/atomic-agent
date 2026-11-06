@@ -11,8 +11,10 @@ export interface PluginMcpServers {
 
 /**
  * MCP servers contributed by enabled plugins, mapped through the same
- * validator as the Claude Code importer. Plugin servers keep the default
- * `approval_gated` trust: a plugin can never mark its own tools as safe.
+ * validator as the Claude Code importer. A plugin's own `trust` field is
+ * dropped, so its tools follow the default MCP approval policy. A stdio
+ * server starts a program, so it is skipped until the user allowed code
+ * for that plugin (`runsCodeAccepted`).
  *
  * `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}` (and the neutral
  * `${PLUGIN_ROOT}` / `${PLUGIN_DATA}`) are expanded in command, args, env,
@@ -32,9 +34,16 @@ export function loadPluginMcpServers(stateDir: string, takenNames: ReadonlySet<s
       const expanded = expandVars(raw, { root: bundle.root, data: dataDir }) as Record<string, unknown>;
       const mapped = mapClaudeCodeMcpServer({ name, raw: expanded });
       if (mapped.kind === "skip") { skipped.push({ plugin: bundle.name, server: serverName, reason: mapped.reason }); continue; }
+      // A stdio server is a program started on this computer: only with the user's consent.
+      if (mapped.server.transport.kind === "stdio" && record.runsCodeAccepted !== true) {
+        skipped.push({ plugin: bundle.name, server: serverName, reason: "runs a local program; allow code for this plugin first (atomic-agent plugin allow-code <name>)" });
+        continue;
+      }
       if (JSON.stringify(raw).includes("PLUGIN_DATA")) mkdirSync(dataDir, { recursive: true });
       used.add(name);
-      servers.push({ ...mapped.server, description: mapped.server.description ?? `From plugin ${bundle.name}` });
+      const server: McpServerConfig = { ...mapped.server };
+      delete server.trust;
+      servers.push({ ...server, description: server.description ?? `From plugin ${bundle.name}` });
     }
   }
   return { servers, skipped };

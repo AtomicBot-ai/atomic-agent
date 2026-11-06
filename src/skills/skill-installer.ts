@@ -118,6 +118,9 @@ export async function uninstallSkill(
   targetRoot: string,
   name: string,
 ): Promise<{ removed: boolean; path: string }> {
+  // `plugin:skill` belongs to an installed plugin; it is switched off or
+  // removed through the plugin, never by deleting a folder here.
+  if (name.includes(":")) throw new Error(`${name} comes from the plugin ${name.split(":")[0]}; use \`atomic-agent plugin disable\` or \`plugin remove\``);
   const path = join(resolve(targetRoot), name);
   const info = await stat(path).catch(() => null);
   if (!info?.isDirectory()) return { removed: false, path };

@@ -191,6 +191,7 @@ export function buildSkillRunScriptTool(
       const autoApprovedGogCheck =
         !ctx.workspaceSkills &&
         record.source === "global" &&
+        record.plugin === undefined &&
         record.manifest.name === "gog-workspace" &&
         scriptName === "check-gog.sh" &&
         scriptArgs.length === 0;

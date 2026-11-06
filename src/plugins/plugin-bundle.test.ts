@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bundleRunsCode, readPluginBundle } from "./plugin-bundle.js";
 import { detectPluginFormat, PluginManifestError } from "./plugin-manifest.js";
-import { writeClaudePlugin } from "./test-plugin-fixture.js";
+import { writeClaudePlugin } from "./plugin-test-helpers.js";
 
 describe("readPluginBundle", () => {
   let base: string;
@@ -59,7 +59,7 @@ describe("readPluginBundle", () => {
 
   it("treats a root SKILL.md as a single-skill plugin", () => {
     const root = join(base, "solo");
-    mkdirSync(join(root, "skills"), { recursive: true });
+    mkdirSync(root, { recursive: true });
     writeFileSync(join(root, "SKILL.md"), "---\nname: solo\ndescription: d\n---\n");
     const b = readPluginBundle(root);
     expect(b.skills).toEqual([{ name: "", dir: root, hasScripts: false }]);

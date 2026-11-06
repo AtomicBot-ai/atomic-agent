@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { cpSync, existsSync, lstatSync, mkdirSync, renameSync, rmSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { readPluginBundle } from "./plugin-bundle.js";
 import {
   installedPluginDir,
@@ -39,7 +39,9 @@ export function stagePluginCopy(stateDir: string, srcDir: string): StagedPlugin 
   if (!existsSync(src) || !lstatSync(src).isDirectory()) throw new PluginInstallError(`not a folder: ${src}`);
   const stagingRoot = join(pluginsRoot(stateDir), "staging");
   mkdirSync(stagingRoot, { recursive: true });
-  const dir = join(stagingRoot, `${basename(src)}-${randomBytes(4).toString("hex")}`);
+  // The last segment keeps the source folder name: a manifest-less plugin is named after it.
+  const holder = join(stagingRoot, randomBytes(4).toString("hex"));
+  const dir = join(holder, basename(src));
   let files = 0;
   try {
     cpSync(src, dir, {
@@ -56,13 +58,13 @@ export function stagePluginCopy(stateDir: string, srcDir: string): StagedPlugin 
     });
     return { dir, bundle: readPluginBundle(dir) };
   } catch (err) {
-    rmSync(dir, { recursive: true, force: true });
+    rmSync(holder, { recursive: true, force: true });
     throw err instanceof PluginInstallError ? err : new PluginInstallError(err instanceof Error ? err.message : String(err));
   }
 }
 
 export function discardStagedPlugin(staged: StagedPlugin): void {
-  rmSync(staged.dir, { recursive: true, force: true });
+  rmSync(dirname(staged.dir), { recursive: true, force: true });
 }
 
 export interface CommitPluginOptions {
@@ -94,6 +96,7 @@ export function commitStagedPlugin(stateDir: string, staged: StagedPlugin, optio
     throw new PluginInstallError(`could not move plugin into place: ${err instanceof Error ? err.message : String(err)}`);
   }
   if (backup) rmSync(backup, { recursive: true, force: true });
+  rmSync(dirname(staged.dir), { recursive: true, force: true });
   const now = new Date().toISOString();
   const record: InstalledPluginRecord = {
     name,
@@ -102,7 +105,9 @@ export function commitStagedPlugin(stateDir: string, staged: StagedPlugin, optio
     source: options.source,
     installedAt: previous?.installedAt ?? now,
     updatedAt: now,
-    ...(options.runsCodeAccepted !== undefined ? { runsCodeAccepted: options.runsCodeAccepted } : previous?.runsCodeAccepted !== undefined ? { runsCodeAccepted: previous.runsCodeAccepted } : {}),
+    // Consent is per install: an update that runs code must be agreed to again
+    // (the permission diff in ATO-955 decides when to ask).
+    ...(options.runsCodeAccepted !== undefined ? { runsCodeAccepted: options.runsCodeAccepted } : {}),
     ...(previous?.disabledParts?.length ? { disabledParts: previous.disabledParts } : {}),
   };
   state.plugins[name] = record;
@@ -111,9 +116,18 @@ export function commitStagedPlugin(stateDir: string, staged: StagedPlugin, optio
 }
 
 /** Copy + record in one go, for a local folder. Callers that scan use stage/commit instead. */
-export function installPluginFromDir(stateDir: string, srcDir: string, options: { force?: boolean } = {}): InstalledPluginRecord {
+export function installPluginFromDir(stateDir: string, srcDir: string, options: { force?: boolean; acceptCode?: boolean } = {}): InstalledPluginRecord {
   const staged = stagePluginCopy(stateDir, srcDir);
-  return commitStagedPlugin(stateDir, staged, { source: { kind: "local", path: resolve(srcDir) }, force: options.force });
+  return commitStagedPlugin(stateDir, staged, {
+    source: { kind: "local", path: resolve(srcDir) },
+    force: options.force,
+    ...(options.acceptCode ? { runsCodeAccepted: true } : {}),
+  });
+}
+
+/** Whether the code-running parts of an installed plugin (stdio MCP, hooks, scripts) may run. */
+export function pluginCodeAllowed(rec: InstalledPluginRecord): boolean {
+  return rec.runsCodeAccepted === true;
 }
 
 export function removePlugin(stateDir: string, name: string): boolean {

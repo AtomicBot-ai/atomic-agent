@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installPluginFromDir, PluginInstallError, removePlugin, setPluginEnabled, setPluginPartEnabled } from "./plugin-install.js";
 import { listEnabledPluginSkills, resetPluginCache } from "./plugin-runtime.js";
 import { installedPluginDir, readPluginState } from "./plugin-store.js";
 import { listPluginSubagents } from "./plugin-subagents.js";
-import { writeClaudePlugin } from "./test-plugin-fixture.js";
+import { writeClaudePlugin } from "./plugin-test-helpers.js";
 
 describe("plugin install", () => {
   let base: string;
@@ -34,11 +34,28 @@ describe("plugin install", () => {
     expect(installPluginFromDir(stateDir, src, { force: true }).name).toBe("demo");
   });
 
+  it("names a manifest-less plugin after its source folder, so --force replaces it", () => {
+    const src = join(base, "my-skills");
+    mkdirSync(join(src, "skills", "a"), { recursive: true });
+    writeFileSync(join(src, "skills", "a", "SKILL.md"), "---\nname: a\ndescription: d\n---\n");
+    expect(installPluginFromDir(stateDir, src).name).toBe("my-skills");
+    expect(installPluginFromDir(stateDir, src, { force: true }).name).toBe("my-skills");
+    expect(Object.keys(readPluginState(stateDir).plugins)).toEqual(["my-skills"]);
+  });
+
+  it("forgets the code consent on an update unless it is given again", () => {
+    const src = writeClaudePlugin(join(base, "src"), { hooks: true });
+    expect(installPluginFromDir(stateDir, src, { acceptCode: true }).runsCodeAccepted).toBe(true);
+    expect(installPluginFromDir(stateDir, src, { force: true }).runsCodeAccepted).toBeUndefined();
+  });
+
   it("drops symlinks while copying", () => {
     const src = writeClaudePlugin(join(base, "src"));
     symlinkSync("/etc", join(src, "skills", "review", "etc-link"));
+    symlinkSync("/etc/hosts", join(src, "skills", "review", "hosts-link"));
     installPluginFromDir(stateDir, src);
     expect(existsSync(join(installedPluginDir(stateDir, "demo"), "skills", "review", "etc-link"))).toBe(false);
+    expect(existsSync(join(installedPluginDir(stateDir, "demo"), "skills", "review", "hosts-link"))).toBe(false);
   });
 
   it("disabling the plugin or one skill hides it; remove deletes files", () => {

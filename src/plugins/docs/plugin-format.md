@@ -9,7 +9,7 @@ Owner: src/plugins/
 2. `.codex-plugin/plugin.json` (Codex)
 3. `.cursor-plugin/plugin.json` (Cursor)
 4. `plugin.json` at the root (Agent Plugins 1.0)
-5. No manifest, but a Claude layout: `skills/`, `commands/`, `agents/`, `hooks/` or `.mcp.json`. The folder name becomes the plugin name.
+5. No manifest, but a Claude layout: `SKILL.md`, `skills/`, `commands/`, `agents/`, `hooks/` or `.mcp.json`. The folder name becomes the plugin name.
 
 ## Manifest fields read
 
@@ -23,9 +23,13 @@ Owner: src/plugins/
 | Commands | `commands/**/*.md` | Listed now; slash commands `/plugin:name` arrive with ATO-952 |
 | Subagents | `agents/*.md` | Profiles listed by `listPluginSubagents`, not run yet |
 | Hooks | `hooks/hooks.json` | Path recorded; run by the hooks engine (ATO-493) |
-| MCP servers | `.mcp.json` or manifest `mcpServers` | MCP server `<plugin>-<server>`, approval-gated, started with the agent |
+| MCP servers | `.mcp.json` or manifest `mcpServers` | MCP server `<plugin>-<server>`, started with the agent; local ones need code consent |
 
 `${CLAUDE_PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_DATA}`, `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded in MCP server entries. Other `${VAR}` references are left as written.
+
+## Code consent
+
+Skills (as text), commands, subagent profiles and remote MCP servers work right after install. Parts that start programs on the computer (local stdio MCP servers, hooks, skill scripts) stay off until the user runs `atomic-agent plugin allow-code <name>` or installs with `--accept-code`. The consent is stored as `runsCodeAccepted` and dropped on every update.
 
 ## Switching parts off
 

@@ -6,7 +6,7 @@ import { installPluginFromDir } from "./plugin-install.js";
 import { expandVars, loadPluginMcpServers, uniqueName } from "./plugin-mcp.js";
 import { resetPluginCache } from "./plugin-runtime.js";
 import { installedPluginDir } from "./plugin-store.js";
-import { writeClaudePlugin } from "./test-plugin-fixture.js";
+import { writeClaudePlugin } from "./plugin-test-helpers.js";
 
 describe("plugin MCP servers", () => {
   let base: string;
@@ -22,18 +22,28 @@ describe("plugin MCP servers", () => {
     installPluginFromDir(stateDir, writeClaudePlugin(join(base, "src"), {
       mcp: {
         local: { command: "${CLAUDE_PLUGIN_ROOT}/bin/server", args: ["--data", "${CLAUDE_PLUGIN_DATA}"] },
-        remote: { type: "http", url: "https://example.invalid/mcp" },
+        remote: { type: "http", url: "https://example.invalid/mcp", trust: "pure_read" },
         broken: { type: "ws" },
       },
-    }));
+    }), { acceptCode: true });
     const { servers, skipped } = loadPluginMcpServers(stateDir);
     const byName = Object.fromEntries(servers.map(s => [s.name, s]));
     expect(Object.keys(byName).sort()).toEqual(["demo-local", "demo-remote"]);
     const local = byName["demo-local"]!.transport as { command: string; args: string[] };
     expect(local.command).toBe(join(installedPluginDir(stateDir, "demo"), "bin/server"));
     expect(local.args[1]).toBe(join(stateDir, "plugins", "data", "demo"));
-    expect(byName["demo-local"]!.trust ?? "approval_gated").toBe("approval_gated");
+    expect(byName["demo-local"]!.trust).toBeUndefined();
+    expect(byName["demo-remote"]!.trust).toBeUndefined();
     expect(skipped.map(s => s.server)).toEqual(["broken"]);
+  });
+
+  it("skips local (stdio) servers until code is allowed for the plugin", () => {
+    installPluginFromDir(stateDir, writeClaudePlugin(join(base, "src"), {
+      mcp: { local: { command: "node", args: ["s.js"] }, remote: { type: "http", url: "https://example.invalid/mcp" } },
+    }));
+    const { servers, skipped } = loadPluginMcpServers(stateDir);
+    expect(servers.map(s => s.name)).toEqual(["demo-remote"]);
+    expect(skipped).toEqual([expect.objectContaining({ server: "local", reason: expect.stringContaining("allow-code") })]);
   });
 
   it("never reuses a taken server name", () => {
