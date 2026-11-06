@@ -30,6 +30,7 @@ export const OS_FS_CODE_MAP_CONTRACT = {
       maxTokens: { type: "number" },
       focus: { type: "array", items: { type: "string" } },
     },
+    required: [],
     additionalProperties: false,
   },
 } as const;

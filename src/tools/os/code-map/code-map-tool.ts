@@ -1,6 +1,6 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import type { Dirent } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, sep } from "node:path";
 import { compressToolResult, retainToolOutput } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import type { ToolContext, ToolDefinition } from "../../tool-registry.js";
@@ -82,6 +82,29 @@ export function splitFocus(focus: readonly string[]): { files: string[]; idents:
     }
   }
   return { files, idents };
+}
+
+/**
+ * The keys a focus path may match in a map rooted at `root`: the path as
+ * given (relative to the map root) and the same path resolved against the
+ * working directory, then made relative to the map root. A model that maps
+ * `src/agent` and focuses on `src/agent/loop.ts` (working-dir relative) or
+ * on `loop.ts` (map-root relative) means the same file either way.
+ */
+export function focusFileKeys(files: readonly string[], workingDir: string, root: string): Set<string> {
+  const keys = new Set<string>();
+  for (const file of files) {
+    keys.add(file);
+    let resolved: string;
+    try {
+      resolved = resolveUserPath(file, workingDir);
+    } catch {
+      continue;
+    }
+    const rel = toPosix(relative(root, resolved));
+    if (rel.length > 0 && !rel.startsWith("../") && rel !== ".." && !isAbsolute(rel)) keys.add(rel);
+  }
+  return keys;
 }
 
 export interface CodeMapDeps {
@@ -226,7 +249,7 @@ export function buildOsFsCodeMapTool(deps: Partial<CodeMapDeps> = {}): ToolDefin
         });
       }
       const focus = splitFocus(args.focus);
-      const ranked = rankFiles(inputs, { files: new Set(focus.files), idents: new Set(focus.idents) });
+      const ranked = rankFiles(inputs, { files: focusFileKeys(focus.files, ctx.workingDir, absolute), idents: new Set(focus.idents) });
       const header = `Code map of ${absolute}: files ranked by how much the rest of the code references them; L<n> = line. Outline one file with ${TOOL} {"path":"<file>"}, read it with os.fs.read.`;
       const rendered = renderProjectMap(ranked, Math.max(0, maxTokens - 60));
       const hidden = rendered.filesTotal - rendered.filesShown;

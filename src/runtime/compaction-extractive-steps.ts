@@ -29,6 +29,7 @@ const READS = new Map([
   ["os.fs.read", "read"], ["os.fs.read_document", "read"], ["os.fs.archive.read_entry", "read"],
   ["os.fs.archive.list", "listed"], ["os.fs.list", "listed"], ["os.fs.glob", "searched files in"],
   ["os.fs.grep", "searched"], ["os.fs.diff", "diffed"], ["os.fs.hash", "hashed"],
+  ["os.fs.code_map", "mapped"],
 ]);
 const FETCHES = new Map([
   ["os.web.fetch", "fetched"], ["os.http.request", "requested"], ["browser.navigate", "opened"],

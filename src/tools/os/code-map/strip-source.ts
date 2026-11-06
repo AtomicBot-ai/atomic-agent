@@ -7,8 +7,12 @@ import type { CodeLanguage } from "./outline-types.js";
  * (an emptied `"..."` is still a string to the eye); everything between
  * them becomes spaces.
  *
- * It is a heuristic, not a lexer: regex literals, nested template
- * expressions and Rust raw strings with hashes are approximations. The
+ * It is a heuristic, not a lexer: nested template expressions and Rust
+ * raw strings with hashes are approximations. JS/TS regex literals are
+ * blanked like strings when the `/` stands where an expression starts
+ * (after `( , = : [ ! & | ? { } ;`, a keyword such as `return`, or at the
+ * start of a line), so a `/[{]/` does not open a brace for the rest of
+ * the file; a `/` anywhere else is division. The
  * cost of a miss is one wrong brace count for the rest of that file,
  * which the outline survives (it only decides what counts as a member).
  */
@@ -40,6 +44,17 @@ function stripCLike(src: string, language: CodeLanguage): string {
       if (i < n) { out.push("  "); i += 2; }
       continue;
     }
+    if (ch === "/" && js && regexAllowedAfter(out)) {
+      const end = regexLiteralEnd(src, i);
+      if (end > 0) {
+        out.push("/");
+        for (let k = i + 1; k < end - 1; k++) out.push(" ");
+        out.push("/");
+        i = end;
+        while (i < n && /[a-z]/i.test(src[i]!)) { out.push(src[i]!); i++; }
+        continue;
+      }
+    }
     // Rust lifetimes (`'a`) are not strings: only `'x'` / `'\n'` are chars.
     if (ch === "'" && rust) {
       const m = /^'(?:\\.|[^\\'\n])'/.exec(src.slice(i, i + 12));
@@ -62,6 +77,51 @@ function stripCLike(src: string, language: CodeLanguage): string {
     out.push(ch); i++;
   }
   return out.join("");
+}
+
+/** Characters after which a `/` opens a regex literal, not a division. */
+const REGEX_PREFIX_CHARS = new Set(["(", ",", "=", ":", "[", "!", "&", "|", "?", "{", "}", ";"]);
+/** Keywords after which a `/` opens a regex literal. */
+const REGEX_PREFIX_WORDS = new Set(["return", "typeof", "case", "yield", "await", "throw", "void", "delete", "in", "of", "instanceof", "new", "else", "do"]);
+
+/**
+ * Whether the stripped text so far ends where an expression may start:
+ * nothing but blanks back to a line start (or the file start), one of
+ * `REGEX_PREFIX_CHARS`, or one of `REGEX_PREFIX_WORDS`.
+ */
+function regexAllowedAfter(out: readonly string[]): boolean {
+  let word = "";
+  for (let c = out.length - 1; c >= 0; c--) {
+    const chunk = out[c]!;
+    for (let k = chunk.length - 1; k >= 0; k--) {
+      const ch = chunk[k]!;
+      if (/[A-Za-z0-9_$]/.test(ch)) { word = ch + word; continue; }
+      if (word) return REGEX_PREFIX_WORDS.has(word);
+      if (ch === "\n") return true;
+      if (ch === " " || ch === "\t" || ch === "\r") continue;
+      return REGEX_PREFIX_CHARS.has(ch);
+    }
+  }
+  return word ? REGEX_PREFIX_WORDS.has(word) : true;
+}
+
+/**
+ * The index just past the closing `/` of a regex literal opening at
+ * `start`, honouring escapes and `[...]` classes (a `/` inside a class
+ * does not close it), or -1 when the line ends first: then it was not a
+ * regex after all and the `/` is kept as it is.
+ */
+function regexLiteralEnd(src: string, start: number): number {
+  let inClass = false;
+  for (let i = start + 1; i < src.length; i++) {
+    const ch = src[i]!;
+    if (ch === "\n" || ch === "\r") return -1;
+    if (ch === "\\") { i++; continue; }
+    if (inClass) { if (ch === "]") inClass = false; continue; }
+    if (ch === "[") { inClass = true; continue; }
+    if (ch === "/") return i === start + 1 ? -1 : i + 1;
+  }
+  return -1;
 }
 
 function stripPython(src: string): string {
