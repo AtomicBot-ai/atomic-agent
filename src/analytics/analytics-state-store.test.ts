@@ -55,6 +55,7 @@ describe("AnalyticsStateStore", () => {
     const persisted = JSON.parse(readFileSync(file, "utf8"));
     expect(Object.keys(persisted).sort()).toEqual([
       "appInstalledSent",
+      "appInstalledSentDesktop",
       "firstMessageSent",
       "installId",
       "installedAt",
@@ -105,5 +106,71 @@ describe("AnalyticsStateStore", () => {
     expect(store.isAppInstalledSent()).toBe(true);
     expect(store.isFirstMessageSent()).toBe(true);
     expect(store.isModelConfiguredSent()).toBe(false);
+  });
+
+  it("keeps a separate app_installed flag for the desktop", () => {
+    const store = new AnalyticsStateStore(file);
+    store.markAppInstalledSent("tui");
+    expect(store.isAppInstalledSent("tui")).toBe(true);
+    expect(store.isAppInstalledSent("cli")).toBe(true);
+    expect(store.isAppInstalledSent()).toBe(true);
+    expect(store.isAppInstalledSent("desktop")).toBe(false);
+    expect(store.isOtherSurfaceAppInstalledSent("desktop")).toBe(true);
+    expect(store.isOtherSurfaceAppInstalledSent("tui")).toBe(false);
+
+    store.markAppInstalledSent("desktop");
+    const reloaded = new AnalyticsStateStore(file);
+    expect(reloaded.isAppInstalledSent("desktop")).toBe(true);
+    expect(reloaded.isAppInstalledSent("tui")).toBe(true);
+    expect(reloaded.isOtherSurfaceAppInstalledSent("tui")).toBe(true);
+  });
+
+  it("reads a file from before the desktop flag: terminal sent, desktop not", () => {
+    const legacyId = "11111111-2222-4333-8444-555555555555";
+    writeFileSync(
+      file,
+      JSON.stringify({
+        installId: legacyId,
+        appInstalledSent: true,
+        firstMessageSent: false,
+        modelConfiguredSent: false,
+      }),
+      "utf8",
+    );
+    const store = new AnalyticsStateStore(file);
+    expect(store.getInstallId()).toBe(legacyId);
+    expect(store.isAppInstalledSent("tui")).toBe(true);
+    expect(store.isAppInstalledSent("desktop")).toBe(false);
+  });
+
+  it("never clears a flag another process set after this one loaded", () => {
+    // Desktop and terminal share the file and may run at the same time.
+    const desktop = new AnalyticsStateStore(file);
+    const terminal = new AnalyticsStateStore(file);
+    terminal.markAppInstalledSent("tui");
+    // The desktop process still holds its stale view; writing it back
+    // must not undo the terminal's flag.
+    desktop.markAppInstalledSent("desktop");
+    desktop.markFirstMessageSent();
+    const persisted = JSON.parse(readFileSync(file, "utf8"));
+    expect(persisted.appInstalledSent).toBe(true);
+    expect(persisted.appInstalledSentDesktop).toBe(true);
+    expect(persisted.firstMessageSent).toBe(true);
+    // And the stale process sees the other flag when asked.
+    expect(desktop.isOtherSurfaceAppInstalledSent("desktop")).toBe(true);
+  });
+
+  it("keeps keys a newer build wrote", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    writeFileSync(
+      file,
+      JSON.stringify({ installId: id, appInstalledSent: true, futureFlag: true }),
+      "utf8",
+    );
+    const store = new AnalyticsStateStore(file);
+    store.markFirstMessageSent();
+    const persisted = JSON.parse(readFileSync(file, "utf8"));
+    expect(persisted.futureFlag).toBe(true);
+    expect(persisted.installId).toBe(id);
   });
 });
