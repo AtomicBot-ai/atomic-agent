@@ -4,6 +4,7 @@ import {
   isKnownLocalModelId,
   LOCAL_MODELS_CATALOG,
   recommendedModelFor,
+  STARTER_LOCAL_MODEL_ID,
   type LocalModelDef,
   type LocalModelId,
 } from "../../local-llm/index.js";
@@ -32,6 +33,21 @@ export interface LocalModelPick {
   tag?: string;
   /** What an uncensored model is, in one sentence; shown instead of the description. */
   note?: string;
+  /**
+   * ATO-1045: the no-key path. The starter model, pinned first: it
+   * answers within a minute of the download, and the best model for this
+   * machine (`followedBy`) downloads in the background once it lands.
+   */
+  quickStart?: boolean;
+  followedBy?: LocalModelId;
+}
+
+export interface LocalModelPicksOptions {
+  /**
+   * Offer the starter as the first row (ATO-1045). Only the first-run
+   * picker asks for it; a model panel lists the catalog as it is.
+   */
+  quickStart?: boolean;
 }
 
 /**
@@ -49,8 +65,12 @@ export const FIRST_RUN_MAX_DOWNLOAD_GB = 8;
 export function buildLocalModelPicks(
   ramGb: number,
   catalog: readonly LocalModelDef[] = LOCAL_MODELS_CATALOG,
+  options: LocalModelPicksOptions = {},
 ): LocalModelPick[] {
   const recommendedId = recommendLocalModel(ramGb, catalog);
+  const quick = options.quickStart
+    ? quickStartFor(ramGb, catalog, recommendedId)
+    : null;
   return catalog.map((def) => ({
     id: def.id,
     label: def.id,
@@ -65,7 +85,32 @@ export function buildLocalModelPicks(
     // screen — the picker computes its own recommendation from RAM.
     tag: def.uncensored === true ? def.tag : undefined,
     ...(def.uncensored === true && def.note !== undefined ? { note: def.note } : {}),
+    ...(quick && def.id === quick.id
+      ? {
+          quickStart: true,
+          followedBy: quick.followedBy,
+          description: `no key, answers in a minute; ${quick.followedBy} follows in the background`,
+        }
+      : {}),
   }));
+}
+
+/**
+ * The starter row, when it is worth offering: the catalog has it, this
+ * machine runs it comfortably, and a better model exists to follow it.
+ * The follow-up shown is the first-run recommendation; the one actually
+ * fetched is decided again when the starter lands (`startModelUpgrade`),
+ * with the GPU and the disk in view, and may be bigger.
+ */
+export function quickStartFor(
+  ramGb: number,
+  catalog: readonly LocalModelDef[],
+  recommendedId: LocalModelId | null,
+): { id: LocalModelId; followedBy: LocalModelId } | null {
+  const starter = catalog.find((def) => def.id === STARTER_LOCAL_MODEL_ID);
+  if (!starter || starter.recommendedRamGb > ramGb) return null;
+  if (!recommendedId || recommendedId === starter.id) return null;
+  return { id: starter.id, followedBy: recommendedId };
 }
 
 /**
@@ -160,6 +205,8 @@ export function orderLocalModelPicks(
   picks: readonly LocalModelPick[],
 ): LocalModelPick[] {
   const ordered = [...picks].sort((a, b) => {
+    // ATO-1045: the no-key starter row leads, the recommendation follows it.
+    if (!!a.quickStart !== !!b.quickStart) return a.quickStart ? -1 : 1;
     if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
     const fitRank = { fits: 0, tight: 1, over: 2 } as const;
     if (fitRank[a.fit] !== fitRank[b.fit])

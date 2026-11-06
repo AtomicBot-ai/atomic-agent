@@ -131,6 +131,7 @@ import {
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import { activeTextProviderIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import { ChatPullMirror, downloadProgressFor } from "../local-turn-gate.js";
+import { upgradeAfterStarter } from "./starter-upgrade.js";
 import { capLocalContextGrowth, growLocalContext, planLocalContextGrowth } from "./local-context-growth.js";
 import type { TuiEventBus } from "../tui-app.js";
 
@@ -774,6 +775,10 @@ export class LocalModelsOrchestrator {
     resetConfigCache();
     await this.refresh();
 
+    // ATO-1045: the starter landed; the best model for this machine
+    // follows as a background download, adopted on the next refresh.
+    void this.followStarterWithUpgrade(def);
+
     // Memory-v2 phase 1B onboarding: if the operator has just
     // pulled their first chat model and there is no embedding on
     // disk yet, show a y/n prompt offering to download the default
@@ -802,6 +807,20 @@ export class LocalModelsOrchestrator {
     if (await this.startChatDaemonAfterPull(def)) {
       this.bus.emit({ type: "ui_mode_set", mode: "chat" });
     }
+  }
+
+  /**
+   * ATO-1045: after the starter lands, start the best model's background
+   * download and say so. Fire and forget: the landing never waits on the
+   * device probe, and a failure leaves the starter running as it is.
+   */
+  private async followStarterWithUpgrade(def: LocalModelDef): Promise<void> {
+    const line = await upgradeAfterStarter(def);
+    if (!line) return;
+    this.bus.emit({ type: "runtime_info", line });
+    // The job is a detached worker like `models pull --background`: the
+    // next refresh adopts it, so its progress shows in the top bar.
+    await this.refresh().catch(() => undefined);
   }
 
   /**

@@ -177,6 +177,8 @@ export function OnboardingLocalPickStep(props: {
  */
 function note(pick: LocalModelPick, fit: OnboardingFit): string {
   const parts: string[] = [];
+  // ATO-1045: the no-key row says what it is before anything else.
+  if (pick.quickStart) parts.push("▶ start now");
   if (pick.recommended) parts.push("★ recommended");
   parts.push(pick.fit === "over" ? `needs ${pick.ramLabel}` : pick.ramLabel);
   // The warning tag outranks the description — it stays on even in the
@@ -198,6 +200,6 @@ function noteColour(pick: LocalModelPick): string {
   if (pick.fit === "over") return theme.colors.warn;
   // An uncensored row reads as a caution even on a machine it fits.
   if (pick.uncensored) return theme.colors.warn;
-  if (pick.recommended) return theme.colors.success;
+  if (pick.recommended || pick.quickStart) return theme.colors.success;
   return theme.colors.muted;
 }
