@@ -158,6 +158,12 @@ export interface SlashDispatchResult {
     import("../../config/index.js").RunModeName | "status" | "swap";
   /** `/runmode workers N`: persist the fusion worker count. */
   readonly runModeWorkers?: number;
+  /**
+   * `/status` (ATO-965): print a status snapshot of the running turn. It
+   * is built from `TuiState`, which this pure dispatcher cannot see, so
+   * the caller (`submit-handler.ts`) formats it.
+   */
+  readonly triggerStatusSnapshot?: boolean;
 }
 
 /**
@@ -234,6 +240,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       });
     case "queue":
       return dispatchQueueSub(parsed.args);
+    case "status":
+      return pureActions([], { triggerStatusSnapshot: true });
     case "steer":
       return dispatchSteerSub(parsed.args);
     case "abort":

@@ -23,6 +23,8 @@ This area owns agent turn and step execution. Read [AGENTS.md](AGENTS.md) before
 - [Progress](progress/README.md): fingerprints, notices, thresholds and observation helpers. ToolLoopTracker remains the single state owner in loop-detector.ts.
 - [Policies](policies/README.md): plan/fusion restrictions, claim/link evidence and tool-set admission.
 
+[status-snapshot.ts](status-snapshot.ts) is read-only over the loop: it folds a turn's events into the short status every surface prints for `/status` (plan progress, what runs now, the last result in stable words, blocked on an approval, time, steps) and decides when a long turn or task is due an automatic snapshot. It never feeds back into the turn.
+
 Session state and dependencies are passed explicitly. Root orchestration retains the original await points: synchronous parse and recovery must not yield before dispatch, retry or steering closure. Read the mechanism documents before changing these decisions.
 
 The 14 core filesystem taxonomy entries select their unchanged classes from [import-free operation contracts](../tools/os/fs/docs/contracts.md). The taxonomy still owns classification lookup and batching policy; it does not import execution/registry or infer role permissions from readonly metadata. Other tools retain their explicit existing entries. [Global conformance](../tools/tool-contract-conformance.test.ts) checks canonical classes and unknown-name behavior alongside actual registrations.

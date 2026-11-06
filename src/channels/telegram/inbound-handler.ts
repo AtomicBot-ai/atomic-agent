@@ -1,4 +1,12 @@
 import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import {
+  buildStatusSnapshot,
+  createSnapshotCadence,
+  createTurnStatusTracker,
+  formatStatusSnapshot,
+  type SnapshotCadenceConfig,
+  type TurnStatusTracker,
+} from "../../agent/status-snapshot.js";
 import { describeFailedAttempts } from "../../llm/fallback/index.js";
 import type { LlmFailureCategory } from "../../llm/reliability/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -132,6 +140,25 @@ export interface InboundContext {
    */
   inflight: Map<string, AbortController>;
   /**
+   * Status of each chat's running turn, keyed like `inflight` (ATO-965):
+   * what `/status` reads while a turn runs. Owned by the channel, like
+   * `inflight`; optional so tests that do not look at it can omit it.
+   */
+  liveTurns?: Map<string, TurnStatusTracker>;
+  /**
+   * Auto status snapshot cadence (`config.statusSnapshot`, ATO-965): a
+   * long turn's progress bubble turns into a status snapshot every N
+   * steps or M minutes, edited in place. Absent or both `0`: off.
+   */
+  statusSnapshot?: SnapshotCadenceConfig | null;
+  /**
+   * The tool whose approval prompt is waiting for `sessionId`, from the
+   * approval bridge; `null` when none. Feeds "Blocked" in `/status`.
+   */
+  pendingApprovalTool?: (sessionId: string) => string | null;
+  /** Test seam: replaces `setInterval` for the snapshot time trigger. */
+  scheduleSnapshotPoll?: (cb: () => void, ms: number) => () => void;
+  /**
    * Where inbound files land — `<stateDir>/inbox/telegram` in
    * production, a tmp dir in tests. The agent is told the saved path
    * and reads it with the ordinary fs / vision tools.
@@ -254,7 +281,7 @@ function helpText(ctx: InboundContext): string {
     "Every chat and forum topic is its own conversation.\n\n" +
     "Commands:\n" +
     "  /start, /help — this message\n" +
-    "  /status — this chat's session id and progress counters, plus running background tasks\n" +
+    "  /status — what this chat's turn is doing now (plan, last result, blocked, time), its session, and running background tasks\n" +
     "  /sessions — every chat this bot has a session for\n" +
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
@@ -860,7 +887,47 @@ async function dispatchToRuntime(
           ref.target.threadId,
         )
       : null;
+  // Status of this turn (ATO-965): `/status` reads it while the turn
+  // runs, and a long turn's bubble turns into an edited snapshot every
+  // N steps or M minutes. A short turn never reaches the cadence.
+  const startedAt = Date.now();
+  const tracker = createTurnStatusTracker({ startedAt });
+  ctx.liveTurns?.set(ref.key, tracker);
+  const cadence = createSnapshotCadence(ctx.statusSnapshot, startedAt);
+  // The bubble that carries snapshots: the progress bubble when it is on,
+  // otherwise one of its own, posted with the first snapshot.
+  let snapshotBubble: TelegramProgressIndicator | null = progress;
+  const postSnapshotIfDue = (): void => {
+    const state = tracker.state();
+    const now = Date.now();
+    if (!state.running || !cadence.due(state.steps, now)) return;
+    cadence.mark(state.steps, now);
+    tracker.setBlockedOn(ctx.pendingApprovalTool?.(session.id) ?? null);
+    const text = formatStatusSnapshot(
+      buildStatusSnapshot(tracker.state(), now),
+      "telegram",
+    );
+    if (snapshotBubble === null) {
+      snapshotBubble = new TelegramProgressIndicator(
+        ctx.api,
+        ref.target.chatId,
+        toTelegramLogger(ctx.logger),
+        undefined,
+        ref.target.threadId,
+      );
+    }
+    void snapshotBubble.showSnapshot(text);
+  };
+  const stopSnapshotPoll =
+    cadence.pollMs === null
+      ? () => undefined
+      : (ctx.scheduleSnapshotPoll ?? scheduleUnrefInterval)(
+          postSnapshotIfDue,
+          cadence.pollMs,
+        );
   const eventHook = (event: AgentLoopEvent): void => {
+    tracker.onEvent(event);
+    if (event.type === "step_finished") postSnapshotIfDue();
     if (event.type === "llm_event") {
       // A progress note is an interim reply; the one that ends the turn
       // follows it and is what the chat gets.
@@ -907,8 +974,12 @@ async function dispatchToRuntime(
     };
   } finally {
     stopKeepalive();
+    stopSnapshotPoll();
     if (ctx.inflight.get(ref.key) === controller) {
       ctx.inflight.delete(ref.key);
+    }
+    if (ctx.liveTurns?.get(ref.key) === tracker) {
+      ctx.liveTurns.delete(ref.key);
     }
     releaseIfMovedOn(ref, session.id, ctx);
   }
@@ -917,7 +988,11 @@ async function dispatchToRuntime(
   // reply (or infra message) stands alone rather than appearing above a
   // stale "Thinking…" bubble. Awaits the internal chain so a fast turn
   // whose `start()` send is still in flight is cleaned up before we send.
+  // A snapshot bubble goes the same way: the reply supersedes it.
   await progress?.remove();
+  if (snapshotBubble !== null && snapshotBubble !== progress) {
+    await snapshotBubble.remove();
+  }
 
   // Only the agent's natural-language reply gets parse-mode
   // formatting. Cancellation acks, the empty-reply marker, and
@@ -1055,8 +1130,9 @@ function startTypingKeepalive(
 
 function formatStatus(ref: ChatRef, ctx: InboundContext): string {
   const tasks = runningTasksBlock(ctx);
+  const turn = runningTurnBlock(ref, ctx);
   const withTasks = (text: string): string =>
-    tasks === null ? text : `${text}\n\n${tasks}`;
+    [turn, text, tasks].filter((part): part is string => part !== null).join("\n\n");
   const entry = ctx.sessionPointer.get(ref.key);
   if (!entry.current) {
     return withTasks(
@@ -1075,6 +1151,30 @@ function formatStatus(ref: ChatRef, ctx: InboundContext): string {
   ];
   if (session.lastError) lines.push(`Last error: ${session.lastError}`);
   return withTasks(lines.join("\n"));
+}
+
+/**
+ * This chat's running turn as a status snapshot (ATO-965): plan
+ * progress when the turn has a plan, what it is doing, the last result,
+ * whether it waits on an approval, elapsed time and steps. `null` when
+ * no turn runs here (the session lines below say the rest).
+ */
+function runningTurnBlock(ref: ChatRef, ctx: InboundContext): string | null {
+  const tracker = ctx.liveTurns?.get(ref.key);
+  if (!tracker || !ctx.inflight.has(ref.key)) return null;
+  const sessionId = ctx.sessionPointer.get(ref.key).current;
+  if (sessionId) tracker.setBlockedOn(ctx.pendingApprovalTool?.(sessionId) ?? null);
+  const snapshot = buildStatusSnapshot(tracker.state(), Date.now());
+  return `This chat's turn:\n${formatStatusSnapshot(snapshot, "telegram")}`;
+}
+
+/** `setInterval` that never keeps the process alive on its own. */
+function scheduleUnrefInterval(cb: () => void, ms: number): () => void {
+  const handle = setInterval(cb, ms);
+  if (typeof (handle as { unref?: () => unknown }).unref === "function") {
+    (handle as { unref: () => unknown }).unref();
+  }
+  return () => clearInterval(handle);
 }
 
 /**

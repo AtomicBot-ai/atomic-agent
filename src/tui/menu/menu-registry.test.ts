@@ -192,6 +192,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "steer the running turn: `/steer <msg>` one-shot | bare `/steer` makes Enter steer",
   },
+  // ATO-965: a status snapshot of the running turn.
+  {
+    name: "status",
+    description:
+      "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
+  },
   {
     name: "window",
     description: "open a new terminal window running atomic-agent (ctrl+n)",

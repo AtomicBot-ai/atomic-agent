@@ -67,6 +67,9 @@ interface PendingState {
   chatId: number;
   messageId: number;
   cancelTimer: () => void;
+  /** Read by `/status` and status snapshots (ATO-965). */
+  sessionId: string;
+  tool: string;
 }
 
 /**
@@ -221,7 +224,13 @@ export class ApprovalBridge {
       chatId,
       messageId,
     );
-    this.pending.set(request.approvalId, { chatId, messageId, cancelTimer });
+    this.pending.set(request.approvalId, {
+      chatId,
+      messageId,
+      cancelTimer,
+      sessionId: request.sessionId,
+      tool: request.tool,
+    });
   }
 
   /**
@@ -312,6 +321,19 @@ export class ApprovalBridge {
     for (const approvalId of ids) {
       this.deps.approvals.resolve({ approvalId, approved: false, reason });
     }
+  }
+
+  /**
+   * The tool whose approval prompt is waiting in a chat for `sessionId`,
+   * or `null`. What `/status` and the status snapshot (ATO-965) call
+   * "Blocked": the loop emits no event while a call waits, so the
+   * bridge that posted the prompt is the one that knows.
+   */
+  pendingToolForSession(sessionId: string): string | null {
+    for (const state of this.pending.values()) {
+      if (state.sessionId === sessionId) return state.tool;
+    }
+    return null;
   }
 
   pendingCount(): number {
