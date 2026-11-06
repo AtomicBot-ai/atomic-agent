@@ -37,6 +37,8 @@ import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } f
 import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
+import type { McpServerConfig } from "../../mcp/mcp-types.js";
+import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
@@ -351,10 +353,14 @@ export async function connectRuntimeMcpCatalog(input: {
     userConfigFile: config.paths.userConfigFile,
     logger,
   });
-  const mcpServerConfigs = [
+  // Servers from installed plugins (ATO-562) ride the same rails, named
+  // `<plugin>-<server>` and always approval-gated. A broken plugin only logs.
+  const ownServers = [
     ...(config.mcp?.servers ?? []),
     ...(composioServerConfig ? [composioServerConfig] : []),
   ];
+  const pluginMcp = safePluginMcpServers(config.paths.stateDir, new Set(ownServers.map(s => s.name)), logger);
+  const mcpServerConfigs = [...ownServers, ...pluginMcp];
   const mcpEnabled = mcpServerConfigs.length > 0;
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
@@ -672,4 +678,15 @@ export function registerRuntimeFusionAndReadScope(input: {
       files: getStateSecretPaths(config.paths),
     },
   });
+}
+
+function safePluginMcpServers(stateDir: string, taken: ReadonlySet<string>, logger: StructuredLogger): McpServerConfig[] {
+  try {
+    const { servers, skipped } = loadPluginMcpServers(stateDir, taken);
+    for (const s of skipped) logger.warn("plugin MCP server skipped", { plugin: s.plugin, server: s.server, reason: s.reason });
+    return servers;
+  } catch (err) {
+    logger.warn("plugin MCP servers unavailable", { error: err instanceof Error ? err.message : String(err) });
+    return [];
+  }
 }
