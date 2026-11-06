@@ -694,8 +694,14 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
             items: objOpen({ task: stringSchema }),
           },
         }),
+        // ATO-617: continue a run cut off by a restart. With `resume`
+        // the call's own arguments come from the run's checkpoint, so
+        // `tasks` is not required here; `parseDelegateArgs` still
+        // requires it on every call that is not a resume.
+        resume: stringSchema,
+        confirm: { ...stringArraySchema, maxItems: 16 },
       },
-      ["tasks"],
+      [],
     ),
   ],
   ["verify.syntax", obj({ files: stringArraySchema }, ["files"])],

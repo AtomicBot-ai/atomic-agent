@@ -579,6 +579,30 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.worker",
+    label: "Stop or escalate a fusion worker",
+    group: "run",
+    slash: {
+      name: "worker",
+      description:
+        "act on one running fusion worker: `/worker stop <id>` · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
+      rank: 46,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.fusion-resume",
+    label: "Resume or discard an unfinished fusion run",
+    group: "run",
+    slash: {
+      name: "fusion",
+      description:
+        "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+      rank: 47,
+    },
+  },
+  {
+    kind: "action",
     id: "run.expand",
     label: "Expand all tool cards",
     group: "run",

@@ -226,6 +226,33 @@ export interface AgentRuntime {
    */
   steer(sessionId: string, text: string): boolean;
   /**
+   * The running fusion workers of `parentSessionId`'s fan-out, by task
+   * id, and the person's two actions on one (ATO-66, ATO-942): `stop`
+   * cancels that worker alone (`false` when it is not running);
+   * `escalate` asks the configured escalation model to advise it and
+   * resolves with one line saying what happened and what it cost
+   * (`null` when it is not running).
+   */
+  readonly fusionWorkers: {
+    running(parentSessionId: string): string[];
+    stop(parentSessionId: string, taskId: string): boolean;
+    escalate(parentSessionId: string, taskId: string): Promise<string | null>;
+  };
+  /**
+   * Fusion runs cut off by a crash, a quit or an update (ATO-617), read
+   * from their checkpoints. `listResumable` names the runs nobody is
+   * working on (of one session, or all); `resumeMessage` is the person's
+   * turn that makes the orchestrator continue one (`null` when there is
+   * none) — the re-dispatch itself is `fusion.delegate { resume }`;
+   * `discard` drops one and returns its id. Without `runId`, the newest.
+   * Optional so embedders and test runtimes need not provide it.
+   */
+  readonly fusionRuns?: {
+    listResumable(sessionId?: string): ResumableFusionRun[];
+    resumeMessage(sessionId: string, runId?: string): string | null;
+    discard(sessionId: string, runId?: string): string | null;
+  };
+  /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
    * SQLite connection used by any future feature that reuses the same
@@ -639,4 +666,13 @@ export interface AgentRuntime {
   setPlanMode(on: boolean): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
+}
+
+/** One unfinished fusion run, as `AgentRuntime.fusionRuns` lists it. */
+export interface ResumableFusionRun {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly updatedAt: number;
+  /** One plain line: what is done, what is left. */
+  readonly summary: string;
 }

@@ -128,3 +128,28 @@ export {
   FUSION_DELEGATE_TOOL,
 } from "./fusion-delegate.js";
 export type { FusionDelegateDeps } from "./fusion-delegate.js";
+export {
+  FusionTurnBudget,
+  TURN_BUDGET_INSTRUCTION,
+} from "./turn-budget.js";
+export type { TurnBudgetLimits, TurnBudgetStop } from "./turn-budget.js";
+export {
+  FusionLiveWorkers,
+  ADVISOR_MAX_OUTPUT_TOKENS,
+} from "./escalation.js";
+export type { LiveWorkerControls, EscalationComplete } from "./escalation.js";
+export {
+  FusionRunStore,
+  FUSION_RUNS_DIR_NAME,
+  FUSION_RUN_RETENTION_MS,
+  toolHasSideEffects,
+} from "./run-checkpoint.js";
+export type {
+  FusionRunCheckpoint,
+  FusionRunRecorder,
+} from "./run-checkpoint.js";
+export {
+  describeResumableRun,
+  planResume,
+  renderResumeRequest,
+} from "./run-resume.js";

@@ -21,7 +21,7 @@ import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.j
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
 import type { SessionState } from "../session/session-state.js";
@@ -47,6 +47,14 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
+import {
+  FUSION_RUNS_DIR_NAME,
+  FusionLiveWorkers,
+  FusionRunStore,
+  FusionTurnBudget,
+  describeResumableRun,
+  renderResumeRequest,
+} from "../tools/fusion/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -355,6 +363,13 @@ export async function createAgentRuntime(
   // behind the same analytics opt-out, since nothing is emitted unless
   // `captureMessageSent` fires.
   const turnUsageMeter = new TurnUsageMeter();
+  const fusionTurnBudget = new FusionTurnBudget();
+  const fusionLiveWorkers = new FusionLiveWorkers();
+  // Checkpoints of fan-outs (ATO-617), so one cut off by a restart can be
+  // resumed. Files, not a table: see `run-checkpoint.ts`.
+  const fusionRuns = new FusionRunStore({
+    dir: join(config.paths.stateDir, FUSION_RUNS_DIR_NAME),
+  });
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
@@ -485,8 +500,19 @@ export async function createAgentRuntime(
     // reads, so the tool the orchestrator is being pushed towards is
     // always in the catalog when the push happens.
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
-    clearFanoutTurnGrant: (sessionId: string) =>
-      approvals.fanoutScopes.clearTurnGrant(sessionId),
+    // A fusion turn starts: its fan-out grant is dropped and its $ /
+    // time caps (ATO-947) start from zero.
+    clearFanoutTurnGrant: (sessionId: string) => {
+      approvals.fanoutScopes.clearTurnGrant(sessionId);
+      // A turn that did not come through `runTurn` (sidecar, scheduler)
+      // has no meter bucket; open one so the cap sees the planner's own
+      // spend, measured from what it reads now.
+      turnUsageMeter.ensureOpen(sessionId);
+      fusionTurnBudget.begin(
+        sessionId,
+        turnUsageMeter.peekCostUsd(sessionId) ?? 0,
+      );
+    },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
     grammar: getGrammar(),
@@ -696,6 +722,11 @@ export async function createAgentRuntime(
     config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest: (id) => turnRequests.get(id),
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
+    turnBudget: fusionTurnBudget,
+    liveWorkers: fusionLiveWorkers,
+    runCheckpoints: fusionRuns,
+    steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
+    orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
 
   const scheduler = createRuntimeScheduler({
@@ -724,6 +755,38 @@ export async function createAgentRuntime(
     turnController,
     steeringInbox,
     steer,
+    fusionWorkers: {
+      running: (parentSessionId: string) => fusionLiveWorkers.running(parentSessionId),
+      stop: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.stop(parentSessionId, taskId),
+      escalate: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.escalate(parentSessionId, taskId),
+    },
+    fusionRuns: {
+      listResumable: (sessionId?: string) =>
+        fusionRuns.listResumable(sessionId).map((run) => ({
+          runId: run.runId,
+          sessionId: run.sessionId,
+          updatedAt: run.updatedAt,
+          summary: describeResumableRun(run),
+        })),
+      resumeMessage: (sessionId: string, runId?: string) => {
+        const run =
+          runId === undefined
+            ? fusionRuns.listResumable(sessionId)[0]
+            : fusionRuns.listResumable(sessionId).find((r) => r.runId === runId);
+        return run === undefined ? null : renderResumeRequest(run);
+      },
+      discard: (sessionId: string, runId?: string) => {
+        const run =
+          runId === undefined
+            ? fusionRuns.listResumable(sessionId)[0]
+            : fusionRuns.listResumable(sessionId).find((r) => r.runId === runId);
+        return run !== undefined && fusionRuns.discard(run.runId)
+          ? run.runId
+          : null;
+      },
+    },
     profileStore,
     notesStore,
     lessonStore,

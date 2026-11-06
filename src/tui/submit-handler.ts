@@ -291,6 +291,17 @@ export function runSlashCommand(
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.fusionWorkerAction !== undefined) {
+    const { action, taskId } = result.fusionWorkerAction;
+    if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {
+      dispatch({ type: "system_message", text: "no fusion worker is running here" });
+    } else {
+      callbacks.onFusionWorkerAction(state.session.sessionId, taskId, action);
+    }
+  }
+  if (result.fusionRunAction !== undefined) {
+    runFusionRunAction(result.fusionRunAction, state, dispatch, callbacks);
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
@@ -484,6 +495,52 @@ export function submitWhileBusy(
   }
   dispatch({ type: "message_queued", text });
   callbacks.onMessageSubmitted(text);
+}
+
+/**
+ * `/fusion [resume|discard] [runId]` (ATO-617). A resume is sent as the
+ * person's own turn — the same path as a skill invocation — so the
+ * orchestrator continues the run with `fusion.delegate { resume }`, in
+ * the transcript, where its result is merged like any fan-out.
+ */
+function runFusionRunAction(
+  request: NonNullable<SlashDispatchResult["fusionRunAction"]>,
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const sessionId = state.session.sessionId;
+  if (sessionId === null) {
+    dispatch({ type: "system_message", text: "no unfinished fusion run in this session" });
+    return;
+  }
+  if (request.action !== "resume") {
+    if (callbacks.onFusionRunAction === undefined) {
+      dispatch({ type: "system_message", text: "no unfinished fusion run in this session" });
+      return;
+    }
+    callbacks.onFusionRunAction(sessionId, request.action, request.runId);
+    return;
+  }
+  if (!canTypeMessage(state)) return;
+  const text = callbacks.prepareFusionResume?.(sessionId, request.runId) ?? null;
+  if (text === null) {
+    dispatch({
+      type: "system_message",
+      text:
+        request.runId === undefined
+          ? "no unfinished fusion run in this session"
+          : `no unfinished fusion run ${request.runId} in this session`,
+    });
+    return;
+  }
+  dispatch({ type: "slash_palette_closed" });
+  if (canAcceptMessage(state)) {
+    dispatch({ type: "message_submitted" });
+    callbacks.onMessageSubmitted(text);
+  } else {
+    submitWhileBusy(text, "queue", dispatch, callbacks);
+  }
 }
 
 /**

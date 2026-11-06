@@ -71,6 +71,7 @@ import {
   resolveStartupTheme,
 } from "./theme/detect-terminal-background.js";
 import { resolveThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
+import { formatStartupFusionNotice } from "./fusion-resume-notice.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
   loadUninstallPreview,
@@ -622,6 +623,58 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onFusionWorkersChangeRequested: (workers) =>
           orchestrator.runMode.setWorkers(workers),
         onFusionLegsSwapRequested: () => void orchestrator.runMode.swapLegs(),
+        // `/worker stop|escalate <id>` (ATO-66): one running fusion
+        // worker, through the runtime's live registry.
+        onFusionWorkerAction: (sessionId, taskId, action) => {
+          const say = (text: string): void =>
+            bus.emit({ type: "system_message", text });
+          if (action === "stop") {
+            say(
+              runtime.fusionWorkers.stop(sessionId, taskId)
+                ? `worker ${taskId}: stopping`
+                : `worker ${taskId} is not running`,
+            );
+            return;
+          }
+          say(`worker ${taskId}: asking the escalation model…`);
+          void runtime.fusionWorkers
+            .escalate(sessionId, taskId)
+            .then((line) =>
+              say(line === null ? `worker ${taskId} is not running` : `worker ${taskId}: ${line}`),
+            )
+            .catch((err: unknown) =>
+              say(`worker ${taskId}: escalation failed — ${err instanceof Error ? err.message : String(err)}`),
+            );
+        },
+        // `/fusion` and `/fusion discard [id]` (ATO-617): the runs of this
+        // session that a restart cut off, from their checkpoints.
+        onFusionRunAction: (sessionId, action, runId) => {
+          const say = (text: string): void =>
+            bus.emit({ type: "system_message", text });
+          const runs = runtime.fusionRuns;
+          if (action === "discard") {
+            const dropped = runs?.discard(sessionId, runId) ?? null;
+            say(
+              dropped === null
+                ? runId === undefined
+                  ? "no unfinished fusion run in this session"
+                  : `no unfinished fusion run ${runId} in this session`
+                : `fusion run ${dropped} discarded`,
+            );
+            return;
+          }
+          const list = runs?.listResumable(sessionId) ?? [];
+          say(
+            list.length === 0
+              ? "no unfinished fusion run in this session"
+              : [
+                  ...list.map((run) => run.summary),
+                  "/fusion resume [id] continues one · /fusion discard [id] drops it",
+                ].join("\n"),
+          );
+        },
+        prepareFusionResume: (sessionId, runId) =>
+          runtime.fusionRuns?.resumeMessage(sessionId, runId) ?? null,
         onProvidersSelectChatModel: (providerId, modelId) =>
           void orchestrator.providers.selectChatModel(providerId, modelId),
         onProvidersChatModelPickerRequested: (providerId) =>
@@ -875,6 +928,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const conhostHint = legacyConhostStartupHint();
   if (conhostHint) {
     bus.emit({ type: "system_message", text: conhostHint });
+  }
+
+  // A fusion run a crash, quit or update cut off (ATO-617) is offered,
+  // never resumed on its own: a resume runs workers again.
+  const fusionStartupNotice = formatStartupFusionNotice(
+    runtime.fusionRuns?.listResumable() ?? [],
+    null,
+  );
+  if (fusionStartupNotice !== null) {
+    bus.emit({ type: "system_message", text: fusionStartupNotice });
   }
 
   // If the user is in managed mode and the backend + model are ready

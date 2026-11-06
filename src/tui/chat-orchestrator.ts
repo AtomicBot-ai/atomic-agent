@@ -79,6 +79,7 @@ import {
   type LocalTurnGateFacts,
 } from "./local-turn-gate.js";
 import { turnsToMessages } from "./chat/turns-to-messages.js";
+import { formatSessionFusionNotice } from "./fusion-resume-notice.js";
 import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
@@ -1023,6 +1024,13 @@ export class ChatOrchestrator {
     // After `session_switched`, so they land in the new transcript
     // rather than the one that was just replaced.
     for (const notice of notices) this.notify(notice);
+    // A fusion run of this thread that a restart cut off (ATO-617).
+    const fusionNotice = formatSessionFusionNotice(
+      this.runtime.fusionRuns?.listResumable(loaded.id) ?? [],
+    );
+    if (fusionNotice !== null) {
+      this.bus.emit({ type: "system_message", text: fusionNotice });
+    }
     // A turn parked on an approval in THIS thread asked its question
     // while another transcript was on screen, where it surfaced only as
     // a pointer notice (approval keys never answer for an off-screen

@@ -243,6 +243,16 @@ const V0_2_2_SLASH_COMMANDS = [
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
   },
   {
+    name: "worker",
+    description:
+      "act on one running fusion worker: `/worker stop <id>` · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
+  },
+  {
+    name: "fusion",
+    description:
+      "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",

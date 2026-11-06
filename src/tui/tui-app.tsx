@@ -552,6 +552,30 @@ export interface TuiAppCallbacks {
    * without changing the mode.
    */
   onFusionWorkersChangeRequested?(workers: number): void;
+  /**
+   * `/worker stop|escalate <id>`: the person's action on one running
+   * fusion worker of `sessionId` (ATO-66). The result is a feed line.
+   */
+  onFusionWorkerAction?(
+    sessionId: string,
+    taskId: string,
+    action: "stop" | "escalate",
+  ): void;
+  /**
+   * `/fusion` and `/fusion discard [id]`: list or drop the unfinished
+   * fusion runs of `sessionId` (ATO-617). The result is a feed line.
+   */
+  onFusionRunAction?(
+    sessionId: string,
+    action: "list" | "discard",
+    runId: string | undefined,
+  ): void;
+  /**
+   * `/fusion resume [id]`: the message that makes the orchestrator
+   * continue an unfinished run of `sessionId`, sent as the person's
+   * turn; `null` when there is no such run.
+   */
+  prepareFusionResume?(sessionId: string, runId: string | undefined): string | null;
   /** Providers tab / LLM panel: select an exact chat model for a provider. */
   onProvidersSelectChatModel?(providerId: string, modelId: string): void;
   /**
