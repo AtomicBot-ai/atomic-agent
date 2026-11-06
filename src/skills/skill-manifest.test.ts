@@ -139,4 +139,35 @@ describe("parseSkillFile", () => {
     ].join("\n");
     expect(() => parseSkillFile(content)).toThrow(/platforms/);
   });
+
+  it("keeps Agent Skills spec fields and only warns about limits (ATO-610)", () => {
+    const body = Array.from({ length: 501 }, (_, i) => `line ${i}`).join("\n");
+    const parsed = parseSkillFile([
+      "---",
+      "name: spec-skill",
+      `description: "${"d".repeat(1025)}"`,
+      "license: Apache-2.0",
+      "compatibility: Needs git",
+      "metadata:",
+      "  author: someone",
+      "  version: 2",
+      "allowed-tools: Bash(git:*) Read",
+      "---",
+      body,
+    ].join("\n"));
+    expect(parsed.manifest).toMatchObject({
+      license: "Apache-2.0",
+      compatibility: "Needs git",
+      metadata: { author: "someone", version: "2" },
+      allowedTools: ["Bash(git:*)", "Read"],
+    });
+    expect(parsed.warnings?.join("\n")).toMatch(/description is longer than 1024/);
+    expect(parsed.warnings?.join("\n")).toMatch(/501 lines/);
+  });
+
+  it("adds no spec keys to a manifest that does not declare them", () => {
+    const parsed = parseSkillFile("---\nname: plain\ndescription: d\n---\nbody");
+    expect(Object.keys(parsed.manifest).sort()).toEqual(["dangerous", "description", "name", "requiresScripts", "requiresTools", "version"]);
+    expect(parsed.warnings).toBeUndefined();
+  });
 });
