@@ -99,7 +99,9 @@ export function createCreateTaskHandler(): HttpHandler {
         return;
       }
       // Saved before the task row: `runOnCreate` may drain at once and loads the session.
-      const fresh = ctx.runtime.createSession({ metadata: { source: "http-task" } });
+      // `persist: false` so no trace recorder opens here (the first turn opens it) and a
+      // refused task leaves nothing behind once its row is deleted below.
+      const fresh = ctx.runtime.createSession({ metadata: { source: "http-task" }, persist: false });
       ctx.runtime.sessionStore.save({ ...fresh, workingDir: dir.dir });
       taskSessionId = fresh.id;
       openedSessionId = fresh.id;

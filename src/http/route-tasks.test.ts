@@ -224,6 +224,13 @@ describe("POST /api/tasks with workingDir and notify (ATO-1113)", () => {
     expect(harness.runtime.sessionStore.listRecent(200).length).toBe(before);
   });
 
+  it("deletes the session it opened when the task itself is refused", async () => {
+    const before = harness.runtime.sessionStore.listRecent(200).length;
+    const res = await post({ userMessage: "x".repeat(16_001), workingDir: dir });
+    expect(res.status).toBe(400);
+    expect(harness.runtime.sessionStore.listRecent(200).length).toBe(before);
+  });
+
   it("refuses sessionId and workingDir together, and a notify target it does not know", async () => {
     const session = harness.runtime.createSession();
     expect((await post({ userMessage: "x", sessionId: session.id, workingDir: dir })).status).toBe(400);
