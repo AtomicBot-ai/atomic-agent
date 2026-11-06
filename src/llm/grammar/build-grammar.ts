@@ -114,6 +114,17 @@ export async function buildGrammar(
 const CHARS_RULE_RE = /^chars ::= char\*$/m;
 
 /**
+ * The non-empty string body `required-string` uses (`chars-nonempty ::=
+ * char chars`), and its hardened form: the same automaton started in the
+ * neutral state with the empty alternative removed. Routing the first
+ * character through the automaton too, rather than through a class that
+ * excludes `<` and `|`, keeps every `<|` refused while a required value
+ * may still open on `<` (an `oldString` of `<div>`, ATO-1114).
+ */
+const CHARS_NONEMPTY_RULE_RE = /^chars-nonempty ::= char chars$/m;
+const HARDENED_CHARS_NONEMPTY_RULE = 'chars-nonempty ::= str-step | "|" str-after-bar';
+
+/**
  * The string body for a reasoning profile: valid JSON with the
  * two-character sequences `<|` and `|>` excluded (F37). The model's own
  * control markers open with one and close with the other (`<|channel>`,
@@ -202,7 +213,9 @@ const HARDENED_REPLY_RULES: ReadonlyArray<[RegExp, string]> = [
 ];
 
 function hardenStringRule(grammar: string): string {
-  let hardened = grammar.replace(CHARS_RULE_RE, HARDENED_STRING_RULES);
+  let hardened = grammar
+    .replace(CHARS_RULE_RE, HARDENED_STRING_RULES)
+    .replace(CHARS_NONEMPTY_RULE_RE, HARDENED_CHARS_NONEMPTY_RULE);
   for (const [re, rules] of HARDENED_REPLY_RULES) {
     hardened = hardened.replace(re, rules);
   }
@@ -242,8 +255,9 @@ const perRequestGrammarCache = new Map<string, Map<string, string>>();
  *
  * `reply` is always present: a grammar with no exit would trap the step in
  * the only thing it can still emit. It lives on its own `reply-call`
- * branch (#681), and `os.shell.run`, `os.fs.read` and `os.fs.write` keep
- * theirs when the request admits them (`tool-call-branches.ts`), so
+ * branch (#681), and the tools with required args (`os.shell.run`, the
+ * `os.fs.*` file tools, web, discovery and notes tools: `DEDICATED_BRANCHES`
+ * in `tool-call-branches.ts`) keep theirs when the request admits them, so
  * `tool-name` gets the other names; when there are none, `tool-call` is
  * cut down to the dedicated branches. The rewritten rule is sorted and
  * deduplicated, and the result is cached by the sorted name list, so the

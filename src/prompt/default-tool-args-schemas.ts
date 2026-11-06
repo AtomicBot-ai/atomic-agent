@@ -43,6 +43,7 @@ import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-
  */
 
 import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
+import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
@@ -166,6 +167,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   [OS_FS_LIST_CONTRACT.name, OS_FS_LIST_CONTRACT.argsJsonSchema],
   [OS_FS_GLOB_CONTRACT.name, OS_FS_GLOB_CONTRACT.argsJsonSchema],
   [OS_FS_LOCATE_PROJECT_CONTRACT.name, OS_FS_LOCATE_PROJECT_CONTRACT.argsJsonSchema],
+  [OS_FS_CODE_MAP_CONTRACT.name, OS_FS_CODE_MAP_CONTRACT.argsJsonSchema],
   [OS_FS_GREP_CONTRACT.name, OS_FS_GREP_CONTRACT.argsJsonSchema],
   [OS_FS_EDIT_CONTRACT.name, OS_FS_EDIT_CONTRACT.argsJsonSchema],
   [

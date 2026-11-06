@@ -1,6 +1,9 @@
 import { projectSessionConversation } from "../session/session-compaction.js";
 import { buildCloudPrompt } from "./build-cloud-prompt.js";
-import { buildSkillCatalogSection } from "../skills/skill-catalog.js";
+import {
+  buildSkillCatalogSection,
+  reclipSkillCatalog,
+} from "../skills/skill-catalog.js";
 import { getConfig } from "../config/index.js";
 import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
@@ -30,6 +33,11 @@ import type {
 import { resolveFusionMachineFacts } from "./fusion-machine-facts.js";
 import { renderRequestSection, requestInView } from "./request-section.js";
 import { buildStablePrefix } from "./stable-prefix.js";
+import {
+  applyCompactToolForms,
+  compactSkillCatalogBudget,
+  decideCompactPrompt,
+} from "./compact-prompt.js";
 import { buildSessionSectionParts } from "./session-tail-sections.js";
 import { renderLoadedToolsSection } from "./render-loaded-tools.js";
 import { partitionByRole } from "../tools/tool-roles.js";
@@ -82,6 +90,23 @@ export type {
  * variable tail, so expanding them does NOT invalidate the KV cache over
  * the stable prefix.
  */
+/**
+ * The window this prompt is budgeted against: the probe's, unless the
+ * caller says the probe speaks for another model
+ * (`profileWindowApplies: false`), then the caller's catalogue window.
+ * Exported so the step can latch the compact-scaffold decision on the
+ * exact window `buildPrompt` will use.
+ */
+export function resolvePromptContextWindow(
+  input: Pick<BuildPromptInput, "profile" | "profileWindowApplies" | "contextWindow">,
+): number | null {
+  const probedWindow =
+    (input.profileWindowApplies ?? true)
+      ? (input.profile?.contextWindow ?? null)
+      : null;
+  return probedWindow ?? input.contextWindow ?? null;
+}
+
 export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const config = getConfig();
   const budgetTotal = input.tokenBudget ?? config.agent.tokenBudget;
@@ -139,17 +164,51 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? getReasoningTurnFraming(input.profile)
       : undefined;
 
+  // The probe first, then whatever the caller resolved (the provider
+  // catalogue, for a cloud model that has no `/props` to read). Before
+  // this the budget simply had no window off the local path.
+  //
+  // The probe only speaks for the model it probed. `profileWindowApplies`
+  // is how a caller serving a different model this step — a Fusion
+  // orchestrator on a cloud leg, with a llama-server profile in hand for
+  // the workers — says so, and drops to the catalogue instead.
+  const contextWindow = resolvePromptContextWindow(input);
+
+  // Compact scaffold for small windows (ATO-1116). A step passes the
+  // session-latched decision (`CompactPromptLatch`) together with the
+  // window it was made from, so neither the scaffold nor the
+  // window-scaled skill catalog can flip mid-session; a direct caller
+  // gets the stateless decision from the same config and window.
+  const compactPrompt =
+    input.compactPrompt ??
+    decideCompactPrompt(config.agent.prompt?.compact ?? "auto", contextWindow).compact;
+  const catalogWindow =
+    input.compactPrompt !== undefined && input.compactPromptWindow !== undefined
+      ? input.compactPromptWindow
+      : contextWindow;
+  const catalogTokenBudget = compactPrompt
+    ? compactSkillCatalogBudget(config.skills.catalogTokenBudget, catalogWindow)
+    : config.skills.catalogTokenBudget;
+
   const workspaceCatalog = input.workspace ? buildSkillCatalogSection(
     input.workspace.skills.entries.filter(e => !e.disabledReasons.length).map(e => e.record),
-    input.workspace.cloud ? { maxChars: Infinity } : { tokenBudget: config.skills.catalogTokenBudget },
+    input.workspace.cloud ? { maxChars: Infinity } : { tokenBudget: catalogTokenBudget },
   ) : undefined;
+  // A catalog built upstream used the configured budget; the compact
+  // scaffold re-packs it against the window-scaled one.
+  const upstreamCatalog =
+    !workspaceCatalog && compactPrompt && catalogTokenBudget < config.skills.catalogTokenBudget
+      ? reclipSkillCatalog(input.skillCatalog, input.skillCatalogDropped ?? 0, catalogTokenBudget)
+      : undefined;
+  const effectiveCatalog = workspaceCatalog ?? upstreamCatalog;
   const stablePrefix = buildStablePrefix({
     toolDescriptors: input.toolDescriptors,
     capabilities: input.workspace ? { ...input.capabilities, workingDir: input.session.workingDir } : input.capabilities,
-    skillCatalog: workspaceCatalog?.entries ?? input.skillCatalog,
-    ...(workspaceCatalog ? { skillCatalogDropped: workspaceCatalog.dropped } : input.skillCatalogDropped !== undefined
+    skillCatalog: effectiveCatalog?.entries ?? input.skillCatalog,
+    ...(effectiveCatalog ? { skillCatalogDropped: effectiveCatalog.dropped } : input.skillCatalogDropped !== undefined
       ? { skillCatalogDropped: input.skillCatalogDropped }
       : {}),
+    ...(compactPrompt ? { compact: true } : {}),
     reasoningSystemToken: suppressPrefill
       ? undefined
       : input.profile?.reasoningSystemToken,
@@ -193,7 +252,10 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   // frequent tool loaded by hand) is not rendered twice: the tail copy
   // would cost tokens and say nothing the prefix does not.
   const describedInFull = new Set(
-    partitionByRole(input.toolRole, input.toolDescriptors)
+    partitionByRole(
+      input.toolRole,
+      compactPrompt ? applyCompactToolForms(input.toolDescriptors) : input.toolDescriptors,
+    )
       .inRole.filter((d) => d.tier !== "rare")
       .map((d) => d.name),
   );
@@ -289,19 +351,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     limits.worldSnapshot,
   );
 
-  // The probe first, then whatever the caller resolved (the provider
-  // catalogue, for a cloud model that has no `/props` to read). Before
-  // this the budget simply had no window off the local path.
-  //
-  // The probe only speaks for the model it probed. `profileWindowApplies`
-  // is how a caller serving a different model this step — a Fusion
-  // orchestrator on a cloud leg, with a llama-server profile in hand for
-  // the workers — says so, and drops to the catalogue instead.
-  const probedWindow =
-    (input.profileWindowApplies ?? true)
-      ? (input.profile?.contextWindow ?? null)
-      : null;
-  const contextWindow = probedWindow ?? input.contextWindow ?? null;
+  // `contextWindow` was resolved above, before the stable prefix.
   const sessionTokenEstimate =
     estimateTokens(sessionPartsForBudget) + loadedToolsTokens;
   const conversationCapEffective = computeEffectiveConversationCap({

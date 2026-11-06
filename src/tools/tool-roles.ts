@@ -51,6 +51,7 @@ const FS_READ_TOOLS: readonly string[] = [
   "os.fs.diff",
   "os.fs.watch",
   "os.fs.locate_project",
+  "os.fs.code_map",
   "os.fs.archive.list",
   "os.fs.archive.read_entry",
 ];

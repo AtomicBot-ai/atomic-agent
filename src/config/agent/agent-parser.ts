@@ -1,4 +1,5 @@
 import { parseCompactionConfig } from "./compaction-config.js";
+import { parsePromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { AgentToolsConfig, ReadScope, ToolSearchMode, UserAgentConfig } from "./agent-types.js";
 import { ConfigValidationError } from "../config-validation-error.js";
@@ -186,6 +187,7 @@ export function parseAgentConfig(
         readDefaults().worldSnapshotMaxTokens,
       "agent.worldSnapshotMaxTokens",
     ),
+    prompt: parsePromptConfig(agent.prompt, readDefaults().prompt),
     tools: parseAgentToolsConfig(agent.tools, readDefaults().tools),
   };
 }

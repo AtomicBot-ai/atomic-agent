@@ -68,6 +68,7 @@ describe("tool roles", () => {
       "os.fs.hash",
       "os.fs.diff",
       "os.fs.locate_project",
+      "os.fs.code_map",
       "os.fs.archive.list",
       "verify.syntax",
       "verify.run",

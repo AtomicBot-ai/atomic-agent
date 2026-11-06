@@ -20,7 +20,7 @@ import {
 
 export { compileGlob } from "./fs-glob-pattern.js";
 
-const DEFAULT_IGNORE = [
+export const DEFAULT_IGNORE = [
   "**/node_modules/**",
   "**/.git/**",
   "**/dist/**",

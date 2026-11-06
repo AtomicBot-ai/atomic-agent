@@ -52,6 +52,7 @@ describe("agent configuration ownership", () => {
       "tokenBudget", "maxSteps", "providerWait", "task", "toolTimeoutMs",
       "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
+      "prompt",
       "tools",
     ]);
     expect(first.providerWait).not.toBe(second.providerWait);
@@ -176,7 +177,8 @@ describe("agent configuration ownership", () => {
       expect(Object.keys(direct)).toEqual([
         "tokenBudget", "maxSteps", "providerWait", "nameSessions", "task", "toolTimeoutMs",
         "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
-        "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens", "tools",
+        "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
+        "prompt", "tools",
       ]);
     } finally {
       USER_CONFIG_DEFAULTS.agent = saved;

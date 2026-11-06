@@ -258,6 +258,7 @@ export function loadConfig(): AtomicAgentConfig {
       conversationLowWater: user.agent.conversationLowWater,
       sessionSectionsMaxTokens: user.agent.sessionSectionsMaxTokens,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
+      prompt: user.agent.prompt,
       ...(user.agent.tools ? { tools: user.agent.tools } : {}),
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",

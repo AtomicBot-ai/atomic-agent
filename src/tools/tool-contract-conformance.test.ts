@@ -15,7 +15,7 @@ import { TaskStore } from "../tasks/task-store.js";
 import { TaskRunner } from "../tasks/task-runner.js";
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { StructuredLogger } from "../tracing/structured-logger.js";
-import { DEFAULT_TOOL_DESCRIPTORS, getToolDescriptorByName } from "../prompt/tool-descriptors.js";
+import { DEFAULT_TOOL_DESCRIPTORS, getToolDescriptorByName, isViewableRareTool } from "../prompt/tool-descriptors.js";
 import type { ToolDescriptor } from "../prompt/stable-prefix.js";
 import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
 import { listKnownToolResourceClasses, resourceClassFor, setDynamicResourceClassResolver } from "../agent/tool-resource-class.js";
@@ -196,13 +196,24 @@ interface Catalog {
   schemaNames: readonly string[];
   classes: ReadonlyMap<string, string>;
 }
+/**
+ * A descriptor without its compact-prompt form (`compact`), which
+ * `tool-descriptors.ts` attaches from its own table like
+ * `argsJsonSchema`: neither is part of a tool's contract or of a known
+ * duplicate's fingerprint.
+ */
+function withoutCompactForm(descriptor: ToolDescriptor): ToolDescriptor {
+  const core = { ...descriptor };
+  delete core.compact;
+  return core;
+}
 function conformanceErrors(catalog: Catalog): string[] {
   const errors: string[] = [];
   const admittedDebt = new Set<string>();
   for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
     const entries = catalog.descriptors.flatMap((descriptor, index) => descriptor.name === name ? [{ descriptor, index }] : []);
     const indices = entries.map((entry) => entry.index);
-    const fingerprints = entries.map((entry) => createHash("sha256").update(JSON.stringify(entry.descriptor)).digest("hex"));
+    const fingerprints = entries.map((entry) => createHash("sha256").update(JSON.stringify(withoutCompactForm(entry.descriptor))).digest("hex"));
     if (JSON.stringify(indices) === JSON.stringify(debt.indices) && JSON.stringify(fingerprints) === JSON.stringify(debt.fingerprints)) admittedDebt.add(name);
     else errors.push(`changed known descriptor debt: ${name}`);
   }
@@ -234,7 +245,7 @@ function conformanceErrors(catalog: Catalog): string[] {
     const descriptor = catalog.descriptors.find((item) => item.name === contract.name);
     if (definition && (definition.description !== contract.description || definition.readonly !== contract.readonly)) errors.push(`core registration mismatch: ${contract.name}`);
     if (descriptor) {
-      const { argsJsonSchema, ...fields } = descriptor;
+      const { argsJsonSchema, ...fields } = withoutCompactForm(descriptor);
       if (JSON.stringify(fields) !== JSON.stringify(contract.descriptor)) errors.push(`core descriptor mismatch: ${contract.name}`);
       if (JSON.stringify(argsJsonSchema) !== JSON.stringify(contract.argsJsonSchema)) errors.push(`core schema mismatch: ${contract.name}`);
     }
@@ -470,7 +481,7 @@ describe("whole built-in tool catalog conformance", () => {
         const operation = view.run({ name: descriptor.name }, { workingDir: directory, sessionId: "catalog", stepIndex: 0, signal: new AbortController().signal, toolRole: role });
         const discoveryDescriptor = getToolDescriptorByName(descriptor.name);
         if (!discoveryDescriptor) throw new Error(`Descriptor disappeared from discovery: ${descriptor.name}`);
-        if (discoveryDescriptor.tier === "rare" || !roleAdmits(role, descriptor.name)) {
+        if (isViewableRareTool(discoveryDescriptor) || !roleAdmits(role, descriptor.name)) {
           const result = await operation;
           expect(result.details?.toolLoaded).toMatchObject({ name: descriptor.name, argsSchema: discoveryDescriptor.argsSchema, source: "explicit" });
         } else await expect(operation).rejects.toThrow("not in the # extras list");

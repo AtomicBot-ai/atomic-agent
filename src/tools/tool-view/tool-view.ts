@@ -1,5 +1,5 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
-import { getToolDescriptorByName } from "../../prompt/tool-descriptors.js";
+import { getToolDescriptorByName, isViewableRareTool } from "../../prompt/tool-descriptors.js";
 import { roleAdmits } from "../tool-roles.js";
 import type { ToolDefinition } from "../tool-registry.js";
 
@@ -7,8 +7,9 @@ import type { ToolDefinition } from "../tool-registry.js";
  * Loads the full args schema for a tool into `session.loadedTools` (via
  * `details.toolLoaded` in `applyStateEffects`).
  *
- * Two kinds of tool are loadable: a `tier: "rare"` one, which the
- * stable prefix only names, and — under a tool role other than `full`
+ * Two kinds of tool are loadable: a `tier: "rare"` one (or one the
+ * compact prompt collapses, `compact.tier: "rare"`), which the stable
+ * prefix only names, and — under a tool role other than `full`
  * (`tool-roles.ts`) — any tool outside the role, which the prefix lists
  * on its "also available via tool.view" line. A frequent tool the
  * current role already describes in full is refused as before: there is
@@ -36,7 +37,9 @@ export function buildToolViewTool(): ToolDefinition {
       }
       const role = ctx.toolRole ?? "full";
       const outsideRole = !roleAdmits(role, d.name);
-      if (d.tier !== "rare" && !outsideRole) {
+      // Rare in either scaffold: the compact prompt (ATO-1116) lists
+      // more tools as one-liners than the full one does.
+      if (!isViewableRareTool(d) && !outsideRole) {
         throw new Error(
           `tool.view: "${name}" is not in the # extras list (full schema is already in the stable prefix)`,
         );
