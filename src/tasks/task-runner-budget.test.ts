@@ -141,4 +141,33 @@ describe("TaskRunner budgets", () => {
     expect(blocked?.status).toBe("blocked");
     expect(blocked?.lastError).toMatch(/^budget_spent: \$2\.40 of \$2\.00/);
   });
+
+  it("keeps the spend of a run that threw, step by step, for the next attempt", async () => {
+    const runtime: TaskRunnerRuntime = {
+      runTurn: async (_s, _message, options) => {
+        options.eventHook?.({ type: "step_finished", stepIndex: 0, summary: "read", durationMs: 1, spendUsd: 0.7 });
+        options.eventHook?.({ type: "step_finished", stepIndex: 1, summary: "read", durationMs: 1, spendUsd: 1.2 });
+        throw new Error("runtime fell over mid-turn");
+      },
+    };
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: { load: () => session },
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: false,
+      sleep: async () => undefined,
+    });
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "throws",
+      origin: "cli",
+      maxAttempts: 3,
+      maxCostUsd: 2,
+    });
+    await runner.runOne(task.id);
+    expect(store.get(task.id)?.spentUsd).toBeCloseTo(1.2, 6);
+  });
 });

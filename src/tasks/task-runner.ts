@@ -383,6 +383,27 @@ export class TaskRunner {
           }
         : undefined;
 
+    // A task with a spend ceiling has its spend written step by step
+    // (ATO-1108), not only when the turn returns: a run that throws, or
+    // a process that dies mid-run, must not hand the next attempt the
+    // whole budget again. `step_finished.spendUsd` is the turn's running
+    // total, so the latest one stands for this run.
+    const spentBefore = claimed.spentUsd ?? 0;
+    const spendHook: TurnEventHook | undefined =
+      claimed.maxCostUsd !== null
+        ? (event: AgentLoopEvent): void => {
+            if (event.type !== "step_finished" || event.spendUsd === undefined) return;
+            this.options.store.recordSpend(claimed.id, spentBefore + event.spendUsd);
+          }
+        : undefined;
+    const eventHook: TurnEventHook | undefined =
+      reportHook && spendHook
+        ? (event: AgentLoopEvent): void => {
+            reportHook(event);
+            spendHook(event);
+          }
+        : (reportHook ?? spendHook);
+
     const maxSteps = claimed.maxSteps ?? this.options.defaultMaxSteps;
     // Every run gets a stop of its own: an operator cancelling the task
     // (`cancel`), the runner stopping for shutdown (`stop`), and the
@@ -399,7 +420,7 @@ export class TaskRunner {
             maxSteps,
             origin: "scheduler",
             signal: run.signal,
-            ...(reportHook ? { eventHook: reportHook } : {}),
+            ...(eventHook ? { eventHook } : {}),
             ...(claimed.maxDurationMs !== null
               ? { taskMaxDurationMs: claimed.maxDurationMs }
               : {}),
@@ -425,10 +446,7 @@ export class TaskRunner {
       // What this run spent joins what earlier attempts spent, whatever
       // the outcome: the morning report and a retry's budget read it.
       if (result.spendUsd !== undefined) {
-        this.options.store.recordSpend(
-          claimed.id,
-          (claimed.spentUsd ?? 0) + result.spendUsd,
-        );
+        this.options.store.recordSpend(claimed.id, spentBefore + result.spendUsd);
       }
       // An operator cancelled the task while its turn ran — here, or from
       // another process, which cannot reach this turn — and that stands:
