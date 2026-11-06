@@ -370,18 +370,24 @@ describe("runWorkerTasks", () => {
       maxWorkers: 1,
       signal: new AbortController().signal,
     });
-    expect(events.map((e) => e.sessionId)).toEqual(Array(4).fill("s-parent"));
+    // Every completion moves the worker's spent tokens (the row's
+    // `tok` figure), so each one is reported; the context size rides
+    // along unchanged until a completion measures a new one, and a
+    // completion that counted nothing never sets it to zero.
+    expect(events.map((e) => e.sessionId)).toEqual(Array(6).fill("s-parent"));
     expect(
       events.map((e) =>
         e.event.type === "fusion_worker"
-          ? [e.event.phase, e.event.contextTokens ?? null]
+          ? [e.event.phase, e.event.contextTokens ?? null, e.event.tokens ?? null]
           : null,
       ),
     ).toEqual([
-      ["started", null],
-      ["usage", 4_200],
-      ["usage", 12_345],
-      ["finished", null],
+      ["started", null, null],
+      ["usage", 4_200, 4_201],
+      ["usage", 4_200, 8_402],
+      ["usage", 4_200, 8_403],
+      ["usage", 12_345, 20_749],
+      ["finished", null, null],
     ]);
   });
 
@@ -1540,5 +1546,114 @@ describe("runWorkerTasks — declared inputs (F51)", () => {
       },
     );
     expect(log).toEqual(["turn s-w-1", "clear s-w-1"]);
+  });
+});
+
+describe("runWorkerTasks — task tree (ATO-940)", () => {
+  type TurnOptions = Parameters<WorkerRunnerDeps["runTurn"]>[2];
+  const read = (): AgentLoopEvent => ({
+    type: "llm_event",
+    event: {
+      type: "tool_call_executed",
+      result: { tool: "os.fs.read", status: "ok", summary: "read main.js: 40 lines", details: {}, truncated: false },
+      batchIndex: 0,
+      batchSize: 1,
+    },
+  });
+  const PROPOSAL =
+    "Too big.\n```split_proposal\n" +
+    JSON.stringify({ tasks: [{ id: "a", instructions: "A" }, { id: "b", instructions: "B" }] }) +
+    "\n```";
+
+  /**
+   * A worker that reads every step; once steered it either keeps reading
+   * (`proposes: false`) or replies with a proposal on its next step.
+   */
+  function worker(proposes: boolean, steered: { at: number | null }) {
+    return async ({ options }: { options: TurnOptions }) => {
+      for (let step = 1; step <= 8; step += 1) {
+        if (options.signal?.aborted) {
+          return turnResult({ reason: "cancelled", stepCount: step - 1 });
+        }
+        if (proposes && steered.at !== null) {
+          options.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: PROPOSAL },
+          });
+          return turnResult({ stepCount: step });
+        }
+        options.eventHook?.({ type: "step_started", stepIndex: step - 1 });
+        options.eventHook?.(read());
+        options.eventHook?.({
+          type: "step_finished",
+          stepIndex: step - 1,
+          summary: "step done",
+          durationMs: 1,
+        });
+      }
+      return turnResult({ stepCount: 8 });
+    };
+  }
+
+  it("steers a worker that may split at the half-budget mark, then hands it back after the grace steps", async () => {
+    const steered = { at: null as number | null };
+    const steers: string[] = [];
+    const { deps } = harness(worker(false, steered));
+    deps.steerWorker = (_id, text) => {
+      steers.push(text);
+      steered.at = 1;
+      return true;
+    };
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      canProposeSplit: () => true,
+      signal: new AbortController().signal,
+    });
+    expect(steers).toHaveLength(1);
+    expect(steers[0]).toContain("split_proposal");
+    expect(result!.status).toBe("needs_orchestrator");
+    // Steered at 4 of 8, handed back two steps later.
+    expect(result!.reply).toMatch(/^handed back early: no file written by half the budget \(6 of 8 steps/);
+  });
+
+  it("keeps a proposal reply clear of the declared-file check: its files are the children's", async () => {
+    const steered = { at: null as number | null };
+    const { deps } = harness(worker(true, steered));
+    deps.steerWorker = () => {
+      steered.at = 1;
+      return true;
+    };
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      canProposeSplit: () => true,
+      signal: new AbortController().signal,
+    });
+    expect(result!.status).toBe("ok");
+    expect(result!.reply).toContain("```split_proposal");
+    expect(result!.error).toBeUndefined();
+  });
+
+  it("is the old hand-back when the task may not split", async () => {
+    const steers: string[] = [];
+    const { deps } = harness(worker(false, { at: null }));
+    deps.steerWorker = (_id, text) => {
+      steers.push(text);
+      return true;
+    };
+    const [result] = await runWorkerTasks(deps, {
+      ...BASE,
+      workerMaxSteps: 8,
+      tasks: [{ ...tasks(1)[0]!, files: ["a.js"] }],
+      maxWorkers: 1,
+      signal: new AbortController().signal,
+    });
+    expect(steers).toEqual([]);
+    expect(result!.reply).toMatch(/\(4 of 8 steps/);
   });
 });

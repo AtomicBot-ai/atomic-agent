@@ -1,6 +1,7 @@
 export { resolveRunMode } from "./resolve-run-mode.js";
 export type {
   ResolvedRunMode,
+  FusionEscalationTarget,
   ResolveRunModeOptions,
   RunModeDegradation,
   RunModeDegradationReason,

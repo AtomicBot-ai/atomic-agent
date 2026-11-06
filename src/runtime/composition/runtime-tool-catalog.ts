@@ -581,10 +581,15 @@ export function registerRuntimeFusionAndReadScope(input: {
   slotManager: FusionDelegateDeps["slotManager"];
   workingDir: string;
   logger: StructuredLogger;
+  turnBudget?: FusionDelegateDeps["turnBudget"];
+  liveWorkers?: FusionDelegateDeps["liveWorkers"];
+  steerWorker?: FusionDelegateDeps["steerWorker"];
+  orchestratorTurnSpendUsd?: FusionDelegateDeps["orchestratorTurnSpendUsd"];
 }): void {
   const { config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest, declaredInputs,
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
-    llama, approvals, dangerous, slotManager, workingDir, logger } = input;
+    llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
+    orchestratorTurnSpendUsd, liveWorkers, steerWorker } = input;
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -623,6 +628,32 @@ export function registerRuntimeFusionAndReadScope(input: {
           return null;
         }
       },
+      // The turn's $ / time caps (ATO-947), reset at each fusion turn's
+      // start by the loop; read only when a cap is configured.
+      ...(turnBudget === undefined ? {} : { turnBudget }),
+      ...(orchestratorTurnSpendUsd === undefined
+        ? {}
+        : { orchestratorTurnSpendUsd }),
+      // Escalation (ATO-942): one completion pinned to the configured
+      // escalation provider — never the fallback chain, so it cannot
+      // land on a model the operator did not pick for it.
+      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal }) => {
+        const provider = providerRegistry.getProvider(providerId);
+        if (provider === undefined) {
+          throw new Error(`escalation provider ${providerId} is not configured`);
+        }
+        const result = await provider.complete({
+          prompt,
+          maxOutputTokens,
+          signal,
+        });
+        return {
+          content: result.content,
+          ...(result.usage === undefined ? {} : { usage: result.usage }),
+        };
+      },
+      ...(liveWorkers === undefined ? {} : { liveWorkers }),
+      ...(steerWorker === undefined ? {} : { steerWorker }),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,

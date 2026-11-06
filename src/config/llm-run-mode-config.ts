@@ -96,7 +96,102 @@ export type UserLlmFusionConfig = {
    * Default 6. See `src/agent/review-stall.ts`.
    */
   reviewStallSteps?: number;
+  /**
+   * Spend cap for one fusion turn, in USD (ATO-947): the orchestrator's
+   * own priced completions plus every worker's, counted with the prompt
+   * cache discount. Once reached, the turn starts no new delegation and
+   * no new worker, and the orchestrator is told to say so plainly. Unset
+   * or `0`: no cap, as before. Unpriced (local) tokens count as $0.
+   */
+  turnBudgetUsd?: number;
+  /**
+   * Wall-clock cap for one fusion turn, in ms, measured from the turn's
+   * start (ATO-947). Same effect as `turnBudgetUsd` when reached. Unset
+   * or `0`: no cap.
+   */
+  turnTimeBudgetMs?: number;
+  /**
+   * Automatic escalation of a stuck worker (ATO-942). `"advisor"`: when a
+   * worker stalls (same result 3x, read-only for 6 steps) or its first
+   * answer is cut by its time limit, the escalation model reads a
+   * compressed trace of that node and sends the worker a short hint; the
+   * worker carries on. At most one automatic escalation per worker.
+   * Default `"off"`: nothing is escalated unless the person asks for it.
+   */
+  escalation?: FusionEscalationMode;
+  /**
+   * Behind a flag, default `false`: a worker that stays stuck after its
+   * advisor hint is stopped and its task re-run on the escalation model
+   * with what was found so far. Needs a priced escalation model, so the
+   * per-escalation cap can be enforced.
+   */
+  escalationReplace?: boolean;
+  /**
+   * The model escalations go to. Must name a configured provider that is
+   * not the worker leg. Default: the orchestrator leg.
+   */
+  escalationProvider?: string;
+  /** Spend cap for one escalation, in USD. Default 0.25. */
+  escalationMaxUsd?: number;
+  /**
+   * The trimmed judge (ATO-944). `"on"`: every task gets an acceptance
+   * checklist in its brief, built from the contract (checks, provides,
+   * declared files) plus its deliverable; after the work, failed facts
+   * and a fresh-context judge decide whether the task closes. A red list
+   * re-runs the task once, then is reported as failed. Default `"off"`.
+   */
+  judge?: "off" | "on";
+  /** The judge's model: a configured provider. Default: the orchestrator leg. */
+  judgeProvider?: string;
+  /**
+   * Automatic replanning (ATO-941): how many times one task may be sent
+   * back to the planner after it did not close (failed, judged red,
+   * handed back, out of steps or time). After a fan-out with such tasks
+   * the planner's next step admits only `fusion.delegate`, with the
+   * facts in front of it, so the turn goes on without the person typing
+   * "continue"; tasks that depend on a failed one in a later wave are
+   * held for the replan instead of run against missing inputs. Once a
+   * task's attempts are used, the planner is told to report it plainly.
+   * `0` (default): off, as before.
+   */
+  autoReplan?: number;
+  /**
+   * The task tree (ATO-940). Off by default. On, a worker whose task is
+   * too big (no write by half its step budget, or its first answer cut
+   * off) may reply with a `split_proposal` instead of failing; the
+   * delegate validates it like delegate args and hands the subtasks out
+   * as a new wave under the parent task, which then closes on its
+   * children and its own contract. Workers still never call
+   * `fusion.delegate` themselves.
+   */
+  taskTree?: UserFusionTaskTreeConfig;
 };
+
+export type UserFusionTaskTreeConfig = {
+  /** Default `false`: the tree is flat, as before. */
+  enabled?: boolean;
+  /**
+   * How deep the tree may grow, counting the orchestrator's own tasks as
+   * depth 1. Default 2 (one level of split); hard-capped at 3.
+   */
+  maxDepth?: number;
+  /** Every node of one fan-out, the orchestrator's tasks included. Default 24. */
+  maxNodes?: number;
+};
+
+/** The tree never grows deeper than this, whatever the file says (ATO-940). */
+export const FUSION_TASK_TREE_MAX_DEPTH = 3;
+export const DEFAULT_FUSION_TASK_TREE_DEPTH = 2;
+export const DEFAULT_FUSION_TASK_TREE_MAX_NODES = 24;
+/** Upper bound on `taskTree.maxNodes`: each node is one worker turn. */
+export const FUSION_TASK_TREE_MAX_NODES_MAX = 64;
+
+export type FusionEscalationMode = "off" | "advisor";
+export const FUSION_ESCALATION_MODES: readonly FusionEscalationMode[] = [
+  "off",
+  "advisor",
+];
+export const DEFAULT_FUSION_ESCALATION_MAX_USD = 0.25;
 
 export type UserLlmRunModeConfig = {
   mode?: RunModeName;
@@ -147,6 +242,10 @@ export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
  */
 export const DEFAULT_FUSION_REVIEW_STALL_STEPS = 6;
 export const FUSION_REVIEW_STALL_STEPS_MAX = 1000;
+/** Upper bound on `autoReplan`: replans per task in one turn. */
+export const FUSION_AUTO_REPLAN_MAX = 5;
+/** Upper bound on `turnBudgetUsd`; anything larger is a typo. */
+export const FUSION_TURN_BUDGET_USD_MAX = 10_000;
 
 export type RunModeProviderRef = { readonly id: string; readonly kind: string };
 
@@ -194,6 +293,26 @@ function parseBoundedInt(
     throw new ConfigValidationError(
       field,
       `expected an integer ${min}-${max}, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw;
+}
+
+function parseBoundedNumber(
+  raw: unknown,
+  field: string,
+  min: number,
+  max: number,
+): number {
+  if (
+    typeof raw !== "number" ||
+    !Number.isFinite(raw) ||
+    raw < min ||
+    raw > max
+  ) {
+    throw new ConfigValidationError(
+      field,
+      `expected a number ${min}-${max}, got ${JSON.stringify(raw)}`,
     );
   }
   return raw;
@@ -301,6 +420,113 @@ function parseFusion(
       `${field}.reviewStallSteps`,
       0,
       FUSION_REVIEW_STALL_STEPS_MAX,
+    );
+  }
+  if (obj.turnBudgetUsd !== undefined) {
+    out.turnBudgetUsd = parseBoundedNumber(
+      obj.turnBudgetUsd,
+      `${field}.turnBudgetUsd`,
+      0,
+      FUSION_TURN_BUDGET_USD_MAX,
+    );
+  }
+  if (obj.escalation !== undefined) {
+    if (
+      typeof obj.escalation !== "string" ||
+      !FUSION_ESCALATION_MODES.includes(obj.escalation as FusionEscalationMode)
+    ) {
+      throw new ConfigValidationError(
+        `${field}.escalation`,
+        `expected ${FUSION_ESCALATION_MODES.join("|")}`,
+      );
+    }
+    out.escalation = obj.escalation as FusionEscalationMode;
+  }
+  if (obj.escalationReplace !== undefined) {
+    if (typeof obj.escalationReplace !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.escalationReplace`,
+        "expected boolean",
+      );
+    }
+    out.escalationReplace = obj.escalationReplace;
+  }
+  if (obj.escalationProvider !== undefined) {
+    out.escalationProvider = parseLegProviderId(
+      obj.escalationProvider,
+      providers,
+      `${field}.escalationProvider`,
+    );
+  }
+  if (obj.escalationMaxUsd !== undefined) {
+    out.escalationMaxUsd = parseBoundedNumber(
+      obj.escalationMaxUsd,
+      `${field}.escalationMaxUsd`,
+      0,
+      1_000,
+    );
+  }
+  if (obj.judge !== undefined) {
+    if (obj.judge !== "off" && obj.judge !== "on") {
+      throw new ConfigValidationError(`${field}.judge`, "expected off|on");
+    }
+    out.judge = obj.judge;
+  }
+  if (obj.judgeProvider !== undefined) {
+    out.judgeProvider = parseLegProviderId(
+      obj.judgeProvider,
+      providers,
+      `${field}.judgeProvider`,
+    );
+  }
+  if (obj.autoReplan !== undefined) {
+    out.autoReplan = parseBoundedInt(
+      obj.autoReplan,
+      `${field}.autoReplan`,
+      0,
+      FUSION_AUTO_REPLAN_MAX,
+    );
+  }
+  if (obj.turnTimeBudgetMs !== undefined) {
+    out.turnTimeBudgetMs = parseBoundedInt(
+      obj.turnTimeBudgetMs,
+      `${field}.turnTimeBudgetMs`,
+      0,
+      86_400_000,
+    );
+  }
+  if (obj.taskTree !== undefined) {
+    out.taskTree = parseTaskTree(obj.taskTree, `${field}.taskTree`);
+  }
+  return out;
+}
+
+function parseTaskTree(raw: unknown, field: string): UserFusionTaskTreeConfig {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const out: UserFusionTaskTreeConfig = {};
+  if (obj.enabled !== undefined) {
+    if (typeof obj.enabled !== "boolean") {
+      throw new ConfigValidationError(`${field}.enabled`, "expected boolean");
+    }
+    out.enabled = obj.enabled;
+  }
+  if (obj.maxDepth !== undefined) {
+    out.maxDepth = parseBoundedInt(
+      obj.maxDepth,
+      `${field}.maxDepth`,
+      1,
+      FUSION_TASK_TREE_MAX_DEPTH,
+    );
+  }
+  if (obj.maxNodes !== undefined) {
+    out.maxNodes = parseBoundedInt(
+      obj.maxNodes,
+      `${field}.maxNodes`,
+      1,
+      FUSION_TASK_TREE_MAX_NODES_MAX,
     );
   }
   return out;

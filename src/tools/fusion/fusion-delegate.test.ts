@@ -1645,3 +1645,104 @@ describe("fusion.delegate — contract inputs (F51)", () => {
     expect(log).toHaveLength(6);
   });
 });
+
+describe("fusion.delegate — task tree (ATO-940)", () => {
+  const PROPOSAL =
+    "Too big for one worker.\n```split_proposal\n" +
+    JSON.stringify({
+      reason: "two parts",
+      tasks: [
+        { id: "a", title: "Part A", instructions: "Write part A" },
+        { id: "b", title: "Part B", instructions: "Write part B" },
+      ],
+    }) +
+    "\n```";
+
+  /** t1 proposes a split; everything else replies "done". */
+  function scripted(briefs: string[]): FusionDelegateDeps["runTurn"] {
+    return async (_session, userMessage, options) => {
+      briefs.push(userMessage);
+      const text =
+        userMessage.includes("Write part A") || userMessage.includes("Write part B")
+          ? "part written"
+          : userMessage.includes("Do one")
+            ? PROPOSAL
+            : "done";
+      options.eventHook?.({
+        type: "llm_event",
+        event: { type: "assistant_reply", text },
+      });
+      return turnResult();
+    };
+  }
+
+  it("is the flat fan-out when the flag is off: a proposal is just a reply", async () => {
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(deps({ runTurn: scripted(briefs) }));
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(briefs).toHaveLength(2);
+    expect(briefs.some((b) => b.includes("If this task is too big"))).toBe(false);
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]).toMatchObject({ id: "t1", status: "ok" });
+    expect(rows[0]?.reply).toContain("```split_proposal");
+    expect(result.details.taskTree).toBeUndefined();
+    expect(result.summary).not.toContain("Task tree:");
+  });
+
+  it("dispatches the proposed subtasks under their parent and returns the tree", async () => {
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: scripted(briefs),
+        resolveRunMode: () =>
+          fusionMode({ taskTree: { maxDepth: 2, maxNodes: 24 } }),
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    // t1, t2, then t1's two children.
+    expect(briefs).toHaveLength(4);
+    expect(briefs[0]).toContain("If this task is too big");
+    const childBriefs = briefs.filter((b) => b.includes("Write part"));
+    expect(childBriefs).toHaveLength(2);
+    for (const brief of childBriefs) {
+      expect(brief).toContain("Part of a larger task");
+      // Depth 2 is the limit: a child is not offered a split of its own.
+      expect(brief).not.toContain("If this task is too big");
+    }
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows.map((r) => r.id)).toEqual(["t1", "t2"]);
+    expect(rows[0]?.status).toBe("ok");
+    expect(rows[0]?.reply).toContain("Split by the worker into 2 subtasks (two parts)");
+    expect(rows[0]?.reply).toContain("[t1/a] ok");
+    const tree = result.details.taskTree as {
+      nodes: number;
+      splits: number;
+      roots: Array<{ id: string; children: Array<{ id: string; depth: number }> }>;
+    };
+    expect(tree.nodes).toBe(4);
+    expect(tree.splits).toBe(1);
+    expect(tree.roots.map((r) => r.id)).toEqual(["t1", "t2"]);
+    expect(tree.roots[0]?.children).toMatchObject([
+      { id: "t1/a", depth: 2 },
+      { id: "t1/b", depth: 2 },
+    ]);
+    expect(result.summary).toContain("Task tree: 1 task split by their workers");
+  });
+
+  it("refuses a proposal past the node cap and leaves the task to the orchestrator", async () => {
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: scripted(briefs),
+        resolveRunMode: () =>
+          fusionMode({ taskTree: { maxDepth: 2, maxNodes: 3 } }),
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(briefs).toHaveLength(2);
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]?.status).toBe("needs_orchestrator");
+    expect(rows[0]?.error).toMatch(/split proposal refused: .*limit is 3/);
+    expect(result.details.taskTree).toMatchObject({ splits: 0, rejected: 1, nodes: 2 });
+  });
+});
