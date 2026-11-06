@@ -12,7 +12,9 @@ import { join } from "node:path";
 import {
   applyDeclaredFileReport,
   applyNoChangesRule,
+  describeDegenerateContent,
   inspectDeclaredFiles,
+  isPlaceholderReply,
   MTIME_SLACK_MS,
 } from "./declared-files.js";
 import type { WorkerTaskResult } from "./worker-result.js";
@@ -68,6 +70,93 @@ describe("inspectDeclaredFiles", () => {
       unchanged: [],
       modified: ["out.js"],
     });
+  });
+});
+
+describe("inspectDeclaredFiles: what a written file contains (ATO-883)", () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "fusion-declared-content-"));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("flags a written file that is only a placeholder or one escaped line", async () => {
+    const startedAt = Date.now();
+    writeFileSync(join(dir, "scene.js"), "...\n");
+    writeFileSync(join(dir, "app.js"), "<full file content>");
+    const escaped = Array.from({ length: 12 }, (_, i) => `const v${i} = ${i};`).join("\\n");
+    writeFileSync(join(dir, "workshop.js"), escaped);
+    writeFileSync(join(dir, "ok.js"), "export const a = 1;\n// ... more later\n");
+
+    const report = await inspectDeclaredFiles(
+      ["scene.js", "app.js", "workshop.js", "ok.js"],
+      dir,
+      startedAt,
+    );
+    expect(report.modified).toEqual(["scene.js", "app.js", "workshop.js", "ok.js"]);
+    expect(report.degenerate?.map((d) => d.path)).toEqual([
+      "scene.js",
+      "app.js",
+      "workshop.js",
+    ]);
+    expect(report.degenerate?.[0]?.reason).toBe('is only the placeholder "..."');
+    expect(report.degenerate?.[2]?.reason).toMatch(/one line with 11 literal \\n sequences/);
+    expect(report).not.toHaveProperty("emptied");
+  });
+
+  it("records an empty written file separately, and never reads an untouched input", async () => {
+    const startedAt = Date.now();
+    writeFileSync(join(dir, "__init__.py"), "");
+    writeFileSync(join(dir, "spec.md"), "...");
+    const past = new Date(startedAt - 60_000);
+    utimesSync(join(dir, "spec.md"), past, past);
+
+    const report = await inspectDeclaredFiles(["__init__.py", "spec.md"], dir, startedAt);
+    expect(report.emptied).toEqual(["__init__.py"]);
+    expect(report.unchanged).toEqual(["spec.md"]);
+    expect(report).not.toHaveProperty("degenerate");
+  });
+});
+
+describe("describeDegenerateContent", () => {
+  it.each([
+    "...",
+    "…",
+    "// ...",
+    "/* ... */",
+    "[...]",
+    "<full file content>",
+    "<content>",
+    "<rest of the code here>",
+    "{file content}",
+  ])("catches the placeholder %j", (text) => {
+    expect(describeDegenerateContent(text)).toMatch(/^is only the placeholder/);
+  });
+
+  it.each([
+    "",
+    "x",
+    "<br>",
+    "{}",
+    "[1, 2, 3]",
+    "export const a = 1; // ...",
+    // A minified bundle: one line, the odd escaped newline in a string.
+    `${"var a=1;".repeat(400)}console.log("a\\nb");`,
+  ])("leaves %j alone", (text) => {
+    expect(describeDegenerateContent(text)).toBeUndefined();
+  });
+});
+
+describe("isPlaceholderReply", () => {
+  it("is true for an empty or placeholder reply, false for a report", () => {
+    expect(isPlaceholderReply("")).toBe(true);
+    expect(isPlaceholderReply("  ...  ")).toBe(true);
+    expect(isPlaceholderReply("<full file content>")).toBe(true);
+    expect(isPlaceholderReply("Wrote js/scene.js (367 lines).")).toBe(false);
   });
 });
 
@@ -166,6 +255,46 @@ describe("applyDeclaredFileReport", () => {
     });
     expect(result.status).toBe("ok");
     expect(result.notes).toEqual(["spec.md, README.md unchanged by this task"]);
+  });
+
+  it("fails an ok row whose declared file is a placeholder (ATO-883)", () => {
+    const result = applyDeclaredFileReport(row({ tools: { calls: 2, errors: 0, writes: 2, byTool: {} } }), {
+      missing: [],
+      unchanged: [],
+      modified: ["js/scene.js"],
+      degenerate: [{ path: "js/scene.js", reason: 'is only the placeholder "..."' }],
+    });
+    expect(result).toMatchObject({
+      status: "failed",
+      error: 'declared file js/scene.js is only the placeholder "..."',
+    });
+  });
+
+  it("notes a degenerate file on a status that already says the work is incomplete", () => {
+    const result = applyDeclaredFileReport(row({ status: "max_steps" }), {
+      missing: [],
+      unchanged: [],
+      modified: ["a.js"],
+      degenerate: [{ path: "a.js", reason: "is one line with 9 literal \\n sequences: the content was written escaped" }],
+    });
+    expect(result.status).toBe("max_steps");
+    expect(result.notes).toEqual([
+      "declared file a.js is one line with 9 literal \\n sequences: the content was written escaped",
+    ]);
+  });
+
+  it("only notes an emptied file and an ok reply that says nothing", () => {
+    const result = applyDeclaredFileReport(row({ reply: "..." }), {
+      missing: [],
+      unchanged: [],
+      modified: ["__init__.py", "js/scene.js"],
+      emptied: ["__init__.py"],
+    });
+    expect(result.status).toBe("ok");
+    expect(result.notes).toEqual([
+      "__init__.py empty after this task",
+      "the worker's reply is empty or a placeholder: it reported nothing, so check its files before relying on them",
+    ]);
   });
 
   it("returns the row untouched when there is nothing to report", () => {
