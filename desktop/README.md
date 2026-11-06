@@ -228,6 +228,11 @@ Real, driven by the running agent:
   `…`. Long args, summaries and results wrap inside the card;
   nothing widens the transcript. Three or more consecutive calls to the same
   tool fold into one line.
+- `/status` (ATO-965, `renderer/status-snapshot.js`) prints a snapshot of
+  the turn running in the chat on screen as a system row: what runs now, the
+  last result (tool name and how it ended, never its output), whether an
+  approval waits on you, time since the send and tool calls so far. Same
+  wording as the terminal's and Telegram's `/status`.
 - a finished turn folds its steps (ATO-464, `renderer/turn-summary.js`):
   while a turn runs, its reasoning rows, tool calls and approvals are drawn
   live, one by one. Once it has finished, the reasoning rows, the calls and
