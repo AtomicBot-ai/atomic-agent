@@ -21190,19 +21190,21 @@ async function applyTraceDurations() {
    prose can land goes through it — the reply body, the tool-card summary and
    the plan hand-off — so they cannot drift apart again.
 
-   It runs on ALREADY-ESCAPED text and only ever inserts tags of its own, so
-   nothing a model writes can become markup. Code spans and fences are lifted
+   It escapes every piece of the model's text it writes and only ever inserts
+   tags of its own, so nothing a model writes can become markup; DOMPurify
+   checks the result again. Code spans and fences are lifted
    out first and put back last: markdown inside code is not markdown.
    --------------------------------------------------------------- */
-/* ATO-1251 / ATO-664: the block parser lives in md-render.js (loaded first):
-   tables with Copy, nested and task lists, callouts, key/value fields,
-   Pros/Cons comparisons, link and file cards. Its contract is this
-   function's: escaped text in, tags of its own out, code held as
-   placeholders that renderProseFresh restores after its link and chip
-   passes — a path in backticks is a path the model wrote literally, not a
-   file to offer a button for, unless the span holds nothing else. */
-function renderMarkdown(escaped) {
-  return mdRender(escaped);
+/* ATO-1251 / ATO-664: md-render.js (loaded first) parses with marked and
+   draws the window's blocks: tables with Copy, nested and task lists,
+   callouts, key/value fields, Pros/Cons comparisons, link and file cards,
+   footnotes. Raw text in (it escapes everything it writes), tags of its own
+   out, code held as placeholders that renderProseFresh restores after its
+   link and chip passes — a path in backticks is a path the model wrote
+   literally, not a file to offer a button for, unless the span holds nothing
+   else. */
+function renderMarkdown(text) {
+  return mdRender(text);
 }
 
 /* ATO-1023: a finished message's markup is the same on every paint, so it is
@@ -21242,7 +21244,7 @@ function renderProseFresh(text) {
   // drive-letter chip below.
   const FILE_RE_HERE = IS_WIN ? /(?<![\p{L}\p{N}_\/:])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu : FILE_RE;
   // \u0000 marks held code and \u0001 a chip below, so neither may come from the text itself.
-  const md = renderMarkdown(esc(text).replace(/[\u0000\u0001]/g, ''));
+  const md = renderMarkdown(text.replace(/[\u0000\u0001]/g, ''));
   let html = md.html;
   /* Chat review (Д23): a chip's markup carries its path in two attributes,
      and the drive-letter pass below would find a Windows path there and wrap
@@ -21274,7 +21276,8 @@ function renderProseFresh(text) {
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
     return raw && codeSpanIsPath(raw) ? chip(raw, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
   });
-  return html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]);
+  // ATO-664: the finished markup through DOMPurify too (md-render.js), behind the escaping.
+  return mdSanitize(html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]));
 }
 /** ATO-666: a fenced block gets a header with its language (the fence's
     `data-lang`, when the fence named one) and a Copy button. The header sits
