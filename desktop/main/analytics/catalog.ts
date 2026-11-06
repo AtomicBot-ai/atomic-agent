@@ -137,9 +137,13 @@ export const EVENTS: Record<string, EventSpec> = {
     /* ATO-202: a model list that did not come back because nothing answered,
        the certificate was not trusted, or our deadline ran out is not an
        empty catalogue. */
+    /* ATO-306: a refused key, a provider's own error and a list that failed
+       otherwise are not an empty catalogue either; the preset says which
+       provider (the same list as provider_setup_started). */
     props: {
       step: en(["onboarding", "settings"]),
-      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "other"]),
+      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "key_rejected", "provider_error", "list_failed", "other"]),
+      provider_preset: en(PROVIDER_PRESETS, { fallback: "custom" }),
     },
   },
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
