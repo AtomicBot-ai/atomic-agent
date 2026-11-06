@@ -160,6 +160,49 @@ describe("AnalyticsStateStore", () => {
     expect(desktop.isOtherSurfaceAppInstalledSent("desktop")).toBe(true);
   });
 
+  it("keeps first_message_sent and model_configured per surface (ATO-1262)", () => {
+    const terminal = new AnalyticsStateStore(file, { surface: "tui" });
+    const desktop = new AnalyticsStateStore(file, { surface: "desktop" });
+    terminal.markFirstMessageSent();
+    terminal.markModelConfiguredSent();
+    // The terminal reporting first no longer hides the desktop's events.
+    expect(desktop.isFirstMessageSent()).toBe(false);
+    expect(desktop.isModelConfiguredSent()).toBe(false);
+    desktop.markFirstMessageSent();
+    desktop.markModelConfiguredSent();
+    const persisted = JSON.parse(readFileSync(file, "utf8"));
+    expect(persisted.firstMessageSent).toBe(true);
+    expect(persisted.firstMessageSentDesktop).toBe(true);
+    expect(persisted.modelConfiguredSent).toBe(true);
+    expect(persisted.modelConfiguredSentDesktop).toBe(true);
+    // `cli` shares the terminal's flags; an explicit surface wins over the default.
+    const cli = new AnalyticsStateStore(file, { surface: "cli" });
+    expect(cli.isFirstMessageSent()).toBe(true);
+    expect(cli.isFirstMessageSent("desktop")).toBe(true);
+  });
+
+  it("reads a pre-ATO-1262 file as terminal reported, desktop not", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
+    writeFileSync(
+      file,
+      JSON.stringify({ installId: id, appInstalledSent: true, firstMessageSent: true, modelConfiguredSent: true }),
+      "utf8",
+    );
+    expect(new AnalyticsStateStore(file, { surface: "tui" }).isFirstMessageSent()).toBe(true);
+    const desktop = new AnalyticsStateStore(file, { surface: "desktop" });
+    expect(desktop.isFirstMessageSent()).toBe(false);
+    expect(desktop.isModelConfiguredSent()).toBe(false);
+    // No surface at all keeps the old behaviour: the terminal's flags.
+    expect(new AnalyticsStateStore(file).isFirstMessageSent()).toBe(true);
+  });
+
+  it("sees a first message the same surface sent from another process", () => {
+    const a = new AnalyticsStateStore(file, { surface: "desktop" });
+    const b = new AnalyticsStateStore(file, { surface: "desktop" });
+    a.markFirstMessageSent();
+    expect(b.isFirstMessageSent()).toBe(true);
+  });
+
   it("keeps keys a newer build wrote", () => {
     const id = "11111111-2222-4333-8444-555555555555";
     writeFileSync(
