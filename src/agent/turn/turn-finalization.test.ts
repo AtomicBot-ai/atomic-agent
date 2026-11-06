@@ -148,3 +148,17 @@ describe("turn finalization seam", () => {
     expect(facade.MAX_SURFACED_NOTE_ALLOWLIST).toBe(MAX_SURFACED_NOTE_ALLOWLIST);
   });
 });
+
+describe("formatTaskStoppedReply for a barren leg", () => {
+  it("does not claim the whole task was the failing stretch", () => {
+    const text = formatTaskStoppedReply({
+      cause: "no_progress",
+      stepsTaken: 2400,
+      stepCeiling: 5000,
+      elapsedMs: 8 * 60 * 60_000,
+    });
+    expect(text).toContain("nothing came back");
+    expect(text).toContain("2400 steps over ~480 min into this task");
+    expect(text).not.toMatch(/my last 2400 steps/);
+  });
+});

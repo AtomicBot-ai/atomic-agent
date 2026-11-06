@@ -79,3 +79,17 @@ export const READ_REPEAT_WARNING_THRESHOLD = 2;
  * counter resets the moment a write lands (see `isSuccessfulWrite`).
  */
 export const OUTCOME_REPEAT_WARNING_THRESHOLD = 3;
+
+/**
+ * No-progress streak at which a deliberate poll is refused (see
+ * `progress/poll-command.ts`): `{wait: id}`, `{jobs: true}`, or a command
+ * line that sleeps before it looks. Waiting on a long build or download
+ * returns "still running" many times in a row by design, and at the
+ * generic `criticalThreshold` (5) the fifth identical poll was refused
+ * and the third refusal ended the turn. At 20 a poll with `sleep 60`
+ * waits ~20 minutes of identical answers before it is stopped; a poll
+ * stuck on a dead process is still stopped. It never sits below the
+ * generic threshold, and it is reachable only while the history window
+ * (`historySize`, 30 by default) can hold that many polls.
+ */
+export const POLL_NO_PROGRESS_THRESHOLD = 20;
