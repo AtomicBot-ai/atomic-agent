@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { TransportError } from "../llm/index.js";
 import { scrubError } from "./error-scrubber.js";
 import {
+  bucketRefusedWait,
   classifyPortClass,
   classifyRequestRoute,
   sanitizeLlmFailureTags,
@@ -110,6 +111,68 @@ describe("request_route and port_class (ATO-872)", () => {
   });
 });
 
+describe("local refusal tags (ATO-421, ATO-769)", () => {
+  it("a refused managed turn on a dead process says the engine was not alive and how long it waited", () => {
+    expect(sanitizeLlmFailureTags({
+      providerId: "local-llama",
+      localEngine: "atomic-core",
+      outageWaitedMs: 8_000,
+      connectionRefused: true,
+      engineLiveness: "dead",
+    })).toMatchObject({
+      local_engine: "atomic-core",
+      local_engine_alive: "no",
+      refused_wait_ms: "8s_to_30s",
+    });
+  });
+
+  it("maps every liveness to yes, no or unknown, never the raw value", () => {
+    const alive = (engineLiveness: string | undefined) =>
+      sanitizeLlmFailureTags({ localEngine: "llama-server", connectionRefused: true, ...(engineLiveness === undefined ? {} : { engineLiveness }) })?.local_engine_alive;
+    expect(alive("alive")).toBe("yes");
+    expect(alive("dead")).toBe("no");
+    expect(alive("no_pid")).toBe("no");
+    expect(alive("unknown")).toBe("unknown");
+    expect(alive("pid 4242 at /Users/someone")).toBe("unknown");
+    expect(alive(undefined)).toBe("unknown");
+  });
+
+  it("an external engine is never judged alive or dead", () => {
+    expect(sanitizeLlmFailureTags({ localEngine: "external", connectionRefused: true, engineLiveness: "alive" })).toEqual({
+      local_engine: "external",
+      local_engine_alive: "unknown",
+      refused_wait_ms: "0",
+    });
+  });
+
+  it("a refusal on a link with no known engine reports local_engine unknown", () => {
+    expect(sanitizeLlmFailureTags({ providerId: "groq", connectionRefused: true })).toEqual({
+      provider_id: "groq",
+      local_engine: "unknown",
+      local_engine_alive: "unknown",
+      refused_wait_ms: "0",
+    });
+  });
+
+  it("adds no refusal tags when the connection was not refused", () => {
+    const tags = sanitizeLlmFailureTags({ localEngine: "atomic-core", engineLiveness: "dead", outageWaitedMs: 1_000 });
+    expect(tags?.local_engine_alive).toBeUndefined();
+    expect(tags?.refused_wait_ms).toBeUndefined();
+  });
+
+  it("buckets the wait on the edges the turn loop acts on", () => {
+    expect(bucketRefusedWait(0)).toBe("0");
+    expect(bucketRefusedWait(1)).toBe("under_8s");
+    expect(bucketRefusedWait(7_999)).toBe("under_8s");
+    expect(bucketRefusedWait(8_000)).toBe("8s_to_30s");
+    expect(bucketRefusedWait(30_000)).toBe("30s_to_2m");
+    expect(bucketRefusedWait(120_000)).toBe("2m_to_5m");
+    expect(bucketRefusedWait(300_000)).toBe("5m_plus");
+    expect(bucketRefusedWait(Number.NaN)).toBe("unknown");
+    expect(bucketRefusedWait(-5)).toBe("unknown");
+  });
+});
+
 describe("llm_failure context through scrubber and envelope", () => {
   const refused = () => new TransportError("fetch failed", null, "http://127.0.0.1:8080/v1");
 
@@ -154,6 +217,28 @@ describe("llm_failure context through scrubber and envelope", () => {
     expect(JSON.stringify(tags)).not.toContain(":8080");
   });
 
+  it("a refused turn carries the refusal tags and no address, port or path", () => {
+    const ev = scrubError(refused(), {
+      source: "llm_failure",
+      category: "transport",
+      llmFailure: {
+        providerId: "local-llama",
+        localEngine: "llama-server",
+        outageWaitedMs: 9_500,
+        daemonState: "no_pid",
+        connectionRefused: true,
+        engineLiveness: "no_pid",
+        requestUrl: "http://127.0.0.1:8080/v1/chat/completions",
+      },
+    });
+    const { tags } = payloadOf(buildEnvelope(DSN, ev, META).body);
+    expect(tags).toMatchObject({ local_engine: "llama-server", local_engine_alive: "no", refused_wait_ms: "8s_to_30s" });
+    const serialized = JSON.stringify(tags);
+    expect(serialized).not.toContain("127.0.0.1");
+    expect(serialized).not.toContain(":8080");
+    expect(serialized).not.toContain("/v1");
+  });
+
   it("the new tags never change the fingerprint", () => {
     const bare = scrubError(refused(), { source: "llm_failure", category: "transport" });
     const tagged = scrubError(refused(), {
@@ -164,6 +249,9 @@ describe("llm_failure context through scrubber and envelope", () => {
         localEngine: "atomic-core",
         daemonState: "no_pid",
         requestUrl: "http://127.0.0.1:8080/v1/chat/completions",
+        connectionRefused: true,
+        engineLiveness: "no_pid",
+        outageWaitedMs: 8_000,
       },
     });
     expect(payloadOf(buildEnvelope(DSN, tagged, META).body).fingerprint).toEqual(

@@ -118,7 +118,8 @@ export interface ScrubbedErrorEvent {
   /**
    * `llm_failure` turn context as ready-made tags (`provider_id`,
    * `local_engine`, `outage_waited_ms`, `outage_attempts`,
-   * `daemon_state`), already reduced to fixed words and numbers by
+   * `daemon_state`, and for a refused connection `local_engine_alive`
+   * and `refused_wait_ms`), already reduced to fixed words and numbers by
    * `sanitizeLlmFailureTags`.
    */
   llmFailureTags?: Record<string, string>;
