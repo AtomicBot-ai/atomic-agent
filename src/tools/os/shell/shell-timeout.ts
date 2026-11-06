@@ -22,15 +22,26 @@ export interface ResolvedShellTimeout {
 }
 
 /**
- * An explicit `timeoutMs` (a finite number; `0` or negative = none)
- * wins; anything else — omitted, `null`, a string — takes the configured
- * default, where `0` (or nothing configured) again means no limit.
+ * An explicit `timeoutMs` wins: a positive number is the limit, a
+ * negative one (`-1`) means none. Anything else — omitted, `null`, a
+ * string, and `0` — takes the configured default, where `0` (or nothing
+ * configured) means no limit.
+ *
+ * `0` reads as omitted because some models (GPT-6 Astra and the like)
+ * fill every optional field with zero (ATO-1175, the same family as the
+ * zero `wait` / `kill` of ATO-891). Read as "no limit", that zero turned
+ * off the default detach (F47) on every call and let a `wait` block for
+ * the whole turn. "No limit" has to be asked for on purpose: `-1`.
  */
 export function resolveShellTimeout(
   rawTimeoutMs: unknown,
   defaultTimeoutMs: number,
 ): ResolvedShellTimeout {
-  if (typeof rawTimeoutMs === "number" && Number.isFinite(rawTimeoutMs)) {
+  if (
+    typeof rawTimeoutMs === "number" &&
+    Number.isFinite(rawTimeoutMs) &&
+    rawTimeoutMs !== 0
+  ) {
     return { timeoutMs: Math.max(0, rawTimeoutMs), source: "explicit" };
   }
   const fallback =
@@ -63,7 +74,7 @@ export function formatShellElapsed(ms: number): string {
  * what stopped it and what to pass for a longer run.
  */
 export function formatShellTimeoutNotice(timeout: ResolvedShellTimeout): string {
-  return `stopped after ${formatShellDuration(timeout.timeoutMs)} (timeoutMs) — output so far below; pass a larger timeoutMs for a longer run, or 0 for no limit`;
+  return `stopped after ${formatShellDuration(timeout.timeoutMs)} (timeoutMs) — output so far below; pass a larger timeoutMs for a longer run, or -1 for no limit`;
 }
 
 export interface ShellDetachNoticeInput {
@@ -99,9 +110,9 @@ export function formatShellDetachNotice(input: ShellDetachNoticeInput): string {
 export function describeShellTimeoutDefault(defaultTimeoutMs: number): string {
   if (Number.isFinite(defaultTimeoutMs) && defaultTimeoutMs > 0) {
     const limit = formatShellDuration(defaultTimeoutMs);
-    return `Timeout: default ${limit} — a command still running then is not killed but detached as a job, and the result names it: {"wait": id} waits for it (up to another ${limit} per call; timeoutMs sets the wait), {"kill": id} stops it, {"jobs": true} lists this session's jobs; a job dies when the turn ends unless the call carried keep: true. Pass \`timeoutMs\` to stop the command at an explicit limit instead, \`0\` for none.`;
+    return `Timeout: default ${limit} — a command still running then is not killed but detached as a job, and the result names it: {"wait": id} waits for it (up to another ${limit} per call; timeoutMs sets the wait), {"kill": id} stops it, {"jobs": true} lists this session's jobs; a job dies when the turn ends unless the call carried keep: true. Pass \`timeoutMs\` to stop the command at an explicit limit instead, \`-1\` for none (\`0\` keeps this default).`;
   }
-  return "By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit.";
+  return "By default there is no timeout (the command runs until it exits or the turn is cancelled); pass `timeoutMs` to set an explicit limit (`-1` or `0` = none).";
 }
 
 /**
