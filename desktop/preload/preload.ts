@@ -88,6 +88,9 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
   projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),
   projectTrustAnswer: (body: unknown) => ipcRenderer.invoke("agent:projectTrustAnswer", body),
+  /** ATO-1144: the saved approval rules, and removing one of the global file's. */
+  approvalRules: (sessionId?: string | null) => ipcRenderer.invoke("agent:approvalRules", sessionId),
+  approvalRuleDelete: (id: string) => ipcRenderer.invoke("agent:approvalRuleDelete", id),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
