@@ -217,6 +217,23 @@ test('the output budget leaves room for thinking, capped by the entry\'s maxOutp
   assert.equal(M.improveMaxTokens(0), 4096);
 });
 
+test('the temperature follows the model: 0.7, Kimi K3.1 only 1, none for OpenAI reasoning models (ATO-1216)', () => {
+  const body = (model) => M.improveRequestBody(model, 'image', 'a fox');
+  assert.equal(body('acme/chat-1').temperature, 0.7);
+  assert.equal(body('gpt-4o').temperature, 0.7);
+  assert.equal(body('kimi-k2.6').temperature, 0.7);
+  assert.equal(body('kimi-k3').temperature, 0.7);
+  assert.equal(body('kimi-k3.1-pro').temperature, 1);
+  assert.equal(body('moonshotai/kimi-k3.1-pro-highspeed').temperature, 1);
+  for (const model of ['gpt-5', 'openai/gpt-5-mini', 'o3', 'o4-mini']) {
+    const b = body(model);
+    assert.equal('temperature' in b, false, model);
+    assert.equal('max_tokens' in b, false, model);
+    assert.equal(b.max_completion_tokens, 4096, model);
+  }
+  assert.equal(body('olmo-3').temperature, 0.7);
+});
+
 test('a reply that only thought says so; a cut-off think block is not taken as the prompt', async () => {
   assert.equal(M.improvedPromptOf({ choices: [{ message: { content: '<think>the fox should be red, and' } }] }), '');
   assert.equal(M.improveReplyOnlyThought({ choices: [{ message: { content: '', reasoning_content: 'hmm' } }] }), true);

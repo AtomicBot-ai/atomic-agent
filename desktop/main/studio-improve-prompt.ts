@@ -111,6 +111,26 @@ export function improveMaxTokens(maxOutputTokens?: number): number {
 }
 
 /**
+ * What a model takes as `temperature` and how its output cap is spelled.
+ * A mirror of the agent's rule in src/llm/provider/openai/model-params.ts
+ * (desktop/main builds on its own and cannot import agent code); keep the
+ * two in step. OpenAI's reasoning models (o1, o3, o4, gpt-5) refuse
+ * `temperature` and want `max_completion_tokens`; Kimi K3.1 accepts only
+ * temperature 1 (Kimi K2.x takes any value; plain kimi-k3 is unverified and
+ * left free). Read after any vendor prefix, so `moonshotai/kimi-k3.1-pro`
+ * counts.
+ */
+export function improveModelParams(model: string): {
+  temperature: "omit" | number | null;
+  capField: "max_tokens" | "max_completion_tokens";
+} {
+  const bare = model.slice(model.lastIndexOf("/") + 1);
+  if (/^(?:o[1-9]|gpt-5)(?![a-z])/i.test(bare)) return { temperature: "omit", capField: "max_completion_tokens" };
+  if (/^kimi-k3\.1(?![0-9])/i.test(bare)) return { temperature: 1, capField: "max_tokens" };
+  return { temperature: null, capField: "max_tokens" };
+}
+
+/**
  * The chat completions body for one rewrite. `local` (ImproveTarget.local):
  * ask the server's chat template not to think, which a local reasoning model
  * honours; a public endpoint may reject the unknown field, so it never gets it.
@@ -121,6 +141,9 @@ export function improveRequestBody(
   prompt: string,
   opts: { local?: boolean; maxOutputTokens?: number } = {},
 ): Record<string, unknown> {
+  // 0.7 where the model takes any value; its one value, or none, otherwise.
+  const params = improveModelParams(model);
+  const temperature = params.temperature === null ? 0.7 : params.temperature;
   return {
     model,
     messages: [
@@ -128,8 +151,8 @@ export function improveRequestBody(
       { role: "user", content: prompt.trim().slice(0, IMPROVE_PROMPT_MAX) },
     ],
     // Room for a reasoning model's thinking before the answer.
-    max_tokens: improveMaxTokens(opts.maxOutputTokens),
-    temperature: 0.7,
+    [params.capField]: improveMaxTokens(opts.maxOutputTokens),
+    ...(temperature === "omit" ? {} : { temperature }),
     stream: false,
     ...(opts.local ? { chat_template_kwargs: { enable_thinking: false } } : {}),
   };
