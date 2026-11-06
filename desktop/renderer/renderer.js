@@ -3326,6 +3326,13 @@ function toolLine(m) {
   if (/^memory\..*\.store$/.test(n) && a.content) return 'Remembered ' + quote(a.content);
   if (/^memory\.profile\.set$/.test(n) && a.key) return 'Remembered your ' + esc(String(a.key).replace(/[._]+/g, ' '));
   if (/^memory\..*\.recall$/.test(n)) return a.query ? 'Recalled ' + quote(a.query) : 'Recalled memories';
+  /* ATO-962: a tool this table has no words for (an MCP or Composio tool,
+     a new one) or whose args were cut off in the clipped `label`: the
+     agent's own past-tense line from the whole args (`done_line` on
+     `tool_progress`, src/tools/describe-tool-call.ts), so the card says
+     "Used github: create issue" rather than a bare name. toolTense still
+     words it for running, waiting, denied and failed. */
+  if (typeof m.doneLine === 'string' && m.doneLine) return esc(m.doneLine);
   return esc(toolVerb(n));
 }
 /* A call still running (or waiting on your approval) has not done it yet,
@@ -3349,7 +3356,11 @@ function toolTense(line, state) {
     'Forgot':['Forgetting','forget'], 'Scheduled':['Scheduling','schedule'], 'Cancelled':['Cancelling','cancel'],
     'Checked':['Checking','check'], 'Compared':['Comparing','compare'], 'Restored':['Restoring','restore'],
     'Clicked':['Clicking','click'], 'Typed':['Typing','type'], 'Scrolled':['Scrolling','scroll'],
-    'Sent':['Sending','send'], 'Copied':['Copying','copy'], 'Generated':['Generating','generate']};
+    'Sent':['Sending','send'], 'Copied':['Copying','copy'], 'Generated':['Generating','generate'],
+    // ATO-962: verbs the agent's describe-tool-call lines start with.
+    'Found':['Finding','find'], 'Watched':['Watching','watch'], 'Extracted':['Extracting','extract'],
+    'Stopped':['Stopping','stop'], 'Focused':['Focusing','focus'], 'Created':['Creating','create'],
+    'Commented':['Commenting','comment']};
   const mt = /^(Added to|Looked for|Looked at|Looked up|[A-Z][a-z]+)\b/.exec(line);
   if (state === 'err' && mt && mt[1] === 'Ran' && /\u00b7 exit /.test(line)) return line;
   if (!mt || !forms[mt[1]]) {
@@ -10429,8 +10440,11 @@ function onChatEvent(ev) {
     const arg = pick(ev.payload, 'label') || '';
     // ATO-197: `call_id` (agent with the tool_result frame) is the key the call's outcome comes back under.
     const callId = pick(ev.payload, 'call_id');
+    // ATO-962: the agent's words for the call, past tense (agent ≥ 0.7.0; older ones send none).
+    const doneLine = pick(ev.payload, 'done_line');
     const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId,
-      callId: typeof callId === 'string' && callId ? callId : null};
+      callId: typeof callId === 'string' && callId ? callId : null,
+      doneLine: typeof doneLine === 'string' && doneLine ? doneLine.slice(0, 200) : null};
     S.log.splice(S.log.indexOf(item), 0, card);
     /* ATO-207: the call ends the step its reasoning was for. The next
        reasoning is a row of its own under this card, as a reopened chat
