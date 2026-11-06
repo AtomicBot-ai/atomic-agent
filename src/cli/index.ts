@@ -17,6 +17,7 @@ import { taskCommand } from "./task-command.js";
 import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
+import { handoffCommand } from "./handoff-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
@@ -123,6 +124,12 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Import skills, sessions + more from another agent (import --help lists sources)",
     run: importCommand,
+  },
+  {
+    name: "handoff",
+    summary:
+      "Continue a Claude Code or Codex session here (e.g. after its usage limit)",
+    run: (args) => handoffCommand(args),
   },
   {
     name: "doctor",
