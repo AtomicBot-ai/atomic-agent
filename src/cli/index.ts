@@ -10,6 +10,7 @@ import { ensureUtf8Console } from "./windows-console-utf8.js";
 import { runAgentCommand } from "./run-agent.js";
 import { debugReplCommand } from "./debug-repl.js";
 import { skillCommand } from "./skill.js";
+import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
@@ -73,6 +74,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "skill",
     summary: "Manage installed skills (install|uninstall|list|show)",
     run: skillCommand,
+  },
+  {
+    name: "plugin",
+    summary: "Manage plugins: Claude-format packages of skills, commands, MCP servers (list|show|install|enable|disable|remove)",
+    run: pluginCommand,
   },
   {
     name: "config",
