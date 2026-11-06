@@ -517,6 +517,13 @@ export interface RunTurnOptions {
    */
   routeNote?: string;
   /**
+   * The surface that shows this turn's reply (terminal, desktop,
+   * Telegram, Discord), from the turn's origin. Reaches every step's
+   * stable prefix as `### answer-style` (`prompt/answer-style.ts`).
+   * Absent, no block.
+   */
+  answerChannel?: import("../prompt/answer-style.js").AnswerChannel;
+  /**
    * Reasoning effort for every completion of this turn, mapped per
    * provider family by the body builder. A fusion worker's
    * `workerReasoning`; absent, the provider's default.

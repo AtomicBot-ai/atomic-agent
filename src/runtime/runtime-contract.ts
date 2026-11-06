@@ -456,6 +456,12 @@ export interface AgentRuntime {
       maxOutputTokens?: number;
       /** See `runTurn`'s `interactive`. */
       interactive?: boolean;
+      /**
+       * Where the turn came in. `runTurn` passes its own; a frontend
+       * calling this directly (the desktop sidecar) names itself so the
+       * reply gets that surface's `### answer-style` (ATO-966).
+       */
+      origin?: TurnOrigin;
     },
   ): Promise<RunTurnResult>;
   /**

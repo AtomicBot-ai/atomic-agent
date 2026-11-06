@@ -141,6 +141,9 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       ? { originalRequest: ctx.originalRequest }
       : {}),
     ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
+    ...(ctx.answerChannel !== undefined
+      ? { answerChannel: ctx.answerChannel }
+      : {}),
   };
   return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors };
 }

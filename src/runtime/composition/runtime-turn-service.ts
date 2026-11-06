@@ -26,6 +26,7 @@ import type { createRuntimeTraces } from "./runtime-traces.js";
 import type { createRuntimeObservability } from "./runtime-observability.js";
 import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
+import { answerChannelForOrigin } from "../../prompt/answer-style.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -324,6 +325,8 @@ export function createRuntimeTurnService(
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
+      /** Where the turn came in; picks the reply's `### answer-style`. */
+      origin?: TurnOrigin;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -448,6 +451,7 @@ export function createRuntimeTurnService(
         if (previousReply !== undefined) {
           turnPreviousReplies?.set(session.id, previousReply);
         }
+        const answerChannel = answerChannelForOrigin(runOptions.origin);
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -463,6 +467,10 @@ export function createRuntimeTurnService(
             ? { originalRequest: turnRequest }
             : {}),
           ...(routeNote !== null ? { routeNote } : {}),
+          // Read only from the caller's origin: a fusion worker turn has
+          // `origin: "fusion"` and gets no block (its reply goes to the
+          // orchestrator, not to a person).
+          ...(answerChannel !== undefined ? { answerChannel } : {}),
           ...buildLoopTurnBudget(runOptions),
         });
         // Stamp the turn's window occupancy so the stored session can
