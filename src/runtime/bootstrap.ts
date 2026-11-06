@@ -86,6 +86,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
+import { ToolHookEngine, installToolHooks } from "../hooks/index.js";
 
 /**
  * One-stop factory that wires the whole agent runtime. Both the CLI
@@ -207,6 +208,11 @@ export async function createAgentRuntime(
     approvals,
     approvalRequired: true,
   };
+  // PreToolUse / PostToolUse hooks (ATO-493): `<stateDir>/hooks.json` plus
+  // hooks of enabled plugins the user let run code. Read per call (cached
+  // on mtime), so editing hooks.json needs no restart. A hook's `ask` goes
+  // to the same approval gate as the tools' own prompts.
+  installToolHooks(new ToolHookEngine({ stateDir: config.paths.stateDir, approvals, logger }));
 
   // Issue #112. Every local text probe below hangs off this one answer,
   // and it is available here — hundreds of lines before
