@@ -223,6 +223,28 @@ export interface ProjectTrustAnswerBody {
   scope?: "all";
 }
 
+/** ATO-1144: one saved approval rule, as `GET /api/approval-rules` lists it. */
+export interface ApprovalRule {
+  id: string;
+  decision: "allow" | "ask" | "deny";
+  tool?: string;
+  category?: string;
+  commandPrefix?: string[];
+  path?: string;
+  project?: string;
+  createdAt?: string;
+  source?: "prompt" | "user";
+  note?: string;
+}
+
+/** ATO-1144: `GET /api/approval-rules`. `projectRules` are read-only (the folder's own file). */
+export interface ApprovalRulesList {
+  rules: ApprovalRule[];
+  globalPath: string;
+  projectPath?: string;
+  projectRules: ApprovalRule[];
+}
+
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
 function errorMessage(text: string, status: number): string {
   try {
@@ -1480,6 +1502,48 @@ export class AgentClient extends EventEmitter {
       }
       // An agent with the route but before `scope: "all"` asks for a questionId.
       if (res.status === 400 && body.scope === "all" && /questionId/.test(text)) return { ok: false, error: "This agent version can only answer the question; update it to change the choice here." };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1144: `GET /api/approval-rules` — the saved approval rules (Settings ›
+   * Privacy). `rules` are the global file's, deletable; `projectRules` are
+   * the ask/deny rules of the chat's own folder, read-only. An agent from
+   * before the route answers "No route for", reported as unsupported. Never throws.
+   */
+  async approvalRules(sessionId?: string | null): Promise<{ supported: false } | { supported: true; ok: true; data: ApprovalRulesList } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/approval-rules${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as ApprovalRulesList };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1144: `DELETE /api/approval-rules/:id`. Only a global-file rule can go.
+   * `notFound`: the agent has no rule by that id (removed elsewhere already).
+   */
+  async deleteApprovalRule(id: string): Promise<{ supported: false } | { ok: true } | { ok: false; notFound?: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/approval-rules/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true };
+      if (res.status === 404) return { ok: false, notFound: true, error: errorMessage(text, res.status) };
       return { ok: false, error: errorMessage(text, res.status) };
     } catch (err) {
       return { ok: false, error: requestErrorText(err) };
