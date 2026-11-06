@@ -99,6 +99,27 @@ describe("tool.search", () => {
     expect(result.details.results).toEqual([]);
   });
 
+  it("never offers a tool a fusion worker cannot call, and loads one outside the role", async () => {
+    const worker = buildToolSearchTool({
+      catalog: () => ({
+        descriptors: [
+          calendar,
+          { name: "memory.notes.store", summary: "Store a note in long-term memory", argsSchema: "{ text: string }" },
+        ],
+        deferred: new Set(),
+      }),
+    });
+    const notes = await worker.run({ query: "store note memory" }, { ...ctx, toolRole: "builder" });
+    expect(notes.details.results).toEqual([]);
+    // mcp.* is in the builder role: described in full, nothing to load.
+    const mcp = await worker.run({ query: "calendar event" }, { ...ctx, toolRole: "builder" });
+    expect(mcp.details.toolsLoaded).toEqual([]);
+    // The orchestrator role does not admit mcp.*: the hit is loaded.
+    const outside = await worker.run({ query: "calendar event" }, { ...ctx, toolRole: "orchestrator" });
+    expect(outside.summary).not.toContain("already described");
+    expect((outside.details.toolsLoaded as Array<{ name: string }>).map((t) => t.name)).toEqual(["mcp.gcal.create_event"]);
+  });
+
   it("validates its arguments", async () => {
     await expect(tool.run({}, ctx)).rejects.toThrow("query");
     await expect(tool.run({ query: "x", limit: "3" }, ctx)).rejects.toThrow("limit");

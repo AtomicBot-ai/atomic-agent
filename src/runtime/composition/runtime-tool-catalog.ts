@@ -555,17 +555,20 @@ export async function connectRuntimeMcpCatalog(input: {
   // Registered whatever the mode: its descriptor is only in the prompt
   // while search mode is on, and a call outside it still searches the
   // full catalog harmlessly.
-  toolRegistry.register(
-    buildToolSearchTool({
-      catalog: () => {
-        const effective = effectiveToolDescriptors();
-        return {
-          descriptors: fullToolDescriptors,
-          deferred: deferredToolNames(fullToolDescriptors, effective),
-        };
-      },
-    }),
-  );
+  const toolSearchCatalog = () => {
+    const effective = effectiveToolDescriptors();
+    return {
+      descriptors: fullToolDescriptors,
+      deferred: deferredToolNames(fullToolDescriptors, effective),
+    };
+  };
+  toolRegistry.register(buildToolSearchTool({ catalog: toolSearchCatalog }));
+  // `tool.view` again, now search-aware: it loads by exact name any
+  // tool search mode deferred to a `# extras` one-liner, including the
+  // statically frequent ones (`os.git.status`) and MCP tools the static
+  // catalog does not hold. Same name, so this replaces the plain
+  // registration made with the static tools.
+  toolRegistry.register(buildToolViewTool({ deferred: toolSearchCatalog }));
   const createRefreshMcp = () => {
 
 

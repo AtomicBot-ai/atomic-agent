@@ -279,6 +279,41 @@ const RULES_SHARED_TAIL =
   "Destructive or privileged tools may require user approval. If the user declines a call, do not retry it or reach the same result another way (another tool, a shell command); tell them it was not done and ask what they want instead. If `### skills` lists a playbook that fits the user goal, call `skill.view` first unless that skill is already under `### loaded-skills`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use. Large trees: narrow with `os.fs.list` filters or `os.fs.glob` before reading content; do not use `os.fs.grep` with broad binary globs (e.g. every `*.pdf`) across huge folders—use tight globs then `os.fs.read_document` on candidates.";
 
 /**
+ * Search mode (ATO-558): the catalog carries `tool.search` and every
+ * non-core tool is a one-liner under `# extras`, MCP and built-in alike.
+ * `tool.view` still loads any of them by exact name, but a model that
+ * only knows what it wants done needs `tool.search`, so the extras
+ * header, the rules sentence and the persona's extras hint name it
+ * first. Each pair is swapped whole, so a catalog without `tool.search`
+ * keeps the prefix byte-identical.
+ */
+const SEARCH_MODE_SWAPS: ReadonlyArray<readonly [string, string]> = [
+  [
+    "Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use.",
+    "Tools in `# extras` are one-liners: find the one you need with `tool.search` { query: what it should do } (or `tool.view` { name } when you know its exact name), which loads its full `args` schema into `### loaded-tools`, before use.",
+  ],
+  ["Rare tool? `tool.view` first.", "Tool under `# extras`? `tool.search` (or `tool.view` by exact name) first."],
+  [
+    "Tools under `# extras` need `tool.view` before their first use.",
+    "Tools under `# extras` need `tool.search` (or `tool.view` by exact name) before their first use.",
+  ],
+];
+
+const EXTRAS_HEADER = `# extras (one-line; use \`tool.view\` { name: "<tool>" } for full schema)`;
+const SEARCH_EXTRAS_HEADER = `# extras (one-line; find one with \`tool.search\` { query: "<what it should do>" }, or load one by exact name with \`tool.view\` { name: "<tool>" })`;
+
+/** Search mode is on exactly when the catalog carries `tool.search` (`applyToolSearch`). */
+function isToolSearchActive(descriptors: readonly ToolDescriptor[]): boolean {
+  return descriptors.some((d) => d.name === "tool.search");
+}
+
+function withSearchModeText(text: string): string {
+  let out = text;
+  for (const [from, to] of SEARCH_MODE_SWAPS) out = out.replace(from, to);
+  return out;
+}
+
+/**
  * The grammar transport's `### rules` line: the pre-#285 line with the
  * declined-call sentence ATO-225 added to the shared tail. Stable within
  * a build, so the KV-cache prefix still holds across turns.
@@ -319,15 +354,17 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   const fusionActive = isFusionActive(input.toolDescriptors);
   const nativeTools = input.toolTransport === "native_tools";
   const compact = input.compact === true;
+  const searchMode = isToolSearchActive(input.toolDescriptors);
+  const searchText = (text: string): string => (searchMode ? withSearchModeText(text) : text);
   const persona =
     input.systemPersona ??
-    (compact
+    searchText(compact
       ? nativeTools
         ? COMPACT_NATIVE_TOOLS_SYSTEM_PERSONA
         : COMPACT_SYSTEM_PERSONA
       : nativeTools
         ? NATIVE_TOOLS_SYSTEM_PERSONA
-        : DEFAULT_SYSTEM_PERSONA);
+        : DEFAULT_SYSTEM_PERSONA));
   const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
   // A role splits the catalog: its own tools render as they always
   // have, the rest collapse to one line of names. `full` (or no role)
@@ -386,13 +423,15 @@ export function buildStablePrefix(input: StablePrefixInput): string {
       : []),
     ``,
     `### rules`,
-    compact
-      ? nativeTools
-        ? COMPACT_NATIVE_TOOLS_RULES_LINE
-        : COMPACT_GRAMMAR_RULES_LINE
-      : nativeTools
-        ? NATIVE_TOOLS_RULES_LINE
-        : GRAMMAR_RULES_LINE,
+    searchText(
+      compact
+        ? nativeTools
+          ? COMPACT_NATIVE_TOOLS_RULES_LINE
+          : COMPACT_GRAMMAR_RULES_LINE
+        : nativeTools
+          ? NATIVE_TOOLS_RULES_LINE
+          : GRAMMAR_RULES_LINE,
+    ),
     ``,
     `### skills`,
     skills,
@@ -401,7 +440,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `# common (full)`,
     commonBlock,
     ``,
-    `# extras (one-line; use \`tool.view\` { name: "<tool>" } for full schema)`,
+    searchMode ? SEARCH_EXTRAS_HEADER : EXTRAS_HEADER,
     extrasBlock,
     ...(outsideLine !== null ? [outsideLine] : []),
     ``,

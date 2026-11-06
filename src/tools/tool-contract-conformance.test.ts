@@ -345,8 +345,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(94);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(98);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(95);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);

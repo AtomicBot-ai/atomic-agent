@@ -154,15 +154,16 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(phases.slice(0, 3)).toEqual(["start", "started", "catalog"]);
     expect(sampling).toHaveBeenCalledWith({ llamaServerClient: input.llama, server: "*" });
     const names = registration.mock.calls.map(([tool]) => tool.name);
-    // `tool.search` (ATO-558) is registered once the descriptor list exists.
-    expect(names).toEqual(["mcp.resource.list", "mcp.resource.read", "mcp.prompt.list", "mcp.prompt.get", "tool.search"]);
+    // `tool.search` (ATO-558) is registered once the descriptor list
+    // exists, and `tool.view` again beside it, search-aware.
+    expect(names).toEqual(["mcp.resource.list", "mcp.resource.read", "mcp.prompt.list", "mcp.prompt.get", "tool.search", "tool.view"]);
     const refresh = owner.createRefreshMcp(); await refresh(); await refresh();
-    expect(registration).toHaveBeenCalledTimes(5);
+    expect(registration).toHaveBeenCalledTimes(6);
   });
 
   it("updates grammar from the immutable baseline after add/remove while an external snapshot stays unchanged", async () => {
     const { input } = deps(); const owner = await connect(input); const snapshot = owner.getGrammar();
-    expect(input.toolRegistry.list().map(tool => tool.name)).toEqual(["tool.search"]);
+    expect(input.toolRegistry.list().map(tool => tool.name)).toEqual(["tool.search", "tool.view"]);
     await owner.mcpManager.addServerLive(disabledServer);
     const list = vi.spyOn(owner.mcpManager, "listAllToolMeta").mockReturnValue([meta("first")]);
     const refresh = owner.createRefreshMcp(); await refresh();
@@ -238,6 +239,10 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     const result = await search.run({ query: "git status" }, { workingDir: directory, sessionId: "s", stepIndex: 0, signal: new AbortController().signal });
     expect(result.summary).toContain("os.git.status");
     expect((result.details.toolsLoaded as Array<{ name: string }>).map(t => t.name)).toContain("os.git.status");
+    // `os.git.status` is frequent in the static catalog; deferred, `tool.view` loads it by name.
+    const view = input.toolRegistry.get("tool.view");
+    const viewed = await view.run({ name: "os.git.status" }, { workingDir: directory, sessionId: "s", stepIndex: 0, signal: new AbortController().signal });
+    expect((viewed.details.toolLoaded as { name: string }).name).toBe("os.git.status");
     input.config.agent.tools = { search: "off" };
     expect(owner.effectiveToolDescriptors().some(tool => tool.name === "tool.search")).toBe(false);
   });

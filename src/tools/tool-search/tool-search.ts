@@ -1,7 +1,10 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
+import { isViewableRareTool } from "../../prompt/tool-descriptors.js";
+import { isWorkerVisibleTool, WORKER_TOOL_ROLE } from "../fusion/worker-tool-policy.js";
+import { roleAdmits, type ToolRole } from "../tool-roles.js";
 import type { ToolDefinition } from "../tool-registry.js";
-import { CORE_TOOL_NAMES, TOOL_SEARCH_NAME } from "./tool-search-policy.js";
+import { TOOL_SEARCH_NAME } from "./tool-search-policy.js";
 import { callShape, searchTools } from "./tool-search-rank.js";
 
 /** Results per search: enough to choose from, few enough to stay small. */
@@ -23,6 +26,18 @@ export interface ToolSearchDeps {
   catalog: () => ToolSearchCatalog;
 }
 
+/**
+ * Tools this turn can never call, whatever a search loads: a fusion
+ * worker (the builder role) runs with `isWorkerVisibleTool` as its
+ * `toolFilter`, which strips the excluded tools from its prompt and
+ * grammar for good, so offering one would only advertise a refusal.
+ * A tool merely outside the role stays findable: like `tool.view`, a
+ * search loads it into `### loaded-tools`, which the role admits.
+ */
+function hiddenFromTurn(role: ToolRole, name: string): boolean {
+  return role === WORKER_TOOL_ROLE && !isWorkerVisibleTool(name);
+}
+
 function clip(text: string, max: number): string {
   return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
 }
@@ -41,7 +56,7 @@ export function buildToolSearchTool(deps: ToolSearchDeps): ToolDefinition {
     description:
       "Search all available tools (built-in and MCP) by what they do; returns the best matches with their arguments and a ready call, and loads their schemas so they can be called on the next step.",
     readonly: true,
-    async run(rawArgs) {
+    async run(rawArgs, ctx) {
       const query = rawArgs.query;
       if (typeof query !== "string" || query.trim().length === 0) {
         throw new Error("tool.search: `query` must be a non-empty string (what the tool should do, e.g. \"send slack message\")");
@@ -55,10 +70,24 @@ export function buildToolSearchTool(deps: ToolSearchDeps): ToolDefinition {
         Math.max(1, Math.floor(typeof rawLimit === "number" ? rawLimit : TOOL_SEARCH_DEFAULT_LIMIT)),
       );
       const { descriptors, deferred } = deps.catalog();
-      // The terminals and the discovery tools are never what one searches for.
+      const role: ToolRole = ctx.toolRole ?? "full";
+      // The terminals and the discovery tools are never what one searches
+      // for; a tool this turn cannot call is never offered.
       const searchable = descriptors.filter(
-        (d) => d.name !== "reply" && d.name !== "finish" && d.name !== TOOL_SEARCH_NAME && d.name !== "tool.view",
+        (d) =>
+          d.name !== "reply" &&
+          d.name !== "finish" &&
+          d.name !== TOOL_SEARCH_NAME &&
+          d.name !== "tool.view" &&
+          !hiddenFromTurn(role, d.name),
       );
+      // In full in this turn's `### tools`: admitted by the role, not
+      // deferred by search mode, not a rare one-liner in either scaffold
+      // (`isViewableRareTool`, the rule `tool.view` loads by). Anything
+      // else is loaded on a hit; under the full scaffold a compact-only
+      // rare tool's copy is skipped by `### loaded-tools` itself.
+      const described = (d: ToolDescriptor): boolean =>
+        roleAdmits(role, d.name) && !deferred.has(d.name) && !isViewableRareTool(d);
       const hits = searchTools(query, searchable, limit);
       if (hits.length === 0) {
         return compressToolResult(
@@ -74,14 +103,14 @@ export function buildToolSearchTool(deps: ToolSearchDeps): ToolDefinition {
       const lines: string[] = [];
       hits.forEach((hit, i) => {
         const d = hit.descriptor;
-        const loadedNote = deferred.has(d.name) || d.tier === "rare" ? "" : " (already described in ### tools)";
+        const loadedNote = described(d) ? " (already described in ### tools)" : "";
         lines.push(`${i + 1}. ${d.name}${loadedNote} — ${d.summary}`);
         lines.push(`   args: ${clip(d.argsSchema, MAX_ARGS_CHARS)}`);
         lines.push(`   call: ${callShape(d)}`);
       });
       const toLoad = hits
         .map((h) => h.descriptor)
-        .filter((d) => (deferred.has(d.name) || d.tier === "rare") && !CORE_TOOL_NAMES.has(d.name))
+        .filter((d) => !described(d))
         .slice(0, TOOL_SEARCH_LOADED);
       if (toLoad.length > 0) {
         lines.push(`Loaded ${toLoad.map((d) => `\`${d.name}\``).join(", ")} into \`### loaded-tools\`. Call the one that fits now, with real values in place of <placeholders>.`);

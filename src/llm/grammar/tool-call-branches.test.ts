@@ -164,7 +164,7 @@ describe("per-request narrowing keeps or drops the fs branches", () => {
  * file session. Each had only the generic `object`, so `{"args":{}}` was
  * legal and a 4–9B model took that way out. The bar is again each tool's
  * own check (`parseEditArgs`, `parseMoveArgs`, `parseListArgs`, the grep,
- * glob, web, http, skill/tool view and notes parsers): what it refuses
+ * glob, web, http, skill/tool view, tool search and notes parsers): what it refuses
  * the grammar refuses, what it accepts stays accepted.
  */
 const MORE_REJECTED = [
@@ -198,6 +198,10 @@ const MORE_REJECTED = [
   call("skill.view", { name: "" }),
   call("tool.view", {}),
   call("tool.view", { name: "" }),
+  // ATO-558: a search needs words to search for.
+  call("tool.search", {}),
+  call("tool.search", { query: "" }),
+  call("tool.search", { limit: 3 }),
   call("memory.notes.store", {}),
   call("memory.notes.store", { content: "" }),
   call("memory.notes.store", { tags: ["x"] }),
@@ -228,6 +232,8 @@ const MORE_ACCEPTED = [
   call("os.http.request", { url: "https://api.example.com", method: "POST", headers: { A: "b" }, body: { a: 1 } }),
   call("skill.view", { name: "pdf" }),
   call("tool.view", { name: "os.git.show" }),
+  call("tool.search", { query: "send slack message" }),
+  call("tool.search", { query: "calendar event", limit: 5 }),
   call("memory.notes.store", { content: "Prefer pnpm", tags: ["prefs", "tooling"] }),
   call("memory.notes.recall", { query: "pnpm", k: 3 }),
   call("memory.notes.recall", { query: "" }),
@@ -250,6 +256,7 @@ const NEW_BRANCHES: ReadonlyArray<[string, string]> = [
   ["os.http.request", "http-request-call"],
   ["skill.view", "skill-view-call"],
   ["tool.view", "tool-view-call"],
+  ["tool.search", "tool-search-call"],
   ["memory.notes.store", "notes-store-call"],
   ["memory.notes.recall", "notes-recall-call"],
 ];
@@ -289,7 +296,7 @@ describe("the tools small models use most need their required args (ATO-1114)", 
       .split("\n")
       .filter((l) => /^(os|discovery|memory)-tool ::=/.test(l))
       .join("\n");
-    for (const name of ['"fs.edit"', '"fs.move"', '"fs.list"', '"fs.grep"', '"fs.glob"', '"web.search"', '"web.fetch"', '"http.request"', '"view"', "tool.view", '"notes.store"', '"notes.recall"']) {
+    for (const name of ['"fs.edit"', '"fs.move"', '"fs.list"', '"fs.grep"', '"fs.glob"', '"web.search"', '"web.fetch"', '"http.request"', '"view"', "tool.view", "tool.search", '"notes.store"', '"notes.recall"']) {
       expect(nameRules, name).not.toContain(name);
     }
     // Their neighbours stay on the generic branch.

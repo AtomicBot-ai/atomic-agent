@@ -13,7 +13,7 @@ root ::= tool-call-array
 # and the sampler has to escape the quote instead. The args are strict
 # (`text`, then optional `attachments`) so the generic object cannot
 # carry a reply around the rule; `tool-name` does not list "reply".
-tool-call ::= reply-call | shell-call | fs-read-call | fs-write-call | fs-edit-call | fs-move-call | fs-list-call | fs-grep-call | fs-glob-call | web-search-call | web-fetch-call | http-request-call | skill-view-call | tool-view-call | notes-store-call | notes-recall-call | other-call
+tool-call ::= reply-call | shell-call | fs-read-call | fs-write-call | fs-edit-call | fs-move-call | fs-list-call | fs-grep-call | fs-glob-call | web-search-call | web-fetch-call | http-request-call | skill-view-call | tool-view-call | tool-search-call | notes-store-call | notes-recall-call | other-call
 reply-call ::= "{" ws "\"tool\"" ws ":" ws "\"reply\"" ws "," ws "\"args\"" ws ":" ws reply-args ws "}"
 other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
 # `os.shell.run` has its own branch too: under the generic `object` rule its
@@ -76,6 +76,9 @@ web-fetch-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.web.fetch\"" ws "," ws "\"a
 http-request-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.http.request\"" ws "," ws "\"args\"" ws ":" ws url-args ws "}"
 skill-view-call ::= "{" ws "\"tool\"" ws ":" ws "\"skill.view\"" ws "," ws "\"args\"" ws ":" ws name-args ws "}"
 tool-view-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.view\"" ws "," ws "\"args\"" ws ":" ws name-args ws "}"
+# `tool.search` (ATO-558) needs words to search for: a non-empty `query`
+# first, `limit` and any other key free. `tool-name` does not list it.
+tool-search-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.search\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"query\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
 notes-store-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.store\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"content\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
 notes-recall-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.recall\"" ws "," ws "\"args\"" ws ":" ws "{" ws ( "\"query\"" ws ":" ws string | "\"id\"" ws ":" ws value ) ( ws "," ws pair )* ws "}" ws "}"
 path-args ::= "{" ws "\"path\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"

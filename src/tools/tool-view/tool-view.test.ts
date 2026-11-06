@@ -98,3 +98,31 @@ describe("buildToolViewTool in registry", () => {
     expect(r.has("tool.view")).toBe(true);
   });
 });
+
+describe("buildToolViewTool in search mode (ATO-558)", () => {
+  const ctx = { workingDir: "/w", sessionId: "s1", stepIndex: 0, signal: new AbortController().signal };
+  const slack = {
+    name: "mcp.slack.chat_post_message",
+    summary: "[mcp:slack] Send a message to a Slack channel",
+    argsSchema: "{ channel: string, text: string }",
+  };
+
+  it("loads a statically frequent tool that search mode deferred", async () => {
+    const tool = buildToolViewTool({ deferred: () => ({ descriptors: [], deferred: new Set(["os.git.status"]) }) });
+    const r = await tool.run({ name: "os.git.status" }, ctx);
+    expect((r.details.toolLoaded as { name: string }).name).toBe("os.git.status");
+  });
+
+  it("loads a deferred MCP tool from the search catalog", async () => {
+    const tool = buildToolViewTool({ deferred: () => ({ descriptors: [slack], deferred: new Set([slack.name]) }) });
+    const r = await tool.run({ name: slack.name }, ctx);
+    expect(r.details.toolLoaded).toMatchObject({ name: slack.name, argsSchema: slack.argsSchema });
+  });
+
+  it("still refuses a frequent tool search mode kept in full, and points an unknown name at tool.search", async () => {
+    const tool = buildToolViewTool({ deferred: () => ({ descriptors: [slack], deferred: new Set([slack.name]) }) });
+    await expect(tool.run({ name: "browser.navigate" }, ctx)).rejects.toThrow(/not in the # extras list/);
+    await expect(tool.run({ name: "mcp.nope.x" }, ctx)).rejects.toThrow(/call tool\.search/);
+    await expect(buildToolViewTool().run({ name: "mcp.nope.x" }, ctx)).rejects.toThrow(/^tool\.view: unknown tool: mcp\.nope\.x$/);
+  });
+});
