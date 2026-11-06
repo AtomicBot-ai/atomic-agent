@@ -1628,6 +1628,8 @@ const P = {
   files:'<path d="M5.5 4.5V3.5A1 1 0 0 1 6.5 2.5h4L13 5v6.5a1 1 0 0 1-1 1h-1"/><path d="M3 5.5a1 1 0 0 1 1-1h4l2.5 2.5v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   plus:'<path d="M8 3v10M3 8h10"/>',
+  // ATO-532: an app window (title bar, two lights) — the composer's window picker.
+  appwin:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M2 6h12M4.3 4.5h.1M6 4.5h.1"/>',
   minus:'<path d="M3 8h10"/>',
   chevD:'<path d="M4.5 6.5 8 10l3.5-3.5"/>',
   chevR:'<path d="M6.5 4.5 10 8l-3.5 3.5"/>',
@@ -3891,7 +3893,7 @@ function composer() {
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
-      + attButtonHTML() + micButton() + sendButton() + '</div>'
+      + attButtonHTML() + (typeof wsnapButtonHTML === 'function' ? wsnapButtonHTML() : '') + micButton() + sendButton() + '</div>'
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
@@ -6629,6 +6631,8 @@ function act(a) {
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
+  // ATO-532: File › Attach App Window… opens the composer's window picker (window-snapshot.js).
+  if (a === 'attach:window') { close(); render(); wsnapOpen(); return; }
   if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
   // ATO-229: the update toast and Settings › General's update rows (app-update.js).
