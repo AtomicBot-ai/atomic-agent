@@ -30,6 +30,7 @@ import { promisify } from "node:util";
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
+import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
@@ -2560,6 +2561,8 @@ function wireIpc(client: AgentClient): void {
   });
   // 0.6.6 live routes: MCP restart / enable / disable and the deep-merge config patch.
   wireAgentLiveIpc(client);
+  // ATO-954: Settings › Plugins, through `atag plugin` (plugins-ipc.ts).
+  wirePluginsIpc();
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   /* Studio (Images + Video): Core's media API for the Studio pages
@@ -5696,10 +5699,10 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Privacy", "Import", "Diagnostics"];
+  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
   const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", memory: "memory",
-    tasks: "tasks", skills: "skills", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
+    tasks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
@@ -5750,9 +5753,9 @@ async function settingsTest(
   check("settings: Cmd+, reopens on the section last shown", viaKey === "skills", `pane=${viaKey}`);
 
   const labels = await js<string[]>("window.__settingsLabels()");
-  check("settings: the nav names the nine sections", same(labels, LABELS), JSON.stringify(labels));
+  check("settings: the nav names the ten sections", same(labels, LABELS), JSON.stringify(labels));
 
-  // Calm (S5): the nav is the nine sections and nothing else — no keycaps,
+  // Calm (S5): the nav is the ten sections and nothing else — no keycaps,
   // no count badges, no Commands list, no rows "not available in the desktop".
   // The chords themselves still run (the ctrl+g check below).
   const navDom = await js<{ rows: number; keycaps: number; counts: number; na: number; text: string }>(

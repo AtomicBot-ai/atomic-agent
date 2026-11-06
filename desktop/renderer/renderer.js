@@ -1160,13 +1160,15 @@ const SETTINGS_SECTIONS = [
   ['memory','Memory','memory',['memory']],
   ['tasks','Tasks','tasks',['tasks']],
   ['skills','Skills','skills',['skills']],
+  // ATO-954: installed plugins (renderer/plugins-pane.js).
+  ['plugins','Plugins','puzzle',['plugins']],
   ['privacy','Privacy','lock',['privacy']],
   ['import','Import','import',['import']],
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['memory','Memory'],
-                       ['tasks','Tasks'],['skills','Skills'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+                       ['tasks','Tasks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -1682,6 +1684,8 @@ const P = {
   term:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   globe:'<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.9 1.7 1.9 9.3 0 11M8 2.5c-1.9 1.7-1.9 9.3 0 11"/>',
   plug:'<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2a3.5 3.5 0 0 1-7 0zM8 11v2.5"/>',
+  // ATO-954: Settings › Plugins — a puzzle piece.
+  puzzle:'<path d="M3 5.5h2.6a1.4 1.4 0 1 1 2.8 0H11v2.6a1.4 1.4 0 1 1 0 2.8V13H3z"/>',
   branch:'<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5" r="1.5"/><path d="M4.5 5v6M11.5 6.5c0 3-7 2-7 4.5"/>',
   dots:'<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" stroke-width="2.6"/>',
   clock:'<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
@@ -1919,6 +1923,7 @@ const PAL = [
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
     ['tasks','Tasks','Settings','','settings:tasks'],
     ['skills','Skills','Settings','','settings:skills'],
+    ['puzzle','Plugins','Settings','','settings:plugins'],
     ['lock','Privacy','Settings','⇧ ⌘ ,','settings:privacy'],
     ['import','Import','Settings','/import','settings:import'],
     ['gauge','Diagnostics','Settings','','settings:diagnostics'],
@@ -5808,6 +5813,7 @@ function settingsPaneEntered(opened) {
   if (pane === 'skills') skillsTabEntered();
   else if (pane === 'memory') memoryTabEntered();
   else if (pane === 'mcp') mcpTabEntered();
+  else if (pane === 'plugins') pluginsTabEntered();
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
@@ -5829,6 +5835,8 @@ function settingsPane() {
   if (p === 'skills') return skillsTab();
   if (p === 'memory') return memoryTab();
   if (p === 'mcp') return mcpTab();
+  // ATO-954: Settings › Plugins (renderer/plugins-pane.js).
+  if (p === 'plugins') return pluginsTab();
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
@@ -6837,6 +6845,8 @@ function act(a) {
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
   if (k === 'memory') { close(); memoryAct(a.slice(7)); return; }
   if (k === 'mcp') { close(); mcpAct(a.slice(4)); return; }
+  // ATO-954: Settings › Plugins' verbs (renderer/plugins-pane.js).
+  if (k === 'plugins') { close(); pluginsAct(a.slice(8)); return; }
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
@@ -22965,6 +22975,7 @@ function settingsKey(e, k, inText) {
   if (pane === 'skills' && skillsKey(e, k, inText)) return true;
   if (pane === 'memory' && memoryKey(e, k, inText)) return true;
   if (pane === 'mcp' && mcpKey(e, k, inText)) return true;
+  if (pane === 'plugins' && pluginsKey(e, k, inText)) return true;
   // Item 7 part C: the LLM / Telegram / Import tabs' keys (the LLM pane's ←/→ switch its mode, not the tab).
   if (pane === 'llm' && llmKey(e, k, inText)) return true;
   if (pane === 'telegram' && telegramKey(e, k, inText)) return true;
