@@ -167,4 +167,17 @@ describe("verifyProviderKey", () => {
     );
     expect(result.detail).not.toContain("sk-secret-key");
   });
+
+  // ATO-1216: the probe's temperature follows the model's own rule.
+  it.each([
+    ["cheap-model", 0],
+    ["moonshotai/kimi-k3.1-pro", 1],
+    ["gpt-5-nano", undefined],
+  ] as const)("sends %s the temperature it accepts", async (model, expected) => {
+    const fetchImpl = vi.fn(async () => response({ choices: [] }));
+    await verifyProviderKey(target({ probeModels: [model] }), { fetchImpl });
+    const body = bodyOf(fetchImpl.mock.calls[0] as never);
+    if (expected === undefined) expect(body).not.toHaveProperty("temperature");
+    else expect(body.temperature).toBe(expected);
+  });
 });

@@ -2,7 +2,11 @@ import type { CompletionRequest } from "../completion-types.js";
 import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
-import { modelParamProfile, reasoningEffortField } from "./model-params.js";
+import {
+  modelParamProfile,
+  reasoningEffortField,
+  resolveTemperature,
+} from "./model-params.js";
 import { buildNativeMessages } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 import { nameEscape } from "./openai-tool-call-adapter.js";
@@ -107,15 +111,15 @@ export function buildOpenAiChatBody(
               : filtered.prompt,
           },
         ];
+  // OpenAI's reasoning models reject the field outright (`Unsupported
+  // parameter: 'temperature'`), so for them it is not sent at all — not
+  // even a caller's own value. Kimi K3.1 accepts only 1, so it gets 1
+  // whatever the caller asked. See `model-params.ts`.
+  const temperature = resolveTemperature(profile, filtered.temperature, 0.2);
   const body: Record<string, unknown> = {
     model: defaultChatModel,
     messages,
-    // OpenAI's reasoning models reject the field outright (`Unsupported
-    // parameter: 'temperature'`), so for them it is not sent at all —
-    // not even a caller's own value. See `model-params.ts`.
-    ...(profile.temperature
-      ? { temperature: filtered.temperature ?? 0.2 }
-      : {}),
+    ...(temperature !== undefined ? { temperature } : {}),
     stream,
   };
   // `max_tokens` only when somebody actually asked for a bound.
@@ -246,6 +250,12 @@ export function buildOpenAiChatBody(
   for (const key of RESERVED_BODY_KEYS) {
     if (key in body) merged[key] = body[key];
     else delete merged[key];
+  }
+  // A temperature the service itself named in a 400 beats the operator's
+  // passthrough: that value is exactly what was just refused. A rule
+  // known up front (Kimi K3.1) stays overridable like any other field.
+  if (profile.temperature.kind === "fixed" && profile.temperature.learned) {
+    merged.temperature = profile.temperature.value;
   }
   return checkedBody(merged, request);
 }
