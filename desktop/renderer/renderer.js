@@ -1927,6 +1927,7 @@ const PAL = [
     ['plus','New chat','','⌘ N','session:new'],
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
+    ['import','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
@@ -4872,6 +4873,7 @@ function overlaysHTML() {
   if (S.overlay === 'sesmenu') html += chatMenuHTML();
   if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
+  if (S.overlay === 'handoff') html += handoffSheetHTML();   // ATO-1156 (handoff.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -6637,6 +6639,9 @@ function act(a) {
   if (k === 'dlc') { dlCardAct(v); return; }
   // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
+  // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
+  // and the settings window down first, so Escape and the scrim close the sheet itself.
+  if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -28205,6 +28210,8 @@ function importTab() {
   const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
   const previewing = IMP.mode === 'configure' || (IMP.mode === 'running' && !IMP.applying);
   let body = report ? '' : '<div class="tk-bar sd-imphead">' + impLogoHTML(f.source, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3>'
+    // ATO-1156: continue one stopped Claude Code / Codex task instead of importing everything.
+    + '<button class="btn btn-g sm" data-act="handoff:open">' + ic('arrowR') + 'Continue a task…</button>'
     + (previewing ? '<span class="grow"></span><button class="btn btn-p sm' + (f.focus === 'run' && IMP.mode === 'configure' ? ' sd-kfocus' : '') + '" data-act="import:preview"'
       + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Preview import</button>' : '')
     + '</div>';
