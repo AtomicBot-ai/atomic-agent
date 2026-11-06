@@ -274,6 +274,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
           });
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
+    case "usage":
+      return pureActions([{ type: "usage_report_requested", now: Date.now() }]);
     case "chat":
       return pureActions([{ type: "ui_mode_set", mode: "chat" }]);
     case "observe":

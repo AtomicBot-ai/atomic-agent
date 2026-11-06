@@ -1001,6 +1001,7 @@ export class ChatOrchestrator {
       // turn (absent on threads that never ran one — the reducer then
       // resets the chip rather than keeping the old thread's figure).
       ...(loaded.contextUsage ? { contextUsage: loaded.contextUsage } : {}),
+      ...(loaded.sessionUsage ? { sessionUsage: loaded.sessionUsage } : {}),
     });
     // The stored snapshot above misses everything the still-running
     // turn has said (a turn saves only when it finishes — for a thread
@@ -1719,6 +1720,9 @@ export class ChatOrchestrator {
         messages: turnsToMessages(this.session.turns),
         ...(this.session.contextUsage
           ? { contextUsage: this.session.contextUsage }
+          : {}),
+        ...(this.session.sessionUsage
+          ? { sessionUsage: this.session.sessionUsage }
           : {}),
       });
     }

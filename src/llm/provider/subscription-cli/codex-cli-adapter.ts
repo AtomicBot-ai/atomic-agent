@@ -1,4 +1,5 @@
 import type { CompletionResult } from "../completion-types.js";
+import { parseCodexRateLimitsPayload, type RateLimitWindow } from "../rate-limits.js";
 import type {
   CliAdapterDescriptor,
   CliArgsInput,
@@ -73,6 +74,19 @@ interface CodexEvent {
   item?: { type?: string; text?: string; message?: string };
   usage?: CodexUsage;
   error?: { message?: string };
+  /**
+   * Plan-window state, on the token-count events of Codex builds that
+   * emit them (top level, or under `msg` / `info` in older and newer
+   * shapes). `codex exec --json` as of 0.4x does not print it, so this
+   * is read when present and never expected (ATO-569).
+   */
+  rate_limits?: unknown;
+  msg?: { rate_limits?: unknown; info?: { rate_limits?: unknown } };
+  info?: { rate_limits?: unknown };
+}
+
+function rateLimitsOf(event: CodexEvent): unknown {
+  return event.rate_limits ?? event.msg?.rate_limits ?? event.msg?.info?.rate_limits ?? event.info?.rate_limits;
 }
 
 function parseLine(line: string): CodexEvent | null {
@@ -97,10 +111,16 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
   let usage: CodexUsage | undefined;
   let completed = false;
   let failure: string | null = null;
+  let rateLimits: RateLimitWindow[] = [];
 
   for (const line of stdout.split("\n")) {
     const event = parseLine(line);
     if (!event) continue;
+    const limits = rateLimitsOf(event);
+    if (limits !== undefined) {
+      const windows = parseCodexRateLimitsPayload(limits);
+      if (windows.length > 0) rateLimits = windows;
+    }
     if (event.type === "item.completed" && event.item) {
       if (event.item.type === "agent_message" && event.item.text) {
         text = event.item.text;
@@ -158,6 +178,7 @@ function parseResult(stdout: string, fallbackModel: string): CompletionResult {
       totalTokens: promptTokens + completionTokens,
     },
     finishReason: "stop",
+    ...(rateLimits.length > 0 ? { rateLimits } : {}),
   };
 }
 

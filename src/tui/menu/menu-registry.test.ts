@@ -206,6 +206,12 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "context",
     description: "show where this session's context window went",
   },
+  // ATO-569: the cost and limit breakdown behind the composer readout.
+  {
+    name: "usage",
+    description: "show this session's cost and the account's rate limits",
+    aliases: ["cost"],
+  },
   // The rail's fold toggle: the mouse has the « control, this is the
   // keyboard's route to the same flip.
   {

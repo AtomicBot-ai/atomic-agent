@@ -25,6 +25,16 @@ export type CliStreamEvent =
   | { kind: "final"; raw: string }
   /** Something worth logging but not worth failing on (rate-limit warnings). */
   | { kind: "notice"; message: string }
+  /**
+   * The subscription's rate-limit state (ATO-569). `notice` is set when
+   * the CLI says the limit is no longer plainly `allowed`, and is logged
+   * exactly like a `notice` event.
+   */
+  | {
+      kind: "rate_limit";
+      windows: readonly import("../rate-limits.js").RateLimitWindow[];
+      notice?: string;
+    }
   | { kind: "ignore" };
 
 /**

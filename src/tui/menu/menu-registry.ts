@@ -449,6 +449,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "session.usage",
+    label: "Cost and limits",
+    group: "session",
+    slash: {
+      name: "usage",
+      description: "show this session's cost and the account's rate limits",
+      aliases: ["cost"],
+      rank: 38.5,
+    },
+  },
+  {
+    kind: "action",
     id: "session.id",
     label: "Show session id",
     group: "session",

@@ -1,4 +1,5 @@
 import { ContextChip } from "./context/context-chip.js";
+import { UsageReadout, usageReadoutLabel } from "./context/usage-readout.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
@@ -2071,13 +2072,31 @@ export function TuiApp({
   // draft itself, so the two stay in step. See
   // `selectComposerContextUsage`.
   const composerContextUsage = selectComposerContextUsage(state);
-  const promptContextSlot = composerContextUsage ? (
-    <ContextChip
-      usage={composerContextUsage}
-      layer={MOUSE_LAYER_PANEL}
-      fusion={promptBackend.kind === "fusion"}
-    />
-  ) : null;
+  // ATO-569: spend and the account's limit beside the gauge, only the
+  // parts that have data. Measured by `selectMetaBarFit` with the same
+  // label function, so the planner reserves exactly what is drawn.
+  const usageNow = Date.now();
+  const usageReadout =
+    usageReadoutLabel(state.sessionUsage, usageNow) !== null ? (
+      <UsageReadout
+        usage={state.sessionUsage}
+        now={usageNow}
+        fusion={promptBackend.kind === "fusion"}
+      />
+    ) : null;
+  const promptContextSlot =
+    composerContextUsage || usageReadout ? (
+      <Box flexDirection="row" flexShrink={0}>
+        {composerContextUsage ? (
+          <ContextChip
+            usage={composerContextUsage}
+            layer={MOUSE_LAYER_PANEL}
+            fusion={promptBackend.kind === "fusion"}
+          />
+        ) : null}
+        {usageReadout}
+      </Box>
+    ) : null;
   // Always drawn, including in `default`. A control that appears only
   // once you are in an unusual mode is a control nobody discovers, and
   // the chip is the only place the app says which rules are in force.

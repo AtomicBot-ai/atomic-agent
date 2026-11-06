@@ -17,6 +17,7 @@ import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
+import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
@@ -90,6 +91,8 @@ export interface RuntimeTurnDependencies {
     observability: Pick<ReturnType<typeof createRuntimeObservability>, "getAnalytics">;
     analyticsStateStore: AnalyticsStateStore;
     turnUsageMeter: TurnUsageMeter;
+    /** Session spend and account limits (ATO-569); absent in narrow test rigs. */
+    sessionUsage?: SessionUsageLedger;
   };
   state: RuntimeTurnState;
   lifecycle: { isShutdown(): boolean };
@@ -105,7 +108,7 @@ export function createRuntimeTurnService(
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain } = deps.inference;
   const { traces, lifecycle, logger } = deps;
   const { ensureRecorder } = traces;
-  const { observability, analyticsStateStore, turnUsageMeter } = deps.telemetry;
+  const { observability, analyticsStateStore, turnUsageMeter, sessionUsage } = deps.telemetry;
   const { pendingSessionNamings, turnsInFlight } = deps.state;
   // Owned by this runtime, bounded by active turns; workers share their parent's snapshot.
   const turnModelModes = new Map<string, ModelModePolicy>();
@@ -454,6 +457,9 @@ export function createRuntimeTurnService(
         // leg length and `agent.task.*` supplies the ceiling, so an
         // ordinary turn runs the task to completion instead of stopping
         // at the first checkpoint.
+        // Carry on from what the session persisted, so a reopened thread
+        // keeps adding to its own total (ATO-569).
+        sessionUsage?.seed(session.id, session.sessionUsage);
         const result = await loop.runTurn(session, {
           userMessage,
           modelModePolicy,
@@ -472,9 +478,11 @@ export function createRuntimeTurnService(
         // stamps what this turn ran on, so switching back into the
         // session later restores its provider/model (session-llm.ts).
         const usage = traces.readContextUsage(session.id);
+        const spend = sessionUsage?.get(session.id);
         const finished: SessionState = {
           ...result.session,
           ...(usage === undefined ? {} : { contextUsage: usage }),
+          ...(spend === undefined ? {} : { sessionUsage: spend }),
           metadata: {
             ...result.session.metadata,
             [SESSION_LLM_METADATA_KEY]: llmStamp,

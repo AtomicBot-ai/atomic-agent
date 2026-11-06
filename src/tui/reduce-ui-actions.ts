@@ -465,6 +465,7 @@ export function reduceUiAction(
         // carrying the old thread's figure over would claim this one is
         // exactly as full as the one just left.
         contextUsage: action.contextUsage ?? EMPTY_CONTEXT_USAGE,
+        sessionUsage: action.sessionUsage ?? null,
         messages: [...action.messages],
         reasoning: [],
         feed: [],
