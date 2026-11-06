@@ -1,4 +1,5 @@
 import type { CompactionConfig } from "./compaction-config.js";
+import type { PromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
 
@@ -186,6 +187,8 @@ export interface RuntimeAgentConfig {
   loopHistorySize: number;
   loopWanderingThreshold: number;
   loopWanderingEscalation: number;
+  /** Mirrors `UserAgentConfig.prompt`. */
+  prompt: PromptConfig;
 }
 
 export interface UserAgentConfig {
@@ -266,4 +269,11 @@ export interface UserAgentConfig {
    */
   sessionSectionsMaxTokens: number;
   worldSnapshotMaxTokens: number;
+  /**
+   * Stable-prefix shape. `compact` (default `"auto"`): the short
+   * scaffold for small context windows; `auto` turns it on when the
+   * model's known window is at most 64K tokens. See
+   * `src/prompt/compact-prompt.ts`.
+   */
+  prompt: PromptConfig;
 }

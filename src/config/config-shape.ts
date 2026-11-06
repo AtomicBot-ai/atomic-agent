@@ -37,6 +37,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "agent.providerWait",
   "agent.task",
   "agent.compaction",
+  "agent.prompt",
   "http",
   "web",
   "web.search",

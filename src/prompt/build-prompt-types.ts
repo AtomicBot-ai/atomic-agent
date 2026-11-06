@@ -87,6 +87,14 @@ export interface BuildPromptInput {
    */
   contextWindow?: number | null;
   /**
+   * Render the compact scaffold (ATO-1116, `compact-prompt.ts`). The
+   * agent step passes its session-latched decision
+   * (`resolveSessionCompactPrompt`) so the stable prefix cannot flip
+   * mid-session. Omitted: decided here from `agent.prompt.compact` and
+   * the resolved window, statelessly.
+   */
+  compactPrompt?: boolean;
+  /**
    * Whether `profile.contextWindow` describes the model *this* prompt
    * is being built for. Default `true` — every single-leg caller.
    *

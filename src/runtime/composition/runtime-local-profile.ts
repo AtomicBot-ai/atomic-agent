@@ -1,5 +1,6 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { getConfig } from "../../config/index.js";
+import { decideCompactPrompt } from "../../prompt/compact-prompt.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { LlamaServerClient } from "../../llm/llama-server-client.js";
@@ -383,11 +384,20 @@ function logResolvedProfile(
   const alias =
     typeof props.model_alias === "string" ? props.model_alias : null;
   const totalSlots = extractTotalSlots(props);
+  // The prompt scaffold this window gets (ATO-1116), so a bench log
+  // shows compact vs full from the boot line. The per-step decision is
+  // logged again as "prompt scaffold" on each turn's first step.
+  const scaffold = decideCompactPrompt(
+    getConfig().agent.prompt?.compact ?? "auto",
+    resolved.contextWindow,
+  );
   logger.info("model profile resolved", {
     id: resolved.id,
     alias,
     contextWindow: resolved.contextWindow ?? null,
     totalSlots,
+    promptCompact: scaffold.compact,
+    promptCompactReason: scaffold.reason,
   });
   return { profile: resolved, modelAlias: alias, totalSlots };
 }

@@ -6,7 +6,8 @@ import { descriptorsForRole } from "../../tools/tool-roles.js";
 import { narrowDescriptorsToToolSet, toolSetAdmits } from "../policies/step-tool-set.js";
 import type { BuildPromptInput } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
-import { buildPrompt } from "../../prompt/build-prompt.js";
+import { buildPrompt, resolvePromptContextWindow } from "../../prompt/build-prompt.js";
+import { resolveSessionCompactPrompt } from "../../prompt/compact-prompt.js";
 import { hashPrefix } from "../../llm/slot-manager.js";
 import { checkProfilePromptAligned } from "../../llm/profile-invariants.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
@@ -88,7 +89,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     ctx.toolSet !== undefined
       ? narrowDescriptorsToToolSet(roleToolDescriptors, ctx.toolSet)
       : roleToolDescriptors;
-  const promptInput: BuildPromptInput = {
+  const basePromptInput: BuildPromptInput = {
     ...(ctx.workspace ? { workspace: ctx.workspace } : {}),
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
@@ -142,12 +143,23 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       : {}),
     ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
   };
-  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors };
+  // Compact scaffold for small windows (ATO-1116), latched per session
+  // so the stable prefix does not flip between steps.
+  const compactDecision = resolveSessionCompactPrompt(
+    ctx.session.id,
+    getConfig().agent.prompt?.compact ?? "auto",
+    resolvePromptContextWindow(basePromptInput),
+  );
+  const promptInput: BuildPromptInput = {
+    ...basePromptInput,
+    compactPrompt: compactDecision.compact,
+  };
+  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision };
 }
 
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   if (!ctx.workspace) refreshStepWorkspace(ctx, deps);
-  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors } = prepareStepPrompt(ctx, deps);
+  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision } = prepareStepPrompt(ctx, deps);
   const prompt = buildPrompt(promptInput);
   if (prompt.cloudContext) ctx.session = { ...ctx.session, cloudContext: prompt.cloudContext };
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -183,6 +195,13 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
         pending: false,
       };
   if (ctx.stepIndex === 0) {
+    // One line per turn so a bench log shows which scaffold ran.
+    deps.logger?.info("prompt scaffold", {
+      sessionId: ctx.session.id,
+      compact: compactDecision.compact,
+      reason: compactDecision.reason,
+      stablePrefixTokens: prompt.tokens.stablePrefix,
+    });
     const promptViolations = checkProfilePromptAligned(
       deps.profile,
       prompt.text,

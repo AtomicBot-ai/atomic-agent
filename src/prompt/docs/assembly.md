@@ -7,6 +7,8 @@ Owner: src/prompt/
 
 `buildStablePrefix` owns persona, rules, skill catalog, tools, capabilities and instructions. Catalog/role changes intentionally alter these bytes; loading a tool/skill or writing a profile does not. The grammar is sent per request, outside the cached prefix.
 
+The [compact scaffold](../compact-prompt.ts) (`agent.prompt.compact`, default `auto`: on when the known window is at most 64K tokens, off when it is unknown) renders each tool's authored short form from [compact-tool-forms.ts](../compact-tool-forms.ts): a short summary, `argsSchema` unchanged, no examples, and `compact.tier: "rare"` tools as one-liners that `tool.view` loads. Persona, rules and instructions use shorter variants, and the skill catalog budget is `min(skills.catalogTokenBudget, 0.5% of the window)`. With every default tool mounted the estimate drops from about 9.6k to 3.7k tokens. The step latches the decision per session (`resolveSessionCompactPrompt`), so a step that cannot see the window keeps the earlier choice instead of flipping the prefix; only a different known window re-decides.
+
 ## Local variable tail
 
 The actual flat assembly in `build-prompt.ts` is:
