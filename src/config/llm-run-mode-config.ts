@@ -133,6 +133,16 @@ export type UserLlmFusionConfig = {
   escalationProvider?: string;
   /** Spend cap for one escalation, in USD. Default 0.25. */
   escalationMaxUsd?: number;
+  /**
+   * The trimmed judge (ATO-944). `"on"`: every task gets an acceptance
+   * checklist in its brief, built from the contract (checks, provides,
+   * declared files) plus its deliverable; after the work, failed facts
+   * and a fresh-context judge decide whether the task closes. A red list
+   * re-runs the task once, then is reported as failed. Default `"off"`.
+   */
+  judge?: "off" | "on";
+  /** The judge's model: a configured provider. Default: the orchestrator leg. */
+  judgeProvider?: string;
 };
 
 export type FusionEscalationMode = "off" | "advisor";
@@ -411,6 +421,19 @@ function parseFusion(
       `${field}.escalationMaxUsd`,
       0,
       1_000,
+    );
+  }
+  if (obj.judge !== undefined) {
+    if (obj.judge !== "off" && obj.judge !== "on") {
+      throw new ConfigValidationError(`${field}.judge`, "expected off|on");
+    }
+    out.judge = obj.judge;
+  }
+  if (obj.judgeProvider !== undefined) {
+    out.judgeProvider = parseLegProviderId(
+      obj.judgeProvider,
+      providers,
+      `${field}.judgeProvider`,
     );
   }
   if (obj.turnTimeBudgetMs !== undefined) {
