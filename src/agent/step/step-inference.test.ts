@@ -10,6 +10,8 @@ import { consumeStream, prepareStepInference, runInitialCompletion } from "./ste
 import { prepareStepRepair, finishStepRepair, type StepRepairArgs, tryParseToolCalls } from "./step-parsing.js";
 import { BatchValidationError, toLlmFailure } from "./step-errors.js";
 import { ModelError } from "../../llm/index.js";
+import { CompactPromptLatch } from "../../prompt/compact-prompt.js";
+import { COMPACT_SYSTEM_PERSONA, DEFAULT_SYSTEM_PERSONA } from "../../prompt/stable-prefix.js";
 
 function completion(overrides: Partial<CompletionResult> = {}): CompletionResult {
   return {
@@ -191,3 +193,43 @@ describe("step inference owner seams", () => {
     if (parsed.ok) expect(parsed.batch.calls[0]?.tool).toBe("reply");
   });
 });
+
+describe("compact prompt decision (ATO-1116)", () => {
+  it("keeps the session's latched scaffold when a later step cannot see the window", () => {
+    const { ctx, deps } = fixture();
+    const latch = new CompactPromptLatch();
+    const first = prepareStepInference(ctx, { ...deps, contextWindow: 32_768, compactPromptLatch: latch });
+    const second = prepareStepInference(ctx, { ...deps, contextWindow: null, compactPromptLatch: latch });
+    expect(first.prompt.stablePrefix).toContain(COMPACT_SYSTEM_PERSONA);
+    expect(second.prompt.stablePrefix).toBe(first.prompt.stablePrefix);
+  });
+
+  it("without a latch decides each step from its own window", () => {
+    const { ctx, deps } = fixture();
+    const second = prepareStepInference(ctx, { ...deps, contextWindow: null });
+    expect(second.prompt.stablePrefix).toContain(DEFAULT_SYSTEM_PERSONA);
+  });
+
+  it("a fallback link decides from its own window, not the primary's latched decision", () => {
+    const { ctx, deps } = fixture();
+    const latch = new CompactPromptLatch();
+    const prepared = prepareStepInference(ctx, {
+      ...deps,
+      contextWindow: 32_768,
+      compactPromptLatch: latch,
+      modelModePolicy: { activeProviderId: "primary", providers: [] },
+      modelMode: { mode: "local", source: "provider", providerId: "primary", modelId: null },
+    });
+    expect(prepared.prompt.stablePrefix).toContain(COMPACT_SYSTEM_PERSONA);
+    const linked = prepared.llmParams.prepareForLink!({
+      modelMode: { mode: "local", source: "provider", providerId: "fallback", modelId: null },
+      transport: "grammar",
+      contextWindow: 131_072,
+    });
+    expect(linked.prompt).toContain(DEFAULT_SYSTEM_PERSONA);
+    expect(linked.prompt).not.toContain(COMPACT_SYSTEM_PERSONA);
+    // The link did not overwrite the primary session's latched decision.
+    expect(latch.resolve(ctx.session.id, "auto", null).compact).toBe(true);
+  });
+});
+

@@ -153,6 +153,12 @@ export interface StepDependencies {
   modelMode?: import("../../llm/model-mode.js").ResolvedModelMode;
   registry: ToolRegistry;
   /**
+   * Per-session compact-prompt decision (ATO-1116), owned by the loop.
+   * Absent (tests, one-off callers): decided per step from config and
+   * the step's window, with nothing held between steps.
+   */
+  compactPromptLatch?: import("../../prompt/compact-prompt.js").CompactPromptLatch;
+  /**
    * Plan mode, read per call rather than captured once — same contract
    * as `BatchExecutionContext.isPlanMode`. Absent ⇒ off.
    */

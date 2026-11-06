@@ -1,11 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
   applyCompactToolForms,
   COMPACT_PROMPT_MAX_WINDOW,
+  CompactPromptLatch,
   compactSkillCatalogBudget,
   decideCompactPrompt,
-  resetCompactPromptLatch,
-  resolveSessionCompactPrompt,
 } from "./compact-prompt.js";
 import { COMPACT_TOOL_FORMS } from "./compact-tool-forms.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "./tool-descriptors.js";
@@ -41,8 +40,6 @@ function prefix(compact: boolean, toolTransport?: "grammar" | "native_tools"): s
     ...(compact ? { compact: true } : {}),
   });
 }
-
-afterEach(() => resetCompactPromptLatch());
 
 describe("compact scaffold size", () => {
   // Measured when this landed: 9651 -> 3727 estimated tokens (grammar),
@@ -163,9 +160,14 @@ describe("decideCompactPrompt", () => {
     expect(decideCompactPrompt("auto", 65_536).compact).toBe(true);
     expect(decideCompactPrompt("auto", 65_537).compact).toBe(false);
     expect(decideCompactPrompt("auto", 262_144).compact).toBe(false);
-    expect(decideCompactPrompt("auto", null)).toEqual({ compact: false, reason: "auto: window unknown" });
+    expect(decideCompactPrompt("auto", null)).toEqual({
+      compact: false,
+      reason: "auto: window unknown",
+      contextWindow: null,
+    });
     expect(decideCompactPrompt("auto", 0).compact).toBe(false);
     expect(decideCompactPrompt("auto", 32_768).reason).toBe("auto: window 32768");
+    expect(decideCompactPrompt("auto", 32_768).contextWindow).toBe(32_768);
   });
 
   it("on / off ignore the window", () => {
@@ -175,25 +177,42 @@ describe("decideCompactPrompt", () => {
   });
 });
 
-describe("resolveSessionCompactPrompt", () => {
+describe("CompactPromptLatch", () => {
   it("keeps a session's known-window decision when a later step cannot see the window", () => {
-    expect(resolveSessionCompactPrompt("a", "auto", 32_768).compact).toBe(true);
-    expect(resolveSessionCompactPrompt("a", "auto", null).compact).toBe(true);
-    expect(resolveSessionCompactPrompt("a", "auto", undefined).compact).toBe(true);
+    const latch = new CompactPromptLatch();
+    expect(latch.resolve("a", "auto", 32_768).compact).toBe(true);
+    expect(latch.resolve("a", "auto", null)).toEqual({
+      compact: true,
+      reason: "auto: window 32768",
+      contextWindow: 32_768,
+    });
+    expect(latch.resolve("a", "auto", undefined).compact).toBe(true);
     // Another session has nothing latched.
-    expect(resolveSessionCompactPrompt("b", "auto", null).compact).toBe(false);
+    expect(latch.resolve("b", "auto", null).compact).toBe(false);
+  });
+
+  it("holds nothing across instances (per loop, no module state)", () => {
+    new CompactPromptLatch().resolve("a", "auto", 32_768);
+    expect(new CompactPromptLatch().resolve("a", "auto", null).compact).toBe(false);
   });
 
   it("re-decides on a different known window (another model, cold cache anyway)", () => {
-    expect(resolveSessionCompactPrompt("a", "auto", 32_768).compact).toBe(true);
-    expect(resolveSessionCompactPrompt("a", "auto", 131_072).compact).toBe(false);
-    expect(resolveSessionCompactPrompt("a", "auto", null).compact).toBe(false);
+    const latch = new CompactPromptLatch();
+    expect(latch.resolve("a", "auto", 32_768).compact).toBe(true);
+    expect(latch.resolve("a", "auto", 131_072).compact).toBe(false);
+    expect(latch.resolve("a", "auto", null).compact).toBe(false);
   });
 
-  it("takes on / off as written", () => {
-    expect(resolveSessionCompactPrompt("a", "auto", 32_768).compact).toBe(true);
-    expect(resolveSessionCompactPrompt("a", "off", null).compact).toBe(false);
-    expect(resolveSessionCompactPrompt("a", "on", 200_000).compact).toBe(true);
+  it("takes on / off as written; `on` keeps the last known window for the catalog", () => {
+    const latch = new CompactPromptLatch();
+    expect(latch.resolve("a", "auto", 32_768).compact).toBe(true);
+    expect(latch.resolve("a", "off", null).compact).toBe(false);
+    expect(latch.resolve("a", "on", 200_000).compact).toBe(true);
+    expect(latch.resolve("a", "on", null)).toEqual({
+      compact: true,
+      reason: "on",
+      contextWindow: 200_000,
+    });
   });
 });
 
@@ -218,7 +237,11 @@ describe("buildPrompt compact wiring", () => {
     description: `Does thing number ${i} with a reasonably long description line`,
     source: "global" as const,
   }));
-  const build = (contextWindow: number | undefined, compactPrompt?: boolean) =>
+  const build = (
+    contextWindow: number | undefined,
+    compactPrompt?: boolean,
+    compactPromptWindow?: number | null,
+  ) =>
     buildPrompt({
       session,
       toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
@@ -229,6 +252,7 @@ describe("buildPrompt compact wiring", () => {
         ...(contextWindow !== undefined ? { contextWindow } : {}),
       },
       ...(compactPrompt !== undefined ? { compactPrompt } : {}),
+      ...(compactPromptWindow !== undefined ? { compactPromptWindow } : {}),
     });
 
   it("auto picks the compact scaffold on a 32K window and the full one on 128K or unknown", () => {
@@ -248,5 +272,19 @@ describe("buildPrompt compact wiring", () => {
     const shown = (p: string) => (p.match(/^- \[global\] skill-/gm) ?? []).length;
     expect(shown(small)).toBeLessThan(shown(large));
     expect(small).toMatch(/more installed skills not shown \(skills\.catalogTokenBudget\)/);
+  });
+  it("a latched 32K decision keeps the stable prefix byte-identical on a step with no window", () => {
+    // The latch holds the window with the decision, so the window-scaled
+    // skill catalog does not grow back to the configured budget when a
+    // later step cannot see the window.
+    const latch = new CompactPromptLatch();
+    const first = latch.resolve(session.id, "auto", 32_768);
+    const second = latch.resolve(session.id, "auto", null);
+    const a = build(32_768, first.compact, first.contextWindow).stablePrefix;
+    const b = build(undefined, second.compact, second.contextWindow).stablePrefix;
+    expect(b).toBe(a);
+    expect(b).toContain(COMPACT_SYSTEM_PERSONA);
+    // Without the latched window the catalog would change mid-session.
+    expect(build(undefined, true).stablePrefix).not.toBe(a);
   });
 });

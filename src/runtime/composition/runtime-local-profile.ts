@@ -126,15 +126,23 @@ export async function prepareRuntimeLocalProfile(
     // Judged against the reply reserve the budget really holds on this
     // window, so a cap raised past the window (96k on a 32k model) does
     // not make every model "too small".
+    // The compact scaffold (ATO-1116) this window gets needs about
+    // half the fixed room of the full one.
+    const compactPrompt = decideCompactPrompt(
+      config.agent.prompt?.compact ?? "auto",
+      candidate.contextWindow,
+    ).compact;
     const minUsableCtx = minUsableContextWindow(
       config.localModels.completionMaxTokens,
       candidate.contextWindow,
+      { compact: compactPrompt },
     );
     if (candidate.contextWindow && candidate.contextWindow < minUsableCtx) {
       logger.warn("context window too small for the agent prompt", {
         contextWindow: candidate.contextWindow,
         required: minUsableCtx,
         completionMaxTokens: config.localModels.completionMaxTokens,
+        promptCompact: compactPrompt,
         hint:
           config.localModels.mode === "managed"
             ? "raise localModels.managed.contextSize, lower localModels.completionMaxTokens, or pick a model that fits VRAM"

@@ -76,6 +76,10 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.fs.grep": {
     summary: "Regex search in file contents (ripgrep). Not for big binary trees like *.pdf.",
   },
+  "os.fs.code_map": {
+    summary:
+      "Outline a code project (key files, symbols, line numbers) before reading; path = one file gives its skeleton.",
+  },
   "os.fs.edit": {
     summary:
       "Replace text in a file (may require approval). oldString must match the file text exactly (copy it from os.fs.read, same indentation) and be unique unless replaceAll.",

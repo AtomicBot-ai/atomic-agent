@@ -89,11 +89,19 @@ export interface BuildPromptInput {
   /**
    * Render the compact scaffold (ATO-1116, `compact-prompt.ts`). The
    * agent step passes its session-latched decision
-   * (`resolveSessionCompactPrompt`) so the stable prefix cannot flip
+   * (`CompactPromptLatch`) so the stable prefix cannot flip
    * mid-session. Omitted: decided here from `agent.prompt.compact` and
    * the resolved window, statelessly.
    */
   compactPrompt?: boolean;
+  /**
+   * The window the latched {@link compactPrompt} decision was made
+   * from. When set (including `null`), the compact skill catalog budget
+   * is scaled to it instead of this step's window, so a step that
+   * cannot see the window keeps the same catalog bytes. Ignored without
+   * `compactPrompt`.
+   */
+  compactPromptWindow?: number | null;
   /**
    * Whether `profile.contextWindow` describes the model *this* prompt
    * is being built for. Default `true` — every single-leg caller.

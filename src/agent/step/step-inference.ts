@@ -7,7 +7,7 @@ import { narrowDescriptorsToToolSet, toolSetAdmits } from "../policies/step-tool
 import type { BuildPromptInput } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
 import { buildPrompt, resolvePromptContextWindow } from "../../prompt/build-prompt.js";
-import { resolveSessionCompactPrompt } from "../../prompt/compact-prompt.js";
+import { decideCompactPrompt } from "../../prompt/compact-prompt.js";
 import { hashPrefix } from "../../llm/slot-manager.js";
 import { checkProfilePromptAligned } from "../../llm/profile-invariants.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
@@ -144,15 +144,17 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
   };
   // Compact scaffold for small windows (ATO-1116), latched per session
-  // so the stable prefix does not flip between steps.
-  const compactDecision = resolveSessionCompactPrompt(
-    ctx.session.id,
-    getConfig().agent.prompt?.compact ?? "auto",
-    resolvePromptContextWindow(basePromptInput),
-  );
+  // by the loop so the stable prefix (scaffold and window-scaled skill
+  // catalog) does not flip between steps.
+  const compactMode = getConfig().agent.prompt?.compact ?? "auto";
+  const promptWindow = resolvePromptContextWindow(basePromptInput);
+  const compactDecision = deps.compactPromptLatch
+    ? deps.compactPromptLatch.resolve(ctx.session.id, compactMode, promptWindow)
+    : decideCompactPrompt(compactMode, promptWindow);
   const promptInput: BuildPromptInput = {
     ...basePromptInput,
     compactPrompt: compactDecision.compact,
+    compactPromptWindow: compactDecision.contextWindow,
   };
   return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision };
 }
@@ -322,7 +324,9 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   };
   if (deps.modelModePolicy) {
     llmParams.prepareForLink = (link) => {
-      const linkDeps = { ...deps, modelMode: link.modelMode, toolTransport: link.transport };
+      // No latch for a link: the primary's session decision does not
+      // speak for a fallback link's window (see `buildPrompt` below).
+      const linkDeps: StepDependencies = { ...deps, modelMode: link.modelMode, toolTransport: link.transport, compactPromptLatch: undefined };
       if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, link.contextWindow ? { ...linkDeps, contextWindow: link.contextWindow } : linkDeps);
       const linked = deps.prepareWorkspace ? prepareStepPrompt(ctx, linkDeps) : null;
       const linkDescriptors = linked?.stepDescriptors ?? stepDescriptors;
@@ -332,7 +336,12 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       }) : null;
       const template = link.transport === "native_tools" ? NO_SERVER_TEMPLATE
         : resolveServerTemplatePolicy(getConfig().localModels, deps.profile);
-      const next = buildPrompt({ ...(linked?.promptInput ?? promptInput), session: ctx.session, modelMode: link.modelMode,
+      // The link's prompt decides compact vs full from the link's own
+      // window, not from the primary's latched decision.
+      const linkPromptInput: BuildPromptInput = { ...(linked?.promptInput ?? promptInput) };
+      delete linkPromptInput.compactPrompt;
+      delete linkPromptInput.compactPromptWindow;
+      const next = buildPrompt({ ...linkPromptInput, session: ctx.session, modelMode: link.modelMode,
         toolTransport: link.transport, contextWindow: link.contextWindow, profileWindowApplies: false,
         suppressReasoningPrefill: link.transport === "native_tools" || template.useServerTemplate,
         completionMaxTokens: link.maxTokens ?? ctx.maxOutputTokens ?? getConfig().localModels.completionMaxTokens,

@@ -28,6 +28,13 @@ export interface CompactPromptDecision {
   compact: boolean;
   /** Short, log-safe reason: `on`, `off`, `auto: window 32768`, `auto: window unknown`. */
   reason: string;
+  /**
+   * The window this decision was made from (`null` when unknown). The
+   * compact skill catalog budget is scaled to it, so a latched decision
+   * also keeps the catalog bytes stable when a later step cannot see
+   * the window.
+   */
+  contextWindow: number | null;
 }
 
 /**
@@ -39,52 +46,66 @@ export function decideCompactPrompt(
   mode: CompactPromptMode,
   contextWindow: number | null | undefined,
 ): CompactPromptDecision {
-  if (mode === "on") return { compact: true, reason: "on" };
-  if (mode === "off") return { compact: false, reason: "off" };
-  if (!contextWindow || contextWindow <= 0) {
-    return { compact: false, reason: "auto: window unknown" };
+  const window = contextWindow && contextWindow > 0 ? contextWindow : null;
+  if (mode === "on") return { compact: true, reason: "on", contextWindow: window };
+  if (mode === "off") return { compact: false, reason: "off", contextWindow: window };
+  if (window === null) {
+    return { compact: false, reason: "auto: window unknown", contextWindow: null };
   }
   return {
-    compact: contextWindow <= COMPACT_PROMPT_MAX_WINDOW,
-    reason: `auto: window ${contextWindow}`,
+    compact: window <= COMPACT_PROMPT_MAX_WINDOW,
+    reason: `auto: window ${window}`,
+    contextWindow: window,
   };
 }
 
-const LATCH_LIMIT = 512;
-const latched = new Map<string, CompactPromptDecision>();
+/**
+ * Bound on remembered sessions. A long-lived runtime serves sessions
+ * without end; forgetting the oldest only costs that session one
+ * re-decision from whatever window its next step sees.
+ */
+const MAX_TRACKED_SESSIONS = 512;
 
 /**
- * {@link decideCompactPrompt} held stable for a session, so the stable
+ * {@link decideCompactPrompt} held stable per session, so the stable
  * prefix (and the llama.cpp KV cache over it) does not flip between
- * steps. Under `auto`, the first decision made with a known window is
- * kept: a later step that cannot see the window (a probe that failed,
- * a leg with no catalogue entry) reuses it instead of falling back to
- * the full scaffold. A different known window is a different model or
- * `--ctx-size`, whose cache is cold anyway, so that re-decides. `on` /
- * `off` are taken as written: changing the config is the operator's
- * choice to drop the cache once.
+ * steps. One instance per `AgentLoop`, handed to the step through
+ * `StepDependencies.compactPromptLatch` (no module-level state).
+ *
+ * Under `auto`, a decision made with a known window is kept together
+ * with that window: a later step that cannot see the window (a probe
+ * that failed, a leg with no catalogue entry) reuses both, so the
+ * scaffold AND the window-scaled skill catalog budget stay the same
+ * bytes. A different known window is a different model or
+ * `--ctx-size`, whose cache is cold anyway, so that re-decides. With an
+ * unknown window, an `on` session also reuses the window it last saw.
+ * `on` / `off` themselves are taken as written: changing the config is
+ * the operator's choice to drop the cache once.
  */
-export function resolveSessionCompactPrompt(
-  sessionId: string,
-  mode: CompactPromptMode,
-  contextWindow: number | null | undefined,
-): CompactPromptDecision {
-  const fresh = decideCompactPrompt(mode, contextWindow);
-  if (mode !== "auto") return fresh;
-  const known = Boolean(contextWindow && contextWindow > 0);
-  if (!known) return latched.get(sessionId) ?? fresh;
-  latched.delete(sessionId);
-  latched.set(sessionId, fresh);
-  if (latched.size > LATCH_LIMIT) {
-    const oldest = latched.keys().next().value;
-    if (oldest !== undefined) latched.delete(oldest);
-  }
-  return fresh;
-}
+export class CompactPromptLatch {
+  private readonly latched = new Map<string, CompactPromptDecision>();
 
-/** Test seam: forget every latched session decision. */
-export function resetCompactPromptLatch(): void {
-  latched.clear();
+  resolve(
+    sessionId: string,
+    mode: CompactPromptMode,
+    contextWindow: number | null | undefined,
+  ): CompactPromptDecision {
+    const fresh = decideCompactPrompt(mode, contextWindow);
+    if (mode === "off") return fresh;
+    if (fresh.contextWindow === null) {
+      const held = this.latched.get(sessionId);
+      if (held === undefined) return fresh;
+      // `on` stays on whatever was latched; only the window is reused.
+      return mode === "on" ? { ...fresh, contextWindow: held.contextWindow } : held;
+    }
+    this.latched.delete(sessionId);
+    this.latched.set(sessionId, fresh);
+    if (this.latched.size > MAX_TRACKED_SESSIONS) {
+      const oldest = this.latched.keys().next().value;
+      if (oldest !== undefined) this.latched.delete(oldest);
+    }
+    return fresh;
+  }
 }
 
 /**

@@ -175,14 +175,19 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const contextWindow = resolvePromptContextWindow(input);
 
   // Compact scaffold for small windows (ATO-1116). A step passes the
-  // session-latched decision (`resolveSessionCompactPrompt`) so the
-  // prefix cannot flip mid-session; a direct caller gets the stateless
-  // one from the same config and window.
+  // session-latched decision (`CompactPromptLatch`) together with the
+  // window it was made from, so neither the scaffold nor the
+  // window-scaled skill catalog can flip mid-session; a direct caller
+  // gets the stateless decision from the same config and window.
   const compactPrompt =
     input.compactPrompt ??
     decideCompactPrompt(config.agent.prompt?.compact ?? "auto", contextWindow).compact;
+  const catalogWindow =
+    input.compactPrompt !== undefined && input.compactPromptWindow !== undefined
+      ? input.compactPromptWindow
+      : contextWindow;
   const catalogTokenBudget = compactPrompt
-    ? compactSkillCatalogBudget(config.skills.catalogTokenBudget, contextWindow)
+    ? compactSkillCatalogBudget(config.skills.catalogTokenBudget, catalogWindow)
     : config.skills.catalogTokenBudget;
 
   const workspaceCatalog = input.workspace ? buildSkillCatalogSection(
