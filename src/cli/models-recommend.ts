@@ -14,25 +14,18 @@
  * are only ever added.
  */
 
-import { getConfig } from "../config/index.js";
 import {
-  decideModelUpgrade,
   modelDownloadGb,
-  recommendModelTiers,
-  type MachineForModels,
-  type ModelTiers,
   type ModelUpgradeDecision,
 } from "../local-llm/catalog/model-upgrade.js";
-import { probeMachineForModels } from "../local-llm/backend/machine-for-models.js";
+import type { LocalModelDef } from "../local-llm/index.js";
 import {
-  downloadJobId,
-  isDownloadJobLive,
-  isModelDownloaded,
-  listLocalModels,
-  readDownloadJob,
-  spawnDownloadWorker,
-  type LocalModelDef,
-} from "../local-llm/index.js";
+  readRecommendSnapshot,
+  startModelUpgrade,
+  type RecommendSnapshot,
+} from "../local-llm/model-upgrade-runner.js";
+
+export { readRecommendSnapshot, startModelUpgrade, type RecommendSnapshot };
 
 /** Bumped only on a breaking change; additions keep it. */
 export const RECOMMEND_JSON_VERSION = 1;
@@ -55,44 +48,6 @@ function modelJson(def: LocalModelDef | null): ModelJson | null {
     downloadGb: Math.round(modelDownloadGb(def) * 100) / 100,
     description: def.description,
     supportsVision: def.supportsVision === true,
-  };
-}
-
-export interface RecommendSnapshot {
-  machine: MachineForModels;
-  tiers: ModelTiers;
-  decision: ModelUpgradeDecision;
-  activeModelId: string | null;
-}
-
-/** Everything both subcommands print, read once from config and the machine. */
-export async function readRecommendSnapshot(
-  probe: typeof probeMachineForModels = probeMachineForModels,
-): Promise<RecommendSnapshot> {
-  const cfg = getConfig();
-  const dataDir = cfg.paths.localModelsDataDir;
-  const managed = cfg.localModels.mode === "managed";
-  const machine = await probe({
-    dataDir,
-    engine: cfg.localModels.managed.engine,
-    configuredDevice: cfg.localModels.managed.device,
-  });
-  const activeModelId = managed ? cfg.localModels.managed.modelId : null;
-  const active = cfg.llm?.activeTextProvider;
-  const downloadedIds = listLocalModels()
-    .filter((def) => isModelDownloaded(dataDir, def))
-    .map((def) => def.id);
-  return {
-    machine,
-    tiers: recommendModelTiers(machine),
-    decision: decideModelUpgrade({
-      machine,
-      activeModelId,
-      downloadedIds,
-      managed,
-      cloudActive: !!active && active !== "local-llama",
-    }),
-    activeModelId,
   };
 }
 
@@ -178,28 +133,9 @@ const NONE_WORDS: Record<Extract<ModelUpgradeDecision, { action: "none" }>["why"
 export async function runModelsUpgrade(args: readonly string[]): Promise<number> {
   const json = args.includes("--json");
   const dryRun = args.includes("--dry-run");
-  const snap = await readRecommendSnapshot();
+  const { snapshot: snap, job } = await startModelUpgrade({ dryRun });
   const out = recommendJson(snap);
   const d = snap.decision;
-  let job: Record<string, unknown> | null = null;
-  if (d.action === "download" && !dryRun) {
-    const dataDir = getConfig().paths.localModelsDataDir;
-    const existing = readDownloadJob(dataDir, downloadJobId("chat", d.model.id));
-    if (isDownloadJobLive(existing)) {
-      job = { id: existing.id, pid: existing.pid, started: false };
-    } else {
-      const res = spawnDownloadWorker({
-        dataDir,
-        kind: "chat",
-        modelId: d.model.id,
-        mode: d.model.supportsVision ? "with-mmproj" : "gguf-only",
-      });
-      job =
-        res.outcome === "already-running"
-          ? { id: res.job.id, pid: res.job.pid, started: false }
-          : { id: res.job.id, pid: res.job.pid, started: true };
-    }
-  }
   if (json) {
     process.stdout.write(`${JSON.stringify({ ...out, job })}\n`);
     return 0;

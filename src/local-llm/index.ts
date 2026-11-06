@@ -37,6 +37,12 @@ export {
   probeMachineForModels,
   type ProbeMachineInput,
 } from "./backend/machine-for-models.js";
+export {
+  readRecommendSnapshot,
+  startModelUpgrade,
+  type RecommendSnapshot,
+  type StartedUpgrade,
+} from "./model-upgrade-runner.js";
 
 export {
   isWindowsArm64,
