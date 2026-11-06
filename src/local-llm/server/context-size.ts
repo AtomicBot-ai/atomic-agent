@@ -16,11 +16,103 @@ const MIB_PER_GB = 1_000_000_000 / (1024 * 1024);
 const VRAM_SAFETY_FRACTION = 0.92;
 
 /**
- * Fixed VRAM reserved for llama.cpp compute buffers (activations, the
- * graph plan, CUDA/Vulkan context) on top of weights + KV. A flat
- * conservative figure — it does not scale much with context length.
+ * VRAM reserved for llama.cpp compute buffers (activations, the graph
+ * plan, CUDA/Vulkan context) on top of weights + KV when nothing more is
+ * known about the launch. A launch that knows its model and slot count
+ * reserves `estimateComputeReserveMiB` instead, which never goes below
+ * this figure.
  */
-const COMPUTE_OVERHEAD_MIB = 768;
+export const COMPUTE_OVERHEAD_MIB = 768;
+
+// ---------------------------------------------------------------------
+// What the model server holds besides weights and the KV cache.
+//
+// A flat 768 MiB was all the fit left for it, whatever the model and
+// however many slots the launch had. llama.cpp reserves its compute
+// graph for a full micro-batch with an output row per token, so the
+// logits buffer alone is `ubatch × vocab × 4` bytes (512 MiB for a
+// 262,144-token vocabulary at the default `--ubatch-size 512`, twice that
+// at the 1024 a vision launch uses), and the vision encoder has buffers
+// of its own when a projector is loaded. A hybrid model
+// (Qwen 3.5+, Nemotron-H) also keeps a fixed recurrent state per
+// sequence for every recurrent layer, and llama.cpp allocates one per
+// `--parallel` slot. With all of that left out, a 27B model on a 24 GB
+// card or a 32 GB Mac was handed a cache that only fit if part of the
+// model went to the CPU (ATO-333, ATO-848, ATO-866).
+// ---------------------------------------------------------------------
+
+/** llama.cpp's default `--ubatch-size`. */
+export const DEFAULT_UBATCH_SIZE = 512;
+
+/** The `--ubatch-size` a launch with a projector runs with (`buildLlamaServerArgs`). */
+export const VISION_UBATCH_SIZE = 1024;
+
+/**
+ * Vocabulary assumed when the header did not say: the largest in the
+ * catalogue (Gemma 4), so an unknown model is never under-reserved.
+ */
+export const UNKNOWN_VOCAB_SIZE = 262_144;
+
+/**
+ * What the server holds besides the logits that does not scale with the
+ * batch or the vocabulary: the backend's own context and the rest of the
+ * graph, whose activations llama.cpp's allocator lays over the same
+ * memory (a Gemma 3 27B launch reports a 522 MiB compute buffer at
+ * `--ubatch-size 512`, its 512 MiB of logits and little else). With an
+ * unknown vocabulary at the default micro-batch this adds up to exactly
+ * the old flat {@link COMPUTE_OVERHEAD_MIB}.
+ */
+export const COMPUTE_BASE_MIB = 256;
+
+/**
+ * The vision encoder's compute buffers when `--mmproj` is loaded, beyond
+ * the projector's own weights (already in `mmprojSizeGb`). An estimate
+ * until a measurement replaces it: the encoder runs one image of the
+ * fixed 560-token budget at a time.
+ */
+export const VISION_ENCODER_RESERVE_MIB = 512;
+
+export interface ComputeReserveInput {
+  /** The launch's `--ubatch-size`. */
+  ubatchSize: number;
+  /** Tokens in the model's vocabulary; unknown means {@link UNKNOWN_VOCAB_SIZE}. */
+  vocabSize?: number | null;
+  /** Whether the launch loads a projector (`--mmproj`). */
+  hasVision: boolean;
+  /** Request slots the launch may have (`--parallel`). */
+  slots: number;
+  /**
+   * Bytes of recurrent state one sequence keeps across all the model's
+   * recurrent layers (`recurrentStateBytesPerSequence` in
+   * `gguf-metadata.ts`); `0` for a model with none.
+   */
+  recurrentStateBytesPerSlot?: number;
+}
+
+/**
+ * MiB the model server needs besides weights and KV cache: the compute
+ * graph for one micro-batch (base + logits) and the vision
+ * encoder when a projector is loaded, together never less than
+ * {@link COMPUTE_OVERHEAD_MIB} so no window grows from this, plus the
+ * recurrent state for every slot. Pure.
+ */
+export function estimateComputeReserveMiB(input: ComputeReserveInput): number {
+  const mib = 1024 * 1024;
+  const ubatch = input.ubatchSize > 0 ? input.ubatchSize : DEFAULT_UBATCH_SIZE;
+  const vocab =
+    typeof input.vocabSize === "number" && input.vocabSize > 0
+      ? input.vocabSize
+      : UNKNOWN_VOCAB_SIZE;
+  const logitsMiB = (ubatch * vocab * 4) / mib;
+  const visionMiB = input.hasVision ? VISION_ENCODER_RESERVE_MIB : 0;
+  const graphMiB = Math.max(
+    COMPUTE_OVERHEAD_MIB,
+    COMPUTE_BASE_MIB + logitsMiB + visionMiB,
+  );
+  const slots = Math.max(1, Math.floor(input.slots || 1));
+  const recurrent = Math.max(0, input.recurrentStateBytesPerSlot ?? 0);
+  return Math.ceil(graphMiB + (slots * recurrent) / mib);
+}
 
 // ---------------------------------------------------------------------
 // Unified memory: the GPU has no memory of its own.
@@ -87,14 +179,25 @@ export function resolveUnifiedMemoryKvRoomMiB(input: {
   systemMemoryMiB: number;
   modelSizeGb: number;
   mmprojSizeGb: number;
+  /** `estimateComputeReserveMiB` for the launch; {@link COMPUTE_OVERHEAD_MIB} when omitted. */
+  computeReserveMiB?: number;
 }): number {
   const weightsMiB = (input.modelSizeGb + input.mmprojSizeGb) * MIB_PER_GB;
   return (
     input.systemMemoryMiB -
     resolveUnifiedMemoryHeadroomMiB(input.systemMemoryMiB) -
     weightsMiB -
-    COMPUTE_OVERHEAD_MIB
+    resolveReserveMiB(input.computeReserveMiB)
   );
+}
+
+/** The compute reserve a fit uses: the launch's own, or the flat default. */
+function resolveReserveMiB(computeReserveMiB: number | undefined): number {
+  return typeof computeReserveMiB === "number" &&
+    Number.isFinite(computeReserveMiB) &&
+    computeReserveMiB > 0
+    ? computeReserveMiB
+    : COMPUTE_OVERHEAD_MIB;
 }
 
 // ---------------------------------------------------------------------
@@ -415,6 +518,12 @@ export interface EstimateContextSizeInput {
    * of its own.
    */
   systemMemoryMiB?: number | null;
+  /**
+   * What the server needs besides weights and cache
+   * (`estimateComputeReserveMiB`). Absent: the flat
+   * {@link COMPUTE_OVERHEAD_MIB}.
+   */
+  computeReserveMiB?: number;
 }
 
 function roundDownTo(value: number, step: number): number {
@@ -435,10 +544,11 @@ export function resolveKvBudgetMiB(input: {
   modelSizeGb: number;
   mmprojSizeGb: number;
   systemMemoryMiB?: number | null;
+  computeReserveMiB?: number;
 }): number {
   const usableMiB = input.freeVramMiB * VRAM_SAFETY_FRACTION;
   const weightsMiB = (input.modelSizeGb + input.mmprojSizeGb) * MIB_PER_GB;
-  const fitMiB = usableMiB - weightsMiB - COMPUTE_OVERHEAD_MIB;
+  const fitMiB = usableMiB - weightsMiB - resolveReserveMiB(input.computeReserveMiB);
   const systemMemoryMiB = input.systemMemoryMiB;
   if (typeof systemMemoryMiB !== "number" || !(systemMemoryMiB > 0)) {
     return fitMiB;
@@ -449,6 +559,9 @@ export function resolveKvBudgetMiB(input: {
       systemMemoryMiB,
       modelSizeGb: input.modelSizeGb,
       mmprojSizeGb: input.mmprojSizeGb,
+      ...(input.computeReserveMiB === undefined
+        ? {}
+        : { computeReserveMiB: input.computeReserveMiB }),
     }),
   );
 }
@@ -463,6 +576,7 @@ export function resolveContextKvBudgetMiB(input: {
   modelSizeGb: number;
   mmprojSizeGb: number;
   systemMemoryMiB?: number | null;
+  computeReserveMiB?: number;
 }): number {
   const budgetMiB = resolveKvBudgetMiB(input);
   const systemMemoryMiB = input.systemMemoryMiB;
@@ -542,6 +656,9 @@ export function estimateContextSize(input: EstimateContextSizeInput): number {
     modelSizeGb,
     mmprojSizeGb,
     systemMemoryMiB: input.systemMemoryMiB ?? null,
+    ...(input.computeReserveMiB === undefined
+      ? {}
+      : { computeReserveMiB: input.computeReserveMiB }),
   });
   const kvBudgetBytes = kvBudgetMiB > 0 ? kvBudgetMiB * 1024 * 1024 : 0;
 
@@ -566,6 +683,37 @@ export function estimateContextSize(input: EstimateContextSizeInput): number {
     Math.max(MIN_AUTO_CONTEXT, Math.floor(Math.min(fitTokens, MAX_AUTO_CONTEXT))),
   );
   return Math.min(roundDownTo(clamped, 1024), ceiling);
+}
+
+/**
+ * An auto-sized context whose compute reserve covers the slots the launch
+ * will get, when the slot count is itself derived from the context
+ * (`parallel: "auto"`, `resolveWorkerSlots`). Tries one slot first and
+ * steps up: the first count whose reserve leaves a context that derives
+ * no more slots than were reserved for is the answer. At `maxSlots`
+ * (the slot rule's own ceiling) that always holds, so the loop ends
+ * there at the latest. A model whose per-slot state is costly so gets a
+ * context and a slot count that fit together, never a context sized for
+ * one slot and launched with eight. Pure: `fit` is `estimateContextSize`
+ * for a given reserve, `slotsFor` the slot rule, `reserveFor` the
+ * reserve for a slot count.
+ */
+export function fitContextForSlots(input: {
+  maxSlots: number;
+  reserveFor: (slots: number) => number;
+  fit: (computeReserveMiB: number) => number;
+  slotsFor: (contextSize: number) => number;
+}): { contextSize: number; slots: number; computeReserveMiB: number } {
+  const top = Math.max(1, Math.floor(input.maxSlots));
+  for (let slots = 1; slots < top; slots += 1) {
+    const computeReserveMiB = input.reserveFor(slots);
+    const contextSize = input.fit(computeReserveMiB);
+    if (input.slotsFor(contextSize) <= slots) {
+      return { contextSize, slots, computeReserveMiB };
+    }
+  }
+  const computeReserveMiB = input.reserveFor(top);
+  return { contextSize: input.fit(computeReserveMiB), slots: top, computeReserveMiB };
 }
 
 /**
