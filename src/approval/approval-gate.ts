@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import {
   currentApprovalLedger,
+  recordAutoApproval,
   type ToolApprovalRecord,
 } from "./approval-ledger.js";
 import {
@@ -386,8 +387,13 @@ export class ApprovalGate {
       });
     }
     const auto = this.autoApproval(request);
-    if (auto)
+    if (auto) {
+      // A grant is logged for the turn summary; the standing level is not.
+      if (!isAutoApprovedAt(this.level, request.category)) {
+        recordAutoApproval("grant", request.category, auto.replace(/^auto-approved \((.*)\)$/, "$1"));
+      }
       return Promise.resolve({ approvalId, approved: true, reason: auto });
+    }
     if (this.shouldReviewRisk(request)) {
       return this.requestAfterReview(request, signal);
     }
@@ -468,6 +474,11 @@ export class ApprovalGate {
       );
     }
     if (verdict?.risk === "low") {
+      recordAutoApproval(
+        "risk-review",
+        request.category,
+        verdict.reason.length > 0 ? `risk review: low (${verdict.reason})` : "risk review: low",
+      );
       return {
         approvalId: request.approvalId,
         approved: true,

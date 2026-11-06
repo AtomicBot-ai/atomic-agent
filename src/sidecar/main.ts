@@ -116,6 +116,11 @@ export async function bootstrapSidecar(): Promise<{
               status: inner.result.status,
               summary: inner.result.summary,
               truncated: inner.result.truncated,
+              // ATO-1145: approval records, auto-approvals included.
+              ...(inner.result.approvals !== undefined &&
+              inner.result.approvals.length > 0
+                ? { approvals: inner.result.approvals }
+                : {}),
               ...(inner.batchSize > 1
                 ? {
                     batchIndex: inner.batchIndex,

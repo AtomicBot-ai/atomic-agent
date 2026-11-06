@@ -173,6 +173,25 @@ describe("tool_result over SSE", () => {
     expect(sent[2]).not.toHaveProperty("key_required");
   });
 
+  it("carries the call's approval records, auto-approvals included, and nothing when there are none (ATO-1145)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const approvals = [
+      { verdict: "auto-approved" as const, category: "shell" as const, at: 1, via: "grant" as const, reason: "session grant: git" },
+      { verdict: "auto-approved" as const, category: "fs_write_workspace" as const, at: 2, via: "risk-review" as const, reason: "risk review: low (writes notes.md)" },
+    ];
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "os.shell.run", approvals }), 0));
+    hook(executed(result({ tool: "os.fs.read" }), 1));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.approvals).toEqual(approvals);
+    // An auto-approval is not a denial.
+    expect(sent[0]!.status).toBe("ok");
+    expect(sent[1]).not.toHaveProperty("approvals");
+  });
+
   it("sends nothing to an OpenAI-compatible client", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(false));

@@ -523,6 +523,13 @@ export function buildStreamEventHook(
             : {}),
           summary: clipToolSummary(inner.result.summary),
           ...keyRequiredFrame(inner.result),
+          // ATO-1145: the call's approval records, as the transcript keeps
+          // them (`tool_result.approvals`), so a live turn summary can list
+          // what was auto-approved (`verdict: "auto-approved"`, `via`,
+          // `reason`) without waiting for the session reload.
+          ...(inner.result.approvals !== undefined && inner.result.approvals.length > 0
+            ? { approvals: inner.result.approvals }
+            : {}),
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;
