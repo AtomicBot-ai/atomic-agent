@@ -139,7 +139,8 @@ describe("ChatLog", () => {
     };
     const { lastFrame } = render(<ChatLog state={state} />);
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("os.fs.read");
+    // ATO-962: the header says the call in words.
+    expect(text).toContain("Read index.ts");
     expect(text).not.toContain('text="Done"');
   });
 

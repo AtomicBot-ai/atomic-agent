@@ -40,6 +40,7 @@ import {
 } from "./request-context.js";
 import { deriveChatSessionId } from "./openai-session-id.js";
 import { maintenanceFrame } from "./stream-maintenance-frames.js";
+import { describeToolCall } from "../tools/describe-tool-call.js";
 import { createTurnPhaseTracker } from "./stream-turn-phase.js";
 import { claimTurnProgress } from "../agent/step/turn-progress-opt-in.js";
 import { buildSlowFirstTokenHint } from "./slow-first-token-hint.js";
@@ -446,6 +447,10 @@ export function buildStreamEventHook(
   let turnStreamed = false;
   let stepIndex = -1;
   let stepStreamed = "";
+  /* ATO-962: each open call's args by `call_id`, so its `tool_result`
+     can say in words what it did ("Read config.ts"). Removed when the
+     result is written. */
+  const openCallArgs = new Map<string, unknown>();
   const writeContent = (content: string): void => {
     sse.writeEvent(
       null,
@@ -488,6 +493,8 @@ export function buildStreamEventHook(
         if (!env.request.extensionsEnabled) return;
         const args = inner.call.args ?? {};
         const label = safeStringify(args).slice(0, 120);
+        const callId = toolCallId(stepIndex, inner.batchIndex);
+        openCallArgs.set(callId, args);
         sse.writeEvent("tool_progress", {
           id: env.completionId,
           object: "chat.completion.tool_progress",
@@ -497,7 +504,13 @@ export function buildStreamEventHook(
           tool: inner.call.tool,
           label,
           // The key its `tool_result` comes back under (ATO-197).
-          call_id: toolCallId(stepIndex, inner.batchIndex),
+          call_id: callId,
+          /* ATO-962: the call in words from the whole args (`label` is
+             clipped JSON): `line` as it runs ("Reading config.ts") and
+             `done_line` as it reads once done ("Read config.ts"), for a
+             host that applies its own tenses (desktop: waiting, denied). */
+          line: describeToolCall({ name: inner.call.tool, args }).line,
+          done_line: describeToolCall({ name: inner.call.tool, args, ok: true }).line,
         });
       } else if (inner.type === "tool_call_executed") {
         /* ATO-197: one call ended. A host drew the call from its
@@ -509,19 +522,29 @@ export function buildStreamEventHook(
            completion's own: the step and the call's place in its batch,
            the same pair the `tool_progress` it answers carries. */
         if (!env.request.extensionsEnabled) return;
+        const resultCallId = toolCallId(stepIndex, inner.batchIndex);
+        const status = toolResultStatus(inner.result);
+        const resultArgs = openCallArgs.get(resultCallId);
+        openCallArgs.delete(resultCallId);
         sse.writeEvent("tool_result", {
           id: env.completionId,
           object: "chat.completion.tool_result",
           created: env.created,
           model: env.request.model,
           session_id: env.session.id,
-          call_id: toolCallId(stepIndex, inner.batchIndex),
+          call_id: resultCallId,
           tool: inner.result.tool,
-          status: toolResultStatus(inner.result),
+          status,
           ...(typeof inner.durationMs === "number" && Number.isFinite(inner.durationMs)
             ? { duration_ms: Math.max(0, Math.round(inner.durationMs)) }
             : {}),
           summary: clipToolSummary(inner.result.summary),
+          // ATO-962: what the call did, in words ("Ran npm test · failed").
+          line: describeToolCall({
+            name: inner.result.tool,
+            args: resultArgs,
+            ok: status === "ok",
+          }).line,
           ...keyRequiredFrame(inner.result),
         });
       } else if (inner.type === "assistant_delta") {
