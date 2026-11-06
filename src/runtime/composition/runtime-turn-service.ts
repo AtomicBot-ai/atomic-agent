@@ -26,6 +26,8 @@ import type { createRuntimeTraces } from "./runtime-traces.js";
 import type { createRuntimeObservability } from "./runtime-observability.js";
 import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
+import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
+import { createRuntimeGoalRunner } from "./runtime-goal.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -538,6 +540,16 @@ export function createRuntimeTurnService(
   const steer = (sessionId: string, text: string): boolean =>
     steeringInbox.push(sessionId, text);
 
+  // Goal mode (ATO-451): rounds of ordinary turns until the acceptance
+  // list is green. Owned here so every frontend gets it through runTurn.
+  const goals = createRuntimeGoalRunner({
+    sessionStore,
+    llmComplete,
+    slotManager,
+    resolveTransport: () => resolveActiveLlmSlice().transport,
+    logger,
+  });
+
   const runTurn = async (
     session: SessionState,
     userMessage: string,
@@ -553,8 +565,29 @@ export function createRuntimeTurnService(
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
+      goal?: GoalSpec;
+      onGoalProgress?: (goal: GoalState) => void;
     } = {},
   ): Promise<RunTurnResult> => {
+    if (runOptions.goal !== undefined) {
+      const { goal, onGoalProgress, ...turnOptions } = runOptions;
+      return goals.run(
+        session,
+        userMessage,
+        {
+          goal,
+          ...(runOptions.signal ? { signal: runOptions.signal } : {}),
+          ...(runOptions.taskMaxDurationMs === undefined ? {} : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+          ...(onGoalProgress ? { onGoalProgress } : {}),
+        },
+        // Each round is an ordinary turn: queued, approved and saved alike.
+        (roundSession, message, remainingMs) =>
+          runTurn(roundSession, message, {
+            ...turnOptions,
+            ...(remainingMs === undefined ? {} : { taskMaxDurationMs: remainingMs }),
+          }),
+      );
+    }
     // Before the queue, so a bad pin rejects now rather than after
     // waiting behind whatever is running on the session.
     assertKnownProvider(runOptions.providerId);
@@ -646,7 +679,7 @@ export function createRuntimeTurnService(
     }
   };
 
-  return { executeTurn, steer, runTurn };
+  return { executeTurn, steer, runTurn, controlGoal: goals.control };
 }
 
 /**
