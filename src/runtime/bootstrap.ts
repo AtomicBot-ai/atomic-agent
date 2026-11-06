@@ -38,6 +38,7 @@ import { SwarmRegistry } from "../channels/swarm/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
+import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
 
 import { ApprovalRouter } from "../approval/approval-router.js";
 
@@ -180,6 +181,12 @@ export async function createAgentRuntime(
     emit: (request) => approvalRouter.emit(request),
     level: options.approvalLevel,
   });
+  // Saved "always allow" / ask / deny rules (ATO-1141): the global file in
+  // the state dir, plus ask / deny from a project's own file.
+  approvals.setRules(new ApprovalRulesStore({
+    stateDir: config.paths.stateDir,
+    warn: (message, fields) => logger.warn(message, fields),
+  }));
   // Tools are registered with `approvalRequired: true` unconditionally;
   // the gate's approval level carries the boot-time value instead. Every
   // request reaches the gate with its category and the gate decides

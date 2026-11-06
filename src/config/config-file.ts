@@ -26,8 +26,12 @@ export function getDotenvPath(stateDir: string): string {
 
 /**
  * The agent's own trust surface: `config.json` (holds
- * `agent.approvalLevel`) and `.env` (API keys / bot tokens loaded at
- * boot). A silent rewrite of either is a self-escalation vector, so the
+ * `agent.approvalLevel`), `.env` (API keys / bot tokens loaded at
+ * boot) and `approval-rules.json` (saved "always allow" rules,
+ * `src/approval/approval-rules-store.ts`; the name is spelled here
+ * because config sits below approval, and `config-file.test.ts` pins it
+ * against the owner's constant). A silent rewrite of any is a
+ * self-escalation vector, so the
  * approval ladder categorises a write to these as `trust_config` (asks
  * until level 5). This is the single place that *knows where the trust
  * surface lives*; the bootstrap resolves it once from `config.paths` and
@@ -37,7 +41,11 @@ export function getTrustConfigPaths(paths: {
   userConfigFile: string;
   stateDir: string;
 }): readonly string[] {
-  return [paths.userConfigFile, getDotenvPath(paths.stateDir)];
+  return [
+    paths.userConfigFile,
+    getDotenvPath(paths.stateDir),
+    join(paths.stateDir, "approval-rules.json"),
+  ];
 }
 
 /**
