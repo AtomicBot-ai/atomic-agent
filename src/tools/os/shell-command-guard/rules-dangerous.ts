@@ -1,4 +1,5 @@
 import type { Rule } from "./guard-types.js";
+import { matchDangerousArgv } from "./rules-dangerous-argv.js";
 
 interface PatternRule {
   id: string;
@@ -22,20 +23,33 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
     regex: /\bchmod\s+(?:-[^\s]+\s+)*(?:777|666)\b/,
     reason: "permissive chmod",
   },
+  // `-R` anywhere in the same command (GNU takes options after the
+  // mode/owner too: `chmod 755 -R dir`), bundled (`-Rv`), or the long
+  // `--recursive` and its abbreviations. `[^;&|\n]*` keeps the match
+  // inside one command of a compound line.
   {
     id: "dangerous.chmod_recursive",
-    regex: /\bchmod\s+-[a-z]*r[a-z]*\b/,
+    regex: /\bchmod\b[^;&|\n]*\s(?:-[a-z]*r[a-z]*|--rec[a-z]*)(?=\s|$)/,
     reason: "recursive chmod",
   },
   {
     id: "dangerous.chown_recursive",
-    regex: /\bchown\s+-[a-z]*r[a-z]*\b/,
+    regex:
+      /\bch(?:own|grp)\b[^;&|\n]*\s(?:-[a-z]*r[a-z]*|--rec[a-z]*)(?=\s|$)/,
     reason: "recursive chown",
   },
   {
     id: "dangerous.curl_pipe_sh",
     regex: /\b(?:curl|wget)\b.*\|\s*(?:sh|bash|zsh|python|python3)\b/,
     reason: "pipe download into interpreter",
+  },
+  // `bash <(curl …)`, `bash < <(curl …)`, `source <(wget …)`: the same
+  // download-and-run as a pipe, through process substitution.
+  {
+    id: "dangerous.curl_process_substitution",
+    regex:
+      /(?:^|[\s;&|(])(?:sh|bash|zsh|dash|ksh|python|python3|source|\.)\s+(?:-\S+\s+)*(?:<\s*)?<\(\s*(?:curl|wget)\b/,
+    reason: "run a download through process substitution",
   },
   {
     id: "dangerous.shell_dash_c",
@@ -52,16 +66,9 @@ const DANGEROUS_PATTERNS: readonly PatternRule[] = [
     regex: /\bsudo\b/,
     reason: "privilege escalation",
   },
-  {
-    id: "dangerous.git_force_push",
-    regex: /\bgit\s+push\b.*(?:^|\s)(?:--force|-f)(?:\s|$)/,
-    reason: "force push",
-  },
-  {
-    id: "dangerous.git_reset_hard",
-    regex: /\bgit\s+reset\s+--hard\b/,
-    reason: "hard reset",
-  },
+  // git (force push, hard reset, clean -f, checkout/restore of the
+  // whole tree, branch -D) and find -delete / -exec rm are matched on
+  // parsed words in rules-dangerous-argv.ts, after these patterns.
   {
     id: "dangerous.drop_table",
     regex: /\bdrop\s+table\b/,
@@ -134,6 +141,6 @@ export const dangerousRule: Rule = {
         };
       }
     }
-    return null;
+    return matchDangerousArgv(input);
   },
 };
