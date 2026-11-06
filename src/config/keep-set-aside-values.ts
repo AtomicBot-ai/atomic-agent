@@ -1,0 +1,145 @@
+import { isDeepStrictEqual } from "node:util";
+
+import { COMPACTION_MODES } from "./agent/compaction-config.js";
+import { parseUserConfigFile, type UserConfigFile } from "./config-schema.js";
+import { LLM_TOOL_TRANSPORTS } from "./llm-config.js";
+import { FUSION_WORKER_REASONING_LEVELS, RUN_MODE_NAMES } from "./llm-run-mode-config.js";
+import { keepSetAsideLocalModelValues } from "./local-models/keep-set-aside-values.js";
+import { WHILE_BUSY_SUBMIT_MODES } from "./tui-config.js";
+
+type Tree = Record<string, unknown>;
+
+/**
+ * Enum-like settings a newer build may hold a value for that this build
+ * reads as the default or unset, with one notice (ATO-1241; the managed
+ * local model fields of ATO-1239 are kept by
+ * `keepSetAsideLocalModelValues`).
+ */
+export const SET_ASIDE_ENUM_KEYS: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
+  ["llm.toolTransport", LLM_TOOL_TRANSPORTS],
+  ["llm.runMode.mode", RUN_MODE_NAMES],
+  ["llm.runMode.fusion.workerReasoning", FUSION_WORKER_REASONING_LEVELS],
+  ["agent.compaction.mode", COMPACTION_MODES],
+  ["tui.whileBusySubmit", WHILE_BUSY_SUBMIT_MODES],
+]);
+
+/**
+ * Keys `config set` refuses a typed value for when it does not read back
+ * as itself: read from the file it is a newer build's choice, typed it is
+ * a typo.
+ */
+export function isSetAsideOnReadKey(key: string): boolean {
+  return key === "localModels.managed.engine" || key === "localModels.managed.backendVariant" || SET_ASIDE_ENUM_KEYS.has(key);
+}
+
+/** References to a provider (and the leg's model label), set aside with it when its kind is unknown here. */
+const PROVIDER_REF_KEYS: ReadonlyArray<readonly [string, string?]> = [
+  ["llm.activeTextProvider"],
+  ["llm.activeEmbeddingProvider"],
+  ["llm.fallback.chain"],
+  ["llm.runMode.fusion.orchestratorProvider", "llm.runMode.fusion.orchestratorModel"],
+  ["llm.runMode.fusion.workerProvider", "llm.runMode.fusion.workerModel"],
+];
+
+/**
+ * The write half of reading a newer build's values leniently. A
+ * whole-file write of a parsed config would put the stand-in (default,
+ * unset, or a provider left out) over what the newer build wrote, so a
+ * value on disk this build set aside is kept wherever `data` still holds
+ * exactly what this build read from that disk value. A choice made here
+ * differs from what was read and replaces it, as before.
+ *
+ * "What this build read" is the disk tree parsed again; when that fails
+ * the file is broken in some other way and `data` is written as is.
+ */
+export function keepSetAsideConfigValues(data: UserConfigFile, disk: Tree): UserConfigFile {
+  const withLocalModels = keepSetAsideLocalModelValues(data, disk);
+  let read: UserConfigFile;
+  try {
+    read = parseUserConfigFile(disk);
+  } catch {
+    return withLocalModels;
+  }
+  let out = withLocalModels as unknown as Tree;
+  for (const [key, known] of SET_ASIDE_ENUM_KEYS) {
+    const d = getPath(disk, key);
+    if (typeof d === "string" && d.length > 0 && !known.includes(d)) out = keepAt(out, disk, read, key);
+  }
+  out = keepSetAsideProviders(out, disk, read);
+  return out === (withLocalModels as unknown) ? withLocalModels : (out as unknown as UserConfigFile);
+}
+
+function keepSetAsideProviders(out: Tree, disk: Tree, read: UserConfigFile): Tree {
+  const diskProviders = getPath(disk, "llm.providers");
+  const outProviders = getPath(out, "llm.providers");
+  if (!Array.isArray(diskProviders) || !Array.isArray(outProviders)) return out;
+  const readIds = new Set((read.llm?.providers ?? []).map((p) => p.id));
+  const setAside = new Set<string>();
+  let providers = outProviders.map((p) => keepModelModes(p as Tree, diskProviders, read));
+  diskProviders.forEach((entry, i) => {
+    const id = isPlain(entry) ? entry.id : undefined;
+    if (typeof id !== "string" || readIds.has(id)) return;
+    setAside.add(id);
+    if (providers.some((p) => (p as Tree).id === id)) return; // a provider added here under that id wins
+    providers = [...providers.slice(0, i), entry, ...providers.slice(i)];
+  });
+  const changed = providers.length !== outProviders.length || providers.some((p, i) => p !== outProviders[i]);
+  let next = changed ? setPath(out, "llm.providers", providers) : out;
+  if (setAside.size === 0) return next;
+  const refers = (v: unknown): boolean =>
+    (typeof v === "string" && setAside.has(v)) || (Array.isArray(v) && v.some((id) => typeof id === "string" && setAside.has(id)));
+  for (const [ref, label] of PROVIDER_REF_KEYS) {
+    if (!refers(getPath(disk, ref))) continue;
+    next = keepAt(next, disk, read, ref);
+    if (label) next = keepAt(next, disk, read, label);
+  }
+  return next;
+}
+
+/** A per-provider `modelMode` / `modelModes` value a newer build added (read as unset here). */
+function keepModelModes(provider: Tree, diskProviders: unknown[], read: UserConfigFile): Tree {
+  const onDisk = diskProviders.find((p) => isPlain(p) && p.id === provider.id) as Tree | undefined;
+  const wasRead = read.llm?.providers.find((p) => p.id === provider.id) as unknown as Tree | undefined;
+  if (!onDisk || !wasRead) return provider;
+  const unknownMode = (v: unknown): boolean => typeof v === "string" && v.length > 0 && v !== "local" && v !== "cloud";
+  let next = provider;
+  if (unknownMode(onDisk.modelMode)) next = keepAt(next, onDisk, wasRead, "modelMode");
+  const modes = onDisk.modelModes;
+  if (isPlain(modes)) {
+    for (const [model, mode] of Object.entries(modes)) {
+      if (!unknownMode(mode)) continue;
+      const current = isPlain(next.modelModes) ? next.modelModes : undefined;
+      const readModes = isPlain(wasRead.modelModes) ? wasRead.modelModes : undefined;
+      if (current?.[model] !== undefined || readModes?.[model] !== undefined) continue;
+      next = { ...next, modelModes: { ...current, [model]: mode } };
+    }
+  }
+  return next;
+}
+
+/** Put the disk value at `key` back when it differs from what was read and `out` still holds what was read. */
+function keepAt(out: Tree, disk: unknown, read: unknown, key: string): Tree {
+  const d = getPath(disk, key);
+  const r = getPath(read, key);
+  if (d === undefined || isDeepStrictEqual(d, r) || !isDeepStrictEqual(getPath(out, key), r)) return out;
+  return setPath(out, key, d);
+}
+
+function isPlain(v: unknown): v is Tree {
+  return v !== null && typeof v === "object" && !Array.isArray(v);
+}
+
+function getPath(tree: unknown, key: string): unknown {
+  let node = tree;
+  for (const part of key.split(".")) {
+    if (!isPlain(node) || !Object.hasOwn(node, part)) return undefined;
+    node = node[part];
+  }
+  return node;
+}
+
+function setPath(tree: Tree, key: string, value: unknown): Tree {
+  const [head, ...rest] = key.split(".") as [string, ...string[]];
+  const child = tree[head];
+  return { ...tree, [head]: rest.length === 0 ? value : setPath(isPlain(child) ? child : {}, rest.join("."), value) };
+}

@@ -74,9 +74,11 @@ describe("compaction configuration and projection", () => {
     expect(parseCompactionConfig({ reasoningReserveTokens: 0 }, createCompactionDefaults()).reasoningReserveTokens).toBe(0);
     expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ mode: "auto", timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
     for (const mode of ["auto", "model", "extractive"]) expect(parseCompactionConfig({ mode }, createCompactionDefaults()).mode).toBe(mode);
-    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { reasoningReserveTokens: -1 }, { reasoningReserveTokens: 1.5 }, { mode: "fast" }, { mode: 1 }]) {
+    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { reasoningReserveTokens: -1 }, { reasoningReserveTokens: 1.5 }, { mode: 1 }]) {
       expect(() => parseCompactionConfig(raw, createCompactionDefaults())).toThrow();
     }
+    // ATO-1241: a mode a newer build added reads as the default.
+    expect(parseCompactionConfig({ mode: "fast" }, createCompactionDefaults()).mode).toBe("auto");
   });
   it("ignores damaged checkpoints with a diagnostic and leaves old sessions intact", () => {
     const state = history();

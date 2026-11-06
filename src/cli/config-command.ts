@@ -32,6 +32,7 @@ import {
   writeConfigPath,
   writeRawUserConfigFileSync,
 } from "../config/config-paths.js";
+import { isSetAsideOnReadKey } from "../config/keep-set-aside-values.js";
 
 /**
  * `stdin` is where `config set -` reads its payload; the CLI passes
@@ -266,7 +267,8 @@ async function setOneKey(key: string, value: string): Promise<number> {
     process.stderr.write(`config set failed: ${key}: unknown managed local model id: ${JSON.stringify(value)} (see \`atomic-agent models list\`)\n`);
     return 1;
   }
-  if ((key === "localModels.managed.engine" || key === "localModels.managed.backendVariant") && readConfigPath(next, key) !== value) {
+  // ATO-1241: the same for every enum-like key a newer build may hold a value for.
+  if (isSetAsideOnReadKey(key) && readConfigPath(next, key) !== value) {
     process.stderr.write(`config set failed: ${key}: ${JSON.stringify(value)} is not a value this build knows\n`);
     return 1;
   }
