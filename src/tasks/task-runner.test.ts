@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -794,6 +794,49 @@ describe("TaskRunner", () => {
       expect(r.summary?.files.map((f) => f.path)).toEqual(["/w/a.ts"]);
       expect(r.summary?.commands[0]).toMatchObject({ command: "npm test", exitCode: 1, test: true });
       expect(r.summary?.questions).toEqual(["Wrote a.ts; tests fail. Keep going?"]);
+    });
+
+    it("sends auto status snapshots of a long run and closes them at the end (ATO-965)", async () => {
+      const updates: number[] = [];
+      const ended: string[] = [];
+      const runtime: TaskRunnerRuntime = {
+        runTurn: async (sess, _msg, options) => {
+          for (let i = 0; i < 5; i++) {
+            options?.eventHook?.({ type: "step_finished", stepIndex: i, summary: `s${i}`, durationMs: 1 });
+          }
+          return { session: sess, reason: "reply", stepCount: 5 };
+        },
+      };
+      const runner = new TaskRunner({
+        store,
+        runtime,
+        sessionLoader: fakeSessionLoader(session),
+        defaultMaxSteps: 5,
+        backoff: { initialMs: 1, maxMs: 10 },
+        enabled: true,
+        runOnCreate: false,
+        sleep: async () => undefined,
+        reportSink: () => undefined,
+        snapshotSink: {
+          update: (status) => {
+            updates.push(status.summary.steps);
+          },
+          end: (taskId) => {
+            ended.push(taskId);
+          },
+        },
+        snapshotCadence: { everySteps: 2, everyMs: 0 },
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "long job",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(updates).toEqual([2, 4]);
+      await vi.waitFor(() => expect(ended).toEqual([t.id]));
     });
 
     it("leaves spend unknown when the turn reports none", async () => {

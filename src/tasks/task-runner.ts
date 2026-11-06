@@ -20,6 +20,7 @@ import {
   type TaskRunSummaryCollector,
 } from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
+import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
   TaskValidationError,
   type TaskRecord,
@@ -117,6 +118,15 @@ export interface TaskRunnerOptions {
    * is inert (tasks finish silently, same as before v3).
    */
   reportSink?: TaskReportSink;
+  /**
+   * Auto status snapshots of long reporting runs (ATO-965): every
+   * `snapshotCadence.everySteps` steps or `everyMs` of wall time, the
+   * live status goes to this sink (Telegram edits one message per task).
+   * Only tasks that report (`notify` set and a `reportSink` wired) have
+   * a live status to send. Absent sink or cadence: off.
+   */
+  snapshotSink?: TaskSnapshotSink;
+  snapshotCadence?: { everySteps: number; everyMs: number } | null;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /**
@@ -349,8 +359,30 @@ export class TaskRunner {
       claimed.notify !== null && this.options.reportSink
         ? createTaskRunSummaryCollector()
         : null;
+    const liveInfo = {
+      taskId: claimed.id,
+      userMessage: claimed.userMessage,
+      startedAt: claimed.startedAt ?? Date.now(),
+    };
+    const snapshots =
+      collector && this.options.snapshotSink
+        ? startTaskSnapshots({
+            sink: this.options.snapshotSink,
+            cadence: this.options.snapshotCadence,
+            live: liveInfo,
+            collector,
+            onError: (err) =>
+              this.options.logger?.warn("task snapshot sink failed", {
+                taskId: claimed.id,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+          })
+        : null;
     const reportHook: TurnEventHook | undefined = collector
-      ? (event: AgentLoopEvent): void => collector.onEvent(event)
+      ? (event: AgentLoopEvent): void => {
+          collector.onEvent(event);
+          snapshots?.onEvent(event);
+        }
       : undefined;
     const runFacts = (result: RunTurnResult | null): TaskReportRun =>
       taskReportRunFrom(result, collector?.snapshot() ?? null);
@@ -362,12 +394,7 @@ export class TaskRunner {
     // — all end the turn through it.
     const run = this.beginRun(claimed.id, runtimeSignal);
     if (collector) {
-      this.live.set(claimed.id, {
-        taskId: claimed.id,
-        userMessage: claimed.userMessage,
-        startedAt: claimed.startedAt ?? Date.now(),
-        collector,
-      });
+      this.live.set(claimed.id, { ...liveInfo, collector });
     }
     try {
       let result: RunTurnResult;
@@ -448,6 +475,7 @@ export class TaskRunner {
       this.maybeReport(completed, facts.summary?.replyText ?? null, facts);
       return this.maybeRequeueRecurring(completed);
     } finally {
+      snapshots?.stop();
       this.live.delete(claimed.id);
       run.end();
     }
