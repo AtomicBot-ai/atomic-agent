@@ -158,6 +158,11 @@ export interface SlashDispatchResult {
     import("../../config/index.js").RunModeName | "status" | "swap";
   /** `/runmode workers N`: persist the fusion worker count. */
   readonly runModeWorkers?: number;
+  /**
+   * `/worker stop|escalate <id>`: act on one running fusion worker of
+   * the current session (ATO-66). Needs the runtime, so the caller runs it.
+   */
+  readonly fusionWorkerAction?: { action: "stop" | "escalate"; taskId: string };
 }
 
 /**
@@ -236,6 +241,21 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return dispatchQueueSub(parsed.args);
     case "steer":
       return dispatchSteerSub(parsed.args);
+    case "worker": {
+      const [verb, taskId, ...rest] = parsed.args.trim().split(/\s+/);
+      if (
+        (verb !== "stop" && verb !== "escalate") ||
+        taskId === undefined ||
+        taskId.length === 0 ||
+        rest.length > 0
+      ) {
+        return pureActions([], {
+          systemMessage:
+            "usage: /worker stop <id> | /worker escalate <id> — the id is in [brackets] on the worker's row",
+        });
+      }
+      return pureActions([], { fusionWorkerAction: { action: verb, taskId } });
+    }
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,

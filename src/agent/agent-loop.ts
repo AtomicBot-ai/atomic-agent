@@ -16,6 +16,8 @@ import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finaliza
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
 import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
+import { observeReplanStep, replanToolSet, takeReplanNotice } from "./fusion-replan.js";
+import type { StepToolSet } from "./policies/step-tool-set.js";
 
 import type { CompletionResult } from "../llm/llama-server-client.js";
 
@@ -135,7 +137,7 @@ export class AgentLoop {
     await preparedTurn.profileSynced;
     const policies = prepareTurnPolicies(session.id, options, this.deps);
     const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes, unknownTools } = policies;
-    let { fusionState, reviewStall } = policies;
+    let { fusionState, reviewStall, replan } = policies;
     const turn = createTurnLoopState();
     // One overflow compaction per turn (ATO-1028): a refused request is
     // compacted and retried once, never in a loop.
@@ -313,6 +315,21 @@ export class AgentLoop {
       // step carries it like every other notice — and the cut narrows
       // the step's tool set. Not on the reserved final step, which is
       // narrower already.
+      // A fan-out left tasks open (ATO-941): this step is held to
+      // `fusion.delegate`, which outranks the stalled-review cut (a
+      // subset of it). Not on the reserved final step.
+      let replanSet: StepToolSet | null = null;
+      if (replan !== null && !finalizationStep) {
+        replanSet = replanToolSet(replan);
+        const taken = takeReplanNotice(replan);
+        replan = taken.state;
+        if (taken.notice !== null) {
+          noticeForThisStep =
+            noticeForThisStep === undefined
+              ? taken.notice
+              : `${noticeForThisStep}\n\n${taken.notice}`;
+        }
+      }
       let stallSignal: ReviewStallSignal | null = null;
       if (reviewStall !== null && !finalizationStep) {
         stallSignal = reviewStallSignal(reviewStall);
@@ -404,9 +421,11 @@ export class AgentLoop {
                 }
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
-            ...(stallSignal?.phase === "cut"
-              ? { toolSet: reviewStallToolSet() }
-              : {}),
+            ...(replanSet !== null
+              ? { toolSet: replanSet }
+              : stallSignal?.phase === "cut"
+                ? { toolSet: reviewStallToolSet() }
+                : {}),
             ...(options.toolFilter ? { toolFilter: options.toolFilter } : {}),
             toolRole,
             ...(turn.truncationRetry?.stepIndex === i &&
@@ -618,6 +637,9 @@ export class AgentLoop {
         // A completed step is what the review-stall count observes: a
         // fan-out resets it, a step of reading (or of refusals) adds
         // one. The mutation predicate is the orchestrator gate's own.
+        if (replan !== null) {
+          replan = observeReplanStep(replan, outcome.toolResults);
+        }
         if (reviewStall !== null) {
           reviewStall = observeReviewStep(reviewStall, {
             results: outcome.toolResults,
