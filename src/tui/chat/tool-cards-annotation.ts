@@ -163,6 +163,7 @@ const SEARCH_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.grep",
   "os.fs.watch",
   "os.fs.locate_project",
+  "os.fs.code_map",
   "os.fs.archive.list",
 ]);
 
