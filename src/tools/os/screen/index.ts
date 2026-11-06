@@ -43,6 +43,7 @@ export {
   accessibilityMessage,
   hostAppName,
   parseScreenProbe,
+  parseWindow,
   resolveScreenDeps,
   screenRecordingMessage,
 } from "./screen-host.js";
@@ -54,6 +55,17 @@ export type {
   ScreenRunner,
 } from "./screen-host.js";
 export { buildScreenInvocation, SCREEN_PAYLOAD_ENV, screenChildEnv } from "./screen-jxa.js";
+export {
+  describeWindows,
+  parseWindowQuery,
+  pickWindow,
+  WINDOW_CAPTURE_REFUSED_BUNDLE_IDS,
+  WINDOW_TEXT_LIMITS,
+  windowCaptureRefusal,
+  windowLabel,
+  windowScreencaptureArgs,
+} from "./screen-window.js";
+export type { ScreenWindow, WindowQuery } from "./screen-window.js";
 export {
   BLOCKED_BUNDLE_IDS,
   BROWSER_BUNDLE_IDS,

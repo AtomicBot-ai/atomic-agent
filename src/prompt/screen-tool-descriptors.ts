@@ -11,9 +11,9 @@ export const SCREEN_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   {
     name: "os.screen.capture",
     summary:
-      "Screenshot of the primary display (macOS); saves a JPEG in the temp folder and returns its path and the pixel-to-point scale. Look at it with vision.describe, then click with os.screen.click using that image's pixel x,y. May ask the user first.",
+      "Screenshot of the primary display or of one app window (macOS); saves a JPEG in the temp folder and returns its path and the pixel-to-point scale. Look at it with vision.describe or show it with reply.attachments, then click with os.screen.click using that image's pixel x,y. May ask the user first.",
     argsSchema:
-      "{ x?: number, y?: number, width?: number, height?: number /* a region in screen points, all four or none; omit for the whole primary display */ }",
+      "{ x?: number, y?: number, width?: number, height?: number /* a region in screen points, all four or none; omit for the whole primary display */, app?: string /* app name or bundle id: snapshot of its front window; a miss lists the windows on screen */, window?: string /* part of the window title */, text?: boolean /* with app/window: also save the window's text */ }",
     tier: "rare",
   },
   {
