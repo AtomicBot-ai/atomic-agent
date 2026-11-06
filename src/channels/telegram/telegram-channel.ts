@@ -28,7 +28,10 @@ import {
   defaultTelegramSettingsSink,
 } from "./telegram-settings.js";
 import { sendOutbound, type TelegramParseMode } from "./outbound-sender.js";
-import { formatTaskReportMessage } from "./task-report-message.js";
+import {
+  formatTaskReportDigest,
+  formatTaskReportMessage,
+} from "./task-report-message.js";
 import { sendWelcomeMessage } from "./welcome-message.js";
 import {
   POLL_STALL_MS,
@@ -1004,6 +1007,48 @@ export class TelegramChannel {
     // replies (never per-chunk).
     this.deps.metrics?.recordTelegramMessage({ direction: "out" });
     return "sent";
+  }
+
+  /**
+   * Post reports held through quiet hours as ONE plain-text message
+   * (`formatTaskReportDigest`). Unlike `sendTaskReport` it never queues:
+   * the caller (`TaskReportHold`) keeps the reports durable and retries,
+   * so a channel that is not up answers `channel_not_up` and the
+   * reports stay held.
+   */
+  async sendTaskReportDigest(
+    reports: readonly TaskReport[],
+  ): Promise<TaskReportDelivery> {
+    const bot = this.bot;
+    if (this.currentState !== "up" || !bot) return "channel_not_up";
+    const ownerUserId = this.currentOwnerUserId;
+    if (ownerUserId === null) return "not_paired";
+    const result = await sendOutbound({
+      api: bot.api,
+      chatId: ownerUserId,
+      text: formatTaskReportDigest(reports),
+      parseMode: "plain",
+      logger: {
+        warn: (message, context) => this.deps.logger.warn(message, context),
+      },
+    });
+    if (result.dropped > 0) return "delivery_failed";
+    this.deps.metrics?.recordTelegramMessage({ direction: "out" });
+    return "sent";
+  }
+
+  /**
+   * The `deliverDigest` half of `TaskReportHold`: `true` only on a
+   * confirmed send, so anything else leaves the reports held.
+   */
+  static buildTaskReportDigestSender(deps: {
+    resolveChannel: () => TelegramChannel | null;
+  }): (reports: readonly TaskReport[]) => Promise<boolean> {
+    return async (reports) => {
+      const channel = deps.resolveChannel();
+      if (!channel) return false;
+      return (await channel.sendTaskReportDigest(reports)) === "sent";
+    };
   }
 
   /** FIFO-append with oldest-first eviction at `TASK_REPORT_QUEUE_LIMIT`. */
