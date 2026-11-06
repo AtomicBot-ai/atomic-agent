@@ -131,6 +131,22 @@ describe("buildRuntimeTelemetry", () => {
     ]);
   });
 
+  it("DO_NOT_TRACK=1 disables both and leaves the shared id alone (ATO-1189)", () => {
+    const f = factories();
+    const store = fakeStore();
+    buildRuntimeTelemetry({
+      enabled: true,
+      store,
+      dimensions: DIMENSIONS,
+      version: "1.0.0",
+      env: { DO_NOT_TRACK: "1" },
+      factories: f,
+    });
+    expect(store.getSharedInstallId).toHaveBeenCalledWith(false, "desktop");
+    expect(f.createAnalyticsClient.mock.calls[0]).toMatchObject([{ enabled: false }]);
+    expect(f.createSentryClient.mock.calls[0]).toMatchObject([{ enabled: false }]);
+  });
+
   it("ATOMIC_AGENT_ANALYTICS=off disables both and leaves the shared id alone", () => {
     const f = factories();
     const store = fakeStore();
