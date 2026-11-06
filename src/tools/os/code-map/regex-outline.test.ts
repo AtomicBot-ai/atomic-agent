@@ -102,6 +102,29 @@ describe("regexOutline: TypeScript", () => {
     expect(names(src, "typescript")).toEqual(["0:const:s@1", "0:class:A+@3", "1:method:go+@4"]);
   });
 
+  it("keeps top-level declarations after a regex literal with an unbalanced brace", () => {
+    const src = [
+      "const OPEN = /[{]/g;",
+      "export function split(s: string) {",
+      "  return s.split(/\\{/).map((p) => p.replace(/}{/, \"\"));",
+      "}",
+      "const half = total / 2 / count;",
+      "export class AfterRegex {",
+      "  run() {}",
+      "}",
+      "export function last() {}",
+      "",
+    ].join("\n");
+    const got = names(src, "typescript");
+    expect(got).toContain("0:function:split+@2");
+    expect(got).toContain("0:class:AfterRegex+@6");
+    expect(got).toContain("0:function:last+@9");
+    const stripped = stripSource(src, "typescript");
+    expect(stripped.split("\n")[0]).toBe("const OPEN = /   /g;");
+    expect(stripped.split("\n")[4]).toBe("const half = total / 2 / count;");
+    expect(stripSource("const re = /[/]{/;\n", "typescript")).toBe("const re = /    /;\n");
+  });
+
   it("counts identifier mentions without keywords or short words", () => {
     const outline = regexOutline("import { parseConfig } from 'x';\nparseConfig(); parseConfig(); if (a) {}", "typescript");
     expect(outline.mentions.get("parseConfig")).toBe(3);

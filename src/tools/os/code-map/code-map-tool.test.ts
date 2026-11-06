@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ToolContext } from "../../tool-registry.js";
 import { OutlineCache } from "./code-map-cache.js";
-import { buildOsFsCodeMapTool, codeMapBudget, parseCodeMapArgs, splitFocus } from "./code-map-tool.js";
+import { buildOsFsCodeMapTool, codeMapBudget, focusFileKeys, parseCodeMapArgs, splitFocus } from "./code-map-tool.js";
 import type { OutlineBackend } from "./outline-types.js";
 import { regexOutlineBackend } from "./regex-outline.js";
 
@@ -124,6 +124,20 @@ describe("code map arguments", () => {
       files: ["src/a.ts", "b.py", "core.go"],
       idents: ["AgentLoop", "parse_config"],
     });
+  });
+
+  it("matches a focus path given from the working dir or from the map root", () => {
+    const work = join(tmpdir(), "proj");
+    const root = join(work, "src", "agent");
+    const keys = focusFileKeys(["src/agent/loop.ts", "loop.ts", "other/x.ts", join(root, "abs.ts")], work, root);
+    // working-dir relative, resolved into the map root
+    expect(keys.has("loop.ts")).toBe(true);
+    // map-root relative, kept as given
+    expect(keys.has("src/agent/loop.ts")).toBe(true);
+    // absolute, made relative to the map root
+    expect(keys.has("abs.ts")).toBe(true);
+    // outside the map root: only the literal form, no `../` key
+    expect([...keys].some((k) => k.startsWith("../"))).toBe(false);
   });
 });
 
