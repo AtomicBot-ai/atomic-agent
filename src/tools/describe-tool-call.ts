@@ -19,6 +19,8 @@
  * field is read defensively and nothing here throws.
  */
 
+import { canonicalArgs } from "./argument-aliases.js";
+
 export type ToolCallStatus = "running" | "ok" | "error";
 
 export interface DescribeToolCallInput {
@@ -174,7 +176,9 @@ function fileObject(a: Record<string, unknown>, fallback: string): string {
 
 /** `cmd` + `args`, first line, clipped; "(+N lines)" when it is a script. */
 function commandText(a: Record<string, unknown>): string | undefined {
-  const cmd = str(a.cmd) ?? str(a.command);
+  const asList = (v: unknown): string | undefined =>
+    Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === "string") ? v.join(" ") : undefined;
+  const cmd = str(a.cmd) ?? str(a.command) ?? asList(a.cmd) ?? asList(a.command);
   if (!cmd) return undefined;
   const argv = Array.isArray(a.args) ? a.args.filter((x) => typeof x === "string" || typeof x === "number").map(String) : [];
   const full = [cmd, ...argv].join(" ").trim();
@@ -193,6 +197,18 @@ export function humanizeToolName(name: string): string {
     .trim()
     .toLowerCase();
   return words === "" ? "a tool" : words;
+}
+
+function patchTargets(patch: string): string[] {
+  const out: string[] = [];
+  for (const l of patch.split(/\r?\n/)) {
+    if (!l.startsWith("+++ ")) continue;
+    let t = (l.slice(4).split("\t")[0] ?? "").trim();
+    if (t === "" || t === "/dev/null") continue;
+    if (t.startsWith("b/")) t = t.slice(2);
+    out.push(t);
+  }
+  return out;
 }
 
 function capitalize(s: string): string {
@@ -243,8 +259,12 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
     case "os.fs.write":
       return P(a.mode === "append" ? V.addedTo : V.wrote, fileObject(a, "a file"));
     case "os.fs.edit":
-    case "os.fs.patch":
       return P(V.edited, fileObject(a, "a file"));
+    case "os.fs.patch": {
+      // An inline patch names its files in `+++ b/<path>` headers.
+      const targets = typeof a.patch === "string" && !pathsOf(a).first ? patchTargets(a.patch) : [];
+      return P(V.edited, targets.length > 0 ? fileObject({ paths: targets }, "a file") : fileObject(a, "a file"));
+    }
     case "os.fs.list": {
       const p = str(a.path);
       return P(V.listed, p ? `files in ${shortPath(p)}` : "files");
@@ -266,8 +286,12 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
     }
     case "os.fs.trash":
       return P(V.moved, `${fileObject(a, "files")} to the Trash`);
-    case "os.fs.diff":
+    case "os.fs.diff": {
+      const left = str(a.aPath);
+      const right = str(a.bPath);
+      if (left && right) return P(V.compared, `${shortPath(left)} and ${shortPath(right)}`);
       return P(V.compared, fileObject(a, "files"));
+    }
     case "os.fs.hash":
       return P(V.checked, fileObject(a, "a file"));
     case "os.fs.watch":
@@ -381,7 +405,8 @@ export function describeToolCall(input: DescribeToolCallInput): ToolCallDescript
   const status = statusOf(input?.ok);
   let phrase: Phrase;
   try {
-    phrase = phraseFor(name, argsObject(input?.args));
+    // As the tool read them: `command` for `cmd`, a move's `{paths, destination}`.
+    phrase = phraseFor(name, canonicalArgs(name, argsObject(input?.args)));
   } catch {
     phrase = P(V.used, humanizeToolName(name));
   }
@@ -449,7 +474,7 @@ export function describeToolCalls(list: readonly DescribeToolCallInput[]): strin
         parts.push(`read ${plural(n, "file")}`);
         break;
       case "search":
-        parts.push(`looked through files ${times(n)}`);
+        parts.push(`ran ${plural(n, "search", "searches")}`);
         break;
       case "edit":
         parts.push(`edited ${plural(n, "file")}`);

@@ -1,4 +1,6 @@
 import type { AgentLoopEvent } from "../../agent/agent-contract.js";
+import { maskSecrets } from "../../error-reporting/secret-detector.js";
+import { describeToolCall } from "../../tools/describe-tool-call.js";
 
 import {
   withThread,
@@ -20,15 +22,18 @@ const PROGRESS_MIN_EDIT_INTERVAL_MS = 1000;
  * Map an `AgentLoopEvent` to a short, operator-facing progress label, or
  * `null` when the event carries nothing worth surfacing (token accounting,
  * streaming deltas, the terminal `assistant_reply` which the reply path
- * already handles). Tool names are shown verbatim — they are stable,
- * meaningful identifiers (`os.fs.write`, `browser.navigate`, …) and inventing
- * friendlier verbs would drift from the tool registry.
+ * already handles). A tool call reads as a person would say it,
+ * "🔧 Reading config.ts" rather than "🔧 os.fs.read" (ATO-962), from the
+ * shared {@link describeToolCall} table the TUI and desktop use too.
  *
- * Every label is constructed here from stable identifiers only. In
- * particular, `step_finished.summary` is deliberately NOT echoed: it is the
- * tail of the tool's raw output (`compressToolResult`), so a file path, a
- * grep hit or the start of a key could otherwise end up in Telegram
- * history, which is forwardable and outlives the session.
+ * Labels never carry tool OUTPUT: `step_finished.summary` is deliberately
+ * NOT echoed: it is the tail of the tool's raw output
+ * (`compressToolResult`), so a grep hit or the start of a key could
+ * otherwise end up in Telegram history, which is forwardable and outlives
+ * the session. A call's line is built from the model's own arguments
+ * (a file's base name, a URL's host, a clipped command), and is run
+ * through the credential masker before and after, so a key typed into a
+ * command reads `[redacted:…]`.
  */
 export function progressLabel(event: AgentLoopEvent): string | null {
   switch (event.type) {
@@ -42,12 +47,23 @@ export function progressLabel(event: AgentLoopEvent): string | null {
       return `🔁 Repeating ${event.tool} (×${event.count})`;
     case "llm_event": {
       const step = event.event;
-      if (step.type === "tool_call_parsed") return `🔧 ${step.call.tool}`;
+      if (step.type === "tool_call_parsed") return `🔧 ${toolCallLabel(step.call.tool, step.call.args)}`;
       return null;
     }
     default:
       return null;
   }
+}
+
+/** The running form of one call, with credentials masked. Never throws. */
+function toolCallLabel(tool: string, args: unknown): string {
+  let masked: unknown = args;
+  try {
+    masked = maskSecrets(JSON.stringify(args ?? {}));
+  } catch {
+    masked = {};
+  }
+  return maskSecrets(describeToolCall({ name: tool, args: masked }).line);
 }
 
 /**

@@ -234,7 +234,7 @@ describe("ToolCard [copy path]", () => {
       startedAt: 1_000,
     });
     await waitUntil(
-      () => pending.frame().includes("os.fs.read"),
+      () => pending.frame().includes("Reading main.ts"),
       "the pending header",
     );
     expect(pending.frame()).not.toContain("[copy path]");

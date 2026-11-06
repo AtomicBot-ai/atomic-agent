@@ -44,6 +44,17 @@ describe("describeToolCall (ATO-962)", () => {
     expect(line("os.shell.run", { cmd: "set -e\nnpm ci\nnpm test" }, true)).toBe("Ran set -e (+2 lines)");
   });
 
+  it("reads the command as the shell tool does: aliases and argv arrays", () => {
+    expect(line("os.shell.run", { command: "git status" }, true)).toBe("Ran git status");
+    expect(line("os.shell.run", { cmd: ["ls", "-la"] }, true)).toBe("Ran ls -la");
+  });
+
+  it("names a patch's files from its headers, and both sides of a diff", () => {
+    const patch = "--- a/src/x.ts\n+++ b/src/x.ts\n@@\n--- a/y.ts\n+++ b/y.ts\n";
+    expect(line("os.fs.patch", { patch }, true)).toBe("Edited x.ts and 1 more");
+    expect(line("os.fs.diff", { aPath: "a/one.txt", bPath: "b/two.txt" }, true)).toBe("Compared one.txt and two.txt");
+  });
+
   it("reads args given as JSON text, and survives clipped JSON", () => {
     expect(line("os.fs.edit", '{"path":"src/a/b.tsx","old":"x"}', true)).toBe("Edited b.tsx");
     expect(line("os.fs.edit", '{"path":"src/a/b.t', true)).toBe("Edited a file");
@@ -132,6 +143,7 @@ describe("describeToolCalls", () => {
         { name: "os.fs.read" },
       ]),
     ).toBe("Read 3 files, ran 2 commands");
+    expect(describeToolCalls([{ name: "os.fs.grep" }, { name: "os.fs.list" }])).toBe("Ran 2 searches");
   });
   it("counts web searches, edits and other tools", () => {
     expect(
