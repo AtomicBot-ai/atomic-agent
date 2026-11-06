@@ -46,6 +46,7 @@ Other area entry points (use their underlying domain instructions for shared con
 - [github](src/github/README.md).
 - [import](src/import/README.md).
 - [plugins](src/plugins/README.md).
+- [hooks](src/hooks/README.md).
 - [integrations](src/integrations/README.md).
 - [native](src/native/README.md).
 - [notifications](src/notifications/README.md).

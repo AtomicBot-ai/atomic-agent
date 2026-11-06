@@ -20,6 +20,7 @@ import {
   runWithApprovalLedger,
   type ToolApprovalRecord,
 } from "../../approval/approval-ledger.js";
+import { activeToolHooks, runWithToolHooks } from "../../hooks/hook-engine.js";
 import {
   isParallelWithinGroup,
   resourceClassFor,
@@ -298,6 +299,19 @@ export async function executeBatch(
     }
   };
 
+  // ATO-493: user and plugin PreToolUse / PostToolUse hooks wrap the
+  // registry call. Inside the approval ledger, so a hook's `ask` prompt is
+  // recorded like a tool's own. Terminals (reply / finish) never run hooks.
+  const toolHooks = ctx.toolHooks === undefined ? activeToolHooks() : ctx.toolHooks;
+  const invokeWithHooks = (input: BatchCallInput): Promise<CompressedToolResult> =>
+    input.resourceClass === "terminal" || toolHooks === null
+      ? invokeRegistry(input)
+      : runWithToolHooks(
+          toolHooks,
+          { tool: input.call.tool, args: input.call.args, sessionId: ctx.sessionId, cwd: ctx.workingDir, signal: ctx.signal },
+          () => invokeRegistry(input),
+        );
+
   const invokeOne = async (input: BatchCallInput): Promise<void> => {
     if (ctx.signal.aborted) {
       slots[input.batchIndex] = {
@@ -324,7 +338,7 @@ export async function executeBatch(
     const approvals: ToolApprovalRecord[] = [];
     compressed =
       refusal ??
-      (await runWithApprovalLedger(approvals, () => invokeRegistry(input)));
+      (await runWithApprovalLedger(approvals, () => invokeWithHooks(input)));
     if (approvals.length > 0) {
       compressed = { ...compressed, approvals: [...approvals] };
     }
