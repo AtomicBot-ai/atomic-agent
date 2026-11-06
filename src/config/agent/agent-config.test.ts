@@ -7,6 +7,7 @@ import {
   parseAgentConfig,
   parseApprovalLevel,
   parseReadScope,
+  parseSmartApprovalModel,
   READ_SCOPES,
 } from "./agent-parser.js";
 import {
@@ -42,6 +43,37 @@ describe("agent configuration ownership", () => {
       .toBeInstanceOf(ConfigValidationError);
   });
 
+  it("parses smart approval: off and automatic by default, strings accepted, garbage rejected", () => {
+    const defaults = createAgentDefaults();
+    expect(defaults.smartApproval).toBe(false);
+    expect(defaults.smartApprovalModel).toBeNull();
+    const absent = parseAgentConfig({}, () => defaults);
+    expect(absent.smartApproval).toBe(false);
+    expect(absent.smartApprovalModel).toBeNull();
+    const on = parseAgentConfig(
+      { smartApproval: "true", smartApprovalModel: " local-llama " },
+      () => defaults,
+    );
+    expect(on.smartApproval).toBe(true);
+    expect(on.smartApprovalModel).toBe("local-llama");
+    expect(parseAgentConfig({ smartApprovalModel: "" }, () => defaults).smartApprovalModel).toBeNull();
+    expect(parseAgentConfig({ smartApprovalModel: null }, () => defaults).smartApprovalModel).toBeNull();
+    expect(thrownError(() => parseAgentConfig({ smartApproval: "maybe" }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(thrownError(() => parseAgentConfig({ smartApprovalModel: 3 }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(parseSmartApprovalModel("cloud-x", "f")).toBe("cloud-x");
+  });
+
+  it("reads smart approval through the whole-file parser", () => {
+    const parsed = parseUserConfigFile({
+      ...USER_CONFIG_DEFAULTS,
+      agent: { ...USER_CONFIG_DEFAULTS.agent, smartApproval: true, smartApprovalModel: "openrouter" },
+    });
+    expect(parsed.agent.smartApproval).toBe(true);
+    expect(parsed.agent.smartApprovalModel).toBe("openrouter");
+  });
+
   it("constructs the old ordered mutable defaults and fresh execution policies", () => {
     const first = createAgentDefaults();
     const second = createAgentDefaults();
@@ -50,6 +82,7 @@ describe("agent configuration ownership", () => {
       "tokenBudget", "maxSteps", "providerWait", "task", "toolTimeoutMs",
       "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
+      "smartApproval", "smartApprovalModel",
     ]);
     expect(first.providerWait).not.toBe(second.providerWait);
     expect(first.task).not.toBe(second.task);
@@ -174,6 +207,7 @@ describe("agent configuration ownership", () => {
         "tokenBudget", "maxSteps", "providerWait", "nameSessions", "task", "toolTimeoutMs",
         "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
         "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
+        "smartApproval", "smartApprovalModel",
       ]);
     } finally {
       USER_CONFIG_DEFAULTS.agent = saved;

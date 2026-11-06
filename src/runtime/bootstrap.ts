@@ -40,6 +40,7 @@ import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 import { ApprovalGate } from "../approval/approval-gate.js";
 
 import { ApprovalRouter } from "../approval/approval-router.js";
+import { installRiskReviewer } from "./composition/runtime-risk-review.js";
 
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
@@ -381,6 +382,13 @@ export async function createAgentRuntime(
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
     costAccumulator, turnUsageMeter, resolveModelPricing, resolveCatalogContextWindow,
+  });
+  // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
+  installRiskReviewer({
+    approvals, readConfig: () => getConfig(), complete: (params) => llmComplete(params),
+    resolveTransport: (providerId) => resolveActiveLlmSlice(providerId).transport,
+    sideCallSlotId: () => slotManager.sideCallSlotId(),
+    userRequest: (sessionId) => turnRequests.get(sessionId), logger,
   });
   const { taskStore, webhookSessionStore } = createRuntimeTaskStores({ config, logger });
   const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
