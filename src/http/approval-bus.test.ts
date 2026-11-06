@@ -16,6 +16,15 @@ describe("ApprovalBus pending mirror (ATO-1111)", () => {
     expect(ids.at(-1)).toBe(`a${MAX_MIRRORED_APPROVALS + 24}`);
   });
 
+  it("once pruned, the cap never drops a request the gate still holds", () => {
+    const bus = new ApprovalBus();
+    bus.prune(() => true);
+    for (let i = 0; i < MAX_MIRRORED_APPROVALS + 5; i++) bus.publish(request(i));
+    const ids = bus.snapshot().map((r) => r.approvalId);
+    expect(ids).toHaveLength(MAX_MIRRORED_APPROVALS + 5);
+    expect(ids[0]).toBe("a0");
+  });
+
   it("prune drops what the gate no longer holds", () => {
     const bus = new ApprovalBus();
     bus.publish(request(1));
