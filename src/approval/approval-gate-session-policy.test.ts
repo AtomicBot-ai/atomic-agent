@@ -30,6 +30,29 @@ describe("ApprovalGate session policy", () => {
     expect(gate.pendingCount()).toBe(0);
   });
 
+  it("words a refusal by request when the policy says how, else uses its reason", async () => {
+    const emitted: ApprovalRequest[] = [];
+    const gate = new ApprovalGate({ emit: (r) => emitted.push(r), level: 1 });
+    gate.setSessionPolicy("s-w-1", {
+      onPrompt: "refuse",
+      reason: "no operator",
+      reasonFor: (r) =>
+        r.category === "shell_dangerous" ? "needs the user" : undefined,
+    });
+    const dangerous = await gate.request({
+      ...shellRequest("s-w-1"),
+      category: "shell_dangerous",
+    });
+    expect(dangerous).toMatchObject({
+      approved: false,
+      automatic: true,
+      reason: "needs the user",
+    });
+    const plain = await gate.request(shellRequest("s-w-1"));
+    expect(plain.reason).toBe("no operator");
+    expect(emitted).toEqual([]);
+  });
+
   it("is per-session: another session still prompts", async () => {
     const emitted: ApprovalRequest[] = [];
     const gate = new ApprovalGate({ emit: (r) => emitted.push(r), level: 1 });
