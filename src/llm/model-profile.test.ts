@@ -63,6 +63,22 @@ describe("detectModelProfile", () => {
     expect(detectModelProfile(GEMMA4_PROPS)).toEqual(GEMMA4_THINK_PROFILE);
   });
 
+  // ATO-879: Nemotron 3.5 Bolt E4B is a Gemma 4 E4B fine-tune that keeps
+  // Gemma 4's template under a `nemotron` alias. Its template has no
+  // `<think>`, so the Nemotron (ChatML) detector does not fire, and the
+  // Gemma 4 detector must not ask for `gemma` in the alias.
+  it("detects gemma 4 think profile from the template alone (Nemotron 3.5 Bolt E4B)", () => {
+    for (const alias of [
+      "Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf",
+      "nemotron-3.5-bolt-e4b",
+      "my-renamed-model",
+    ]) {
+      expect(
+        detectModelProfile({ ...GEMMA4_PROPS, model_alias: alias }),
+      ).toEqual(GEMMA4_THINK_PROFILE);
+    }
+  });
+
   // Nemotron has no profile of its own: its ChatML template is qwen-shaped,
   // so the dedicated detector deliberately maps onto QWEN_THINK_PROFILE. The
   // contract under test is that the Nemotron template yields the think-tags
