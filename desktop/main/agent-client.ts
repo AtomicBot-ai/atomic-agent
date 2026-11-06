@@ -1193,6 +1193,29 @@ export class AgentClient extends EventEmitter {
       )}&discarded=${encodeURIComponent(String(discarded))}`,
     );
 
+  /* ATO-568 — the person's controls over one running Fusion worker, addressed
+     by the chat the fan-out runs in and the worker's task id. An agent from
+     before these routes answers 404 "no route" to all three; the renderer
+     reads that as "not supported" and keeps the rows read-only. */
+  fusionWorkers = (sessionId: string) =>
+    this.json<{ sessionId: string; running: string[]; actions?: string[] }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/fusion/workers`,
+    );
+  /** 200 `{stopped:true}`; 404 when the worker is not running. */
+  stopFusionWorker = (sessionId: string, taskId: string) =>
+    this.request<{ stopped: boolean; sessionId: string; taskId: string }>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(sessionId)}/fusion/workers/${encodeURIComponent(taskId)}/stop`,
+      {},
+    );
+  /** 200 `{steered:true}`; 404 not running; 409 not taking notes right now (nothing queued). */
+  steerFusionWorker = (sessionId: string, taskId: string, text: string) =>
+    this.request<{ steered: boolean; sessionId: string; taskId: string }>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(sessionId)}/fusion/workers/${encodeURIComponent(taskId)}/steer`,
+      { text },
+    );
+
   task = (id: string) => this.json<unknown>(`/api/tasks/${encodeURIComponent(id)}`);
   cancelTask = (id: string) => this.request<unknown>("DELETE", `/api/tasks/${encodeURIComponent(id)}`);
   /** Runs one attempt synchronously — an agent turn — so it waits longer than a read. */
