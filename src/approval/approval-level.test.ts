@@ -25,6 +25,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "proc_kill",
   "publish",
   "git_remote",
+  "fusion_fanout",
   "browser_nonweb",
   "browser_commit",
   "browser_secret",
@@ -41,10 +42,20 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart and shell_dangerous", () => {
+  it("ALL_CATEGORIES lists every category in the union (ATO-1174)", () => {
+    // The label map is a Record over the union, so the compiler keeps
+    // its keys complete; a category missing here would silently skip the
+    // grantable check below (fusion_fanout did).
+    expect([...ALL_CATEGORIES].sort()).toEqual(
+      (Object.keys(APPROVAL_CATEGORY_LABELS) as ApprovalCategory[]).sort(),
+    );
+  });
+
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, shell_dangerous and fusion_fanout", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
         category !== "shell_dangerous" &&
+          category !== "fusion_fanout" &&
           category !== "trust_config" &&
           category !== "state_secret" &&
           category !== "email" &&
