@@ -1,4 +1,3 @@
-import { formatElapsed } from "../hooks/use-elapsed.js";
 import type { ChatMessage, ToolCardEntry } from "../tui-state.js";
 
 /**
@@ -158,7 +157,13 @@ export function turnFoldLabel(
 export function formatTurnFoldDuration(ms: number | null): string | null {
   if (ms === null || !Number.isFinite(ms) || ms <= 0) return null;
   if (ms < 1000) return "<1s";
-  return formatElapsed(ms);
+  // Same `12s` / `1m 07s` form as the live elapsed counter
+  // (`hooks/use-elapsed.ts`), kept here so the reducer does not pull in
+  // React through this module.
+  const total = Math.floor(ms / 1000);
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  return `${minutes}m ${String(total % 60).padStart(2, "0")}s`;
 }
 
 export const TURN_FOLD_CLOSED_GLYPH = "▸";
