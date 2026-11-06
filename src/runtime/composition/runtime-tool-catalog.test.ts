@@ -259,7 +259,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous, declaredInputs: new osTools.DeclaredInputsRegistry(),
       resolveOriginalRequest, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
       prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }) }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
     const wired = builder.mock.calls[0]?.[0]; const protectedReads = confinement.mock.calls[0]?.[1];
     if (!wired || !protectedReads) throw new Error("late tool phase missing");
     expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);

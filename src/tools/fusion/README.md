@@ -7,4 +7,6 @@ Fusion delegates bounded task waves to worker turns. Contracts carry deliverable
 
 Workers are ephemeral: no durable session row/reflection/trace; no recursive delegation or invisible interactive approval. Provider pins must not fall over to a different billing/model leg. Declared input replacement remains forbidden. Concurrency is resolved from the call, task count and serving slot capability, rather than blindly capturing startup state.
 
+After a local worker is cut off (time limit, queue wait, hand-back or operator cancel), the next local dispatch first asks the server `GET /health` ([local-leg-health.ts](local-leg-health.ts), ATO-917); a server that does not answer fails the task at once with a restart hint instead of letting it wait out its budget.
+
 Read [tool instructions](../AGENTS.md), [worker runner](worker-runner.ts), [worker policy](worker-tool-policy.ts), [delegate](fusion-delegate.ts), [wave planning](contract-waves.ts), [input contract](contract-inputs.ts), and [run modes](../../llm/run-mode/README.md). Run tools/fusion and runtime fusion seam tests.

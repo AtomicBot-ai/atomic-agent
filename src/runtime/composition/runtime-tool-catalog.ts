@@ -575,7 +575,10 @@ export function registerRuntimeFusionAndReadScope(input: {
   emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
   resolveCurrentRunMode: FusionDelegateDeps["resolveRunMode"];
   providerRegistry: Pick<ProviderRegistry, "getProvider">;
-  llama: Pick<LlamaServerClient, "measuredTokensPerSecond" | "fetchSlots">;
+  llama: Pick<
+    LlamaServerClient,
+    "measuredTokensPerSecond" | "fetchSlots" | "probeHealth"
+  >;
   approvals: ApprovalGate;
   dangerous: DangerousToolOptions;
   slotManager: FusionDelegateDeps["slotManager"];
@@ -623,6 +626,9 @@ export function registerRuntimeFusionAndReadScope(input: {
           return null;
         }
       },
+      // Asked before a local worker is sent after one was cut off
+      // (ATO-917): a server that stopped answering fails the task now.
+      probeLocalHealth: () => llama.probeHealth(),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,
