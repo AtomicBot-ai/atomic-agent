@@ -842,6 +842,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   );
 
   orchestrator.start();
+  // `--session` / `--send` (set by `atag handoff`): land on the saved
+  // chat, then send the continuation message as if it had been typed.
+  if (parsed.sessionId) orchestrator.switchSession(parsed.sessionId);
+  if (parsed.send) orchestrator.sendMessage(parsed.send);
 
   bus.emit({
     type: "runtime_info",

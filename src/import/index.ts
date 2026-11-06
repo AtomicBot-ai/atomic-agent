@@ -192,3 +192,6 @@ export type {
   DetectImportAgentsOptions,
   ImportAgentId,
 } from "./detect-import-agents.js";
+
+// Handoff: continue another coding agent's session (`atag handoff`).
+export * from "./handoff/index.js";
