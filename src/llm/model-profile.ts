@@ -297,7 +297,7 @@ function selectBaseProfile(
   if (looksLikeNemotronThinkModel(modelAlias, templateLower)) {
     return QWEN_THINK_PROFILE;
   }
-  if (looksLikeGemma4ThinkModel(modelAlias, templateLower)) {
+  if (looksLikeGemma4ThinkModel(templateLower)) {
     return GEMMA4_THINK_PROFILE;
   }
   return PLAIN_INSTRUCT_PROFILE;
@@ -373,15 +373,20 @@ function looksLikeNemotronThinkModel(
   return aliasHint && templateHint;
 }
 
-function looksLikeGemma4ThinkModel(
-  modelAlias: string,
-  templateLower: string,
-): boolean {
-  const aliasHint = modelAlias.includes("gemma");
-  const templateHint =
+/**
+ * Gemma 4's chat format, read from the template alone. The `<|channel>thought`
+ * block inside `<|turn>` / `<turn|>` framing is Gemma 4's own (GPT-OSS's
+ * harmony format spells it `<|channel|>`), so the template is enough and
+ * the alias is not asked: a fine-tune of Gemma 4 that keeps its template
+ * under another name (Nemotron 3.5 Bolt E4B, a file renamed on disk) needs
+ * the same turn framing, and without it fell to `plain-instruct` and lost
+ * its reasoning channel (ATO-879).
+ */
+function looksLikeGemma4ThinkModel(templateLower: string): boolean {
+  return (
     templateLower.includes("<|channel>thought") &&
-    (templateLower.includes("<|turn>") || templateLower.includes("<turn|>"));
-  return aliasHint && templateHint;
+    (templateLower.includes("<|turn>") || templateLower.includes("<turn|>"))
+  );
 }
 
 function readString(value: unknown): string {
