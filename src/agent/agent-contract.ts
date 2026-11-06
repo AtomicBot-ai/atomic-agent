@@ -797,7 +797,14 @@ export type AgentLoopEvent =
        * `usage` is not a line: it carries a fresh `contextTokens` for the
        * live worker row and the feed renders nothing for it.
        */
-      phase: "started" | "tool" | "usage" | "finished" | "failed" | "cancelled";
+      phase:
+        | "started"
+        | "tool"
+        | "usage"
+        | "escalated"
+        | "finished"
+        | "failed"
+        | "cancelled";
       /**
        * Which leg this line is about. `worker` when absent, so the
        * event's original shape still reads correctly. The orchestrator
@@ -833,6 +840,11 @@ export type AgentLoopEvent =
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */
       summary?: string;
+      /**
+       * `phase: "escalated"`: what that escalation cost, when the
+       * escalation model is priced (ATO-942).
+       */
+      costUsd?: number;
     }
   /** `### profile` was clipped at `memory.profile.maxTokens` (issue #407). */
   | ProfileClippedEvent

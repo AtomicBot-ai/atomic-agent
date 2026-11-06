@@ -133,3 +133,8 @@ export {
   TURN_BUDGET_INSTRUCTION,
 } from "./turn-budget.js";
 export type { TurnBudgetLimits, TurnBudgetStop } from "./turn-budget.js";
+export {
+  FusionLiveWorkers,
+  ADVISOR_MAX_OUTPUT_TOKENS,
+} from "./escalation.js";
+export type { LiveWorkerControls, EscalationComplete } from "./escalation.js";
