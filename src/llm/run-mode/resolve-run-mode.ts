@@ -62,6 +62,10 @@ export type ResolvedRunMode = {
   workersPinned: boolean;
   workerMaxSteps: number;
   workerTimeoutMs: number;
+  /** `llm.runMode.fusion.turnBudgetUsd`, present only when set above 0. */
+  turnBudgetUsd?: number;
+  /** `llm.runMode.fusion.turnTimeBudgetMs`, present only when set above 0. */
+  turnTimeBudgetMs?: number;
   /**
    * The provider that must be `llm.activeTextProvider` for `effective`
    * to hold. Never empty — falls back to the configured active provider
@@ -196,6 +200,12 @@ export function resolveRunMode(
     workerMaxSteps: fusion?.workerMaxSteps ?? DEFAULT_FUSION_WORKER_MAX_STEPS,
     workerTimeoutMs:
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
+    ...(fusion?.turnBudgetUsd !== undefined && fusion.turnBudgetUsd > 0
+      ? { turnBudgetUsd: fusion.turnBudgetUsd }
+      : {}),
+    ...(fusion?.turnTimeBudgetMs !== undefined && fusion.turnTimeBudgetMs > 0
+      ? { turnTimeBudgetMs: fusion.turnTimeBudgetMs }
+      : {}),
     primaryProviderId,
     degraded,
   };

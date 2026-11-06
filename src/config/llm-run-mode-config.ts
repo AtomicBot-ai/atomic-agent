@@ -96,6 +96,20 @@ export type UserLlmFusionConfig = {
    * Default 6. See `src/agent/review-stall.ts`.
    */
   reviewStallSteps?: number;
+  /**
+   * Spend cap for one fusion turn, in USD (ATO-947): the orchestrator's
+   * own priced completions plus every worker's, counted with the prompt
+   * cache discount. Once reached, the turn starts no new delegation and
+   * no new worker, and the orchestrator is told to say so plainly. Unset
+   * or `0`: no cap, as before. Unpriced (local) tokens count as $0.
+   */
+  turnBudgetUsd?: number;
+  /**
+   * Wall-clock cap for one fusion turn, in ms, measured from the turn's
+   * start (ATO-947). Same effect as `turnBudgetUsd` when reached. Unset
+   * or `0`: no cap.
+   */
+  turnTimeBudgetMs?: number;
 };
 
 export type UserLlmRunModeConfig = {
@@ -147,6 +161,8 @@ export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
  */
 export const DEFAULT_FUSION_REVIEW_STALL_STEPS = 6;
 export const FUSION_REVIEW_STALL_STEPS_MAX = 1000;
+/** Upper bound on `turnBudgetUsd`; anything larger is a typo. */
+export const FUSION_TURN_BUDGET_USD_MAX = 10_000;
 
 export type RunModeProviderRef = { readonly id: string; readonly kind: string };
 
@@ -194,6 +210,26 @@ function parseBoundedInt(
     throw new ConfigValidationError(
       field,
       `expected an integer ${min}-${max}, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw;
+}
+
+function parseBoundedNumber(
+  raw: unknown,
+  field: string,
+  min: number,
+  max: number,
+): number {
+  if (
+    typeof raw !== "number" ||
+    !Number.isFinite(raw) ||
+    raw < min ||
+    raw > max
+  ) {
+    throw new ConfigValidationError(
+      field,
+      `expected a number ${min}-${max}, got ${JSON.stringify(raw)}`,
     );
   }
   return raw;
@@ -301,6 +337,22 @@ function parseFusion(
       `${field}.reviewStallSteps`,
       0,
       FUSION_REVIEW_STALL_STEPS_MAX,
+    );
+  }
+  if (obj.turnBudgetUsd !== undefined) {
+    out.turnBudgetUsd = parseBoundedNumber(
+      obj.turnBudgetUsd,
+      `${field}.turnBudgetUsd`,
+      0,
+      FUSION_TURN_BUDGET_USD_MAX,
+    );
+  }
+  if (obj.turnTimeBudgetMs !== undefined) {
+    out.turnTimeBudgetMs = parseBoundedInt(
+      obj.turnTimeBudgetMs,
+      `${field}.turnTimeBudgetMs`,
+      0,
+      86_400_000,
     );
   }
   return out;
