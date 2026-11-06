@@ -1116,16 +1116,45 @@ async function runOneTask(
   // handed back unread because it ended first.
   const personNotes: string[] = [];
   let personNotesUnread = 0;
+  // Notes sent to each worker session and not yet seen folded into a
+  // step (`steer_applied`). A turn that returns hands its unread notes
+  // back as `undelivered`; one that THROWS hands back nothing, and the
+  // loop's own `finally` drains the inbox into a log line. Without this
+  // ledger a note sent just before the throw was counted as sent and
+  // never as unread, so the orchestrator believed the worker had read
+  // the person's word (ATO-1269).
+  const notesInFlight = new Map<string, string[]>();
   const steerByPerson = (workerSessionId: string, text: string): boolean => {
     if (text.trim().length === 0) return false;
     const note = formatPersonSteer(text);
     const steered = deps.steerWorker?.(workerSessionId, note) ?? false;
-    if (steered) personNotes.push(note);
+    if (steered) {
+      personNotes.push(note);
+      const pending = notesInFlight.get(workerSessionId) ?? [];
+      pending.push(note);
+      notesInFlight.set(workerSessionId, pending);
+    }
     return steered;
   };
-  const countUnreadNotes = (undelivered: readonly string[] | undefined): void => {
+  const markNoteRead = (workerSessionId: string, event: AgentLoopEvent): void => {
+    if (event.type !== "steer_applied") return;
+    const pending = notesInFlight.get(workerSessionId);
+    const at = pending?.indexOf(event.text) ?? -1;
+    if (pending !== undefined && at >= 0) pending.splice(at, 1);
+  };
+  const countUnreadNotes = (
+    workerSessionId: string,
+    undelivered: readonly string[] | undefined,
+  ): void => {
+    notesInFlight.delete(workerSessionId);
     if (undelivered === undefined) return;
     personNotesUnread += undelivered.filter((text) => personNotes.includes(text)).length;
+  };
+  // The throw path: every note this session took and never folded into
+  // a step went unread.
+  const countNotesLostToThrow = (workerSessionId: string): void => {
+    personNotesUnread += notesInFlight.get(workerSessionId)?.length ?? 0;
+    notesInFlight.delete(workerSessionId);
   };
   const unregisterLive = deps.liveWorkers?.register(
     options.parentSessionId,
@@ -1250,10 +1279,11 @@ async function runOneTask(
             currentBusy = true;
           }
         }
+        markNoteRead(session.id, event);
         collector.observe(event);
       },
     });
-    countUnreadNotes(turn.undelivered);
+    countUnreadNotes(session.id, turn.undelivered);
     const timedOut = turn.reason === "cancelled" && hitTimeLimit();
     timedOutOutcome = timedOut;
     queuedOutcome = turn.reason === "cancelled" && hitQueueLimit();
@@ -1274,6 +1304,7 @@ async function runOneTask(
         : {}),
     });
   } catch (error) {
+    countNotesLostToThrow(session.id);
     const timedOut = hitTimeLimit();
     timedOutOutcome = timedOut;
     queuedOutcome = hitQueueLimit();
@@ -1360,6 +1391,7 @@ async function runOneTask(
             capAbort.signal,
           ]),
           eventHook: (event) => {
+            markNoteRead(replaceSession.id, event);
             replaceCollector.observe(event);
             if (
               event.type === "llm_event" &&
@@ -1388,7 +1420,7 @@ async function runOneTask(
           },
         },
       );
-      countUnreadNotes(turn.undelivered);
+      countUnreadNotes(replaceSession.id, turn.undelivered);
       result = replaceCollector.finish({
         id: task.id,
         title: task.title,
@@ -1401,6 +1433,7 @@ async function runOneTask(
           : {}),
       });
     } catch (error) {
+      countNotesLostToThrow(replaceSession.id);
       result = replaceCollector.finish({
         id: task.id,
         title: task.title,

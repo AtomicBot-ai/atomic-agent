@@ -226,3 +226,93 @@ describe("FusionLiveWorkers.steer", () => {
     expect(live.steer("s1", "t", "inbox full")).toBe(false);
   });
 });
+
+/**
+ * A worker turn that THROWS hands back no `undelivered` list: the loop
+ * drains the inbox in its own `finally` and only logs it. The row must
+ * still say the person's note was not read (ATO-1269).
+ */
+describe("a note to a worker whose turn throws (ATO-1269)", () => {
+  function throwingHarness(inbox: SteeringInbox, live: FusionLiveWorkers) {
+    let minted = 0;
+    let boundary: (() => void) | undefined;
+    let explode: ((error: Error) => void) | undefined;
+    const deps: WorkerRunnerDeps = {
+      runTurn: (session: SessionState, _message: string, options: TurnOptions) =>
+        new Promise<RunTurnResult>((_resolve, reject) => {
+          inbox.open(session.id);
+          // A step boundary as `AgentLoop` runs it: drain, and announce
+          // each note folded into the step.
+          boundary = () => {
+            for (const text of inbox.drain(session.id)) {
+              options.eventHook?.({ type: "steer_applied", text, stepIndex: 0 });
+            }
+          };
+          explode = (error) => {
+            // The loop's `finally` on the throw path: drained, not returned.
+            inbox.closeAndDrain(session.id);
+            reject(error);
+          };
+        }),
+      createEphemeralSession: (meta: FusionWorkerMeta) => {
+        minted += 1;
+        return createEmptySessionState({
+          id: `${FUSION_WORKER_ID_PREFIX}${minted}`,
+          workingDir: "/repo",
+          metadata: { fusionWorker: { ...meta } },
+        });
+      },
+      approvals: { setSessionPolicy: () => {}, clearSessionPolicy: () => {} },
+      emitEvent: () => {},
+      workingDir: "/repo",
+      steerWorker: (sessionId, text) => inbox.push(sessionId, text),
+      liveWorkers: live,
+    };
+    return {
+      deps,
+      stepBoundary: () => boundary?.(),
+      explode: (error: Error) => explode?.(error),
+    };
+  }
+
+  it("counts a note the worker never reached as not read", async () => {
+    const inbox = new SteeringInbox();
+    const live = new FusionLiveWorkers();
+    const h = throwingHarness(inbox, live);
+    const run = runWorkerTasks(h.deps, {
+      ...BASE,
+      maxWorkers: 1,
+      tasks: [TWO[0]!],
+      signal: new AbortController().signal,
+    });
+    await flush();
+    expect(live.steer("s-parent", "ui", "use the old API")).toBe(true);
+    h.explode(new Error("socket hang up"));
+    const [row] = await run;
+    expect(row!.status).toBe("failed");
+    expect(row!.notes).toContain(
+      "the person sent this worker 1 note while it ran; 1 arrived after its last step and was not read",
+    );
+  });
+
+  it("does not count a note the worker read before the throw", async () => {
+    const inbox = new SteeringInbox();
+    const live = new FusionLiveWorkers();
+    const h = throwingHarness(inbox, live);
+    const run = runWorkerTasks(h.deps, {
+      ...BASE,
+      maxWorkers: 1,
+      tasks: [TWO[0]!],
+      signal: new AbortController().signal,
+    });
+    await flush();
+    expect(live.steer("s-parent", "ui", "first")).toBe(true);
+    h.stepBoundary();
+    expect(live.steer("s-parent", "ui", "second")).toBe(true);
+    h.explode(new Error("socket hang up"));
+    const [row] = await run;
+    expect(row!.notes).toContain(
+      "the person sent this worker 2 notes while it ran; 1 arrived after its last step and was not read",
+    );
+  });
+});
