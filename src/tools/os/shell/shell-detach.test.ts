@@ -258,7 +258,7 @@ describe.skipIf(process.platform === "win32")(
       const pidFile = join(dir, "pid");
       await tool.run({ cmd: `echo $$ > "${pidFile}"; sleep 30` }, ctx());
       const controller = new AbortController();
-      const pending = tool.run({ wait: 1, timeoutMs: 0 }, ctx(controller.signal));
+      const pending = tool.run({ wait: 1, timeoutMs: -1 }, ctx(controller.signal));
       setTimeout(() => controller.abort(), 100);
       const startedAt = Date.now();
       const result = await pending;
@@ -300,6 +300,35 @@ describe.skipIf(process.platform === "win32")(
       expect(result.summary).toContain("zero-defaults");
       expect(result.details.invalidCall).toBeUndefined();
       expect(jobs.list(SESSION)).toEqual([]);
+    });
+
+    it("a zero-filled timeoutMs still detaches at the default (ATO-1175)", async () => {
+      const pidFile = join(dir, "pid");
+      const result = await shellTool(DEFAULT_WAIT_MS, jobs).run(
+        {
+          cmd: `echo $$ > "${pidFile}"; sleep 30`,
+          args: [],
+          timeoutMs: 0,
+          keep: false,
+          wait: 0,
+          kill: 0,
+          jobs: false,
+        },
+        ctx(),
+      );
+      expect(result.status).toBe("ok");
+      expect(result.details).toMatchObject({ detached: true, jobId: 1, timedOut: false });
+      expect(isAlive(await readPid(pidFile))).toBe(true);
+    });
+
+    it("a wait with timeoutMs: 0 waits the default, not forever (ATO-1175)", async () => {
+      const tool = shellTool(DEFAULT_WAIT_MS, jobs);
+      await tool.run({ cmd: "sleep 30" }, ctx());
+      const startedAt = Date.now();
+      const result = await tool.run({ wait: 1, timeoutMs: 0 }, ctx());
+      expect(Date.now() - startedAt).toBeLessThan(5_000);
+      expect(result.details).toMatchObject({ detached: true, jobId: 1 });
+      expect(result.summary).toContain("still running after another 1 s (job 1)");
     });
   },
 );
