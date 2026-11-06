@@ -22,6 +22,7 @@ test("a full request becomes the task body", () => {
     workingDir: "/Users/me/app",
     maxCostUsd: 5,
     maxDurationMs: 8 * 60 * 60 * 1000,
+    maxSteps: O.OVERNIGHT_MAX_STEPS,
     notify: "telegram",
   });
 });

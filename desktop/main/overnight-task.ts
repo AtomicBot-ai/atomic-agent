@@ -20,6 +20,13 @@ export const OVERNIGHT_MESSAGE_MAX = 16_000;
 export const OVERNIGHT_HOURS_MIN = 0.5;
 export const OVERNIGHT_HOURS_MAX = 24;
 const HOUR_MS = 60 * 60 * 1000;
+/**
+ * The run's step ceiling, the default of the agent's `agent.task.maxSteps`.
+ * A task row without `maxSteps` runs with `agent.maxSteps` (25) as its whole
+ * ceiling (task-runner passes it to runTurn as `taskMaxSteps`), which would
+ * end an overnight run after a few minutes.
+ */
+export const OVERNIGHT_MAX_STEPS = 1000;
 
 export interface OvernightRequest {
   message: string;
@@ -35,6 +42,7 @@ export interface OvernightTaskBody {
   workingDir: string;
   maxCostUsd: number | null;
   maxDurationMs: number;
+  maxSteps: number;
   notify?: "telegram";
 }
 
@@ -69,6 +77,7 @@ export function overnightTaskBody(input: unknown): OvernightCheck {
     workingDir: folder,
     maxCostUsd,
     maxDurationMs: Math.round(hours * HOUR_MS),
+    maxSteps: OVERNIGHT_MAX_STEPS,
     ...(notifyTelegram ? { notify: "telegram" as const } : {}),
   };
   return { ok: true, request, body };
