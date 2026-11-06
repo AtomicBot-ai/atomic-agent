@@ -176,6 +176,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // old figure over would read as "this fresh session is already
         // 40% full" until the first prompt lands.
         contextUsage: EMPTY_CONTEXT_USAGE,
+        // A fresh thread has no plan yet (ATO-486).
+        plan: null,
       };
     case "skill_count_changed":
       return {
@@ -1219,6 +1221,12 @@ function reduceStepEvent(
           : state.currentTurnToolSteps + 1,
       };
     }
+    case "plan_updated":
+      // ATO-486: the whole checklist, newest wins; an empty one hides it.
+      return {
+        ...state,
+        plan: event.plan.items.length > 0 ? event.plan : null,
+      };
     case "rare_tool_autoloaded":
       return appendFeed(state, {
         kind: "runtime_info",

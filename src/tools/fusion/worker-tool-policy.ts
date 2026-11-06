@@ -42,6 +42,9 @@ export const WORKER_EXCLUDED_TOOLS: ReadonlySet<string> = new Set([
   "os.screen.click",
   "os.screen.type",
   "os.screen.key",
+  // The live checklist is the operator's view of the orchestrator's
+  // work (ATO-486); a worker's own list would reach nobody.
+  "plan.update",
 ]);
 
 /** `RunTurnOptions.toolFilter` for a worker turn. */

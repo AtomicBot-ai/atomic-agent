@@ -175,6 +175,9 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   // discovery
   "skill.view": "pure_read",
   "tool.view": "pure_read",
+  // The live plan (ATO-486): writes only the session's own record, so it
+  // batches with anything; the step commit applies results in order.
+  "plan.update": "pure_read",
   "skill.run_script": "approval_gated",
 
   // memory.*
