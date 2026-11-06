@@ -47,7 +47,10 @@
 # feed is a separate release step, not done here (desktop/README.md
 # "App updates"). Each Windows job (package win32-x64, package-win32-arm64)
 # writes its own stable.yml; the feed needs the two merged into one
-# (desktop/scripts/merge-update-yml.mjs, ATO-252).
+# (desktop/scripts/merge-update-yml.mjs, ATO-252). Before the upload,
+# desktop/scripts/feed-files.mjs checks the folder holds every platform's yml
+# and every file they name (ATO-1230: the 0.0.7 feed went up without the
+# Linux ymls, and no AppImage could update).
 
 name: Desktop packages
 
@@ -512,6 +515,31 @@ jobs:
           # The blockmap only enables a differential download; a full one works without it.
           ls desktop/release/*-mac.zip.blockmap || echo "::warning::no mac zip blockmap: updates download the whole zip"
           cat desktop/release/*-mac.yml
+
+      # ATO-1230: the AppImage reads <channel>-linux.yml (x64) or
+      # <channel>-linux-arm64.yml (arm64). It must be written, name the
+      # AppImage built here, and go into the artifact with it.
+      - name: Check the update files (Linux AppImage, with a feed)
+        if: startsWith(matrix.slug, 'linux-') && (inputs.feed_url != '' || vars.ATAG_UPDATE_FEED_URL != '')
+        shell: bash
+        env:
+          CHANNEL: ${{ inputs.channel || vars.ATAG_UPDATE_CHANNEL || 'stable' }}
+        run: |
+          set -euo pipefail
+          case "${{ matrix.slug }}" in
+            linux-x64)   yml="desktop/release/${CHANNEL}-linux.yml" ;;
+            linux-arm64) yml="desktop/release/${CHANNEL}-linux-arm64.yml" ;;
+          esac
+          if [[ ! -f "$yml" ]]; then
+            echo "::error::$yml was not written: the AppImage would never find an update (ATO-1230)"
+            exit 1
+          fi
+          cat "$yml"
+          appimage="$(sed -n 's/^path: *//p' "$yml" | tr -d "\"'")"
+          if [[ "$appimage" != *.AppImage || ! -f "desktop/release/$appimage" ]]; then
+            echo "::error::$yml names '$appimage', which is not an AppImage in desktop/release"
+            exit 1
+          fi
 
       - name: Upload packages
         uses: actions/upload-artifact@v4
