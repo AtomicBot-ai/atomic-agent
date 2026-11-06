@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { installPluginFromDir } from "./plugin-install.js";
-import { expandVars, loadPluginMcpServers, uniqueName } from "./plugin-mcp.js";
+import { expandUserKeys, expandVars, loadPluginMcpServers, uniqueName, userKeyRefs } from "./plugin-mcp.js";
 import { resetPluginCache } from "./plugin-runtime.js";
 import { installedPluginDir } from "./plugin-store.js";
 import { writeClaudePlugin } from "./plugin-test-helpers.js";
@@ -54,5 +54,34 @@ describe("plugin MCP servers", () => {
 
   it("expands variables inside nested values only", () => {
     expect(expandVars({ a: ["${PLUGIN_ROOT}/x"], b: 1, c: "${HOME}" }, { root: "/r", data: "/d" })).toEqual({ a: ["/r/x"], b: 1, c: "${HOME}" });
+  });
+
+  it("passes the user's keys only after code is allowed, and never as literal text", () => {
+    const mcp = {
+      gh: { command: "node", args: ["s.js"], env: { GITHUB_TOKEN: "${GITHUB_TOKEN}" } },
+      api: { type: "http", url: "https://example.invalid/mcp", headers: { Authorization: "Bearer ${API_KEY}" } },
+      plain: { type: "http", url: "https://example.invalid/plain" },
+    };
+    installPluginFromDir(stateDir, writeClaudePlugin(join(base, "src"), { mcp }));
+    let out = loadPluginMcpServers(stateDir, new Set(), { GITHUB_TOKEN: "t1", API_KEY: "k1" });
+    expect(out.servers.map(s => s.name)).toEqual(["demo-plain"]);
+    expect(out.skipped.find(s => s.server === "api")?.reason).toContain("API_KEY");
+
+    resetPluginCache();
+    installPluginFromDir(stateDir, writeClaudePlugin(join(base, "src2"), { mcp }), { force: true, acceptCode: true });
+    out = loadPluginMcpServers(stateDir, new Set(), { GITHUB_TOKEN: "t1" });
+    expect(out.servers.map(s => s.name).sort()).toEqual(["demo-gh", "demo-plain"]);
+    expect(JSON.stringify(out.servers)).toContain("t1");
+    expect(JSON.stringify(out.servers)).not.toContain("${");
+    expect(out.skipped).toEqual([expect.objectContaining({ server: "api", reason: expect.stringContaining("needs API_KEY") })]);
+  });
+
+  it("reads key references and fills defaults", () => {
+    expect(userKeyRefs({ env: { A: "${A}", B: "${CLAUDE_PLUGIN_ROOT}/x" }, url: "https://h/${C:-x}" })).toEqual(["A", "C"]);
+    const unset: string[] = [];
+    expect(expandUserKeys({ a: "${A}", c: "${C:-dflt}", p: "${PLUGIN_DATA}" }, { A: "1" }, unset)).toEqual({ a: "1", c: "dflt", p: "${PLUGIN_DATA}" });
+    expect(unset).toEqual([]);
+    expandUserKeys("${MISSING}", {}, unset);
+    expect(unset).toEqual(["MISSING"]);
   });
 });

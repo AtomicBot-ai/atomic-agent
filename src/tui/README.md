@@ -37,6 +37,7 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Integrations hub](integrations/README.md)
 - [Telegram setup adapter](telegram/README.md)
 - [Swarm management](swarm/README.md)
+- [Plugins panel](plugins/README.md)
 
 ## Ownership and dependencies
 

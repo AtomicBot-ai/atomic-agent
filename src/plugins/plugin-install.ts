@@ -6,6 +6,7 @@ import {
   installedPluginDir,
   pluginsRoot,
   readPluginState,
+  updatePluginRecord,
   writePluginState,
   type InstalledPluginRecord,
   type PluginSourceRecord,
@@ -158,4 +159,13 @@ export function setPluginPartEnabled(stateDir: string, name: string, part: strin
   state.plugins[name] = { ...rec, disabledParts: [...parts].sort(), updatedAt: new Date().toISOString() };
   writePluginState(stateDir, state);
   return true;
+}
+
+/**
+ * Allow or stop a plugin's code-running parts (local MCP servers, hooks,
+ * skill scripts). The one writer behind `plugin allow-code` / `deny-code`,
+ * the terminal `/plugins` panel and the desktop Plugins screen.
+ */
+export function setPluginCodeAllowed(stateDir: string, name: string, allow: boolean): boolean {
+  return updatePluginRecord(stateDir, name, r => ({ ...r, runsCodeAccepted: allow })) !== null;
 }

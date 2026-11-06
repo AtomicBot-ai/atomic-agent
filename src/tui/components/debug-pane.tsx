@@ -28,6 +28,7 @@ import { ImportPanel } from "../import/import-panel.js";
 import { PrivacyPanel } from "../privacy/components/privacy-panel.js";
 import { IntegrationsPanel } from "../integrations/components/integrations-panel.js";
 import { SwarmPanel } from "../swarm/components/swarm-panel.js";
+import { PluginsPanel } from "../plugins/components/plugins-panel.js";
 import { ProvidersPanel } from "../providers/providers-panel.js";
 
 interface DebugPaneProps {
@@ -161,6 +162,7 @@ function buildManageTabs(state: TuiState): SubTab[] {
   return [
     { id: "tasks", label: `Tasks${suffix(state.tasksPanel.rows.length)}` },
     { id: "skills", label: `Skills${suffix(state.skillsPanel.rows.length)}` },
+    { id: "plugins", label: `Plugins${suffix(state.pluginsPanel.rows.length)}` },
     { id: "memory", label: `Memory${suffix(state.memoryPanel.rows.length)}` },
     { id: "mcp", label: `MCP${suffix(state.mcpPanel.rows.length)}` },
     { id: "integrations", label: integrationsTabLabel(state) },
@@ -385,6 +387,8 @@ function ActiveDebugTab({
       );
     case "swarm":
       return <SwarmPanel panel={state.swarmPanel} maxRows={compactRows} />;
+    case "plugins":
+      return <PluginsPanel panel={state.pluginsPanel} maxRows={compactRows} />;
     default:
       return <EventFeed state={state} maxVisible={maxVisible} />;
   }

@@ -248,6 +248,23 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "place",
+    id: "go.manage.plugins",
+    label: "Plugins",
+    group: "go",
+    // `p` is Privacy; `x` (extensions) is free.
+    chord: "x",
+    slash: {
+      name: "plugins",
+      description:
+        "open the Plugins tab: installed plugins, what each brings, on/off switches for a plugin and its parts, code permission and missing keys",
+      rank: 46,
+    },
+    section: "manage",
+    tab: "plugins",
+    parent: "go.manage",
+  },
+  {
+    kind: "place",
     id: "go.manage.memory",
     label: "Memory",
     group: "go",
