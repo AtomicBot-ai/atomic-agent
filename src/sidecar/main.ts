@@ -340,6 +340,8 @@ export async function bootstrapSidecar(): Promise<{
           // `null`, which the old `??` also treated as "not given".
           ...(typeof maxSteps === "number" ? { maxSteps } : {}),
           signal: active.controller.signal,
+          // The desktop app: picks the reply's `### answer-style`.
+          origin: "sidecar",
         });
       },
     });

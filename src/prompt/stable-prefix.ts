@@ -2,6 +2,11 @@ import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import { COMPOSIO_GUIDANCE, isComposioActive } from "./composio-guidance.js";
 import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
+import {
+  ANSWER_STYLE_HEADER,
+  buildAnswerStyleGuidance,
+  type AnswerStyleInput,
+} from "./answer-style.js";
 import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import {
   formatSkillCatalogLine,
@@ -127,6 +132,14 @@ export interface StablePrefixInput {
    * byte-identical to before roles existed.
    */
   toolRole?: ToolRole;
+  /**
+   * How the final `reply` should read on the surface that shows it
+   * (ATO-966, `answer-style.ts`): rendered as `### answer-style` right
+   * after `### rules`. Deterministic per (channel, compact), so stable
+   * within a session. Omitted, no block and the prefix is byte-identical
+   * to before the block existed.
+   */
+  answerStyle?: AnswerStyleInput;
 }
 
 /** Header of the out-of-role names line — pinned by tests, read by the model. */
@@ -323,6 +336,9 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `### rules`,
     nativeTools ? NATIVE_TOOLS_RULES_LINE : GRAMMAR_RULES_LINE,
     ``,
+    ...(input.answerStyle !== undefined
+      ? [ANSWER_STYLE_HEADER, buildAnswerStyleGuidance(input.answerStyle), ``]
+      : []),
     `### skills`,
     skills,
     ``,

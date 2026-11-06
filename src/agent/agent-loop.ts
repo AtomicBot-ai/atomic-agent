@@ -423,6 +423,9 @@ export class AgentLoop {
             ...(options.routeNote !== undefined
               ? { routeNote: options.routeNote }
               : {}),
+            ...(options.answerChannel !== undefined
+              ? { answerChannel: options.answerChannel }
+              : {}),
             ...(options.reasoningEffort !== undefined
               ? { reasoningEffort: options.reasoningEffort }
               : {}),

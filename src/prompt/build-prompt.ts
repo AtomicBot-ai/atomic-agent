@@ -175,6 +175,18 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
       ? { toolTransport: input.toolTransport }
       : {}),
     ...(input.toolRole !== undefined ? { toolRole: input.toolRole } : {}),
+    // Short form for anything not explicitly cloud: `resolveModelMode`
+    // treats an unset mode as local, and a local window pays for every
+    // prefix byte on every step. Mode is per link, and a link change
+    // already rebuilds the prompt (`prepareForLink`).
+    ...(input.answerChannel !== undefined
+      ? {
+          answerStyle: {
+            channel: input.answerChannel,
+            compact: input.modelMode?.mode !== "cloud",
+          },
+        }
+      : {}),
   });
 
   if (input.modelMode?.mode === "cloud") return buildCloudPrompt(input, stablePrefix);
