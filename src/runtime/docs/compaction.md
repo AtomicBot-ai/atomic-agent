@@ -92,7 +92,9 @@ target ratio of that allowance; manual requests use the smaller of allowance and
 current volume. When the step's model profile has prefix reuse `none` (and
 applies to that step's route), the ratio is at most 0.35: every later step
 re-reads the whole prompt there, so a smaller kept tail is cheaper per step and
-postpones the next compaction. Summary reserve is bounded by the configured maximum, 20% of the
+postpones the next compaction. When no cut fits that smaller target (on a 16k
+window it leaves about 500 tokens for the kept tail, less than one tool step),
+the configured ratio is tried before the planner gives up. Summary reserve is bounded by the configured maximum, 20% of the
 history allowance, and half the target so small manual operations remain useful;
 when half the target holds 512 tokens the reserve is at least 512, so a mid-size
 allowance does not ask for a summary too short to carry the task. The summary
@@ -212,9 +214,16 @@ It runs in milliseconds on a 150k-token history, makes no calls and reports no
 progress events. Cloud state updates are not part of it.
 
 `auto` ([choice](../compaction-mode.ts)) extracts when the serving link is a
-llama-server whose prefix reuse is `none`, or whose serialized source is at least
-32k estimated tokens: prompt evaluation speed is unknown in advance and that much
-input already takes minutes on a laptop model. Cloud and other routes keep the
+llama-server whose serialized source is at least 32k estimated tokens (prompt
+evaluation speed is unknown in advance and that much input already takes minutes
+on a laptop model), or whose prefix reuse is `none` unless its context window is
+at least 32768 tokens and its planned summary at least 1024 (an unknown window
+counts as too small). That second rule covers small windows (16k), where
+compaction fires every step or two and a model call each time would about double
+the step time. It gates on the window itself, since a small prompt scaffold can
+give a 16k window a summary over 1024. From a 32k window the model writes the summary, since most small
+local models (Qwen3.5, Gemma 4) report prefix reuse `none` and would otherwise
+never get one. Cloud and other routes keep the
 model summary. Under `auto`, a model summary that fails or times out (not a
 cancellation) is replaced by an extractive checkpoint instead of leaving the
 packer's mechanical cut, and the completed result says so. After a model summary
