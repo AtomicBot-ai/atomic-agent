@@ -14,7 +14,7 @@ atomic-agent overnight "migrate the tests to vitest" --budget 5 --hours 8 --dir 
 | Flag | What it does |
 |---|---|
 | `--budget <usd>` | Stop once the run has spent this many dollars. Without it, `agent.task.maxCostUsd` applies (`0`, the default, means no cap). |
-| `--hours <h>` | Stop after this many hours. Default 8, at most 168. |
+| `--hours <h>` | Stop after this many hours. Default 8, from 1 minute (about `0.017`) to 168. |
 | `--dir <path>` | The folder the run works in. Default: the current folder. |
 | `--notify telegram` | Send the report to your paired Telegram chat when the run ends. |
 | `--detach` | Run in the background. Prints the task id, the log path (`<stateDir>/logs/overnight-<id>.log`) and the command to check on it. |
@@ -28,7 +28,7 @@ With `--detach`, check on the run with `atomic-agent task show <id>` and stop it
 
 ## Approvals
 
-Nobody is there to answer, so nobody is asked. An action that needs approval is denied, the run carries on without it, and the report lists what was denied. `--no-approval` starts the run at the top approval level instead, which allows everything, including the commands that otherwise always ask.
+Nobody is there to answer, so nobody is asked. An action that needs approval is denied and the run carries on without it. Each denied action is printed as it happens (in the log file with `--detach`) and the summary at the end counts them; the Telegram report lists them under **Needs you**. `--no-approval` starts the run at the top approval level instead, which allows every action the shell guard does not block outright, including the commands that otherwise always ask.
 
 ## Limits
 
@@ -42,11 +42,11 @@ Budgets work outside `overnight` too. `atomic-agent task create --max-cost-usd <
 
 With `--notify telegram`, the report for a finished task lists **Done**, **Failed** and **Needs you**, with the number of steps, the time taken and why it stopped. `/status` in Telegram shows background tasks that are still running.
 
-A report is sent when the task ends, even at 3 a.m. To hold reports at night and get one summary in the morning, set `ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS=23:00-08:00` in the agent's environment.
+A report is sent when the task ends, even at 3 a.m. To hold reports at night, set `ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS=23:00-08:00` in the agent's environment. Held reports are sent together when the window ends: one held report goes out as a normal report, several come as a morning summary.
 
 ## After a crash
 
-Background tasks save a checkpoint after every step. If the agent crashes or is restarted, the task continues from the last finished step instead of starting over. This is on by default (`agent.task.resumeInterrupted`), up to `agent.task.maxResumes` times (default 3); after that the task is marked as given up. Interactive chats are not resumed this way.
+Background tasks save a checkpoint after every step. If the agent crashes or is restarted, the task continues from the last finished step instead of starting over. This is on by default (`agent.task.resumeInterrupted`), up to `agent.task.maxResumes` times (default 3); after that the task is marked as given up. Interactive chats are not resumed this way. Resuming a terminal `overnight` run after a crash has not been tested yet, so do not count on it.
 
 ## Keep going until a checklist passes
 
