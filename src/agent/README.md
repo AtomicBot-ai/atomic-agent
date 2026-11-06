@@ -37,4 +37,6 @@ Read docs/batching.md for dispatch, docs/recovery.md for failures/progress, and 
 
 [Stage 07 acceptance](../../docs/testing/stage-07-validation.md) records extraction/API evidence, callback-order tests and the paired development case study. Its observed source output is not total model context or a performance guarantee.
 
+[reply-polish.ts](reply-polish.ts) (ATO-967) cleans the model's final `reply` text once, at commit, when the turn names a chat surface (`RunTurnOptions.answerChannel`, the same field that picks `### answer-style`: terminal, desktop, Telegram, Discord). It is deterministic and never rewrites fenced or inline code. The recorded turn and the `assistant_reply` event carry the polished text; the event's `rawText` keeps what streamed. CLI, plain HTTP, scheduler and fusion-worker replies are left as written. `ATOMIC_AGENT_REPLY_POLISH=0` turns it off. [close-streaming-markdown.ts](close-streaming-markdown.ts) is shared with the TUI's streaming bubble.
+
 The injected [compaction control](compaction-control.ts) runs at a safe boundary before inference, after completed batches. The loop supplies the same pure prompt input as step inference, then drains late steering. Runtime owns subcalls and persistence; see [context compaction](../runtime/docs/compaction.md).
