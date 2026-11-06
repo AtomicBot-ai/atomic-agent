@@ -184,3 +184,40 @@ describe("DiscordApprovalBridge", () => {
     expect(approvals.resolve).not.toHaveBeenCalled();
   });
 });
+
+describe("DiscordApprovalBridge and a dangerous shell command (ATO-1224)", () => {
+  const DANGEROUS: ApprovalRequest = {
+    ...REQUEST,
+    approvalId: "ap-rm",
+    category: "shell_dangerous",
+    reason: "recursive remove",
+    preview: "rm -rf build",
+  };
+
+  it("posts approve and deny only, and no click grants anything", async () => {
+    const { bridge, api, approvals } = makeBridge();
+    bridge.handlerFor("c1")(DANGEROUS);
+    await new Promise((r) => setImmediate(r));
+    const rows = (api.sendMessage.mock.calls[0] as unknown[])[2] as ReturnType<
+      typeof buttonsFor
+    >;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.components.map((c) => c.custom_id)).toEqual([
+      "atomic:approve:yes:ap-rm",
+      "atomic:approve:no:ap-rm",
+    ]);
+
+    // A forged grant verb is not a yes.
+    await bridge.handleInteraction(click("session", OWNER, "ap-rm"));
+    expect(approvals.resolve).toHaveBeenLastCalledWith({
+      approvalId: "ap-rm",
+      approved: false,
+    });
+    await bridge.handleInteraction(click("yes", OWNER, "ap-rm"));
+    expect(approvals.resolve).toHaveBeenLastCalledWith({
+      approvalId: "ap-rm",
+      approved: true,
+      reason: "approved from Discord",
+    });
+  });
+});

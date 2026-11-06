@@ -171,6 +171,35 @@ describe("POST /api/approval/resolve", () => {
     expect(harness.runtime.approvals.sessionGrants("s-chat").shapes).toEqual([]);
   });
 
+  it("refuses allow-in-chat for a dangerous shell command, even one carrying a shape (ATO-1224)", async () => {
+    // `rm -rf`, `git reset --hard`: each one is its own decision. The
+    // shell tool sends no shape for them; a request that carried one
+    // anyway must still not turn into a standing grant.
+    const pending = harness.runtime.approvals.request({
+      sessionId: "s-chat",
+      tool: "os.shell.run",
+      category: "shell_dangerous",
+      reason: "recursive remove",
+      commandShape: "rm",
+      approvalId: "approval-dangerous",
+    });
+    const refused = await resolveVia(harness, "approval-dangerous", "allow-in-chat");
+    expect(refused.status).toBe(400);
+    expect(harness.runtime.approvals.isPending("approval-dangerous")).toBe(true);
+    expect(harness.runtime.approvals.sessionGrants("s-chat")).toEqual({
+      categories: [],
+      shapes: [],
+    });
+
+    const denied = await resolveVia(harness, "approval-dangerous", "deny");
+    expect(denied.status).toBe(200);
+    expect((await pending).approved).toBe(false);
+    expect(harness.runtime.approvals.sessionGrants("s-chat")).toEqual({
+      categories: [],
+      shapes: [],
+    });
+  });
+
   it("rejects unknown decision strings", async () => {
     const response = await fetch(`${harness.baseUrl}/api/approval/resolve`, {
       method: "POST",
