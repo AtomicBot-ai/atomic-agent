@@ -175,6 +175,13 @@ export type StepEvent =
        * `assistant_reply` as the turn's answer should expect another.
        */
       progressNote?: true;
+      /**
+       * The reply as the model wrote (and streamed) it, present only when
+       * the reply polish (`reply-polish.ts`, ATO-967) changed it: `text`
+       * is what to show. A consumer that already streamed the deltas
+       * compares against this one so it does not print the body twice.
+       */
+      rawText?: string;
     }
   /**
    * Emitted once when the first `parseToolCall` threw and the executor

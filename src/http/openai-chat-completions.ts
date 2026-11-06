@@ -160,7 +160,12 @@ async function handleNonStream(
       // An extensions client (the desktop) draws approval prompts, so a
       // person can be asked before an out-of-memory restart (ATO-334); a
       // plain OpenAI client cannot answer and gets the automatic one.
-      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
+      // The same client is a chat a person reads: it gets the desktop's
+      // answer style (ATO-966) and its final reply is polished (ATO-967);
+      // a plain OpenAI client gets neither.
+      ...(env.request.extensionsEnabled
+        ? { interactive: true, answerChannel: "desktop" as const }
+        : {}),
     });
   } catch (err) {
     // Reaches this branch only for unclassified / programming
@@ -306,7 +311,10 @@ async function handleStream(
       eventHook: hook,
       // See the non-stream path: only a client that draws approval
       // prompts is asked before an out-of-memory restart (ATO-334).
-      ...(env.request.extensionsEnabled ? { interactive: true } : {}),
+      // Desktop answer style and reply polish too, see the non-stream path.
+      ...(env.request.extensionsEnabled
+        ? { interactive: true, answerChannel: "desktop" as const }
+        : {}),
     });
   } catch (err) {
     // Same contract as the non-stream branch above: classified
@@ -410,7 +418,10 @@ async function handleStream(
  *  - `assistant_delta` / `assistant_reply` → OpenAI content delta chunk.
  *    A terminal `assistant_reply` whose text the same step already streamed
  *    as deltas is skipped (no duplicate body); one that was never streamed
- *    — a stop message, a non-streamed retry — is sent.
+ *    — a stop message, a non-streamed retry — is sent. A reply the
+ *    polish changed (ATO-967) is matched by its raw text; when the stream
+ *    already carried it, the polished text goes out as
+ *    `event: reply_polished` (extensions opt-in only).
  *  - an `assistant_reply` flagged `progressNote` — a reply the model
  *    batched with work, kept while the turn went on — is never content:
  *    it goes out as `event: progress_note` (extensions opt-in only), so
@@ -458,16 +469,38 @@ export function buildStreamEventHook(
       }),
     );
   };
-  const writeReplyText = (text: string): void => {
+  /* A polished reply (`rawText` set, ATO-967) is compared with the
+     stream as it was written, since that is what went out as deltas. When
+     the stream already carried it, the polished text goes to an
+     extensions client as `event: reply_polished` to swap into the
+     bubble; the wire's OpenAI content is never sent twice. */
+  const writePolished = (text: string): void => {
+    if (!env.request.extensionsEnabled) return;
+    sse.writeEvent("reply_polished", {
+      id: env.completionId,
+      object: "chat.completion.reply_polished",
+      created: env.created,
+      model: env.request.model,
+      session_id: env.session.id,
+      step_index: stepIndex,
+      text,
+    });
+  };
+  const writeReplyText = (text: string, rawText?: string): void => {
     const streamed = stepStreamed;
     stepStreamed = "";
-    if (text.length === 0) return;
+    const written = rawText ?? text;
+    if (written.length === 0) return;
     // Already on the wire in this step, whole: nothing to add.
-    if (streamed.length > 0 && (streamed.endsWith(text) || streamed.trimEnd() === text.trimEnd())) return;
+    if (streamed.length > 0 && (streamed.endsWith(written) || streamed.trimEnd() === written.trimEnd())) {
+      if (rawText !== undefined) writePolished(text);
+      return;
+    }
     // The step streamed the start of it (a retry finished what the
     // stream began): send the rest, joined without a break.
-    if (streamed.length > 0 && text.startsWith(streamed)) {
-      writeContent(text.slice(streamed.length));
+    if (streamed.length > 0 && written.startsWith(streamed)) {
+      writeContent(written.slice(streamed.length));
+      if (rawText !== undefined) writePolished(text);
       return;
     }
     // Never streamed: send it whole, set apart from any text this turn
@@ -558,7 +591,7 @@ export function buildStreamEventHook(
           stepStreamed = "";
           return;
         }
-        writeReplyText(inner.text);
+        writeReplyText(inner.text, inner.rawText);
         /* ATO-408: the files the reply delivers (`reply.attachments`,
            absolute paths the tool already checked). Channels post them
            after the text; this is the same promise for an HTTP host,

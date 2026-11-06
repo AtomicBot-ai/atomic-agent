@@ -26,7 +26,7 @@ import type { createRuntimeTraces } from "./runtime-traces.js";
 import type { createRuntimeObservability } from "./runtime-observability.js";
 import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
-import { answerChannelForOrigin } from "../../prompt/answer-style.js";
+import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -327,6 +327,11 @@ export function createRuntimeTurnService(
       interactive?: boolean;
       /** Where the turn came in; picks the reply's `### answer-style`. */
       origin?: TurnOrigin;
+      /**
+       * The reply's surface when the origin cannot tell it: an HTTP
+       * extensions client is the desktop app. Wins over `origin`.
+       */
+      answerChannel?: AnswerChannel;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -451,7 +456,7 @@ export function createRuntimeTurnService(
         if (previousReply !== undefined) {
           turnPreviousReplies?.set(session.id, previousReply);
         }
-        const answerChannel = answerChannelForOrigin(runOptions.origin);
+        const answerChannel = runOptions.answerChannel ?? answerChannelForOrigin(runOptions.origin);
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -561,6 +566,8 @@ export function createRuntimeTurnService(
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
+      /** See `executeTurn`'s `answerChannel`. */
+      answerChannel?: AnswerChannel;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after

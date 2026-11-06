@@ -19,6 +19,7 @@ import { CancelledError } from "../../llm/index.js";
 import type { StepEvent } from "../step-events.js";
 import { capBatchSummaries } from "../batch-summary-cap.js";
 import { assistantToolCallTurn, toolResultTurn, assistantReplyTurn } from "../../session/conversation-turn.js";
+import { polishReply, replyChannelForAnswer, type PolishReplyOptions } from "../reply-polish.js";
 export interface StepCommitArgs {
   ctx: StepContext;
   deps: StepDependencies;
@@ -38,6 +39,7 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
   const { calls, suppressed, unverified, unsourced, batchSize, progressNoteIndex } = args.admission;
   let { trimmedBatchNotice } = args;
   const modelMode = (completion.servedModelMode ?? deps.modelMode)?.mode;
+  const replyChannel = replyChannelForAnswer(ctx.answerChannel);
 
   // Materialise per-call results in batch-index order. Cancelled tail
   // calls are folded into a synthetic error result so the transcript
@@ -175,6 +177,15 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
     terminal,
     modelMode,
     onEvent: deps.onEvent,
+    ...(replyChannel !== undefined && getConfig().agent.replyPolish !== false
+      ? {
+          replyPolish: {
+            channel: replyChannel,
+            smallModel: modelMode === "local",
+            userMessage: ctx.userMessage ?? null,
+          },
+        }
+      : {}),
   });
 
   // The progress note lands after the step's tool pairs, as the reply it
@@ -252,6 +263,11 @@ export interface AppendBatchedTurnsParams {
   reasoning: string;
   terminal: StepTerminal;
   onEvent?: (event: StepEvent) => void;
+  /**
+   * Clean up the final `reply` text for this surface before it is
+   * recorded and emitted (ATO-967). Absent: the text is kept as written.
+   */
+  replyPolish?: PolishReplyOptions;
 }
 
 
@@ -338,11 +354,17 @@ export function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionSta
         );
       }
     }
-    const text =
+    const written =
       typeof terminalCall.args?.text === "string" &&
       terminalCall.args.text.length > 0
         ? (terminalCall.args.text as string)
         : terminalResult.summary;
+    // The final answer only: progress notes and streamed deltas never
+    // reach here. `polishReply` returns its input on any failure.
+    const text =
+      params.replyPolish !== undefined
+        ? polishReply(written, params.replyPolish)
+        : written;
     // Attachments come from the tool *result*, not the call args: the
     // tool has already validated the paths exist and resolved them
     // against the working directory, so every consumer downstream gets
@@ -351,6 +373,7 @@ export function appendBatchedTurns(params: AppendBatchedTurnsParams): SessionSta
     onEvent?.({
       type: "assistant_reply",
       text,
+      ...(text !== written ? { rawText: written } : {}),
       ...(attachments.length > 0 ? { attachments } : {}),
     });
     return recordTurn(
