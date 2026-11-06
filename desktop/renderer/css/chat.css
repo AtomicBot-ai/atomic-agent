@@ -272,6 +272,9 @@
 .turnsum .ts-sep{flex:none}
 .turnsum .ts-bad{flex:none;color:var(--critical)}
 .turnsum .ts-du{flex:none;font-size:var(--fs-label);font-variant-numeric:tabular-nums}
+/* ATO-1145: "Auto-approved N actions" under the line, its list in the reasoning body's box. */
+.ts-autolist{white-space:normal}
+.ts-autowhy{color:var(--ink-3)}
 
 /* "Working…" (0.6.7 item 10) — from the send to the turn's first step or word
    (workingRowHTML). It takes the reasoning line's box: the height, inset, gap
