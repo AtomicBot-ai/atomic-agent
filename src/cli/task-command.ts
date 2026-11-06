@@ -8,6 +8,7 @@ import {
   type TaskStatus,
 } from "../tasks/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
+import { parseDurationFlag, parseUsdFlag } from "./task-budget-flags.js";
 
 const HELP =
   [
@@ -25,7 +26,7 @@ const HELP =
     "  create [--session <id>] --message <text>",
     "         [--max-attempts N] [--max-steps N]",
     "         [--at <unix-ms|iso-8601> | --cron <expr> | --every <seconds>] [--tz <iana>]",
-    "         [--notify telegram]",
+    "         [--notify telegram] [--max-cost-usd <n>] [--max-duration <dur>]",
     "                            Persist a new task (origin=cli). Omit --session for a",
     "                            lazy one-shot (fresh ephemeral session at run time) or",
     "                            for a recurring task (persistent session allocated on",
@@ -34,6 +35,11 @@ const HELP =
     "                            the paired Telegram chat (the result text is sent to",
     "                            Telegram's servers; skipped with a warning when the",
     "                            channel is down or unpaired).",
+    "                            --max-cost-usd stops a run once its estimated spend",
+    "                            reaches that many dollars, with a closing summary;",
+    "                            local (unpriced) models count as $0. --max-duration",
+    "                            takes 90s, 30m, 8h or 1h30m (a bare number is seconds).",
+    "                            Both default to agent.task.* in config.",
     "                            --at takes Unix ms or strict ISO-8601. A date-time",
     "                            without Z or an offset is the machine's local time; a",
     "                            date alone (YYYY-MM-DD) is midnight UTC.",
@@ -148,10 +154,12 @@ async function handleCreate(args: string[]): Promise<number> {
   const everyRaw = readOption(args, "--every");
   const tz = readOption(args, "--tz");
   const notifyRaw = readOption(args, "--notify");
+  const maxCostRaw = readOption(args, "--max-cost-usd");
+  const maxDurationRaw = readOption(args, "--max-duration");
 
   if (!message) {
     process.stderr.write(
-      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms|iso> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram] [--max-attempts N] [--max-steps N]\n",
+      "usage: atomic-agent task create [--session <id>] --message <text> [--at <ms|iso> | --cron <expr> | --every <seconds>] [--tz <iana>] [--notify telegram] [--max-attempts N] [--max-steps N] [--max-cost-usd <n>] [--max-duration <dur>]\n",
     );
     return 1;
   }
@@ -188,6 +196,21 @@ async function handleCreate(args: string[]): Promise<number> {
     process.stderr.write("--max-steps must be a positive integer\n");
     return 1;
   }
+  const maxCostUsd = maxCostRaw === undefined ? null : parseUsdFlag(maxCostRaw);
+  if (maxCostRaw !== undefined && maxCostUsd === null) {
+    process.stderr.write("--max-cost-usd must be a positive number of dollars, e.g. 5 or 2.50\n");
+    return 1;
+  }
+  const maxDurationMs =
+    maxDurationRaw === undefined ? null : parseDurationFlag(maxDurationRaw);
+  if (maxDurationRaw !== undefined && maxDurationMs === null) {
+    process.stderr.write("--max-duration must be a duration like 90s, 30m, 8h or 1h30m\n");
+    return 1;
+  }
+  const budget = {
+    ...(maxCostUsd !== null ? { maxCostUsd } : {}),
+    ...(maxDurationMs !== null ? { maxDurationMs } : {}),
+  };
 
   // One clock reading for the one-shot create: the past-time warning,
   // `resolveScheduledFor` and `store.create` all see the same `now`.
@@ -245,6 +268,7 @@ async function handleCreate(args: string[]): Promise<number> {
         maxAttempts,
         maxSteps,
         ...(notify ? { notify } : {}),
+        ...budget,
         schedule,
       });
       process.stdout.write(`${JSON.stringify(created, null, 2)}\n`);
@@ -271,6 +295,7 @@ async function handleCreate(args: string[]): Promise<number> {
         maxAttempts,
         maxSteps,
         ...(notify ? { notify } : {}),
+        ...budget,
         ...(schedule
           ? { schedule, scheduledFor: resolveScheduledFor(schedule, now) }
           : {}),

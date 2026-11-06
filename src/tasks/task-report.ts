@@ -34,6 +34,13 @@ export interface TaskReport {
   replyText: string | null;
   errorMessage: string | null;
   errorCategory: LlmFailureCategory | null;
+  /**
+   * Estimated USD the task's runs spent (`TaskRecord.spentUsd`, ATO-1108).
+   * Absent when nothing was recorded.
+   */
+  spentUsd?: number;
+  /** The task's own spend ceiling, USD; absent when it has none. */
+  maxCostUsd?: number;
 }
 
 /**
@@ -77,5 +84,7 @@ export function buildTaskReport(
     replyText,
     errorMessage: task.lastError,
     errorCategory: task.lastErrorCategory,
+    ...(task.spentUsd !== null ? { spentUsd: task.spentUsd } : {}),
+    ...(task.maxCostUsd !== null ? { maxCostUsd: task.maxCostUsd } : {}),
   };
 }

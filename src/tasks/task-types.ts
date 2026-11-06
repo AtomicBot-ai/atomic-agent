@@ -129,6 +129,24 @@ export interface TaskRecord {
    * behaviour: the task finishes silently.
    */
   notify: TaskNotifyTarget | null;
+  /**
+   * Spend ceiling for one run of the task, in USD (ATO-1108). `null`
+   * leaves it to `agent.task.maxCostUsd` at run time. A retry gets what
+   * earlier attempts left of it (`spentUsd`).
+   */
+  maxCostUsd: number | null;
+  /**
+   * Wall-clock ceiling for one run, in ms. `null` leaves it to
+   * `agent.task.maxDurationMs` at run time.
+   */
+  maxDurationMs: number | null;
+  /**
+   * Estimated USD the task's runs have spent so far, summed over the
+   * attempts of the current firing (a recurring task starts each firing
+   * from `null`). `null` until a run that reports spend has ended.
+   * Unpriced (local) models add $0.
+   */
+  spentUsd: number | null;
 }
 
 /**
@@ -160,7 +178,9 @@ export class TaskValidationError extends Error {
       | "maxAttempts"
       | "id"
       | "schedule"
-      | "notify",
+      | "notify"
+      | "maxCostUsd"
+      | "maxDurationMs",
     message: string,
   ) {
     super(message);

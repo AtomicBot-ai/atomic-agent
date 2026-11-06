@@ -270,5 +270,8 @@ function recordToJson(record: TaskRecord): Record<string, unknown> {
     lastScheduledAt: record.lastScheduledAt,
     triggerSource: record.triggerSource,
     notify: record.notify,
+    maxCostUsd: record.maxCostUsd,
+    maxDurationMs: record.maxDurationMs,
+    spentUsd: record.spentUsd,
   };
 }

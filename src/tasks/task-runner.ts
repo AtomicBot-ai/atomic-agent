@@ -13,6 +13,8 @@ import {
   type TaskReportSink,
 } from "./task-report.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
+import { remainingCostUsd } from "./task-budget.js";
+import { formatUsd } from "../llm/provider/usage-cost.js";
 import {
   TaskValidationError,
   type TaskRecord,
@@ -37,6 +39,10 @@ export interface TaskRunnerRuntime {
       signal?: AbortSignal;
       origin?: TurnOrigin;
       eventHook?: TurnEventHook;
+      /** The task's own wall-clock ceiling (`TaskRecord.maxDurationMs`). */
+      taskMaxDurationMs?: number;
+      /** What the task may still spend, USD (`TaskRecord.maxCostUsd`). */
+      taskMaxCostUsd?: number;
     },
   ): Promise<RunTurnResult>;
 }
@@ -323,6 +329,21 @@ export class TaskRunner {
       return blocked;
     }
 
+    // A budget the earlier attempts already used up (ATO-1108): running
+    // again would only spend more, so the task waits for an operator.
+    const costLeft = remainingCostUsd(claimed);
+    if (costLeft === "exhausted") {
+      const blocked = this.options.store.markBlocked(claimed.id, {
+        category: "tool",
+        message:
+          `budget_spent: ${formatUsd(claimed.spentUsd ?? 0)} of ` +
+          `${formatUsd(claimed.maxCostUsd ?? 0)} already spent by earlier attempts`,
+      });
+      this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
+      return blocked;
+    }
+
     this.stampWakeReason(session, claimed);
 
     // Capture the final result text live so a completed report can
@@ -379,6 +400,10 @@ export class TaskRunner {
             origin: "scheduler",
             signal: run.signal,
             ...(reportHook ? { eventHook: reportHook } : {}),
+            ...(claimed.maxDurationMs !== null
+              ? { taskMaxDurationMs: claimed.maxDurationMs }
+              : {}),
+            ...(costLeft !== undefined ? { taskMaxCostUsd: costLeft } : {}),
           },
         );
       } catch (err) {
@@ -396,6 +421,14 @@ export class TaskRunner {
           );
         }
         return this.handleFailure(claimed, category, err);
+      }
+      // What this run spent joins what earlier attempts spent, whatever
+      // the outcome: the morning report and a retry's budget read it.
+      if (result.spendUsd !== undefined) {
+        this.options.store.recordSpend(
+          claimed.id,
+          (claimed.spentUsd ?? 0) + result.spendUsd,
+        );
       }
       // An operator cancelled the task while its turn ran — here, or from
       // another process, which cannot reach this turn — and that stands:
