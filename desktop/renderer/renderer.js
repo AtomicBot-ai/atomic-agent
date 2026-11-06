@@ -7721,6 +7721,9 @@ document.addEventListener('click', (e) => {
   // ATO-464: a finished turn's summary line opens or folds its steps in place.
   const tsum = t.closest('[data-turnsum]');
   if (tsum) { turnSumToggle(tsum.dataset.turnsum); return; }
+  // ATO-1145: the "Auto-approved N actions" list under a turn's summary line.
+  const tsauto = t.closest('[data-tsauto]');
+  if (tsauto) { const id = tsauto.dataset.tsauto; if (TURN_AUTO_OPEN.has(id)) TURN_AUTO_OPEN.delete(id); else TURN_AUTO_OPEN.add(id); if (!repaintTranscript()) render(); return; }
   const tg = t.closest('[data-toggle]');
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
@@ -19755,8 +19758,11 @@ function sessionTurnsToLog(turns) {
         .map((a) => ({id:nid(), k:'approval', stored:true, tool:t.tool || 'tool',
           cat:a.category || 'other', kind:CATEGORY_LABEL[a.category] || a.category || 'action',
           state:a.verdict, at: Number.isFinite(a.at) ? new Date(a.at).toTimeString().slice(0, 8) : ''}));
-      // ATO-237: the last answer's time, so the card is timed from it (toolTook).
-      const answered = (Array.isArray(t.approvals) ? t.approvals : []).map((a) => a && a.at).filter(Number.isFinite);
+      // ATO-1145: what the agent allowed by itself (a rule, a chat grant, the risk check), for the turn's summary line.
+      const auto = autoApprovedOf(t.approvals);
+      if (auto.length) card.autoApproved = auto;
+      // ATO-237: the last answer's time, so the card is timed from it (toolTook). An auto-approval is not an answer.
+      const answered = (Array.isArray(t.approvals) ? t.approvals : []).filter((a) => a && a.verdict !== 'auto-approved').map((a) => a && a.at).filter(Number.isFinite);
       if (answered.length) card.apprAt = Math.max(...answered);
       if (receipts.length) {
         let at = log.indexOf(card) + 1;
@@ -20737,7 +20743,7 @@ function renderItems() {
     const fold = folds.get(i);
     if (fold) {
       const open = TURN_OPEN.has(fold.replyId);
-      html += turnSumHTML(fold, open, turnSumMs(fold, items), {esc, ic, dur});
+      html += turnSumHTML(fold, open, turnSumMs(fold, items), {esc, ic, dur, autoWhat: toolLine});
       if (!open) fold.rows.forEach((x) => hidden.add(x));
     }
     if (hidden.has(i)) {
@@ -21107,6 +21113,11 @@ async function reconcileToolCards(attempt = 0) {
       if (/^cancelled before invocation\b/.test(card.out)) card.outcome = 'notrun';
       else if (Array.isArray(result.approvals) && result.approvals.some((a) => a && a.verdict === 'denied')) card.outcome = 'denied';
       else if (card.outcome === 'notrun') delete card.outcome;
+    }
+    // ATO-1145: what the agent allowed by itself, for the turn's summary line.
+    if (result) {
+      const auto = autoApprovedOf(result.approvals);
+      if (auto.length) card.autoApproved = auto; else delete card.autoApproved;
     }
   }
   // Whatever the store still does not describe is finished, just unmeasured.
