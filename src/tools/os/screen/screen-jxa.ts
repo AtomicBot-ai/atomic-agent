@@ -29,7 +29,18 @@ interface Pinned {
 }
 
 export type ScreenOp =
-  | { op: "probe"; point?: { x: number; y: number } }
+  | { op: "probe"; point?: { x: number; y: number }; windows?: boolean }
+  | {
+      op: "windowText";
+      pid: number;
+      /** The captured window's title; the first window of the process when empty or not found. */
+      title: string;
+      /** Apps whose text is never read (`WINDOW_CAPTURE_REFUSED_BUNDLE_IDS`), re-checked by pid. */
+      refusedIds: readonly string[];
+      maxDepth: number;
+      maxElements: number;
+      maxChars: number;
+    }
   | ({ op: "click"; x: number; y: number; button: "left" | "right"; double: boolean } & Pinned)
   | ({ op: "type"; text: string; typeVia: "keys" | "paste" } & Pinned)
   | ({ op: "key"; keyCode: number; flags: number } & Pinned);
@@ -55,6 +66,49 @@ function ownerAt(x, y) {
     }
   }
   return null;
+}
+function listWindows() {
+  var list = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1 | 16, 0))) || [];
+  var apps = {}, out = [];
+  for (var i = 0; i < list.length && out.length < 60; i++) {
+    var w = list[i], b = w.kCGWindowBounds, pid = w.kCGWindowOwnerPID;
+    if (w.kCGWindowLayer !== 0 || !b || w.kCGWindowAlpha === 0 || b.Width < 40 || b.Height < 40) continue;
+    if (!(pid in apps)) apps[pid] = safe(function () { return appInfo($.NSRunningApplication.runningApplicationWithProcessIdentifier(pid)); }, null);
+    var app = apps[pid];
+    out.push({ id: w.kCGWindowNumber, pid: pid, app: (app && app.name) || w.kCGWindowOwnerName || null, bundleId: app ? app.bundleId : null,
+      title: w.kCGWindowName || "", x: b.X, y: b.Y, width: b.Width, height: b.Height });
+  }
+  return out;
+}
+function windowText(p) {
+  var owner = safe(function () { return appInfo($.NSRunningApplication.runningApplicationWithProcessIdentifier(p.pid)); }, null);
+  if (owner && owner.bundleId && isProtected({ protectedIds: p.refusedIds || [] }, owner.bundleId)) return { error: "protected" };
+  var procs = Application("System Events").processes.whose({ unixId: p.pid })();
+  if (!procs.length) return { error: "no-process" };
+  var wins = safe(function () { return procs[0].windows(); }, []);
+  var win = null;
+  for (var i = 0; i < wins.length && !win; i++) if (p.title && safe(function () { return wins[i].name(); }, "") === p.title) win = wins[i];
+  if (!win) win = wins[0];
+  if (!win) return { error: "no-window" };
+  var parts = [], seen = 0, chars = 0, cut = false;
+  function walk(el, depth) {
+    if (depth > p.maxDepth || seen >= p.maxElements || chars >= p.maxChars) { cut = true; return; }
+    seen++;
+    var role = safe(function () { return el.role(); }, "");
+    // A password field is never read, not even its bullet count.
+    if (role === "AXSecureTextField") return;
+    var v = safe(function () { return el.value(); }, null);
+    var s = typeof v === "string" ? v : "";
+    if (!s && (role === "AXStaticText" || role === "AXHeading")) s = safe(function () { return el.name(); }, "") || "";
+    s = String(s || "").trim();
+    if (s && parts[parts.length - 1] !== s) { parts.push(s); chars += s.length + 1; }
+    var kids = safe(function () { return el.uiElements(); }, []);
+    for (var k = 0; k < kids.length; k++) walk(kids[k], depth + 1);
+  }
+  walk(win, 0);
+  var text = parts.join("\n");
+  if (text.length > p.maxChars) { text = text.slice(0, p.maxChars); cut = true; }
+  return { text: text, truncated: cut };
 }
 function isProtected(p, id) {
   if (!id) return true;
@@ -162,6 +216,17 @@ function run() {
   };
   if (p.op === "probe") {
     if (p.point) out.ownerAtPoint = safe(function () { return ownerAt(p.point.x, p.point.y); }, null);
+    if (p.windows) out.windows = safe(listWindows, []);
+    return JSON.stringify(out);
+  }
+  if (p.op === "windowText") {
+    // Reading text posts nothing, so no app is pinned; the walk itself needs Accessibility.
+    if (out.accessibility !== true) { out.error = "accessibility"; return JSON.stringify(out); }
+    var read = safe(function () { return windowText(p); }, { error: "text-failed" });
+    if (read.error) { out.error = read.error; return JSON.stringify(out); }
+    out.text = read.text;
+    out.textTruncated = read.truncated;
+    out.done = true;
     return JSON.stringify(out);
   }
   if (out.accessibility !== true) { out.error = "accessibility"; return JSON.stringify(out); }
