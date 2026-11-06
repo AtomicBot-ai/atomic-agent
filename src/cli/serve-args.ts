@@ -64,6 +64,8 @@ export const HELP =
     "  POST /api/sessions/{id}/steer            Fold a message into the turn already running",
     "  GET  /api/sessions/{id}/steer            Steers a turn accepted but never delivered",
     "  DELETE /api/sessions/{id}/steer          Acknowledge those: ?through={seq} and/or ?discarded={n}",
+    "  GET  /api/sessions/{id}/fusion/workers   Running fusion workers of this chat's fan-out",
+    "  POST .../fusion/workers/{taskId}/stop|steer|escalate  Act on one of them",
     "  POST /api/approval/resolve               Resolve a pending approval",
     "  GET  /api/events                         SSE stream of pending approval requests",
   ].join("\n") + "\n";

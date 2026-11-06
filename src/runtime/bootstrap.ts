@@ -748,6 +748,8 @@ export async function createAgentRuntime(
         fusionLiveWorkers.stop(parentSessionId, taskId),
       escalate: (parentSessionId: string, taskId: string) =>
         fusionLiveWorkers.escalate(parentSessionId, taskId),
+      steer: (parentSessionId: string, taskId: string, text: string) =>
+        fusionLiveWorkers.steer(parentSessionId, taskId, text),
     },
     profileStore,
     notesStore,

@@ -430,5 +430,5 @@ export function fusionWorkerActionsHint(
   const running = workers.filter((w) => !w.done).map((w) => w.taskId);
   return running.length === 0
     ? null
-    : `/worker stop <id> · /worker escalate <id> — running: ${running.join(", ")}`;
+    : `/worker stop <id> · /worker escalate <id> · /worker steer <id> <note> — running: ${running.join(", ")}`;
 }
