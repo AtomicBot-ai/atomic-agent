@@ -27,9 +27,9 @@ describe("agent execution policy configuration", () => {
     const otherTask = createAgentTaskDefaults();
     const wait = createProviderWaitDefaults();
     const otherWait = createProviderWaitDefaults();
-    expect(task).toStrictEqual({ maxSteps: 1000, maxDurationMs: 7_200_000, autoContinue: true });
+    expect(task).toStrictEqual({ maxSteps: 1000, maxDurationMs: 7_200_000, autoContinue: true, resumeInterrupted: true, maxResumes: 3 });
     expect(wait).toStrictEqual({ enabled: true, maxWaitMs: 300_000 });
-    expect(Object.keys(task)).toEqual(["maxSteps", "maxDurationMs", "autoContinue"]);
+    expect(Object.keys(task)).toEqual(["maxSteps", "maxDurationMs", "autoContinue", "resumeInterrupted", "maxResumes"]);
     expect(Object.keys(wait)).toEqual(["enabled", "maxWaitMs"]);
     expect(task).not.toBe(otherTask);
     expect(wait).not.toBe(otherWait);
@@ -42,7 +42,7 @@ describe("agent execution policy configuration", () => {
   });
 
   it("returns supplied defaults by reference for missing and null blocks", () => {
-    const task = { maxSteps: 31, maxDurationMs: 47, autoContinue: false };
+    const task = { maxSteps: 31, maxDurationMs: 47, autoContinue: false, resumeInterrupted: true, maxResumes: 3 };
     const wait = { enabled: false, maxWaitMs: 59 };
     expect(parseAgentTask(undefined, task)).toBe(task);
     expect(parseAgentTask(null, task)).toBe(task);
@@ -57,7 +57,7 @@ describe("agent execution policy configuration", () => {
   });
 
   it("normalizes present blocks into fresh objects and falls back on null fields", () => {
-    const task = { maxSteps: 31, maxDurationMs: 47, autoContinue: false };
+    const task = { maxSteps: 31, maxDurationMs: 47, autoContinue: false, resumeInterrupted: true, maxResumes: 3 };
     const wait = { enabled: false, maxWaitMs: 59 };
     const normalizedTask = parseAgentTask({}, task);
     const normalizedWait = parseProviderWait({}, wait);
@@ -71,14 +71,14 @@ describe("agent execution policy configuration", () => {
       .toStrictEqual(task);
     expect(parseProviderWait({ enabled: null, maxWaitMs: null, ignored: 9 }, wait)).toStrictEqual(wait);
     expect(parseAgentTask({ maxSteps: "1e2" }, task))
-      .toStrictEqual({ maxSteps: 100, maxDurationMs: 47, autoContinue: false });
+      .toStrictEqual({ maxSteps: 100, maxDurationMs: 47, autoContinue: false, resumeInterrupted: true, maxResumes: 3 });
     expect(parseProviderWait({ maxWaitMs: "2.0" }, wait)).toStrictEqual({ enabled: false, maxWaitMs: 2 });
   });
 
   it("preserves numeric-string and boolean coercion including explicit false", () => {
     const rawTask = { maxSteps: " 1e2 ", maxDurationMs: "2.0", autoContinue: "OFF" };
     const rawWait = { enabled: "No", maxWaitMs: "+3" };
-    const expectedTask = { maxSteps: 100, maxDurationMs: 2, autoContinue: false };
+    const expectedTask = { maxSteps: 100, maxDurationMs: 2, autoContinue: false, resumeInterrupted: true, maxResumes: 3 };
     const expectedWait = { enabled: false, maxWaitMs: 3 };
     expect(parseAgentTask(rawTask, createAgentTaskDefaults())).toStrictEqual(expectedTask);
     expect(parseProviderWait(rawWait, createProviderWaitDefaults())).toStrictEqual(expectedWait);
@@ -107,7 +107,7 @@ describe("agent execution policy configuration", () => {
   it("keeps task ceilings independent of the per-leg agent step budget", () => {
     const config = parseUserConfigFile({ agent: { maxSteps: 25, task: { maxSteps: 1, maxDurationMs: 1 } } });
     expect(config.agent.maxSteps).toBe(25);
-    expect(config.agent.task).toStrictEqual({ maxSteps: 1, maxDurationMs: 1, autoContinue: true });
+    expect(config.agent.task).toStrictEqual({ maxSteps: 1, maxDurationMs: 1, autoContinue: true, resumeInterrupted: true, maxResumes: 3 });
   });
 
   it.each([
@@ -118,6 +118,8 @@ describe("agent execution policy configuration", () => {
     { policy: "task", raw: { maxSteps: 0 }, field: "agent.task.maxSteps", reason: "expected positive integer, got 0" },
     { policy: "task", raw: { maxDurationMs: "2ms" }, field: "agent.task.maxDurationMs", reason: 'expected positive integer, got "2ms"' },
     { policy: "task", raw: { autoContinue: " true " }, field: "agent.task.autoContinue", reason: 'expected boolean, got " true "' },
+    { policy: "task", raw: { resumeInterrupted: 1 }, field: "agent.task.resumeInterrupted", reason: "expected boolean, got 1" },
+    { policy: "task", raw: { maxResumes: -1 }, field: "agent.task.maxResumes", reason: "expected non-negative integer, got -1" },
     { policy: "providerWait", raw: { enabled: 0 }, field: "agent.providerWait.enabled", reason: "expected boolean, got 0" },
     { policy: "providerWait", raw: { maxWaitMs: 1.5 }, field: "agent.providerWait.maxWaitMs", reason: "expected positive integer, got 1.5" },
     { policy: "providerWait", raw: { enabled: false, maxWaitMs: 0 }, field: "agent.providerWait.maxWaitMs", reason: "expected positive integer, got 0" },
@@ -175,7 +177,7 @@ describe("agent execution policy configuration", () => {
     const originalWait = originalAgent.providerWait;
     try {
       const before = parseUserConfigFile({});
-      const replacementTask = { maxSteps: 67, maxDurationMs: 71, autoContinue: false };
+      const replacementTask = { maxSteps: 67, maxDurationMs: 71, autoContinue: false, resumeInterrupted: true, maxResumes: 3 };
       const replacementWait = { enabled: false, maxWaitMs: 73 };
       originalAgent.task = replacementTask;
       originalAgent.providerWait = replacementWait;
@@ -187,7 +189,7 @@ describe("agent execution policy configuration", () => {
       expect(nestedPresent.agent.providerWait).toStrictEqual(replacementWait);
       expect(before.agent.task).toBe(originalTask);
       expect(before.agent.providerWait).toBe(originalWait);
-      const nextTask = { maxSteps: 79, maxDurationMs: 83, autoContinue: true };
+      const nextTask = { maxSteps: 79, maxDurationMs: 83, autoContinue: true, resumeInterrupted: true, maxResumes: 3 };
       const nextWait = { enabled: true, maxWaitMs: 89 };
       USER_CONFIG_DEFAULTS.agent = { ...originalAgent, task: nextTask, providerWait: nextWait };
       const whole = parseUserConfigFile({});

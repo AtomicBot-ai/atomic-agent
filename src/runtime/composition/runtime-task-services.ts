@@ -50,7 +50,7 @@ export function createRuntimeTaskRunner(args: {
   config: Pick<AtomicAgentConfig, "agent" | "tasks">;
   taskStore: TaskStore;
   runTurn: TaskRunnerRuntime["runTurn"];
-  sessionStore: Pick<SessionStore, "load" | "save">;
+  sessionStore: Pick<SessionStore, "load" | "save" | "readTurnProgress" | "clearTurnProgress">;
   createSession: AgentRuntime["createSession"];
   toolRegistry: ToolRegistry;
   resolveTelegram: () => TelegramChannel | null;
@@ -92,6 +92,16 @@ export function createRuntimeTaskRunner(args: {
     }),
     logger,
     metrics,
+    // Continue a run a crash, a kill or a restart cut off from its
+    // session's checkpoint (ATO-1109).
+    resume: {
+      enabled: config.agent.task.resumeInterrupted,
+      maxResumes: config.agent.task.maxResumes,
+      progress: {
+        read: (sessionId) => sessionStore.readTurnProgress(sessionId),
+        clear: (sessionId) => sessionStore.clearTurnProgress(sessionId),
+      },
+    },
   });
 
   registerTaskTools(toolRegistry, {

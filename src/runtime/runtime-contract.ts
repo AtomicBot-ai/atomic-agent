@@ -1,3 +1,4 @@
+import type { TurnCheckpointOptions } from "./turn-checkpoints.js";
 import type { CompactionResult, SessionCompaction } from "../session/session-compaction.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import type { AtomicAgentConfig } from "../config/index.js";
@@ -440,6 +441,12 @@ export interface AgentRuntime {
        * ATO-334). Absent: unattended, the window is halved without asking.
        */
       interactive?: boolean;
+      /**
+       * What the turn's progress marker records beyond the message: the
+       * durable task it runs for, resumes already spent, the request
+       * when the message carries a resume note (ATO-1109).
+       */
+      checkpoint?: TurnCheckpointOptions;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -469,6 +476,8 @@ export interface AgentRuntime {
       maxOutputTokens?: number;
       /** See `runTurn`'s `interactive`. */
       interactive?: boolean;
+      /** See `runTurn`'s `checkpoint`. */
+      checkpoint?: TurnCheckpointOptions;
     },
   ): Promise<RunTurnResult>;
   /**

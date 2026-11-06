@@ -593,14 +593,22 @@ export class TaskStore {
    */
   markInterrupted(
     id: string,
-    options: { nextScheduledFor: number | null },
+    options: {
+      nextScheduledFor: number | null;
+      /**
+       * `last_error` to write instead of `TASK_INTERRUPTED_ERROR`: a run
+       * stopped before its crash resume started keeps the boot sweep's
+       * `TASK_OWNER_GONE_ERROR`, so that crash still counts next time.
+       */
+      lastError?: string;
+    },
     now: number = Date.now(),
   ): TaskRecord | null {
     const result = this.markInterruptedStmt.run({
       id,
       now,
       scheduled_for: options.nextScheduledFor,
-      last_error: TASK_INTERRUPTED_ERROR,
+      last_error: options.lastError ?? TASK_INTERRUPTED_ERROR,
     }) as { changes: number };
     if (result.changes === 0) return null;
     return this.get(id);
