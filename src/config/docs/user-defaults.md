@@ -60,6 +60,8 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.conversationLowWater` (default `0.65`).
 - `agent.sessionSectionsMaxTokens` (default `0`).
 - `agent.worldSnapshotMaxTokens` (default `8000`).
+- `agent.smartApproval` (default `false`).
+- `agent.smartApprovalModel` (default `null`).
 
 ## http
 

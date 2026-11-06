@@ -99,6 +99,12 @@ export interface LlmStreamParams {
   reasoningEffort?: ReasoningEffort;
   /** See `CompletionRequest.disableThinking`. */
   disableThinking?: boolean;
+  /**
+   * Sampling temperature for a side call that must be deterministic (the
+   * smart-approval risk review sends `0`). The main loop leaves it unset
+   * and the provider's own default applies, as before.
+   */
+  temperature?: number;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;

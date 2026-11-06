@@ -164,5 +164,33 @@ export function parseAgentConfig(
         readDefaults().worldSnapshotMaxTokens,
       "agent.worldSnapshotMaxTokens",
     ),
+    // Additive and unversioned: a file without them reads off / automatic.
+    smartApproval: parseBool(
+      agent.smartApproval ?? readDefaults().smartApproval,
+      "agent.smartApproval",
+    ),
+    smartApprovalModel: parseSmartApprovalModel(
+      agent.smartApprovalModel === undefined
+        ? readDefaults().smartApprovalModel
+        : agent.smartApprovalModel,
+      "agent.smartApprovalModel",
+    ),
   };
+}
+
+/**
+ * `agent.smartApprovalModel`: a provider id, or `null` for automatic. An
+ * empty or blank string reads as `null` (what clearing the field in a
+ * settings form sends); anything else that is not a string is an error.
+ */
+export function parseSmartApprovalModel(raw: unknown, field: string): string | null {
+  if (raw === null) return null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    return trimmed.length === 0 ? null : trimmed;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected a provider id or null, got ${JSON.stringify(raw)}`,
+  );
 }

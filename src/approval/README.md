@@ -12,6 +12,7 @@ This area owns approval policy and routing. Read [AGENTS.md](AGENTS.md) before c
 - [approval-router.ts](approval-router.ts)
 - [dangerous-tool.ts](dangerous-tool.ts)
 - [read-scope-grants.ts](read-scope-grants.ts)
+- [risk-review.ts](risk-review.ts): smart approval (`agent.smartApproval`, off by default). Before a grantable request prompts, a model rates it low/medium/high under a grammar or one-field schema; `low` runs it, anything else and every failure prompts with `riskNote`. Fail-closed; never for non-grantable categories, `fs_read_outside` or a session under a refuse policy. Wired by [runtime-risk-review](../runtime/composition/runtime-risk-review.ts).
 - [approval-preview.ts](approval-preview.ts): fits a long preview onto a size-limited surface (TUI modal, Telegram message) by whole lines, with an explicit "+N more lines" note instead of a silent cut, and pages the whole preview (`pagePreview`) for a surface that shows all of it before the decision.
 
 ## Ownership and dependencies

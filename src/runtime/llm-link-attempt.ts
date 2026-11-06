@@ -116,6 +116,9 @@ function turnRequestFields(params: LlmStreamParams) {
       ? { requestTimeoutMs: params.requestTimeoutMs }
       : {}),
     ...(params.disableThinking ? { disableThinking: true } : {}),
+    ...(typeof params.temperature === "number"
+      ? { temperature: params.temperature }
+      : {}),
   };
 }
 

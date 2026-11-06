@@ -14,6 +14,14 @@ import {
   type ApprovalCategory,
   type ApprovalLevel,
 } from "./approval-level.js";
+import {
+  formatRiskNote,
+  isRiskReviewEligible,
+  RISK_REVIEW_LOW_REASON,
+  runRiskReview,
+  type RiskLevel,
+  type RiskReviewer,
+} from "./risk-review.js";
 
 export interface ApprovalRequest {
   approvalId: string;
@@ -58,6 +66,15 @@ export interface ApprovalRequest {
    * same action by another route.
    */
   targetPaths?: string[];
+  /**
+   * Set by the gate, never by a caller: what the smart-approval risk
+   * review (`risk-review.ts`) said about a request it did not let
+   * through, e.g. `risk check: medium (installs a package)`. A surface
+   * shows it beside the prompt; absent when no review ran.
+   */
+  riskNote?: string;
+  /** The level behind `riskNote`; absent when the review gave no verdict. */
+  riskLevel?: RiskLevel;
 }
 
 /**
@@ -254,6 +271,11 @@ export class ApprovalGate {
    */
   readonly readScopeGrants = new ReadScopeGrants();
 
+  /** Smart approval (step 7 of `request`); unset = never consulted. */
+  private riskReviewer: RiskReviewer | undefined;
+  /** Requests on their way back into `request` after a review (see `requestAfterReview`). */
+  private readonly riskReviewed = new Set<string>();
+
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
     this.level = options.level ?? MIN_APPROVAL_LEVEL;
@@ -266,6 +288,16 @@ export class ApprovalGate {
    */
   setSessionPolicy(sessionId: string, policy: SessionApprovalPolicy): void {
     this.policiesBySession.set(sessionId, policy);
+  }
+
+  /**
+   * Install (or with `undefined` remove) the smart-approval reviewer. It
+   * is asked only about a request that would otherwise prompt, of a
+   * grantable category (`isRiskReviewEligible`), from a session with no
+   * prompt policy; its own `enabled()` is the live on/off switch.
+   */
+  setRiskReviewer(reviewer: RiskReviewer | undefined): void {
+    this.riskReviewer = reviewer;
   }
 
   /** Remove the session's policy so its requests prompt again. */
@@ -356,6 +388,9 @@ export class ApprovalGate {
     const auto = this.autoApproval(request);
     if (auto)
       return Promise.resolve({ approvalId, approved: true, reason: auto });
+    if (this.shouldReviewRisk(request)) {
+      return this.requestAfterReview(request, signal);
+    }
     // Would prompt from here on. A session under a refuse policy gets its
     // denial now, and no emitter ever sees the request — there is no
     // surface that could answer it.
@@ -396,6 +431,62 @@ export class ApprovalGate {
       signal?.addEventListener("abort", onAbort, { once: true });
       this.emitter(request);
     });
+  }
+
+  /**
+   * Whether smart approval rates `request` before it prompts. Not for a
+   * session under a prompt policy (a fusion worker): nobody would see
+   * what the reviewer let through, and its refusal posture stays.
+   */
+  private shouldReviewRisk(request: ApprovalRequest): boolean {
+    const reviewer = this.riskReviewer;
+    if (reviewer === undefined || reviewer.enabled?.() === false) return false;
+    if (this.riskReviewed.has(request.approvalId)) return false;
+    if (this.policiesBySession.has(request.sessionId)) return false;
+    return isRiskReviewEligible(request.category);
+  }
+
+  /**
+   * Step 7: a `low` verdict approves; anything else, a failure included,
+   * goes back through `request` (which re-reads the turn's declines and
+   * the level, since the review took time) and prompts with the verdict
+   * in `riskNote`.
+   */
+  private async requestAfterReview(
+    request: ApprovalRequest,
+    signal: AbortSignal | undefined,
+  ): Promise<ApprovalDecision> {
+    const reviewer = this.riskReviewer;
+    const verdict =
+      reviewer === undefined
+        ? null
+        : await runRiskReview(reviewer, { request }, signal ? { signal } : {});
+    if (signal?.aborted) {
+      throw new ApprovalGateError(
+        "approval aborted before a decision was made",
+        request.approvalId,
+      );
+    }
+    if (verdict?.risk === "low") {
+      return {
+        approvalId: request.approvalId,
+        approved: true,
+        reason: RISK_REVIEW_LOW_REASON,
+      };
+    }
+    this.riskReviewed.add(request.approvalId);
+    try {
+      return this.request(
+        {
+          ...request,
+          riskNote: formatRiskNote(verdict),
+          ...(verdict !== null ? { riskLevel: verdict.risk } : {}),
+        },
+        signal ? { signal } : {},
+      );
+    } finally {
+      this.riskReviewed.delete(request.approvalId);
+    }
   }
 
   /**

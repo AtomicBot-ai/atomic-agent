@@ -51,6 +51,10 @@ export interface RuntimeAgentConfig {
    * the ApprovalGate; see `runtime.setApprovalLevel`.
    */
   approvalLevel: ApprovalLevel;
+  /** Smart approval: a model rates a request before it prompts. See the user type. */
+  smartApproval: boolean;
+  /** Provider id the risk review runs on; `null` = automatic. See the user type. */
+  smartApprovalModel: string | null;
   stablePrefixHashSalt: string;
   /**
    * Safety-net ceiling for the `### conversation` section of the prompt.
@@ -266,4 +270,17 @@ export interface UserAgentConfig {
    */
   sessionSectionsMaxTokens: number;
   worldSnapshotMaxTokens: number;
+  /**
+   * Smart approval (ATO-465). When on, a request that would prompt, of a
+   * category the operator could grant for the session, is first rated by
+   * a model (`src/approval/risk-review.ts`): `low` runs it without a
+   * prompt, anything else and every failure prompts as before, with the
+   * rating shown. Off by default. Read live: no restart needed.
+   */
+  smartApproval: boolean;
+  /**
+   * The `llm.providers[].id` the risk review runs on. `null` (default):
+   * a local `llama-server` link that has a model, else the active provider.
+   */
+  smartApprovalModel: string | null;
 }
