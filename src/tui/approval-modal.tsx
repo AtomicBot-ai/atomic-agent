@@ -72,6 +72,13 @@ interface ApprovalModalProps {
  * and granting for a whole session are not the same act, and they no
  * longer look like it.
  */
+/**
+ * Appended to a `shell` grant's label: a category or `[a]` grant never
+ * covers a dangerous command (`rm -rf`, `git reset --hard`), which asks
+ * as `shell_dangerous` every time (ATO-1225).
+ */
+const RISKY_STILL_ASK = " (risky commands still ask)";
+
 export function ApprovalModal({
   request,
   pathDraft,
@@ -181,7 +188,7 @@ export function ApprovalModal({
             </ApprovalButton>
           </Box>
           {grantCategory || grantShape || editable ? (
-            <Box flexDirection="row" marginTop={1}>
+            <Box flexDirection="row" flexWrap="wrap" marginTop={1}>
               {grantCategory ? (
                 <>
                   <ApprovalButton
@@ -190,7 +197,7 @@ export function ApprovalModal({
                     grant="category"
                     tone="secondary"
                   >
-                    {`allow ${categoryLabel} this session · ctrl+${APPROVAL_CHORDS.grantCategory}`}
+                    {`allow ${categoryLabel} this session${request.category === "shell" ? RISKY_STILL_ASK : ""} · ctrl+${APPROVAL_CHORDS.grantCategory}`}
                   </ApprovalButton>
                   <Text> </Text>
                 </>
@@ -208,7 +215,7 @@ export function ApprovalModal({
                   grant="shape"
                   tone="secondary"
                 >
-                  {`allow all ${request.commandShape} this session · ctrl+${APPROVAL_CHORDS.contextual}`}
+                  {`allow all ${request.commandShape} this session${RISKY_STILL_ASK} · ctrl+${APPROVAL_CHORDS.contextual}`}
                 </ApprovalButton>
               ) : null}
               {editable ? (

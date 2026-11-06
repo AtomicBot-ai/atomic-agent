@@ -467,7 +467,7 @@ export class ApprovalGate {
         const tool = declined.targets.get(target);
         if (
           tool !== undefined &&
-          (query.category === "shell" || tool === query.tool)
+          (isShellCommandCategory(query.category) || tool === query.tool)
         ) {
           return `${tool} on ${target} (this call would change that file too)`;
         }
@@ -502,7 +502,7 @@ export class ApprovalGate {
       this.declinedBySession.set(request.sessionId, declined);
     }
     declined.calls.add(callKey(request));
-    if (request.category === "shell") return;
+    if (isShellCommandCategory(request.category)) return;
     for (const target of normaliseTargets(request.targetPaths)) {
       declined.targets.set(target, request.tool);
     }
@@ -728,6 +728,14 @@ export function canGrantCategory(request: ApprovalRequest): boolean {
  */
 export function canGrantShape(request: ApprovalRequest): boolean {
   return request.category === "shell" && Boolean(request.commandShape);
+}
+
+/**
+ * A shell command, ordinary or dangerous (`shell_dangerous`, ATO-1220):
+ * the same-turn denial rule treats both alike.
+ */
+function isShellCommandCategory(category: ApprovalCategory): boolean {
+  return category === "shell" || category === "shell_dangerous";
 }
 
 /**

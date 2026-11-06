@@ -99,6 +99,25 @@ describe("approvalHotkey", () => {
     expect(approvalHotkey(state, "", key({ escape: true }))).toBe("abort");
   });
 
+  it("offers no grant chord for a dangerous shell command (ATO-1224)", () => {
+    // `rm -rf` asks as shell_dangerous every time: neither the category
+    // grant nor the shape grant exists, even for a request that carried
+    // a shape. Approve once and deny still work.
+    const state = pending({
+      pendingApproval: writeRequest({
+        tool: "os.shell.run",
+        category: "shell_dangerous",
+        reason: "recursive remove",
+        commandShape: "rm",
+        redirectablePath: undefined,
+      }),
+    });
+    expect(approvalHotkey(state, "f", key(ctrl))).toBeNull();
+    expect(approvalHotkey(state, "b", key(ctrl))).toBeNull();
+    expect(approvalHotkey(state, "y", key(ctrl))).toBe("approve");
+    expect(approvalHotkey(state, "d", key(ctrl))).toBe("deny");
+  });
+
   it("never reads a bare letter as a decision", () => {
     // The whole point of the change. "yes, but put it in ~/Documents"
     // used to approve the call on its first keystroke.
