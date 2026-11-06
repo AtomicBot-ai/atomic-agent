@@ -11,6 +11,13 @@ export const OVERNIGHT_DEFAULT_HOURS = 8;
 /** A week. Past that the run is a service, not an overnight job. */
 export const OVERNIGHT_MAX_HOURS = 168;
 /**
+ * The shortest run, one minute. Anything shorter rounds to a duration
+ * the task store refuses (0 ms) or spells back to the detached child in
+ * exponent notation, which the child's own parse rejects after the
+ * parent already reported a start.
+ */
+export const OVERNIGHT_MIN_HOURS = 1 / 60;
+/**
  * Internal: the detached child runs the task id its parent already
  * printed. Not in the help text; a user who passes it just picks the id.
  */
@@ -94,7 +101,7 @@ export function parseOvernightArgs(
   if (hours === null) {
     return {
       ok: false,
-      error: `--hours expects a number above 0 and at most ${OVERNIGHT_MAX_HOURS}, got ${values.get("--hours")}`,
+      error: `--hours expects a number from 1 minute (${OVERNIGHT_MIN_HOURS.toFixed(3)}) to ${OVERNIGHT_MAX_HOURS}, got ${values.get("--hours")}`,
     };
   }
 
@@ -131,7 +138,11 @@ function parseHours(raw: string | undefined): number | null {
   const trimmed = raw.trim();
   if (!/^(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) return null;
   const hours = Number(trimmed);
-  if (!Number.isFinite(hours) || hours <= 0 || hours > OVERNIGHT_MAX_HOURS) {
+  if (
+    !Number.isFinite(hours) ||
+    Math.round(hours * 3_600_000) < Math.round(OVERNIGHT_MIN_HOURS * 3_600_000) ||
+    hours > OVERNIGHT_MAX_HOURS
+  ) {
     return null;
   }
   return hours;

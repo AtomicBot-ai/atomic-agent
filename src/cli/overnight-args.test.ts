@@ -64,6 +64,8 @@ describe("parseOvernightArgs", () => {
     [["x", "--budget", "0"], /--budget expects/],
     [["x", "--budget"], /--budget needs a value/],
     [["x", "--hours", "0"], /--hours expects/],
+    [["x", "--hours", "0.0000001"], /--hours expects/],
+    [["x", "--hours", "0.01"], /--hours expects/],
     [["x", "--hours", "8h"], /--hours expects/],
     [["x", "--hours", "500"], /--hours expects/],
     [["x", "--dir", "/etc"], /not a directory: \/etc/],
