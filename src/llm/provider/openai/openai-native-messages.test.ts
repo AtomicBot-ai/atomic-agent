@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import type { PromptMessages } from "../completion-types.js";
 import { OpenAiHttpError } from "./openai-http.js";
+import { estimateTokens } from "../../../prompt/token-budget.js";
 import {
   NO_RESULT_RECORDED,
+  PRESERVED_REASONING_TOKEN_BUDGET,
   buildNativeMessages,
+  capPreservedReasoning,
   isNativeShapeRejection,
 } from "./openai-native-messages.js";
 import { nameEscape } from "./openai-tool-call-adapter.js";
@@ -149,6 +152,118 @@ describe("buildNativeMessages", () => {
       { role: "system", content: "### system\nprefix" },
       { role: "user", content: "### world\n(none)\n\n### respond\nRespond now.\n" },
     ]);
+  });
+});
+
+describe("buildNativeMessages: reasoning handed back (ATO-887)", () => {
+  const turns: PromptMessages["turns"] = [
+    { kind: "user", text: "read a.txt" },
+    { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "need the file first" },
+    { kind: "tool_result", tool: "os.fs.read", status: "ok", body: "hello", truncated: false },
+  ];
+
+  it("puts the call's reasoning on its assistant message as reasoning_content", () => {
+    const messages = buildNativeMessages(prompt({ turns }), { ...options, preserveReasoning: true });
+    expect(messages[2]).toEqual({
+      role: "assistant",
+      content: null,
+      reasoning_content: "need the file first",
+      tool_calls: [
+        { id: "call_1", type: "function", function: { name: "os__fs__read", arguments: '{"path":"a.txt"}' } },
+      ],
+    });
+  });
+
+  it("leaves it out unless asked, so a strict API never sees the field", () => {
+    const messages = buildNativeMessages(prompt({ turns }), options);
+    expect(messages[2]).not.toHaveProperty("reasoning_content");
+  });
+
+  it("adds nothing for a call that has no reasoning", () => {
+    const plain: PromptMessages["turns"] = [
+      { kind: "user", text: "read a.txt" },
+      { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a.txt" } },
+    ];
+    const messages = buildNativeMessages(prompt({ turns: plain }), { ...options, preserveReasoning: true });
+    expect(messages[2]).not.toHaveProperty("reasoning_content");
+  });
+});
+
+describe("capPreservedReasoning: reasoning handed back stays within a fixed budget (ATO-887)", () => {
+  const call = (reasoning?: string): PromptMessages["turns"][number] => ({
+    kind: "assistant_tool_call",
+    tool: "os.fs.read",
+    args: { path: "a.txt" },
+    ...(reasoning !== undefined ? { reasoning } : {}),
+  });
+  const result: PromptMessages["turns"][number] = {
+    kind: "tool_result",
+    tool: "os.fs.read",
+    status: "ok",
+    body: "hello",
+    truncated: false,
+  };
+  const words = (count: number, tag: string): string =>
+    Array.from({ length: count }, (_, i) => `${tag}${i}`).join(" ");
+
+  it("is a named budget of 2048 estimated tokens", () => {
+    expect(PRESERVED_REASONING_TOKEN_BUDGET).toBe(2048);
+  });
+
+  it("keeps every call's reasoning whole while the total fits", () => {
+    const turns = [{ kind: "user", text: "go" } as const, call("first"), result, call("second"), result];
+    const kept = capPreservedReasoning(turns);
+    expect(kept.get(1)).toBe("first");
+    expect(kept.get(3)).toBe("second");
+  });
+
+  it("gives the budget to the newest calls and drops older reasoning entirely", () => {
+    const older = words(600, "old");
+    const newer = words(600, "new");
+    const turns = [call(older), result, call(older), result, call(newer), result];
+    const budget = estimateTokens(newer) + 10;
+    const kept = capPreservedReasoning(turns, budget);
+    expect(kept.get(4)).toBe(newer);
+    // The next call does not fit whole, so only its tail is kept.
+    const cut = kept.get(2)!;
+    expect(older.endsWith(cut)).toBe(true);
+    expect(estimateTokens(cut)).toBeLessThanOrEqual(10);
+    // Nothing older than the cut call survives.
+    expect(kept.has(0)).toBe(false);
+  });
+
+  it("cuts a single oversized newest reasoning from the start, keeping its tail", () => {
+    const huge = words(5000, "w");
+    const kept = capPreservedReasoning([call(huge)]);
+    const tail = kept.get(0)!;
+    expect(tail.length).toBeGreaterThan(0);
+    expect(tail.length).toBeLessThan(huge.length);
+    expect(huge.endsWith(tail)).toBe(true);
+    expect(tail.endsWith("w4999")).toBe(true);
+    expect(estimateTokens(tail)).toBeLessThanOrEqual(PRESERVED_REASONING_TOKEN_BUDGET);
+  });
+
+  it("keeps the total of a long tool loop within the budget", () => {
+    const turns: PromptMessages["turns"] = [{ kind: "user", text: "go" }];
+    for (let i = 0; i < 40; i++) turns.push(call(words(300, `s${i}_`)), result);
+    const kept = capPreservedReasoning(turns);
+    const total = [...kept.values()].reduce((sum, text) => sum + estimateTokens(text), 0);
+    expect(total).toBeLessThanOrEqual(PRESERVED_REASONING_TOKEN_BUDGET);
+    // The newest call is always among the kept ones.
+    expect(kept.has(turns.length - 2)).toBe(true);
+  });
+
+  it("buildNativeMessages applies the cap to reasoning_content", () => {
+    const huge = words(5000, "w");
+    const messages = buildNativeMessages(
+      prompt({ turns: [{ kind: "user", text: "go" }, call(words(50, "old")), result, call(huge)] }),
+      { ...options, preserveReasoning: true },
+    );
+    const assistants = messages.filter((m) => m.role === "assistant");
+    expect(assistants[0]).not.toHaveProperty("reasoning_content");
+    const content = assistants[1]!.reasoning_content as string;
+    expect(huge.endsWith(content)).toBe(true);
+    expect(estimateTokens(content)).toBeLessThanOrEqual(PRESERVED_REASONING_TOKEN_BUDGET);
   });
 });
 
