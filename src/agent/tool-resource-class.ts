@@ -94,6 +94,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   [OS_FS_LIST_CONTRACT.name]: OS_FS_LIST_CONTRACT.resourceClass,
   [OS_FS_GLOB_CONTRACT.name]: OS_FS_GLOB_CONTRACT.resourceClass,
   [OS_FS_LOCATE_PROJECT_CONTRACT.name]: OS_FS_LOCATE_PROJECT_CONTRACT.resourceClass,
+  "os.fs.code_map": "pure_read",
   [OS_FS_GREP_CONTRACT.name]: OS_FS_GREP_CONTRACT.resourceClass,
   [OS_FS_HASH_CONTRACT.name]: OS_FS_HASH_CONTRACT.resourceClass,
   [OS_FS_DIFF_CONTRACT.name]: OS_FS_DIFF_CONTRACT.resourceClass,
