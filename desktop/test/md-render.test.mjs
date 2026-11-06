@@ -197,6 +197,12 @@ test("intraword underscores and bracket-then-paren code in prose stay as written
   assert.equal(md("[mail](mailto:a@b.co) me"), "[mail](mailto:a@b.co) me");
 });
 
+test("a bare path keeps its underscores and stars: no emphasis cuts it", () => {
+  assert.equal(md("edit /tmp/pkg/__init__.py now"), "edit /tmp/pkg/__init__.py now");
+  assert.equal(md("open ~/my*notes*.md"), "open ~/my*notes*.md");
+  assert.equal(md("see ~/a_b_/c__d__.md now"), "see ~/a_b_/c__d__.md now");
+});
+
 test("raw HTML is shown as text, never as markup", () => {
   assert.equal(md("<b>hi</b> & bye"), "&lt;b&gt;hi&lt;/b&gt; &amp; bye");
   assert.equal(md("<div>\nx\n</div>"), "&lt;div&gt;\nx\n&lt;/div&gt;");

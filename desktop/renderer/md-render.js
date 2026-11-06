@@ -50,6 +50,16 @@ function mdrHold(held, html) { return '\u0000' + (held.push(html) - 1) + '\u0000
 function mdrNl(s) { return (String(s || '').match(/\n/g) || []).length; }
 function mdrTrailNl(s) { return (/\n*$/.exec(String(s || '')) || [''])[0].length; }
 
+/* A bare path in prose is one piece of text, so `/app/pkg/__init__.py` or
+   `~/my*notes*.md` keeps its underscores and stars (emphasis would cut the
+   path in two and renderProseFresh would no longer find it for a chip). */
+const MDR_PATH_AT = /^(?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@*+-]+\.[A-Za-z0-9]{1,10}(?![\p{L}\p{N}_\/])/u;
+const MDR_PATH_EXT = {
+  name: 'mdpath', level: 'inline',
+  start(src) { const m = /(^|[\s(\[{"'])(?:~\/|\/)/.exec(src); return m ? m.index + m[1].length : undefined; },
+  tokenizer(src) { const m = MDR_PATH_AT.exec(src); return m ? {type: 'text', raw: m[0], text: m[0]} : undefined; },
+};
+
 /* One marked instance for the window. Setext headings are off: a model's
    `---` under a line of text is a rule (ATO-163's T53 pins it), and with them
    on, every streamed "text\n-" frame flashed as a heading. */
@@ -59,13 +69,13 @@ function mdrMarked() {
   const lib = typeof marked !== 'undefined' ? marked : null;
   if (!lib || typeof lib.Marked !== 'function') return null;
   const m = new lib.Marked({gfm: true, breaks: false});
-  m.use({tokenizer: {lheading() { return undefined; }}});
+  m.use({tokenizer: {lheading() { return undefined; }}, extensions: [MDR_PATH_EXT]});
   MDR_MD = m;
   return m;
 }
 function mdrLexInline(src) {
-  const lib = typeof marked !== 'undefined' ? marked : null;
-  try { return lib ? lib.Lexer.lexInline(String(src), {gfm: true}) : null; } catch (e) { return null; }
+  const md = mdrMarked();
+  try { return md ? marked.Lexer.lexInline(String(src), md.defaults) : null; } catch (e) { return null; }
 }
 
 /* ---------------- inline ---------------- */
