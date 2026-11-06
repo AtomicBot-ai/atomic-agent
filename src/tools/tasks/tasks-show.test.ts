@@ -36,6 +36,9 @@ function makeRecord(): TaskRecord {
     startedAt: null,
     completedAt: null,
     notify: null,
+    maxCostUsd: null,
+    maxDurationMs: null,
+    spentUsd: null,
   };
 }
 

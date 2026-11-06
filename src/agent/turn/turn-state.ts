@@ -25,6 +25,14 @@ export interface TurnLoopState {
    * Surfaced as `RunTurnResult.stopCause`.
    */
   endedOnFinalizationStep: boolean;
+  /**
+   * Estimated USD the turn's step completions have cost so far
+   * (ATO-1108), priced by `AgentLoopDependencies.priceCompletion`. Read
+   * against the task's spend ceiling before each step.
+   */
+  spendUsd: number;
+  /** Whether any step was priced (a pricing seam answered with a number). */
+  spendPriced: boolean;
   /** Set by any step in the current leg that produced a usable result. */
   legMadeProgress: boolean;
   outageWaitedMs: number;
@@ -102,6 +110,8 @@ export function createTurnLoopState(): TurnLoopState {
     creditStop: null,
     ceilingFiredMidRequest: false,
     endedOnFinalizationStep: false,
+    spendUsd: 0,
+    spendPriced: false,
     legMadeProgress: false,
     outageWaitedMs: 0,
     outageAttempts: 0,

@@ -14,6 +14,7 @@ import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
+import { overnightCommand } from "./overnight-command.js";
 import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
@@ -106,6 +107,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "task",
     summary: "Manage durable tasks (list|show|create|cancel|run)",
     run: taskCommand,
+  },
+  {
+    name: "overnight",
+    summary: "Run one long task unattended with a money and a time cap (--budget, --hours, --detach)",
+    run: overnightCommand,
   },
   {
     name: "memory",
