@@ -129,6 +129,10 @@ function startDetached(args: OvernightArgs, stateDir: string, deps: OvernightDep
       // the child must write the same tasks.sqlite the id points into.
       env: { ...process.env },
     });
+    // A spawn that fails (ENOENT, EACCES, EMFILE) answers with no pid
+    // and an 'error' event a tick later; unheard, that event would crash
+    // this process after the message below.
+    child.on("error", () => undefined);
     child.unref();
     if (child.pid == null) {
       process.stderr.write("overnight: could not start the background run\n");
@@ -172,16 +176,26 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
         process.stderr.write(`${line}\n`);
       },
       onApprovalRequest: (request) => {
-        deniedApprovals += 1;
-        process.stderr.write(
-          `  needs approval: ${request.tool} (${request.reason}); denied, nobody is there to answer\n`,
-        );
+        // Nobody answers here, so every request is denied; only this
+        // run's own count toward its summary.
+        if (sessionId !== null && request.sessionId === sessionId) {
+          deniedApprovals += 1;
+          process.stderr.write(
+            `  needs approval: ${request.tool} (${request.reason}); denied, nobody is there to answer\n`,
+          );
+        }
         resolveApproval?.(request.approvalId);
       },
     },
   });
   // No reason on a deny: it would reach the model as the user's own words.
   resolveApproval = (approvalId) => runtime.approvals.resolve({ approvalId, approved: false });
+  // This process runs one task. Its scheduler would otherwise take
+  // leadership whenever no desktop holds it and drain unrelated due
+  // tasks from the shared queue for hours, under this run's approval
+  // posture (every action granted with --no-approval). Its first tick
+  // is a full tickMs away, so stopping it here claims nothing.
+  await runtime.scheduler?.stop();
 
   let interrupted = 0;
   const onSignal = (): void => {
@@ -231,10 +245,9 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
 type OvernightRuntime = Awaited<ReturnType<typeof createAgentRuntime>>;
 
 /**
- * Run the task here, or wait for whoever claimed it. The runtime's own
- * scheduler may pick a fresh pending row up first; `runOne` then hands
- * back the row as it is, and the run goes on in this same process, so
- * waiting on the row is enough. A `task cancel` from another terminal
+ * Run the task here, or wait for whoever claimed it. Another process's
+ * scheduler may pick the fresh pending row up first; `runOne` then hands
+ * back the row as it is, and waiting on the row is enough. A `task cancel` from another terminal
  * only writes the row: seeing it cancelled, abort the turn here.
  */
 async function runToEnd(runtime: OvernightRuntime, taskId: string): Promise<TaskRecord> {

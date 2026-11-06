@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 
 import { getConfig, resetConfigCache } from "../config/index.js";
 import { overnightCommand } from "./overnight-command.js";
@@ -61,7 +62,7 @@ describe("overnightCommand", () => {
 
   it("--detach starts a background child in --dir and prints how to check it", async () => {
     const unref = vi.fn();
-    const fakeSpawn = vi.fn(() => ({ pid: 4242, unref }));
+    const fakeSpawn = vi.fn(() => ({ pid: 4242, unref, on: vi.fn() }));
     const code = await overnightCommand(
       ["write the notes", "--dir", workDir, "--budget", "3", "--detach"],
       { spawn: fakeSpawn as unknown as typeof spawn, newTaskId: () => "t-fixed" },
@@ -95,5 +96,22 @@ describe("overnightCommand", () => {
     expect(printed).toContain("t-fixed");
     expect(printed).toContain("atomic-agent task show t-fixed");
     expect(printed).toContain(logPath);
+  });
+
+  it("--detach reports a child that failed to start without crashing on its error event", async () => {
+    const child = Object.assign(new EventEmitter(), { pid: undefined, unref: vi.fn() });
+    const fakeSpawn = vi.fn(() => {
+      setImmediate(() => child.emit("error", new Error("spawn ENOENT")));
+      return child;
+    });
+    const code = await overnightCommand(["write the notes", "--dir", workDir, "--detach"], {
+      spawn: fakeSpawn as unknown as typeof spawn,
+      newTaskId: () => "t-broken",
+    });
+    expect(code).toBe(1);
+    expect(err.join("")).toContain("could not start the background run");
+    // The error event fires a tick later and must find a listener.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(child.listenerCount("error")).toBeGreaterThan(0);
   });
 });
