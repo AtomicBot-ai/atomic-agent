@@ -75,6 +75,8 @@ export type ResolvedRunMode = {
    * `null` when it is off or no provider resolves. Optional for fixtures.
    */
   judge?: { providerId: string; model: string | null } | null;
+  /** `llm.runMode.fusion.autoReplan`, present only when set above 0 (ATO-941). */
+  autoReplan?: number;
   /** `llm.runMode.fusion.turnBudgetUsd`, present only when set above 0. */
   turnBudgetUsd?: number;
   /** `llm.runMode.fusion.turnTimeBudgetMs`, present only when set above 0. */
@@ -265,6 +267,9 @@ export function resolveRunMode(
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
     escalation,
     judge,
+    ...(fusion?.autoReplan !== undefined && fusion.autoReplan > 0
+      ? { autoReplan: fusion.autoReplan }
+      : {}),
     ...(fusion?.turnBudgetUsd !== undefined && fusion.turnBudgetUsd > 0
       ? { turnBudgetUsd: fusion.turnBudgetUsd }
       : {}),
