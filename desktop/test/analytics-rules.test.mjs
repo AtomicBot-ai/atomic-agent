@@ -188,6 +188,14 @@ test("gate: an opt-out in the terminal config is inherited only when the desktop
   assert.equal(E.inheritedOptOut({}, off), true);
 });
 
+test("DO_NOT_TRACK=1 turns analytics off; 0, false and empty do not (ATO-1189)", () => {
+  for (const v of ["1", "true", "TRUE", "yes", "on", " 1 "]) assert.equal(E.doNotTrackIn({ DO_NOT_TRACK: v }), true, v);
+  for (const v of ["0", "false", "", "no"]) assert.equal(E.doNotTrackIn({ DO_NOT_TRACK: v }), false, JSON.stringify(v));
+  assert.equal(E.doNotTrackIn({}), false);
+  const core = readFileSync(new URL("../main/analytics/core.ts", import.meta.url), "utf8");
+  assert.match(core, /if \(doNotTrackIn\(\)\) return false;/);
+});
+
 test("test and dev runs: --dev, NODE_ENV=development and unpackaged builds send nothing", () => {
   assert.equal(E.isTestRun(["electron", "."], {}, true), false);
   assert.equal(E.isTestRun(["electron", ".", "--dev"], {}, true), true);

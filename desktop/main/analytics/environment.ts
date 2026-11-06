@@ -64,6 +64,18 @@ export function isTestRun(
   return !packaged && env.ATOMIC_DESKTOP_ANALYTICS !== "on";
 }
 
+/**
+ * The cross-tool `DO_NOT_TRACK=1` convention (also true / yes / on): the
+ * desktop sends no events and no crash reports, and tells the agent the
+ * same, whatever `analytics.enabled` says (ATO-1189). `0`, `false` or an
+ * empty value change nothing.
+ */
+export function doNotTrackIn(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.DO_NOT_TRACK;
+  if (typeof raw !== "string") return false;
+  return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+}
+
 /** What the spawned agent must know about the shell's own gate (core.ts keeps it current). */
 export interface AgentGate {
   testRun: boolean;
@@ -94,7 +106,7 @@ export function agentAnalyticsEnv(stateDir: string): Record<string, string> {
     if (g.testRun) {
       out.ATOMIC_AGENT_ANALYTICS = "off";
       out.ATOMIC_AGENT_INSTALL_ID_FILE = join(stateDir, "install-id");
-    } else if (g.inheritedOff) {
+    } else if (g.inheritedOff || doNotTrackIn()) {
       out.ATOMIC_AGENT_ANALYTICS = "off";
     }
   } catch {
