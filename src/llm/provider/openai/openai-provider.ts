@@ -30,6 +30,8 @@ import {
   type OpenAiBodyOptions,
 } from "./openai-build-body.js";
 import { isNativeShapeRejection } from "./openai-native-messages.js";
+import { allowedTemperatureFromError } from "./allowed-temperature.js";
+import { rememberAllowedTemperature } from "./model-params.js";
 import { OPENAI_DEFAULT_REQUEST_TIMEOUT_MS } from "../../transport-deadlines.js";
 import {
   buildOpenAiHeaders,
@@ -284,14 +286,31 @@ export class OpenAiProvider implements LlmProvider {
             },
           ),
       );
+    // One resend per completion when the service names the only
+    // temperature it takes (`allowed-temperature.ts`); the rebuilt body
+    // carries the lesson.
+    let temperatureRetried = false;
+    const sendOnce = async (
+      shape: "native" | "flat",
+    ): Promise<Record<string, unknown>> => {
+      try {
+        return await send(shape);
+      } catch (err) {
+        if (temperatureRetried || !this.learnAllowedTemperature(request, err)) {
+          throw err;
+        }
+        temperatureRetried = true;
+        return await send(shape);
+      }
+    };
     const shape = this.shapeFor(request);
     let json: Record<string, unknown>;
     try {
-      json = await send(shape);
+      json = await sendOnce(shape);
     } catch (err) {
       if (!this.shouldFallBackToFlat(request, shape, err)) throw err;
       this.markFlat(request, err);
-      json = await send("flat");
+      json = await sendOnce("flat");
     }
     const adapted = adaptQwenTaggedToolResponse(
       json,
@@ -358,6 +377,33 @@ export class OpenAiProvider implements LlmProvider {
     return isNativeShapeRejection(err);
   }
 
+  /**
+   * Whether a failed send is a 400 naming the one temperature this model
+   * accepts (Moonshot's "only 1 is allowed"). The value is remembered for
+   * the model for the rest of the process, so the next body built — the
+   * resend, and every later turn — carries it. The caller allows one
+   * such resend per completion.
+   */
+  private learnAllowedTemperature(
+    request: CompletionRequest,
+    err: unknown,
+  ): boolean {
+    if (request.signal?.aborted) return false;
+    const value = allowedTemperatureFromError(err);
+    if (value === undefined) return false;
+    if (!rememberAllowedTemperature(this.defaultChatModel!, value)) return true;
+    this.http.logger?.warn(
+      `llm: "${this.id}" accepts only temperature ${value} for this model; resending once and keeping it for this model`,
+      {
+        provider: this.id,
+        model: this.defaultChatModel,
+        status: 400,
+        temperature: value,
+      },
+    );
+    return true;
+  }
+
   private markFlat(request: CompletionRequest, err: unknown): void {
     this.flatSessions.add(sessionKey(request));
     this.http.logger?.warn(
@@ -397,6 +443,8 @@ export class OpenAiProvider implements LlmProvider {
     // from the top and duplicate text the user already read, and because
     // sampling is non-deterministic no prefix dedupe can repair that.
     let committed = false;
+    // Whether the one resend for a named temperature has been spent.
+    let temperatureRetried = false;
     // One completion, one budget. Passed into every open so a reopen
     // draws from the same pot the opens do — the alternative is two
     // nested loops of `OPENAI_MAX_ATTEMPTS` and 9 requests per turn.
@@ -529,6 +577,19 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
+        // The service named the one temperature it takes: resend once
+        // with it. Same window as the flat resend below — a 400 comes
+        // from the open, before any output — and only once per
+        // completion, so a second rejection falls through.
+        if (
+          !committed &&
+          !temperatureRetried &&
+          this.learnAllowedTemperature(request, err)
+        ) {
+          temperatureRetried = true;
+          body = this.buildBody(request, true, shape);
+          continue;
+        }
         // The service refused the message layout, before any byte of
         // output existed (a 400 comes from the open): the same request
         // goes out once more in the flat form, and the session stays
@@ -692,6 +753,12 @@ export class OpenAiProvider implements LlmProvider {
         request,
         this.chatPathPrefix,
         this.providerPreferences,
+        {
+          ...(this.extraBody ? { extraBody: this.extraBody } : {}),
+          ...(this.bodyOptions.modelParams
+            ? { modelParams: this.bodyOptions.modelParams }
+            : {}),
+        },
       );
     } catch (error) {
       // Only a model nobody described learns from a rejection: an
