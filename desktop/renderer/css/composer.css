@@ -351,3 +351,27 @@
 .cfoot .composer-seat .cchip{flex:0 1 auto;min-width:0}
 .cfoot .composer-seat .cval{overflow:hidden;text-overflow:ellipsis}
 .cfoot .composer-seat .enginechip{flex:0 1 auto}
+
+/* ---- Live plan (ATO-486, plan-bar.js): the agent's checklist ------------
+   Above the queue tray. Open: the chip's line and the steps, ticks on the
+   finished ones. Folded: the "Plan 3/7" chip alone. */
+.planbar{position:relative;display:flex;flex-direction:column;gap:4px;padding:0 4px;min-width:0}
+.planchip{display:inline-flex;align-items:center;gap:6px;align-self:flex-start;height:28px;max-width:100%;min-width:0;
+  padding:0 11px 0 6px;border:0;border-radius:var(--r-pill);background:none;box-shadow:inset 0 0 0 1.5px var(--bd-2);
+  font:inherit;font-size:var(--fs-cap);color:var(--ink-2);cursor:pointer}
+.planchip svg{width:12px;height:12px;flex:none}
+.planchip .pl-l{flex:none;font-weight:600;color:var(--ink)}
+.planchip.is-done .pl-l{color:var(--success)}
+.planchip .pl-sep{flex:none;color:var(--ink-3, var(--ink-2))}
+.planchip .pl-cur{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-list{list-style:none;margin:0;padding:0 0 0 10px;display:flex;flex-direction:column;gap:2px;max-height:200px;overflow:auto}
+.pl-it{display:flex;align-items:center;gap:8px;min-width:0;font-size:var(--fs-cap);color:var(--ink-2)}
+.pl-it .pl-tx{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pl-it.pl-in-progress{color:var(--ink);font-weight:500}
+.pl-it.pl-done .pl-tx{text-decoration:line-through;text-decoration-color:var(--bd-2)}
+.pl-mk{width:14px;height:14px;flex:none;display:inline-flex;align-items:center;justify-content:center}
+.pl-mk svg{width:12px;height:12px;color:var(--success)}
+.pl-dot{width:7px;height:7px;border-radius:50%;background:var(--amber)}
+.pl-ring{width:8px;height:8px;border-radius:50%;box-shadow:inset 0 0 0 1.5px var(--bd-2)}
+.pl-more{font-size:var(--fs-cap);color:var(--ink-2);padding-left:22px}
+.pl-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}

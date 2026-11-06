@@ -3863,7 +3863,8 @@ function composer() {
       '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
-  return '<div class="composerwrap">' + status + fzLiveHTML() + q
+  // ATO-486: the agent's live plan, above the queue (plan-bar.js).
+  return '<div class="composerwrap">' + status + fzLiveHTML() + planBarHTML(S.sessionId, {esc, ic}) + q
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
@@ -7721,6 +7722,9 @@ document.addEventListener('click', (e) => {
   // ATO-464: a finished turn's summary line opens or folds its steps in place.
   const tsum = t.closest('[data-turnsum]');
   if (tsum) { turnSumToggle(tsum.dataset.turnsum); return; }
+  // ATO-486: the plan bar folds to its "Plan 3/7" chip and back.
+  const ptog = t.closest('[data-plan-toggle]');
+  if (ptog) { planToggle(ptog.dataset.planToggle); render(); return; }
   const tg = t.closest('[data-toggle]');
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
@@ -10274,6 +10278,14 @@ function onChatEvent(ev) {
   if (ev && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && ev.turnId && toolCardsTurnEnded(ev)) render();
   // ATO-259: a compaction the turn's end cut short does not spin on.
   if (ev && ev.turnId === S.turnId && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && compactTurnEnded()) render();
+  /* ATO-486: the live plan, kept per chat whichever chat is on screen
+     (plan-bar.js). The whole plan comes each time, so nothing is replayed
+     later: the chat draws the newest one when it is opened. */
+  if (ev && ev.kind === 'plan_updated') {
+    const sid = pick(ev.payload, 'session_id', 'sessionId') || turnSid;
+    if (planSet(sid, ev.payload && ev.payload.plan) && sid === S.sessionId) render();
+    return;
+  }
   // Item 38: what a turn draws while its rows are not on screen waits for its chat to be opened.
   if (liveTurnFrame(ev)) return;
   if (!ev || ev.turnId !== S.turnId) return;
@@ -19863,6 +19875,8 @@ async function openSession(id) {
     return;
   }
   const data = res.data;
+  // ATO-486: the plan the agent stored with the chat (behind the stream while its turn runs).
+  planRestore(id, data.plan, live);
   const turns = Array.isArray(data.turns) ? data.turns : [];
   const log = sessionTurnsToLog(turns);
   /* Item 38: the stored transcript has nothing of a turn that is running
