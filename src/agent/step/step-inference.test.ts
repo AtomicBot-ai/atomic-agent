@@ -231,5 +231,27 @@ describe("compact prompt decision (ATO-1116)", () => {
     // The link did not overwrite the primary session's latched decision.
     expect(latch.resolve(ctx.session.id, "auto", null).compact).toBe(true);
   });
+
+  it("a fallback link with no known window does not borrow the primary's latched window", () => {
+    const { ctx, deps } = fixture();
+    const latch = new CompactPromptLatch();
+    const prepared = prepareStepInference(ctx, {
+      ...deps,
+      contextWindow: 32_768,
+      compactPromptLatch: latch,
+      modelModePolicy: { activeProviderId: "primary", providers: [] },
+      modelMode: { mode: "local", source: "provider", providerId: "primary", modelId: null },
+    });
+    expect(prepared.prompt.stablePrefix).toContain(COMPACT_SYSTEM_PERSONA);
+    const linked = prepared.llmParams.prepareForLink!({
+      modelMode: { mode: "local", source: "provider", providerId: "fallback", modelId: null },
+      transport: "grammar",
+      contextWindow: null,
+    });
+    // Unknown link window under `auto`: full scaffold, not the primary's 32K compact one.
+    expect(linked.prompt).toContain(DEFAULT_SYSTEM_PERSONA);
+    expect(linked.prompt).not.toContain(COMPACT_SYSTEM_PERSONA);
+    expect(latch.resolve(ctx.session.id, "auto", null).compact).toBe(true);
+  });
 });
 

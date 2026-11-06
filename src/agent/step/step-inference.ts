@@ -324,10 +324,13 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   };
   if (deps.modelModePolicy) {
     llmParams.prepareForLink = (link) => {
-      // No latch for a link: the primary's session decision does not
-      // speak for a fallback link's window (see `buildPrompt` below).
-      const linkDeps: StepDependencies = { ...deps, modelMode: link.modelMode, toolTransport: link.transport, compactPromptLatch: undefined };
-      if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, link.contextWindow ? { ...linkDeps, contextWindow: link.contextWindow } : linkDeps);
+      // No latch and no primary window for a link: neither the primary's
+      // session decision nor its window speaks for a fallback link. A
+      // link with no known window gets `null`, so its compact decision
+      // (and workspace) falls back to the full scaffold under `auto`.
+      const linkDeps: StepDependencies = { ...deps, modelMode: link.modelMode, toolTransport: link.transport,
+        contextWindow: link.contextWindow ?? null, profileWindowApplies: false, compactPromptLatch: undefined };
+      if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, linkDeps);
       const linked = deps.prepareWorkspace ? prepareStepPrompt(ctx, linkDeps) : null;
       const linkDescriptors = linked?.stepDescriptors ?? stepDescriptors;
       const wire = linked ? buildLlmStreamParams({ promptText: "", deps: linkDeps,
