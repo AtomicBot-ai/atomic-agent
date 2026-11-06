@@ -51,6 +51,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.task.maxSteps` (default `1000`).
 - `agent.task.maxDurationMs` (default `7200000`).
 - `agent.task.autoContinue` (default `true`).
+- `agent.task.maxCostUsd` (default `0`): spend ceiling per task in USD, `0` = no cap; unpriced (local) models count as $0.
 - `agent.toolTimeoutMs` (default `60000`).
 - `agent.readScope` (default `"working-dir"`).
 - `agent.approvalLevel` (default `1`).

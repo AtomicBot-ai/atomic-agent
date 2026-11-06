@@ -137,6 +137,62 @@ describe("taskCommand", () => {
     expect(JSON.parse(stdout()).notify).toBeNull();
   });
 
+  it("create --max-cost-usd / --max-duration persist the task's budget; default stays null", async () => {
+    const code = await taskCommand([
+      "create",
+      "--session",
+      "s-cli-budget",
+      "--message",
+      "long job",
+      "--max-cost-usd",
+      "2.50",
+      "--max-duration",
+      "1h30m",
+    ]);
+    expect(code).toBe(0);
+    const created = JSON.parse(stdout());
+    expect(created.maxCostUsd).toBe(2.5);
+    expect(created.maxDurationMs).toBe(90 * 60_000);
+    expect(created.spentUsd).toBeNull();
+
+    const store = new TaskStore({ dbFile: getConfig().paths.tasksDbFile });
+    try {
+      expect(store.get(created.id)).toMatchObject({
+        maxCostUsd: 2.5,
+        maxDurationMs: 5_400_000,
+      });
+    } finally {
+      store.close();
+    }
+
+    stdoutChunks.length = 0;
+    expect(
+      await taskCommand(["create", "--session", "s-cli-budget", "--message", "plain"]),
+    ).toBe(0);
+    const plain = JSON.parse(stdout());
+    expect(plain.maxCostUsd).toBeNull();
+    expect(plain.maxDurationMs).toBeNull();
+  });
+
+  it.each([
+    ["--max-cost-usd", "0", /--max-cost-usd must be a positive number/],
+    ["--max-cost-usd", "five", /--max-cost-usd must be a positive number/],
+    ["--max-duration", "8 hours", /--max-duration must be a duration/],
+    ["--max-duration", "0s", /--max-duration must be a duration/],
+  ])("create rejects %s %s", async (flag, value, message) => {
+    const code = await taskCommand([
+      "create",
+      "--session",
+      "s-cli-bad-budget",
+      "--message",
+      "x",
+      flag,
+      value,
+    ]);
+    expect(code).toBe(1);
+    expect(stderr()).toMatch(message);
+  });
+
   it("create rejects an unknown --notify target", async () => {
     const code = await taskCommand([
       "create",
