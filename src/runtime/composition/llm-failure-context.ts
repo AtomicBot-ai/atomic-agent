@@ -1,19 +1,32 @@
 import { getConfig, type AtomicAgentConfig } from "../../config/index.js";
 import type { LlmFailureContext } from "../../error-reporting/index.js";
 import { managedPortsOf } from "../../llm/describe-llama-health-failure.js";
+import { readErrnoCode } from "../../llm/errno-code.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
-import { readChatDaemonPidState, type ChatDaemonPidState } from "../../local-llm/index.js";
+import {
+  readChatDaemonPidState,
+  readManagedEngineLiveness,
+  type ChatDaemonPidState,
+  type ManagedEngineLiveness,
+} from "../../local-llm/index.js";
 import { resolveTurnLocalEngine } from "./runtime-turn-service.js";
 
 export interface LlmFailureContextDeps {
   readConfig: () => AtomicAgentConfig;
   readDaemonPidState: (dataDir: string) => ChatDaemonPidState;
+  /**
+   * The managed engine's liveness as the outage wait reads it (ATO-772).
+   * Disk reads and a signal-0 probe only, nothing that waits on the
+   * engine. Asked for refused connections only.
+   */
+  readEngineLiveness?: (dataDir: string) => ManagedEngineLiveness;
 }
 
 const defaultDeps: LlmFailureContextDeps = {
   readConfig: getConfig,
   readDaemonPidState: readChatDaemonPidState,
+  readEngineLiveness: readManagedEngineLiveness,
 };
 
 /**
@@ -37,6 +50,10 @@ export function describeLlmFailure(
     context.outageWaitedMs = event.outage.waitedMs;
     context.outageAttempts = event.outage.attempts;
   }
+  // `ECONNREFUSED`: nothing listened on the port (ATO-421). The reason the
+  // turn ended (`LocalEngineDownError`) keeps the refusal on its cause.
+  const connectionRefused = readErrnoCode(event.error) === "ECONNREFUSED";
+  if (connectionRefused) context.connectionRefused = true;
   const requestUrl = readRequestUrl(event.error);
   if (requestUrl !== undefined) context.requestUrl = requestUrl;
   let config: AtomicAgentConfig;
@@ -57,6 +74,13 @@ export function describeLlmFailure(
     context.daemonState = deps.readDaemonPidState(config.paths.localModelsDataDir);
   } catch {
     context.daemonState = "unknown";
+  }
+  if (connectionRefused && deps.readEngineLiveness !== undefined) {
+    try {
+      context.engineLiveness = deps.readEngineLiveness(config.paths.localModelsDataDir);
+    } catch {
+      context.engineLiveness = "unknown";
+    }
   }
   return context;
 }
