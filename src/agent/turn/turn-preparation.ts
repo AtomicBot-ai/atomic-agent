@@ -93,7 +93,7 @@ export function prepareAgentTurn(
   // with, and the probe would fail against a backend nobody is using.
   //
   // ...unless the previous turn was actually SERVED by a local link
-  // through the fallback chain. `appendLocal` defaults to `true`, so a
+  // through the fallback chain. With `appendLocal` on (off by default since ATO-349), a
   // rate-limited cloud primary falls over to llama-server on every
   // turn while the active provider stays cloud; without this second
   // arm the profile and grammar would stay pinned to whatever the

@@ -63,7 +63,7 @@ export interface FallbackPanelState {
    * "add link" affordance. Empty when every provider is already a link.
    */
   addableProviderIds: readonly string[];
-  /** Stored `llm.fallback.appendLocal` (default true when unset). */
+  /** Stored `llm.fallback.appendLocal` (default false when unset, ATO-349). */
   appendLocal: boolean;
   /** Last observed cross-provider switch, or null. */
   lastSwitch: FallbackLastSwitch | null;

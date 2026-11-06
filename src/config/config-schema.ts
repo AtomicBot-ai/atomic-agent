@@ -541,8 +541,9 @@ export interface AtomicAgentConfig {
     /**
      * Cross-provider fallover. `chain` is an ordered list of provider ids
      * (primary first) tried in turn when the active provider is
-     * unavailable; the local llama-server provider is auto-appended
-     * unless `appendLocal` is false. Timing knobs default to the
+     * unavailable. The local llama-server provider is appended only when
+     * `appendLocal` is true (default false: no switch to a local model
+     * the person did not pick). Timing knobs default to the
      * circuit-breaker numbers in ../llm/docs/fallback.md.
      */
     fallback?: {

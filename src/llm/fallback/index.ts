@@ -9,6 +9,7 @@ export {
   withoutKeylessLinks,
   withoutUnavailableLinks,
   withoutUnbuiltLinks,
+  DEFAULT_APPEND_LOCAL,
   DEFAULT_FALLBACK_TIMING,
   type FallbackTiming,
   type ResolvedFallbackChain,
