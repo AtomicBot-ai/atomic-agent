@@ -49,7 +49,7 @@ describe("TUI configuration ownership", () => {
     const second = createTuiDefaults();
     expect(first).toEqual(USER_CONFIG_DEFAULTS.tui);
     expect(Object.keys(first)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "notify", "sessionRail", "onboarding",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "notify", "sessionRail", "onboarding",
     ]);
     expect(Object.keys(first.onboarding)).toEqual([
       "completedAt", "importOfferedAt", "introSeenAt", "localSetupSeenAt",
@@ -178,7 +178,7 @@ describe("TUI configuration ownership", () => {
     });
     expect(events).toEqual([
       "raw-theme", "defaults-initial", "raw-busy", "defaults-busy", "raw-mouse",
-      "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
+      "defaults-busy", "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
     ]);
     expect(parsed.theme).toBe("initial-theme");
     expect(parsed.whileBusySubmit).toBe("queue");
@@ -187,8 +187,18 @@ describe("TUI configuration ownership", () => {
     expect(parsed.sessionRail.order).toEqual(["a"]);
     expect(parsed.notify).toEqual({ enabled: false, minDurationMs: 0 });
     expect(Object.keys(parsed)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "onboarding", "sessionRail", "notify",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "onboarding", "sessionRail", "notify",
     ]);
+  });
+
+  it("reads tui.showSteps as off when absent and refuses a non-boolean", () => {
+    const defaults = createTuiDefaults();
+    expect(defaults.showSteps).toBe(false);
+    expect(parseTuiConfig({}, () => defaults).showSteps).toBe(false);
+    expect(parseTuiConfig({ showSteps: true }, () => defaults).showSteps).toBe(true);
+    expect(thrownError(() => parseTuiConfig({ showSteps: "yes" }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(parseUserConfigFile({ tui: { showSteps: true } }).tui.showSteps).toBe(true);
   });
 
   it("preserves field failure order and validates notify fields even when disabled", () => {

@@ -73,6 +73,14 @@ export interface TuiConfig {
   theme: string;
   whileBusySubmit: WhileBusySubmitMode;
   mouse: boolean;
+  /**
+   * Always show steps (ATO-963): keep every finished turn's tool cards and
+   * reasoning open in the chat, as before. Off by default: a finished turn
+   * folds into one "Used 6 tools · 40s" line. Additive and unversioned, a
+   * file without it reads `false`. A display preference only; the agent
+   * never reads it.
+   */
+  showSteps: boolean;
   onboarding: OnboardingState;
   sessionRail: SessionRailConfig;
   notify: TuiNotifyConfig;
@@ -83,6 +91,7 @@ export function createTuiDefaults(): TuiConfig {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    showSteps: false,
     notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
@@ -238,6 +247,10 @@ export function parseTuiConfig(
     mouse: parseBool(
       tui.mouse ?? readDefaults().mouse,
       "tui.mouse",
+    ),
+    showSteps: parseBool(
+      tui.showSteps ?? readDefaults().showSteps,
+      "tui.showSteps",
     ),
     onboarding: parseOnboardingStateWithDefaults(
       tui.onboarding,

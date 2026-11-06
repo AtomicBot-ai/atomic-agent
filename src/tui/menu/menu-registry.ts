@@ -580,23 +580,38 @@ export const MENU: readonly MenuNode[] = [
   {
     kind: "action",
     id: "run.expand",
-    label: "Expand all tool cards",
+    label: "Show the last turn's steps",
     group: "run",
     slash: {
       name: "expand",
-      description: "expand every tool card in the chat log",
+      description:
+        "open the last finished turn's steps | `/expand all` opens every turn and tool card",
       rank: 16,
     },
   },
   {
     kind: "action",
     id: "run.collapse",
-    label: "Collapse all tool cards",
+    label: "Fold all turns and tool cards",
     group: "run",
     slash: {
       name: "collapse",
-      description: "collapse every tool card in the chat log",
+      description: "fold every finished turn and tool card in the chat log",
       rank: 17,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.steps",
+    label: "Always show steps on/off",
+    group: "run",
+    slash: {
+      name: "steps",
+      description:
+        "always show steps: `/steps` toggles | `/steps on` keeps finished turns open | `/steps off` folds them",
+      // Between /collapse (17) and the next integer rank: the palette keeps
+      // the three fold commands together.
+      rank: 17.5,
     },
   },
   {

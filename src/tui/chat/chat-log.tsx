@@ -23,6 +23,7 @@ import { SplashBanner } from "./splash-banner.js";
 import { ThinkingIndicator } from "./thinking-indicator.js";
 import { ToolCard } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
+import { turnFoldsOf } from "../render/turn-collapse.js";
 
 interface ChatLogProps {
   state: TuiState;
@@ -93,6 +94,18 @@ export function ChatLog({
   // moves it into the transcript proper with the step it reached, and
   // it does not move on screen doing so.
   const pendingSteers = state.pendingSteers;
+  // Finished turns fold into one line (ATO-963) unless the operator keeps
+  // their steps open. The turn still running is never folded.
+  const folds = turnFoldsOf(finalised, {
+    always: state.showSteps,
+    running: state.status === "running",
+  });
+  const foldStateOf = (id: string): "none" | "closed" | "open" =>
+    folds.has(id)
+      ? state.turnsExpandedById[id] === true
+        ? "open"
+        : "closed"
+      : "none";
   const isEmpty =
     finalised.length === 0 &&
     !hasStreamingTail &&
@@ -119,7 +132,10 @@ export function ChatLog({
   // `measuredContentRows` is the source of truth.
   const estimatedContentRows = isEmpty
     ? 0
-    : finalised.reduce((acc, m) => acc + estimateMessageHeight(m), 0) +
+    : finalised.reduce(
+        (acc, m) => acc + estimateMessageHeight(m, foldStateOf(m.id)),
+        0,
+      ) +
       (hasStreamingTail ? estimateStreamingTailHeight(state) : 0) +
       (showIndicator ? 2 : 0) +
       pendingSteers.reduce(
@@ -184,6 +200,8 @@ export function ChatLog({
               message={message}
               toolsExpandedById={state.toolsExpandedById}
               fusion={fusion}
+              fold={folds.get(message.id) ?? null}
+              turnOpen={state.turnsExpandedById[message.id] === true}
               // The plan's own buttons, under the plan. Only the last
               // message can carry them: the offer is about the newest
               // plan, and an older one further up the log would be an

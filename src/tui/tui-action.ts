@@ -206,6 +206,15 @@ export type TuiAction =
   | { type: "tool_expand_toggled"; toolCardId: string }
   /** Force-expand or collapse every known tool card at once. */
   | { type: "tool_expand_all_set"; expanded: boolean }
+  /** Open / fold one finished turn's summary line (click on it). */
+  | { type: "turn_expand_toggled"; messageId: string }
+  /**
+   * `/expand` (`scope: "last"`), `/expand all` and `/collapse` (`"all"`):
+   * open or fold the finished turns' summary lines.
+   */
+  | { type: "turn_expand_set"; scope: "last" | "all"; expanded: boolean }
+  /** `/steps on|off`: always show steps (`tui.showSteps`). */
+  | { type: "show_steps_set"; on: boolean }
   /** Open the slash palette with a leading-slash query. */
   | { type: "slash_palette_opened"; query: string }
   /** Update the filter query while the palette is open. */

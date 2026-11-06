@@ -23,6 +23,10 @@ For input versions below 75, validated providers without `modelMode` receive `cl
 
 Version 77 makes `atomic-core` the default `localModels.managed.engine`. Before it the Atomic Core choice sat behind an opt-in environment variable, so a stored `llama-server` was the written default rather than a decision: for input versions below 77 a missing or `llama-server` engine becomes `atomic-core`. Nothing else in the file changes, including external mode and every other managed field. From version 77 an explicit `llama-server` is honoured, so switching back with `models engine llama-server` survives later loads. Unknown engine values still fail validation. [Local model config tests](../local-models/local-models-config.test.ts) cover the migration.
 
+## Terminal chat step folding
+
+`tui.showSteps` (boolean) is additive and unversioned: a file without it reads `false`, so a finished turn in the terminal chat folds its tool cards and reasoning into one summary line; `true` keeps every finished turn open, as before. `/steps on|off` writes it. A non-boolean is a validation error. [TUI config tests](../tui-config.test.ts) cover it.
+
 ## Atomic Core backend variant
 
 `localModels.managed.coreBackendVariant` (`auto` or `cpu`) is additive and unversioned: a file without it reads `auto`, Core's recommended build, as before. It is the Atomic Core engine's own key on purpose. `localModels.managed.backendVariant` belongs to the llama-server engine, whose start rescue wrote `cpu` there on any health timeout, including on machines whose GPU build works; files moved to `atomic-core` by version 77 still carry it, and reading it for Core would move them to the slower CPU build. Only Core's own rescue writes `coreBackendVariant: "cpu"`, after the CPU build served a model the GPU build crashed on. [Local model config tests](../local-models/local-models-config.test.ts) and [Core backend variant tests](../../local-llm/core/core-backend-variant.test.ts) cover it.

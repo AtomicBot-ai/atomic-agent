@@ -8,6 +8,7 @@ import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
+import { lastTurnFoldId, turnFoldsOf } from "./render/turn-collapse.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -78,6 +79,40 @@ export function reduceUiAction(
         next[card.id] = action.expanded;
       return { ...state, toolsExpandedById: next };
     }
+    case "turn_expand_toggled": {
+      const open = state.turnsExpandedById[action.messageId] === true;
+      return {
+        ...state,
+        turnsExpandedById: {
+          ...state.turnsExpandedById,
+          [action.messageId]: !open,
+        },
+      };
+    }
+    case "turn_expand_set": {
+      if (action.scope === "all") {
+        if (!action.expanded) return { ...state, turnsExpandedById: {} };
+        const next: Record<string, boolean> = {};
+        const folds = turnFoldsOf(state.messages, {
+          running: state.status === "running",
+        });
+        for (const id of folds.keys()) next[id] = true;
+        return { ...state, turnsExpandedById: next };
+      }
+      const last = lastTurnFoldId(state.messages, {
+        running: state.status === "running",
+      });
+      if (last === null) return state;
+      return {
+        ...state,
+        turnsExpandedById: {
+          ...state.turnsExpandedById,
+          [last]: action.expanded,
+        },
+      };
+    }
+    case "show_steps_set":
+      return { ...state, showSteps: action.on };
     case "menu_opened":
       // Always reopen at the root with an empty query: a menu that resumes
       // where it was last left makes the same keypress mean different
@@ -288,6 +323,7 @@ export function reduceUiAction(
         streamingToolCalls: [],
         streamingToolCards: [],
         toolsExpandedById: {},
+        turnsExpandedById: {},
         lastRunStatus: null,
         // `/clear` drops the transcript, so the window it filled is
         // gone too. Leaving the old figure up would claim tokens that
@@ -473,6 +509,7 @@ export function reduceUiAction(
         streamingToolCalls: [],
         streamingToolCards: [],
         toolsExpandedById: {},
+        turnsExpandedById: {},
         currentTurnToolSteps: 0,
         currentStep: 0,
         stepStartedAt: null,

@@ -17,6 +17,14 @@ import {
 interface ToolCardProps {
   card: ToolCardEntry | StreamingToolCall;
   expanded: boolean;
+  /**
+   * The one-line result preview under a closed card. `always` (default)
+   * shows it on every finished card, as the live turn does. `errors`
+   * keeps a large output out of sight in a finished turn the operator
+   * opened (ATO-963): only a failure shows its line, the rest open with
+   * a click. Stale-read notes are warnings and always stay.
+   */
+  preview?: "always" | "errors";
 }
 
 /**
@@ -31,7 +39,11 @@ interface ToolCardProps {
  * `/expand` and `/collapse`, which act on every card at once — so the
  * mouse is the first way to open one specific card.
  */
-export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
+export function ToolCard({
+  card,
+  expanded,
+  preview = "always",
+}: ToolCardProps): ReactElement {
   const isFinalised = "status" in card;
   const status = isFinalised ? card.status : "pending";
   const color = toColor(status);
@@ -87,7 +99,11 @@ export function ToolCard({ card, expanded }: ToolCardProps): ReactElement {
       <Box flexDirection="column" marginBottom={1}>
         {header}
         {isFinalised ? (
-          <SummaryLine summary={card.summary} color={color} />
+          <SummaryLine
+            summary={card.summary}
+            color={color}
+            notesOnly={preview === "errors" && status !== "error"}
+          />
         ) : null}
       </Box>
     );
@@ -186,12 +202,14 @@ export function splitStaleReadNote(summary: string): {
 function SummaryLine({
   summary,
   color,
+  notesOnly = false,
 }: {
   summary: string;
   color: string;
+  notesOnly?: boolean;
 }): ReactElement | null {
   const { rest, notes } = splitStaleReadNote(summary);
-  const oneLine = rest.trim().replace(/\s+/g, " ");
+  const oneLine = notesOnly ? "" : rest.trim().replace(/\s+/g, " ");
   if (oneLine.length === 0 && notes.length === 0) return null;
   const clipped =
     oneLine.length <= PREVIEW_SUMMARY_LIMIT
