@@ -60,3 +60,12 @@ describe("parseHandoffArgs", () => {
     expect(parseHandoffArgs(["--help"])).toEqual({ help: true });
   });
 });
+
+describe("parseHandoffArgs --context", () => {
+  it("defaults to the configured window and accepts 0 to keep everything", () => {
+    expect(parseHandoffArgs(["--from", "codex"])).toMatchObject({ context: null });
+    expect(parseHandoffArgs(["--from", "codex", "--context", "0"])).toMatchObject({ context: 0 });
+    expect(parseHandoffArgs(["--from", "codex", "--context", "65536"])).toMatchObject({ context: 65536 });
+    expect(parseHandoffArgs(["--from", "codex", "--context", "-1"])).toHaveProperty("error");
+  });
+});

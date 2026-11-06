@@ -21,3 +21,14 @@ export {
   handoffPrompt,
 } from "./handoff-session.js";
 export type { BuildHandoffInput, HandoffSession } from "./handoff-session.js";
+export {
+  HANDOFF_DEFAULT_WINDOW,
+  HANDOFF_HISTORY_SHARE,
+  HANDOFF_MAX_WINDOW,
+  HANDOFF_TAIL_RESULT_MAX_CHARS,
+  HANDOFF_TAIL_SHARE,
+  defaultHandoffWindow,
+  fitHandoffContext,
+  turnTokens,
+} from "./fit-context.js";
+export type { FitContextOptions, FitContextResult } from "./fit-context.js";

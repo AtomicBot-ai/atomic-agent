@@ -7,6 +7,8 @@ import {
   HandoffNotFoundError,
   buildHandoffSession,
   defaultHandoffSourceDir,
+  defaultHandoffWindow,
+  fitHandoffContext,
   isHandoffAgent,
   listHandoffCandidates,
   readHandoffTranscript,
@@ -34,6 +36,8 @@ export const HANDOFF_HELP =
     "                        env CLAUDE_CODE_STATE_DIR / CODEX_STATE_DIR)",
     "  --cwd <dir>           Folder to continue in (default: the session's own folder)",
     "  --note <text>         Extra instructions added to the continuation message",
+    "  --context <tokens>    Window to fit the carried history into (default: the local",
+    "                        model's pinned context, else 32768); 0 keeps it all as is",
     "  --list                List their fresh sessions instead (newest first)",
     "  --limit N             How many sessions --list shows (default 10)",
     "  --json                Machine output; saves the chat but does not open it",
@@ -51,6 +55,8 @@ interface HandoffArgs {
   sourceDir: string | null;
   cwd: string | null;
   note: string | null;
+  /** `--context`: null = default window, 0 = do not fit. */
+  context: number | null;
   list: boolean;
   limit: number;
   json: boolean;
@@ -65,6 +71,7 @@ export function parseHandoffArgs(
   let sourceDir: string | null = null;
   let cwd: string | null = null;
   let note: string | null = null;
+  let context: number | null = null;
   let list = false;
   let limit = 10;
   let json = false;
@@ -112,6 +119,13 @@ export function parseHandoffArgs(
         note = v;
         break;
       }
+      case "--context": {
+        const v = value();
+        const n = v === null ? NaN : Number.parseInt(v, 10);
+        if (!Number.isFinite(n) || n < 0) return { error: "--context must be a token count (0 keeps the history as is)" };
+        context = n;
+        break;
+      }
       case "--limit": {
         const v = value();
         const n = v === null ? NaN : Number.parseInt(v, 10);
@@ -136,7 +150,7 @@ export function parseHandoffArgs(
   if (!isHandoffAgent(agent)) {
     return { error: `--from must be claude-code or codex, not ${agent}` };
   }
-  return { agent, session, sourceDir, cwd, note, list, limit, json, open };
+  return { agent, session, sourceDir, cwd, note, context, list, limit, json, open };
 }
 
 /** `atag handoff`. 0 done · 1 nothing to continue / failed · 2 usage error. */
@@ -206,9 +220,15 @@ export async function handoffCommand(
   });
 
   const config = getConfig();
+  const windowTokens = parsed.context ?? defaultHandoffWindow(config.localModels.managed?.contextSize ?? 0);
+  const fitted =
+    windowTokens > 0
+      ? fitHandoffContext(built.session, { windowTokens })
+      : null;
+  const session = fitted?.session ?? built.session;
   const store = new SessionStore({ dbFile: config.paths.sessionsDbFile });
   try {
-    store.save(built.session);
+    store.save(session);
   } finally {
     store.close();
   }
@@ -225,6 +245,16 @@ export async function handoffCommand(
         sourceSessionId: transcript.candidate.id,
         turns: built.session.turns.length,
         closedCalls: built.closedCalls,
+        context: fitted
+          ? {
+              windowTokens,
+              compacted: fitted.compacted,
+              tokensBefore: fitted.tokensBefore,
+              tokensAfter: fitted.tokensAfter,
+              summarizedTurns: fitted.summarizedTurns,
+              clippedResults: fitted.clippedResults,
+            }
+          : null,
         prompt: built.prompt,
       })}\n`,
     );
@@ -239,7 +269,12 @@ export async function handoffCommand(
       (built.closedCalls > 0
         ? ` (${built.closedCalls} unanswered tool call${built.closedCalls === 1 ? "" : "s"} marked as cut off)`
         : "") +
-      `\n  saved as chat ${built.session.id}\n`,
+      `\n` +
+      (fitted?.compacted
+        ? `  history: ~${fitted.tokensBefore} → ~${fitted.tokensAfter} tokens for a ${windowTokens}-token window ` +
+          `(first ${fitted.summarizedTurns} records summarised, the rest kept as is)\n`
+        : "") +
+      `  saved as chat ${built.session.id}\n`,
   );
 
   const isTty = deps.isTty ?? (process.stdin.isTTY === true && process.stdout.isTTY === true);
