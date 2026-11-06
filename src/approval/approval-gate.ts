@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import {
   currentApprovalLedger,
+  recordAutoApproval,
   type ToolApprovalRecord,
 } from "./approval-ledger.js";
 import {
@@ -458,15 +459,26 @@ export class ApprovalGate {
         automatic: true,
       });
     }
-    const auto =
-      rule?.decision === "ask"
-        ? null
-        : (this.autoApproval(request) ??
-          (rule?.decision === "allow"
-            ? `auto-approved (rule ${rule.rule.id})`
-            : null));
-    if (auto)
+    const auto = rule?.decision === "ask" ? null : this.autoApproval(request);
+    if (auto) {
+      // A grant is logged for the turn summary; the standing level is not.
+      if (!isAutoApprovedAt(this.level, request.category)) {
+        recordAutoApproval("grant", request.category, auto.replace(/^auto-approved \((.*)\)$/, "$1"));
+      }
       return Promise.resolve({ approvalId, approved: true, reason: auto });
+    }
+    if (rule?.decision === "allow") {
+      recordAutoApproval(
+        "rule",
+        request.category,
+        `rule ${rule.rule.id}: ${describeRule(rule.rule)}`,
+      );
+      return Promise.resolve({
+        approvalId,
+        approved: true,
+        reason: `auto-approved (rule ${rule.rule.id})`,
+      });
+    }
     // An "ask" rule means the person wants the prompt: no model rates it away.
     if (rule?.decision !== "ask" && this.shouldReviewRisk(request)) {
       return this.requestAfterReview(request, signal);
@@ -548,6 +560,11 @@ export class ApprovalGate {
       );
     }
     if (verdict?.risk === "low") {
+      recordAutoApproval(
+        "risk-review",
+        request.category,
+        verdict.reason.length > 0 ? `risk review: low (${verdict.reason})` : "risk review: low",
+      );
       return {
         approvalId: request.approvalId,
         approved: true,
