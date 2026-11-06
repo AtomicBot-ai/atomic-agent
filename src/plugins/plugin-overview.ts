@@ -2,6 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { bundleRunsCode, readPluginBundle } from "./plugin-bundle.js";
 import { installedPluginDir, isPartDisabled, readPluginState, type InstalledPluginRecord, type PluginSourceRecord } from "./plugin-store.js";
 import type { PluginBundle, PluginFormat } from "./plugin-types.js";
+import { userKeyRefs } from "./plugin-mcp.js";
 
 /**
  * One view model of an installed plugin, shared by the terminal `/plugins`
@@ -133,7 +134,7 @@ export function buildPluginOverview(
   }
   for (const [name, entry] of Object.entries(bundle.mcpServers)) {
     const id = `mcp:${name}`;
-    parts.push({ id, kind: "mcp", active: false, name, enabled: on(id), runsCode: typeof entry.command === "string", missingKeys: missingMcpKeys(entry, env) });
+    parts.push({ id, kind: "mcp", active: false, name, enabled: on(id), runsCode: typeof entry.command === "string" || userKeyRefs(entry).length > 0, missingKeys: missingMcpKeys(entry, env) });
   }
   const hookEvents = [...new Set(options.hookEvents ?? [])].sort();
   for (const event of hookEvents) {
@@ -149,7 +150,7 @@ export function buildPluginOverview(
     parts.push({ id, kind: "agent", active: false, name: agent.name, enabled: on(id), runsCode: false, missingKeys: [] });
   }
 
-  const runsCode = bundleRunsCode(bundle) || hookEvents.length > 0;
+  const runsCode = bundleRunsCode(bundle) || hookEvents.length > 0 || parts.some(p => p.runsCode);
   const codeAllowed = record.runsCodeAccepted === true;
   for (const part of parts) part.active = record.enabled && part.enabled && (!part.runsCode || codeAllowed);
   const missingKeys = [...new Set(parts.filter(p => p.enabled).flatMap(p => p.missingKeys))].sort();
@@ -187,6 +188,9 @@ export function pluginCodeParts(b: PluginBundle): string[] {
   const out: string[] = [];
   const stdio = Object.entries(b.mcpServers).filter(([, s]) => typeof s.command === "string").map(([n]) => n);
   if (stdio.length) out.push(`local MCP servers: ${stdio.join(", ")}`);
+  // Passing the user's keys to a server is trusted like running code (see plugin-mcp.ts).
+  const keyed = Object.entries(b.mcpServers).filter(([n, s]) => !stdio.includes(n) && userKeyRefs(s).length > 0);
+  if (keyed.length) out.push(`MCP servers that get your keys: ${keyed.map(([n, s]) => `${n} (${userKeyRefs(s).join(", ")})`).join(", ")}`);
   if (b.hooksFile || b.manifest.hooksInline) out.push("hooks");
   const scripted = b.skills.filter(s => s.hasScripts).map(s => s.name || b.name);
   if (scripted.length) out.push(`skill scripts: ${scripted.join(", ")}`);
@@ -195,7 +199,7 @@ export function pluginCodeParts(b: PluginBundle): string[] {
 
 /**
  * Keys an MCP server entry needs and does not have: every `${VAR}` in its
- * `env`, `headers` or `url` whose variable is unset or empty in `env`
+ * `env`, `headers`, `url`, `command` or `args` whose variable is unset or empty in `env`
  * (`${VAR:-default}` has a fallback and never counts), plus every `env` /
  * `headers` field left empty. Plugin path variables are filled in by the
  * loader and never count. Returns names only, never values.
@@ -219,6 +223,9 @@ export function missingMcpKeys(entry: Record<string, unknown>, env: Readonly<Rec
     }
   }
   if (typeof entry.url === "string") scan(entry.url);
+  // The loader fills keys everywhere in the entry, so a key in command/args is needed too.
+  if (typeof entry.command === "string") scan(entry.command);
+  if (Array.isArray(entry.args)) for (const a of entry.args) if (typeof a === "string") scan(a);
   return [...missing].sort();
 }
 

@@ -14,12 +14,15 @@ export function registerSkillTools(
   dangerous: DangerousToolOptions,
   /** `tools.shell.envPassthrough`; see `SkillRunScriptToolOptions`. */
   envPassthrough?: readonly string[],
+  /** Data folder for plugin code consent; see `SkillRunScriptToolOptions.pluginsStateDir`. */
+  pluginsStateDir?: string,
 ): void {
   registry.register(buildSkillViewTool(skillRegistry));
   registry.register(
     buildSkillRunScriptTool(skillRegistry, {
       ...dangerous,
       ...(envPassthrough !== undefined ? { envPassthrough } : {}),
+      ...(pluginsStateDir !== undefined ? { pluginsStateDir } : {}),
     }),
   );
 }

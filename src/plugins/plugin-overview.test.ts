@@ -39,8 +39,8 @@ describe("missingMcpKeys", () => {
     expect(missingMcpKeys(entry, { GITHUB_TOKEN: "", API_KEY: "k", URL_KEY: "u" })).toEqual(["GITHUB_TOKEN", "X-Empty"]);
   });
 
-  it("ignores entries without env, headers or url and non-string values", () => {
-    expect(missingMcpKeys({ command: "x", args: ["${NOT_CHECKED}"] }, {})).toEqual([]);
+  it("checks command and args like the loader does, and ignores non-string values", () => {
+    expect(missingMcpKeys({ command: "x", args: ["${ARG_KEY}", "${OK:-1}"] }, {})).toEqual(["ARG_KEY"]);
     expect(missingMcpKeys({ env: { N: 3 }, headers: ["nope"] }, {})).toEqual([]);
   });
 });

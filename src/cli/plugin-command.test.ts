@@ -59,6 +59,19 @@ describe("atomic-agent plugin (ATO-954 additions)", () => {
     expect(await pluginCommand(["disable", "demo", "--part", "bogus"])).toBe(2);
   });
 
+  it("accepts --part=<id>, and never falls back to the whole plugin", async () => {
+    expect(await pluginCommand(["disable", "demo", "--part=mcp:gh"])).toBe(0);
+    expect(readPluginState(stateDir).plugins.demo?.disabledParts).toEqual(["mcp:gh"]);
+    expect(readPluginState(stateDir).plugins.demo?.enabled).toBe(true);
+    expect(await pluginCommand(["disable", "demo", "--prat", "mcp:gh"])).toBe(2);
+    expect(readPluginState(stateDir).plugins.demo?.enabled).toBe(true);
+  });
+
+  it("refuses a part the plugin does not have", async () => {
+    expect(await pluginCommand(["disable", "demo", "--part", "mcp:github"])).toBe(1);
+    expect(readPluginState(stateDir).plugins.demo?.disabledParts ?? []).toEqual([]);
+  });
+
   it("allow-code and deny-code write runsCodeAccepted", async () => {
     expect(await pluginCommand(["allow-code", "demo"])).toBe(0);
     expect(readPluginState(stateDir).plugins.demo?.runsCodeAccepted).toBe(true);

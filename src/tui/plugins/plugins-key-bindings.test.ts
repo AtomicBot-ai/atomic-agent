@@ -112,3 +112,24 @@ describe("handlePluginsTabKey", () => {
     expect(onPluginsRefreshRequested).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("plugins question counts as a panel modal", () => {
+  it("claims the global keys only while remove or allow-code is asked", async () => {
+    const { isPanelModalOpen } = await import("../app-key-bindings.js");
+    const stateOf = (mode: PluginsPanelState["mode"]) => ({
+      uiMode: "debug",
+      activeTab: "plugins",
+      pluginsPanel: { ...createInitialPluginsPanelState(), mode },
+      tasksPanel: { mode: "list", cancelConfirm: null, searchOpen: false },
+      skillsPanel: { mode: "list", installConfirm: null, removeConfirm: null },
+      memoryPanel: { mode: "list" },
+      localModelsPanel: { mode: "list", removeConfirmId: null, notifyPrompt: null },
+      telegramPanel: { mode: "list" },
+      mcpPanel: { addModal: null, removeConfirm: null },
+      providersPanel: { wizard: null, removeConfirm: null },
+    }) as unknown as TuiState;
+    expect(isPanelModalOpen(stateOf("list"))).toBe(false);
+    expect(isPanelModalOpen(stateOf("remove"))).toBe(true);
+    expect(isPanelModalOpen(stateOf("allow-code"))).toBe(true);
+  });
+});

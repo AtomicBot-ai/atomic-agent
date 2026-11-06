@@ -132,14 +132,28 @@ const PART_ID_RE = /^(skill|mcp|hook|command|agent):\S+$/;
 
 function toggle(stateDir: string, args: string[], enabled: boolean): number {
   const verb = enabled ? "enable" : "disable";
-  const partFlag = args.indexOf("--part");
-  const part = partFlag >= 0 ? args[partFlag + 1] : undefined;
-  const name = args.find((a, i) => !a.startsWith("--") && (partFlag < 0 || i !== partFlag + 1));
-  if (!name || (partFlag >= 0 && !PART_ID_RE.test(part ?? ""))) {
-    console.error(`usage: atomic-agent plugin ${verb} <name> [--part skill:<name>|mcp:<name>|hook:<Event>|command:<name>|agent:<name>]`);
-    return 2;
+  const usage = `usage: atomic-agent plugin ${verb} <name> [--part skill:<name>|mcp:<name>|hook:<Event>|command:<name>|agent:<name>]`;
+  let name: string | undefined;
+  let part: string | undefined;
+  let partFlag = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--part") { partFlag = true; part = args[++i]; continue; }
+    if (a.startsWith("--part=")) { partFlag = true; part = a.slice("--part=".length); continue; }
+    // Any other flag is a typo: never fall back to switching the whole plugin.
+    if (a.startsWith("-")) { console.error(`unknown option: ${a}\n${usage}`); return 2; }
+    if (name !== undefined) { console.error(usage); return 2; }
+    name = a;
   }
+  if (!name || (partFlag && !PART_ID_RE.test(part ?? ""))) { console.error(usage); return 2; }
   if (part) {
+    const rec = readPluginState(stateDir).plugins[name];
+    if (!rec) { console.error(`plugin not installed: ${name}`); return 1; }
+    const known = loadPluginOverview(stateDir, rec, process.env).parts.map(p => p.id);
+    if (!known.includes(part)) {
+      console.error(`${name} has no part ${part}. Parts: ${known.length ? known.join(", ") : "none"}`);
+      return 1;
+    }
     if (!setPluginPartEnabled(stateDir, name, part, enabled)) { console.error(`plugin not installed: ${name}`); return 1; }
     console.log(`${name} ${part} ${enabled ? "on" : "off"}. Restart running agents to pick up MCP server changes.`);
     return 0;

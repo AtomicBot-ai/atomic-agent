@@ -197,7 +197,7 @@ function Detail({ panel }: { panel: PluginsPanelState }): ReactElement | null {
   const bits = [
     p.description,
     `from ${p.sourceLabel}`,
-    p.needsKey ? `set ${p.missingKeys.join(", ")} in ~/.atomic-agent/.env` : "",
+    p.needsKey ? `set ${p.missingKeys.join(", ")} in .env in the agent data folder` : "",
     p.error && !p.filesOk ? p.error : "",
   ].filter(Boolean);
   return (
