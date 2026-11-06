@@ -1070,6 +1070,9 @@ export interface UserConfigFile {
 // `off`) and `judgeProvider` (default the orchestrator leg), ATO-944.
 // Unversioned, additive: `llm.runMode.fusion.autoReplan` (0..5, default
 // 0 = off), ATO-941.
+// Unversioned, additive: `llm.runMode.fusion.taskTree` (`enabled` default
+// false, `maxDepth` 1..3 default 2, `maxNodes` 1..64 default 24),
+// ATO-940. An older file has no field and keeps the flat fan-out.
 export const USER_CONFIG_VERSION = 79;
 
 /**

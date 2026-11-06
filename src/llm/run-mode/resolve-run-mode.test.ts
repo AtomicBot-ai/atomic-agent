@@ -314,3 +314,44 @@ describe("fusion escalation target (ATO-942)", () => {
     });
   });
 });
+
+describe("resolveRunMode — task tree (ATO-940)", () => {
+  it("is absent unless enabled", () => {
+    expect(resolveRunMode(llm("openrouter", { mode: "fusion" })).taskTree).toBeUndefined();
+    expect(
+      resolveRunMode(
+        llm("openrouter", {
+          mode: "fusion",
+          fusion: { taskTree: { enabled: false, maxDepth: 3 } },
+        }),
+      ).taskTree,
+    ).toBeUndefined();
+  });
+
+  it("defaults to depth 2 and 24 nodes when enabled", () => {
+    expect(
+      resolveRunMode(
+        llm("openrouter", { mode: "fusion", fusion: { taskTree: { enabled: true } } }),
+      ).taskTree,
+    ).toEqual({ maxDepth: 2, maxNodes: 24 });
+  });
+
+  it("treats depth 1 as the flat fan-out and honours the configured limits", () => {
+    expect(
+      resolveRunMode(
+        llm("openrouter", {
+          mode: "fusion",
+          fusion: { taskTree: { enabled: true, maxDepth: 1 } },
+        }),
+      ).taskTree,
+    ).toBeUndefined();
+    expect(
+      resolveRunMode(
+        llm("openrouter", {
+          mode: "fusion",
+          fusion: { taskTree: { enabled: true, maxDepth: 3, maxNodes: 10 } },
+        }),
+      ).taskTree,
+    ).toEqual({ maxDepth: 3, maxNodes: 10 });
+  });
+});

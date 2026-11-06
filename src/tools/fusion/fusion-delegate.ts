@@ -39,6 +39,11 @@ import {
 } from "./worker-runner.js";
 import { describeReplan, renderReplanBlock } from "./replan.js";
 import {
+  TaskTreeState,
+  expandSplits,
+  renderSplitInstructions,
+} from "./task-tree.js";
+import {
   applyJudgeVerdict,
   buildAcceptanceChecklist,
   judgeTask,
@@ -564,10 +569,34 @@ export function buildFusionDelegateTool(
               : renderAcceptanceBlock(items);
           }
         : undefined;
+      // The task tree (ATO-940): off unless configured, and then only
+      // the wave runs below read proposals — a judge's retry does not.
+      const tree =
+        mode.taskTree === undefined
+          ? undefined
+          : new TaskTreeState(mode.taskTree, workerModel);
+      tree?.addRoots(parsed.tasks, parsed.contract);
+      const canProposeSplit =
+        tree === undefined
+          ? undefined
+          : (taskId: string): boolean => tree.canSplitAt(tree.depthOf(taskId));
+      const waveSuffix =
+        tree === undefined
+          ? acceptanceSuffix
+          : (taskId: string): string | undefined => {
+              const parts = [
+                acceptanceSuffix?.(taskId),
+                canProposeSplit?.(taskId) === true
+                  ? renderSplitInstructions(tree.nodesLeft)
+                  : undefined,
+              ].filter((part): part is string => part !== undefined);
+              return parts.length === 0 ? undefined : parts.join("\n\n");
+            };
       const runTasks = (
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
         briefSuffix: ((taskId: string) => string | undefined) | undefined,
+        allowSplit = false,
       ): Promise<WorkerTaskResult[]> =>
         runWorkerTasks(
           ctx.modelMode === "cloud"
@@ -597,8 +626,58 @@ export function buildFusionDelegateTool(
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
+            ...(allowSplit && canProposeSplit !== undefined
+              ? { canProposeSplit }
+              : {}),
           },
         );
+      // A proposal's children: run through the same runner (width, caps,
+      // approval scope), then their own contract is checked before their
+      // parent closes on them.
+      const expandWave = (
+        tasks: readonly DelegateTask[],
+        rows: WorkerTaskResult[],
+      ): Promise<WorkerTaskResult[]> =>
+        tree === undefined
+          ? Promise.resolve(rows)
+          : expandSplits(tasks, rows, {
+              tree,
+              workingDir: ctx.workingDir,
+              ...(parsed.contract === undefined
+                ? {}
+                : { parentContract: parsed.contract }),
+              workerMaxSteps: mode.workerMaxSteps,
+              workerTimeoutMs: mode.workerTimeoutMs,
+              runChildren: (children, childContract, suffix) =>
+                runTasks(children, childContract, suffix, true),
+              evaluateChildren: async (rows, children, childContract) => {
+                const provides = await inspectContractProvides(
+                  childContract,
+                  children,
+                  ctx.workingDir,
+                  { results: rows, signal: ctx.signal },
+                );
+                const checks = await runContractChecks(
+                  childContract.checks ?? [],
+                  deps.runChecks,
+                  { workingDir: ctx.workingDir, signal: ctx.signal },
+                );
+                const failedChecks = checks.outcomes
+                  .filter((o) => o.task === undefined && !o.ok)
+                  .map((o) => o.detail);
+                return {
+                  rows: applyCheckOutcomes(
+                    applyContractFindings(rows, provides.findings),
+                    checks.outcomes,
+                  ),
+                  ...(failedChecks.length === 0 ? {} : { failedChecks }),
+                };
+              },
+              mayStart: () =>
+                !ctx.signal.aborted &&
+                stoppedBy === undefined &&
+                budgetStop() === undefined,
+            });
 
       let results: WorkerTaskResult[];
       try {
@@ -645,12 +724,12 @@ export function buildFusionDelegateTool(
               ),
             );
           }
-          const waveResults = await runTasks(
-            parsed.tasks.filter(
-              (t) => wave.includes(t.id) && !held.includes(t.id),
-            ),
-            contract,
-            acceptanceSuffix,
+          const waveTasks = parsed.tasks.filter(
+            (t) => wave.includes(t.id) && !held.includes(t.id),
+          );
+          const waveResults = await expandWave(
+            waveTasks,
+            await runTasks(waveTasks, contract, waveSuffix, true),
           );
           for (const result of waveResults) finished.set(result.id, result);
         }
@@ -918,6 +997,14 @@ export function buildFusionDelegateTool(
         workerPricing === undefined
           ? null
           : fanoutSpend(results, workerPricing, workerModel);
+      // The task tree, when any worker proposed a split (ATO-940); the
+      // children themselves are summarised in their parent's block.
+      const treeReport = tree?.report();
+      const treeNote =
+        treeReport === undefined ||
+        treeReport.splits + treeReport.rejected === 0
+          ? ""
+          : `\n\nTask tree: ${treeReport.splits} task${treeReport.splits === 1 ? "" : "s"} split by their workers, ${treeReport.rejected} proposal${treeReport.rejected === 1 ? "" : "s"} refused, ${treeReport.nodes} of ${treeReport.maxNodes} nodes used (depth limit ${treeReport.maxDepth}).`;
       const budgetNote =
         budgetStopped === undefined
           ? ""
@@ -938,7 +1025,7 @@ export function buildFusionDelegateTool(
             judgeSpendUsd > 0
               ? `\n\nThe judge (${judgeTarget?.model ?? judgeTarget?.providerId}) cost ${formatUsd(judgeSpendUsd)} this fan-out.`
               : ""
-          }${replan === undefined ? "" : renderReplanBlock(replan)}${budgetNote}`,
+          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -956,6 +1043,7 @@ export function buildFusionDelegateTool(
             (replan.pending.length === 0 && replan.exhausted.length === 0)
               ? {}
               : { replan }),
+            ...(treeReport === undefined ? {} : { taskTree: treeReport }),
             ...(budgetStopped === undefined
               ? {}
               : {

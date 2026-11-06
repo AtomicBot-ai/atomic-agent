@@ -49,6 +49,7 @@ import {
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
+import { hasSplitProposal, splitSteer } from "./task-tree.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -564,7 +565,22 @@ export interface RunWorkerTasksOptions {
    * is exactly as before.
    */
   briefSuffix?: (taskId: string) => string | undefined;
+  /**
+   * The task tree (ATO-940): whether this task may still propose a
+   * split. True, the half-budget hand-back and a cut first answer first
+   * steer the worker toward a `split_proposal` (once, with
+   * `SPLIT_GRACE_STEPS` more steps), and a reply that carries one skips
+   * the declared-file check: the files are its children's to write.
+   * Absent: exactly as before.
+   */
+  canProposeSplit?: (taskId: string) => boolean;
 }
+
+/**
+ * Steps a worker steered toward a split proposal gets to write one
+ * before the half-budget hand-back fires after all (ATO-940).
+ */
+export const SPLIT_GRACE_STEPS = 2;
 
 /** The row of a task the turn's cap kept from starting. */
 export function notStartedResult(
@@ -964,6 +980,17 @@ async function runOneTask(
   // Why the step half fired, when it did; carried onto the note so the
   // orchestrator re-briefs against the cause, not just the count.
   let stall: string | undefined;
+  // The task tree (ATO-940): the step at which this worker was steered
+  // toward a split proposal, once. It then has `SPLIT_GRACE_STEPS` steps
+  // to reply with one before the hand-back fires as it always did.
+  const mayPropose = options.canProposeSplit?.(task.id) === true;
+  let splitAskedAt: number | undefined;
+  const askForSplit = (cause: "half-budget" | "answer-cut"): boolean => {
+    if (!mayPropose || splitAskedAt !== undefined) return false;
+    const steered = deps.steerWorker?.(session.id, splitSteer(cause)) ?? false;
+    if (steered) splitAskedAt = stepsFinished;
+    return steered;
+  };
   const maybeHandBack = (): void => {
     if (declaredFiles === 0 || wroteSomething || handBack.signal.aborted)
       return;
@@ -975,6 +1002,13 @@ async function runOneTask(
     const pastHalfSteps =
       stepsFinished >= stepThreshold && stalled !== undefined;
     if (!pastHalfSteps && !pastHalfTime) return;
+    if (askForSplit("half-budget")) return;
+    if (
+      splitAskedAt !== undefined &&
+      stepsFinished < splitAskedAt + SPLIT_GRACE_STEPS
+    ) {
+      return;
+    }
     stall = stalled;
     handBack.abort(
       new Error("handed back early: no file written by half the budget"),
@@ -1210,6 +1244,7 @@ async function runOneTask(
             spent + REPLY_CAP_SLACK_TOKENS >= timeFittedCap
           ) {
             firstCutTokens = spent;
+            askForSplit("answer-cut");
             autoEscalate({
               kind: "first-answer-cut",
               detail: `${spent} tokens against a time-fitted cap of ${timeFittedCap}`,
@@ -1552,7 +1587,12 @@ async function runOneTask(
   // that wrote nothing at all is `no_changes`. Only for statuses that
   // still claim some work; a failed or cancelled task is expected to
   // have left its files missing.
+  // A worker that proposed a split (ATO-940) wrote nothing by design:
+  // its files are its children's, and the delegate checks them on the
+  // parent once they ran.
+  const proposedSplit = mayPropose && hasSplitProposal(result.reply);
   if (
+    !proposedSplit &&
     task.files !== undefined &&
     task.files.length > 0 &&
     (result.status === "ok" ||
