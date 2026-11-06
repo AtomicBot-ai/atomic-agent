@@ -591,6 +591,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.fusion-resume",
+    label: "Resume or discard an unfinished fusion run",
+    group: "run",
+    slash: {
+      name: "fusion",
+      description:
+        "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+      rank: 47,
+    },
+  },
+  {
+    kind: "action",
     id: "run.expand",
     label: "Expand all tool cards",
     group: "run",
