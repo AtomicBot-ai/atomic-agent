@@ -235,6 +235,8 @@ import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, D
 import { registerModelSession } from "./model-sessions.js";
 import { readConfigFile, readStateDirsRecord, recordStateDirRun, sharedSetupNoticeDue, stateDirsRecordPath } from "./shared-state-notice.js";
 import { importFromTui, parseDotenv, sqliteRowCount, tuiSetupPresent, type TuiImportOptions } from "./tui-import.js";
+// ATO-1156 — "Continue from Claude Code / Codex" (`atag handoff`).
+import { handoffList, handoffStart } from "./handoff.js";
 // Backlog 03 — the first-run probe's frame log, summarised.
 import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
@@ -2831,6 +2833,10 @@ function wireIpc(client: AgentClient): void {
     A.telegramConfigWrite(key, null, res);
     return res;
   });
+  // ATO-1156: list Claude Code / Codex sessions and continue one in a new chat.
+  ipcMain.handle("cli:handoffList", (_event, agent: unknown) => handoffList(atagRun, agent, client.isRemote));
+  ipcMain.handle("cli:handoffStart", (_event, agent: unknown, id: unknown) =>
+    handoffStart(atagRun, agent, id, client.isRemote));
   ipcMain.handle("cli:importRun", (_event, input: unknown) => {
     const i = (input ?? {}) as Record<string, unknown>;
     // r5 item 7: all four sources `atag import` accepts, not two.
