@@ -5,6 +5,8 @@ import {
   DEFAULT_FUSION_REVIEW_STALL_STEPS,
   DEFAULT_FUSION_WORKERS,
   FUSION_REVIEW_STALL_STEPS_MAX,
+  FUSION_TASK_TREE_MAX_DEPTH,
+  FUSION_TASK_TREE_MAX_NODES_MAX,
   FUSION_WORKERS_MAX,
   FUSION_WORKERS_MIN,
   parseLlmRunModeConfig,
@@ -332,5 +334,54 @@ describe("reviewStallSteps (F41)", () => {
     expect(() =>
       parseLlmRunModeConfig({ fusion: { isolation: "on" } }, providers, "llm.runMode"),
     ).toThrow(/llm\.runMode\.fusion\.isolation/);
+  });
+});
+
+describe("taskTree (ATO-940)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("is optional, and each field is validated when present", () => {
+    expect(
+      parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion
+        ?.taskTree,
+    ).toBeUndefined();
+    expect(
+      parseLlmRunModeConfig(
+        { fusion: { taskTree: { enabled: true, maxDepth: 3, maxNodes: 24 } } },
+        providers,
+        "llm.runMode",
+      ).fusion?.taskTree,
+    ).toEqual({ enabled: true, maxDepth: 3, maxNodes: 24 });
+    expect(
+      parseLlmRunModeConfig(
+        { fusion: { taskTree: {} } },
+        providers,
+        "llm.runMode",
+      ).fusion?.taskTree,
+    ).toEqual({});
+  });
+
+  it("caps the depth at 3 and refuses a malformed block, naming the field", () => {
+    expect(FUSION_TASK_TREE_MAX_DEPTH).toBe(3);
+    const bad: Array<[unknown, RegExp]> = [
+      [true, /llm\.runMode\.fusion\.taskTree/],
+      [{ enabled: "yes" }, /taskTree\.enabled/],
+      [{ maxDepth: 4 }, /taskTree\.maxDepth/],
+      [{ maxDepth: 0 }, /taskTree\.maxDepth/],
+      [{ maxDepth: 2.5 }, /taskTree\.maxDepth/],
+      [{ maxNodes: 0 }, /taskTree\.maxNodes/],
+      [{ maxNodes: FUSION_TASK_TREE_MAX_NODES_MAX + 1 }, /taskTree\.maxNodes/],
+    ];
+    for (const [taskTree, field] of bad) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { taskTree } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(field);
+    }
   });
 });

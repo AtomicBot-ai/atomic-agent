@@ -1080,6 +1080,9 @@ export interface UserConfigFile {
 // Unversioned, additive: `llm.runMode.fusion.isolation` (`off|worktree`,
 // default `off`), ATO-946. An older file has none and workers write in
 // place, as before.
+// Unversioned, additive: `llm.runMode.fusion.taskTree` (`enabled` default
+// false, `maxDepth` 1..3 default 2, `maxNodes` 1..64 default 24),
+// ATO-940. An older file has no field and keeps the flat fan-out.
 export const USER_CONFIG_VERSION = 79;
 
 /**

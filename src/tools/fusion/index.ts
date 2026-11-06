@@ -138,3 +138,5 @@ export {
   ADVISOR_MAX_OUTPUT_TOKENS,
 } from "./escalation.js";
 export type { LiveWorkerControls, EscalationComplete } from "./escalation.js";
+export { SPLIT_PROPOSAL_TAG, TaskTreeState } from "./task-tree.js";
+export type { TaskTreeNode, TaskTreeReport } from "./task-tree.js";

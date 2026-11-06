@@ -45,6 +45,11 @@ import {
   type MergeTaskSuggestion,
 } from "./branch-merge.js";
 import {
+  TaskTreeState,
+  expandSplits,
+  renderSplitInstructions,
+} from "./task-tree.js";
+import {
   applyJudgeVerdict,
   buildAcceptanceChecklist,
   judgeTask,
@@ -618,6 +623,29 @@ export function buildFusionDelegateTool(
               : renderAcceptanceBlock(items);
           }
         : undefined;
+      // The task tree (ATO-940): off unless configured, and then only
+      // the wave runs below read proposals — a judge's retry does not.
+      const tree =
+        mode.taskTree === undefined
+          ? undefined
+          : new TaskTreeState(mode.taskTree, workerModel);
+      tree?.addRoots(parsed.tasks, parsed.contract);
+      const canProposeSplit =
+        tree === undefined
+          ? undefined
+          : (taskId: string): boolean => tree.canSplitAt(tree.depthOf(taskId));
+      const waveSuffix =
+        tree === undefined
+          ? acceptanceSuffix
+          : (taskId: string): string | undefined => {
+              const parts = [
+                acceptanceSuffix?.(taskId),
+                canProposeSplit?.(taskId) === true
+                  ? renderSplitInstructions(tree.nodesLeft)
+                  : undefined,
+              ].filter((part): part is string => part !== undefined);
+              return parts.length === 0 ? undefined : parts.join("\n\n");
+            };
       // Branch isolation (ATO-946): with `isolation: "worktree"` each run
       // of tasks (a wave, a judge's retry) gets a workspace per task and
       // is merged back before anything reads the folder. Off: unchanged.
@@ -627,9 +655,10 @@ export function buildFusionDelegateTool(
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
         briefSuffix: ((taskId: string) => string | undefined) | undefined,
+        allowSplit = false,
       ): Promise<WorkerTaskResult[]> => {
         if (mode.isolation !== "worktree") {
-          return runAcrossLegs(tasks, contract, briefSuffix, undefined);
+          return runAcrossLegs(tasks, contract, briefSuffix, undefined, allowSplit);
         }
         const wave = await runIsolatedWave({
           realDir: ctx.workingDir,
@@ -637,7 +666,7 @@ export function buildFusionDelegateTool(
           writeScope,
           inputs: contract?.inputs ?? [],
           run: (rebased, taskWorkspace) =>
-            runAcrossLegs(rebased, contract, briefSuffix, taskWorkspace),
+            runAcrossLegs(rebased, contract, briefSuffix, taskWorkspace, allowSplit),
         });
         merges.push(...wave.merges);
         return wave.results;
@@ -651,6 +680,7 @@ export function buildFusionDelegateTool(
               taskId: string,
             ) => { workingDir: string; writeScope: readonly string[] } | undefined)
           | undefined,
+        allowSplit: boolean,
       ): Promise<WorkerTaskResult[]> =>
         runWorkerTasks(
           ctx.modelMode === "cloud"
@@ -681,6 +711,9 @@ export function buildFusionDelegateTool(
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
             ...(taskWorkspace === undefined ? {} : { taskWorkspace }),
+            ...(allowSplit && canProposeSplit !== undefined
+              ? { canProposeSplit }
+              : {}),
           },
         );
       // A role model's leg (ATO-943): its own provider, label, price and
@@ -703,6 +736,7 @@ export function buildFusionDelegateTool(
               taskId: string,
             ) => { workingDir: string; writeScope: readonly string[] } | undefined)
           | undefined,
+        allowSplit: boolean,
       ): Promise<WorkerTaskResult[]> => {
         const local = deps.workerSupportsSlotAffinity(leg.providerId);
         const pricing = rolePricing.get(leg.providerId);
@@ -750,6 +784,9 @@ export function buildFusionDelegateTool(
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(pricing === undefined ? {} : { workerPricing: pricing }),
             ...(taskWorkspace === undefined ? {} : { taskWorkspace }),
+            ...(allowSplit && canProposeSplit !== undefined
+              ? { canProposeSplit }
+              : {}),
           },
         );
       };
@@ -764,9 +801,10 @@ export function buildFusionDelegateTool(
               taskId: string,
             ) => { workingDir: string; writeScope: readonly string[] } | undefined)
           | undefined,
+        allowSplit: boolean,
       ): Promise<WorkerTaskResult[]> => {
         if (roleLegs.size === 0) {
-          return runOnLeg(tasks, contract, briefSuffix, taskWorkspace);
+          return runOnLeg(tasks, contract, briefSuffix, taskWorkspace, allowSplit);
         }
         const onWorkerLeg = tasks.filter(
           (t) => taskLegs.get(t.id)?.isWorkerLeg !== false,
@@ -774,7 +812,7 @@ export function buildFusionDelegateTool(
         const groups = await Promise.all([
           onWorkerLeg.length === 0
             ? Promise.resolve<WorkerTaskResult[]>([])
-            : runOnLeg(onWorkerLeg, contract, briefSuffix, taskWorkspace),
+            : runOnLeg(onWorkerLeg, contract, briefSuffix, taskWorkspace, allowSplit),
           ...[...roleLegs.values()].map((leg) => {
             const mine = tasks.filter((t) => {
               const own = taskLegs.get(t.id);
@@ -782,7 +820,7 @@ export function buildFusionDelegateTool(
             });
             return mine.length === 0
               ? Promise.resolve<WorkerTaskResult[]>([])
-              : runOnRoleLeg(leg, mine, contract, briefSuffix, taskWorkspace);
+              : runOnRoleLeg(leg, mine, contract, briefSuffix, taskWorkspace, allowSplit);
           }),
         ]);
         const byId = new Map(groups.flat().map((r) => [r.id, r]));
@@ -791,6 +829,53 @@ export function buildFusionDelegateTool(
           return row === undefined ? [] : [row];
         });
       };
+      // A proposal's children: run through the same runner (width, caps,
+      // approval scope), then their own contract is checked before their
+      // parent closes on them.
+      const expandWave = (
+        tasks: readonly DelegateTask[],
+        rows: WorkerTaskResult[],
+      ): Promise<WorkerTaskResult[]> =>
+        tree === undefined
+          ? Promise.resolve(rows)
+          : expandSplits(tasks, rows, {
+              tree,
+              workingDir: ctx.workingDir,
+              ...(parsed.contract === undefined
+                ? {}
+                : { parentContract: parsed.contract }),
+              workerMaxSteps: mode.workerMaxSteps,
+              workerTimeoutMs: mode.workerTimeoutMs,
+              runChildren: (children, childContract, suffix) =>
+                runTasks(children, childContract, suffix, true),
+              evaluateChildren: async (rows, children, childContract) => {
+                const provides = await inspectContractProvides(
+                  childContract,
+                  children,
+                  ctx.workingDir,
+                  { results: rows, signal: ctx.signal },
+                );
+                const checks = await runContractChecks(
+                  childContract.checks ?? [],
+                  deps.runChecks,
+                  { workingDir: ctx.workingDir, signal: ctx.signal },
+                );
+                const failedChecks = checks.outcomes
+                  .filter((o) => o.task === undefined && !o.ok)
+                  .map((o) => o.detail);
+                return {
+                  rows: applyCheckOutcomes(
+                    applyContractFindings(rows, provides.findings),
+                    checks.outcomes,
+                  ),
+                  ...(failedChecks.length === 0 ? {} : { failedChecks }),
+                };
+              },
+              mayStart: () =>
+                !ctx.signal.aborted &&
+                stoppedBy === undefined &&
+                budgetStop() === undefined,
+            });
 
       let results: WorkerTaskResult[];
       try {
@@ -837,12 +922,12 @@ export function buildFusionDelegateTool(
               ),
             );
           }
-          const waveResults = await runTasks(
-            parsed.tasks.filter(
-              (t) => wave.includes(t.id) && !held.includes(t.id),
-            ),
-            contract,
-            acceptanceSuffix,
+          const waveTasks = parsed.tasks.filter(
+            (t) => wave.includes(t.id) && !held.includes(t.id),
+          );
+          const waveResults = await expandWave(
+            waveTasks,
+            await runTasks(waveTasks, contract, waveSuffix, true),
           );
           for (const result of waveResults) finished.set(result.id, result);
         }
@@ -1155,6 +1240,14 @@ export function buildFusionDelegateTool(
               workerPricing,
               workerModel,
             );
+      // The task tree, when any worker proposed a split (ATO-940); the
+      // children themselves are summarised in their parent's block.
+      const treeReport = tree?.report();
+      const treeNote =
+        treeReport === undefined ||
+        treeReport.splits + treeReport.rejected === 0
+          ? ""
+          : `\n\nTask tree: ${treeReport.splits} task${treeReport.splits === 1 ? "" : "s"} split by their workers, ${treeReport.rejected} proposal${treeReport.rejected === 1 ? "" : "s"} refused, ${treeReport.nodes} of ${treeReport.maxNodes} nodes used (depth limit ${treeReport.maxDepth}).`;
       const budgetNote =
         budgetStopped === undefined
           ? ""
@@ -1179,7 +1272,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${budgetNote}`,
+          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -1199,6 +1292,7 @@ export function buildFusionDelegateTool(
             (replan.pending.length === 0 && replan.exhausted.length === 0)
               ? {}
               : { replan }),
+            ...(treeReport === undefined ? {} : { taskTree: treeReport }),
             ...(budgetStopped === undefined
               ? {}
               : {

@@ -10,6 +10,9 @@ import {
   DEFAULT_FUSION_WORKER_MAX_STEPS,
   DEFAULT_FUSION_WORKER_TIMEOUT_MS,
   DEFAULT_FUSION_WORKERS,
+  DEFAULT_FUSION_TASK_TREE_DEPTH,
+  DEFAULT_FUSION_TASK_TREE_MAX_NODES,
+  FUSION_TASK_TREE_MAX_DEPTH,
   LOCAL_PROVIDER_KIND,
 } from "../../config/llm-run-mode-config.js";
 import type {
@@ -89,6 +92,12 @@ export type ResolvedRunMode = {
    * (ATO-946): each task works in its own workspace and is merged back.
    */
   isolation?: "worktree";
+  /**
+   * `llm.runMode.fusion.taskTree` (ATO-940), present only when enabled
+   * with a depth above 1 — a tree of depth 1 is the flat fan-out.
+   * `maxDepth` is already clamped to `FUSION_TASK_TREE_MAX_DEPTH`.
+   */
+  taskTree?: { maxDepth: number; maxNodes: number };
   /** `llm.runMode.fusion.turnBudgetUsd`, present only when set above 0. */
   turnBudgetUsd?: number;
   /** `llm.runMode.fusion.turnTimeBudgetMs`, present only when set above 0. */
@@ -346,6 +355,7 @@ export function resolveRunMode(
       ? { autoReplan: fusion.autoReplan }
       : {}),
     ...(fusion?.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
+    ...resolveTaskTree(fusion?.taskTree),
     ...(fusion?.turnBudgetUsd !== undefined && fusion.turnBudgetUsd > 0
       ? { turnBudgetUsd: fusion.turnBudgetUsd }
       : {}),
@@ -354,5 +364,23 @@ export function resolveRunMode(
       : {}),
     primaryProviderId,
     degraded,
+  };
+}
+
+/** The task tree's resolved limits, or nothing when it is off (ATO-940). */
+function resolveTaskTree(
+  tree: { enabled?: boolean; maxDepth?: number; maxNodes?: number } | undefined,
+): { taskTree?: { maxDepth: number; maxNodes: number } } {
+  if (tree?.enabled !== true) return {};
+  const maxDepth = Math.min(
+    FUSION_TASK_TREE_MAX_DEPTH,
+    Math.max(1, tree.maxDepth ?? DEFAULT_FUSION_TASK_TREE_DEPTH),
+  );
+  if (maxDepth < 2) return {};
+  return {
+    taskTree: {
+      maxDepth,
+      maxNodes: Math.max(1, tree.maxNodes ?? DEFAULT_FUSION_TASK_TREE_MAX_NODES),
+    },
   };
 }

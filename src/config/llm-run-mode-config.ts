@@ -186,6 +186,16 @@ export type UserLlmFusionConfig = {
    * straight into the working directory, as before.
    */
   isolation?: FusionIsolationMode;
+  /**
+   * The task tree (ATO-940). Off by default. On, a worker whose task is
+   * too big (no write by half its step budget, or its first answer cut
+   * off) may reply with a `split_proposal` instead of failing; the
+   * delegate validates it like delegate args and hands the subtasks out
+   * as a new wave under the parent task, which then closes on its
+   * children and its own contract. Workers still never call
+   * `fusion.delegate` themselves.
+   */
+  taskTree?: UserFusionTaskTreeConfig;
 };
 
 /** Roles a fusion task can be given (ATO-943). */
@@ -205,6 +215,25 @@ export const FUSION_ISOLATION_MODES: readonly FusionIsolationMode[] = [
   "off",
   "worktree",
 ];
+
+export type UserFusionTaskTreeConfig = {
+  /** Default `false`: the tree is flat, as before. */
+  enabled?: boolean;
+  /**
+   * How deep the tree may grow, counting the orchestrator's own tasks as
+   * depth 1. Default 2 (one level of split); hard-capped at 3.
+   */
+  maxDepth?: number;
+  /** Every node of one fan-out, the orchestrator's tasks included. Default 24. */
+  maxNodes?: number;
+};
+
+/** The tree never grows deeper than this, whatever the file says (ATO-940). */
+export const FUSION_TASK_TREE_MAX_DEPTH = 3;
+export const DEFAULT_FUSION_TASK_TREE_DEPTH = 2;
+export const DEFAULT_FUSION_TASK_TREE_MAX_NODES = 24;
+/** Upper bound on `taskTree.maxNodes`: each node is one worker turn. */
+export const FUSION_TASK_TREE_MAX_NODES_MAX = 64;
 
 export type FusionEscalationMode = "off" | "advisor";
 export const FUSION_ESCALATION_MODES: readonly FusionEscalationMode[] = [
@@ -536,6 +565,9 @@ function parseFusion(
     }
     out.mixLocalModels = obj.mixLocalModels;
   }
+  if (obj.taskTree !== undefined) {
+    out.taskTree = parseTaskTree(obj.taskTree, `${field}.taskTree`);
+  }
   return out;
 }
 
@@ -559,6 +591,37 @@ function parseRoles(
       value,
       providers,
       `${field}.${key}`,
+    );
+  }
+  return out;
+}
+
+function parseTaskTree(raw: unknown, field: string): UserFusionTaskTreeConfig {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const out: UserFusionTaskTreeConfig = {};
+  if (obj.enabled !== undefined) {
+    if (typeof obj.enabled !== "boolean") {
+      throw new ConfigValidationError(`${field}.enabled`, "expected boolean");
+    }
+    out.enabled = obj.enabled;
+  }
+  if (obj.maxDepth !== undefined) {
+    out.maxDepth = parseBoundedInt(
+      obj.maxDepth,
+      `${field}.maxDepth`,
+      1,
+      FUSION_TASK_TREE_MAX_DEPTH,
+    );
+  }
+  if (obj.maxNodes !== undefined) {
+    out.maxNodes = parseBoundedInt(
+      obj.maxNodes,
+      `${field}.maxNodes`,
+      1,
+      FUSION_TASK_TREE_MAX_NODES_MAX,
     );
   }
   return out;
