@@ -237,9 +237,26 @@ const config = {
       }
     ]
   },
+  /* ATO-1229: Ubuntu 24.04. electron-builder's own deb scripts with the
+     install made failure-proof and chrome-sandbox made the root setuid
+     helper whenever the app cannot use user namespaces (AppArmor's userns
+     restriction without our profile loaded). See the scripts' headers. */
   "deb": {
     "packageCategory": "devel",
-    "priority": "optional"
+    "priority": "optional",
+    "afterInstall": "build/linux/after-install.tpl",
+    "afterRemove": "build/linux/after-remove.tpl"
+  },
+  /* ATO-1229: the AppImage with the static type-2 runtime (electron-builder's
+     appimage toolset 1.0.3, runtime 20251108) instead of the legacy one,
+     which needs libfuse2: Ubuntu 22.04+ and Debian 12+ no longer install it,
+     and without it the AppImage cannot even mount ("dlopen(): error loading
+     libfuse.so.2"). The static runtime needs only a FUSE kernel module and
+     fusermount / fusermount3. electron-builder marks the 1.x toolsets beta.
+     Its AppRun still adds --no-sandbox when unprivileged user namespaces
+     are blocked (`unshare -Ur true` fails), as the legacy one did. */
+  "toolsets": {
+    "appimage": "1.0.3"
   },
   "afterPack": "scripts/after-pack.mjs"
 };
