@@ -38,3 +38,12 @@ export { loadPluginMcpServers, expandVars, uniqueName } from "./plugin-mcp.js";
 export type { PluginMcpServers } from "./plugin-mcp.js";
 export { listPluginSubagents, parseSubagentFile } from "./plugin-subagents.js";
 export type { PluginSubagentProfile } from "./plugin-subagents.js";
+export {
+  listPluginCommands,
+  parseCommandFile,
+  renderCommandTemplate,
+  renderPluginCommand,
+  shortCommandAliases,
+  splitCommandArgs,
+} from "./plugin-commands.js";
+export type { CommandTemplateVars, ParsedCommandFile, PluginCommand } from "./plugin-commands.js";

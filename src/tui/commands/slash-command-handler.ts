@@ -20,6 +20,8 @@ export interface SlashDispatchCallbacks {
 
 export interface SlashDispatchResult {
   readonly skillInvocation?: { name: string; input: string };
+  /** A plugin command: the caller renders its template and sends it as the message. */
+  readonly pluginCommandInvocation?: { name: string; args: string };
   readonly modelModeCommand?: ModelModeCommand;
   /**
    * Reducer actions the caller should dispatch in order. Empty when the
@@ -206,6 +208,9 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
   }
   if (resolved.skillName) {
     return pureActions([], { skillInvocation: { name: resolved.skillName, input: parsed.args } });
+  }
+  if (resolved.pluginCommand) {
+    return pureActions([], { pluginCommandInvocation: { name: resolved.pluginCommand, args: parsed.args } });
   }
   switch (resolved.name) {
     case "report":

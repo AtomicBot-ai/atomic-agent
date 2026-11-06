@@ -108,9 +108,21 @@ export interface SkillSummaryRow {
   disabled: boolean;
 }
 
+/** A plugin command as the slash palette needs it (see src/plugins/plugin-commands.ts). */
+export interface PluginCommandRow {
+  /** `plugin:command` */
+  name: string;
+  /** Bare command name, offered as `/command` when nothing else claims it. */
+  command: string;
+  description: string;
+  argumentHint?: string;
+}
+
 /** Root state slice for the Skills tab. */
 export interface SkillsPanelState {
   workspace?: string;
+  /** Enabled plugin commands, offered in the slash palette in every mode. */
+  pluginCommands?: readonly PluginCommandRow[];
   projectSkillsEnabled?: boolean;
   mode: SkillsPanelMode;
   rows: readonly SkillSummaryRow[];
