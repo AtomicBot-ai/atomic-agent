@@ -131,8 +131,8 @@ export const ONBOARDING_CHOICES: readonly OnboardingChoice[] = [
     id: "local",
     label: "Local models",
     detail: [
-      "Runs on this machine. Private, free per token,",
-      "one download of 2.7–22 GB.",
+      "Runs on this machine. Private, no key, free per token.",
+      "Answers in a minute; a bigger model follows on its own.",
     ],
   },
   {
