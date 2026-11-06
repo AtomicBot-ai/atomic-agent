@@ -1,6 +1,6 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
-import { describeFailedAttempts } from "../llm/fallback/index.js";
+import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.js";
 import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   classifyLocalServerError,
@@ -691,6 +691,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
                 event.to,
                 event.reason,
                 event.cause,
+                event.failure !== undefined
+                  ? falloverSentence(event.from, event.to, event.failure, event.toModel)
+                  : undefined,
               ),
             })
           : withSwitch,
