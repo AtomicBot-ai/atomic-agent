@@ -60,6 +60,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.conversationLowWater` (default `0.65`).
 - `agent.sessionSectionsMaxTokens` (default `0`).
 - `agent.worldSnapshotMaxTokens` (default `8000`).
+- `agent.prompt.compact` (default `"auto"`): `auto` uses the compact prompt scaffold when the model's known context window is at most 64K tokens, `on` always, `off` never.
 
 ## http
 

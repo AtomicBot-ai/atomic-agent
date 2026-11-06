@@ -32,6 +32,21 @@ describe("buildToolViewTool", () => {
   });
 });
 
+describe("buildToolViewTool and the compact prompt", () => {
+  it("loads a tool only the compact scaffold collapses to a one-liner", async () => {
+    // verify.run is frequent in the full prompt and `compact.tier: "rare"`.
+    const tool = buildToolViewTool();
+    const r = await tool.run(
+      { name: "verify.run" },
+      { workingDir: "/w", sessionId: "s1", stepIndex: 0, signal: new AbortController().signal },
+    );
+    expect(r.status).toBe("ok");
+    const tl = r.details.toolLoaded as { name: string; argsSchema: string };
+    expect(tl.name).toBe("verify.run");
+    expect(tl.argsSchema).toContain("kind: 'command' | 'service' | 'page'");
+  });
+});
+
 describe("buildToolViewTool under a tool role", () => {
   const ctxFor = (toolRole: "builder" | "orchestrator" | "full") => ({
     workingDir: "/w",

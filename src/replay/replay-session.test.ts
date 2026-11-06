@@ -207,4 +207,38 @@ describe("replaySession", () => {
       rmSync(fx.tmp, { recursive: true, force: true });
     }
   });
+  it("reports no drift for a compact-scaffold trace unless the full scaffold is pinned", async () => {
+    // ATO-1116: a session on a window of 64K or less runs the compact
+    // scaffold by default. Traces do not record it, so the unpinned
+    // replay tries both scaffolds for each transport.
+    const context = buildCurrentContext();
+    const compactHash = hashPrefix(
+      buildStablePrefix({
+        toolDescriptors: context.toolDescriptors,
+        capabilities: context.capabilities,
+        skillCatalog: context.skillCatalog,
+        reasoningSystemToken: context.profile.reasoningSystemToken,
+        toolTransport: "native_tools",
+        compact: true,
+      }),
+    );
+    const fx = writeTrace({ recordedHash: compactHash });
+    try {
+      const report = await replaySession({ path: fx.path, context });
+      expect(report.driftCount).toBe(0);
+      expect(report.steps.every((s) => s.matchedCompact === true)).toBe(true);
+      expect(
+        report.steps.every((s) => s.matchedTransport === "native_tools"),
+      ).toBe(true);
+
+      const pinnedFull = await replaySession({
+        path: fx.path,
+        context: { ...context, compact: false },
+      });
+      expect(pinnedFull.driftCount).toBe(2);
+      expect(pinnedFull.steps.every((s) => s.matchedCompact === null)).toBe(true);
+    } finally {
+      rmSync(fx.tmp, { recursive: true, force: true });
+    }
+  });
 });

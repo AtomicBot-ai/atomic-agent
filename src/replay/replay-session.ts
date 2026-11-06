@@ -41,6 +41,16 @@ export interface ReplayContext {
    * variant when it is known.
    */
   toolTransport?: ToolCallTransport;
+  /**
+   * Whether the traced session ran the compact scaffold (ATO-1116,
+   * `agent.prompt.compact`; on by default at a window of 64K or less).
+   * Traces do not record it either, so when omitted the replay builds
+   * the full AND the compact variant of every transport and a recorded
+   * hash is clean when it matches any of them. A compact session's
+   * window-scaled skill catalog is whatever `skillCatalog` /
+   * `skillCatalogDropped` say: pass the catalog as the session saw it.
+   */
+  compact?: boolean;
 }
 
 export interface ReplayStepReport {
@@ -55,6 +65,8 @@ export interface ReplayStepReport {
   currentHash: string;
   /** Transport whose current prefix matched `recordedHash`; `null` on drift. */
   matchedTransport: ToolCallTransport | null;
+  /** Whether the matched variant was the compact scaffold; `null` on drift. */
+  matchedCompact: boolean | null;
   drift: boolean;
   tokens: {
     recordedStablePrefix: number;
@@ -86,7 +98,7 @@ export async function replaySession(options: {
   context: ReplayContext;
 }): Promise<ReplayReport> {
   const { path, context } = options;
-  const prefixFor = (transport: ToolCallTransport): string =>
+  const prefixFor = (transport: ToolCallTransport, compact: boolean): string =>
     buildStablePrefix({
       toolDescriptors: context.toolDescriptors,
       capabilities: context.capabilities,
@@ -96,20 +108,27 @@ export async function replaySession(options: {
         : {}),
       reasoningSystemToken: context.profile.reasoningSystemToken,
       toolTransport: transport,
+      ...(compact ? { compact: true } : {}),
       ...(context.systemPersona !== undefined
         ? { systemPersona: context.systemPersona }
         : {}),
     });
   // Candidate order matters only for the no-match `currentHash` fallback:
-  // the first entry (pinned transport, else `"grammar"`) supplies it.
+  // the first entry (pinned transport, else `"grammar"`; pinned compact,
+  // else the full scaffold) supplies it.
   const transports: readonly ToolCallTransport[] =
     context.toolTransport !== undefined
       ? [context.toolTransport]
       : ["grammar", "native_tools"];
-  const candidates = transports.map((transport) => ({
-    transport,
-    hash: hashPrefix(prefixFor(transport)),
-  }));
+  const compactVariants: readonly boolean[] =
+    context.compact !== undefined ? [context.compact] : [false, true];
+  const candidates = compactVariants.flatMap((compact) =>
+    transports.map((transport) => ({
+      transport,
+      compact,
+      hash: hashPrefix(prefixFor(transport, compact)),
+    })),
+  );
 
   let sessionId = "";
   let workingDir: string | null = null;
@@ -131,6 +150,7 @@ export async function replaySession(options: {
       recordedHash: recorded.stablePrefixHash,
       currentHash: matched !== null ? matched.hash : candidates[0]!.hash,
       matchedTransport: matched !== null ? matched.transport : null,
+      matchedCompact: matched !== null ? matched.compact : null,
       drift: matched === null,
       tokens: {
         recordedStablePrefix: recorded.tokens.stablePrefix,
