@@ -155,7 +155,39 @@ export type UserLlmFusionConfig = {
    * `0` (default): off, as before.
    */
   autoReplan?: number;
+  /**
+   * Models by role (ATO-943): each names a configured provider, the same
+   * shape as `escalationProvider`. A provider entry serves one model, so
+   * a role's model IS its provider entry (two cloud models = two
+   * entries). The planner tags a task with `role` (or names one of these
+   * models in `model`) and that task runs there; a task with neither runs
+   * on the worker leg, as before. `review` is also the judge's model when
+   * `judgeProvider` is unset. `plan` is listed to the planner and usable
+   * by a task, but does not switch the orchestrator itself (that stays
+   * `orchestratorProvider`). Unset: every task runs on the worker leg.
+   */
+  roles?: FusionRoleProviders;
+  /**
+   * This machine can serve a second local model next to the session's
+   * own (ATO-943). Without it, a role whose provider is another
+   * llama-server entry is not used while the session already holds a
+   * local model: its tasks run on the worker leg and the row says so.
+   * Default `false`. Cloud role models never need it.
+   */
+  mixLocalModels?: boolean;
 };
+
+/** Roles a fusion task can be given (ATO-943). */
+export type FusionRole = "plan" | "build" | "review" | "explore" | "utility";
+export const FUSION_ROLES: readonly FusionRole[] = [
+  "plan",
+  "build",
+  "review",
+  "explore",
+  "utility",
+];
+/** `llm.runMode.fusion.roles`: role → configured provider id. */
+export type FusionRoleProviders = Partial<Record<FusionRole, string>>;
 
 export type FusionEscalationMode = "off" | "advisor";
 export const FUSION_ESCALATION_MODES: readonly FusionEscalationMode[] = [
@@ -466,6 +498,43 @@ function parseFusion(
       86_400_000,
     );
   }
+  if (obj.roles !== undefined) {
+    out.roles = parseRoles(obj.roles, providers, `${field}.roles`);
+  }
+  if (obj.mixLocalModels !== undefined) {
+    if (typeof obj.mixLocalModels !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.mixLocalModels`,
+        "expected boolean",
+      );
+    }
+    out.mixLocalModels = obj.mixLocalModels;
+  }
+  return out;
+}
+
+function parseRoles(
+  raw: unknown,
+  providers: ReadonlyArray<RunModeProviderRef>,
+  field: string,
+): FusionRoleProviders {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const out: FusionRoleProviders = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!FUSION_ROLES.includes(key as FusionRole)) {
+      throw new ConfigValidationError(
+        `${field}.${key}`,
+        `unknown role; expected ${FUSION_ROLES.join("|")}`,
+      );
+    }
+    out[key as FusionRole] = parseLegProviderId(
+      value,
+      providers,
+      `${field}.${key}`,
+    );
+  }
   return out;
 }
 
@@ -522,15 +591,30 @@ export function scrubRunModeProviderPins(
     orchestratorModel,
     workerProvider,
     workerModel,
+    roles,
     ...rest
   } = runMode.fusion;
   const keepOrchestrator = orchestratorProvider !== removedId;
   const keepWorker = workerProvider !== removedId;
-  if (keepOrchestrator && keepWorker) return runMode;
+  // A role pinned to the removed provider goes too (ATO-943); the task
+  // tagged with it then runs on the worker leg.
+  const keptRoles =
+    roles === undefined
+      ? undefined
+      : (Object.fromEntries(
+          Object.entries(roles).filter(([, id]) => id !== removedId),
+        ) as FusionRoleProviders);
+  const rolesChanged =
+    roles !== undefined &&
+    Object.keys(keptRoles ?? {}).length !== Object.keys(roles).length;
+  if (keepOrchestrator && keepWorker && !rolesChanged) return runMode;
   return {
     ...runMode,
     fusion: {
       ...rest,
+      ...(keptRoles !== undefined && Object.keys(keptRoles).length > 0
+        ? { roles: keptRoles }
+        : {}),
       ...(orchestratorProvider && keepOrchestrator
         ? { orchestratorProvider }
         : {}),

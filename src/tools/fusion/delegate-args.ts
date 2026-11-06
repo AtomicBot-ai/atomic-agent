@@ -66,6 +66,10 @@ import {
   type DelegateContract,
 } from "./contract.js";
 import { readContractInputs } from "./contract-inputs.js";
+import {
+  FUSION_ROLES,
+  type FusionRole,
+} from "../../config/llm-run-mode-config.js";
 
 /** One unit of delegated work; becomes exactly one worker turn. */
 export interface DelegateTask {
@@ -115,6 +119,19 @@ export interface DelegateTask {
    * separately and does not spend it.
    */
   timeoutMs?: number;
+  /**
+   * The kind of work this is (ATO-943). With `llm.runMode.fusion.roles`
+   * set, the task runs on that role's model; without one for the role,
+   * on the worker leg.
+   */
+  role?: FusionRole;
+  /**
+   * A model the planner picked for this task by name (ATO-943): one of
+   * the role models or the worker leg's, by model name or provider id.
+   * Checked against that list by the tool, not here (the parser has no
+   * run mode); a name outside it refuses the call.
+   */
+  model?: string;
 }
 
 export type ParsedDelegateArgs =
@@ -219,6 +236,20 @@ function readBudget(
     return null;
   }
   return Math.floor(n);
+}
+
+/** A task's `role` (ATO-943): absent is fine, an unknown name is not. */
+function readRole(
+  value: unknown,
+  label: string,
+  problems: string[],
+): FusionRole | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "string" && FUSION_ROLES.includes(value as FusionRole)) {
+    return value as FusionRole;
+  }
+  problems.push(`${label} must be one of ${FUSION_ROLES.join("|")}`);
+  return null;
 }
 
 /**
@@ -570,6 +601,14 @@ export function parseDelegateArgs(
       `${label}.timeoutMs`,
       problems,
     );
+    const role = readRole(entry.role, `${label}.role`, problems);
+    const model =
+      entry.model === undefined || entry.model === null
+        ? null
+        : readString(entry.model);
+    if (model === null && entry.model !== undefined && entry.model !== null) {
+      problems.push(`${label}.model must be a non-empty string`);
+    }
     if (id !== null && !seen.has(id)) {
       seen.add(id);
       bindable.push({ id, ...(files.length === 0 ? {} : { files }) });
@@ -586,6 +625,8 @@ export function parseDelegateArgs(
       ...(files.length === 0 ? {} : { files }),
       ...(maxSteps === null ? {} : { maxSteps }),
       ...(taskTimeoutMs === null ? {} : { timeoutMs: taskTimeoutMs }),
+      ...(role === null ? {} : { role }),
+      ...(model === null ? {} : { model }),
     });
   }
 
