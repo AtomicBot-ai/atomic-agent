@@ -201,7 +201,7 @@ export const GEMMA4_THINK_PROFILE: TaggedReasoningModelProfile = {
 export function detectModelProfile(
   props: Record<string, unknown>,
 ): ModelProfile {
-  const modelAlias = readString(props.model_alias).toLowerCase();
+  const modelNames = readModelNameHints(props);
   const chatTemplate = readString(props.chat_template);
   const templateLower = chatTemplate.toLowerCase();
   const caps = readObject(props.chat_template_caps);
@@ -209,7 +209,7 @@ export function detectModelProfile(
     readBoolean(caps.supports_preserve_reasoning) ?? false;
 
   const base = selectBaseProfile(
-    modelAlias,
+    modelNames,
     templateLower,
     supportsPreserveReasoning,
   );
@@ -278,6 +278,16 @@ function selectBaseProfile(
   templateLower: string,
   supportsPreserveReasoning: boolean,
 ): ModelProfile {
+  // The template is what the model was trained on; the alias is whatever
+  // the operator (or our daemon) typed. A full Gemma 4 native thinking
+  // template decides on its own, before any alias-gated branch: Gemma 4
+  // fine-tunes ship under other names (Nemotron 3.5 Bolt E4B carries a
+  // `nemotron` name and the Gemma 4 template, ATO-879), and a qwen- or
+  // nemotron-named alias must not push a `<|turn>`-framed model onto the
+  // ChatML `<think>` prefill.
+  if (hasGemma4NativeThinkTemplate(templateLower)) {
+    return GEMMA4_THINK_PROFILE;
+  }
   if (
     looksLikeQwenThinkModel(
       modelAlias,
@@ -382,6 +392,41 @@ function looksLikeGemma4ThinkModel(
     templateLower.includes("<|channel>thought") &&
     (templateLower.includes("<|turn>") || templateLower.includes("<turn|>"));
   return aliasHint && templateHint;
+}
+
+/**
+ * The Gemma 4 thinking template, recognised from the template alone: it
+ * emits the system-turn opener, the `<|think|>` switch token, the
+ * model-turn opener at the generation point and the `<|channel>thought`
+ * channel. All four must be present, so a template that merely mentions
+ * the channel tags (stripping them from history, say) does not qualify —
+ * it is the framing `GEMMA4_THINK_PROFILE` reproduces by hand, so a
+ * template that writes it is one the profile fits.
+ */
+function hasGemma4NativeThinkTemplate(templateLower: string): boolean {
+  return (
+    templateLower.includes("<|channel>thought") &&
+    templateLower.includes("<|think|>") &&
+    templateLower.includes("<|turn>system") &&
+    templateLower.includes("<|turn>model")
+  );
+}
+
+/**
+ * Lower-cased model names to match the alias hints against: the served
+ * alias plus the GGUF file name from `/props.model_path`. The managed
+ * daemon serves under a catalog id (`-a <model.id>`), an external server
+ * under whatever `--alias` was given or the model path; adding the file
+ * name keeps the same GGUF on the same profile whichever way it was
+ * launched. Only the base name is read, so a directory such as
+ * `~/qwen-models/` cannot lend its name to an unrelated file.
+ */
+function readModelNameHints(props: Record<string, unknown>): string {
+  const alias = readString(props.model_alias).toLowerCase();
+  const fileName =
+    readString(props.model_path).split(/[\\/]/).pop()?.toLowerCase() ?? "";
+  if (!fileName || alias.includes(fileName)) return alias;
+  return alias ? `${alias} ${fileName}` : fileName;
 }
 
 function readString(value: unknown): string {
