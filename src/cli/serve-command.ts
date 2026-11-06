@@ -5,6 +5,12 @@ import { createStderrSink } from "../tracing/structured-logger.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import { HELP, lanUrls, parseArgs, serveAuthWarning } from "./serve-args.js";
+import {
+  MEMORY_GUARD_EXIT_CODE,
+  memoryGuardDisabled,
+  startServeMemoryGuard,
+  type ServeMemoryGuard,
+} from "./serve-memory-guard.js";
 import { watchForOrphaning } from "./serve-orphan-guard.js";
 import {
   formatReapOutcomes,
@@ -53,6 +59,7 @@ export async function serveCommand(args: string[]): Promise<number> {
   let handle: HttpServerHandle | null = null;
   let releaseRecord: (() => void) | null = null;
   let orphanWatch: OrphanWatch | null = null;
+  let memoryGuard: ServeMemoryGuard | null = null;
   try {
     runtime = await createAgentRuntime({
       workingDir: parsed.workingDir,
@@ -82,7 +89,13 @@ export async function serveCommand(args: string[]): Promise<number> {
         // factory's parameter makes that a compile error now, and
         // `serve-command.test.ts` reads what is passed here.
         logSinks: [createStderrSink()],
-        onApprovalRequest: (request) => approvalBus.publish(request),
+        onApprovalRequest: (request) => {
+          // ATO-1111: drop mirrored prompts whose turn was aborted, so a
+          // window that never reconnects /api/events does not keep them.
+          const live = runtime;
+          if (live) approvalBus.prune((r) => live.approvals.isPending(r.approvalId));
+          approvalBus.publish(request);
+        },
       },
     });
     handle = await createHttpServer({
@@ -130,19 +143,31 @@ export async function serveCommand(args: string[]): Promise<number> {
           parsed.parentPid ?? undefined,
         );
 
+    // ATO-1111: end through the teardown below, with its own exit code,
+    // before the OS refuses memory (Windows 0xC000009A) and kills it mid-write.
+    memoryGuard = memoryGuardDisabled()
+      ? null
+      : startServeMemoryGuard({
+          isBusy: () => liveRuntime.turnController.busySessionIds().length > 0,
+        });
+    let exitCode = 0;
     await Promise.race([
       waitForShutdownSignal().then((signal) => {
         process.stderr.write(`[atomic-agent] ${signal} received, closing\n`);
       }),
       orphanWatch?.orphaned ?? new Promise<void>(() => {}),
+      memoryGuard?.exhausted.then(() => {
+        exitCode = MEMORY_GUARD_EXIT_CODE;
+      }) ?? new Promise<void>(() => {}),
     ]);
-    return 0;
+    return exitCode;
   } catch (err) {
     const message =
       err instanceof Error ? (err.stack ?? err.message) : String(err);
     process.stderr.write(`serve failed: ${message}\n`);
     return 1;
   } finally {
+    memoryGuard?.stop();
     orphanWatch?.stop();
     if (handle) await handle.close();
     if (runtime) await runtime.shutdown();
