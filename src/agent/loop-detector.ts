@@ -1,8 +1,8 @@
-import { BATCH_LOOP_LABEL, LOOP_WARNING_BUCKET_SIZE, WANDERING_CEILING_SHARE, OUTCOME_REPEAT_WARNING_THRESHOLD } from "./progress/loop-constants.js";
-export { BATCH_LOOP_LABEL, LOOP_VETO_DENIED_REASON, LOOP_WARNING_BUCKET_SIZE, WANDERING_CEILING_SHARE, TEST_REPEAT_WARNING_THRESHOLD, READ_REPEAT_WARNING_THRESHOLD, OUTCOME_REPEAT_WARNING_THRESHOLD } from "./progress/loop-constants.js";
+import { BATCH_LOOP_LABEL, LOOP_WARNING_BUCKET_SIZE, WANDERING_CEILING_SHARE, OUTCOME_REPEAT_WARNING_THRESHOLD, POLL_NO_PROGRESS_THRESHOLD } from "./progress/loop-constants.js";
+export { BATCH_LOOP_LABEL, LOOP_VETO_DENIED_REASON, LOOP_WARNING_BUCKET_SIZE, WANDERING_CEILING_SHARE, TEST_REPEAT_WARNING_THRESHOLD, READ_REPEAT_WARNING_THRESHOLD, OUTCOME_REPEAT_WARNING_THRESHOLD, POLL_NO_PROGRESS_THRESHOLD } from "./progress/loop-constants.js";
 import type { WanderingStop, OutcomeRepeatCheck, ReadRepeatCheck, TestRepeatCheck, ToolLoopTrackerOptions, LoopCheckVerdict } from "./progress/loop-contract.js";
 export type { LoopCheckLevel, WanderingStop, OutcomeRepeatCheck, ReadRepeatCheck, TestRepeatCheck, ToolLoopTrackerOptions, LoopCheckVerdict } from "./progress/loop-contract.js";
-import { isSuccessfulWrite, fingerprintToolOutcome, isLoopVetoResult, hashToolCall, hashToolOutcome, hashBatchCompositeArgs, hashBatchCompositeResults, sameReadVersion } from "./progress/loop-fingerprints.js";
+import { isSuccessfulWrite, isWriteTool, fingerprintToolOutcome, isLoopVetoResult, hashToolCall, hashToolOutcome, hashBatchCompositeArgs, hashBatchCompositeResults, sameReadVersion } from "./progress/loop-fingerprints.js";
 export { isSuccessfulWrite, fingerprintToolOutcome, isLoopVetoResult, hashToolCall, hashToolOutcome } from "./progress/loop-fingerprints.js";
 export { formatRepeatNotice, formatVetoInstruction, formatTestRepeatNotice, formatOutcomeRepeatNotice, formatReadRepeatNotice, formatWanderingRedirect, formatForcedLoopReply, extractLoopTarget } from "./progress/loop-notices.js";
 
@@ -17,13 +17,14 @@ import {
 import { ProbeRuns, probeFamily } from "./wandering-spread.js";
 import { MutationEpochs, normalizeLoopPath, readTargetPath, samePathTarget } from "./progress/mutation-epochs.js";
 import { FileReadVersions } from "../tools/os/fs/fs-read-freshness.js";
+import { getNoProgressStreak, getRepeatCount, RecentKeys, type CallEpoch, type HistoryEntry } from "./progress/loop-history.js";
+import { isDeliberatePoll } from "./progress/poll-command.js";
 
 /**
- * Cap on distinct outcome fingerprints tracked in one turn; the oldest
- * is evicted first. A turn that produces hundreds of distinct results is
- * not looping on any of them, so eviction can only cost a detection.
+ * Cap on warning keys remembered for de-duplication. A many-hour turn
+ * meets thousands of distinct calls; only recent ones can still repeat.
  */
-const MAX_TRACKED_OUTCOMES = 200;
+const MAX_WARNING_KEYS = 200;
 
 /**
  * Cap on files tracked for read coverage in one turn. A wide scan (a
@@ -51,23 +52,6 @@ export function isWanderingProneTool(tool: string): boolean {
   return probeFamily(tool) !== null;
 }
 
-interface HistoryEntry {
-  tool: string;
-  argsHash: string;
-  /** Set by `recordOutcome`. `undefined` while pending or when vetoed. */
-  resultHash?: string;
-  /** True when the outcome was a loop veto (excluded from the streak). */
-  vetoed?: boolean;
-  /** Step round the call was dispatched in (see `noteStep`). */
-  round?: number;
-  /**
-   * For an `os.fs.read`, the mutation epoch of its path at dispatch
-   * (`MutationEpochs`). Reads of different epochs never count against
-   * each other; `undefined` for every other call.
-   */
-  epoch?: number;
-}
-
 /**
  * OpenClaw-style per-turn tool loop tracker.
  *
@@ -89,6 +73,8 @@ interface HistoryEntry {
 export class ToolLoopTracker {
   private readonly warningThreshold: number;
   private readonly criticalThreshold: number;
+  /** No-progress cap for a deliberate poll; see `POLL_NO_PROGRESS_THRESHOLD`. */
+  private readonly pollCriticalThreshold: number;
   private readonly breakerVetoStreak: number;
   private readonly historySize: number;
   private readonly warningBucketSize: number;
@@ -99,7 +85,32 @@ export class ToolLoopTracker {
   /** Window-spread warn, the rung below `wanderingCeiling`. */
   private readonly wanderingWindowWarning: number;
   private readonly history: HistoryEntry[] = [];
-  private readonly warningBuckets = new Map<string, number>();
+  /**
+   * Warning key → the bucket last emitted and the call sequence number
+   * it was emitted at. An entry older than the history window has
+   * expired: the repeat it de-duplicated has scrolled out of every
+   * counter, so a later episode of the same call is a new one and is
+   * warned about again. Capped at `MAX_WARNING_KEYS`, oldest first.
+   */
+  private readonly warningBuckets = new Map<
+    string,
+    { bucket: number; seq: number }
+  >();
+  /** Calls recorded this turn; the clock `warningBuckets` expires on. */
+  private callSeq = 0;
+  /**
+   * Writes landed this turn. A call that is not a read, a write or a
+   * poll is judged only against identical calls made after the same
+   * number of landed writes: re-running the tests after an edit, or
+   * re-listing a directory after writing into it, is a new question.
+   */
+  private writesLanded = 0;
+  /**
+   * Deliberate polls run this turn (`progress/poll-command.ts`). Every
+   * call but a write or a poll, reads included, is judged only against
+   * identical calls made after the same number of polls.
+   */
+  private pollsRun = 0;
   private consecutiveVetoSignature: string | null = null;
   private consecutiveVetoCount = 0;
   /**
@@ -135,14 +146,15 @@ export class ToolLoopTracker {
     }
   >();
   /**
-   * Outcome-repeat detector state: outcome fingerprint → how many times
-   * this turn has received it since the last successful write. Cleared
+   * Outcome-repeat detector state: the fingerprints of the last
+   * `historySize` outcomes since the last successful write. Cleared
    * whole by a successful `os.fs.write` / `edit` / `patch`: a write is the
    * progress every repeated result was waiting for, so the counts before
-   * it are about a workspace that no longer exists. Insertion order is
-   * the eviction order (see `MAX_TRACKED_OUTCOMES`).
+   * it are about a workspace that no longer exists. A window, not a
+   * lifetime count: the same clean `git status` once an hour across an
+   * overnight run is not a loop.
    */
-  private readonly outcomeCounts = new Map<string, number>();
+  private readonly recentOutcomes: RecentKeys;
   /**
    * Wandering runs (issue #458): distinct probe signatures per
    * wandering-prone tool since the turn last completed a successful call
@@ -188,6 +200,11 @@ export class ToolLoopTracker {
       this.wanderingEscalation,
       options.historySize ?? 30,
     );
+    this.pollCriticalThreshold = Math.min(
+      this.historySize,
+      Math.max(this.criticalThreshold, POLL_NO_PROGRESS_THRESHOLD),
+    );
+    this.recentOutcomes = new RecentKeys(this.historySize);
     // The window ladder, derived from the window so it is always
     // reachable. Its warn sits at the same fraction of its stop as the
     // run ladder's does, so neither ladder can hard-stop a turn that was
@@ -218,9 +235,12 @@ export class ToolLoopTracker {
    */
   check(tool: string, args: unknown): LoopCheckVerdict {
     const argsHash = hashToolCall(tool, args);
-    const epoch = this.readEpoch(tool, args);
+    const epoch = this.callEpoch(tool, args);
     const noProgress = getNoProgressStreak(this.history, tool, argsHash, epoch);
-    if (noProgress.count >= this.criticalThreshold) {
+    const critical = isDeliberatePoll(tool, args)
+      ? this.pollCriticalThreshold
+      : this.criticalThreshold;
+    if (noProgress.count >= critical) {
       return {
         level: "critical",
         count: noProgress.count,
@@ -239,7 +259,7 @@ export class ToolLoopTracker {
       // avoid. A repeat falls through to the repeat detector, which
       // describes it accurately.
       const repeatsEarlierCall =
-        getRepeatCount(this.history, tool, argsHash) > 0;
+        getRepeatCount(this.history, tool, argsHash, epoch) > 0;
       const warn = this.wanderingWarning(tool, argsHash);
       if (warn !== null && !repeatsEarlierCall) {
         return {
@@ -362,12 +382,12 @@ export class ToolLoopTracker {
   /** Push a pending history entry. Call at dispatch, AFTER `check`. */
   recordCall(tool: string, args: unknown): void {
     const argsHash = hashToolCall(tool, args);
-    const epoch = this.readEpoch(tool, args);
+    this.callSeq += 1;
     this.history.push({
       tool,
       argsHash,
       ...(this.stepRound !== null ? { round: this.stepRound } : {}),
-      ...(epoch !== undefined ? { epoch } : {}),
+      ...this.callEpoch(tool, args),
     });
     this.trimHistory();
   }
@@ -395,10 +415,21 @@ export class ToolLoopTracker {
     );
   }
 
-  /** The mutation epoch an `os.fs.read` would be made in now. */
-  private readEpoch(tool: string, args: unknown): number | undefined {
+  /**
+   * The epochs a call would be made in now. A write carries none, so
+   * writing the same content again and again is still a streak. A
+   * deliberate poll carries none, so a poll stuck on the same answer is
+   * judged on its own streak (`pollCriticalThreshold`). An `os.fs.read`
+   * takes its path's mutation epoch (ATO-1000), so a write to another
+   * file does not excuse re-reading this one; anything else takes the
+   * count of landed writes. Both take the count of polls run.
+   */
+  private callEpoch(tool: string, args: unknown): CallEpoch {
+    if (isWriteTool(tool) || isDeliberatePoll(tool, args)) return {};
     const path = readTargetPath(tool, args);
-    return path === null ? undefined : this.mutations.epochFor(path);
+    const epoch =
+      path !== null ? this.mutations.epochFor(path) : this.writesLanded;
+    return { epoch, polls: this.pollsRun };
   }
 
   /**
@@ -454,6 +485,10 @@ export class ToolLoopTracker {
       return { repeat: false, count: 0, fingerprint: "" };
     }
     this.patchLatestPending(tool, args, { resultHash });
+    // Something changed between this call and the next identical one: a
+    // write landed, or a poll let time pass on purpose.
+    if (isSuccessfulWrite(tool, result)) this.writesLanded += 1;
+    if (isDeliberatePoll(tool, args)) this.pollsRun += 1;
     // Wandering runs (issue #458). A call that landed either settles the
     // other tools' runs (it is the progress they were missing) or joins
     // its own. A vetoed call returned above: it never ran.
@@ -483,18 +518,11 @@ export class ToolLoopTracker {
     result: CompressedToolResult,
   ): OutcomeRepeatCheck {
     if (isSuccessfulWrite(tool, result)) {
-      this.outcomeCounts.clear();
+      this.recentOutcomes.clear();
       return { repeat: false, count: 0, fingerprint: "" };
     }
     const fingerprint = fingerprintToolOutcome(tool, result);
-    const count = (this.outcomeCounts.get(fingerprint) ?? 0) + 1;
-    // Re-insert so the map's order stays least-recently-seen first.
-    this.outcomeCounts.delete(fingerprint);
-    this.outcomeCounts.set(fingerprint, count);
-    if (this.outcomeCounts.size > MAX_TRACKED_OUTCOMES) {
-      const oldest = this.outcomeCounts.keys().next();
-      if (!oldest.done) this.outcomeCounts.delete(oldest.value);
-    }
+    const count = this.recentOutcomes.push(fingerprint);
     return {
       repeat: count >= OUTCOME_REPEAT_WARNING_THRESHOLD,
       count,
@@ -710,9 +738,17 @@ export class ToolLoopTracker {
     const threshold = Math.max(1, minCount);
     if (count < threshold) return false;
     const bucket = Math.floor((count - threshold) / this.warningBucketSize);
-    const prev = this.warningBuckets.get(warningKey) ?? -1;
-    if (bucket <= prev) return false;
-    this.warningBuckets.set(warningKey, bucket);
+    const prev = this.warningBuckets.get(warningKey);
+    const live =
+      prev !== undefined && this.callSeq - prev.seq <= this.historySize;
+    if (live && bucket <= prev.bucket) return false;
+    // Re-insert so the map's order stays least-recently-warned first.
+    this.warningBuckets.delete(warningKey);
+    this.warningBuckets.set(warningKey, { bucket, seq: this.callSeq });
+    if (this.warningBuckets.size > MAX_WARNING_KEYS) {
+      const oldest = this.warningBuckets.keys().next();
+      if (!oldest.done) this.warningBuckets.delete(oldest.value);
+    }
     return true;
   }
 
@@ -794,12 +830,11 @@ export class ToolLoopTracker {
     }
     // No pending entry (e.g. recordOutcome without a preceding
     // recordCall): append a finished entry so the streak still advances.
-    const epoch = this.readEpoch(tool, args);
     this.history.push({
       tool,
       argsHash,
       ...(this.stepRound !== null ? { round: this.stepRound } : {}),
-      ...(epoch !== undefined ? { epoch } : {}),
+      ...this.callEpoch(tool, args),
       ...patch,
     });
     this.trimHistory();
@@ -810,56 +845,4 @@ export class ToolLoopTracker {
       this.history.splice(0, this.history.length - this.historySize);
     }
   }
-}
-
-/**
- * Walk history backwards counting identical `(tool, argsHash)` entries
- * whose `resultHash` matches the most recent matching result. Non-
- * matching tools are skipped (`continue`) so interleaving is tolerated;
- * a changed `resultHash` breaks the streak (`break`) so progress clears
- * it; entries without a `resultHash` (pending or vetoed) are skipped.
- */
-function getNoProgressStreak(
-  history: readonly HistoryEntry[],
-  tool: string,
-  argsHash: string,
-  epoch?: number,
-): { count: number; latestResultHash?: string } {
-  let streak = 0;
-  let latestResultHash: string | undefined;
-  for (let i = history.length - 1; i >= 0; i -= 1) {
-    const record = history[i]!;
-    if (record.tool !== tool || record.argsHash !== argsHash) continue;
-    if (record.epoch !== epoch) continue;
-    if (typeof record.resultHash !== "string" || !record.resultHash) continue;
-    if (latestResultHash === undefined) {
-      latestResultHash = record.resultHash;
-      streak = 1;
-      continue;
-    }
-    if (record.resultHash !== latestResultHash) break;
-    streak += 1;
-  }
-  return latestResultHash === undefined
-    ? { count: streak }
-    : { count: streak, latestResultHash };
-}
-
-/**
- * Raw count of matching `(tool, argsHash)` entries in the window. A read
- * only matches reads of its own mutation epoch (`epoch`); every other
- * call carries none, so `undefined === undefined` matches as before.
- */
-function getRepeatCount(
-  history: readonly HistoryEntry[],
-  tool: string,
-  argsHash: string,
-  epoch?: number,
-): number {
-  let count = 0;
-  for (const record of history) {
-    if (record.tool !== tool || record.argsHash !== argsHash) continue;
-    if (record.epoch === epoch) count += 1;
-  }
-  return count;
 }

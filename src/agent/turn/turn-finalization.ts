@@ -73,7 +73,9 @@ export function formatTaskStoppedReply(input: {
     input.cause === "time_ceiling"
       ? `(paused: this task hit its time limit after ${spent}.)`
       : input.cause === "no_progress"
-        ? `(paused: nothing came back from my last ${spent} of tool calls — something in the environment is failing.)`
+        ? // `spent` is the whole task, not the leg that failed: on a long
+          // run "my last 2400 steps" would overstate it by hours.
+          `(paused: for a whole stretch of steps nothing came back from my tool calls, ${spent} into this task. Something in the environment is failing.)`
         : `(paused: this task hit its step ceiling of ${input.stepCeiling} after ${spent}.)`;
   const tail =
     input.cause === "no_progress"
