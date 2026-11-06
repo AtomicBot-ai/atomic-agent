@@ -454,6 +454,9 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS",
         ENV_DEFAULTS.TASKS_MIN_INTERVAL_MS,
       ),
+      report: {
+        quietHours: readEnv("ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS") ?? null,
+      },
     },
     update: {
       checkOnStartup: readBool(
