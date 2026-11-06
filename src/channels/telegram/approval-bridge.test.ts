@@ -521,3 +521,49 @@ describe("ApprovalBridge.dispatch — forum topics", () => {
     expect(opts).not.toHaveProperty("message_thread_id");
   });
 });
+
+describe("ApprovalBridge and a dangerous shell command (ATO-1224)", () => {
+  function dangerous(approvalId: string): ApprovalRequest {
+    return {
+      ...req(approvalId),
+      category: "shell_dangerous",
+      reason: "recursive remove",
+      preview: "rm -rf ./build",
+    };
+  }
+
+  it("offers only approve and deny, and a forged grant answer grants nothing", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(dangerous("rm1"), 7);
+    const opts = h.api.sendMessage.mock.calls[0]![2] as { reply_markup: unknown };
+    expect(opts.reply_markup).toEqual({
+      inline_keyboard: [
+        [
+          { text: "✅ Approve", callback_data: "appr:rm1:y" },
+          { text: "❌ Deny", callback_data: "appr:rm1:n" },
+        ],
+      ],
+    });
+    const text = h.api.sendMessage.mock.calls[0]![1] as string;
+    expect(text).toContain("kind: dangerous shell command");
+
+    // Hand-made session / shape answers are not decisions here.
+    for (const kind of ["s", "a"]) {
+      await h.bridge.handleCallback({
+        ...callback("rm1", "y"),
+        data: `appr:rm1:${kind}`,
+      });
+    }
+    expect(h.approvals.decisions).toEqual([]);
+    expect(h.bridge.pendingCount()).toBe(1);
+
+    // Approve is a one-time yes: no grant rides on it.
+    await h.bridge.handleCallback(callback("rm1", "y"));
+    expect(h.approvals.decisions).toHaveLength(1);
+    expect(h.approvals.decisions[0]).toMatchObject({
+      approvalId: "rm1",
+      approved: true,
+    });
+    expect(h.approvals.decisions[0]).not.toHaveProperty("grant");
+  });
+});

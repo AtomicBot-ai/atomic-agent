@@ -94,6 +94,37 @@ describe("ApprovalModal", () => {
     expect(frame).toContain("git");
   });
 
+  it("says on both shell grants that risky commands still ask (ATO-1225)", () => {
+    const frame = frameOf(
+      request({ category: "shell", commandShape: "git" }),
+    ).replace(/\s+/g, " ");
+    expect(frame).toContain(
+      "allow shell command this session (risky commands still ask)",
+    );
+    expect(frame).toContain(
+      "allow all git this session (risky commands still ask)",
+    );
+  });
+
+  it("keeps the plain grant label for a non-shell category", () => {
+    const frame = frameOf(request({ category: "fs_write_home" })).replace(
+      /\s+/g,
+      " ",
+    );
+    expect(frame).toContain("allow file write · home this session");
+    expect(frame).not.toContain("risky commands still ask");
+  });
+
+  it("offers no grant for a dangerous shell command, shape or not (ATO-1224)", () => {
+    const frame = frameOf(
+      request({ category: "shell_dangerous", commandShape: "rm" }),
+    ).replace(/\s+/g, " ");
+    expect(frame).not.toContain("this session ·");
+    expect(frame).not.toContain("ctrl+f");
+    expect(frame).not.toContain("ctrl+b");
+    expect(frame).toContain("dangerous shell command is never granted for the session");
+  });
+
   it("offers the category grant but no shape grant for a non-shell request", () => {
     const frame = frameOf(request({ category: "fs_write_home" }));
     expect(frame).toContain("this session");

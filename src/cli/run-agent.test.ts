@@ -80,6 +80,21 @@ describe("formatCliApprovalPrompt", () => {
     );
   });
 
+  it("offers neither s nor a for a dangerous shell command (ATO-1224)", () => {
+    // Even a request that carried a shape: `a` is for `shell` only.
+    const prompt = formatCliApprovalPrompt({
+      ...request("shell_dangerous"),
+      tool: "os.shell.run",
+      commandShape: "rm",
+    });
+    expect(prompt).not.toContain("s = allow this kind");
+    expect(prompt).not.toContain("a = allow all");
+    expect(prompt).toContain("y = approve once");
+    expect(prompt).toContain(
+      "(dangerous shell command is never granted for the session)",
+    );
+  });
+
   it("offers the session grant and no note for a grantable category", () => {
     const prompt = formatCliApprovalPrompt(request("fs_write_home"));
     expect(prompt).toContain("s = allow this kind this session");
