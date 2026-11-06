@@ -140,3 +140,18 @@ export {
 export type { LiveWorkerControls, EscalationComplete } from "./escalation.js";
 export { SPLIT_PROPOSAL_TAG, TaskTreeState } from "./task-tree.js";
 export type { TaskTreeNode, TaskTreeReport } from "./task-tree.js";
+export {
+  FusionRunStore,
+  FUSION_RUNS_DIR_NAME,
+  FUSION_RUN_RETENTION_MS,
+  toolHasSideEffects,
+} from "./run-checkpoint.js";
+export type {
+  FusionRunCheckpoint,
+  FusionRunRecorder,
+} from "./run-checkpoint.js";
+export {
+  describeResumableRun,
+  planResume,
+  renderResumeRequest,
+} from "./run-resume.js";

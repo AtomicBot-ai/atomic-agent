@@ -163,6 +163,15 @@ export interface SlashDispatchResult {
    * the current session (ATO-66). Needs the runtime, so the caller runs it.
    */
   readonly fusionWorkerAction?: { action: "stop" | "escalate"; taskId: string };
+  /**
+   * `/fusion [resume|discard] [runId]`: list, continue or drop a fusion
+   * run of the current session that a restart cut off (ATO-617). Needs
+   * the runtime, so the caller runs it.
+   */
+  readonly fusionRunAction?: {
+    action: "list" | "resume" | "discard";
+    runId?: string;
+  };
 }
 
 /**
@@ -255,6 +264,20 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         });
       }
       return pureActions([], { fusionWorkerAction: { action: verb, taskId } });
+    }
+    case "fusion": {
+      const [verb = "", runId, ...rest] = parsed.args.trim().split(/\s+/).filter((part) => part.length > 0);
+      const action =
+        verb === "" ? "list" : verb === "resume" || verb === "discard" ? verb : null;
+      if (action === null || rest.length > 0 || (action === "list" && runId !== undefined)) {
+        return pureActions([], {
+          systemMessage:
+            "usage: /fusion (list unfinished runs) | /fusion resume [run id] | /fusion discard [run id]",
+        });
+      }
+      return pureActions([], {
+        fusionRunAction: { action, ...(runId === undefined ? {} : { runId }) },
+      });
     }
     case "abort":
       return pureActions([{ type: "abort_requested" }], {

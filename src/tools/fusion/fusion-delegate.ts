@@ -49,6 +49,12 @@ import {
   expandSplits,
   renderSplitInstructions,
 } from "./task-tree.js";
+import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
+import {
+  planResume,
+  readResumeRequest,
+  type ResumePlan,
+} from "./run-resume.js";
 import {
   applyJudgeVerdict,
   buildAcceptanceChecklist,
@@ -135,6 +141,12 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
   turnBudget?: FusionTurnBudget;
   /** The orchestrator's priced spend so far this turn (`TurnUsageMeter.peekCostUsd`). */
   orchestratorTurnSpendUsd?: (sessionId: string) => number | undefined;
+  /**
+   * Where each run is checkpointed after every task and wave, and where
+   * `resume` reads an unfinished one from (ATO-617). Absent: nothing is
+   * written and `resume` is refused.
+   */
+  runCheckpoints?: FusionRunStore;
 }
 
 function error(
@@ -228,7 +240,7 @@ export function buildFusionDelegateTool(
   return {
     name: FUSION_DELEGATE_TOOL,
     description:
-      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }.",
+      "Delegate independent parts of the work to local worker agents that run concurrently. You choose how many run at once with `maxWorkers`. A task that needs more room than the default can say so with `maxSteps` / `timeoutMs`; both are clamped to a multiple of the configured default and the result tells you when that happened. An optional `contract` (owners, provides, requires, checks) is prepended to every brief and checked after the fan-out. Give each `provides` entry a one-line `shape` (a signature, a return shape, what a field means): it is pasted into the brief of every worker that relies on it, and matching names is not matching meaning. Args: { tasks: [{ id, instructions, title?, deliverable?, files?, maxSteps?, timeoutMs? }], maxWorkers?, contract? }. To continue a run cut off by a restart: { resume: runId, confirm?: [taskId] } and nothing else.",
     readonly: false,
     async run(rawArgs, ctx): Promise<CompressedToolResult> {
       if (isFusionWorkerSessionId(ctx.sessionId)) {
@@ -245,8 +257,38 @@ export function buildFusionDelegateTool(
           { reason: "not-fusion", effective: mode.effective },
         );
       }
-      const parsed = parseDelegateArgs(rawArgs);
+      // A resume (ATO-617) replays the cut-off run's own arguments: the
+      // finished tasks are reported from its checkpoint, the rest run.
+      const resumeRequest = readResumeRequest(rawArgs);
+      if (typeof resumeRequest === "string") {
+        return error(`fusion.delegate: ${resumeRequest}`, { field: "resume" });
+      }
+      let resume: ResumePlan | undefined;
+      let resumedFrom: ReturnType<FusionRunStore["load"]> = null;
+      if (resumeRequest !== null) {
+        resumedFrom = deps.runCheckpoints?.load(resumeRequest.runId) ?? null;
+        if (resumedFrom === null || resumedFrom.sessionId !== ctx.sessionId) {
+          return error(
+            `fusion.delegate: there is no unfinished fusion run "${resumeRequest.runId}" in this session to resume. Plan the remaining work again instead.`,
+            { reason: "resume-unknown", runId: resumeRequest.runId },
+          );
+        }
+        if (deps.runCheckpoints!.isLive(resumedFrom)) {
+          return error(
+            `fusion.delegate: run "${resumeRequest.runId}" is still running; it cannot be resumed while it runs.`,
+            { reason: "resume-live", runId: resumeRequest.runId },
+          );
+        }
+        resume = planResume(resumedFrom, resumeRequest.confirm);
+      }
+      const delegateArgs = resumedFrom?.args ?? rawArgs;
+      const parsed = parseDelegateArgs(delegateArgs);
       if (!parsed.ok) return error(parsed.error, { field: "tasks" });
+      // What the run spent before the restart counts toward this turn's
+      // cap: a resume is the same run, not a fresh allowance.
+      if (resume !== undefined && resume.carriedSpendUsd > 0) {
+        turnBudget.addWorkerSpend(ctx.sessionId, resume.carriedSpendUsd);
+      }
 
       // Labels, never guesses: the resolver's pin when it has one, the
       // provider id when it does not. Both legs are read from the same
@@ -479,7 +521,11 @@ export function buildFusionDelegateTool(
       // The orchestrator's brief is a summary, and summaries were thin
       // enough that workers built the wrong thing or scavenged the disk
       // for the missing spec. Every worker also gets what was asked.
-      const originalRequest = deps.resolveOriginalRequest?.(ctx.sessionId);
+      // A resumed run keeps the request it was started for: this turn's
+      // own message is the person's "continue", not the job.
+      const originalRequest =
+        resumedFrom?.originalRequest ??
+        deps.resolveOriginalRequest?.(ctx.sessionId);
       // A local worker's time limit is sized from the machine's measured
       // speed (F19); a cloud leg has no such measurement and keeps the
       // configured ceiling.
@@ -593,6 +639,7 @@ export function buildFusionDelegateTool(
               },
               onEscalationSpend: (_taskId: string, usd: number): void => {
                 escalationSpendUsd += usd;
+                run?.addSpend(usd);
                 turnBudget.addWorkerSpend(ctx.sessionId, usd);
                 const stop = budgetStop();
                 if (stop !== undefined) stopForBudget(stop);
@@ -623,6 +670,39 @@ export function buildFusionDelegateTool(
               : renderAcceptanceBlock(items);
           }
         : undefined;
+      // The checkpoint (ATO-617): written after every task and wave, so a
+      // run cut off by a crash or a quit can be resumed from where it was.
+      const run: FusionRunRecorder | undefined = deps.runCheckpoints?.start({
+        ...(resume === undefined ? {} : { runId: resume.runId }),
+        sessionId: ctx.sessionId,
+        workingDir: ctx.workingDir,
+        ...(originalRequest === undefined ? {} : { originalRequest }),
+        args: checkpointArgs(delegateArgs),
+        tasks: parsed.tasks,
+        waveCount: plan.waves.length,
+        ...(resumedFrom === null ? {} : { resumedFrom }),
+      });
+      // Priced per leg: a role model's task is recorded at its own price.
+      const checkpointOptionsFor = (
+        pricing: typeof workerPricing,
+      ): Pick<
+        Parameters<typeof runWorkerTasks>[1],
+        "onWorkerTool" | "onTaskFinished"
+      > =>
+        run === undefined
+          ? {}
+          : {
+              onWorkerTool: (taskId: string, tool: string): void =>
+                run.noteTool(taskId, tool),
+              onTaskFinished: (result: WorkerTaskResult): void =>
+                run.recordTask(
+                  result,
+                  pricing !== undefined && result.usage !== undefined
+                    ? estimateUsageCostUsd(result.usage, pricing)
+                    : 0,
+                ),
+            };
+      const checkpointOptions = checkpointOptionsFor(workerPricing);
       // The task tree (ATO-940): off unless configured, and then only
       // the wave runs below read proposals — a judge's retry does not.
       const tree =
@@ -714,6 +794,7 @@ export function buildFusionDelegateTool(
             ...(allowSplit && canProposeSplit !== undefined
               ? { canProposeSplit }
               : {}),
+            ...checkpointOptions,
           },
         );
       // A role model's leg (ATO-943): its own provider, label, price and
@@ -787,6 +868,7 @@ export function buildFusionDelegateTool(
             ...(allowSplit && canProposeSplit !== undefined
               ? { canProposeSplit }
               : {}),
+            ...checkpointOptionsFor(pricing),
           },
         );
       };
@@ -879,8 +961,17 @@ export function buildFusionDelegateTool(
 
       let results: WorkerTaskResult[];
       try {
-        const finished = new Map<string, WorkerTaskResult>();
-        for (const wave of plan.waves) {
+        // A resume starts with what finished before the restart, and with
+        // the tasks that wait for the person's yes; neither runs here.
+        const finished = new Map<string, WorkerTaskResult>(
+          resume === undefined
+            ? []
+            : [...resume.carried, ...resume.needsConfirmation].map((r) => [
+                r.id,
+                r,
+              ]),
+        );
+        for (const [waveIndex, wave] of plan.waves.entries()) {
           waveWarnings.push(
             ...dependencyWarnings(wave, plan.dependencies, finished),
           );
@@ -897,6 +988,7 @@ export function buildFusionDelegateTool(
           const held =
             autoReplan > 0
               ? wave.filter((id) =>
+                  !finished.has(id) &&
                   (plan.dependencies.get(id) ?? []).some((provider) => {
                     const done = finished.get(provider);
                     return (
@@ -923,13 +1015,17 @@ export function buildFusionDelegateTool(
             );
           }
           const waveTasks = parsed.tasks.filter(
-            (t) => wave.includes(t.id) && !held.includes(t.id),
+            (t) =>
+              wave.includes(t.id) &&
+              !held.includes(t.id) &&
+              !finished.has(t.id),
           );
           const waveResults = await expandWave(
             waveTasks,
             await runTasks(waveTasks, contract, waveSuffix, true),
           );
           for (const result of waveResults) finished.set(result.id, result);
+          run?.recordWave(waveIndex + 1);
         }
         // In the caller's task order, whatever wave each ran in.
         results = parsed.tasks.flatMap((t) => {
@@ -939,6 +1035,8 @@ export function buildFusionDelegateTool(
       } catch (err) {
         // `runWorkerTasks` is written not to throw; if it ever does, the
         // orchestrator still gets a readable result rather than a dead turn.
+        // The checkpoint stays: what finished can still be resumed.
+        run?.finish("interrupted");
         return error(
           `the fan-out failed: ${err instanceof Error ? err.message : String(err)}`,
           { reason: "fan-out-failed" },
@@ -950,8 +1048,10 @@ export function buildFusionDelegateTool(
       // turn; the replan bound (ATO-941) is counted against these. A task
       // held or kept from starting has not been tried.
       if (autoReplan > 0) {
+        // Rows carried from before a restart (ATO-617) were not run now.
+        const carried = new Set(resume?.carried.map((r) => r.id) ?? []);
         for (const r of results) {
-          if (!(r.error ?? "").startsWith("not started:")) {
+          if (!(r.error ?? "").startsWith("not started:") && !carried.has(r.id)) {
             turnBudget.noteAttempt(ctx.sessionId, r.id);
           }
         }
@@ -1080,6 +1180,7 @@ export function buildFusionDelegateTool(
             });
             if (verdict.costUsd !== null && verdict.costUsd > 0) {
               judgeSpendUsd += verdict.costUsd;
+              run?.addSpend(verdict.costUsd);
               turnBudget.addWorkerSpend(ctx.sessionId, verdict.costUsd);
             }
             verdicts.set(row.id, verdict);
@@ -1157,6 +1258,17 @@ export function buildFusionDelegateTool(
           : undefined;
       const contractLine =
         contract === undefined ? undefined : renderContractLine(contract);
+      // The run ended here. Stopped by the person or by a quit, its file
+      // stays for a resume; otherwise there is nothing left to resume.
+      run?.finish(ctx.signal.aborted ? "interrupted" : "complete");
+      const resumeNote =
+        resume === undefined
+          ? ""
+          : `\n\nResumed run ${resume.runId}: ${resume.carried.length} task${resume.carried.length === 1 ? "" : "s"} reported from before the restart, ${resume.rerun.length} run again${
+              resume.needsConfirmation.length === 0
+                ? ""
+                : `, ${resume.needsConfirmation.length} not run again until the person agrees (${resume.needsConfirmation.map((r) => r.id).join(", ")})`
+            }.`;
 
       // Where each task ran (ATO-943): the model and role on the row, and
       // a note when it is not the worker leg or not where it asked to be.
@@ -1272,7 +1384,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${budgetNote}`,
+          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -1293,6 +1405,20 @@ export function buildFusionDelegateTool(
               ? {}
               : { replan }),
             ...(treeReport === undefined ? {} : { taskTree: treeReport }),
+            ...(run === undefined ? {} : { runId: run.runId }),
+            ...(resume === undefined
+              ? {}
+              : {
+                  resume: {
+                    runId: resume.runId,
+                    carried: resume.carried.map((r) => r.id),
+                    rerun: resume.rerun,
+                    needsConfirmation: resume.needsConfirmation.map(
+                      (r) => r.id,
+                    ),
+                    carriedSpendUsd: resume.carriedSpendUsd,
+                  },
+                }),
             ...(budgetStopped === undefined
               ? {}
               : {
@@ -1308,4 +1434,16 @@ export function buildFusionDelegateTool(
       );
     },
   };
+}
+
+/**
+ * The arguments a checkpoint replays: the call's own, without the
+ * resume keys, so a resumed run's file still describes the run.
+ */
+function checkpointArgs(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(args).filter(([key]) => key !== "resume" && key !== "confirm"),
+  );
 }
