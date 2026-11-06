@@ -119,6 +119,20 @@ describe("SessionStore turn checkpoints", () => {
     });
   });
 
+  it("keeps a title the row got while the turn ran", () => {
+    const state = seed("named");
+    store.beginTurn("named", 1_000, progress());
+    // Renamed mid-turn: the loop's copy was read before, without it.
+    store.renameSession("named", "Operator title", 1_500);
+    store.checkpointTurn(
+      afterSteps(state, 1),
+      progress({ stepsDone: 1, lastStepIndex: 0 }),
+    );
+    expect(store.load("named")?.metadata.title).toBe("Operator title");
+    store.finishTurn({ ...afterSteps(state, 1), status: "pending" });
+    expect(store.load("named")?.metadata.title).toBe("Operator title");
+  });
+
   it("does not checkpoint a turn it did not mark", () => {
     const state = seed("s2");
     expect(store.checkpointTurn(afterSteps(state, 1), progress())).toBe(false);

@@ -502,7 +502,13 @@ export class SessionStore {
   checkpointTurn(state: SessionState, progress: TurnProgress): boolean {
     const owner = this.ownTurns.get(state.id);
     if (owner === undefined || this.progress === null) return false;
-    const row = this.serialize(state);
+    // The loop's copy was read before the turn started: a rename or the
+    // namer's title written since is only in the row, and replacing the
+    // payload without it would lose it for good (`finishTurn` reads the
+    // row's title to keep it).
+    const row = this.serialize(
+      withStoredTitle(state, this.storedRow(state.id)),
+    );
     const result = this.progress.checkpoint.run({
       id: state.id,
       owner,
@@ -684,36 +690,7 @@ export class SessionStore {
       this.insertStmt.run(this.serialize(next));
       return;
     }
-    const storedUserAt = stored.titleSetByUserAt;
-    const nextUserAt = readUserTitleSetAt(next.metadata);
-    if (
-      stored.title !== null &&
-      storedUserAt !== null &&
-      (nextUserAt === null || nextUserAt < storedUserAt)
-    ) {
-      // The operator's name outranks any copy read before the rename —
-      // a turn that was running, the namer's late answer, a TUI stamp —
-      // whatever title that copy carries.
-      next = {
-        ...next,
-        metadata: {
-          ...next.metadata,
-          [SESSION_TITLE_METADATA_KEY]: stored.title,
-          [SESSION_TITLE_USER_SET_AT_KEY]: storedUserAt,
-        },
-      };
-    } else if (
-      stored.title !== null &&
-      readSessionTitle(next.metadata) === null
-    ) {
-      next = {
-        ...next,
-        metadata: {
-          ...next.metadata,
-          [SESSION_TITLE_METADATA_KEY]: stored.title,
-        },
-      };
-    }
+    next = withStoredTitle(next, stored);
     const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
     update.run(this.serialize(next));
   }
@@ -995,4 +972,49 @@ function ensureTurnOwnerColumn(db: Database.Database): string | null {
     const message = err instanceof Error ? err.message : String(err);
     return /duplicate column/i.test(message) ? null : message;
   }
+}
+
+/**
+ * `next` with the title the stored row carries where `next` should not
+ * replace it: the operator's stamped name over any copy without the
+ * stamp or with an older one, and any stored title over a copy with
+ * none. Shared by every write that replaces a row's payload.
+ */
+function withStoredTitle(
+  next: SessionState,
+  stored: StoredRow | undefined,
+): SessionState {
+  if (stored === undefined) return next;
+  const storedUserAt = stored.titleSetByUserAt;
+  const nextUserAt = readUserTitleSetAt(next.metadata);
+  if (
+    stored.title !== null &&
+    storedUserAt !== null &&
+    (nextUserAt === null || nextUserAt < storedUserAt)
+  ) {
+    // The operator's name outranks any copy read before the rename —
+    // a turn that was running, the namer's late answer, a TUI stamp —
+    // whatever title that copy carries.
+    return {
+      ...next,
+      metadata: {
+        ...next.metadata,
+        [SESSION_TITLE_METADATA_KEY]: stored.title,
+        [SESSION_TITLE_USER_SET_AT_KEY]: storedUserAt,
+      },
+    };
+  }
+  if (
+    stored.title !== null &&
+    readSessionTitle(next.metadata) === null
+  ) {
+    return {
+      ...next,
+      metadata: {
+        ...next.metadata,
+        [SESSION_TITLE_METADATA_KEY]: stored.title,
+      },
+    };
+  }
+  return next;
 }
