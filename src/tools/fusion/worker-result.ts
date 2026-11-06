@@ -445,6 +445,9 @@ function stopCauseNote(cause: WorkerStopCause, stepCount: number): string {
   if (cause === "no_progress") {
     return "stopped after a whole leg of steps made no progress";
   }
+  if (cause === "cost_ceiling") {
+    return "stopped at its spend limit; any reply was written on the forced final step and may describe work that was not done";
+  }
   return `stopped at its step limit (${stepCount} steps); the reply was written on the forced final step and may describe work that was not done`;
 }
 

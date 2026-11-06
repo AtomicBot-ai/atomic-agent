@@ -578,6 +578,10 @@ export async function createAgentRuntime(
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
     contextProviderId: (sessionId: string) => fallbackChain.standingOverrideFor(sessionId) ?? undefined,
+    // The task spend ceiling (ATO-1108) prices each step's completion the
+    // way compaction prices its own: cache-aware, unpriced (local) = $0.
+    priceCompletion: (result: CompletionResult, providerId: string | undefined) =>
+      compactionCost(result, providerId ?? providerRegistry.activeText.id),
     resolveLlmSlice: (providerId: string) => {
       const slice = resolveActiveLlmSlice(providerId);
       return {

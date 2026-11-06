@@ -12,6 +12,7 @@ import { createProgressNoteNoticeState } from "../progress-note-reply.js";
 import { createUnknownToolStreak } from "../policies/unknown-tool.js";
 import { ToolLoopTracker } from "../loop-detector.js";
 import { getConfig } from "../../config/index.js";
+import { resolveCostCeilingUsd } from "./turn-spend.js";
 
 export type TurnPreparationDependencies = Pick<
   AgentLoopDependencies,
@@ -232,8 +233,15 @@ export function prepareTurnBudgets(options: RunTurnOptions) {
     : legSteps;
   const durationCeilingMs =
     options.taskMaxDurationMs ?? taskCfg.maxDurationMs;
+  // Money (ATO-1108): `0` is no cap, the default.
+  const costCeilingUsd = resolveCostCeilingUsd(
+    options.taskMaxCostUsd,
+    taskCfg.maxCostUsd,
+  );
   const taskStartedAt = Date.now();
-  return { legSteps, autoContinue, stepCeiling, durationCeilingMs, taskStartedAt };
+  return {
+    legSteps, autoContinue, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt,
+  };
 }
 
 export function createTurnLoopTracker(): ToolLoopTracker {

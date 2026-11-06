@@ -846,6 +846,14 @@ describe("WorkerRunCollector — why a worker stopped", () => {
     expect(result.notes?.[0]).toMatch(/time limit/);
   });
 
+  it("says a worker stopped by the spend ceiling hit its spend limit, not its step limit", () => {
+    const c = new WorkerRunCollector();
+    const result = c.finish({ ...base, reason: "reply", stopCause: "cost_ceiling" });
+    expect(result.status).toBe("max_steps");
+    expect(result.notes?.[0]).toMatch(/spend limit/);
+    expect(result.notes?.[0]).not.toMatch(/step limit/);
+  });
+
   it("forgets a wait the provider recovered from, and never puts an error on an ok row", () => {
     const recovered = new WorkerRunCollector();
     recovered.observe(waiting("fetch failed"));

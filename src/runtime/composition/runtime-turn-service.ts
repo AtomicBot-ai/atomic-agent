@@ -125,6 +125,7 @@ export function createRuntimeTurnService(
     signal?: AbortSignal;
     providerId?: string;
     taskMaxDurationMs?: number;
+    taskMaxCostUsd?: number;
     toolFilter?: (name: string) => boolean;
     toolRole?: ToolRole;
     reasoningEffort?: ReasoningEffort;
@@ -150,6 +151,9 @@ export function createRuntimeTurnService(
     ...(runOptions.taskMaxDurationMs === undefined
       ? {}
       : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+    ...(runOptions.taskMaxCostUsd === undefined
+      ? {}
+      : { taskMaxCostUsd: runOptions.taskMaxCostUsd }),
     ...(runOptions.providerId === undefined
       ? {}
       : { providerId: runOptions.providerId }),
@@ -338,6 +342,7 @@ export function createRuntimeTurnService(
       signal?: AbortSignal;
       providerId?: string;
       taskMaxDurationMs?: number;
+      taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
@@ -574,6 +579,7 @@ export function createRuntimeTurnService(
       origin?: TurnOrigin;
       providerId?: string;
       taskMaxDurationMs?: number;
+      taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;

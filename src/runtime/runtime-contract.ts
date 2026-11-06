@@ -437,6 +437,8 @@ export interface AgentRuntime {
       origin?: TurnOrigin;
       providerId?: string;
       taskMaxDurationMs?: number;
+      /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
+      taskMaxCostUsd?: number;
       /**
        * Hide tools from this turn (see `RunTurnOptions.toolFilter`).
        * `fusion.delegate` narrows a worker's catalog with it.
@@ -484,6 +486,8 @@ export interface AgentRuntime {
       signal?: AbortSignal;
       providerId?: string;
       taskMaxDurationMs?: number;
+      /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
+      taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;

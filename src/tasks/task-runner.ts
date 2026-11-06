@@ -19,6 +19,8 @@ import {
   type TaskReportSink,
 } from "./task-report.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
+import { remainingCostUsd } from "./task-budget.js";
+import { formatUsd } from "../llm/provider/usage-cost.js";
 import {
   TaskValidationError,
   type TaskRecord,
@@ -46,6 +48,10 @@ export interface TaskRunnerRuntime {
       eventHook?: TurnEventHook;
       /** The progress marker's task id, resumes and request (ATO-1109). */
       checkpoint?: { taskId?: string; resumes?: number; request?: string };
+      /** The task's own wall-clock ceiling (`TaskRecord.maxDurationMs`). */
+      taskMaxDurationMs?: number;
+      /** What the task may still spend, USD (`TaskRecord.maxCostUsd`). */
+      taskMaxCostUsd?: number;
     },
   ): Promise<RunTurnResult>;
 }
@@ -345,6 +351,21 @@ export class TaskRunner {
       return blocked;
     }
 
+    // A budget the earlier attempts already used up (ATO-1108): running
+    // again would only spend more, so the task waits for an operator.
+    const costLeft = remainingCostUsd(claimed);
+    if (costLeft === "exhausted") {
+      const blocked = this.options.store.markBlocked(claimed.id, {
+        category: "tool",
+        message:
+          `budget_spent: ${formatUsd(claimed.spentUsd ?? 0)} of ` +
+          `${formatUsd(claimed.maxCostUsd ?? 0)} already spent by earlier attempts`,
+      });
+      this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
+      return blocked;
+    }
+
     this.stampWakeReason(session, claimed);
 
     // `task` is the row as it was before the claim, which cleared the
@@ -391,6 +412,27 @@ export class TaskRunner {
           }
         : undefined;
 
+    // A task with a spend ceiling has its spend written step by step
+    // (ATO-1108), not only when the turn returns: a run that throws, or
+    // a process that dies mid-run, must not hand the next attempt the
+    // whole budget again. `step_finished.spendUsd` is the turn's running
+    // total, so the latest one stands for this run.
+    const spentBefore = claimed.spentUsd ?? 0;
+    const spendHook: TurnEventHook | undefined =
+      claimed.maxCostUsd !== null
+        ? (event: AgentLoopEvent): void => {
+            if (event.type !== "step_finished" || event.spendUsd === undefined) return;
+            this.options.store.recordSpend(claimed.id, spentBefore + event.spendUsd);
+          }
+        : undefined;
+    const eventHook: TurnEventHook | undefined =
+      reportHook && spendHook
+        ? (event: AgentLoopEvent): void => {
+            reportHook(event);
+            spendHook(event);
+          }
+        : (reportHook ?? spendHook);
+
     const maxSteps = claimed.maxSteps ?? this.options.defaultMaxSteps;
     // Every run gets a stop of its own: an operator cancelling the task
     // (`cancel`), the runner stopping for shutdown (`stop`), and the
@@ -417,7 +459,11 @@ export class TaskRunner {
             maxSteps,
             origin: "scheduler",
             signal: run.signal,
-            ...(reportHook ? { eventHook: reportHook } : {}),
+            ...(eventHook ? { eventHook } : {}),
+            ...(claimed.maxDurationMs !== null
+              ? { taskMaxDurationMs: claimed.maxDurationMs }
+              : {}),
+            ...(costLeft !== undefined ? { taskMaxCostUsd: costLeft } : {}),
             checkpoint: {
               taskId: claimed.id,
               resumes: plan.kind === "resume" ? plan.resumes : 0,
@@ -443,6 +489,11 @@ export class TaskRunner {
           );
         }
         return this.handleFailure(claimed, category, err);
+      }
+      // What this run spent joins what earlier attempts spent, whatever
+      // the outcome: the morning report and a retry's budget read it.
+      if (result.spendUsd !== undefined) {
+        this.options.store.recordSpend(claimed.id, spentBefore + result.spendUsd);
       }
       // An operator cancelled the task while its turn ran — here, or from
       // another process, which cannot reach this turn — and that stands:

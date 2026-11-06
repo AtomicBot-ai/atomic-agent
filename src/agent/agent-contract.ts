@@ -219,6 +219,18 @@ export interface AgentLoopDependencies {
   /** Sticky fallback expected to serve this session; an explicit turn pin wins. */
   contextProviderId?: (sessionId: string) => string | undefined;
   /**
+   * Estimated USD spend of one step's completion, for the task spend
+   * ceiling and `RunTurnResult.spendUsd` (ATO-1108). Cache-aware
+   * (`estimateUsageCostUsd`); `undefined` or `0` for an unpriced model or
+   * a completion without usage. `providerId` is the link the step was
+   * routed to (`undefined`: the active provider). Absent (tests,
+   * embedders): every step counts $0, so no spend ceiling can fire.
+   */
+  priceCompletion?: (
+    completion: CompletionResult,
+    providerId: string | undefined,
+  ) => number | undefined;
+  /**
    * Optional hot-swap supervisor. When provided, the loop re-probes
    * `/props` at the start of every turn and inspects the `modelId` of
    * each completion; if the operator swaps the model behind
@@ -461,13 +473,19 @@ export interface SteeringChannel {
 }
 
 /**
- * Why a task stopped without the model closing it. The three ceilings
- * are the loop's own; `credit_exhausted` is the provider's — the account
- * cannot pay for the next request, so the turn parks where it is and
- * resumes after a top-up, the same way as after a ceiling.
+ * Why a task stopped without the model closing it. The ceilings are the
+ * loop's own; `credit_exhausted` is the provider's — the account cannot
+ * pay for the next request, so the turn parks where it is and resumes
+ * after a top-up, the same way as after a ceiling. `cost_ceiling` is the
+ * task's spend budget (`taskMaxCostUsd`): it ends the task through the
+ * same reserved summary step as `time_ceiling`.
  */
 export type TaskStopCause =
-  "step_ceiling" | "time_ceiling" | "no_progress" | "credit_exhausted";
+  | "step_ceiling"
+  | "time_ceiling"
+  | "cost_ceiling"
+  | "no_progress"
+  | "credit_exhausted";
 
 export interface RunTurnOptions {
   /** Frozen policy for this turn, its workers and background reflection. */
@@ -485,6 +503,15 @@ export interface RunTurnOptions {
   taskMaxSteps?: number;
   /** Wall-clock ceiling. Defaults to `config.agent.task.maxDurationMs`. */
   taskMaxDurationMs?: number;
+  /**
+   * Spend ceiling in USD (ATO-1108). Defaults to
+   * `config.agent.task.maxCostUsd`; `0` means no cap. Checked after each
+   * step's completion is priced (`AgentLoopDependencies.priceCompletion`):
+   * once the turn's spend reaches it, the next step is the reserved
+   * summary step and the task stops with `stopCause: "cost_ceiling"`.
+   * Unpriced completions (a local model) count as $0.
+   */
+  taskMaxCostUsd?: number;
   /**
    * Carry on past a leg boundary while the work progresses. Defaults to
    * `config.agent.task.autoContinue`; `false` restores the historical
@@ -880,6 +907,12 @@ export type AgentLoopEvent =
       summary: string;
       durationMs: number;
       /**
+       * The turn's estimated USD spend so far (ATO-1108), present once a
+       * priced step has run. Lets a watcher show spend against a
+       * `taskMaxCostUsd` budget without pricing completions itself.
+       */
+      spendUsd?: number;
+      /**
        * The step kept a `reply` batched with work tools as a progress
        * note and the turn went on (`progress-note-reply.ts`).
        */
@@ -1017,4 +1050,12 @@ export interface RunTurnResult {
    * when no call reported any, so a missing figure never reads as zero.
    */
   usage?: { promptTokens: number; completionTokens: number };
+  /**
+   * Estimated USD the turn's own step completions cost (ATO-1108),
+   * priced through `AgentLoopDependencies.priceCompletion`. `0` when
+   * nothing priced ran (a local model); absent when no pricing seam is
+   * wired. Sub-calls outside the step loop (memory, compaction) and
+   * fusion workers' own turns are not included.
+   */
+  spendUsd?: number;
 }

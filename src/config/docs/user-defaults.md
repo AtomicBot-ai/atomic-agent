@@ -53,6 +53,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.task.autoContinue` (default `true`).
 - `agent.task.resumeInterrupted` (default `true`): continue a task run cut off by a crash, a kill or a restart from its checkpoint.
 - `agent.task.maxResumes` (default `3`): crash/kill resumes before the task is failed.
+- `agent.task.maxCostUsd` (default `0`): spend ceiling per task in USD, `0` = no cap; unpriced (local) models count as $0.
 - `agent.toolTimeoutMs` (default `60000`).
 - `agent.readScope` (default `"working-dir"`).
 - `agent.approvalLevel` (default `1`).

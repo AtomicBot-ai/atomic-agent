@@ -14,6 +14,7 @@ import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLo
 import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-memory-context.js";
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
+import { costCeilingNotice, costCeilingReached, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
 import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
@@ -154,7 +155,7 @@ export class AgentLoop {
       overflowWindow !== null && (lastPromptWindow === null || lastPromptWindow > overflowWindow)
         ? { ...input, contextWindow: overflowWindow, profileWindowApplies: false }
         : input;
-    const { legSteps, stepCeiling, durationCeilingMs, taskStartedAt } =
+    const { legSteps, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt } =
       prepareTurnBudgets(options);
     // Provider-outage parking. A transport failure means "this link is
     // not answering", which is a state of the world, not a verdict on
@@ -308,8 +309,13 @@ export class AgentLoop {
       const elapsedMs = Date.now() - taskStartedAt;
       const outOfTime =
         turn.ceilingFiredMidRequest || elapsedMs >= durationCeilingMs;
+      // The spend ceiling (ATO-1108) is read here too, after the last
+      // step's completion was priced and before this one starts.
+      const outOfBudget =
+        !outOfTime && costCeilingReached(turn.spendUsd, costCeilingUsd);
       if (outOfTime) turn.stopCause = "time_ceiling";
-      const finalizationStep = i === stepCeiling - 1 || outOfTime;
+      else if (outOfBudget) turn.stopCause = "cost_ceiling";
+      const finalizationStep = i === stepCeiling - 1 || outOfTime || outOfBudget;
       // The stalled-review phase this step runs under, read before the
       // prompt is built (`review-stall.ts`): the notice joins the step's
       // `### notice` — inside `noticeForThisStep`, so a retry of the
@@ -353,9 +359,10 @@ export class AgentLoop {
       }
       const effectiveTransport: ToolCallTransport =
         pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar";
-      const finalizationNotice =
-        "This is the final allowed step. Do not call any non-terminal tool; " +
-        "summarize the completed work with reply, or end the session with finish.";
+      const finalizationNotice = outOfBudget
+        ? costCeilingNotice(turn.spendUsd, costCeilingUsd)
+        : "This is the final allowed step. Do not call any non-terminal tool; " +
+          "summarize the completed work with reply, or end the session with finish.";
       // The ceiling holds while waiting on a provider: the step's
       // completion request gets the task's remaining time as a deadline
       // (composed with the user's signal), so a turn parked in a queue
@@ -541,6 +548,15 @@ export class AgentLoop {
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              // Every completion the provider bills is priced (ATO-1108),
+              // not only the one a step commits: a repair attempt, an
+              // answer continuation, and a completion that is then
+              // thrown away (unparseable, truncated, empty, retried)
+              // all cost money, and they are the runaway cases the
+              // spend ceiling exists for.
+              if (event.type === "llm_completed") {
+                recordStepSpend(turn, event.completion, contextProviderId, this.deps.priceCompletion);
+              }
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
                 lastPromptWindow = event.prompt.contextWindow;
@@ -717,6 +733,7 @@ export class AgentLoop {
           stepIndex: i,
           summary,
           durationMs,
+          ...(turn.spendPriced ? { spendUsd: turn.spendUsd } : {}),
           ...(outcome.progressNote !== undefined ? { progressNote: true } : {}),
           ...(stallSignal !== null ? { reviewStall: stallSignal } : {}),
         });
@@ -1047,6 +1064,7 @@ export class AgentLoop {
             state, options, cancelled: false, category: failed.category,
             runError: failed.runError, creditRefused: false,
             stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+            ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
           }, this.deps, (sessionId) => this.flushSteering(sessionId));
         }
         if (decision.kind === "retry_same") { i -= 1; continue; }
@@ -1061,6 +1079,7 @@ export class AgentLoop {
           state, options, cancelled: decision.cancelled, category: decision.category,
           runError: decision.runError, creditRefused: decision.creditRefused,
           stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+          ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
         }, this.deps, (sessionId) => this.flushSteering(sessionId));
 
       }
@@ -1069,7 +1088,8 @@ export class AgentLoop {
     return finalizeAgentTurn({
       state, options, reason: turn.reason, stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt,
       taskStartedAt, stepCeiling, stopCause: turn.stopCause, creditStop: turn.creditStop, endedOnFinalizationStep: turn.endedOnFinalizationStep,
-      surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
+      surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds, costCeilingUsd,
+      ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
     }, this.deps, (sessionId) => this.flushSteering(sessionId));
 
   }

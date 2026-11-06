@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "./config-validation-error.js";
-import { parseBool, parseNonNegativeInt, parsePositiveInt } from "./config-primitives.js";
+import { coerceFloatLike, parseBool, parseNonNegativeInt, parsePositiveInt } from "./config-primitives.js";
 
 /**
  * What to do when the model provider stops answering.
@@ -48,6 +48,15 @@ export interface AgentTaskConfig {
    * agent down every time. `0` fails it at the first such interruption.
    */
   maxResumes: number;
+  /**
+   * Spend ceiling for one task, in USD, estimated from each completion's
+   * usage and the model's prices (prompt-cache aware). Reached, the task
+   * ends the same graceful way as the time ceiling. `0` means no cap.
+   * Unpriced models (a local model) count as $0, so this never stops
+   * local work. Default `0`. Additive and unversioned: an older file has
+   * no field and runs uncapped, as before.
+   */
+  maxCostUsd: number;
 }
 
 export function createProviderWaitDefaults(): ProviderWaitConfig {
@@ -72,6 +81,7 @@ export function createAgentTaskDefaults(): AgentTaskConfig {
     autoContinue: true,
     resumeInterrupted: true,
     maxResumes: 3,
+    maxCostUsd: 0,
   };
 }
 
@@ -137,5 +147,21 @@ export function parseAgentTask(
       task.maxResumes ?? defaults.maxResumes,
       "agent.task.maxResumes",
     ),
+    maxCostUsd: parseNonNegativeUsd(
+      task.maxCostUsd ?? defaults.maxCostUsd,
+      "agent.task.maxCostUsd",
+    ),
   };
+}
+
+/** A dollar amount: any finite number `>= 0`, fractions allowed. */
+function parseNonNegativeUsd(raw: unknown, field: string): number {
+  const value = coerceFloatLike(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new ConfigValidationError(
+      field,
+      `expected non-negative number, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
 }

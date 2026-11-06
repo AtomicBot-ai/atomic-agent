@@ -11,15 +11,24 @@ import {
   type TaskRecord,
   type TaskStatus,
 } from "../tasks/index.js";
+import {
+  validateMaxCostUsd,
+  validateMaxDurationMs,
+} from "../tasks/task-budget.js";
 
 /**
  * `POST /api/tasks` — persist a new task. Body shape:
  *
  *  ```json
- *  { "sessionId": "s-…", "userMessage": "…", "maxAttempts": 3, "maxSteps": 10 }
+ *  { "sessionId": "s-…", "userMessage": "…", "maxAttempts": 3, "maxSteps": 10,
+ *    "maxCostUsd": 5, "maxDurationMs": 28800000 }
  *  ```
  *
  * `maxAttempts` defaults to `config.tasks.maxAttempts` when omitted.
+ * `maxCostUsd` / `maxDurationMs` are the task's own budget (the desktop
+ * "Run overnight" dialog sets them); omitted or `null` leaves the
+ * config ceiling in charge, anything else that is not a positive
+ * number is a 400.
  * Auto-drain (when `tasks.runOnCreate` is enabled) is fire-and-forget;
  * the response always returns 201 with the freshly persisted row,
  * never the post-drain status.
@@ -57,12 +66,22 @@ export function createCreateTaskHandler(): HttpHandler {
       return;
     }
     try {
+      // Validate here as well as in the store so a string or other
+      // non-number is a 400 instead of being silently dropped.
+      const maxCostUsd = validateMaxCostUsd(
+        body.maxCostUsd as number | null | undefined,
+      );
+      const maxDurationMs = validateMaxDurationMs(
+        body.maxDurationMs as number | null | undefined,
+      );
       const created = ctx.runtime.taskRunner.create({
         sessionId,
         userMessage,
         origin: "http",
         maxAttempts,
         maxSteps,
+        maxCostUsd,
+        maxDurationMs,
       });
       sendJson(res, 201, recordToJson(created));
     } catch (err) {
@@ -270,5 +289,8 @@ function recordToJson(record: TaskRecord): Record<string, unknown> {
     lastScheduledAt: record.lastScheduledAt,
     triggerSource: record.triggerSource,
     notify: record.notify,
+    maxCostUsd: record.maxCostUsd,
+    maxDurationMs: record.maxDurationMs,
+    spentUsd: record.spentUsd,
   };
 }
