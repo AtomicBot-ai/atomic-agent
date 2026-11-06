@@ -180,6 +180,20 @@ describe("AgentLoop task spend ceiling", () => {
     expect(result.spendUsd).toBe(0);
   });
 
+  it("prices every completion the provider returned, including thrown-away ones", async () => {
+    const { agent, prompts } = loop(
+      (call) => (call === 1 ? "{ not a tool call" : call <= 3 ? readCall : replyCall("done")),
+      fortyCents,
+    );
+    const result = await agent.runTurn(
+      createEmptySessionState({ id: "s-cost-retries", workingDir }),
+      options({}),
+    );
+    // One $0.40 charge per completion requested, whatever the step did
+    // with it (repair, retry, or commit).
+    expect(result.spendUsd).toBeCloseTo(prompts.length * 0.4, 6);
+  });
+
   it("reports no spend figure when no pricing seam is wired", async () => {
     const { agent } = loop(() => replyCall("hi"));
     const result = await agent.runTurn(

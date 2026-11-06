@@ -528,6 +528,15 @@ export class AgentLoop {
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              // Every completion the provider bills is priced (ATO-1108),
+              // not only the one a step commits: a repair attempt, an
+              // answer continuation, and a completion that is then
+              // thrown away (unparseable, truncated, empty, retried)
+              // all cost money, and they are the runaway cases the
+              // spend ceiling exists for.
+              if (event.type === "llm_completed") {
+                recordStepSpend(turn, event.completion, contextProviderId, this.deps.priceCompletion);
+              }
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
                 lastPromptWindow = event.prompt.contextWindow;
@@ -616,7 +625,6 @@ export class AgentLoop {
         }
         state = outcome.nextSession;
         turn.stepsTaken += 1;
-        recordStepSpend(turn, outcome.completion, contextProviderId, this.deps.priceCompletion);
         // A step that came back ends a run of out-of-memory restarts.
         turn.oomRestarts = 0;
         // A step that came back whole ends a run of cut steps: the turn's

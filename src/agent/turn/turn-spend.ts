@@ -6,9 +6,10 @@ import type { TurnLoopState } from "./turn-state.js";
  * The task spend ceiling (ATO-1108): money, next to the step and time
  * ceilings the loop already had.
  *
- * Each step's completion is priced as soon as it returns (cache-aware,
+ * Every completion is priced as soon as it returns (cache-aware,
  * through the runtime's `priceCompletion` seam) and added to the turn's
- * spend. Before the next step starts, a spend at or over the ceiling
+ * spend, including repair attempts, answer continuations and
+ * completions a step then throws away and retries. Before the next step starts, a spend at or over the ceiling
  * makes that step the reserved summary step, exactly as a time ceiling
  * does, and the task ends with `stopCause: "cost_ceiling"`. The summary
  * step itself is one more completion, so a run can end slightly over
