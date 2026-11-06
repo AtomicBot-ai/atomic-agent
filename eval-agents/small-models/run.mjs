@@ -259,6 +259,7 @@ async function main() {
   }
 
   const matrix = JSON.parse(readFileSync(opts.matrix ?? join(HERE, "matrix.json"), "utf8"));
+  if (opts["llama-server"]) matrix.server.bin = opts["llama-server"];
   const plan = buildPlan(opts, matrix);
   process.stdout.write(`${printPlan(plan, opts)}\n`);
   if (opts["dry-run"]) return 0;
@@ -266,7 +267,6 @@ async function main() {
   const command = resolveAgentCommand(opts.agent);
   if (!opts["server-url"] && !opts["start-server"]) throw new Error("pass --server-url <url> (existing llama-server) or --start-server --models-dir <dir>");
   if (opts["start-server"] && !opts["models-dir"]) throw new Error("--start-server needs --models-dir <folder with the GGUF files>");
-  if (opts["llama-server"]) matrix.server.bin = opts["llama-server"];
 
   const runId = new Date().toISOString().replace(/[:.]/g, "-");
   // Default output lives under eval-agents/reports/ (gitignored): `mbp` only syncs tracked

@@ -28,14 +28,16 @@ export function makeNeedleLog(tokens, seed = `needle:${tokens}`) {
   const lines = [];
   let bytes = 0;
   let sec = 0;
-  while (bytes < targetBytes) {
+  const fillerLine = () => {
     sec += rng.int(0, 3);
     const ts = new Date(Date.UTC(2026, 10, 2, 0, 0, sec)).toISOString().replace(".000", "");
     const svc = `${rng.pick(SERVICES)}-${String(rng.int(1, 12)).padStart(2, "0")}`;
-    const line =
-      rng.next() < 0.06
-        ? `${ts} ERROR ${svc} code=E${rng.int(10, 39)} msg=upstream ${rng.pick(["timeout", "reset", "refused", "overloaded"])} req=${rng.hex(6)}`
-        : `${ts} ${rng.pick(["INFO", "INFO", "INFO", "WARN"])} ${svc} req=${rng.hex(6)} path=${rng.pick(PATHS)} status=${rng.pick([200, 200, 200, 201, 304, 404])} latency=${rng.int(3, 900)}ms`;
+    return rng.next() < 0.06
+      ? `${ts} ERROR ${svc} code=E${rng.int(10, 39)} msg=upstream ${rng.pick(["timeout", "reset", "refused", "overloaded"])} req=${rng.hex(6)}`
+      : `${ts} ${rng.pick(["INFO", "INFO", "INFO", "WARN"])} ${svc} req=${rng.hex(6)} path=${rng.pick(PATHS)} status=${rng.pick([200, 200, 200, 201, 304, 404])} latency=${rng.int(3, 900)}ms`;
+  };
+  while (bytes < targetBytes) {
+    const line = fillerLine();
     lines.push(line);
     bytes += line.length + 1;
   }
@@ -64,7 +66,15 @@ export function makeNeedleLog(tokens, seed = `needle:${tokens}`) {
     const i = freeIndex(0, n - 1);
     lines[i] = `${stamp(i)} ERROR ${rng.pick(SERVICES)}-02 code=E420 msg=quota warning req=${rng.hex(6)}`;
   }
-  return { text: `${lines.join("\n")}\n`, key, count, lines: n };
+  // The needle/error/decoy lines above are shorter than the filler they replace,
+  // so top the log back up with filler until it reaches the byte target again.
+  let total = lines.reduce((acc, l) => acc + l.length + 1, 0);
+  while (total < targetBytes) {
+    const line = fillerLine();
+    lines.push(line);
+    total += line.length + 1;
+  }
+  return { text: `${lines.join("\n")}\n`, key, count, lines: lines.length };
 }
 
 function needleTask(id, tokens, label) {
