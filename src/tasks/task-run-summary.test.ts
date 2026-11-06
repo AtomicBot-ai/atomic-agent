@@ -5,6 +5,8 @@ import type { CompressedToolResult } from "../compressor/result-compressor.js";
 
 import {
   createTaskRunSummaryCollector,
+  describeStepTools,
+  LAST_STEP_MAX_TOOLS,
   openChecklistItems,
   questionsIn,
   SUMMARY_MAX_ERRORS,
@@ -174,9 +176,33 @@ describe("createTaskRunSummaryCollector", () => {
     c.onEvent({ type: "loop_failed", error: new Error("boom"), category: "transport" });
     const s = c.snapshot();
     expect(s.steps).toBe(1);
-    expect(s.lastStep).toBe("read files");
+    expect(s.lastStep).toBe("no tool calls");
     expect(s.creditExhausted).toBe(true);
     expect(s.errors).toEqual(["turn failed [transport]: boom"]);
+  });
+
+  it("names the last step by tool and ok/failed, never by its raw output (ATO-1293)", () => {
+    const c = createTaskRunSummaryCollector();
+    c.onEvent({ type: "step_started", stepIndex: 0 });
+    c.onEvent(tool({ tool: "os.fs.read", summary: "OPENAI_API_KEY=sk-secret" }));
+    c.onEvent({ type: "step_finished", stepIndex: 0, summary: "OPENAI_API_KEY=sk-secret", durationMs: 5 });
+    expect(c.snapshot().lastStep).toBe("os.fs.read ok");
+    c.onEvent({ type: "step_started", stepIndex: 1 });
+    c.onEvent(tool({ tool: "os.fs.grep", summary: "/home/u/.env:1:TOKEN=abc" }));
+    c.onEvent(tool({ tool: "os.shell.run", status: "error", summary: "cat: secret.txt: denied" }));
+    c.onEvent({ type: "step_finished", stepIndex: 1, summary: "2 tools: os.fs.grep[ok], os.shell.run[error]", durationMs: 5 });
+    const s = c.snapshot();
+    expect(s.lastStep).toBe("os.fs.grep ok, os.shell.run failed");
+    expect(s.lastStep).not.toContain("TOKEN");
+    expect(s.steps).toBe(2);
+  });
+
+  it("counts the tools of a big step beyond the shown ones", () => {
+    const many = Array.from({ length: LAST_STEP_MAX_TOOLS + 3 }, () => ({ tool: "os.fs.read", ok: true }));
+    const line = describeStepTools(many);
+    expect(line.endsWith("+3 more")).toBe(true);
+    expect(line.split(", ")).toHaveLength(LAST_STEP_MAX_TOOLS);
+    expect(describeStepTools([])).toBe("no tool calls");
   });
 
   it("caps errors and counts the rest", () => {
