@@ -30,6 +30,7 @@ import {
 import { sendOutbound, type TelegramParseMode } from "./outbound-sender.js";
 import {
   formatTaskReportDigest,
+  splitTaskReportDigest,
   formatTaskReportMessage,
 } from "./task-report-message.js";
 import { sendWelcomeMessage } from "./welcome-message.js";
@@ -1010,11 +1011,15 @@ export class TelegramChannel {
   }
 
   /**
-   * Post reports held through quiet hours as ONE plain-text message
-   * (`formatTaskReportDigest`). Unlike `sendTaskReport` it never queues:
-   * the caller (`TaskReportHold`) keeps the reports durable and retries,
-   * so a channel that is not up answers `channel_not_up` and the
-   * reports stay held.
+   * Post reports held through quiet hours as a plain-text digest
+   * (`formatTaskReportDigest`): one message, or a few when more reports
+   * were held than one message shows in full (`splitTaskReportDigest`).
+   * The caller deletes the held rows after a confirmed send, so no
+   * report may be cut down to its id. Unlike `sendTaskReport` it never
+   * queues: the caller (`TaskReportHold`) keeps the reports durable and
+   * retries, so a channel that is not up answers `channel_not_up` and
+   * the reports stay held. A part that fails stops the send; a retry
+   * may repeat the parts already delivered, which beats losing any.
    */
   async sendTaskReportDigest(
     reports: readonly TaskReport[],
@@ -1023,17 +1028,20 @@ export class TelegramChannel {
     if (this.currentState !== "up" || !bot) return "channel_not_up";
     const ownerUserId = this.currentOwnerUserId;
     if (ownerUserId === null) return "not_paired";
-    const result = await sendOutbound({
-      api: bot.api,
-      chatId: ownerUserId,
-      text: formatTaskReportDigest(reports),
-      parseMode: "plain",
-      logger: {
-        warn: (message, context) => this.deps.logger.warn(message, context),
-      },
-    });
-    if (result.dropped > 0) return "delivery_failed";
-    this.deps.metrics?.recordTelegramMessage({ direction: "out" });
+    const groups = splitTaskReportDigest(reports);
+    for (const [i, group] of groups.entries()) {
+      const result = await sendOutbound({
+        api: bot.api,
+        chatId: ownerUserId,
+        text: formatTaskReportDigest(group, { index: i + 1, total: groups.length }),
+        parseMode: "plain",
+        logger: {
+          warn: (message, context) => this.deps.logger.warn(message, context),
+        },
+      });
+      if (result.dropped > 0) return "delivery_failed";
+      this.deps.metrics?.recordTelegramMessage({ direction: "out" });
+    }
     return "sent";
   }
 

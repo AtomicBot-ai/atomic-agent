@@ -4,6 +4,8 @@ import type { TaskReport, TaskRunSummary } from "../../tasks/index.js";
 
 import {
   formatTaskReportDigest,
+  splitTaskReportDigest,
+  TASK_REPORT_DIGEST_MAX_REPORTS,
   formatTaskReportMessage,
   TASK_REPORT_TRUNCATION_MARKER,
 } from "./task-report-message.js";
@@ -148,5 +150,21 @@ describe("formatTaskReportDigest", () => {
     const text = formatTaskReportDigest(reports);
     expect(text.length).toBeLessThan(4000);
     expect(text).toMatch(/more reports not shown: t-\d+/);
+  });
+
+  it("splits a long night into parts that show every report", () => {
+    const reports = Array.from({ length: 18 }, (_, i) =>
+      makeReport({ taskId: `t-0b8f6c2e-41d7-4a55-9a3e-5f1c7d2e9a${String(i).padStart(2, "0")}`, replyText: "r".repeat(5000) }),
+    );
+    const groups = splitTaskReportDigest(reports);
+    expect(groups.flat()).toEqual(reports);
+    expect(groups.every((g) => g.length >= 2 && g.length <= TASK_REPORT_DIGEST_MAX_REPORTS)).toBe(true);
+    groups.forEach((group, i) => {
+      const text = formatTaskReportDigest(group, { index: i + 1, total: groups.length });
+      expect(text.length).toBeLessThan(4000);
+      expect(text).not.toMatch(/more reports not shown/);
+      expect(text).toContain(`Morning report (${i + 1}/${groups.length})`);
+      for (const r of group) expect(text).toContain(r.taskId);
+    });
   });
 });

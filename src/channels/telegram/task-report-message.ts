@@ -118,22 +118,68 @@ export function formatTaskReportMessage(
   });
 }
 
+const DIGEST_SEPARATOR = "\n\n― ― ―\n\n";
+/** Room for the "not shown" line at the end of a digest. */
+const DIGEST_TAIL_RESERVE = 200;
+/** Upper bound on the two header lines, part label included. */
+const DIGEST_HEADER_RESERVE = 160;
+
+/**
+ * Most reports one digest message carries with every report shown at
+ * `DIGEST_MIN_PER_REPORT` or more (7 at the current limits).
+ */
+export const TASK_REPORT_DIGEST_MAX_REPORTS = Math.max(
+  1,
+  Math.floor(
+    (TASK_MESSAGE_MAX_CHARS - DIGEST_HEADER_RESERVE - DIGEST_TAIL_RESERVE) /
+      (DIGEST_MIN_PER_REPORT + DIGEST_SEPARATOR.length),
+  ),
+);
+
+/**
+ * Held reports split into digest messages, oldest first, each small
+ * enough that every report in it is shown. The groups are as even as
+ * possible, so no part is a lone report without the digest header. A
+ * long quiet night with a busy recurring task becomes a few messages
+ * instead of one that names most reports by id only: the held rows are
+ * deleted after a confirmed send, so a report cut down to an id (or
+ * past the cut of the id line) would be lost for good.
+ */
+export function splitTaskReportDigest(
+  reports: readonly TaskReport[],
+): TaskReport[][] {
+  if (reports.length === 0) return [];
+  const parts = Math.ceil(reports.length / TASK_REPORT_DIGEST_MAX_REPORTS);
+  const size = Math.ceil(reports.length / parts);
+  const groups: TaskReport[][] = [];
+  for (let i = 0; i < reports.length; i += size) {
+    groups.push(reports.slice(i, i + size));
+  }
+  return groups;
+}
+
 /**
  * Several reports held through quiet hours, as one message. Each
  * report keeps its own sections at a smaller budget; when even that
- * does not fit, the reports past the budget are named by id so nothing
- * disappears without a trace.
+ * does not fit, the reports past the budget are named by id. Callers
+ * that delete what they sent split first (`splitTaskReportDigest`), so
+ * that cut never happens to them; `part` labels one of those messages.
  */
-export function formatTaskReportDigest(reports: readonly TaskReport[]): string {
+export function formatTaskReportDigest(
+  reports: readonly TaskReport[],
+  part?: { index: number; total: number },
+): string {
   if (reports.length === 1) return formatTaskReportMessage(reports[0]!);
   const counts = { completed: 0, failed: 0, blocked: 0 };
   for (const r of reports) counts[r.status] += 1;
+  const label =
+    part !== undefined && part.total > 1 ? ` (${part.index}/${part.total})` : "";
   const header = [
-    `Morning report: ${reports.length} tasks finished during quiet hours`,
+    `Morning report${label}: ${reports.length} tasks finished during quiet hours`,
     `✅ ${counts.completed} completed · ❌ ${counts.failed} failed · ⛔ ${counts.blocked} blocked`,
   ].join("\n");
-  const separator = "\n\n― ― ―\n\n";
-  const tailReserve = 200; // room for the "not shown" line
+  const separator = DIGEST_SEPARATOR;
+  const tailReserve = DIGEST_TAIL_RESERVE;
   const room = TASK_MESSAGE_MAX_CHARS - header.length - tailReserve;
   const perReport = Math.floor(room / reports.length) - separator.length;
   const shown =

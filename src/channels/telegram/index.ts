@@ -14,6 +14,8 @@ export type {
 export {
   formatTaskReportDigest,
   formatTaskReportMessage,
+  splitTaskReportDigest,
+  TASK_REPORT_DIGEST_MAX_REPORTS,
   TASK_REPORT_ERROR_MAX_CHARS,
   TASK_REPORT_PROMPT_PREVIEW_CHARS,
   TASK_REPORT_RESULT_MAX_CHARS,
