@@ -149,6 +149,8 @@ export async function serveCommand(args: string[]): Promise<number> {
       ? null
       : startServeMemoryGuard({
           isBusy: () => liveRuntime.turnController.busySessionIds().length > 0,
+          // A daemon has no supervisor to start it again: it only reports the line.
+          exitAllowed: !(parsed.noParentExit || process.ppid <= 1),
         });
     let exitCode = 0;
     await Promise.race([

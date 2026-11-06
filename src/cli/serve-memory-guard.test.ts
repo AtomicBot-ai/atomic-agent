@@ -20,12 +20,13 @@ const sample = (heapGb: number, rssGb = 1, limitGb = 4, totalGb = 16): MemorySam
 });
 
 /** A guard on a hand-moved clock and a manual interval. */
-function harness(read: () => MemorySample, busy = false) {
+function harness(read: () => MemorySample, busy = false, exitAllowed?: boolean) {
   const lines: string[] = [];
   let clock = 0;
   let cleared = false;
   const guard = startServeMemoryGuard({
     isBusy: () => busy,
+    ...(exitAllowed === undefined ? {} : { exitAllowed }),
     read,
     write: (l) => lines.push(l),
     now: () => clock,
@@ -108,6 +109,16 @@ describe("startServeMemoryGuard", () => {
   it("waits for the running turn below the last-resort line", () => {
     const h = harness(() => sample(3.6), true);
     expect(h.guard.check()).toBe("warn");
+  });
+
+  it("a daemon with nothing to restart it reports the exit line and keeps serving", async () => {
+    const h = harness(() => sample(3.6), false, false);
+    expect(h.guard.check()).toBe("exit");
+    expect(h.cleared()).toBe(false);
+    expect(h.lines.some((l) => l.includes("memory exit"))).toBe(true);
+    expect(h.lines.some((l) => l.includes("memory guard"))).toBe(false);
+    const settled = await Promise.race([h.guard.exhausted.then(() => true), Promise.resolve(false)]);
+    expect(settled).toBe(false);
   });
 
   it("a reader that throws is not a reason to exit", () => {

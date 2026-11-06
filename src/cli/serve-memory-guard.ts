@@ -101,6 +101,13 @@ export function formatMemoryLine(sample: MemorySample, verdict: MemoryVerdict): 
 
 export interface ServeMemoryGuardDeps {
   isBusy: () => boolean;
+  /**
+   * False when nothing would start serve again after it exits: a daemon
+   * (`--no-parent-exit`, or no parent at boot, e.g. a service or a
+   * Telegram-only host). The guard then only reports the exit line and
+   * keeps serving. Default true.
+   */
+  exitAllowed?: boolean;
   read?: () => MemorySample;
   write?: (line: string) => void;
   now?: () => number;
@@ -154,7 +161,7 @@ export function startServeMemoryGuard(deps: ServeMemoryGuardDeps): ServeMemoryGu
       lastLogAt = now();
       write(formatMemoryLine(sample, verdict));
     }
-    if (verdict === "exit") {
+    if (verdict === "exit" && deps.exitAllowed !== false) {
       done = true;
       write("[atomic-agent] memory guard: closing the agent cleanly before the system runs out of memory\n");
       stop();
