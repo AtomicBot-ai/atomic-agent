@@ -51,10 +51,16 @@ export function createRuntimeObservability(
     stateDir: config.paths.stateDir,
     ...(options.analyticsSurface ? { surface: options.analyticsSurface } : {}),
   });
+  // `surface` picks the "sent" flag: desktop and terminal share the state
+  // file but each reports its own `app_installed` once (ATO-1227).
   const appInstalledContext = () => ({
     installChannel: analyticsDimensions.installChannel,
+    surface: analyticsDimensions.surface,
     otherSurfaceInstalled: detectOtherSurfaceInstalled(
       analyticsDimensions.surface,
+      undefined,
+      undefined,
+      config.paths.stateDir,
     ),
   });
   // Both clients are `let` (not `const`) so `setAnalyticsEnabled` can

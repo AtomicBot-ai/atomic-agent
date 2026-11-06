@@ -1,5 +1,6 @@
 import type { AnalyticsClient } from "./analytics-client.js";
 import type { AnalyticsStateStore } from "./analytics-state-store.js";
+import type { AnalyticsSurface } from "./resolve-surface.js";
 
 /** Canonical PostHog event names emitted by the runtime. */
 export const ANALYTICS_EVENTS = {
@@ -29,7 +30,18 @@ export type AnalyticsDisabledVia = "settings" | "slash" | "config";
 export interface AppInstalledContext {
   /** Install channel enum (also stamped globally). */
   installChannel?: string;
-  /** Whether the other surface (desktop / terminal) ran on this machine. */
+  /**
+   * Which surface is installing. The desktop has its own "sent" flag in
+   * the shared state file, so terminal and desktop each report once
+   * (ATO-1227); `tui`, `cli` and no value share the terminal's flag.
+   */
+  surface?: AnalyticsSurface;
+  /**
+   * Whether the other surface (desktop / terminal) ran on this machine,
+   * from a source outside the state file (a legacy separate state dir).
+   * With `surface` set, `other_surface_installed` is also `true` when the
+   * other surface's "sent" flag is set in the shared file.
+   */
   otherSurfaceInstalled?: boolean;
 }
 
@@ -105,16 +117,22 @@ export async function captureAppInstalled(
   context: AppInstalledContext = {},
 ): Promise<void> {
   if (!client) return;
-  if (store.isAppInstalledSent()) return;
+  const { surface } = context;
+  if (store.isAppInstalledSent(surface)) return;
+  const otherSurfaceInstalled =
+    surface !== undefined
+      ? context.otherSurfaceInstalled === true ||
+        store.isOtherSurfaceAppInstalledSent(surface)
+      : context.otherSurfaceInstalled;
   const delivered = await client.captureConfirmed(ANALYTICS_EVENTS.appInstalled, {
     ...(context.installChannel !== undefined
       ? { install_channel: context.installChannel }
       : {}),
-    ...(context.otherSurfaceInstalled !== undefined
-      ? { other_surface_installed: context.otherSurfaceInstalled }
+    ...(otherSurfaceInstalled !== undefined
+      ? { other_surface_installed: otherSurfaceInstalled }
       : {}),
   });
-  if (delivered) store.markAppInstalledSent();
+  if (delivered) store.markAppInstalledSent(surface);
 }
 
 /**

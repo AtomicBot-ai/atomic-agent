@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { resolveSurface, type AnalyticsSurface } from "./resolve-surface.js";
 import {
@@ -124,30 +124,45 @@ export function resolveAnalyticsDimensions(options: {
 }
 
 /**
- * Whether the *other* surface has ever run on this machine: the desktop
- * agent looks for the terminal state dir's `analytics.json`, the terminal
- * looks for the desktop's. Only a boolean leaves the machine. Uses the
- * home-based default dirs; always `false` under the test runner so the
- * suite never depends on the developer's home.
+ * Whether the *other* surface has ever run on this machine, judged by a
+ * separate state dir: the desktop agent looks for the terminal state
+ * dir's `analytics.json`, the terminal looks for the desktop's legacy
+ * `~/.atomic-agent-desktop` one (desktop builds before 0.0.3). Only a
+ * boolean leaves the machine. Uses the home-based default dirs; always
+ * `false` under the test runner so the suite never depends on the
+ * developer's home.
+ *
+ * Since Desktop 0.0.3 both surfaces share `~/.atomic-agent`, so for the
+ * desktop the "other" dir is usually its own: pass `ownStateDir` and a
+ * dir equal to it is never counted (it would always read `true`). The
+ * shared-folder case is answered by the per-surface flags in the state
+ * file instead (`captureAppInstalled`, ATO-1227).
  */
 export function detectOtherSurfaceInstalled(
   surface: AnalyticsSurface,
   home: string = homedir(),
   env: NodeJS.ProcessEnv = process.env,
+  ownStateDir?: string,
 ): boolean {
   if (env.VITEST !== undefined || env.NODE_ENV === "test") return false;
-  return otherSurfaceAnalyticsExists(surface, home);
+  return otherSurfaceAnalyticsExists(surface, home, ownStateDir);
 }
 
 /** Pure part of {@link detectOtherSurfaceInstalled}, exported for tests. */
 export function otherSurfaceAnalyticsExists(
   surface: AnalyticsSurface,
   home: string,
+  ownStateDir?: string,
 ): boolean {
-  const otherDir =
-    surface === "desktop" ? ".atomic-agent" : ".atomic-agent-desktop";
+  const otherDir = join(
+    home,
+    surface === "desktop" ? ".atomic-agent" : ".atomic-agent-desktop",
+  );
+  if (ownStateDir !== undefined && resolve(ownStateDir) === resolve(otherDir)) {
+    return false;
+  }
   try {
-    return existsSync(join(home, otherDir, "analytics.json"));
+    return existsSync(join(otherDir, "analytics.json"));
   } catch {
     return false;
   }
