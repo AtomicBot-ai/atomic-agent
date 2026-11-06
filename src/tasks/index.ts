@@ -10,6 +10,8 @@ export type {
   TaskStoreOptions,
 } from "./task-store.js";
 export { TaskRunner } from "./task-runner.js";
+export { planTaskResume, resumeNote, wasInterruptedFromOutside } from "./task-resume.js";
+export type { TaskResumePlan, TaskResumePolicy } from "./task-resume.js";
 export type {
   DrainOptions,
   DrainOutcome,
