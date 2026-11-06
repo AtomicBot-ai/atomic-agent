@@ -87,7 +87,7 @@ export async function runContextCompaction(
     const through = rolled?.through ?? plan.through;
     const method = rolled ? "rolling" : options.preferExtractive && config.mode === "auto"
       ? "extractive"
-      : chooseCompactionMethod(config.mode, route, () => estimateTokens(source().text));
+      : chooseCompactionMethod(config.mode, route, () => estimateTokens(source().text), plan.summaryMaxTokens);
     let summary: string;
     let model: string | null = null;
     if (rolled) {

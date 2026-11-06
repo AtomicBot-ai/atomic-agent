@@ -3,7 +3,7 @@ import { estimateTokens } from "../prompt/token-budget.js";
 import { assistantReplyTurn, assistantToolCallTurn, steeredUserTurn, stoppedTurnMarker, toolResultTurn, userTurn, type ConversationTurn } from "../session/conversation-turn.js";
 import { buildExtractiveSummary, clipMiddle, EXTRACTIVE_USER_MAX_CHARS } from "./compaction-extractive.js";
 import { describeToolStep, firstErrorLine } from "./compaction-extractive-steps.js";
-import { AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS, chooseCompactionMethod } from "./compaction-mode.js";
+import { AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS, chooseCompactionMethod } from "./compaction-mode.js";
 
 /** A long tool-heavy task: about 150k tokens of serialized records. */
 function bigSession(): ConversationTurn[] {
@@ -118,5 +118,20 @@ describe("compaction method choice", () => {
     expect(chooseCompactionMethod("auto", { local: true, prefixReuse: "none" }, small)).toBe("extractive");
     expect(chooseCompactionMethod("auto", { local: true, prefixReuse: "partial" }, small)).toBe("model");
     expect(chooseCompactionMethod("auto", { local: true }, () => AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS)).toBe("extractive");
+  });
+
+  it("asks the model on a no-reuse local route once the planned summary is large enough (ATO-895)", () => {
+    const none = { local: true, prefixReuse: "none" as const };
+    // A 16k window plans about 600 summary tokens: compaction every step or two, kept extractive.
+    expect(chooseCompactionMethod("auto", none, small, 600)).toBe("extractive");
+    expect(chooseCompactionMethod("auto", none, small, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS - 1)).toBe("extractive");
+    // 32k and 64k windows plan 1255 and 2048: the model writes the summary.
+    expect(chooseCompactionMethod("auto", none, small, NO_REUSE_MODEL_SUMMARY_MIN_TOKENS)).toBe("model");
+    expect(chooseCompactionMethod("auto", none, small, 2048)).toBe("model");
+    // A large source still extracts, whatever the summary size.
+    expect(chooseCompactionMethod("auto", none, () => AUTO_EXTRACTIVE_LOCAL_SOURCE_TOKENS, 2048)).toBe("extractive");
+    // The summary size does not change a route with prefix reuse, nor an explicit mode.
+    expect(chooseCompactionMethod("auto", { local: true, prefixReuse: "partial" }, small, 100)).toBe("model");
+    expect(chooseCompactionMethod("extractive", none, small, 2048)).toBe("extractive");
   });
 });

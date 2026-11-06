@@ -110,6 +110,16 @@ describe("auto compaction mode", () => {
     }
   });
 
+  it("asks the model on a local route without prefix reuse once the window plans a large summary (ATO-895)", async () => {
+    const wide = (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: 64000, conversationMaxTokens: 24000 });
+    const f = fixture("auto", { local: true, prefixReuse: "none" }, history(), wide);
+    f.config.summaryMaxTokens = 2048;
+    expect(await f.compactSession("chat")).toMatchObject({ status: "compacted" });
+    expect(f.complete).toHaveBeenCalled();
+    expect(f.stored().compaction).toMatchObject({ model: "test-model" });
+    expect(f.stored().compaction).not.toHaveProperty("kind");
+  });
+
   it("falls back to an extractive checkpoint when the model summary fails; model mode does not", async () => {
     const auto = fixture("auto");
     auto.complete.mockRejectedValue(new Error("provider down"));
