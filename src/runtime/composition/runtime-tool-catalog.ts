@@ -179,6 +179,11 @@ export function registerRuntimeCoreTools(input: {
   registerVerifyTools(toolRegistry, {
     ...dangerous,
     config: { browser: config.browser },
+    // The same guard policy as `os.shell.run`: a `git push` started by
+    // verify.run obeys the remote-sync switch too (ATO-1266).
+    shellPolicy: {
+      isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+    },
   });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
   // token saved in the Integrations hub works on the next turn. The
