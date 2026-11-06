@@ -213,3 +213,25 @@ export function emitConfigNotice(line: string): void {
   }
   process.stderr.write(`${line}\n`);
 }
+
+/**
+ * ATO-1239 / ATO-1241: the state dir is shared with newer builds (the
+ * desktop app), so an enum-like setting may hold a value this build has
+ * never heard of. That is not a broken file. True, with one notice, when
+ * `raw` is such a value: the caller reads `standIn` (the default, or
+ * unset) in its place, and `keepSetAsideConfigValues` keeps the newer
+ * value on a whole-file write. False for a known value and for anything
+ * that is not a non-empty string, which the caller's strict parser still
+ * rejects.
+ */
+export function isSetAsideString(
+  raw: unknown,
+  known: readonly string[],
+  field: string,
+  standIn: string | undefined,
+): boolean {
+  if (typeof raw !== "string" || raw.length === 0 || known.includes(raw)) return false;
+  const using = standIn === undefined ? "leaving it unset" : `using ${JSON.stringify(standIn)}`;
+  emitConfigNoticeOnce(`[atomic-agent] ${field} ${JSON.stringify(raw)} is not known to this build (a newer app may have written it); ${using} here — update atomic-agent to use it`);
+  return true;
+}

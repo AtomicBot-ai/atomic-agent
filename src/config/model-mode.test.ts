@@ -68,7 +68,9 @@ describe("model mode configuration", () => {
       activeTextProvider: "remote", providers: [{ ...provider, modelMode }],
     } });
     expect(parseUserConfigFile(raw(null)).llm!.providers[0]!.modelMode).toBe("cloud");
-    expect(() => parseUserConfigFile(raw("auto"))).toThrow(/modelMode/);
+    expect(() => parseUserConfigFile(raw(false))).toThrow(/modelMode/);
+    // ATO-1241: a mode string this build does not know reads as absent, like null.
+    expect(parseUserConfigFile(raw("auto")).llm!.providers[0]!.modelMode).toBe("cloud");
   });
   it("round-trips overrides without creating a catalog metadata override", () => {
     const parsed = parseLlmProviderEntry({ ...provider, modelMode: "cloud", modelModes: { large: "local", "vendor/model": "cloud" } }, "provider");
