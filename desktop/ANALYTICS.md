@@ -176,7 +176,17 @@ no agent is running).
   lines do not count); the lines themselves are never sent.
   `uptime` is lt_10s / lt_1m / lt_10m / lt_1h / gte_1h. `sentinel_alive` is
   yes / no: a dead sentinel means the agent closed itself on `--parent-pid`,
-  not a crash (ATO-763).
+  not a crash (ATO-763). `exit_status` is a word for a known exit code:
+  insufficient_resources (Windows 0xC000009A), no_memory, stack_overflow,
+  killed_from_outside, access_violation, or memory_guard (exit 86: the
+  agent's memory guard closed it cleanly before the system ran out,
+  ATO-1111). `free_mem` buckets the machine's free memory at the exit.
+  From the agent's last `[atomic-agent] memory …` sample (written every ten
+  minutes): `agent_rss` (lt_512m … gte_8g), `agent_heap` (heap share of its
+  ceiling) and `agent_mem_share` (RSS share of the machine), both lt_25 /
+  lt_50 / lt_75 / lt_90 / gte_90, and `agent_mem_verdict` (ok / warn /
+  exit). A growing agent shows a high `agent_heap`; a small machine shows a
+  modest `agent_rss` with a high `agent_mem_share`.
 - Scrubbing: the message is dropped (no message type is allowlisted); the
   type is kept only when it matches `SomethingError` / `SomethingException`
   or is one of the shell's own names, else `Error`; a renderer value that is

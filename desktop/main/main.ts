@@ -245,6 +245,7 @@ import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
+import { AgentMemoryTracker } from "./agent-memory-sample.js";
 import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
@@ -1143,6 +1144,8 @@ const AGENT_SAID_AT: number[] = [];
 const LAST_WORDS_MS = 30_000;
 /** ATO-763: how many AGENT_SAID lines the current agent wrote (reset as one starts), so an exit is judged on its own lines only. */
 let agentSaidSinceStart = 0;
+/** ATO-1111: the running agent's last `[atomic-agent] memory …` sample, for the exit report. */
+const agentMemory = new AgentMemoryTracker();
 
 /**
  * Item 11: the route left the managed daemon behind (Settings or the wizard
@@ -3195,13 +3198,17 @@ function wireIpc(client: AgentClient): void {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting });
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting, agentMemory: agentMemory.latest() });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
   client.on("status", (status: { state?: string }) => {
     // A start begins (not every status while it boots): the lines from here on are the new agent's.
-    if (status?.state === "starting" && agentStateWas !== "starting") agentSaidSinceStart = 0;
+    if (status?.state === "starting" && agentStateWas !== "starting") {
+      agentSaidSinceStart = 0;
+      // ATO-1111: the last memory sample is the agent's that wrote it, not the next one's.
+      agentMemory.reset();
+    }
     agentStateWas = status?.state;
   });
   client.on("log", (event) => send("agent:log", event));
@@ -3213,6 +3220,7 @@ function wireIpc(client: AgentClient): void {
      write-only until a check fails. */
   client.on("log", (event: { stream?: string; line?: string; level?: AgentLogLevel }) => {
     const line = String(event.line ?? "");
+    agentMemory.observe(line);
     /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
        INFO lines filled this ring. A structured line is tagged with its own
        level, a lifecycle line by its shape (agent-output.ts); INFO and DEBUG stay in agent.log and the
