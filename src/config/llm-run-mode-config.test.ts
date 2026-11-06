@@ -236,6 +236,56 @@ describe("scrubRunModeProviderPins", () => {
       fusion: { orchestratorModel: "gpt-5" },
     });
   });
+
+  it("drops escalation and judge pins that name the removed provider (ATO-1264)", () => {
+    const block = {
+      mode: "fusion" as const,
+      fusion: {
+        orchestratorProvider: "openrouter",
+        workerProvider: "local-llama",
+        escalation: "advisor" as const,
+        escalationProvider: "claude-cli",
+        escalationMaxUsd: 0.5,
+        judge: "on" as const,
+        judgeProvider: "claude-cli",
+      },
+    };
+    const scrubbed = scrubRunModeProviderPins(block, "claude-cli");
+    expect(scrubbed).toEqual({
+      mode: "fusion",
+      fusion: {
+        orchestratorProvider: "openrouter",
+        workerProvider: "local-llama",
+        escalation: "advisor",
+        escalationMaxUsd: 0.5,
+        judge: "on",
+      },
+    });
+    // The scrubbed block must load again without the removed provider.
+    const remaining = providers.filter((p) => p.id !== "claude-cli");
+    expect(() =>
+      parseLlmRunModeConfig(scrubbed, remaining, "llm.runMode"),
+    ).not.toThrow();
+  });
+
+  it("keeps escalation and judge pins that name another provider", () => {
+    const block = {
+      mode: "fusion" as const,
+      fusion: {
+        workerProvider: "local-llama",
+        escalationProvider: "openrouter",
+        judgeProvider: "claude-cli",
+      },
+    };
+    expect(scrubRunModeProviderPins(block, "local-llama")).toEqual({
+      mode: "fusion",
+      fusion: { escalationProvider: "openrouter", judgeProvider: "claude-cli" },
+    });
+    expect(scrubRunModeProviderPins(block, "claude-cli")).toEqual({
+      mode: "fusion",
+      fusion: { workerProvider: "local-llama", escalationProvider: "openrouter" },
+    });
+  });
 });
 
 describe("cloudWorkers (F21)", () => {
