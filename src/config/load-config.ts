@@ -248,6 +248,8 @@ export function loadConfig(): AtomicAgentConfig {
       toolTimeoutMs: user.agent.toolTimeoutMs,
       readScope: user.agent.readScope,
       approvalLevel: user.agent.approvalLevel,
+      smartApproval: user.agent.smartApproval,
+      smartApprovalModel: user.agent.smartApprovalModel,
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,

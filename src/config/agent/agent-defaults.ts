@@ -21,5 +21,7 @@ export function createAgentDefaults(): UserAgentConfig {
     // `0` = keep the `tokenBudget * 0.15` share (SESSION_SECTIONS_CAP_AUTO).
     sessionSectionsMaxTokens: 0,
     worldSnapshotMaxTokens: 8_000,
+    smartApproval: false,
+    smartApprovalModel: null,
   };
 }
