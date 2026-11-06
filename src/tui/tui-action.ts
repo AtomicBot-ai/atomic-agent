@@ -31,6 +31,7 @@ import type {
   TuiUiMode,
 } from "./tui-state.js";
 import type { ContextUsageState } from "../session/context-usage.js";
+import type { SessionUsageState } from "../session/usage-meter.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -216,6 +217,8 @@ export type TuiAction =
   | { type: "menu_closed" }
   /** Flip the composer's context detail panel (chip click, `/context`). */
   | { type: "context_panel_toggled" }
+  /** `/usage`: print the session's spend and limits (ATO-569). `now` keeps the reducer pure. */
+  | { type: "usage_report_requested"; now: number }
   | { type: "context_panel_closed" }
   | { type: "context_pairs_selected"; pairs: number }
   | { type: "menu_query_changed"; query: string }
@@ -278,6 +281,8 @@ export type TuiAction =
        * numbers on screen.
        */
       contextUsage?: ContextUsageState;
+      /** The target session's persisted spend and limits (ATO-569). */
+      sessionUsage?: SessionUsageState;
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
   | { type: "llama_url_changed"; url: string }
