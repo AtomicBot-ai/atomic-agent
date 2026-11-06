@@ -39,6 +39,11 @@ import {
 } from "./worker-runner.js";
 import { describeReplan, renderReplanBlock } from "./replan.js";
 import {
+  renderMergeBlock,
+  runIsolatedWave,
+  type MergeTaskSuggestion,
+} from "./branch-merge.js";
+import {
   applyJudgeVerdict,
   buildAcceptanceChecklist,
   judgeTask,
@@ -564,10 +569,38 @@ export function buildFusionDelegateTool(
               : renderAcceptanceBlock(items);
           }
         : undefined;
-      const runTasks = (
+      // Branch isolation (ATO-946): with `isolation: "worktree"` each run
+      // of tasks (a wave, a judge's retry) gets a workspace per task and
+      // is merged back before anything reads the folder. Off: unchanged.
+      const merges: MergeTaskSuggestion[] = [];
+      const runTasks = async (
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
         briefSuffix: ((taskId: string) => string | undefined) | undefined,
+      ): Promise<WorkerTaskResult[]> => {
+        if (mode.isolation !== "worktree") {
+          return runTasksIn(tasks, contract, briefSuffix, undefined);
+        }
+        const wave = await runIsolatedWave({
+          realDir: ctx.workingDir,
+          tasks,
+          writeScope,
+          inputs: contract?.inputs ?? [],
+          run: (rebased, taskWorkspace) =>
+            runTasksIn(rebased, contract, briefSuffix, taskWorkspace),
+        });
+        merges.push(...wave.merges);
+        return wave.results;
+      };
+      const runTasksIn = (
+        tasks: readonly DelegateTask[],
+        contract: DelegateContract | undefined,
+        briefSuffix: ((taskId: string) => string | undefined) | undefined,
+        taskWorkspace:
+          | ((
+              taskId: string,
+            ) => { workingDir: string; writeScope: readonly string[] } | undefined)
+          | undefined,
       ): Promise<WorkerTaskResult[]> =>
         runWorkerTasks(
           ctx.modelMode === "cloud"
@@ -597,6 +630,7 @@ export function buildFusionDelegateTool(
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
+            ...(taskWorkspace === undefined ? {} : { taskWorkspace }),
           },
         );
 
@@ -938,7 +972,7 @@ export function buildFusionDelegateTool(
             judgeSpendUsd > 0
               ? `\n\nThe judge (${judgeTarget?.model ?? judgeTarget?.providerId}) cost ${formatUsd(judgeSpendUsd)} this fan-out.`
               : ""
-          }${replan === undefined ? "" : renderReplanBlock(replan)}${budgetNote}`,
+          }${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -952,6 +986,7 @@ export function buildFusionDelegateTool(
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
             ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
+            ...(merges.length === 0 ? {} : { merges }),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)
               ? {}

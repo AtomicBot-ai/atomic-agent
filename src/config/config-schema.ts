@@ -1070,6 +1070,9 @@ export interface UserConfigFile {
 // `off`) and `judgeProvider` (default the orchestrator leg), ATO-944.
 // Unversioned, additive: `llm.runMode.fusion.autoReplan` (0..5, default
 // 0 = off), ATO-941.
+// Unversioned, additive: `llm.runMode.fusion.isolation` (`off|worktree`,
+// default `off`), ATO-946. An older file has none and workers write in
+// place, as before.
 export const USER_CONFIG_VERSION = 79;
 
 /**

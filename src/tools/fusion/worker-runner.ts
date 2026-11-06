@@ -564,6 +564,14 @@ export interface RunWorkerTasksOptions {
    * is exactly as before.
    */
   briefSuffix?: (taskId: string) => string | undefined;
+  /**
+   * The workspace a task runs in instead of the working directory, and
+   * the write scope rebased onto it (branch isolation, ATO-946). Absent,
+   * or `undefined` for a task: the working directory, as before.
+   */
+  taskWorkspace?: (
+    taskId: string,
+  ) => { workingDir: string; writeScope: readonly string[] } | undefined;
 }
 
 /** The row of a task the turn's cap kept from starting. */
@@ -632,10 +640,16 @@ async function runOneTask(
 ): Promise<WorkerTaskResult> {
   const startedAt = Date.now();
   const collector = new WorkerRunCollector();
+  // Branch isolation (ATO-946): the task's own workspace stands in for
+  // the working directory everywhere below. Without it, nothing changes.
+  const isolated = options.taskWorkspace?.(task.id);
+  const workingDir = isolated?.workingDir ?? deps.workingDir;
+  const sessionDir =
+    isolated !== undefined || deps.inheritWorkspace ? workingDir : undefined;
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
-  }, deps.inheritWorkspace ? deps.workingDir : undefined);
+  }, sessionDir);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
   // fan-out would deadlock rather than run. `createEphemeralSession`
@@ -755,7 +769,7 @@ async function runOneTask(
     // worker writes unprompted. The refuse policy above still catches
     // everything else, so straying outside the scope comes back as
     // `needs_orchestrator` — a task to re-delegate, not a dead worker.
-    const writeScope = options.writeScope ?? [];
+    const writeScope = isolated?.writeScope ?? options.writeScope ?? [];
     if (writeScope.length > 0) {
       deps.approvals.fanoutScopes?.grant(id, writeScope);
     }
@@ -768,7 +782,7 @@ async function runOneTask(
     // says, with no `overwrite` exemption — the orchestrator redeclares.
     const inputs = resolveContractInputs(
       options.contract?.inputs ?? [],
-      deps.workingDir,
+      workingDir,
     );
     if (inputs.length > 0) deps.declaredInputs?.declare(id, inputs);
   };
@@ -786,7 +800,7 @@ async function runOneTask(
 
   const suffix = options.briefSuffix?.(task.id);
   const brief = `${renderWorkerBrief(task, {
-    workingDir: deps.workingDir,
+    workingDir,
     ...(options.originalRequest === undefined
       ? {}
       : { originalRequest: options.originalRequest }),
@@ -1297,7 +1311,7 @@ async function runOneTask(
   ) {
     const replaceSession = deps.createEphemeralSession(
       { parentSessionId: options.parentSessionId, taskId: task.id },
-      deps.inheritWorkspace ? deps.workingDir : undefined,
+      sessionDir,
     );
     armWorkerSession(replaceSession.id);
     const replaceCollector = new WorkerRunCollector();
@@ -1561,7 +1575,7 @@ async function runOneTask(
   ) {
     const report = await inspectDeclaredFiles(
       task.files,
-      deps.workingDir,
+      workingDir,
       startedAt,
     );
     result = applyNoChangesRule(

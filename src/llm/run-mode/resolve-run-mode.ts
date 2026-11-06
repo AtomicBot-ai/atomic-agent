@@ -77,6 +77,11 @@ export type ResolvedRunMode = {
   judge?: { providerId: string; model: string | null } | null;
   /** `llm.runMode.fusion.autoReplan`, present only when set above 0 (ATO-941). */
   autoReplan?: number;
+  /**
+   * `llm.runMode.fusion.isolation`, present only when `"worktree"`
+   * (ATO-946): each task works in its own workspace and is merged back.
+   */
+  isolation?: "worktree";
   /** `llm.runMode.fusion.turnBudgetUsd`, present only when set above 0. */
   turnBudgetUsd?: number;
   /** `llm.runMode.fusion.turnTimeBudgetMs`, present only when set above 0. */
@@ -270,6 +275,7 @@ export function resolveRunMode(
     ...(fusion?.autoReplan !== undefined && fusion.autoReplan > 0
       ? { autoReplan: fusion.autoReplan }
       : {}),
+    ...(fusion?.isolation === "worktree" ? { isolation: "worktree" as const } : {}),
     ...(fusion?.turnBudgetUsd !== undefined && fusion.turnBudgetUsd > 0
       ? { turnBudgetUsd: fusion.turnBudgetUsd }
       : {}),
