@@ -46,6 +46,7 @@ import {
   FUSION_WORKER_APPROVAL_REFUSED,
   WORKER_TOOL_ROLE,
   isWorkerVisibleTool,
+  workerRefusalFor,
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
@@ -844,9 +845,13 @@ async function runOneTask(
     // A worker has no operator: an approval prompt would park the turn
     // until process exit. Refuse instead, with the reason the brief told
     // the model to hand back up.
+    // A step no fan-out can authorise (a dangerous command, the agent's
+    // own `.env`) gets a refusal that says so, rather than one inviting
+    // the orchestrator to re-send it with the path and loop.
     deps.approvals.setSessionPolicy(id, {
       onPrompt: "refuse",
       reason: FUSION_WORKER_APPROVAL_REFUSED,
+      reasonFor: workerRefusalFor,
     });
     // …and the half that lets it work at all. The operator answered one
     // question at the fan-out naming these directories; inside them this

@@ -3,6 +3,9 @@ export {
   isWorkerVisibleTool,
   FUSION_WORKER_APPROVAL_REFUSED,
   FUSION_WORKER_APPROVAL_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_REFUSED,
+  workerRefusalFor,
 } from "./worker-tool-policy.js";
 export {
   humaniseTaskId,

@@ -164,6 +164,13 @@ export type ApprovalEmitter = (request: ApprovalRequest) => void;
 export interface SessionApprovalPolicy {
   onPrompt: "refuse";
   reason: string;
+  /**
+   * A refusal worded for this request, when the session's general
+   * `reason` would send the model the wrong way: a fusion worker told to
+   * re-delegate a step no fan-out can authorise (`rm -rf`, the agent's
+   * own `.env`) loops. `undefined` falls back to `reason`.
+   */
+  reasonFor?: (request: ApprovalRequest) => string | undefined;
 }
 
 /** A live, in-memory view of a session's point grants. Diagnostic only. */
@@ -472,7 +479,7 @@ export class ApprovalGate {
       return Promise.resolve({
         approvalId,
         approved: false,
-        reason: policy.reason,
+        reason: policy.reasonFor?.(request) ?? policy.reason,
         automatic: true,
       });
     }

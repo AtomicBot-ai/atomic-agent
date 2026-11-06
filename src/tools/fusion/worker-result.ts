@@ -12,8 +12,21 @@ import {
   replacedInputsOf,
   type ReplacedInput,
 } from "./replaced-inputs.js";
-import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
+import {
+  FUSION_WORKER_APPROVAL_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+} from "./worker-tool-policy.js";
 import type { JudgeSummary } from "./judge.js";
+
+/**
+ * The note on a task a worker could not finish because a step needs the
+ * operator directly (`FUSION_WORKER_OPERATOR_ONLY_REFUSED`). Read by the
+ * orchestrator: sending the task out again only asks the operator about
+ * a wider fan-out and is refused again.
+ */
+export const WORKER_OPERATOR_ONLY_NOTE =
+  "blocked on a step only the user can approve (a dangerous command, or the agent's own config or secret files); " +
+  "no fan-out can authorise it, so do not send it out again: tell the user exactly what to run or change";
 
 /**
  * What one delegated task produced, as the orchestrator sees it.
@@ -233,6 +246,8 @@ export function describeChecks(
 export class WorkerRunCollector {
   private replyText = "";
   private approvalRefused = false;
+  /** A refusal no fan-out can lift (`FUSION_WORKER_OPERATOR_ONLY_MARKER`). */
+  private operatorOnlyRefused = false;
   private calls = 0;
   private errors = 0;
   private writes = 0;
@@ -289,6 +304,9 @@ export class WorkerRunCollector {
       else if (FILE_WRITING_TOOLS.has(result.tool)) this.writes += 1;
       if (resultCarriesApprovalRefusal(result.summary, result.details)) {
         this.approvalRefused = true;
+        if (resultCarriesOperatorOnlyRefusal(result.summary, result.details)) {
+          this.operatorOnlyRefused = true;
+        }
       }
       // The guard's hit is in the result's details whatever its status:
       // the write landed before the guard spoke.
@@ -390,6 +408,9 @@ export class WorkerRunCollector {
       status !== "cancelled"
         ? [stopCauseNote(input.stopCause, input.stepCount)]
         : [];
+    if (this.operatorOnlyRefused && status === "needs_orchestrator") {
+      notes.push(WORKER_OPERATOR_ONLY_NOTE);
+    }
     return {
       id: input.id,
       title: input.title,
@@ -436,6 +457,19 @@ export function resultCarriesApprovalRefusal(
   const reason = details.deniedReason ?? details.reason;
   return (
     typeof reason === "string" && reason.includes(FUSION_WORKER_APPROVAL_MARKER)
+  );
+}
+
+/** Whether a tool result is the refusal no fan-out can lift. */
+export function resultCarriesOperatorOnlyRefusal(
+  summary: string,
+  details: Record<string, unknown>,
+): boolean {
+  if (summary.includes(FUSION_WORKER_OPERATOR_ONLY_MARKER)) return true;
+  const reason = details.deniedReason ?? details.reason;
+  return (
+    typeof reason === "string" &&
+    reason.includes(FUSION_WORKER_OPERATOR_ONLY_MARKER)
   );
 }
 

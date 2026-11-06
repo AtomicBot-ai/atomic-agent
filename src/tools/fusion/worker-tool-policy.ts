@@ -1,3 +1,4 @@
+import type { ApprovalCategory } from "../../approval/approval-level.js";
 import type { ToolRole } from "../tool-roles.js";
 
 /**
@@ -94,3 +95,51 @@ export const FUSION_WORKER_APPROVAL_REFUSED =
  */
 export const FUSION_WORKER_APPROVAL_MARKER =
   "needs operator approval, which a worker cannot request";
+
+/**
+ * The stable substring of `FUSION_WORKER_OPERATOR_ONLY_REFUSED`: the
+ * result classifier keys a note to the orchestrator off it.
+ */
+export const FUSION_WORKER_OPERATOR_ONLY_MARKER =
+  "only the operator can approve it, and no fan-out can authorise it";
+
+/**
+ * The refusal for a step no fan-out can authorise, whatever directory
+ * it names: a dangerous shell command (`shell_dangerous`), the agent's
+ * own trust config or secret files (`trust_config`, `state_secret`), a
+ * mail, a password or a payment. The general refusal tells the worker
+ * to name the path so the task can be sent out again with it; for these
+ * that is a loop — the operator is asked about a wider fan-out, says
+ * yes, and the worker is refused again. So this one says to stop and
+ * hand the step to the operator. It keeps `FUSION_WORKER_APPROVAL_MARKER`
+ * so the task still comes back `needs_orchestrator`.
+ */
+export const FUSION_WORKER_OPERATOR_ONLY_REFUSED =
+  `this step ${FUSION_WORKER_APPROVAL_MARKER}, and ${FUSION_WORKER_OPERATOR_ONLY_MARKER}: ` +
+  "a dangerous command (rm -rf, git reset --hard, a force push, sudo), a read or change of " +
+  "the agent's own config or secret files, a mail, a password or a payment. " +
+  "Do not retry it or try another way to do the same thing. In your reply, name the exact " +
+  "command or file and report it to the orchestrator: re-sending the task will not help, " +
+  "only the user can run or approve it.";
+
+/** Categories a fan-out's directory never covers (see above). */
+const OPERATOR_ONLY_CATEGORIES: ReadonlySet<ApprovalCategory> = new Set([
+  "shell_dangerous",
+  "trust_config",
+  "state_secret",
+  "email",
+  "browser_secret",
+]);
+
+/**
+ * `SessionApprovalPolicy.reasonFor` for a worker: the operator-only
+ * refusal for a step no fan-out can authorise, else `undefined` (the
+ * general `FUSION_WORKER_APPROVAL_REFUSED`).
+ */
+export function workerRefusalFor(request: {
+  category: ApprovalCategory;
+}): string | undefined {
+  return OPERATOR_ONLY_CATEGORIES.has(request.category)
+    ? FUSION_WORKER_OPERATOR_ONLY_REFUSED
+    : undefined;
+}

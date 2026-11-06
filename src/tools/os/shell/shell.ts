@@ -243,7 +243,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // in" rather than something broader. One exception: a command
     // that would change a file the user declined this turn goes to the
     // gate, which refuses it, rather than running on the fan-out's yes.
+    // Nor does the directory cover a dangerous command (`rm -rf`, `git
+    // reset --hard`, `sudo`): the operator approved a directory of work,
+    // not those, so it goes to the gate too, where a worker's refuse
+    // policy hands it back as a step for the operator (ATO-1223).
+    const dangerous = isDangerousGuardRule(guardVerdict.rule);
     const scopedByFanout =
+      !dangerous &&
       (options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ??
         false) &&
       !(
@@ -266,7 +272,6 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // --hard`, `sudo`) asks as `shell_dangerous` with no shape: no
       // `shell` grant, no `[a]` on `git` and no level below full trust
       // runs it unasked, and no prompt offers to remember it (ATO-1220).
-      const dangerous = isDangerousGuardRule(guardVerdict.rule);
       const commandShape = dangerous
         ? undefined
         : shellGrantShape(guardInput.cmd, commandLine, useShell);
