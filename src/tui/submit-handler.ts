@@ -291,6 +291,14 @@ export function runSlashCommand(
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.fusionWorkerAction !== undefined) {
+    const { action, taskId } = result.fusionWorkerAction;
+    if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {
+      dispatch({ type: "system_message", text: "no fusion worker is running here" });
+    } else {
+      callbacks.onFusionWorkerAction(state.session.sessionId, taskId, action);
+    }
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }

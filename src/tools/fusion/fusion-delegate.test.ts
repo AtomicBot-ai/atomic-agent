@@ -1645,3 +1645,125 @@ describe("fusion.delegate — contract inputs (F51)", () => {
     expect(log).toHaveLength(6);
   });
 });
+
+describe("fusion.delegate models by role (ATO-943)", () => {
+  const roles: NonNullable<ResolvedRunMode["roles"]> = {
+    byRole: {
+      build: { providerId: "or-coder", model: "qwen-coder", local: false },
+      utility: { providerId: "local-llama", model: "small", local: true },
+      review: { providerId: "or-sonnet", model: "sonnet", local: false },
+    },
+    mixLocalModels: false,
+    localLegProviderIds: ["local-llama"],
+  };
+  const affine = (providerId: string): boolean =>
+    providerId === "local-llama" || providerId === "other-llama";
+
+  it("runs each task on its role's model and says so on the row", async () => {
+    const pins = new Map<string, string | undefined>();
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles }),
+        workerSupportsSlotAffinity: affine,
+        runTurn: async (session, _msg, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          pins.set(meta.taskId, options.providerId);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "b", instructions: "build it", role: "build" },
+          { id: "u", instructions: "rename", role: "utility" },
+          { id: "d", instructions: "plain" },
+          { id: "m", instructions: "check", model: "sonnet" },
+        ],
+      },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(Object.fromEntries(pins)).toEqual({
+      b: "or-coder",
+      u: "local-llama",
+      d: "local-llama",
+      m: "or-sonnet",
+    });
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows.map((r) => r.id)).toEqual(["b", "u", "d", "m"]);
+    expect(rows[0]).toMatchObject({ model: "qwen-coder", modelRole: "build" });
+    expect(rows[0]!.notes).toContain("ran on qwen-coder (role build)");
+    expect(rows[1]).toMatchObject({ model: "small", modelRole: "utility" });
+    expect(rows[2]).toMatchObject({ model: "small" });
+    expect(rows[3]).toMatchObject({ model: "sonnet" });
+  });
+
+  it("refuses a model that is not on the allowed list before any worker starts", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    const result = await buildFusionDelegateTool(
+      deps({ resolveRunMode: () => fusionMode({ roles }), runTurn }),
+    ).run(
+      { tasks: [{ id: "x", instructions: "go", model: "gpt-9" }] },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain('names model "gpt-9"');
+    expect(result.summary).toContain("`qwen-coder`");
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("keeps a second local model off the machine unless mixLocalModels says it fits", async () => {
+    const twoLocal: NonNullable<ResolvedRunMode["roles"]> = {
+      ...roles,
+      byRole: {
+        utility: { providerId: "other-llama", model: "tiny-8b", local: true },
+      },
+    };
+    const run = async (mode: ResolvedRunMode) => {
+      const pins: Array<string | undefined> = [];
+      const result = await buildFusionDelegateTool(
+        deps({
+          resolveRunMode: () => mode,
+          workerSupportsSlotAffinity: affine,
+          runTurn: async (_s, _m, options) => {
+            pins.push(options.providerId);
+            return turnResult();
+          },
+        }),
+      ).run({ tasks: [{ id: "u", instructions: "tidy", role: "utility" }] }, ctx());
+      return { pins, row: (result.details.tasks as WorkerTaskResult[])[0]! };
+    };
+    const guarded = await run(fusionMode({ roles: twoLocal }));
+    expect(guarded.pins).toEqual(["local-llama"]);
+    expect(guarded.row.notes?.join("\n")).toContain("mixLocalModels");
+    const mixed = await run(
+      fusionMode({ roles: { ...twoLocal, mixLocalModels: true } }),
+    );
+    expect(mixed.pins).toEqual(["other-llama"]);
+  });
+
+  it("without roles runs everything on the worker leg and leaves the rows as before", async () => {
+    const pins: Array<string | undefined> = [];
+    const result = await buildFusionDelegateTool(
+      deps({
+        runTurn: async (_s, _m, options) => {
+          pins.push(options.providerId);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "a", instructions: "one", role: "build" },
+          { id: "b", instructions: "two" },
+        ],
+      },
+      ctx(),
+    );
+    expect(pins).toEqual(["local-llama", "local-llama"]);
+    for (const row of result.details.tasks as WorkerTaskResult[]) {
+      expect(row).not.toHaveProperty("model");
+      expect((row.notes ?? []).join("\n")).not.toMatch(/ran on|role /);
+    }
+  });
+});
