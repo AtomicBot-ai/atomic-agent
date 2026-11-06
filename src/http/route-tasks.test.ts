@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
@@ -180,5 +184,53 @@ describe("tasks.minIntervalMs at runtime (#548)", () => {
       kind: "interval",
       everyMs: 30_000,
     });
+  });
+});
+
+describe("POST /api/tasks with workingDir and notify (ATO-1113)", () => {
+  let harness: Harness;
+  let dir: string;
+
+  beforeEach(async () => {
+    harness = await startTestHarness();
+    dir = mkdtempSync(join(tmpdir(), "task-dir-"));
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const post = (body: unknown) =>
+    fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("opens a new session in the folder and keeps notify", async () => {
+    const res = await post({ userMessage: "tidy the repo", workingDir: dir, maxAttempts: 1, notify: "telegram" });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { sessionId: string; notify: string | null };
+    expect(created.notify).toBe("telegram");
+    const session = harness.runtime.sessionStore.load(created.sessionId);
+    expect(session?.workingDir).toBe(dir);
+  });
+
+  it("refuses a folder that does not exist and leaves no session behind", async () => {
+    const before = harness.runtime.sessionStore.listRecent(200).length;
+    const res = await post({ userMessage: "x", workingDir: join(dir, "missing") });
+    expect(res.status).toBe(400);
+    expect(harness.runtime.sessionStore.listRecent(200).length).toBe(before);
+  });
+
+  it("refuses sessionId and workingDir together, and a notify target it does not know", async () => {
+    const session = harness.runtime.createSession();
+    expect((await post({ userMessage: "x", sessionId: session.id, workingDir: dir })).status).toBe(400);
+    expect((await post({ userMessage: "x", workingDir: dir, notify: "email" })).status).toBe(400);
+  });
+
+  it("still requires a session or a folder", async () => {
+    expect((await post({ userMessage: "x" })).status).toBe(400);
   });
 });
