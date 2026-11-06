@@ -129,7 +129,7 @@ const COMMANDS: CommandDescriptor[] = [
     name: "handoff",
     summary:
       "Continue a Claude Code or Codex session here (e.g. after its usage limit)",
-    run: (args) => handoffCommand(args),
+    run: (args) => handoffCommand(args, { openTui: tuiCommand }),
   },
   {
     name: "doctor",

@@ -14,7 +14,6 @@ import {
   type HandoffCandidate,
 } from "../import/index.js";
 import { SessionStore } from "../session/index.js";
-import { tuiCommand } from "../tui/index.js";
 
 export const HANDOFF_HELP =
   [
@@ -251,7 +250,13 @@ export async function handoffCommand(
     );
     return 0;
   }
-  const openTui = deps.openTui ?? tuiCommand;
+  // The TUI is injected by the CLI composition root (src/cli/index.ts):
+  // CLI commands do not import src/tui directly (scripts/check-imports.mjs).
+  const openTui = deps.openTui;
+  if (!openTui) {
+    process.stdout.write(`\nOpen it: atag tui --cwd ${shellQuote(workingDir)} --session ${built.session.id}\n`);
+    return 0;
+  }
   return openTui(["--cwd", workingDir, "--session", built.session.id, "--send", built.prompt]);
 }
 
