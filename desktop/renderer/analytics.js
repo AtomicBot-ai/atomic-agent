@@ -102,6 +102,7 @@ const ANX = (() => {
     const choice = key === 'prose' ? 'deny_with_text'
       : key === 'esc' ? 'abort'
       : key === 'c' ? 'allow_in_chat'
+      : key === 'w' ? 'allow_always'
       : (key === 'y' || key === 's' || key === 'a') ? 'allow_once' : 'deny';
     const at = apprShownAt.get(req);
     const cats = reg(() => CATS.map((c) => c[0]), []);

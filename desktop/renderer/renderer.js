@@ -3637,6 +3637,10 @@ function apprCard(m) {
          never `bash -c`), on an agent that takes it (apprChatOk). No key: the
          chords stay Allow once and Deny. */
       + (apprChatOk(m) ? '<button class="btn sm btn-s appr-chat" data-appr="c" title="' + esc('Allow this call, and ' + m.shape + ' commands for the rest of this chat without asking') + '">Allow in this chat</button>' : '')
+      /* ATO-1142: a saved rule, for a request the agent says it can remember
+         (canAlways). The agent's own words name what the rule covers. No key,
+         like Allow in this chat. */
+      + (apprAlwaysOk(m) ? '<button class="btn sm btn-s appr-always" data-appr="w" title="' + esc(apprAlwaysTitle(m)) + '">' + esc(apprAlwaysButton(m)) + '</button>' : '')
       + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny' + (current ? ' (' + apprKeyLabel('n') + ')' : '') + '">Deny' + keyOn('n') + '</button>'
       + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run">Abort run</button>'
     + '</div>'
@@ -3702,6 +3706,23 @@ const APPR_FALLBACK = {
 function apprChatOk(m) {
   const decisions = LIVE_CAPS && LIVE_CAPS.agent && LIVE_CAPS.agent.approvalDecisions;
   return !!m.shape && m.cat === 'shell' && Array.isArray(decisions) && decisions.includes('allow-in-chat');
+}
+/** ATO-1142: whether the card offers "Always allow". Only when the agent's
+    `approval_request` frame says `canAlways: true` (a category it may save a
+    rule for, with a rules store installed), and not again on a card whose
+    rule the agent already refused (apprAlwaysReopen). */
+function apprAlwaysOk(m) {
+  return !!m && m.canAlways === true && !m.alwaysRefused;
+}
+/** The button's words: the agent's `alwaysLabel` when it reads as a short
+    button, else "Always allow". The full label is the tooltip either way. */
+function apprAlwaysButton(m) {
+  const label = String(m.alwaysLabel || '').trim();
+  return label && label.length <= 48 ? label : 'Always allow';
+}
+function apprAlwaysTitle(m) {
+  const label = String(m.alwaysLabel || '').trim();
+  return (label || 'Always allow this') + '. Saved as a rule; remove it in Settings, Privacy.';
 }
 /** The question: "Allow Atomic Agent to run `touch approved.txt`?" (html). */
 function apprAsk(m) {
@@ -11161,6 +11182,9 @@ function onApprovalEvent(payload) {
     reason: payload.reason || '',
     preview: payload.preview || '(no preview)',
     shape: payload.commandShape || '',
+    // ATO-1142: the agent can save an allow rule for this request, and the words it uses for it.
+    canAlways: payload.canAlways === true,
+    alwaysLabel: typeof payload.alwaysLabel === 'string' ? payload.alwaysLabel : '',
     affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
     affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
     sessionGrants: false,
@@ -11326,9 +11350,42 @@ function apprChatGrantedNote(req) {
   return {id:nid(), k:'system', apprNote:true,
     text:'Allowed in this chat. Atomic Agent won\u2019t ask again about <code>' + esc(req.shape) + '</code> commands until you start a new chat.'};
 }
+/* ATO-1142: "Always allow" the agent did not take. A 400 (it saves no rule
+   for this request, or no rules store is installed) resolves nothing, so the
+   request is still waiting at the gate. A "not pending" answer is the usual
+   no-longer-waiting case, and a failed send is the usual send error. */
+function apprAlwaysRefused(res) {
+  return !!res && res.ok !== false && !!res.data && res.data.resolved !== true && !approvalNotWaiting(res.data);
+}
+/* The card opens again without its Always allow button, with a short line
+   under it: Allow once and Deny still answer it, by click or by key. */
+function apprAlwaysReopen(req, res) {
+  const err = res && res.data && res.data.error;
+  const why = typeof err === 'string' ? err : (err && typeof err.message === 'string' ? err.message : '');
+  LOGS.push([new Date().toTimeString().slice(0, 8), 'warn', 'approval answer: allow-always refused for ' + req.approvalId + (why ? ': ' + why : '')]);
+  delete req.state; delete req.at; delete req.landed;
+  req.alwaysRefused = true;
+  const sid = req.sessionId;
+  if (sid) { PENDING_APPROVALS.set(sid, req.approvalId); APPROVAL_CARDS.set(sid, req); }
+  if (S.log.includes(req) && (!sid || approvalOnScreen(sid))) S.pending = req;
+  // Waiting for an answer again is not "busy" for the chat that asked (onApprovalEvent).
+  if (!sid || sid === S.agentSession) S.busy = false;
+  placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn',
+    text:'Couldn\u2019t save that as a rule, so nothing was decided yet. Choose Allow once or Deny.'});
+}
+/* The receipt for a saved rule: what it allows, in the agent's words, and
+   where to remove it. A system row's text is html, so the label is escaped. */
+function apprAlwaysSavedNote(req, data) {
+  const label = String(req.alwaysLabel || '').trim();
+  const rule = data && data.rule;
+  const what = label || (rule && Array.isArray(rule.commandPrefix) && rule.commandPrefix.length ? 'Always allow <code>' + esc(rule.commandPrefix.join(' ')) + '</code>' : 'Always allow this');
+  return {id:nid(), k:'system', apprNote:true,
+    text:'Rule saved: ' + (label ? esc(label) : what) + '. Atomic Agent won\u2019t ask about it again. You can remove it in Settings, Privacy.'};
+}
 function answerLive(req, key) {
-  const approve = key === 'y' || key === 's' || key === 'a' || key === 'c';
+  const approve = key === 'y' || key === 's' || key === 'a' || key === 'c' || key === 'w';
   const inChat = key === 'c' && apprChatOk(req);
+  const always = key === 'w' && apprAlwaysOk(req);
   ANX.apprAnswered(req, key);
   // Backlog 25: an older card answered by its own button (see the click
   // delegator) leaves the newest request, and its card, open.
@@ -11365,9 +11422,12 @@ function answerLive(req, key) {
   /* Q60 review: whether the agent took it, for a replay of the same request
      (onApprovalEvent): only a confirmed answer keeps the card closed. */
   req.answering = true; delete req.landed;
-  const decision = inChat ? 'allow-in-chat' : approve ? 'allow-once' : 'deny';
+  const decision = always ? 'allow-always' : inChat ? 'allow-in-chat' : approve ? 'allow-once' : 'deny';
   BR.approve(req.approvalId, decision).then((res) => apprChatFallback(req, decision, res)).then((res) => {
     req.answering = false;
+    // ATO-1142: a rule the agent would not save (a 400) decided nothing; the card asks again.
+    if (always && apprAlwaysRefused(res)) { apprAlwaysReopen(req, res); render(); return; }
+    if (always && res && res.ok !== false && res.data && res.data.resolved === true) placeAfterRow(req, apprAlwaysSavedNote(req, res.data));
     req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
     if (inChat && req.landed && res.chatGranted) placeAfterRow(req, apprChatGrantedNote(req));
     if (res && res.ok !== false && approvalNotWaiting(res.data)) apprNoLongerWaiting(req);
