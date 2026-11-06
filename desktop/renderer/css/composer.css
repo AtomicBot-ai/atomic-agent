@@ -301,6 +301,13 @@
 .ctxpct{font:500 var(--fs-label)/1 var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-2)}
 .ctxbtn.warn .ctxpct{color:var(--amber-text)}
 .ctxbtn.crit .ctxpct{color:var(--critical)}
+/* ATO-569: the chat's cost and the plan's limit, after the ring. Plain text
+   in the ring's ink, not a button: the numbers are its tooltip; amber once
+   the plan window is nearly spent. */
+.cfoot .usagechip{flex:none;display:inline-flex;align-items:center;height:24px;padding:0 6px;
+  font:500 var(--fs-label)/1 var(--font-ui);font-variant-numeric:tabular-nums;color:var(--ink-2);
+  white-space:nowrap;cursor:default}
+.cfoot .usagechip.warn{color:var(--amber-text)}
 
 /* Mode chip tones: default neutral · plan blue · auto amber · bypass red. */
 .cfoot .cmodechip.tone-plan{background:var(--brand-wash);color:var(--blue)}
