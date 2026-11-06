@@ -68,13 +68,14 @@ function ovnFinished(task) { return !!task && OVN_TERMINAL.includes(task.status)
 function ovnOverTime(run, task, now) {
   if (!run || !task || ovnFinished(task)) return false;
   if (typeof task.maxDurationMs === 'number' && task.maxDurationMs > 0) return false;
-  const start = typeof task.startedAt === 'number' ? task.startedAt : run.startedAt;
-  return now - start > run.limitMs;
+  // The window's own start: the task's startedAt is reset on every retry
+  // and every requeue after a restart, which would restart the limit.
+  return now - run.startedAt > run.limitMs;
 }
 /** One line under a run's title. */
 function ovnStatusLine(run, now) {
   const t = run.task || {};
-  const start = typeof t.startedAt === 'number' ? t.startedAt : run.startedAt;
+  const start = run.startedAt;
   const spentRaw = typeof t.spentUsd === 'number' ? t.spentUsd : null;
   const spend = ovnSpendLine(spentRaw, run.budget);
   if (ovnFinished(t)) {

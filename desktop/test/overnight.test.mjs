@@ -49,6 +49,8 @@ test("the window stops a run itself only when the agent did not take the time li
   assert.equal(O.ovnOverTime(run, { status: "running", startedAt: 0 }, 7 * H), false);
   assert.equal(O.ovnOverTime(run, { status: "running", startedAt: 0, maxDurationMs: 8 * H }, 9 * H), false);
   assert.equal(O.ovnOverTime(run, { status: "completed", startedAt: 0 }, 9 * H), false);
+  // A retry or a requeue resets the task's startedAt; the limit still counts from the window's start.
+  assert.equal(O.ovnOverTime(run, { status: "running", startedAt: 7 * H }, 9 * H), true);
 });
 
 test("status lines for running and finished runs", () => {
