@@ -28,12 +28,13 @@ describe("parseLlmRunModeConfig", () => {
     });
   });
 
-  it("rejects an unknown mode", () => {
+  it("ATO-1241: leaves a mode a newer build added unset; rejects a non-string mode", () => {
+    expect(parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode")).toEqual({});
     expect(() =>
-      parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode"),
+      parseLlmRunModeConfig({ mode: 3 }, providers, "llm.runMode"),
     ).toThrow(ConfigValidationError);
     expect(() =>
-      parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode"),
+      parseLlmRunModeConfig({ mode: 3 }, providers, "llm.runMode"),
     ).toThrow(/llm\.runMode\.mode/);
   });
 
@@ -277,8 +278,12 @@ describe("workerReasoning / workerMaxOutputTokens (F20)", () => {
     );
     expect(parsed.fusion).toEqual({ workerReasoning: "low", workerMaxOutputTokens: 12_000 });
     expect(parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion).toEqual({});
+    // ATO-1241: a level a newer build added reads as unset; a non-string is still rejected.
+    expect(
+      parseLlmRunModeConfig({ fusion: { workerReasoning: "max" } }, providers, "llm.runMode").fusion,
+    ).toEqual({});
     expect(() =>
-      parseLlmRunModeConfig({ fusion: { workerReasoning: "max" } }, providers, "llm.runMode"),
+      parseLlmRunModeConfig({ fusion: { workerReasoning: 2 } }, providers, "llm.runMode"),
     ).toThrow(/llm\.runMode\.fusion\.workerReasoning/);
     for (const bad of [0, -1, 2.5, "8192", 1_000_001]) {
       expect(() =>

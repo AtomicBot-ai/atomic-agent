@@ -194,10 +194,10 @@ describe("TUI configuration ownership", () => {
   it("preserves field failure order and validates notify fields even when disabled", () => {
     const defaults = createTuiDefaults();
     const error = thrownError(() => parseTuiConfig({
-      whileBusySubmit: "invalid", onboarding: [], notify: { minDurationMs: -1 },
+      whileBusySubmit: 7, onboarding: [], notify: { minDurationMs: -1 },
     }, () => defaults));
     expect(error).toEqual(new ConfigValidationError(
-      "tui.whileBusySubmit", 'expected "steer" or "queue", got "invalid"',
+      "tui.whileBusySubmit", 'expected "steer" or "queue", got 7',
     ));
     expect(thrownError(() => parseTuiNotifyWithDefaults({
       enabled: false, minDurationMs: -1,

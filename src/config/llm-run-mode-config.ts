@@ -1,3 +1,4 @@
+import { isSetAsideString } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 
 /**
@@ -258,7 +259,10 @@ function parseFusion(
       FUSION_CLOUD_WORKERS_MAX,
     );
   }
-  if (obj.workerReasoning !== undefined) {
+  if (obj.workerReasoning !== undefined && !isSetAsideString(
+    obj.workerReasoning, FUSION_WORKER_REASONING_LEVELS, `${field}.workerReasoning`, undefined,
+  )) {
+    // ATO-1241: a level a newer build added is left unset (the provider's default).
     const level = obj.workerReasoning;
     if (
       typeof level !== "string" ||
@@ -322,7 +326,8 @@ export function parseLlmRunModeConfig(
   }
   const obj = raw as Record<string, unknown>;
   const out: UserLlmRunModeConfig = {};
-  if (obj.mode !== undefined) {
+  // ATO-1241: a mode a newer build added is left unset, which resolves as before the block existed.
+  if (obj.mode !== undefined && !isSetAsideString(obj.mode, RUN_MODE_NAMES, `${field}.mode`, undefined)) {
     const mode = obj.mode;
     if (
       typeof mode !== "string" ||

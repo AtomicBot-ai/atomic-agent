@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { carryUnknownConfigKeys } from "./carry-unknown-config-keys.js";
-import { keepSetAsideLocalModelValues } from "./local-models/keep-set-aside-values.js";
+import { keepSetAsideConfigValues } from "./keep-set-aside-values.js";
 import {
   ConfigValidationError,
   ENV_DEFAULTS,
@@ -120,7 +120,7 @@ export function writeUserConfigFileSync(
       `[atomic-agent] kept config version ${onDisk} (this build writes v${data.version}) at ${path}\n`,
     );
   }
-  const carried = diskTree ? carryUnknownConfigKeys(keepSetAsideLocalModelValues(data, diskTree), diskTree) : data;
+  const carried = diskTree ? carryUnknownConfigKeys(keepSetAsideConfigValues(data, diskTree), diskTree) : data;
   const payload =
     JSON.stringify(
       version === carried.version ? carried : { ...carried, version },
