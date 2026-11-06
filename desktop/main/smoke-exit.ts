@@ -89,15 +89,18 @@ export const SMOKE_STOP_SIGNALS = ["SIGHUP", "SIGINT", "SIGTERM"] as const;
 /**
  * Wires `onStop` to the stop signals, once: a second signal while the first
  * one's cleanup runs is ignored rather than cutting it short (the cleanup is
- * bounded by its caller).
+ * bounded by its caller). The listeners stay registered (`on`, not `once`):
+ * with `once`, a repeat of the SAME signal (a second ^C, `kill` sent twice)
+ * found no listener and the default action killed the app mid-cleanup,
+ * leaving the run's model server behind.
  */
 export function onSmokeStopSignal(
-  proc: { once: (sig: string, fn: () => void) => unknown },
+  proc: { on: (sig: string, fn: () => void) => unknown },
   onStop: (signal: string) => void,
 ): void {
   let fired = false;
   for (const sig of SMOKE_STOP_SIGNALS) {
-    proc.once(sig, () => {
+    proc.on(sig, () => {
       if (fired) return;
       fired = true;
       onStop(sig);

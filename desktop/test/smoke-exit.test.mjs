@@ -84,6 +84,17 @@ test("every stop signal runs the cleanup, once (ATO-825)", () => {
   assert.deepEqual(seen, ["SIGHUP"]);
 });
 
+test("a repeat of the same stop signal is still caught, so the cleanup is not cut short", () => {
+  const proc = new EventEmitter();
+  const seen = [];
+  onSmokeStopSignal(proc, (sig) => seen.push(sig));
+  proc.emit("SIGINT");
+  // A real process with no listener left for SIGINT would take the default action (exit) here.
+  assert.equal(proc.listenerCount("SIGINT"), 1);
+  proc.emit("SIGINT");
+  assert.deepEqual(seen, ["SIGINT"]);
+});
+
 test("signal exit codes are the shell's", () => {
   assert.equal(signalExitCode("SIGHUP"), 129);
   assert.equal(signalExitCode("SIGINT"), 130);
