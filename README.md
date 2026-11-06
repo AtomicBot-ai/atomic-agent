@@ -275,12 +275,15 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **E-mail** | Give the agent its own `@atomicmail.ai` inbox from the Integrations tab (Atomic Mail) to list its inbox (sender, subject, preview) and send plain-text messages; sends are approval-gated and cannot be granted for the session. Background model downloads can mail you when they finish. |
 | **Verify** | `verify.syntax` checks files by type and never reports an unchecked file as passing; `verify.run` runs a command, a service or a page against a throwaway copy of the working directory (off macOS, build and dependency folders are linked rather than copied, and a tree over 2 GB runs in place), with checks like `exit 0` or `status 200`. |
 | **Memory** | Profile facts, notes with hybrid recall, links, lessons, procedures, voting, and reflection. |
-| **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. |
+| **Tasks** | Durable deferred turns, cron schedules, intervals, webhooks, and agent-created reminders. A background task saves a checkpoint after every step and, after a crash or restart, continues from the last finished step (up to 3 times). |
+| **Overnight runs** | `atomic-agent overnight "<task>"` runs one long task with nobody watching, capped by `--budget` (dollars, estimated) and `--hours` (8 by default, up to 168). Actions that need approval are denied and listed in the report. With `--notify telegram` the report lists what was done, what failed and what needs you. In the desktop app, **Run overnight** in the composer's + menu takes a task, a folder and a time limit; keep the app open while it runs. `/goal` in the TUI keeps working on a checklist, round after round, until every item passes. Guide: [overnight.md](docs/user/overnight.md). |
+| **Plugins** | Install Claude Code, Codex and Cursor plugin packages from a folder or a marketplace with `atomic-agent plugin install`. Their skills show up as `plugin:skill`, their MCP servers join the agent behind approval, their commands become TUI slash commands, and their PreToolUse and PostToolUse command hooks can block or annotate a tool call. A plugin's local programs and hooks run only after you allow its code. Terminal only for now. |
+| **Handoff** | When Claude Code or Codex stops in the middle of a task, `atag handoff --from claude-code` (or `codex`) saves its latest session in the current folder as an Atomic Agent chat and opens the TUI with a message to carry on. A long session is shortened to fit a local model's window (32k tokens unless set). The desktop app has the same thing as **Continue from Claude Code / Codex**. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
 | **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
-| **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. |
-| **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, plus one-click presets for Anthropic, Groq, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, Atomic Chat and more, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. |
+| **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. You can stop, steer or escalate one running worker without stopping the rest, resume a run cut off by a crash with `/fusion resume`, and cap one Fusion turn's spend and time. Models by role, a task tree, a git worktree per worker, a judge, automatic replanning and escalation to a stronger model are options, all off by default. |
+| **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, plus one-click presets for Anthropic, Groq, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, Atomic Chat and more, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. Model pickers for OpenRouter, AI/ML API, Gemini and the Claude CLI start with Cheap, Balanced and Best. When a cloud provider fails you see the reason instead of a silent move to a local model; on a 429 or 503 the agent retries up to 3 times, and with a fallback chain set it says which provider it switched to. `atomic-agent models recommend` names the best local models this machine can run. |
 | **Telegram & Discord** | Remote control from your phone: a session per chat, approval buttons, files both ways, and opt-in scheduled-task reports on Telegram. Run several bots at once from the Swarm tab (`/swarm`), each with its own token and owner. |
 | **[Composio](https://composio.dev)** | Connect 1500+ SaaS toolkits (Gmail, Slack, Notion, Linear, and more) with OAuth handled for you. Set up from the Integrations tab; tools arrive as `mcp.composio.*` and every write to a real account stays approval-gated. |
 
@@ -377,6 +380,17 @@ atomic-agent tui --cwd /path/to/work
 ```
 
 Managed mode downloads the backend, pulls GGUF models, selects the active model, and starts detached chat / embedding daemons when configured.
+
+To see which local model fits this machine:
+
+```bash
+atomic-agent models recommend           # RAM, GPU memory, free disk, and a fast, balanced and quality pick
+atomic-agent models upgrade --dry-run   # what upgrade would download, without downloading it
+atomic-agent models upgrade             # fetch the quality pick in the background; it never switches models
+atomic-agent models use <id>            # switch once the download has landed
+```
+
+For example, the quality pick is Qwen 3.5 9B on a 16 GB Mac, Gemma 4 26B A4B on a 32 GB Mac and Qwen 3.6 35B A3B on a 64 GB Mac. On the TUI's first run you can start right away on the 1.3 GB starter model with no key; the best model for the machine then downloads in the background and takes over when it lands. The desktop app does the same but asks first: Switch now or Later.
 
 The default engine is Atomic Chat Core, which installs and runs our TurboQuant `llama.cpp` build for your computer. The first start installs it with progress. If that fails, the error says what happened and how to retry: `atomic-agent models update` (TUI: `R` in Models). The standalone `llama.cpp` server remains a support-only fallback that the app does not show: `atomic-agent models engine llama-server` selects it and `atomic-agent models engine atomic-core` switches back; both engines use the same model files.
 
@@ -614,6 +628,42 @@ The TUI MCP panel supports live add / remove without restarting the process. Whe
 
 </details>
 
+<details>
+<summary><b>Overnight runs, handoff and plugins</b></summary>
+
+**Overnight runs.** `atomic-agent overnight` (shown under TUI and CLI above) runs one long task with a money cap and a time cap and nobody there to answer. [overnight.md](docs/user/overnight.md) covers what happens at each limit, what the Telegram report says, how a crashed task resumes and how `/goal` works.
+
+**Handoff from Claude Code or Codex.** When Claude Code or Codex stops in the middle of a task, carry on in Atomic Agent:
+
+```bash
+atag handoff --from claude-code                   # newest Claude Code session in this folder, opened in the TUI
+atag handoff --from codex --list                  # pick from recent Codex sessions instead
+atag handoff --from claude-code --session <id> --note "run the tests before you commit"
+atag handoff --from claude-code --context 65536   # fit the history into a 64k window (default 32k)
+atag handoff --from claude-code --no-open         # save the chat and print how to open it
+```
+
+The session becomes a new Atomic Agent chat with its history, and the TUI opens with a message to carry on. A tool call that never got its result is marked as such, so the agent checks before it relies on it. History longer than the window is shortened without a model call: the newest steps stay word for word and the older part becomes a short extract.
+
+**Claude Code plugins.** The agent reads Claude Code, Codex and Cursor plugin packages as they are:
+
+```bash
+atomic-agent plugin install ./my-plugin                                  # from a folder
+atomic-agent plugin marketplace add anthropics/claude-plugins-official   # add a marketplace
+atomic-agent plugin install <name>                                       # install from it by name
+atomic-agent plugin list
+atomic-agent plugin update <name>
+atomic-agent plugin allow-code <name>                                    # let its MCP servers and hooks run
+atomic-agent plugin disable <name>
+atomic-agent plugin remove <name>
+```
+
+Skills show up as `plugin:skill`. MCP servers join the agent and always ask before a tool runs. Commands become TUI slash commands (`/plugin:command`, with `$ARGUMENTS` and `$1` to `$9`). Hooks follow Claude's `hooks.json` format: a PreToolUse hook can block a tool call and a PostToolUse hook can add a note after it, with matchers such as `Bash`, `Read`, `Write`, `Edit` and `mcp__server__tool`. Your own hooks go in `<stateDir>/hooks.json`.
+
+Installing never runs plugin code. Every install and update is scanned, and a plugin's local MCP servers and hooks stay off until you pass `--accept-code` or run `plugin allow-code`; that consent is asked again when what the plugin runs changes. Not supported yet: output styles, LSP servers, hook events other than PreToolUse and PostToolUse, and running a plugin's subagents. Plugins are terminal only. The desktop app has no plugin screen yet.
+
+</details>
+
 ## Safety and Observability
 
 Everything Atomic Agent does is inspectable and interruptible:
@@ -622,7 +672,10 @@ Everything Atomic Agent does is inspectable and interruptible:
 - **Append-only traces:** prompts, completions, tool invocations, outcomes, failure categories, votes, and lifecycle events recorded as local NDJSON.
 - **Prompt drift replay:** `atomic-agent trace replay <sessionId>` compares current stable-prefix hashes against recorded traces.
 - **Failure taxonomy:** transport, grammar, model, tool, and cancellation failures classified across events, traces, metrics, TUI, sidecar, and HTTP.
-- **No-progress guard:** repeated identical tool calls draw a warning at 3 repeats and a hard veto at 5; after 3 consecutive vetoes the agent is forced into a graceful reply.
+- **Allow always:** every place that asks (TUI, CLI, Telegram, Discord, the desktop app) offers a third answer that saves a rule, for example `Always allow "git status" in this project` (`ctrl+n` in the TUI, `w` in the CLI). Rules live in `<stateDir>/approval-rules.json` (allow, ask, deny) and in a project's `.atomic-agent/approval-rules.json`, where only ask and deny count, so a project cannot grant itself anything. Deny wins over ask, and ask wins over allow. A shell rule covers simple commands only (no pipes, `&&` or redirects) and is saved by program and subcommand. Dangerous commands and secret files never get an allow rule. The desktop app lists saved rules in Settings › Privacy.
+- **Dangerous commands ask every time:** `rm -rf`, `git reset --hard`, force pushes (including `--force-with-lease` and `git push origin +main`), `git clean -fdx`, `git checkout -- .`, `git branch -D`, `find -delete`, `sudo`, `bash -c`, `eval`, `chmod 777` and similar fall in the `shell_dangerous` category. A session grant for the shell never covers them, and approving a Fusion fan-out does not let workers run them; only the top approval level skips the question.
+- **Risk check (opt-in):** with `agent.smartApproval` set to `true` in `config.json` (off by default), a small model rates each action before you are asked. Low-risk actions run; the rest come to you as usual. If the check does not answer in 8 seconds, you are asked.
+- **No-progress guard:** repeated identical tool calls draw a warning at 3 repeats and a hard veto at 5; after 3 consecutive vetoes the agent is forced into a graceful reply. Calls are judged on the recent window and on what changed since: re-running the tests after an edit or re-reading a log after a wait is a new question, not a repeat. A deliberate poll (`sleep 60 && tail build.log`, waiting on a background job) is refused only after 20 identical answers.
 - **Per-session FIFO:** every surface enters the same `TurnController`; one session stays ordered while different sessions run concurrently.
 - **Explicit state:** sessions, memory, tasks, skills, browser profile, MCP config, and traces are ordinary local files or SQLite databases.
 - **Replaced files come back:** before a write replaces a file the agent did not create this session, the previous content is copied to `<stateDir>/restore/` (the last 20 copies per working directory, files up to 5 MB), and `os.fs.restore` puts it back.
