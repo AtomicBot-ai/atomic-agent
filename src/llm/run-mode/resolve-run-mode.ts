@@ -1,8 +1,10 @@
 import type {
+  FusionRole,
   FusionWorkerReasoning,
   RunModeName,
 } from "../../config/llm-run-mode-config.js";
 import {
+  FUSION_ROLES,
   DEFAULT_FUSION_ESCALATION_MAX_USD,
   DEFAULT_FUSION_CLOUD_WORKERS,
   DEFAULT_FUSION_WORKER_MAX_STEPS,
@@ -75,6 +77,11 @@ export type ResolvedRunMode = {
    * `null` when it is off or no provider resolves. Optional for fixtures.
    */
   judge?: { providerId: string; model: string | null } | null;
+  /**
+   * Models by role (ATO-943), present only when `llm.runMode.fusion.roles`
+   * names at least one provider that exists. Optional for fixtures.
+   */
+  roles?: FusionRoleModels;
   /** `llm.runMode.fusion.autoReplan`, present only when set above 0 (ATO-941). */
   autoReplan?: number;
   /** `llm.runMode.fusion.turnBudgetUsd`, present only when set above 0. */
@@ -99,6 +106,26 @@ export type FusionEscalationTarget = {
   /** The replacement path (`escalationReplace`). */
   replace: boolean;
   maxUsd: number;
+};
+
+/** One role's model: the provider a task with that role is pinned to. */
+export type FusionRoleModel = {
+  providerId: string;
+  /** Display and pricing label; `null` when the entry names no model. */
+  model: string | null;
+  /** A `llama-server` entry: a local model that needs room on this machine. */
+  local: boolean;
+};
+
+export type FusionRoleModels = {
+  byRole: Partial<Record<FusionRole, FusionRoleModel>>;
+  /** `llm.runMode.fusion.mixLocalModels`: the machine can hold two local models. */
+  mixLocalModels: boolean;
+  /**
+   * The llama-server providers the session's own legs already hold (the
+   * orchestrator and/or the worker leg), for the two-local-models guard.
+   */
+  localLegProviderIds: readonly string[];
 };
 
 export type ResolveRunModeOptions = {
@@ -194,9 +221,55 @@ export function resolveRunMode(
     (effective === "local" ? workerProviderId : orchestratorProviderId) ??
     resolved.activeTextProvider;
 
+  // Models by role (ATO-943). A role's label follows the same chain as
+  // the legs': the worker leg's own label when the role IS the worker
+  // leg, else the entry's chat model (cloud) or `model` (local).
+  const workerModelLabel =
+    fusion?.workerModel ??
+    (worker !== undefined && isLocalKind(worker)
+      ? (opts.managedModelId ?? worker.model ?? null)
+      : (worker?.defaultChatModel ?? worker?.model ?? null));
+  const byRole: Partial<Record<FusionRole, FusionRoleModel>> = {};
+  for (const role of FUSION_ROLES) {
+    const entry = byId(fusion?.roles?.[role]);
+    if (entry === undefined) continue;
+    byRole[role] = {
+      providerId: entry.id,
+      model:
+        entry.id === worker?.id
+          ? workerModelLabel
+          : entry.id === orchestrator?.id
+            ? (fusion?.orchestratorModel ??
+              entry.defaultChatModel ??
+              entry.model ??
+              null)
+            : isLocalKind(entry)
+              ? (entry.model ?? entry.defaultChatModel ?? null)
+              : (entry.defaultChatModel ?? entry.model ?? null),
+      local: isLocalKind(entry),
+    };
+  }
+  const roles: FusionRoleModels | undefined =
+    Object.keys(byRole).length === 0
+      ? undefined
+      : {
+          byRole,
+          mixLocalModels: fusion?.mixLocalModels === true,
+          localLegProviderIds: [orchestrator, worker]
+            .filter(
+              (p): p is LlmProviderConfigEntry =>
+                p !== undefined && isLocalKind(p),
+            )
+            .map((p) => p.id),
+        };
+
   // The judge reads in a fresh context; any configured provider may be
-  // it, the orchestrator leg by default.
-  const judgeEntry = byId(fusion?.judgeProvider) ?? orchestrator;
+  // it: the pinned judge, else the review role's model (ATO-943), else
+  // the orchestrator leg.
+  const judgeEntry =
+    byId(fusion?.judgeProvider) ??
+    byId(fusion?.roles?.review) ??
+    orchestrator;
   const judge =
     fusion?.judge !== "on" || judgeEntry === undefined
       ? null
@@ -248,11 +321,7 @@ export function resolveRunMode(
     // legs swapped it is the name of an idle model on this machine, and
     // every surface that shows it — the composer strip, the LLM pane —
     // would be naming a model that runs nothing.
-    workerModel:
-      fusion?.workerModel ??
-      (worker !== undefined && isLocalKind(worker)
-        ? (opts.managedModelId ?? worker.model ?? null)
-        : (worker?.defaultChatModel ?? worker?.model ?? null)),
+    workerModel: workerModelLabel,
     workers: fusion?.workers ?? DEFAULT_FUSION_WORKERS,
     cloudWorkers: fusion?.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
     ...(fusion?.workerReasoning === undefined
@@ -267,6 +336,7 @@ export function resolveRunMode(
       fusion?.workerTimeoutMs ?? DEFAULT_FUSION_WORKER_TIMEOUT_MS,
     escalation,
     judge,
+    ...(roles === undefined ? {} : { roles }),
     ...(fusion?.autoReplan !== undefined && fusion.autoReplan > 0
       ? { autoReplan: fusion.autoReplan }
       : {}),

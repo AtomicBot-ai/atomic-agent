@@ -49,6 +49,7 @@ import {
   type JudgeVerdict,
 } from "./judge.js";
 import type { DelegateTask } from "./delegate-args.js";
+import { resolveTaskLegs, unknownModels, type TaskLeg } from "./role-models.js";
 import type { DelegateContract } from "./contract.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
@@ -237,6 +238,28 @@ export function buildFusionDelegateTool(
       const parsed = parseDelegateArgs(rawArgs);
       if (!parsed.ok) return error(parsed.error, { field: "tasks" });
 
+      // Labels, never guesses: the resolver's pin when it has one, the
+      // provider id when it does not. Both legs are read from the same
+      // live `mode` the fan-out is about to run on.
+      const workerModel = mode.workerModel ?? workerProviderId;
+      // Models by role and node (ATO-943): where each task runs, decided
+      // before anything starts. A model name outside the allowed list
+      // refuses the call; without `roles` every task is on the worker
+      // leg, as before.
+      const workerLegRef = { providerId: workerProviderId, model: workerModel };
+      const modelProblem = unknownModels(parsed.tasks, workerLegRef, mode.roles);
+      if (modelProblem !== undefined) {
+        return error(modelProblem, { field: "tasks", reason: "unknown-model" });
+      }
+      const taskLegs = resolveTaskLegs(parsed.tasks, workerLegRef, mode.roles);
+      // The legs other than the worker leg, one per provider.
+      const roleLegs = new Map<string, TaskLeg>();
+      for (const leg of taskLegs.values()) {
+        if (!leg.isWorkerLeg && !roleLegs.has(leg.providerId)) {
+          roleLegs.set(leg.providerId, leg);
+        }
+      }
+
       // The turn's caps (ATO-947). Unset — the default — and nothing
       // below changes: no check, no extra signal, no timer.
       const limits: TurnBudgetLimits = {
@@ -285,6 +308,17 @@ export function buildFusionDelegateTool(
         });
       }
 
+      for (const providerId of roleLegs.keys()) {
+        try {
+          await deps.warmWorkerBackend(providerId);
+        } catch (err) {
+          deps.logger.warn("fusion: warming a role model's backend failed", {
+            providerId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
       const slotAffine = deps.workerSupportsSlotAffinity(workerProviderId);
       const poolSize = slotAffine
         ? Math.max(1, deps.slotManager.poolSize())
@@ -308,7 +342,13 @@ export function buildFusionDelegateTool(
       const requested =
         parsed.maxWorkers ??
         (slotAffine ? (mode.workersPinned ? mode.workers : 1) : mode.workers);
-      const wanted = Math.max(1, Math.min(requested, parsed.tasks.length));
+      // Tasks a role model takes (ATO-943) are not this leg's to queue.
+      const legTaskCount =
+        roleLegs.size === 0
+          ? parsed.tasks.length
+          : parsed.tasks.filter((t) => taskLegs.get(t.id)?.isWorkerLeg !== false)
+              .length;
+      const wanted = Math.max(1, Math.min(requested, legTaskCount));
       // A cloud leg has no slot pool, so nothing physical bounds the
       // width — only the bill. `cloudWorkers` is that bound: a
       // `maxWorkers` above it is clamped, and the result says so, since
@@ -323,12 +363,8 @@ export function buildFusionDelegateTool(
       // number or simply had more tasks than the machine has slots.
       const poolIsBinding =
         !cloudCapIsBinding &&
-        (maxWorkers < wanted || maxWorkers < parsed.tasks.length);
+        (maxWorkers < wanted || maxWorkers < legTaskCount);
 
-      // Labels, never guesses: the resolver's pin when it has one, the
-      // provider id when it does not. Both legs are read from the same
-      // live `mode` the fan-out is about to run on.
-      const workerModel = mode.workerModel ?? workerProviderId;
       const orchestratorModel =
         mode.orchestratorModel ??
         mode.orchestratorProviderId ??
@@ -396,7 +432,11 @@ export function buildFusionDelegateTool(
               sessionId: ctx.sessionId,
               tool: FUSION_DELEGATE_TOOL,
               category: "fusion_fanout",
-              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} on ${workerModel}`,
+              reason: `${parsed.tasks.length} task${parsed.tasks.length === 1 ? "" : "s"} to ${maxWorkers} worker${maxWorkers === 1 ? "" : "s"} on ${workerModel}${
+                roleLegs.size === 0
+                  ? ""
+                  : ` and ${[...roleLegs.values()].map((l) => l.model).join(", ")}`
+              }`,
               preview: describeFanoutPreview(parsed.tasks, writeScope),
               affectedResources: [...writeScope],
             },
@@ -495,29 +535,31 @@ export function buildFusionDelegateTool(
               Math.max(0, timeLeft) + 50,
             );
       budgetTimer?.unref?.();
-      const budgetOptions = capped
-        ? {
-            shouldStart: (): string | undefined => {
-              const stop = stoppedBy ?? budgetStop();
-              if (stop === undefined) return undefined;
-              stopForBudget(stop);
-              return stop.message;
-            },
-            onWorkerUsage: (
-              _taskId: string,
-              usage: Parameters<typeof estimateUsageCostUsd>[0],
-            ): void => {
-              if (workerPricing !== undefined) {
-                turnBudget.addWorkerSpend(
-                  ctx.sessionId,
-                  estimateUsageCostUsd(usage, workerPricing),
-                );
-              }
-              const stop = budgetStop();
-              if (stop !== undefined) stopForBudget(stop);
-            },
-          }
-        : {};
+      const budgetOptionsFor = (pricing: WorkerPricing | undefined) =>
+        capped
+          ? {
+              shouldStart: (): string | undefined => {
+                const stop = stoppedBy ?? budgetStop();
+                if (stop === undefined) return undefined;
+                stopForBudget(stop);
+                return stop.message;
+              },
+              onWorkerUsage: (
+                _taskId: string,
+                usage: Parameters<typeof estimateUsageCostUsd>[0],
+              ): void => {
+                if (pricing !== undefined) {
+                  turnBudget.addWorkerSpend(
+                    ctx.sessionId,
+                    estimateUsageCostUsd(usage, pricing),
+                  );
+                }
+                const stop = budgetStop();
+                if (stop !== undefined) stopForBudget(stop);
+              },
+            }
+          : {};
+      const budgetOptions = budgetOptionsFor(workerPricing);
       // Escalation (ATO-942): only to the configured target, priced with
       // the same resolver as the workers, and counted in the turn's cap.
       const escalationTarget = mode.escalation ?? null;
@@ -571,7 +613,7 @@ export function buildFusionDelegateTool(
               : renderAcceptanceBlock(items);
           }
         : undefined;
-      const runTasks = (
+      const runOnLeg = (
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
         briefSuffix: ((taskId: string) => string | undefined) | undefined,
@@ -606,6 +648,101 @@ export function buildFusionDelegateTool(
             ...(workerPricing === undefined ? {} : { workerPricing }),
           },
         );
+      // A role model's leg (ATO-943): its own provider, label, price and
+      // width. A cloud leg takes the cloud cap; a second local server is
+      // one at a time, since its slots are nobody's measurement. The
+      // escalation target is dropped where it is this very provider.
+      const rolePricing = new Map(
+        [...roleLegs.values()].map((leg) => [
+          leg.providerId,
+          deps.resolveWorkerPricing?.(leg.providerId, leg.model),
+        ]),
+      );
+      const runOnRoleLeg = (
+        leg: TaskLeg,
+        tasks: readonly DelegateTask[],
+        contract: DelegateContract | undefined,
+        briefSuffix: ((taskId: string) => string | undefined) | undefined,
+      ): Promise<WorkerTaskResult[]> => {
+        const local = deps.workerSupportsSlotAffinity(leg.providerId);
+        const pricing = rolePricing.get(leg.providerId);
+        const roles = new Set(
+          tasks.map((t) => taskLegs.get(t.id)?.role ?? "-"),
+        );
+        const onlyRole = roles.size === 1 ? [...roles][0] : "-";
+        return runWorkerTasks(
+          ctx.modelMode === "cloud"
+            ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true }
+            : deps,
+          {
+            ...(originalRequest === undefined ? {} : { originalRequest }),
+            ...(contract === undefined ? {} : { contract }),
+            parentSessionId: ctx.sessionId,
+            tasks,
+            maxWorkers: local
+              ? 1
+              : Math.max(
+                  1,
+                  Math.min(
+                    tasks.length,
+                    mode.cloudWorkers ?? DEFAULT_FUSION_CLOUD_WORKERS,
+                  ),
+                ),
+            providerId: leg.providerId,
+            workerModel:
+              onlyRole === "-" ? leg.model : `${leg.model} (${onlyRole})`,
+            workerMaxSteps: mode.workerMaxSteps,
+            workerTimeoutMs: mode.workerTimeoutMs,
+            localTokensPerSecond: null,
+            localLeg: local,
+            ...(mode.workerReasoning === undefined
+              ? {}
+              : { workerReasoning: mode.workerReasoning }),
+            ...(mode.workerMaxOutputTokens === undefined
+              ? {}
+              : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
+            writeScope,
+            signal: runSignal,
+            ...budgetOptionsFor(pricing),
+            ...(escalationTarget?.providerId === leg.providerId
+              ? {}
+              : escalationOptions),
+            ...(briefSuffix === undefined ? {} : { briefSuffix }),
+            ...(pricing === undefined ? {} : { workerPricing: pricing }),
+          },
+        );
+      };
+      // Every leg's share of a wave runs at once; rows come back in the
+      // caller's task order. No role legs: exactly the old single call.
+      const runTasks = async (
+        tasks: readonly DelegateTask[],
+        contract: DelegateContract | undefined,
+        briefSuffix: ((taskId: string) => string | undefined) | undefined,
+      ): Promise<WorkerTaskResult[]> => {
+        if (roleLegs.size === 0) return runOnLeg(tasks, contract, briefSuffix);
+        const onWorkerLeg = tasks.filter(
+          (t) => taskLegs.get(t.id)?.isWorkerLeg !== false,
+        );
+        const groups = await Promise.all([
+          onWorkerLeg.length === 0
+            ? Promise.resolve<WorkerTaskResult[]>([])
+            : runOnLeg(onWorkerLeg, contract, briefSuffix),
+          ...[...roleLegs.values()].map((leg) => {
+            const mine = tasks.filter((t) => {
+              const own = taskLegs.get(t.id);
+              return own?.isWorkerLeg === false && own.providerId === leg.providerId;
+            });
+            return mine.length === 0
+              ? Promise.resolve<WorkerTaskResult[]>([])
+              : runOnRoleLeg(leg, mine, contract, briefSuffix);
+          }),
+        ]);
+        const byId = new Map(groups.flat().map((r) => [r.id, r]));
+        return tasks.flatMap((t) => {
+          const row = byId.get(t.id);
+          return row === undefined ? [] : [row];
+        });
+      };
 
       let results: WorkerTaskResult[];
       try {
@@ -888,6 +1025,43 @@ export function buildFusionDelegateTool(
       const contractLine =
         contract === undefined ? undefined : renderContractLine(contract);
 
+      // Where each task ran (ATO-943): the model and role on the row, and
+      // a note when it is not the worker leg or not where it asked to be.
+      // Without roles and without a task naming a model, rows are as before.
+      if (mode.roles !== undefined || roleLegs.size > 0) {
+        results = results.map((r) => {
+          const leg = taskLegs.get(r.id);
+          if (leg === undefined) return r;
+          const notes = [
+            ...(leg.note === undefined ? [] : [leg.note]),
+            ...(leg.isWorkerLeg
+              ? []
+              : [
+                  `ran on ${leg.model}${leg.role === undefined ? "" : ` (role ${leg.role})`}`,
+                ]),
+          ];
+          return {
+            ...r,
+            model: leg.model,
+            ...(leg.role === undefined ? {} : { modelRole: leg.role }),
+            ...(notes.length === 0 ? {} : { notes: [...(r.notes ?? []), ...notes] }),
+          };
+        });
+      }
+      let roleSpendUsd = 0;
+      for (const [providerId, pricing] of rolePricing) {
+        if (pricing === undefined) continue;
+        roleSpendUsd += fanoutSpend(
+          results.filter(
+            (r) =>
+              taskLegs.get(r.id)?.providerId === providerId &&
+              taskLegs.get(r.id)?.isWorkerLeg === false,
+          ),
+          pricing,
+          providerId,
+        ).usd;
+      }
+
       // …and takes the turn back. One line, so the operator can see the
       // spend return to the cloud leg instead of guessing which of the
       // lines above was the last worker.
@@ -908,7 +1082,7 @@ export function buildFusionDelegateTool(
       // all three things it needs: what was wanted, what actually ran
       // concurrently, and the config key that changes the second number.
       const hint = poolIsBinding
-        ? `\n\nNote: ${Math.max(wanted, parsed.tasks.length)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — every slot draws on one shared llama-server context pool (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
+        ? `\n\nNote: ${Math.max(wanted, legTaskCount)} workers' worth of work was sent but the local server has ${poolSize} request slot${poolSize === 1 ? "" : "s"}, so only ${maxWorkers} ran at a time and the rest queued. That number comes from the machine — every slot draws on one shared llama-server context pool (\`localModels.managed.parallel\`, \`"auto"\` by default). Split into fewer, larger tasks if the queueing is costing more than the parallelism buys.`
         : cloudCapIsBinding
           ? `\n\nNote: maxWorkers ${wanted} was clamped to ${maxWorkers}, the cloud worker cap (\`llm.runMode.fusion.cloudWorkers\`); the rest queued behind them.`
           : "";
@@ -924,7 +1098,15 @@ export function buildFusionDelegateTool(
       const spend =
         workerPricing === undefined
           ? null
-          : fanoutSpend(results, workerPricing, workerModel);
+          : fanoutSpend(
+              roleLegs.size === 0
+                ? results
+                : results.filter(
+                    (r) => taskLegs.get(r.id)?.isWorkerLeg !== false,
+                  ),
+              workerPricing,
+              workerModel,
+            );
       const budgetNote =
         budgetStopped === undefined
           ? ""
@@ -945,6 +1127,10 @@ export function buildFusionDelegateTool(
             judgeSpendUsd > 0
               ? `\n\nThe judge (${judgeTarget?.model ?? judgeTarget?.providerId}) cost ${formatUsd(judgeSpendUsd)} this fan-out.`
               : ""
+          }${
+            roleSpendUsd > 0
+              ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
+              : ""
           }${replan === undefined ? "" : renderReplanBlock(replan)}${budgetNote}`,
           details: {
             tasks: results,
@@ -959,6 +1145,7 @@ export function buildFusionDelegateTool(
             ...(spend === null ? {} : { workerSpendUsd: spend.usd }),
             ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
+            ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)
               ? {}

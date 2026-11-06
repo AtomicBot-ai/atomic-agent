@@ -1,3 +1,4 @@
+import type { FusionRole } from "../../config/llm-run-mode-config.js";
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
 import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import type {
@@ -184,6 +185,13 @@ export interface WorkerTaskResult {
   replacedInputs?: ReplacedInput[];
   /** The judge's verdict on this task's acceptance list (ATO-944), when it ran. */
   judge?: JudgeSummary;
+  /**
+   * The model the task ran on, set when models by role are configured
+   * (ATO-943); absent, it ran on the worker leg as every task did.
+   */
+  model?: string;
+  /** The role that picked `model`, when one did (ATO-943). */
+  modelRole?: FusionRole;
 }
 
 export interface TaskCheckSummary {

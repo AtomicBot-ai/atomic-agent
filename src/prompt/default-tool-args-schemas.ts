@@ -636,6 +636,13 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
               // planner's estimate of the work, not a malformed call.
               maxSteps: { type: "integer", minimum: 1 },
               timeoutMs: { type: "integer", minimum: 1 },
+              // Models by role (ATO-943): the task runs on that role's
+              // model, or on the named one from the `### fusion` list.
+              role: {
+                type: "string",
+                enum: ["plan", "build", "review", "explore", "utility"],
+              },
+              model: stringSchema,
             },
             ["id", "instructions"],
           ),
