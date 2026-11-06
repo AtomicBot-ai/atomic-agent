@@ -34,3 +34,5 @@ Skills (as text), commands, subagent profiles and remote MCP servers work right 
 ## Switching parts off
 
 `disabledParts` in the install record holds `skill:<folder>`, `mcp:<server>`, `agent:<name>`, `command:<name>` and `hook:<event>` entries. The whole plugin is switched with `enabled`.
+
+Installing from a marketplace: [marketplaces.md](marketplaces.md).

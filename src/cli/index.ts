@@ -77,7 +77,7 @@ const COMMANDS: CommandDescriptor[] = [
   },
   {
     name: "plugin",
-    summary: "Manage plugins: Claude-format packages of skills, commands, MCP servers (list|show|install|enable|disable|remove)",
+    summary: "Manage plugins: Claude-format packages of skills, commands, MCP servers (list|show|install|update|enable|disable|remove|marketplace)",
     run: pluginCommand,
   },
   {
