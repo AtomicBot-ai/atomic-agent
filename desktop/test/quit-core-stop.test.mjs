@@ -4,7 +4,7 @@
 // Core owns its model sessions; the quit never kills Core's processes. A
 // `models stop` that timed out or failed while Core still records a session
 // is asked once more, and that is all.
-import { after, test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -14,6 +14,16 @@ import { createRequire } from "node:module";
 const home = mkdtempSync(join(tmpdir(), "quit-core-stop-"));
 process.env.ATOMIC_AGENT_STATE_DIR = home;
 after(() => rmSync(home, { recursive: true, force: true }));
+
+// The code under test bounds its waits with unref'd timers on purpose (they must
+// never hold the app open). In a test, a stand-in that never answers then leaves
+// nothing alive but those timers, and on a loaded machine node:test can see an
+// empty event loop and fail the test as "still pending" before they fire
+// (ATO-1255). One ref'd handle for the whole file keeps the loop alive until
+// the last test is done.
+let keepAlive;
+before(() => { keepAlive = setInterval(() => {}, 60_000); });
+after(() => clearInterval(keepAlive));
 
 const require = createRequire(import.meta.url);
 const { withCliStandIn } = require("../out/main/agent-cli.js");
