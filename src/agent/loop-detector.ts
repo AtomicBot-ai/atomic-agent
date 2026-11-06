@@ -486,9 +486,19 @@ export class ToolLoopTracker {
     }
     this.patchLatestPending(tool, args, { resultHash });
     // Something changed between this call and the next identical one: a
-    // write landed, or a poll let time pass on purpose.
+    // write landed, or a poll let time pass on purpose and saw something
+    // new. A poll that got back the very answer it got last time saw
+    // nothing change, so it does not excuse the calls around it: a
+    // two-call loop of an unchanged poll and `npm test` would otherwise
+    // give `npm test` a fresh epoch every round, while the poll, holding
+    // only half the window, never reaches its own cap.
     if (isSuccessfulWrite(tool, result)) this.writesLanded += 1;
-    if (isDeliberatePoll(tool, args)) this.pollsRun += 1;
+    if (
+      isDeliberatePoll(tool, args) &&
+      getNoProgressStreak(this.history, tool, hashToolCall(tool, args)).count <= 1
+    ) {
+      this.pollsRun += 1;
+    }
     // Wandering runs (issue #458). A call that landed either settles the
     // other tools' runs (it is the progress they were missing) or joins
     // its own. A vetoed call returned above: it never ran.

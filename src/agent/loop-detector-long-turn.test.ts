@@ -91,6 +91,19 @@ describe("ToolLoopTracker over a many-hour turn", () => {
     expect(levels.at(-1)).toBe("stopped");
   });
 
+  it("still refuses a call looped against a poll that keeps getting the same answer", () => {
+    const tracker = new ToolLoopTracker();
+    const poll = { cmd: "sleep 1 && tail -1 build.log" };
+    const same = result("os.shell.run", "$ sleep 1 && tail -1 build.log\n[build] failed", { details: { exitCode: 0 } });
+    const levels: Level[] = [];
+    for (let i = 0; i < 8; i += 1) {
+      gate(tracker, "os.shell.run", poll, same);
+      levels.push(gate(tracker, "os.shell.run", { cmd: "npm test" }, failingTests));
+    }
+    expect(levels.slice(0, 5)).not.toContain("critical");
+    expect(levels.slice(5).every((level) => level === "critical")).toBe(true);
+  });
+
   it("re-reads a log and re-checks a status after each background-job wait", () => {
     const tracker = new ToolLoopTracker();
     const levels: Level[] = [];
