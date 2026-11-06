@@ -291,6 +291,19 @@ export function runSlashCommand(
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.fusionWorkerAction !== undefined) {
+    const worker = result.fusionWorkerAction;
+    if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {
+      dispatch({ type: "system_message", text: "no fusion worker is running here" });
+    } else {
+      callbacks.onFusionWorkerAction(
+        state.session.sessionId,
+        worker.taskId,
+        worker.action,
+        worker.action === "steer" ? worker.text : undefined,
+      );
+    }
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }

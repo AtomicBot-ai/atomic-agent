@@ -32,6 +32,12 @@ import {
 } from "./route-sessions.js";
 import { createRenameSessionHandler } from "./route-session-title.js";
 import {
+  createEscalateFusionWorkerHandler,
+  createListFusionWorkersHandler,
+  createSteerFusionWorkerHandler,
+  createStopFusionWorkerHandler,
+} from "./route-fusion-workers.js";
+import {
   createApprovalEventsHandler,
   createResolveApprovalHandler,
 } from "./route-approval.js";
@@ -183,6 +189,12 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/sessions/{id}/steer",
       handler: createAckUndeliveredSteersHandler(),
     },
+    // ATO-568: the person's stop / steer / escalate on one running fusion
+    // worker of this session's fan-out (the desktop's subagent panel).
+    { method: "GET", path: "/api/sessions/{id}/fusion/workers", handler: createListFusionWorkersHandler() },
+    { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/stop", handler: createStopFusionWorkerHandler() },
+    { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/steer", handler: createSteerFusionWorkerHandler() },
+    { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/escalate", handler: createEscalateFusionWorkerHandler() },
     {
       method: "POST",
       path: "/api/approval/resolve",

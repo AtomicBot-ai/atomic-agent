@@ -622,6 +622,40 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onFusionWorkersChangeRequested: (workers) =>
           orchestrator.runMode.setWorkers(workers),
         onFusionLegsSwapRequested: () => void orchestrator.runMode.swapLegs(),
+        // `/worker stop|escalate <id>` (ATO-66) and `/worker steer <id>
+        // <note>` (ATO-568): one running fusion worker, through the
+        // runtime's live registry.
+        onFusionWorkerAction: (sessionId, taskId, action, text) => {
+          const say = (line: string): void =>
+            bus.emit({ type: "system_message", text: line });
+          if (action === "steer") {
+            say(
+              runtime.fusionWorkers.steer(sessionId, taskId, text ?? "")
+                ? `worker ${taskId}: note queued — it reads it at its next step`
+                : runtime.fusionWorkers.running(sessionId).includes(taskId)
+                  ? `worker ${taskId}: note not queued — its turn is ending or its inbox is full`
+                  : `worker ${taskId} is not running`,
+            );
+            return;
+          }
+          if (action === "stop") {
+            say(
+              runtime.fusionWorkers.stop(sessionId, taskId)
+                ? `worker ${taskId}: stopping`
+                : `worker ${taskId} is not running`,
+            );
+            return;
+          }
+          say(`worker ${taskId}: asking the escalation model…`);
+          void runtime.fusionWorkers
+            .escalate(sessionId, taskId)
+            .then((line) =>
+              say(line === null ? `worker ${taskId} is not running` : `worker ${taskId}: ${line}`),
+            )
+            .catch((err: unknown) =>
+              say(`worker ${taskId}: escalation failed — ${err instanceof Error ? err.message : String(err)}`),
+            );
+        },
         onProvidersSelectChatModel: (providerId, modelId) =>
           void orchestrator.providers.selectChatModel(providerId, modelId),
         onProvidersChatModelPickerRequested: (providerId) =>
