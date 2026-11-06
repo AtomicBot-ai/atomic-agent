@@ -72,7 +72,7 @@ export interface ToolGateSourceConfig {
   };
   readonly mcp: { readonly servers: readonly unknown[] };
   /** `tools.screen.enabled`; optional so hand-built test configs need not name it. */
-  readonly tools?: { readonly screen?: { readonly enabled: boolean } };
+  readonly tools?: { readonly screen?: { readonly enabled: boolean; readonly point?: boolean } };
   readonly llm?: {
     readonly runMode?: { readonly mode?: string };
     readonly providers?: readonly { readonly kind: string; readonly apiKey?: string; readonly baseUrl?: string }[];
@@ -129,6 +129,7 @@ export function effectiveToolDescriptors(
     video: { available: openRouterImageKey(config, env) !== undefined },
     screen: {
       enabled: config.tools?.screen?.enabled === true && platform === "darwin",
+      point: config.tools?.screen?.point === true && platform === "darwin",
     },
   });
 }

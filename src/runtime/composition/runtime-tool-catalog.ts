@@ -171,6 +171,8 @@ export function registerRuntimeCoreTools(input: {
   registerOsScreenTools(toolRegistry, {
     ...dangerous,
     enabled: config.tools.screen.enabled,
+    // ATO-1018: drawing marks only (and the screenshot it reads), on by default.
+    point: config.tools.screen.point,
   });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the
@@ -481,7 +483,10 @@ export async function connectRuntimeMcpCatalog(input: {
       video: { available: openRouterImageKey(getConfig()) !== undefined },
       // Boot-time, like the registration above: the tools exist only when
       // they were switched on before start and the host is a Mac.
-      screen: { enabled: config.tools.screen.enabled && process.platform === "darwin" },
+      screen: {
+        enabled: config.tools.screen.enabled && process.platform === "darwin",
+        point: config.tools.screen.point && process.platform === "darwin",
+      },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(

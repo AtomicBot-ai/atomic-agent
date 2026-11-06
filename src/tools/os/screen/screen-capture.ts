@@ -34,6 +34,9 @@ export function screenshotDir(tmpDir: string, sessionId: string): string {
   return join(tmpDir, SCREENSHOT_DIR, safe === "." || safe === ".." ? "default" : safe);
 }
 
+export const CAPTURE_NEEDS_OVERLAY_MESSAGE =
+  "Screen control is off (tools.screen.enabled), so screenshots are only taken to point at things in the Atomic Agent desktop app, and this chat is not in it. Nothing was captured: ask the user to describe what they see.";
+
 /** The whole message must reach the model: it says what to do next. */
 const SCREEN_RESULT_OPTIONS = { maxSummaryLength: 1_200, maxTailLines: 40 } as const;
 
@@ -47,6 +50,14 @@ export interface ScreenRegion {
 export interface OsScreenCaptureOptions extends DangerousToolOptions {
   deps: ScreenDeps;
   geometry: ScreenGeometryStore;
+  /**
+   * ATO-1018: set when capture is registered only for `os.screen.point`
+   * (`tools.screen.point` without `tools.screen.enabled`). It then runs
+   * only for a session whose host draws marks (the desktop app's own
+   * chat); a terminal, a channel or a scheduled task is refused, so
+   * pointing never widens where screenshots can be taken.
+   */
+  onlyWithOverlay?: (sessionId: string) => boolean;
 }
 
 /**
@@ -71,6 +82,9 @@ export function buildOsScreenCaptureTool(
     async run(rawArgs, ctx) {
       if (deps.platform !== "darwin") {
         return errorResult(macOnlyMessage(OS_SCREEN_CAPTURE_TOOL, deps.platform));
+      }
+      if (options.onlyWithOverlay && !options.onlyWithOverlay(ctx.sessionId)) {
+        return errorResult(CAPTURE_NEEDS_OVERLAY_MESSAGE, { retryable: false, reason: "no-overlay" });
       }
       let region: ScreenRegion | undefined;
       try {

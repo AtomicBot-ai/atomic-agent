@@ -173,6 +173,22 @@ describe("tool_result over SSE", () => {
     expect(sent[2]).not.toHaveProperty("key_required");
   });
 
+  it("carries an ok os.screen.point's marks as screen_marks, and nothing otherwise (ATO-1018)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const screenMarks = { marks: [{ kind: "arrow", x: 812, y: 440, text: "Save", step: 1 }], seconds: 20 };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "os.screen.point", summary: "Showing 1 mark", details: { screenMarks } }), 0));
+    hook(executed(result({ tool: "os.screen.point", status: "error", summary: "no overlay", details: { screenMarks } }), 1));
+    hook(executed(result({ tool: "os.fs.write", details: { screenMarks } }), 2));
+    hook(executed(result({ tool: "os.screen.point", details: { screenMarks: { marks: [], seconds: 20 } } }), 3));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.screen_marks).toEqual(screenMarks);
+    for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("screen_marks");
+  });
+
   it("sends nothing to an OpenAI-compatible client", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(false));
