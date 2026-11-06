@@ -24,7 +24,8 @@ import { getConfig } from "../config/index.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { isSeaBuild, selfInvocation } from "../runtime/self-invocation.js";
-import type { TaskRecord } from "../tasks/index.js";
+import { SHUTDOWN_TURN_GRACE_MS } from "../runtime/turns-in-flight.js";
+import type { TaskCreateInput, TaskRecord, TaskRunner } from "../tasks/index.js";
 import {
   OVERNIGHT_DEFAULT_HOURS,
   detachedChildArgs,
@@ -65,6 +66,109 @@ const HELP = [
 
 const TERMINAL = new Set<TaskRecord["status"]>(["completed", "failed", "blocked", "cancelled"]);
 const POLL_MS = 5_000;
+
+/**
+ * What each stop signal does to the run. Ctrl+C is the person at the
+ * keyboard saying stop: the task is cancelled. SIGTERM and SIGHUP come
+ * from the system (shutdown, logout, a closed terminal) in the middle
+ * of the night: the run stops the way a runtime shutdown stops it, and
+ * the task is left pending so it can resume instead of being lost.
+ */
+export const OVERNIGHT_STOP_SIGNALS = {
+  SIGINT: "cancel",
+  SIGTERM: "interrupt",
+  SIGHUP: "interrupt",
+} as const satisfies Record<string, "cancel" | "interrupt">;
+
+type StopSignal = keyof typeof OVERNIGHT_STOP_SIGNALS;
+
+const SIGNAL_EXIT_CODE: Record<StopSignal, number> = {
+  SIGINT: 130,
+  SIGTERM: 143,
+  SIGHUP: 129,
+};
+
+export interface StopSignalTarget {
+  on(signal: StopSignal, listener: () => void): unknown;
+  off(signal: StopSignal, listener: () => void): unknown;
+}
+
+export interface StopSignalHandle {
+  /** Whether a system signal stopped the run (task left resumable). */
+  interrupted(): boolean;
+  dispose(): void;
+}
+
+/**
+ * Wire SIGINT / SIGTERM / SIGHUP to the task runner per
+ * `OVERNIGHT_STOP_SIGNALS`. A second signal of any kind quits at once.
+ */
+export function installStopSignals(
+  runner: Pick<TaskRunner, "cancel" | "stop">,
+  taskId: string,
+  deps: {
+    target?: StopSignalTarget;
+    exit?: (code: number) => void;
+    write?: (text: string) => void;
+  } = {},
+): StopSignalHandle {
+  const target: StopSignalTarget = deps.target ?? process;
+  const exit = deps.exit ?? ((code: number) => process.exit(code));
+  const write = deps.write ?? ((text: string) => void process.stderr.write(text));
+  let received = 0;
+  let interrupted = false;
+  const listeners = new Map<StopSignal, () => void>();
+  for (const signal of Object.keys(OVERNIGHT_STOP_SIGNALS) as StopSignal[]) {
+    const listener = (): void => {
+      received += 1;
+      if (received > 1) {
+        exit(SIGNAL_EXIT_CODE[signal]);
+        return;
+      }
+      if (OVERNIGHT_STOP_SIGNALS[signal] === "cancel") {
+        write("\nstopping the run (press Ctrl+C again to quit at once)\n");
+        runner.cancel(taskId);
+        return;
+      }
+      interrupted = true;
+      write(`\n${signal}: pausing the run; the task stays queued to resume\n`);
+      void runner.stop(SHUTDOWN_TURN_GRACE_MS);
+    };
+    listeners.set(signal, listener);
+    target.on(signal, listener);
+  }
+  return {
+    interrupted: () => interrupted,
+    dispose: () => {
+      for (const [signal, listener] of listeners) target.off(signal, listener);
+    },
+  };
+}
+
+/**
+ * The task row an overnight run creates. `maxSteps` is the task-wide
+ * ceiling (`agent.task.maxSteps`): left unset, the runner would fall
+ * back to the per-leg `agent.maxSteps` and end the night at step 25.
+ */
+export function overnightTaskInput(
+  args: OvernightArgs,
+  taskId: string,
+  sessionId: string,
+  config: { agent: { task: { maxSteps: number } } },
+): TaskCreateInput {
+  return {
+    id: taskId,
+    sessionId,
+    userMessage: args.task,
+    origin: "cli",
+    triggerSource: "user",
+    maxAttempts: 1,
+    maxSteps: config.agent.task.maxSteps,
+    maxDurationMs: args.durationMs,
+    ...(args.budgetUsd !== null ? { maxCostUsd: args.budgetUsd } : {}),
+    ...(args.notify ? { notify: args.notify } : {}),
+  };
+}
 
 export interface OvernightDeps {
   spawn?: typeof nodeSpawn;
@@ -152,6 +256,9 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
   let sessionId: string | null = null;
   let reply: string | null = null;
   let deniedApprovals = 0;
+  // What the task had already spent before this run (a resumed or
+  // retried task): step events carry only this run's spend.
+  let spentBeforeUsd = 0;
   let resolveApproval: ((approvalId: string) => void) | null = null;
 
   const runtime = await createAgentRuntime({
@@ -171,6 +278,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
           summary: event.summary,
           elapsedMs: Date.now() - startedAt,
           spendUsd: event.spendUsd,
+          spentBeforeUsd,
           capUsd,
         });
         process.stderr.write(`${line}\n`);
@@ -197,34 +305,19 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
   // is a full tickMs away, so stopping it here claims nothing.
   await runtime.scheduler?.stop();
 
-  let interrupted = 0;
-  const onSignal = (): void => {
-    interrupted += 1;
-    if (interrupted > 1) process.exit(130);
-    process.stderr.write("\nstopping the run (press Ctrl+C again to quit at once)\n");
-    runtime.taskRunner.cancel(taskId);
-  };
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
+  const signals = installStopSignals(runtime.taskRunner, taskId);
   try {
     const session = runtime.createSession({ metadata: { overnight: true } });
     sessionId = session.id;
-    const created = runtime.taskStore.create({
-      id: taskId,
-      sessionId: session.id,
-      userMessage: args.task,
-      origin: "cli",
-      triggerSource: "user",
-      maxAttempts: 1,
-      maxDurationMs: args.durationMs,
-      ...(args.budgetUsd !== null ? { maxCostUsd: args.budgetUsd } : {}),
-      ...(args.notify ? { notify: args.notify } : {}),
-    });
+    const created = runtime.taskStore.create(
+      overnightTaskInput(args, taskId, session.id, config),
+    );
+    spentBeforeUsd = runtime.taskStore.get(created.id)?.spentUsd ?? 0;
     process.stderr.write(
       `overnight ${created.id}: working in ${args.dir}, up to ${args.durationMs / 3_600_000}h` +
         `${capUsd > 0 ? `, up to ${formatUsd(capUsd)}` : ", no money cap"}\n`,
     );
-    const final = await runToEnd(runtime, created.id);
+    const final = await runToEnd(runtime, created.id, signals.interrupted);
     process.stdout.write(
       formatOvernightSummary({
         task: final,
@@ -236,8 +329,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
     );
     return overnightExitCode(final.status);
   } finally {
-    process.off("SIGINT", onSignal);
-    process.off("SIGTERM", onSignal);
+    signals.dispose();
     await runtime.shutdown();
   }
 }
@@ -249,8 +341,14 @@ type OvernightRuntime = Awaited<ReturnType<typeof createAgentRuntime>>;
  * scheduler may pick the fresh pending row up first; `runOne` then hands
  * back the row as it is, and waiting on the row is enough. A `task cancel` from another terminal
  * only writes the row: seeing it cancelled, abort the turn here.
+ * Once a system signal has stopped the run, the row as it stands is the
+ * answer: it is pending (to resume), or another process holds it.
  */
-async function runToEnd(runtime: OvernightRuntime, taskId: string): Promise<TaskRecord> {
+async function runToEnd(
+  runtime: OvernightRuntime,
+  taskId: string,
+  interrupted: () => boolean,
+): Promise<TaskRecord> {
   const watch = setInterval(() => {
     if (runtime.taskStore.get(taskId)?.status === "cancelled") {
       runtime.taskRunner.cancel(taskId);
@@ -259,7 +357,8 @@ async function runToEnd(runtime: OvernightRuntime, taskId: string): Promise<Task
   try {
     let record = await runtime.taskRunner.runOne(taskId);
     for (;;) {
-      if (record && TERMINAL.has(record.status)) return record;
+      if (interrupted()) record = runtime.taskStore.get(taskId) ?? record;
+      if (record && (TERMINAL.has(record.status) || interrupted())) return record;
       await new Promise((resolve) => setTimeout(resolve, POLL_MS));
       record = runtime.taskStore.get(taskId);
       if (!record) throw new Error(`task ${taskId} disappeared from the queue`);

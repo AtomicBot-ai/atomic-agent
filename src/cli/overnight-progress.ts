@@ -13,7 +13,13 @@ export interface ProgressLineInput {
   stepIndex: number;
   summary: string;
   elapsedMs: number;
+  /** This run's spend so far (`step_finished.spendUsd`). */
   spendUsd: number | undefined;
+  /**
+   * What the task had spent before this run started. The cap covers the
+   * whole task, so a resumed or retried run shows the sum against it.
+   */
+  spentBeforeUsd?: number;
   /** Effective cap in dollars; 0 = none. */
   capUsd: number;
 }
@@ -21,8 +27,9 @@ export interface ProgressLineInput {
 /** `[step 12 | 14m | $0.42 of $5.00] read src/app.ts` */
 export function formatProgressLine(input: ProgressLineInput): string {
   const parts = [`step ${input.stepIndex + 1}`, formatElapsed(input.elapsedMs)];
-  if (input.spendUsd !== undefined || input.capUsd > 0) {
-    const spent = formatUsd(input.spendUsd ?? 0);
+  const before = input.spentBeforeUsd ?? 0;
+  if (input.spendUsd !== undefined || input.capUsd > 0 || before > 0) {
+    const spent = formatUsd(before + (input.spendUsd ?? 0));
     parts.push(input.capUsd > 0 ? `${spent} of ${formatUsd(input.capUsd)}` : spent);
   }
   const oneLine = input.summary.replace(/\s+/g, " ").trim();
@@ -81,6 +88,11 @@ export function formatOvernightSummary(input: OvernightSummaryInput): string {
   if (input.deniedApprovals > 0) {
     lines.push(
       `  denied ${input.deniedApprovals} action(s) that needed approval; rerun with --no-approval to allow them`,
+    );
+  }
+  if (task.status === "pending") {
+    lines.push(
+      `  interrupted by the system; the task stays queued to resume (atomic-agent task show ${task.id})`,
     );
   }
   if (task.lastError && task.status !== "completed") {

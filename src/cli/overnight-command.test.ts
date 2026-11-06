@@ -6,7 +6,13 @@ import type { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 
 import { getConfig, resetConfigCache } from "../config/index.js";
-import { overnightCommand } from "./overnight-command.js";
+import type { OvernightArgs } from "./overnight-args.js";
+import {
+  OVERNIGHT_STOP_SIGNALS,
+  installStopSignals,
+  overnightCommand,
+  overnightTaskInput,
+} from "./overnight-command.js";
 
 /**
  * The foreground run boots `createAgentRuntime` against the real model
@@ -113,5 +119,89 @@ describe("overnightCommand", () => {
     // The error event fires a tick later and must find a listener.
     await new Promise((resolve) => setImmediate(resolve));
     expect(child.listenerCount("error")).toBeGreaterThan(0);
+  });
+});
+
+describe("overnightTaskInput", () => {
+  const args = {
+    task: "migrate the tests",
+    budgetUsd: 5,
+    durationMs: 8 * 3_600_000,
+    dir: "/tmp/x",
+    notify: null,
+    detach: false,
+    noApproval: false,
+    taskId: null,
+  } as unknown as OvernightArgs;
+
+  it("carries the task-wide step ceiling, not the per-leg default", () => {
+    const input = overnightTaskInput(args, "t-1", "s-1", {
+      agent: { task: { maxSteps: 1000 } },
+    });
+    expect(input.maxSteps).toBe(1000);
+    expect(input).toMatchObject({
+      id: "t-1",
+      sessionId: "s-1",
+      userMessage: "migrate the tests",
+      origin: "cli",
+      maxAttempts: 1,
+      maxDurationMs: 8 * 3_600_000,
+      maxCostUsd: 5,
+    });
+  });
+
+  it("takes agent.task.maxSteps from the loaded config", () => {
+    const config = getConfig();
+    const input = overnightTaskInput(args, "t-1", "s-1", config);
+    expect(input.maxSteps).toBe(config.agent.task.maxSteps);
+  });
+});
+
+describe("installStopSignals", () => {
+  function setup() {
+    const target = new EventEmitter();
+    const runner = { cancel: vi.fn(), stop: vi.fn(async () => 0) };
+    const exit = vi.fn();
+    const handle = installStopSignals(runner, "t-1", {
+      target: target as never,
+      exit,
+      write: () => undefined,
+    });
+    return { target, runner, exit, handle };
+  }
+
+  it("maps Ctrl+C to cancel and system signals to interrupt", () => {
+    expect(OVERNIGHT_STOP_SIGNALS).toEqual({
+      SIGINT: "cancel",
+      SIGTERM: "interrupt",
+      SIGHUP: "interrupt",
+    });
+  });
+
+  it("SIGINT cancels the task", () => {
+    const { target, runner, handle } = setup();
+    target.emit("SIGINT");
+    expect(runner.cancel).toHaveBeenCalledWith("t-1");
+    expect(runner.stop).not.toHaveBeenCalled();
+    expect(handle.interrupted()).toBe(false);
+  });
+
+  it.each(["SIGTERM", "SIGHUP"])("%s stops the runner without cancelling", (signal) => {
+    const { target, runner, handle } = setup();
+    target.emit(signal);
+    expect(runner.stop).toHaveBeenCalledTimes(1);
+    expect(runner.cancel).not.toHaveBeenCalled();
+    expect(handle.interrupted()).toBe(true);
+  });
+
+  it("a second signal quits at once, and dispose removes the listeners", () => {
+    const { target, exit, handle } = setup();
+    target.emit("SIGTERM");
+    target.emit("SIGINT");
+    expect(exit).toHaveBeenCalledWith(130);
+    handle.dispose();
+    expect(target.listenerCount("SIGINT")).toBe(0);
+    expect(target.listenerCount("SIGTERM")).toBe(0);
+    expect(target.listenerCount("SIGHUP")).toBe(0);
   });
 });

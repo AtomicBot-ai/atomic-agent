@@ -35,6 +35,41 @@ describe("overnight progress", () => {
     expect(long.length).toBeLessThan(140);
   });
 
+  it("adds what the task spent before this run to the spend shown", () => {
+    expect(
+      formatProgressLine({
+        stepIndex: 0,
+        summary: "resume",
+        elapsedMs: 0,
+        spendUsd: 0.5,
+        spentBeforeUsd: 3,
+        capUsd: 5,
+      }),
+    ).toBe("[step 1 | 0m | $3.50 of $5.00] resume");
+    expect(
+      formatProgressLine({
+        stepIndex: 0,
+        summary: "x",
+        elapsedMs: 0,
+        spendUsd: undefined,
+        spentBeforeUsd: 1,
+        capUsd: 0,
+      }),
+    ).toBe("[step 1 | 0m | $1.00] x");
+  });
+
+  it("says an interrupted run stays queued", () => {
+    const text = formatOvernightSummary({
+      task: { id: "t-2", status: "pending", spentUsd: 0.3, lastError: null } as unknown as TaskRecord,
+      elapsedMs: 0,
+      capUsd: 0,
+      reply: null,
+      deniedApprovals: 0,
+    });
+    expect(text).toContain("overnight pending: t-2");
+    expect(text).toContain("stays queued to resume");
+  });
+
   it("formats elapsed time in minutes and hours", () => {
     expect(formatElapsed(59_999)).toBe("0m");
     expect(formatElapsed(60 * 60_000)).toBe("1h");
