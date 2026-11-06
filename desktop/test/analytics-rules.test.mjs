@@ -4,7 +4,7 @@
 // id order, the inherited opt-out, upgrader seeding, backend_switched, the
 // bounded transport and the Sentry envelope. Each test fails if the rule it
 // names is removed.
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,6 +25,16 @@ const SU = require("../out/main/analytics/setup.js");
 const CORE = require("../out/main/analytics/core.js");
 const ENV = require("../out/main/sentry/envelope.js");
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+// The code under test bounds its waits with unref'd timers on purpose (they must
+// never hold the app open). In a test, a stand-in that never answers then leaves
+// nothing alive but those timers, and on a loaded machine node:test can see an
+// empty event loop and fail the test as "still pending" before they fire
+// (ATO-1255). One ref'd handle for the whole file keeps the loop alive until
+// the last test is done.
+let keepAlive;
+before(() => { keepAlive = setInterval(() => {}, 60_000); });
+after(() => clearInterval(keepAlive));
 
 /* ---- ui_action: camelCase in, ids out ---- */
 
