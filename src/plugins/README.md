@@ -14,7 +14,9 @@ A plugin is a folder that bundles skills, slash commands, subagent profiles, hoo
 - [plugin-runtime.ts](plugin-runtime.ts): enabled plugins parsed and cached; skill folders for the skill loaders.
 - [plugin-mcp.ts](plugin-mcp.ts): plugin MCP servers for the runtime catalog, named `<plugin>-<server>`. A plugin's own `trust` is dropped, and local (stdio) servers start only after `plugin allow-code`.
 - [plugin-subagents.ts](plugin-subagents.ts): `agents/*.md` profiles, listed for Fusion worker profiles; nothing runs them yet.
-- CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts).
+- [plugin-overview.ts](plugin-overview.ts): one view model per installed plugin (counts, parts with their switches, runs code, code consent, missing MCP keys), shared by the `/plugins` panel, `plugin list --json` and the desktop Plugins screen.
+- CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts); `list --json` / `show <name> --json` print overviews, `enable|disable <name> --part <id>` switches one part.
+- TUI: [../tui/plugins/README.md](../tui/plugins/README.md).
 
 ## Ownership and dependencies
 
