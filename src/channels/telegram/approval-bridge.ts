@@ -1,5 +1,6 @@
 import type { ApprovalGate, ApprovalRequest } from "../../approval/index.js";
 import {
+  describeAlwaysRule,
   excerptPreview,
   formatApprovalCategory,
   hiddenLinesNote,
@@ -47,9 +48,12 @@ export interface ApprovalBridgeDeps {
   /**
    * The bridge only ever resolves the gate; it never requests a new
    * approval. `Pick<ApprovalGate, "resolve">` makes that explicit and
-   * keeps the test-time mock surface small.
+   * keeps the test-time mock surface small. `canGrantAlways` decides
+   * whether the third button, "Allow always" (ATO-1142), is sent; a
+   * gate without it never offers one.
    */
-  approvals: Pick<ApprovalGate, "resolve">;
+  approvals: Pick<ApprovalGate, "resolve"> &
+    Partial<Pick<ApprovalGate, "canGrantAlways">>;
   /**
    * Owner check applied to every callback_query. `null` is a fail-
    * closed configuration: every callback is dropped silently. This
@@ -67,6 +71,8 @@ interface PendingState {
   chatId: number;
   messageId: number;
   cancelTimer: () => void;
+  /** The "Allow always" label, when that button was sent; else absent. */
+  alwaysLabel?: string;
 }
 
 /**
@@ -172,6 +178,10 @@ export class ApprovalBridge {
     const attached = formatApprovalText(request, null).cut
       ? await this.attachFullCommand(request, chatId, threadId)
       : null;
+    const alwaysLabel =
+      this.deps.approvals.canGrantAlways?.(request) === true
+        ? describeAlwaysRule(request)
+        : undefined;
     let messageId: number | null = null;
     try {
       const sent = await this.deps.api.sendMessage(
@@ -185,7 +195,7 @@ export class ApprovalBridge {
               : FULL_COMMAND_MISSING_NOTE,
         ).text,
         withThread(
-          { reply_markup: buildKeyboard(request.approvalId) },
+          { reply_markup: buildKeyboard(request.approvalId, alwaysLabel) },
           threadId,
         ),
       );
@@ -221,7 +231,12 @@ export class ApprovalBridge {
       chatId,
       messageId,
     );
-    this.pending.set(request.approvalId, { chatId, messageId, cancelTimer });
+    this.pending.set(request.approvalId, {
+      chatId,
+      messageId,
+      cancelTimer,
+      ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
+    });
   }
 
   /**
@@ -244,8 +259,8 @@ export class ApprovalBridge {
     const parts = data.slice(CALLBACK_PREFIX.length).split(":");
     if (parts.length !== 2) return;
     const [approvalId, kind] = parts;
-    if (!approvalId || (kind !== "y" && kind !== "n")) return;
-    const approved = kind === "y";
+    if (!approvalId || (kind !== "y" && kind !== "n" && kind !== "w")) return;
+    const approved = kind !== "n";
 
     const pending = this.pending.get(approvalId);
     if (!pending) {
@@ -255,6 +270,11 @@ export class ApprovalBridge {
       return;
     }
 
+    // `w` counts only where the button was sent: a forged callback
+    // cannot save a rule the prompt never offered.
+    if (kind === "w" && pending.alwaysLabel === undefined) return;
+    const always = kind === "w";
+
     pending.cancelTimer();
     this.pending.delete(approvalId);
 
@@ -263,14 +283,22 @@ export class ApprovalBridge {
       approved,
       // A button carries no words of the user's, so a deny has no reason.
       ...(approved ? { reason: "telegram" } : {}),
+      ...(always ? { grant: "always" as const } : {}),
     });
 
-    await this.acknowledge(update.id, approved ? "Approved" : "Denied");
+    await this.acknowledge(
+      update.id,
+      always ? "Approved, rule saved" : approved ? "Approved" : "Denied",
+    );
     if (resolved) {
       await this.editFinal(
         pending.chatId,
         pending.messageId,
-        approved ? "✅ approved" : "❌ denied",
+        always
+          ? `✅ approved · saved: ${pending.alwaysLabel}`
+          : approved
+            ? "✅ approved"
+            : "❌ denied",
       );
     }
   }
@@ -421,23 +449,38 @@ export class ApprovalBridge {
   }
 }
 
-function buildKeyboard(approvalId: string): {
+/** Longest "Allow always" button text; Telegram cuts long buttons badly. */
+const ALWAYS_BUTTON_MAX_CHARS = 60;
+
+function buildKeyboard(
+  approvalId: string,
+  alwaysLabel?: string,
+): {
   inline_keyboard: Array<Array<{ text: string; callback_data: string }>>;
 } {
-  return {
-    inline_keyboard: [
-      [
-        {
-          text: "✅ Approve",
-          callback_data: `${CALLBACK_PREFIX}${approvalId}:y`,
-        },
-        {
-          text: "❌ Deny",
-          callback_data: `${CALLBACK_PREFIX}${approvalId}:n`,
-        },
-      ],
+  const rows = [
+    [
+      {
+        text: "✅ Approve",
+        callback_data: `${CALLBACK_PREFIX}${approvalId}:y`,
+      },
+      {
+        text: "❌ Deny",
+        callback_data: `${CALLBACK_PREFIX}${approvalId}:n`,
+      },
     ],
-  };
+  ];
+  if (alwaysLabel !== undefined) {
+    // Its own row: the saved answer is never next to the one-off pair.
+    const text =
+      alwaysLabel.length <= ALWAYS_BUTTON_MAX_CHARS
+        ? alwaysLabel
+        : `${alwaysLabel.slice(0, ALWAYS_BUTTON_MAX_CHARS - 1)}…`;
+    rows.push([
+      { text, callback_data: `${CALLBACK_PREFIX}${approvalId}:w` },
+    ]);
+  }
+  return { inline_keyboard: rows };
 }
 
 /**

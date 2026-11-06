@@ -93,7 +93,7 @@ function req(approvalId = "abc"): ApprovalRequest {
 
 function callback(
   approvalId: string,
-  kind: "y" | "n",
+  kind: "y" | "n" | "w",
   fromId: number = 42,
 ): InboundCallbackUpdate {
   return {
@@ -284,6 +284,77 @@ describe("ApprovalBridge.dispatch", () => {
     await h.bridge.dispatch(req("abc"), 7);
 
     expect(h.api.sendMessage).toHaveBeenCalledTimes(1);
+    expect(h.bridge.pendingCount()).toBe(1);
+  });
+});
+
+describe("Allow always over Telegram (ATO-1142)", () => {
+  function alwaysReq(approvalId = "abc"): ApprovalRequest {
+    return {
+      ...req(approvalId),
+      preview: "git status",
+      commandShape: "git",
+      commandArgv: ["git", "status"],
+      workdir: "/work/app",
+    };
+  }
+
+  type Keyboard = { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+  function keyboardOf(h: TestHarness): Keyboard {
+    const options = h.api.sendMessage.mock.calls[0]![2] as { reply_markup: Keyboard };
+    return options.reply_markup;
+  }
+
+  it("adds a third button with the rule's label when the gate offers it", async () => {
+    const h = makeHarness({
+      approvals: { resolve: vi.fn(() => true), canGrantAlways: () => true },
+    });
+    await h.bridge.dispatch(alwaysReq(), 7);
+    const rows = keyboardOf(h).inline_keyboard;
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toEqual([
+      { text: 'Always allow "git status" in this project', callback_data: "appr:abc:w" },
+    ]);
+  });
+
+  it("sends only the two buttons when the gate does not offer it", async () => {
+    const h = makeHarness({
+      approvals: { resolve: vi.fn(() => true), canGrantAlways: () => false },
+    });
+    await h.bridge.dispatch(alwaysReq(), 7);
+    expect(keyboardOf(h).inline_keyboard).toHaveLength(1);
+    // A gate with no rules support at all: same.
+    const bare = makeHarness();
+    await bare.bridge.dispatch(alwaysReq(), 7);
+    expect(keyboardOf(bare).inline_keyboard).toHaveLength(1);
+  });
+
+  it("resolves `w` as an approval with grant always and says what was saved", async () => {
+    const decisions: ApprovalDecision[] = [];
+    const h = makeHarness({
+      approvals: {
+        resolve: vi.fn((d: ApprovalDecision) => {
+          decisions.push(d);
+          return true;
+        }),
+        canGrantAlways: () => true,
+      },
+    });
+    await h.bridge.dispatch(alwaysReq(), 7);
+    await h.bridge.handleCallback(callback("abc", "w"));
+    expect(decisions).toEqual([
+      { approvalId: "abc", approved: true, reason: "telegram", grant: "always" },
+    ]);
+    expect(h.api.editMessageText.mock.calls[0]![2]).toBe(
+      '✅ approved · saved: Always allow "git status" in this project',
+    );
+  });
+
+  it("ignores a `w` callback for a prompt that never offered it", async () => {
+    const h = makeHarness();
+    await h.bridge.dispatch(alwaysReq(), 7);
+    await h.bridge.handleCallback(callback("abc", "w"));
+    expect(h.approvals.decisions).toEqual([]);
     expect(h.bridge.pendingCount()).toBe(1);
   });
 });

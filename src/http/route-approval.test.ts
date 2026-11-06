@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ApprovalRequest } from "../approval/approval-gate.js";
 
+import { approvalEventPayload } from "./route-approval.js";
 import { beginSse } from "./request-context.js";
 import { startTestHarness, type Harness } from "./test-harness.js";
 
@@ -171,6 +172,65 @@ describe("POST /api/approval/resolve", () => {
     expect(harness.runtime.approvals.sessionGrants("s-chat").shapes).toEqual([]);
   });
 
+  it("allow-always saves a rule from the pending request and answers with it (ATO-1142)", async () => {
+    const pending = harness.runtime.approvals.request({
+      sessionId: "s-always",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "test",
+      commandShape: "git",
+      commandArgv: ["git", "status", "-s"],
+      workdir: harness.workingDir,
+      approvalId: "approval-always",
+    });
+    const response = await resolveVia(harness, "approval-always", "allow-always");
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      approved: boolean;
+      grant?: string;
+      rule?: { commandPrefix?: string[]; decision: string; source: string };
+    };
+    expect(body.approved).toBe(true);
+    expect(body.grant).toBe("always");
+    expect(body.rule).toMatchObject({
+      decision: "allow",
+      commandPrefix: ["git", "status"],
+      source: "prompt",
+    });
+    expect((await pending).approved).toBe(true);
+    // The next `git status` in this project runs unasked, in another chat too.
+    const again = await harness.runtime.approvals.request({
+      sessionId: "s-other",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "test",
+      commandShape: "git",
+      commandArgv: ["git", "status"],
+      workdir: harness.workingDir,
+    });
+    expect(again.approved).toBe(true);
+    expect(again.reason).toMatch(/rule r_/);
+  });
+
+  it("refuses allow-always where it is not offered and keeps the request pending", async () => {
+    // A trust_config write is never granted; a shell call with no argv
+    // has no command the rule could name.
+    const pending = harness.runtime.approvals.request({
+      sessionId: "s-always",
+      tool: "os.fs.write",
+      category: "trust_config",
+      reason: "test",
+      workdir: harness.workingDir,
+      approvalId: "approval-trust",
+    });
+    const refused = await resolveVia(harness, "approval-trust", "allow-always");
+    expect(refused.status).toBe(400);
+    expect(harness.runtime.approvals.isPending("approval-trust")).toBe(true);
+    expect(harness.runtime.approvals.getRules()?.list()).toEqual([]);
+    await resolveVia(harness, "approval-trust", "deny");
+    expect((await pending).approved).toBe(false);
+  });
+
   it("rejects unknown decision strings", async () => {
     const response = await fetch(`${harness.baseUrl}/api/approval/resolve`, {
       method: "POST",
@@ -259,6 +319,33 @@ describe("GET /api/events", () => {
       approved: false,
     });
     await live;
+  });
+});
+
+describe("approval_request payload (ATO-1142)", () => {
+  const request: ApprovalRequest = {
+    approvalId: "a",
+    sessionId: "s",
+    tool: "os.shell.run",
+    category: "shell",
+    reason: "r",
+    commandShape: "git",
+    commandArgv: ["git", "status"],
+    workdir: "/work/app",
+  };
+
+  it("adds canAlways and the label when the gate offers Allow always", () => {
+    expect(approvalEventPayload(request, { canGrantAlways: () => true })).toEqual({
+      ...request,
+      canAlways: true,
+      alwaysLabel: 'Always allow "git status" in this project',
+    });
+  });
+
+  it("says canAlways: false and no label otherwise", () => {
+    const payload = approvalEventPayload(request, { canGrantAlways: () => false });
+    expect(payload.canAlways).toBe(false);
+    expect(payload).not.toHaveProperty("alwaysLabel");
   });
 });
 
