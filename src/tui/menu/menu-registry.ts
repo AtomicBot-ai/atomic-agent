@@ -580,12 +580,12 @@ export const MENU: readonly MenuNode[] = [
   {
     kind: "action",
     id: "run.worker",
-    label: "Stop or escalate a fusion worker",
+    label: "Stop, steer or escalate a fusion worker",
     group: "run",
     slash: {
       name: "worker",
       description:
-        "act on one running fusion worker: `/worker stop <id>` · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
+        "act on one running fusion worker: `/worker stop <id>` · `/worker steer <id> <note>` (it reads the note at its next step) · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
       rank: 46,
     },
   },

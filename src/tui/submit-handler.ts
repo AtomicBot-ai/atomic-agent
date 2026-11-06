@@ -308,11 +308,16 @@ export function runSlashCommand(
     callbacks.onSkillsRefreshRequested?.();
   }
   if (result.fusionWorkerAction !== undefined) {
-    const { action, taskId } = result.fusionWorkerAction;
+    const worker = result.fusionWorkerAction;
     if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {
       dispatch({ type: "system_message", text: "no fusion worker is running here" });
     } else {
-      callbacks.onFusionWorkerAction(state.session.sessionId, taskId, action);
+      callbacks.onFusionWorkerAction(
+        state.session.sessionId,
+        worker.taskId,
+        worker.action,
+        worker.action === "steer" ? worker.text : undefined,
+      );
     }
   }
   if (result.fusionRunAction !== undefined) {

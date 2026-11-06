@@ -161,10 +161,12 @@ export interface SlashDispatchResult {
   /** `/runmode workers N`: persist the fusion worker count. */
   readonly runModeWorkers?: number;
   /**
-   * `/worker stop|escalate <id>`: act on one running fusion worker of
-   * the current session (ATO-66). Needs the runtime, so the caller runs it.
+   * `/worker stop|escalate <id>` and `/worker steer <id> <text>`: act on
+   * one running fusion worker of the current session (ATO-66, ATO-568).
+   * Needs the runtime, so the caller runs it. `text` is set for `steer`
+   * only.
    */
-  readonly fusionWorkerAction?: { action: "stop" | "escalate"; taskId: string };
+  readonly fusionWorkerAction?: FusionWorkerAction;
   /**
    * `/fusion [resume|discard] [runId]`: list, continue or drop a fusion
    * run of the current session that a restart cut off (ATO-617). Needs
@@ -174,6 +176,31 @@ export interface SlashDispatchResult {
     action: "list" | "resume" | "discard";
     runId?: string;
   };
+}
+
+export type FusionWorkerAction =
+  | { action: "stop" | "escalate"; taskId: string }
+  | { action: "steer"; taskId: string; text: string };
+
+/**
+ * The arguments of `/worker`: `stop <id>`, `escalate <id>`, or
+ * `steer <id> <note…>` where the note is the rest of the line as typed
+ * (inner spacing kept, ends trimmed). `null` for anything else, so the
+ * caller prints the usage instead of acting on a guess.
+ */
+export function parseWorkerCommand(args: string): FusionWorkerAction | null {
+  const match = /^\s*(\S+)(?:\s+(\S+))?(?:\s+([\s\S]*))?$/.exec(args);
+  if (match === null) return null;
+  const [, verb, taskId, rest] = match;
+  if (taskId === undefined || taskId.length === 0) return null;
+  const tail = (rest ?? "").trim();
+  if (verb === "stop" || verb === "escalate") {
+    return tail.length === 0 ? { action: verb, taskId } : null;
+  }
+  if (verb === "steer") {
+    return tail.length === 0 ? null : { action: "steer", taskId, text: tail };
+  }
+  return null;
 }
 
 /**
@@ -256,19 +283,14 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
     case "steer":
       return dispatchSteerSub(parsed.args);
     case "worker": {
-      const [verb, taskId, ...rest] = parsed.args.trim().split(/\s+/);
-      if (
-        (verb !== "stop" && verb !== "escalate") ||
-        taskId === undefined ||
-        taskId.length === 0 ||
-        rest.length > 0
-      ) {
+      const action = parseWorkerCommand(parsed.args);
+      if (action === null) {
         return pureActions([], {
           systemMessage:
-            "usage: /worker stop <id> | /worker escalate <id> — the id is in [brackets] on the worker's row",
+            "usage: /worker stop <id> | /worker escalate <id> | /worker steer <id> <note> — the id is in [brackets] on the worker's row",
         });
       }
-      return pureActions([], { fusionWorkerAction: { action: verb, taskId } });
+      return pureActions([], { fusionWorkerAction: action });
     }
     case "fusion": {
       const [verb = "", runId, ...rest] = parsed.args.trim().split(/\s+/).filter((part) => part.length > 0);

@@ -752,6 +752,11 @@ export function buildStreamEventHook(
           ...(typeof contextTokens === "number" && Number.isFinite(contextTokens) && contextTokens > 0
             ? { context_tokens: contextTokens }
             : {}),
+          // ATO-568: the spend the TUI row shows, for the desktop's panel.
+          // Measured only; an unpriced (local) worker has no `spent_usd`.
+          ...(isFiniteNumber(event.tokens) && event.tokens > 0 ? { tokens: event.tokens } : {}),
+          ...(isFiniteNumber(event.spentUsd) ? { spent_usd: event.spentUsd } : {}),
+          ...(isFiniteNumber(event.costUsd) ? { cost_usd: event.costUsd } : {}),
         });
       }
       return;
@@ -1200,4 +1205,8 @@ function resolveSession(
 function makeCompletionId(): string {
   const hex = randomUUID().replace(/-/g, "");
   return `chatcmpl-${hex.slice(0, 29)}`;
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }

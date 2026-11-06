@@ -555,13 +555,16 @@ export interface TuiAppCallbacks {
    */
   onFusionWorkersChangeRequested?(workers: number): void;
   /**
-   * `/worker stop|escalate <id>`: the person's action on one running
-   * fusion worker of `sessionId` (ATO-66). The result is a feed line.
+   * `/worker stop|escalate <id>` and `/worker steer <id> <note>`: the
+   * person's action on one running fusion worker of `sessionId` (ATO-66,
+   * ATO-568). `text` is the note, for `steer` only. The result is a feed
+   * line.
    */
   onFusionWorkerAction?(
     sessionId: string,
     taskId: string,
-    action: "stop" | "escalate",
+    action: "stop" | "escalate" | "steer",
+    text?: string,
   ): void;
   /**
    * `/fusion` and `/fusion discard [id]`: list or drop the unfinished

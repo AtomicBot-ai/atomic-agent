@@ -66,6 +66,16 @@ export function renderAdvisorPrompt(input: {
   ].join("\n");
 }
 
+/**
+ * A note the person typed for one worker (ATO-568). The worker's own
+ * "user" is the orchestrator's brief, so the note says who it is from:
+ * the person outranks the brief, and a worker that read it as the
+ * orchestrator changing its mind would not know which to follow.
+ */
+export function formatPersonSteer(text: string): string {
+  return `Note from the person running this session, sent to you while you work. It outranks your brief where the two disagree:\n\n${text.trim()}`;
+}
+
 /** The steer the worker reads at its next step. */
 export function formatAdvisorSteer(model: string, hint: string): string {
   return `Advice from a stronger model (${model}) after your recent steps looked stuck. Follow it unless your files show it is wrong:\n\n${hint.trim()}`;
@@ -158,6 +168,13 @@ export interface LiveWorkerControls {
   stop(): void;
   /** Resolves with what happened, in one line for the feed. */
   escalate(): Promise<string>;
+  /**
+   * Queue the person's note for this worker alone (ATO-568). It reaches
+   * the worker at its next step boundary, the same point the session's
+   * own steers land. `false` when the worker's turn is no longer taking
+   * steers, the text is blank or its inbox is full: nothing was queued.
+   */
+  steer(text: string): boolean;
 }
 
 export class FusionLiveWorkers {
@@ -195,6 +212,24 @@ export class FusionLiveWorkers {
     const worker = this.workers.get(this.key(parentSessionId, taskId));
     if (worker === undefined) return null;
     return worker.escalate();
+  }
+
+  /**
+   * `false` when no such worker is running, or when it is running but
+   * did not take the note (see {@link LiveWorkerControls.steer}). Only
+   * the fan-out's own parent session reaches its workers: the key is
+   * the pair, never the task id alone.
+   */
+  steer(parentSessionId: string, taskId: string, text: string): boolean {
+    if (text.trim().length === 0) return false;
+    const worker = this.workers.get(this.key(parentSessionId, taskId));
+    if (worker === undefined) return false;
+    return worker.steer(text);
+  }
+
+  /** True while `taskId` of `parentSessionId`'s fan-out is running. */
+  isRunning(parentSessionId: string, taskId: string): boolean {
+    return this.workers.has(this.key(parentSessionId, taskId));
   }
 
   running(parentSessionId: string): string[] {

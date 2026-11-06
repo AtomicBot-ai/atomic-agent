@@ -4,7 +4,10 @@ import {
   fusionWorkerActionsHint,
   reduceFusionLiveWorkers,
 } from "./fusion-live-workers.js";
-import { dispatchSlashCommand } from "./commands/slash-command-handler.js";
+import {
+  dispatchSlashCommand,
+  parseWorkerCommand,
+} from "./commands/slash-command-handler.js";
 
 const base = {
   type: "fusion_worker" as const,
@@ -25,7 +28,7 @@ describe("a worker row's $ and tokens, and its actions", () => {
     const line = formatFusionLiveWorker(rows[0]!, 12_000);
     expect(line).toContain("41.2k tok · $0.03");
     expect(fusionWorkerActionsHint(rows)).toBe(
-      "/worker stop <id> · /worker escalate <id> — running: ui",
+      "/worker stop <id> · /worker escalate <id> · /worker steer <id> <note> — running: ui",
     );
     // A finished row keeps its totals; nothing is left to act on.
     rows = reduceFusionLiveWorkers(rows, { ...base, phase: "finished" }, 20_000);
@@ -51,5 +54,32 @@ describe("a worker row's $ and tokens, and its actions", () => {
     const bad = dispatchSlashCommand("/worker kill ui");
     expect(bad.fusionWorkerAction).toBeUndefined();
     expect(bad.systemMessage).toMatch(/usage: \/worker stop <id>/);
+  });
+
+  it("parses /worker steer <id> <note> and keeps the note as typed (ATO-568)", () => {
+    expect(
+      dispatchSlashCommand("/worker steer ui use the  existing Button, not a new one").fusionWorkerAction,
+    ).toEqual({
+      action: "steer",
+      taskId: "ui",
+      text: "use the  existing Button, not a new one",
+    });
+    // Multi-line notes survive: only the ends are trimmed.
+    expect(parseWorkerCommand("steer core first line\nsecond line  ")).toEqual({
+      action: "steer",
+      taskId: "core",
+      text: "first line\nsecond line",
+    });
+  });
+
+  it("refuses a steer with no note or no id, and a stop with extra words", () => {
+    expect(parseWorkerCommand("steer ui")).toBeNull();
+    expect(parseWorkerCommand("steer ui    ")).toBeNull();
+    expect(parseWorkerCommand("steer")).toBeNull();
+    expect(parseWorkerCommand("stop ui now")).toBeNull();
+    expect(parseWorkerCommand("")).toBeNull();
+    const bad = dispatchSlashCommand("/worker steer ui");
+    expect(bad.fusionWorkerAction).toBeUndefined();
+    expect(bad.systemMessage).toMatch(/\/worker steer <id> <note>/);
   });
 });

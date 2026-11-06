@@ -13,6 +13,7 @@ import {
   describeTrigger,
   formatAdvisorSteer,
   formatCost,
+  formatPersonSteer,
   renderAdvisorPrompt,
   requestAdvice,
   type EscalationComplete,
@@ -1228,12 +1229,32 @@ async function runOneTask(
       replaceAbort.abort(new Error("replaced by the escalation model"));
     }
   };
+  // The person's notes to this worker (ATO-568). They ride the same
+  // steering inbox the session's own steers do, keyed by the worker's
+  // ephemeral session id, which its `runTurn` opens on entry and drains
+  // at every step boundary: no second delivery path to keep honest.
+  // Kept here so the row can say how many arrived and how many the turn
+  // handed back unread because it ended first.
+  const personNotes: string[] = [];
+  let personNotesUnread = 0;
+  const steerByPerson = (workerSessionId: string, text: string): boolean => {
+    if (text.trim().length === 0) return false;
+    const note = formatPersonSteer(text);
+    const steered = deps.steerWorker?.(workerSessionId, note) ?? false;
+    if (steered) personNotes.push(note);
+    return steered;
+  };
+  const countUnreadNotes = (undelivered: readonly string[] | undefined): void => {
+    if (undelivered === undefined) return;
+    personNotesUnread += undelivered.filter((text) => personNotes.includes(text)).length;
+  };
   const unregisterLive = deps.liveWorkers?.register(
     options.parentSessionId,
     task.id,
     {
       stop: () => stopByPerson.abort(new Error("stopped by the person")),
       escalate: () => escalate({ kind: "manual" }),
+      steer: (text) => steerByPerson(session.id, text),
     },
   );
 
@@ -1359,6 +1380,7 @@ async function runOneTask(
         collector.observe(event);
       },
     });
+    countUnreadNotes(turn.undelivered);
     const timedOut = turn.reason === "cancelled" && hitTimeLimit();
     timedOutOutcome = timedOut;
     queuedOutcome = turn.reason === "cancelled" && hitQueueLimit();
@@ -1441,6 +1463,7 @@ async function runOneTask(
       {
         stop: () => stopByPerson.abort(new Error("stopped by the person")),
         escalate: async () => "not escalated: the task is already running on the escalation model",
+        steer: (text) => steerByPerson(replaceSession.id, text),
       },
     );
     announceEscalation(
@@ -1492,6 +1515,7 @@ async function runOneTask(
           },
         },
       );
+      countUnreadNotes(turn.undelivered);
       result = replaceCollector.finish({
         id: task.id,
         title: task.title,
@@ -1527,6 +1551,16 @@ async function runOneTask(
   }
   if (stopByPerson.signal.aborted) {
     escalationNotes.push("stopped by the person");
+  }
+  if (personNotes.length > 0) {
+    // The orchestrator reads the row: a worker that changed course on
+    // the person's word should not look like one that ignored its brief.
+    const sent = `the person sent this worker ${personNotes.length} note${personNotes.length === 1 ? "" : "s"} while it ran`;
+    escalationNotes.push(
+      personNotesUnread === 0
+        ? sent
+        : `${sent}; ${personNotesUnread} arrived after its last step and ${personNotesUnread === 1 ? "was" : "were"} not read`,
+    );
   }
 
   // A local worker that ended by an abort — its clock, its queue wait,
