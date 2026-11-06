@@ -12,6 +12,10 @@ import {
   type ApprovalCategory,
 } from "../approval/approval-level.js";
 import {
+  canGrantAlways,
+  describeAlwaysRule,
+} from "../approval/approval-rules.js";
+import {
   excerptPreview,
   hiddenLinesNote,
   previewLines,
@@ -87,6 +91,8 @@ export function ApprovalModal({
   // `[a]` only when the shell tool supplied a command shape to grant.
   const grantCategory = canGrantCategory(request);
   const grantShape = canGrantShape(request);
+  // "Allow always": a saved rule, scoped to this project (ATO-1142).
+  const grantAlways = canGrantAlways(request);
   const editable = canEditPath(request);
   const editing = pathDraft !== null;
   return (
@@ -218,6 +224,18 @@ export function ApprovalModal({
               ) : null}
             </Box>
           ) : null}
+          {grantAlways ? (
+            <Box flexDirection="row" marginTop={1}>
+              <ApprovalButton
+                request={request}
+                approved
+                grant="always"
+                tone="secondary"
+              >
+                {`${describeAlwaysRule(request)} · ctrl+${APPROVAL_CHORDS.grantAlways}`}
+              </ApprovalButton>
+            </Box>
+          ) : null}
           <Box marginTop={1}>
             <Text color={theme.colors.muted}>
               esc abort run {theme.glyphs.dotSeparator} ctrl+c stop everything
@@ -243,7 +261,7 @@ function footerHint(grantable: boolean, category: ApprovalCategory): string {
   if (!grantable) {
     return `${formatNeverGrantedNote(category)}; approve covers this call only · ${typing}`;
   }
-  return `approve covers this call once; the session grants last until the app exits (never persisted); loosen the standing stance with the coding-mode control in the composer · ${typing}`;
+  return `approve covers this call once; the session grants last until the app exits (never persisted), "always allow" is saved for this project; loosen the standing stance with the coding-mode control in the composer · ${typing}`;
 }
 
 /**

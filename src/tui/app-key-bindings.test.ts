@@ -605,6 +605,46 @@ describe("handleAppKey", () => {
     });
   });
 
+  it("ctrl+n saves an Allow always rule where one is offered, and says so (ATO-1142)", () => {
+    const state = createInitialTuiState(stubSession());
+    state.pendingApproval = pendingRequest({
+      commandArgv: ["git", "status"],
+      workdir: "/work/app",
+    });
+    const onApprovalDecision = vi.fn();
+    const dispatch = vi.fn();
+    const handled = handleAppKey("n", emptyKey({ ctrl: true }), {
+      state,
+      dispatch,
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(handled).toBe(true);
+    expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true, "always");
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "system_message",
+      text: expect.stringContaining('saved: Always allow "git status" in this project'),
+    });
+  });
+
+  it("ctrl+n is no decision where Allow always is not offered", () => {
+    const state = createInitialTuiState(stubSession());
+    // No argv: a compound or opaque shell line has nothing a rule can name.
+    state.pendingApproval = pendingRequest({ workdir: "/work/app" });
+    const onApprovalDecision = vi.fn();
+    handleAppKey("n", emptyKey({ ctrl: true }), {
+      state,
+      dispatch: vi.fn(),
+      callbacks: { onApprovalDecision, onAbort: vi.fn(), onQuit: vi.fn() },
+      ctrlCArmed: false,
+      setCtrlCArmed: vi.fn(),
+      sidebarVisible: false,
+    });
+    expect(onApprovalDecision).not.toHaveBeenCalled();
+  });
+
   it("ctrl+f is inert on a trust_config approval (never grantable)", () => {
     const state = createInitialTuiState(stubSession());
     state.pendingApproval = pendingRequest({

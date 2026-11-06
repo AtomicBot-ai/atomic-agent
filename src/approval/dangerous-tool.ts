@@ -22,6 +22,10 @@ export interface ApprovalPrompt {
   affectedResources?: string[];
   /** Command binary (argv[0]) for shell requests; unit of a shape grant. */
   commandShape?: string;
+  /** Parsed argv of a simple shell command; see `ApprovalRequest.commandArgv`. */
+  commandArgv?: readonly string[];
+  /** Session working directory; see `ApprovalRequest.workdir`. */
+  workdir?: string;
   /**
    * Absolute path the host may offer to retarget before approving. See
    * `ApprovalRequest.redirectablePath` — set only by `os.fs.write`.
@@ -156,6 +160,10 @@ export async function requireApproval(
       ...(prompt.commandShape !== undefined
         ? { commandShape: prompt.commandShape }
         : {}),
+      ...(prompt.commandArgv !== undefined
+        ? { commandArgv: [...prompt.commandArgv] }
+        : {}),
+      ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
       ...(prompt.redirectablePath !== undefined
         ? { redirectablePath: prompt.redirectablePath }
         : {}),

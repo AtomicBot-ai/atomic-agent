@@ -14,6 +14,16 @@ import {
   type ApprovalCategory,
   type ApprovalLevel,
 } from "./approval-level.js";
+import {
+  buildAlwaysRule,
+  canGrantAlways,
+  describeRule,
+  matchRules,
+  type ApprovalRule,
+  type RuleMatch,
+} from "./approval-rules.js";
+import type { ApprovalRulesSource } from "./approval-rules-store.js";
+import { currentApprovalWorkdir } from "./approval-workdir.js";
 
 export interface ApprovalRequest {
   approvalId: string;
@@ -37,6 +47,18 @@ export interface ApprovalRequest {
    * the shape option is not offered.
    */
   commandShape?: string;
+  /**
+   * Parsed argv of a simple shell command (`["git", "status", "-s"]`),
+   * the unit a saved rule's `commandPrefix` matches. Set only by the shell
+   * tool, and only where `commandShape` is: a pipeline or a compound line
+   * has none, so no prefix rule can match it.
+   */
+  commandArgv?: string[];
+  /**
+   * The session's working directory, for rules scoped to a project. The
+   * gate fills it from the dispatching tool call when the tool did not.
+   */
+  workdir?: string;
   /**
    * Absolute path this request would write, when the host may offer to
    * retarget it before approving (`[e]` in the TUI). Set only by tools
@@ -67,9 +89,10 @@ export interface ApprovalRequest {
  * request's `commandShape` binary (`a`, shell only). The gate reads the
  * category/shape from its own pending request, never from the caller:
  * the caller names the scope, not the value, so a host cannot grant a
- * category the prompt was not about.
+ * category the prompt was not about. `always` saves an allow rule built
+ * from the pending request (`buildAlwaysRule`) in the rules store.
  */
-export type ApprovalGrantScope = "category" | "shape";
+export type ApprovalGrantScope = "category" | "shape" | "always";
 
 export interface ApprovalDecision {
   approvalId: string;
@@ -254,6 +277,11 @@ export class ApprovalGate {
    */
   readonly readScopeGrants = new ReadScopeGrants();
 
+  /** Saved allow / ask / deny rules (`approval-rules.ts`); none until `setRules`. */
+  private rules: ApprovalRulesSource | undefined;
+  /** The rule the last `grant: "always"` saved, for the host that asked. */
+  private lastAlwaysRule: { approvalId: string; rule: ApprovalRule } | null = null;
+
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
     this.level = options.level ?? MIN_APPROVAL_LEVEL;
@@ -266,6 +294,29 @@ export class ApprovalGate {
    */
   setSessionPolicy(sessionId: string, policy: SessionApprovalPolicy): void {
     this.policiesBySession.set(sessionId, policy);
+  }
+
+  /** Install (or with `undefined`, remove) the saved approval rules. */
+  setRules(store: ApprovalRulesSource | undefined): void {
+    this.rules = store;
+  }
+
+  /** The installed rules store, for hosts that list or delete rules. */
+  getRules(): ApprovalRulesSource | undefined {
+    return this.rules;
+  }
+
+  /** `canGrantAlways` plus: a rules store is installed to save the rule in. */
+  canGrantAlways(request: ApprovalRequest): boolean {
+    return this.rules !== undefined && canGrantAlways(request);
+  }
+
+  /** The rule `resolve({ grant: "always" })` saved for `approvalId`, once. */
+  takeAlwaysRule(approvalId: string): ApprovalRule | null {
+    const last = this.lastAlwaysRule;
+    if (last === null || last.approvalId !== approvalId) return null;
+    this.lastAlwaysRule = null;
+    return last.rule;
   }
 
   /** Remove the session's policy so its requests prompt again. */
@@ -339,7 +390,12 @@ export class ApprovalGate {
     { signal }: { signal?: AbortSignal } = {},
   ): Promise<ApprovalDecision> {
     const approvalId = params.approvalId ?? randomUUID();
-    const request: ApprovalRequest = { ...params, approvalId };
+    const workdir = params.workdir ?? currentApprovalWorkdir();
+    const request: ApprovalRequest = {
+      ...params,
+      approvalId,
+      ...(workdir !== undefined ? { workdir } : {}),
+    };
     // Before auto-approval: a level or a grant that would run a write
     // silently must not become the way round the user's own Deny of it
     // a few steps earlier.
@@ -353,7 +409,24 @@ export class ApprovalGate {
         declinedEarlier: true,
       });
     }
-    const auto = this.autoApproval(request);
+    // Saved rules: a deny wins over everything below; an ask skips the
+    // level and the grants; an allow is the last way round a prompt.
+    const rule = this.matchRule(request);
+    if (rule?.decision === "deny") {
+      return Promise.resolve({
+        approvalId,
+        approved: false,
+        reason: `blocked by your rule ${rule.rule.id}: ${describeRule(rule.rule)}`,
+        automatic: true,
+      });
+    }
+    const auto =
+      rule?.decision === "ask"
+        ? null
+        : (this.autoApproval(request) ??
+          (rule?.decision === "allow"
+            ? `auto-approved (rule ${rule.rule.id})`
+            : null));
     if (auto)
       return Promise.resolve({ approvalId, approved: true, reason: auto });
     // Would prompt from here on. A session under a refuse policy gets its
@@ -424,6 +497,30 @@ export class ApprovalGate {
       return `auto-approved (session grant: ${request.commandShape})`;
     }
     return null;
+  }
+
+  /**
+   * The saved rule that decides `request`: the global file's rules plus
+   * the ask / deny rules of the session's project file. A store that
+   * cannot be read never blocks a request; it is as if it had no rules.
+   */
+  private matchRule(request: ApprovalRequest): RuleMatch | null {
+    const store = this.rules;
+    if (store === undefined) return null;
+    try {
+      const workdir =
+        request.workdir === undefined
+          ? undefined
+          : (store.canonicalDir?.(request.workdir) ?? resolvePath(request.workdir));
+      const rules = [
+        ...store.list(),
+        ...(workdir !== undefined ? (store.projectRules?.(workdir) ?? []) : []),
+      ];
+      if (rules.length === 0) return null;
+      return matchRules(rules, request, workdir !== undefined ? { workdir } : {});
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -612,6 +709,10 @@ export class ApprovalGate {
     scope: ApprovalGrantScope,
   ): void {
     if (!isGrantableCategory(request.category)) return;
+    if (scope === "always") {
+      this.saveAlwaysRule(request);
+      return;
+    }
     const grants = this.grantsForSession(request.sessionId);
     if (scope === "category") {
       grants.categories.add(request.category);
@@ -619,6 +720,24 @@ export class ApprovalGate {
     }
     if (request.category === "shell" && request.commandShape) {
       grants.shapes.add(request.commandShape);
+    }
+  }
+
+  /**
+   * Save the allow rule "Allow always" stands for, built from the pending
+   * request and scoped to its project. Without a store, or when the rule
+   * cannot be built or written, the approval stays a one-off.
+   */
+  private saveAlwaysRule(request: ApprovalRequest): void {
+    const store = this.rules;
+    if (store === undefined || request.workdir === undefined) return;
+    const project = store.canonicalDir?.(request.workdir) ?? resolvePath(request.workdir);
+    const rule = buildAlwaysRule(request, project);
+    if (rule === null) return;
+    try {
+      this.lastAlwaysRule = { approvalId: request.approvalId, rule: store.add(rule) };
+    } catch {
+      // Not saved: this call still runs, the next one asks again.
     }
   }
 

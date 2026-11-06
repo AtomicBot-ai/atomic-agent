@@ -36,6 +36,10 @@ import {
   createResolveApprovalHandler,
 } from "./route-approval.js";
 import {
+  createDeleteApprovalRuleHandler,
+  createListApprovalRulesHandler,
+} from "./route-approval-rules.js";
+import {
   createCancelTaskHandler,
   createCreateTaskHandler,
   createDrainTasksHandler,
@@ -193,6 +197,9 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/events",
       handler: createApprovalEventsHandler(),
     },
+    // ATO-1141: saved "always allow" / ask / deny rules.
+    { method: "GET", path: "/api/approval-rules", handler: createListApprovalRulesHandler() },
+    { method: "DELETE", path: "/api/approval-rules/{id}", handler: createDeleteApprovalRuleHandler() },
     // The two routes the desktop needs and the TUI does not: the coding-mode
     // stance it projects onto the approval ladder, and the context figure it
     // shows before the first message of a session.
