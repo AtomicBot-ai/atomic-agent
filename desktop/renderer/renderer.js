@@ -9920,6 +9920,11 @@ function turnFailure(ev) {
      words under Details, before any other wording of the same failure. */
   const full = localContextFullLine(ev, selActiveProviderId());
   if (full) return {text: esc(full), detail: String(ev.error || '')};
+  /* ATO-1206: a local server that turned the request down for another
+     reason (tools, images, a parameter it does not take) says so, with
+     what to do, instead of "Couldn't get a reply". */
+  const invalid = localRequestInvalidLine(ev, selActiveProviderId());
+  if (invalid) return {text: esc(invalid), detail: String(ev.error || '')};
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
   /* ATO-391: the provider replied, with an error (a 404 for a model it does
@@ -9962,13 +9967,43 @@ function localWrongServerLine(ev, picked) {
     on a cloud provider and for anything else. */
 function localContextFullLine(ev, picked) {
   const words = /exceeds? the available context size|exceed_context_size_error|(?:no longer fits|does not fit)(?: in)? (?:this|the) (?:local )?model's context window/i;
-  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
-  if (!id || !waitIsLocalServer(id) || localWrongServerLine(ev, picked)) return '';
-  const p = (ev && ev.payload) || {};
-  const code = p.code || (ev && ev.code) || '';
-  if (code ? code !== 'local_context_exceeded' : !words.test(String((ev && ev.error) || ''))) return '';
-  return "The conversation no longer fits in the local model's context window."
+  const phrase = "The conversation no longer fits in the local model's context window."
     + ' Compact this chat or start a new one, or give the model a larger context size.';
+  const code = localFailureCode(ev);
+  /* ATO-1206: the agent sets this code only for a server on this machine
+     (llama.cpp, or an OpenAI-compatible one such as Atomic Chat on 1337),
+     so the code alone is enough; the words alone need a local provider. */
+  if (code === 'local_context_exceeded') {
+    if (localWrongServerLine(ev, picked)) return '';
+    return localFrameAdvice(ev) || phrase;
+  }
+  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
+  if (code || !id || !waitIsLocalServer(id) || localWrongServerLine(ev, picked)) return '';
+  return words.test(String((ev && ev.error) || '')) ? phrase : '';
+}
+/** ATO-1206: a local server answered 400 with `invalid_request_error` for
+    anything but a full context (the agent's `local_request_invalid`): the
+    agent's sentence and advice from the frame, in the window's words.
+    Only by the code: the raw words ("tools are not supported…") are the
+    server's, too varied to read. A 404/405 stays the wrong server; '' for
+    anything else. The words are the agent's for that code
+    (local-bad-request.ts), kept for a frame with no advice. */
+function localRequestInvalidLine(ev, picked) {
+  if (localFailureCode(ev) !== 'local_request_invalid' || localWrongServerLine(ev, picked)) return '';
+  return localFrameAdvice(ev) || 'The local model server turned the request down as invalid.'
+    + ' The model or the server may not support something the agent sent, such as tools or images.'
+    + ' Try another model, or update the server.';
+}
+/** The machine-readable reason on a failed turn's frame, or ''. */
+function localFailureCode(ev) {
+  const p = (ev && ev.payload) || {};
+  return String(p.code || (ev && ev.code) || '');
+}
+/** The agent's sentence and advice for a local-server code (failure-reason-frame.ts), in the window's words, or ''. */
+function localFrameAdvice(ev) {
+  const p = (ev && ev.payload) || {};
+  const said = String(p.advice || (ev && ev.advice) || '').trim();
+  return said.replace(/the Providers panel/g, 'Settings › Models');
 }
 /** The host a llama-server entry talks to, or ''. Its address is `url`
     (its `baseUrl` is the embeddings server), and selProviders() leaves
