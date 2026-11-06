@@ -5,6 +5,7 @@ import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { contextWindowExhaustedError, isConversationSizeRefusal, planOverflowCompaction } from "./turn/overflow-compaction.js";
 import { createTurnLoopState } from "./turn/turn-state.js";
+import { checkpointStep } from "./turn/turn-checkpoint.js";
 import { recoverTurnStep, abortableSleep, reportTurnFailure } from "./turn/turn-recovery.js";
 import { recoverFromOutOfMemory } from "./turn/out-of-memory-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
@@ -717,6 +718,9 @@ export class AgentLoop {
           turn.reason = "max_steps";
           break;
         }
+        // The step is done and the turn goes on: make it durable now, so
+        // a crash before the turn's end loses only the step in flight.
+        checkpointStep(options, state, { stepIndex: i, stepsTaken: turn.stepsTaken }, this.deps.logger);
         // A trimmed-batch step (auto-split: approval-gated solo) seeds
         // the next step's `pendingNotice` so the model sees which calls
         // were dropped and can retry them as length-1 arrays. The

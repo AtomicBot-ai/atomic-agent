@@ -574,6 +574,22 @@ export interface RunTurnOptions {
    * there is nobody to answer).
    */
   localOutOfMemory?: "ask" | "auto";
+  /**
+   * Called after every completed step that does not end the turn, with
+   * the session as it now stands (ATO-1109). The runtime writes it to
+   * the session store with the turn's progress marker, so a crash or a
+   * kill mid-turn loses at most the step in flight. A throw is logged
+   * and ignored (`turn/turn-checkpoint.ts`).
+   */
+  onStepCheckpoint?: (session: SessionState, step: StepCheckpoint) => void;
+}
+
+/** One completed step, as `RunTurnOptions.onStepCheckpoint` reports it. */
+export interface StepCheckpoint {
+  /** Index of the step that just completed. */
+  stepIndex: number;
+  /** Steps completed in this turn so far, this one included. */
+  stepsTaken: number;
 }
 
 /** Why a `runTurn` invocation returned. */

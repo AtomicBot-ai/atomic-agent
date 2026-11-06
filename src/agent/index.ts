@@ -1,5 +1,5 @@
 export { AgentLoop } from "./agent-loop.js";
-export type { AgentLoopDependencies, AgentLoopEvent, AgentLoopReason, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
+export type { AgentLoopDependencies, AgentLoopEvent, AgentLoopReason, RunTurnOptions, RunTurnResult, StepCheckpoint } from "./agent-contract.js";
 export { executeStep } from "./step-executor.js";
 export type { StepContext, StepDependencies, StepOutcome } from "./step/step-contract.js";
 export type { StepEvent } from "./step-events.js";
