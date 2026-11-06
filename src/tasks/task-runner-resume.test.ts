@@ -26,6 +26,7 @@ describe("TaskRunner resume", () => {
   let markers: Map<string, TurnProgress>;
   let calls: Call[];
   let sleeps: number[];
+  let onSleep: (() => void) | undefined;
 
   beforeEach(() => {
     tmp = mkdtempSync(join(tmpdir(), "atomic-agent-resume-"));
@@ -34,6 +35,7 @@ describe("TaskRunner resume", () => {
     markers = new Map();
     calls = [];
     sleeps = [];
+    onSleep = undefined;
   });
 
   afterEach(() => {
@@ -64,6 +66,7 @@ describe("TaskRunner resume", () => {
       runOnCreate: false,
       sleep: async (ms) => {
         sleeps.push(ms);
+        onSleep?.();
       },
       resume: {
         enabled: true,
@@ -123,6 +126,19 @@ describe("TaskRunner resume", () => {
     await runner().runOne(id);
     expect(calls[0]?.checkpoint?.resumes).toBe(2);
     expect(sleeps).toEqual([100]);
+  });
+
+  it("keeps the crash counted when the agent quits during the resume's backoff", async () => {
+    const id = crashedTask(3, 1);
+    const quit = new AbortController();
+    onSleep = () => quit.abort();
+    const final = await runner().runOne(id, quit.signal);
+    expect(calls).toHaveLength(0);
+    expect(final?.status).toBe("pending");
+    // Still read as taken back from a dead agent: the next boot counts
+    // this crash again instead of continuing it as a clean restart.
+    expect(final?.lastError).toBe(TASK_OWNER_GONE_ERROR);
+    expect(markers.get(session.id)?.resumes).toBe(1);
   });
 
   it("fails the task past maxResumes instead of running it again", async () => {

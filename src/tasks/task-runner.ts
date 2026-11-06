@@ -27,6 +27,7 @@ import {
   type TriggerSource,
 } from "./task-types.js";
 import type { TaskCreateInput, TaskStore } from "./task-store.js";
+import { TASK_OWNER_GONE_ERROR } from "./task-store.js";
 
 /**
  * Subset of `AgentRuntime` consumed by the task runner. Declared
@@ -396,11 +397,19 @@ export class TaskRunner {
     // drain's signal — the scheduler aborts its own when the agent quits
     // — all end the turn through it.
     const run = this.beginRun(claimed.id, runtimeSignal);
+    // Set once the turn is about to start. A crash resume stopped before
+    // that (during its backoff) never wrote its resume count into the
+    // session's marker (`beginTurn` does), so the task goes back still
+    // marked as taken back from a dead agent and the next boot counts
+    // that crash again; otherwise quitting during the wait would reset
+    // the count `agent.task.maxResumes` is checked against.
+    let turnStarted = false;
     try {
       let result: RunTurnResult;
       try {
         await this.backOffResume(plan, run.signal);
         if (run.signal.aborted) throw new Error("stopped before resuming");
+        turnStarted = true;
         result = await this.options.runtime.runTurn(
           session,
           plan.kind === "resume" ? plan.message : claimed.userMessage,
@@ -428,6 +437,9 @@ export class TaskRunner {
             claimed,
             err,
             this.interrupted(runtimeSignal),
+            !turnStarted && plan.kind === "resume" && plan.crashed
+              ? TASK_OWNER_GONE_ERROR
+              : undefined,
           );
         }
         return this.handleFailure(claimed, category, err);
@@ -834,6 +846,8 @@ export class TaskRunner {
     task: TaskRecord,
     err: unknown,
     interrupted: boolean,
+    /** `last_error` for a one-shot task put back (`markInterrupted`). */
+    interruptedError?: string,
   ): TaskRecord | null {
     const message = err instanceof Error ? err.message : String(err);
     if (task.recurring && task.schedule) {
@@ -858,6 +872,9 @@ export class TaskRunner {
     if (interrupted) {
       const pending = this.options.store.markInterrupted(task.id, {
         nextScheduledFor: null,
+        ...(interruptedError !== undefined
+          ? { lastError: interruptedError }
+          : {}),
       });
       if (!pending) return this.options.store.get(task.id);
       this.options.logger?.info("task run interrupted; left pending", {
