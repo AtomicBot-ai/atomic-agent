@@ -550,7 +550,9 @@ export const MENU: readonly MenuNode[] = [
       name: "status",
       description:
         "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
-      rank: 46,
+      // Next to /steer and /queue, its run-time siblings; a fraction so
+      // it never collides with the integer ranks other commands append.
+      rank: 35.5,
     },
   },
   {
