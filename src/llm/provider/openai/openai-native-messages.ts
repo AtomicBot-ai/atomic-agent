@@ -33,6 +33,15 @@ export type OpenAiChatMessage = Record<string, unknown>;
 export interface NativeMessageOptions {
   /** The adapter's escape for tool names (`os.fs.read` → `os__fs__read`). */
   nameEscape: (qualifiedName: string) => string;
+  /**
+   * Hand a tool call's reasoning back as the assistant message's
+   * `reasoning_content` (ATO-887). Only for a server that renders the
+   * model's chat template itself: the template then decides what to keep
+   * (Qwen keeps the thinking after the last user message, all of it under
+   * `preserve_thinking`). Strict APIs answer unknown fields with a 400,
+   * so it is off by default.
+   */
+  preserveReasoning?: boolean;
 }
 
 export const NO_RESULT_RECORDED = "(no result recorded)";
@@ -91,6 +100,11 @@ export function buildNativeMessages(
         out.push({
           role: "assistant",
           content: null,
+          ...(options.preserveReasoning === true &&
+          turn.reasoning !== undefined &&
+          turn.reasoning.length > 0
+            ? { reasoning_content: turn.reasoning }
+            : {}),
           tool_calls: [
             {
               id,

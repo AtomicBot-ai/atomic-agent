@@ -38,7 +38,22 @@ export interface CompletionUsage {
 export type PromptTurn =
   | { kind: "user"; text: string }
   | { kind: "assistant_reply"; text: string }
-  | { kind: "assistant_tool_call"; tool: string; args: Record<string, unknown>; callId?: string }
+  | {
+      kind: "assistant_tool_call";
+      tool: string;
+      args: Record<string, unknown>;
+      callId?: string;
+      /**
+       * The model's own reasoning from the inference that emitted this
+       * call. Set only on calls of the current (un-replied) macro-turn,
+       * and only on the first call of a batch, where the transcript keeps
+       * it. A local server that renders the chat template gets it back as
+       * `reasoning_content`, so a template that keeps thinking between
+       * tool steps (Qwen `preserve_thinking`, Flint) sees it; every other
+       * layout ignores it.
+       */
+      reasoning?: string;
+    }
   | {
       kind: "tool_result";
       tool: string;

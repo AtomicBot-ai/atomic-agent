@@ -152,6 +152,40 @@ describe("buildNativeMessages", () => {
   });
 });
 
+describe("buildNativeMessages: reasoning handed back (ATO-887)", () => {
+  const turns: PromptMessages["turns"] = [
+    { kind: "user", text: "read a.txt" },
+    { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "need the file first" },
+    { kind: "tool_result", tool: "os.fs.read", status: "ok", body: "hello", truncated: false },
+  ];
+
+  it("puts the call's reasoning on its assistant message as reasoning_content", () => {
+    const messages = buildNativeMessages(prompt({ turns }), { ...options, preserveReasoning: true });
+    expect(messages[2]).toEqual({
+      role: "assistant",
+      content: null,
+      reasoning_content: "need the file first",
+      tool_calls: [
+        { id: "call_1", type: "function", function: { name: "os__fs__read", arguments: '{"path":"a.txt"}' } },
+      ],
+    });
+  });
+
+  it("leaves it out unless asked, so a strict API never sees the field", () => {
+    const messages = buildNativeMessages(prompt({ turns }), options);
+    expect(messages[2]).not.toHaveProperty("reasoning_content");
+  });
+
+  it("adds nothing for a call that has no reasoning", () => {
+    const plain: PromptMessages["turns"] = [
+      { kind: "user", text: "read a.txt" },
+      { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a.txt" } },
+    ];
+    const messages = buildNativeMessages(prompt({ turns: plain }), { ...options, preserveReasoning: true });
+    expect(messages[2]).not.toHaveProperty("reasoning_content");
+  });
+});
+
 describe("isNativeShapeRejection", () => {
   const http = (status: number | null, message: string) =>
     new OpenAiHttpError(message, status, "http://x", false, null, "p");
