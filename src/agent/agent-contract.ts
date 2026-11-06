@@ -574,6 +574,14 @@ export interface RunTurnOptions {
    * there is nobody to answer).
    */
   localOutOfMemory?: "ask" | "auto";
+  /**
+   * Goal mode (ATO-451): keep working, round after round, until the
+   * acceptance list is green. Not read by the loop itself: the runtime
+   * wraps the loop's turns in the goal controller (`./goal/`), which runs
+   * `checks` after each round, asks a judge about `criteria`, and starts
+   * the next round with what is still open, up to `maxRounds`.
+   */
+  goal?: import("./goal/goal-types.js").GoalSpec;
 }
 
 /** Why a `runTurn` invocation returned. */
@@ -978,4 +986,10 @@ export interface RunTurnResult {
    * when no call reported any, so a missing figure never reads as zero.
    */
   usage?: { promptTokens: number; completionTokens: number };
+  /**
+   * Where the goal stands after a goal-mode run (`RunTurnOptions.goal`):
+   * its status, per-criterion marks and rounds used. Absent on an
+   * ordinary turn and when the operator cleared the goal mid-run.
+   */
+  goal?: import("./goal/goal-types.js").GoalState;
 }

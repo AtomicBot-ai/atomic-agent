@@ -679,7 +679,7 @@ export async function createAgentRuntime(
   const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
-  const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
+  const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
@@ -747,6 +747,7 @@ export async function createAgentRuntime(
     createSession,
     createEphemeralSession,
     runTurn,
+    controlGoal,
     executeTurn,
     previewPrompt,
     compactSession: compaction.compactSession,

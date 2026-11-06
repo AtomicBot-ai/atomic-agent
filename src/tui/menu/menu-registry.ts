@@ -437,6 +437,15 @@ export const MENU: readonly MenuNode[] = [
     slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
   },
   {
+    kind: "action", id: "session.goal", label: "Goal mode…", group: "session",
+    slash: {
+      name: "goal",
+      description:
+        "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
+      rank: 46,
+    },
+  },
+  {
     kind: "action",
     id: "session.context",
     label: "Context window",

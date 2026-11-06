@@ -243,6 +243,11 @@ const V0_2_2_SLASH_COMMANDS = [
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
   },
   {
+    name: "goal",
+    description:
+      "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
+  },
+  {
     name: "uninstall",
     description:
       "remove atomic-agent and all of its data from this machine — permanent, no undo",

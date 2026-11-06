@@ -743,6 +743,12 @@ export interface TuiState {
    */
   queuedMessages: readonly string[];
   /**
+   * The open chat's goal as one line (`Goal: 3/5 criteria green · round
+   * 2/10`), or `null` without a goal. Published by the orchestrator via
+   * `goal_changed`; the goal itself lives in the session's metadata.
+   */
+  goalLine: string | null;
+  /**
    * Messages folded into the turn already running (steer mode), from
    * the moment they are sent until the loop picks one up. They are not
    * transcript yet — the inbox is drained at the next step boundary,
@@ -972,6 +978,7 @@ export function createInitialTuiState(
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
     queuedMessages: [],
+    goalLine: null,
     pendingSteers: [],
     whileBusyMode: layout?.whileBusyMode ?? "steer",
     abortArmed: false,
