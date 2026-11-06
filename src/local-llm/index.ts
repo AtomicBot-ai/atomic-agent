@@ -20,6 +20,29 @@ export {
   recommendedModelFor,
   type RecommendedModelOptions,
 } from "./catalog/recommended-model.js";
+export {
+  BALANCED_MAX_DOWNLOAD_GB,
+  CPU_ONLY_MAX_MODEL_GB,
+  decideModelUpgrade,
+  isStarterModel,
+  modelDownloadGb,
+  modelsThisMachineCarries,
+  recommendModelTiers,
+  type MachineForModels,
+  type ModelTiers,
+  type ModelUpgradeDecision,
+  type ModelUpgradeInput,
+} from "./catalog/model-upgrade.js";
+export {
+  probeMachineForModels,
+  type ProbeMachineInput,
+} from "./backend/machine-for-models.js";
+export {
+  readRecommendSnapshot,
+  startModelUpgrade,
+  type RecommendSnapshot,
+  type StartedUpgrade,
+} from "./model-upgrade-runner.js";
 
 export {
   isWindowsArm64,
