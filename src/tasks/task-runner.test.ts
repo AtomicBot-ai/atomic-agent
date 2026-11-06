@@ -734,6 +734,85 @@ describe("TaskRunner", () => {
       expect(reports[0]?.replyText).toBe("done, 3 issues triaged");
     });
 
+    it("carries the harness summary, steps, stop cause and spend into the report (ATO-964)", async () => {
+      const reports: TaskReport[] = [];
+      let liveDuringTurn: ReturnType<TaskRunner["liveStatus"]> = [];
+      let runner!: TaskRunner;
+      const runtime: TaskRunnerRuntime = {
+        runTurn: async (sess, _msg, options) => {
+          const executed = (result: Record<string, unknown>) =>
+            options?.eventHook?.({
+              type: "llm_event",
+              event: {
+                type: "tool_call_executed",
+                result: { status: "ok", summary: "", details: {}, truncated: false, ...result } as never,
+                batchIndex: 0,
+                batchSize: 1,
+              },
+            });
+          executed({ tool: "os.fs.write", details: { path: "/w/a.ts", lines: 4, mode: "replace", existed: false } });
+          executed({ tool: "os.shell.run", status: "error", details: { cmd: "npm", args: ["test"], exitCode: 1, timedOut: false } });
+          options?.eventHook?.({ type: "step_finished", stepIndex: 0, summary: "wrote a.ts", durationMs: 1 });
+          liveDuringTurn = runner.liveStatus();
+          options?.eventHook?.({
+            type: "llm_event",
+            event: { type: "assistant_reply", text: "Wrote a.ts; tests fail. Keep going?" },
+          });
+          // `spendUsd` arrives with the budget change; read structurally.
+          return {
+            session: sess,
+            reason: "reply",
+            stepCount: 7,
+            stopCause: "step_ceiling",
+            spendUsd: 0.25,
+          } as RunTurnResult;
+        },
+      };
+      runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "overnight fix",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(liveDuringTurn).toHaveLength(1);
+      expect(liveDuringTurn[0]).toMatchObject({ taskId: t.id, userMessage: "overnight fix" });
+      expect(liveDuringTurn[0]?.summary.lastStep).toBe("wrote a.ts");
+      expect(runner.liveStatus()).toEqual([]);
+      expect(reports).toHaveLength(1);
+      const r = reports[0]!;
+      expect(r).toMatchObject({
+        replyText: "Wrote a.ts; tests fail. Keep going?",
+        stepCount: 7,
+        stopCause: "step_ceiling",
+        spendUsd: 0.25,
+      });
+      expect(r.summary?.files.map((f) => f.path)).toEqual(["/w/a.ts"]);
+      expect(r.summary?.commands[0]).toMatchObject({ command: "npm test", exitCode: 1, test: true });
+      expect(r.summary?.questions).toEqual(["Wrote a.ts; tests fail. Keep going?"]);
+    });
+
+    it("leaves spend unknown when the turn reports none", async () => {
+      const reports: TaskReport[] = [];
+      const { runtime } = replyingRuntime("ok");
+      const runner = makeRunner(runtime, (r) => {
+        reports.push(r);
+      });
+      const t = store.create({
+        sessionId: session.id,
+        userMessage: "job",
+        origin: "cli",
+        maxAttempts: 1,
+        notify: "telegram",
+      });
+      await runner.runOne(t.id);
+      expect(reports[0]).toMatchObject({ spendUsd: null, stopCause: null, stepCount: 1 });
+    });
+
     it("does NOT pass an eventHook and does NOT report when the task never opted in", async () => {
       const reports: TaskReport[] = [];
       const { runtime, hooksSeen } = replyingRuntime("silent result");
