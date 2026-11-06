@@ -218,7 +218,10 @@ export function refusalFor(
           `like. Split a part that timed out into smaller ones. A task that ` +
           `came back \`needs_orchestrator\` was blocked by an approval — ` +
           `re-send it with the paths in \`files\` so the operator can ` +
-          `authorise that directory when the fan-out asks.`;
+          `authorise that directory when the fan-out asks — unless its ` +
+          `note says only the user can approve the step (a dangerous ` +
+          `command, the agent's own config or secret files): no fan-out ` +
+          `can authorise that, so tell the user what to run instead.`;
   return {
     tool,
     status: "error",

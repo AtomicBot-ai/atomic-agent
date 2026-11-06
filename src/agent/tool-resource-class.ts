@@ -348,7 +348,10 @@ const FS_WRITE_CATEGORIES: readonly ApprovalCategory[] = [
  */
 const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
   {
-    "os.shell.run": ["shell"],
+    // A command the guard's dangerous layer matched asks as
+    // `shell_dangerous`, which only full trust silences and no grant
+    // reaches (ATO-1220): below level 5 a shell batch is not unattended.
+    "os.shell.run": ["shell", "shell_dangerous"],
     // Same rung as a shell command: it runs one, in a copy.
     "verify.run": ["shell"],
     "os.fs.write": FS_WRITE_CATEGORIES,

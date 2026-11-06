@@ -71,6 +71,14 @@ export {
   shellGrantShape,
 } from "./shell-interpretation.js";
 
+/**
+ * True for a verdict of the guard's dangerous layer (`dangerous.*` in
+ * `rules-dangerous.ts`): the command asks as `shell_dangerous`.
+ */
+export function isDangerousGuardRule(rule: string): boolean {
+  return rule.startsWith("dangerous.");
+}
+
 export interface OsShellToolOptions extends DangerousToolOptions {
   /**
    * Operator policy for the pre-exec guard (the git remote-sync switch).
@@ -234,7 +242,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // in" rather than something broader. One exception: a command
     // that would change a file the user declined this turn goes to the
     // gate, which refuses it, rather than running on the fan-out's yes.
+    // Nor does the directory cover a dangerous command (`rm -rf`, `git
+    // reset --hard`, `sudo`): the operator approved a directory of work,
+    // not those, so it goes to the gate too, where a worker's refuse
+    // policy hands it back as a step for the operator (ATO-1223).
+    const dangerous = isDangerousGuardRule(guardVerdict.rule);
     const scopedByFanout =
+      !dangerous &&
       (options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ??
         false) &&
       !(
@@ -252,17 +266,20 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // `git`. Withheld for those and for opaque interpreters
       // (`bash -c …`) where the binary name hides what runs — see
       // `shellGrantShape`.
-      const commandShape = shellGrantShape(
-        guardInput.cmd,
-        commandLine,
-        useShell,
-      );
+      //
+      // A command the dangerous layer matched (`rm -rf`, `git reset
+      // --hard`, `sudo`) asks as `shell_dangerous` with no shape: no
+      // `shell` grant, no `[a]` on `git` and no level below full trust
+      // runs it unasked, and no prompt offers to remember it (ATO-1220).
+      const commandShape = dangerous
+        ? undefined
+        : shellGrantShape(guardInput.cmd, commandLine, useShell);
       await requireApproval(
         options,
         {
           sessionId: ctx.sessionId,
           tool: "os.shell.run",
-          category: "shell",
+          category: dangerous ? "shell_dangerous" : "shell",
           reason:
             `${guardVerdict.reason} in ${cwd}` +
             // The user approves the lifetime too: a background command

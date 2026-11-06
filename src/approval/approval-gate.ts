@@ -124,6 +124,13 @@ export type ApprovalEmitter = (request: ApprovalRequest) => void;
 export interface SessionApprovalPolicy {
   onPrompt: "refuse";
   reason: string;
+  /**
+   * A refusal worded for this request, when the session's general
+   * `reason` would send the model the wrong way: a fusion worker told to
+   * re-delegate a step no fan-out can authorise (`rm -rf`, the agent's
+   * own `.env`) loops. `undefined` falls back to `reason`.
+   */
+  reasonFor?: (request: ApprovalRequest) => string | undefined;
 }
 
 /** A live, in-memory view of a session's point grants. Diagnostic only. */
@@ -364,7 +371,7 @@ export class ApprovalGate {
       return Promise.resolve({
         approvalId,
         approved: false,
-        reason: policy.reason,
+        reason: policy.reasonFor?.(request) ?? policy.reason,
         automatic: true,
       });
     }
@@ -467,7 +474,7 @@ export class ApprovalGate {
         const tool = declined.targets.get(target);
         if (
           tool !== undefined &&
-          (query.category === "shell" || tool === query.tool)
+          (isShellCommandCategory(query.category) || tool === query.tool)
         ) {
           return `${tool} on ${target} (this call would change that file too)`;
         }
@@ -502,7 +509,7 @@ export class ApprovalGate {
       this.declinedBySession.set(request.sessionId, declined);
     }
     declined.calls.add(callKey(request));
-    if (request.category === "shell") return;
+    if (isShellCommandCategory(request.category)) return;
     for (const target of normaliseTargets(request.targetPaths)) {
       declined.targets.set(target, request.tool);
     }
@@ -728,6 +735,14 @@ export function canGrantCategory(request: ApprovalRequest): boolean {
  */
 export function canGrantShape(request: ApprovalRequest): boolean {
   return request.category === "shell" && Boolean(request.commandShape);
+}
+
+/**
+ * A shell command, ordinary or dangerous (`shell_dangerous`, ATO-1220):
+ * the same-turn denial rule treats both alike.
+ */
+function isShellCommandCategory(category: ApprovalCategory): boolean {
+  return category === "shell" || category === "shell_dangerous";
 }
 
 /**

@@ -20,6 +20,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "fs_trash",
   "http",
   "shell",
+  "shell_dangerous",
   "script",
   "proc_kill",
   "publish",
@@ -40,10 +41,11 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config, state_secret, email, browser_secret and local_model_restart", () => {
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart and shell_dangerous", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
-        category !== "trust_config" &&
+        category !== "shell_dangerous" &&
+          category !== "trust_config" &&
           category !== "state_secret" &&
           category !== "email" &&
           category !== "browser_secret" &&
@@ -58,6 +60,17 @@ describe("session-grant eligibility", () => {
     expect(isAutoApprovedAt(4, "shell")).toBe(true);
     expect(isAutoApprovedAt(4, "state_secret")).toBe(false);
     expect(isAutoApprovedAt(5, "state_secret")).toBe(true);
+  });
+
+  it("shell_dangerous asks below full trust and is never granted (ATO-1220)", () => {
+    expect(isGrantableCategory("shell_dangerous")).toBe(false);
+    // Level 4 runs an ordinary shell command unasked; `rm -rf` still asks.
+    expect(isAutoApprovedAt(4, "shell")).toBe(true);
+    expect(isAutoApprovedAt(4, "shell_dangerous")).toBe(false);
+    expect(isAutoApprovedAt(5, "shell_dangerous")).toBe(true);
+    expect(formatApprovalCategory("shell_dangerous")).toBe(
+      "dangerous shell command",
+    );
   });
 
   it("trust_config is the one non-grantable category (mirrors its level-5 pin)", () => {
@@ -80,6 +93,8 @@ describe("approval ladder", () => {
       fs_trash: 3,
       http: 3,
       shell: 4,
+      // rm -rf, git reset --hard, sudo: only full trust runs them unasked.
+      shell_dangerous: 5,
       script: 4,
       proc_kill: 4,
       publish: 4,
