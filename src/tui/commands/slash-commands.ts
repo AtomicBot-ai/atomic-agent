@@ -1,7 +1,8 @@
 import fuzzysort from "fuzzysort";
 
+import { shortCommandAliases } from "../../plugins/plugin-commands.js";
 import { toSlashCommands } from "../menu/menu-registry.js";
-import type { SkillsPanelState } from "../skills/skills-panel-state.js";
+import type { PluginCommandRow, SkillsPanelState } from "../skills/skills-panel-state.js";
 
 export interface SlashCommandDef {
   /** Canonical command name (without leading `/`). */
@@ -12,6 +13,8 @@ export interface SlashCommandDef {
   readonly aliases?: readonly string[];
   /** Present only for workspace catalog commands; never a built-in alias. */
   readonly skillName?: string;
+  /** Present only for plugin commands: the full `plugin:command` name. */
+  readonly pluginCommand?: string;
 }
 
 /**
@@ -32,12 +35,42 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = toSlashCommands().map(
     aliases ? { name, description, aliases } : { name, description },
 );
 
-/** Cloud-only projection. Built-in names and aliases always keep their meaning. */
+/**
+ * Everything the palette offers beyond the built-ins: cloud workspace
+ * skills (cloud only), then plugin commands (any mode). Built-in names
+ * and aliases always keep their meaning.
+ */
 export function skillSlashCommands(panel: SkillsPanelState): readonly SlashCommandDef[] {
-  if (!panel.workspace) return [];
-  return panel.rows
-    .filter(row => !row.disabled && resolveSlashCommand(row.name) === null)
-    .map(row => ({ name: row.name, description: row.description, skillName: row.name }));
+  const skills: SlashCommandDef[] = panel.workspace
+    ? panel.rows
+      .filter(row => !row.disabled && resolveSlashCommand(row.name) === null)
+      .map(row => ({ name: row.name, description: row.description, skillName: row.name }))
+    : [];
+  const plugins = pluginSlashCommands(panel.pluginCommands ?? [], skills);
+  return plugins.length ? [...skills, ...plugins] : skills;
+}
+
+/**
+ * Plugin commands as `/plugin:command`, plus the bare `/command` alias when
+ * nothing else claims it. A built-in or a skill with the same name wins:
+ * the plugin entry (or its alias) is dropped.
+ */
+export function pluginSlashCommands(rows: readonly PluginCommandRow[], taken: readonly SlashCommandDef[] = []): readonly SlashCommandDef[] {
+  if (rows.length === 0) return [];
+  const takenNames = new Set(taken.map(cmd => cmd.name));
+  const usable = rows.filter(row => resolveSlashCommand(row.name) === null && !takenNames.has(row.name));
+  const usableNames = new Set(usable.map(row => row.name));
+  const aliases = shortCommandAliases(
+    usable,
+    alias => resolveSlashCommand(alias) !== null || takenNames.has(alias) || usableNames.has(alias),
+  );
+  return usable.map(row => {
+    const alias = aliases.get(row.name);
+    const description = row.argumentHint ? `${row.description} ${row.argumentHint}`.trim() : row.description;
+    return alias
+      ? { name: row.name, description, aliases: [alias], pluginCommand: row.name }
+      : { name: row.name, description, pluginCommand: row.name };
+  });
 }
 
 /**
@@ -71,5 +104,7 @@ export function resolveSlashCommand(name: string, skills: readonly SlashCommandD
     if (cmd.name === needle) return cmd;
     if (cmd.aliases?.includes(needle)) return cmd;
   }
-  return skills.find(cmd => cmd.name === needle) ?? null;
+  return skills.find(cmd => cmd.name === needle)
+    ?? skills.find(cmd => cmd.aliases?.includes(needle))
+    ?? null;
 }

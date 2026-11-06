@@ -479,6 +479,8 @@ export interface TuiAppCallbacks {
   onSkillsAutoRefreshStart?(): void;
   /** Revalidate a cloud skill and format its explicit request before normal submission. */
   prepareSkillInvocation?(name: string, input: string): string;
+  /** Render a plugin command (`plugin:command`) with its arguments into the message to send. */
+  preparePluginCommand?(name: string, args: string): string;
   /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
   /** Skills tab: load the SKILL.md body and open the detail view. */

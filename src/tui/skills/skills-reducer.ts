@@ -43,6 +43,11 @@ function reducePanel(
         loading: false,
       };
     }
+    case "skills_plugin_commands_set":
+      // Kept apart from the skill rows: a failed skill scan never hides plugin commands.
+      // Refresh repeats every few seconds; an unchanged list keeps the same state.
+      if (JSON.stringify(panel.pluginCommands ?? []) === JSON.stringify(action.commands)) return panel;
+      return { ...panel, pluginCommands: action.commands };
     case "skills_refresh_failed":
       // A failed scan after switching workspaces must not expose the previous catalog.
       return { ...panel, rows: [], workspace: undefined, detailName: null, detailBody: null,

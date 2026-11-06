@@ -202,6 +202,24 @@ function runEnhanceCurrentDraft(
   callbacks.onPromptEnhanceRequested?.(draft);
 }
 
+/**
+ * The message a skill or plugin command turns into. A plugin command is
+ * rendered from its template (`$ARGUMENTS`, `$1`..`$9`) and then sent
+ * exactly as if the user had typed it.
+ */
+function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks): string {
+  if (result.skillInvocation) {
+    if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
+    const { name, input } = result.skillInvocation;
+    return callbacks.prepareSkillInvocation(name, input);
+  }
+  if (!result.pluginCommandInvocation || !callbacks.preparePluginCommand) throw new Error("Plugin commands are unavailable");
+  const { name, args } = result.pluginCommandInvocation;
+  const text = callbacks.preparePluginCommand(name, args);
+  if (text.trim().length === 0) throw new Error(`plugin command /${name} rendered an empty message`);
+  return text;
+}
+
 export function runSlashCommand(
   raw: string,
   state: TuiState,
@@ -209,12 +227,10 @@ export function runSlashCommand(
   callbacks: TuiAppCallbacks,
 ): void {
   const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
-  if (result.skillInvocation) {
+  if (result.skillInvocation || result.pluginCommandInvocation) {
     if (!canTypeMessage(state)) return;
     try {
-      if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
-      const { name, input } = result.skillInvocation;
-      const text = callbacks.prepareSkillInvocation(name, input);
+      const text = prepareInvocationText(result, callbacks);
       dispatch({ type: "slash_palette_closed" });
       if (canAcceptMessage(state)) {
         dispatch({ type: "message_submitted" });
