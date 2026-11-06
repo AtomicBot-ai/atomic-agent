@@ -1077,6 +1077,9 @@ export interface UserConfigFile {
 // Unversioned, additive: `llm.runMode.fusion.roles` (`plan|build|review|
 // explore|utility` → provider id) and `mixLocalModels` (default false),
 // ATO-943. An older file has neither and runs every task on the worker leg.
+// Unversioned, additive: `llm.runMode.fusion.isolation` (`off|worktree`,
+// default `off`), ATO-946. An older file has none and workers write in
+// place, as before.
 export const USER_CONFIG_VERSION = 79;
 
 /**

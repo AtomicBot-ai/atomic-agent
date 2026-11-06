@@ -40,6 +40,11 @@ import {
 import { describeReplan, renderReplanBlock } from "./replan.js";
 import { LocalLegHealth } from "./local-leg-health.js";
 import {
+  renderMergeBlock,
+  runIsolatedWave,
+  type MergeTaskSuggestion,
+} from "./branch-merge.js";
+import {
   applyJudgeVerdict,
   buildAcceptanceChecklist,
   judgeTask,
@@ -613,10 +618,39 @@ export function buildFusionDelegateTool(
               : renderAcceptanceBlock(items);
           }
         : undefined;
+      // Branch isolation (ATO-946): with `isolation: "worktree"` each run
+      // of tasks (a wave, a judge's retry) gets a workspace per task and
+      // is merged back before anything reads the folder. Off: unchanged.
+      // Inside a wave the tasks are split across the role legs (ATO-943).
+      const merges: MergeTaskSuggestion[] = [];
+      const runTasks = async (
+        tasks: readonly DelegateTask[],
+        contract: DelegateContract | undefined,
+        briefSuffix: ((taskId: string) => string | undefined) | undefined,
+      ): Promise<WorkerTaskResult[]> => {
+        if (mode.isolation !== "worktree") {
+          return runAcrossLegs(tasks, contract, briefSuffix, undefined);
+        }
+        const wave = await runIsolatedWave({
+          realDir: ctx.workingDir,
+          tasks,
+          writeScope,
+          inputs: contract?.inputs ?? [],
+          run: (rebased, taskWorkspace) =>
+            runAcrossLegs(rebased, contract, briefSuffix, taskWorkspace),
+        });
+        merges.push(...wave.merges);
+        return wave.results;
+      };
       const runOnLeg = (
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
         briefSuffix: ((taskId: string) => string | undefined) | undefined,
+        taskWorkspace:
+          | ((
+              taskId: string,
+            ) => { workingDir: string; writeScope: readonly string[] } | undefined)
+          | undefined,
       ): Promise<WorkerTaskResult[]> =>
         runWorkerTasks(
           ctx.modelMode === "cloud"
@@ -646,6 +680,7 @@ export function buildFusionDelegateTool(
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
+            ...(taskWorkspace === undefined ? {} : { taskWorkspace }),
           },
         );
       // A role model's leg (ATO-943): its own provider, label, price and
@@ -663,6 +698,11 @@ export function buildFusionDelegateTool(
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
         briefSuffix: ((taskId: string) => string | undefined) | undefined,
+        taskWorkspace:
+          | ((
+              taskId: string,
+            ) => { workingDir: string; writeScope: readonly string[] } | undefined)
+          | undefined,
       ): Promise<WorkerTaskResult[]> => {
         const local = deps.workerSupportsSlotAffinity(leg.providerId);
         const pricing = rolePricing.get(leg.providerId);
@@ -709,24 +749,32 @@ export function buildFusionDelegateTool(
               : escalationOptions),
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(pricing === undefined ? {} : { workerPricing: pricing }),
+            ...(taskWorkspace === undefined ? {} : { taskWorkspace }),
           },
         );
       };
       // Every leg's share of a wave runs at once; rows come back in the
       // caller's task order. No role legs: exactly the old single call.
-      const runTasks = async (
+      const runAcrossLegs = async (
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
         briefSuffix: ((taskId: string) => string | undefined) | undefined,
+        taskWorkspace:
+          | ((
+              taskId: string,
+            ) => { workingDir: string; writeScope: readonly string[] } | undefined)
+          | undefined,
       ): Promise<WorkerTaskResult[]> => {
-        if (roleLegs.size === 0) return runOnLeg(tasks, contract, briefSuffix);
+        if (roleLegs.size === 0) {
+          return runOnLeg(tasks, contract, briefSuffix, taskWorkspace);
+        }
         const onWorkerLeg = tasks.filter(
           (t) => taskLegs.get(t.id)?.isWorkerLeg !== false,
         );
         const groups = await Promise.all([
           onWorkerLeg.length === 0
             ? Promise.resolve<WorkerTaskResult[]>([])
-            : runOnLeg(onWorkerLeg, contract, briefSuffix),
+            : runOnLeg(onWorkerLeg, contract, briefSuffix, taskWorkspace),
           ...[...roleLegs.values()].map((leg) => {
             const mine = tasks.filter((t) => {
               const own = taskLegs.get(t.id);
@@ -734,7 +782,7 @@ export function buildFusionDelegateTool(
             });
             return mine.length === 0
               ? Promise.resolve<WorkerTaskResult[]>([])
-              : runOnRoleLeg(leg, mine, contract, briefSuffix);
+              : runOnRoleLeg(leg, mine, contract, briefSuffix, taskWorkspace);
           }),
         ]);
         const byId = new Map(groups.flat().map((r) => [r.id, r]));
@@ -1131,7 +1179,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${replan === undefined ? "" : renderReplanBlock(replan)}${budgetNote}`,
+          }${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${budgetNote}`,
           details: {
             tasks: results,
             outcome,
@@ -1146,6 +1194,7 @@ export function buildFusionDelegateTool(
             ...(escalationSpendUsd > 0 ? { escalationSpendUsd } : {}),
             ...(judgeSpendUsd > 0 ? { judgeSpendUsd } : {}),
             ...(roleSpendUsd > 0 ? { roleSpendUsd } : {}),
+            ...(merges.length === 0 ? {} : { merges }),
             ...(replan === undefined ||
             (replan.pending.length === 0 && replan.exhausted.length === 0)
               ? {}

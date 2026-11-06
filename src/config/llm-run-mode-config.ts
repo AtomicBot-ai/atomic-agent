@@ -175,6 +175,17 @@ export type UserLlmFusionConfig = {
    * Default `false`. Cloud role models never need it.
    */
   mixLocalModels?: boolean;
+  /**
+   * Branch isolation (ATO-946). `"worktree"`: every task of a fan-out
+   * works in a workspace of its own (a detached git worktree inside a
+   * git repo, a folder copy elsewhere); after its wave the changes are
+   * merged back into the working directory file by file with a
+   * three-way merge, a conflicting file is left as it was and handed to
+   * the planner as a merge task, and a failed task's changes are
+   * dropped with its workspace. `"off"` (default): workers write
+   * straight into the working directory, as before.
+   */
+  isolation?: FusionIsolationMode;
 };
 
 /** Roles a fusion task can be given (ATO-943). */
@@ -188,6 +199,12 @@ export const FUSION_ROLES: readonly FusionRole[] = [
 ];
 /** `llm.runMode.fusion.roles`: role → configured provider id. */
 export type FusionRoleProviders = Partial<Record<FusionRole, string>>;
+
+export type FusionIsolationMode = "off" | "worktree";
+export const FUSION_ISOLATION_MODES: readonly FusionIsolationMode[] = [
+  "off",
+  "worktree",
+];
 
 export type FusionEscalationMode = "off" | "advisor";
 export const FUSION_ESCALATION_MODES: readonly FusionEscalationMode[] = [
@@ -489,6 +506,15 @@ function parseFusion(
       0,
       FUSION_AUTO_REPLAN_MAX,
     );
+  }
+  if (obj.isolation !== undefined) {
+    if (obj.isolation !== "off" && obj.isolation !== "worktree") {
+      throw new ConfigValidationError(
+        `${field}.isolation`,
+        "expected off|worktree",
+      );
+    }
+    out.isolation = obj.isolation;
   }
   if (obj.turnTimeBudgetMs !== undefined) {
     out.turnTimeBudgetMs = parseBoundedInt(
