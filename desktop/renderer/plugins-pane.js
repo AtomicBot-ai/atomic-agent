@@ -16,7 +16,8 @@ const PLG = {
   rows: null,          // PluginOverview[] once read
   err: null,           // the last read's error
   unsupported: false,  // the agent has no `plugin list --json` yet
-  loading: false,
+  loading: null,       // the running list read (a promise), so a later write can queue one more
+  again: false,        // a read was asked for while one was running
   busy: null,          // name of the plugin a write is running for
   cursor: 0,           // index into rows (keyboard)
   open: {},            // name → true when its parts are shown
@@ -84,11 +85,12 @@ function pluginsTabEntered() { pluginsRefresh(); }
 
 function pluginsRefresh() {
   if (typeof BR === 'undefined' || !BR || !BR.pluginList) { PLG.err = 'Plugins need the desktop bridge.'; return; }
-  if (PLG.loading) return;
-  PLG.loading = true;
-  render();
-  return BR.pluginList().then((res) => {
-    PLG.loading = false;
+  // A read already running may predate a write that just landed: queue one more read after it.
+  if (PLG.loading) { PLG.again = true; return PLG.loading; }
+  PLG.again = false;
+  PLG.loading = BR.pluginList().then((res) => {
+    PLG.loading = null;
+    if (PLG.again) return pluginsRefresh();
     if (res && res.ok) {
       PLG.rows = Array.isArray(res.plugins) ? res.plugins : [];
       PLG.err = null; PLG.unsupported = false;
@@ -99,7 +101,13 @@ function pluginsRefresh() {
       if (PLG.unsupported) PLG.rows = [];
     }
     render();
-  }, (err) => { PLG.loading = false; PLG.err = String(err && err.message || err); render(); });
+  }, (err) => {
+    PLG.loading = null;
+    if (PLG.again) return pluginsRefresh();
+    PLG.err = String(err && err.message || err); render();
+  });
+  render();
+  return PLG.loading;
 }
 
 function plgFind(name) { return (PLG.rows || []).find((p) => p.name === name) || null; }
@@ -162,6 +170,8 @@ function pluginsAct(what) {
 /* Keys, as in the TUI panel: j/k move, Enter open, e switch, c code, d remove, r refresh; y/n in a question. */
 function pluginsKey(e, k, inText) {
   if (inText) return false;
+  // Cmd/Ctrl/Alt combos (copy, paste, reload) are not panel keys, even inside a question.
+  if (e.metaKey || e.ctrlKey || e.altKey) return false;
   const confirm = PLG.removeConfirm ? 'remove' : PLG.codeConfirm ? 'code' : null;
   if (confirm) {
     if (k === 'y' || k === 'Enter') { e.preventDefault(); pluginsAct(confirm + 'Confirm'); return true; }
