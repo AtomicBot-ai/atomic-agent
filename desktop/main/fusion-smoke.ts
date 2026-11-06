@@ -303,6 +303,28 @@ export async function fusionSmokeTest(js: Js, check: Check): Promise<void> {
       && /^write the parser · qwen-3\.5-4b — os\.fs\.write · \d+(?:m\d\d)?s(?: \([^)]*\))? · 12\.3k ctx$/.test(withUsage.live[0] ?? ""),
     `${JSON.stringify(withUsage.lines)} · ${JSON.stringify(withUsage.live)}`);
 
+  /* ATO-568: a running row's own Stop and Steer, drawn only for the actions
+     the agent lists (an older agent lists none: the rows stay read-only, as
+     the check above asserts for frames without a chat id), with the row's
+     spend and the stuck mark beside the line. */
+  type PanelRow = { text: string; buttons: Array<{ label: string; aria: string | null; disabled: boolean }>; spend: string; stuck: boolean };
+  const now = Date.now();
+  const seeded = [
+    { taskId: "t1", title: "write the parser", sessionId: "s-smoke", model: "qwen-3.5-4b", tool: "os.fs.write", done: false, phase: "tool", startedAt: now - 5_000, tokens: 41_200, spentUsd: 0.031 },
+    { taskId: "t2", title: "tests", sessionId: "s-smoke", model: "qwen-3.5-4b", tool: null, done: false, phase: "escalated", startedAt: now - 5_000, stalled: true },
+    { taskId: "t3", title: "docs", sessionId: "s-smoke", model: "qwen-3.5-4b", tool: null, done: true, phase: "finished", startedAt: now - 9_000, finishedAt: now - 1_000 },
+  ];
+  const panel = await js<PanelRow[]>(`window.__fzpPanelProbe(${JSON.stringify(seeded)}, ["stop", "steer"])`);
+  const readOnly = await js<PanelRow[]>(`window.__fzpPanelProbe(${JSON.stringify(seeded)}, [])`);
+  check("fusion: a running worker row has its own Steer and Stop buttons, a finished one none; none at all when the agent lists no action",
+    same(panel.map((r) => r.buttons.map((b) => b.label)), [["Steer", "Stop"], ["Steer", "Stop"], []])
+      && panel[0]!.buttons.every((b) => !b.disabled && /worker write the parser$/.test(b.aria ?? ""))
+      && readOnly.every((r) => r.buttons.length === 0),
+    JSON.stringify(panel.map((r) => r.buttons)));
+  check("fusion: the row shows the worker's tokens and $ and marks a stalled worker stuck",
+    panel[0]!.spend === "41.2k tok · $0.03" && !panel[0]!.stuck && panel[1]!.stuck && !panel[2]!.stuck,
+    JSON.stringify(panel.map((r) => ({ spend: r.spend, stuck: r.stuck }))));
+
   /* ---- labels, slash, leftovers, menu ---- */
   const cat = await js<{ label: string | null; level: number | null }>("window.__approvalCat('fusion_fanout')");
   check("fusion: the fan-out approval reads `fusion · fan-out` at level 4", cat.label === "fusion · fan-out" && cat.level === 4, JSON.stringify(cat));

@@ -1422,6 +1422,46 @@ function wireIpc(client: AgentClient): void {
     }
   });
 
+  /* ATO-568 — one Fusion worker's Stop and Steer, and the list the renderer
+     feature-detects with. Errors come back as `error` text; the renderer
+     (fusion-panel.js) words them for the row. */
+  ipcMain.handle("agent:fusionWorkers", async (_event, sessionId: unknown) => {
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, error: "session id required" };
+    try {
+      const res = await client.fusionWorkers(sessionId);
+      return {
+        ok: true,
+        running: Array.isArray(res?.running) ? res.running.filter((t): t is string => typeof t === "string") : [],
+        actions: Array.isArray(res?.actions) ? res.actions.filter((a): a is string => typeof a === "string") : [],
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle("agent:fusionWorkerStop", async (_event, payload: unknown) => {
+    const { sessionId, taskId } = (payload ?? {}) as { sessionId?: unknown; taskId?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, error: "session id required" };
+    if (typeof taskId !== "string" || !taskId) return { ok: false, error: "task id required" };
+    try {
+      const res = await client.stopFusionWorker(sessionId, taskId);
+      return { ok: true, stopped: res?.stopped === true };
+    } catch (err) {
+      return { ok: false, stopped: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+  ipcMain.handle("agent:fusionWorkerSteer", async (_event, payload: unknown) => {
+    const { sessionId, taskId, text } = (payload ?? {}) as { sessionId?: unknown; taskId?: unknown; text?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, error: "session id required" };
+    if (typeof taskId !== "string" || !taskId) return { ok: false, error: "task id required" };
+    if (typeof text !== "string" || !text.trim()) return { ok: false, error: "text required" };
+    try {
+      const res = await client.steerFusionWorker(sessionId, taskId, text);
+      return { ok: true, steered: res?.steered === true };
+    } catch (err) {
+      return { ok: false, steered: false, error: err instanceof Error ? err.message : String(err) };
+    }
+  });
+
   ipcMain.handle("agent:chat", async (_event, payload: unknown) => {
     const { messages, sessionId } = payload as {
       messages?: Array<{ role: string; content: string }>;
