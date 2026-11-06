@@ -28,7 +28,11 @@ export function buildToolViewTool(): ToolDefinition {
       }
       const d = getToolDescriptorByName(name);
       if (!d) {
-        throw new Error(`tool.view: unknown tool: ${name}`);
+        // A deferred MCP tool (search mode, ATO-558) is not in the static
+        // catalog this reads; `tool.search` loads it by name.
+        throw new Error(
+          `tool.view: unknown tool: ${name} (if it is listed under \`# extras\`, call tool.search with its name)`,
+        );
       }
       const role = ctx.toolRole ?? "full";
       const outsideRole = !roleAdmits(role, d.name);

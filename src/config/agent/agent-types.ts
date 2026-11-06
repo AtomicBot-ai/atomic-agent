@@ -17,6 +17,19 @@ import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-con
  */
 export type ReadScope = "working-dir" | "unrestricted";
 
+/**
+ * How the tool catalog reaches the prompt (ATO-558). `auto` describes
+ * only the core tools in full on a small window or a big catalog and
+ * lists the rest as one-liners behind `tool.search`; `on` always does,
+ * `off` never does. See `src/tools/tool-search/tool-search-policy.ts`.
+ */
+export type ToolSearchMode = "auto" | "on" | "off";
+
+/** `agent.tools`: additive (no schema version bump). */
+export interface AgentToolsConfig {
+  search: ToolSearchMode;
+}
+
 export interface RuntimeAgentConfig {
   /**
    * Compact target for the upper prompt. Its only remaining effect on
@@ -114,6 +127,8 @@ export interface RuntimeAgentConfig {
    * edge cases where compression misses (huge SVG trees, etc.).
    */
   worldSnapshotMaxTokens: number;
+  /** `agent.tools.search` (ATO-558); absent reads as `auto`. */
+  tools?: AgentToolsConfig;
   /**
    * Max `### loaded-tools` rare-schema entries kept per session (LRU
    * by `loadedAt`). Env-only: `ATOMIC_AGENT_LOADED_TOOLS_CAP`.
@@ -266,4 +281,10 @@ export interface UserAgentConfig {
    */
   sessionSectionsMaxTokens: number;
   worldSnapshotMaxTokens: number;
+  /**
+   * Tool catalog on demand (ATO-558): `tools.search` is `auto`, `on`
+   * or `off`. Optional so configs and fixtures written before it stay
+   * valid; the parser always fills it.
+   */
+  tools?: AgentToolsConfig;
 }

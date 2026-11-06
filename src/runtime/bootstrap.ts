@@ -366,6 +366,11 @@ export async function createAgentRuntime(
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode,
     ...mcpGrammarHookFor(profileManager),
+    // `agent.tools.search: "auto"` reads the live route's window (ATO-558):
+    // a local link's served window once `/props` has answered, else the catalogue's.
+    resolveContextWindow: () => resolveActiveLlmSlice().isLlamaServer
+      ? connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow()
+      : resolveCatalogContextWindow(),
   });
   const { mcpManager, getGrammar, effectiveToolDescriptors } = mcpCatalog;
 

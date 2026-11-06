@@ -60,6 +60,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     argsSchema: '{ name: string } /* e.g. "os.git.show" */',
   },
   {
+    // ATO-558: only in the catalog while search mode is on
+    // (`applyToolSearch`); it then stands in for the deferred tools.
+    name: "tool.search",
+    summary:
+      "Find a tool listed under `# extras` (built-in or MCP) by what it should do. Returns the best matches with their args and a ready call, and loads their schemas: call the right one on the next step.",
+    argsSchema:
+      '{ query: string /* what the tool should do, e.g. "send a slack message" */, limit?: number /* 1..8, default 3 */ }',
+    examples: ['{"query":"create a github issue"}'],
+  },
+  {
     name: "skill.run_script",
     summary:
       "Run a script from a skill's requires_scripts (may require approval).",

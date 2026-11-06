@@ -26,6 +26,7 @@ import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
 import { registerSkillTools } from "../../tools/skill/index.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
+import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
@@ -323,9 +324,15 @@ export async function connectRuntimeMcpCatalog(input: {
    * is whether the `mcp.resource.*` / `mcp.prompt.*` tools are registered.
    */
   onMcpToolNameRule?: (rule: string | null, nativeTools: boolean) => void;
+  /**
+   * The live route's context window, when known. `agent.tools.search:
+   * "auto"` defers the non-core tools behind `tool.search` on a small
+   * one (ATO-558). Absent ⇒ only the catalog size decides.
+   */
+  resolveContextWindow?: () => number | null | undefined;
 }) {
   const { config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
-    visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule } = input;
+    visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule, resolveContextWindow } = input;
   let grammar = initialGrammar;
 
   // MCP client subsystem. The manager is always constructed so the
@@ -518,19 +525,47 @@ export async function connectRuntimeMcpCatalog(input: {
   // flip, none while the route holds. The image gate too: saving or
   // removing an OpenRouter key adds or drops `image.generate` and
   // `video.generate` (one gate value: they share the key).
+  //
+  // Tool search (ATO-558) is one more gate: when `agent.tools.search`
+  // (live config) and the route's window or the catalog size say so,
+  // the prompt describes only the core tools in full and lists the rest
+  // as one-liners behind `tool.search`. `fullToolDescriptors` keeps the
+  // undeferred list — what `tool.search` searches and loads from.
+  let fullToolDescriptors = rebuildToolDescriptorsFromMcp();
+  const toolSearchOn = (): boolean =>
+    toolSearchActive(
+      getConfig().agent.tools?.search ?? "auto",
+      fullToolDescriptors.length,
+      resolveContextWindow?.(),
+    );
   const liveDescriptorGates = (): string =>
-    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}`;
-  let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}`;
   let cachedDescriptorGates = liveDescriptorGates();
+  let cachedToolDescriptors = applyToolSearch(fullToolDescriptors, toolSearchOn());
   const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {
+    fullToolDescriptors = rebuildToolDescriptorsFromMcp();
     cachedDescriptorGates = liveDescriptorGates();
-    cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+    cachedToolDescriptors = applyToolSearch(fullToolDescriptors, toolSearchOn());
     return cachedToolDescriptors;
   };
   const effectiveToolDescriptors = (): readonly ToolDescriptor[] =>
     liveDescriptorGates() === cachedDescriptorGates
       ? cachedToolDescriptors
       : rebuildToolDescriptors();
+  // Registered whatever the mode: its descriptor is only in the prompt
+  // while search mode is on, and a call outside it still searches the
+  // full catalog harmlessly.
+  toolRegistry.register(
+    buildToolSearchTool({
+      catalog: () => {
+        const effective = effectiveToolDescriptors();
+        return {
+          descriptors: fullToolDescriptors,
+          deferred: deferredToolNames(fullToolDescriptors, effective),
+        };
+      },
+    }),
+  );
   const createRefreshMcp = () => {
 
 
