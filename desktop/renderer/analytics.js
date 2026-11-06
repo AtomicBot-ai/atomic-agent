@@ -208,9 +208,13 @@ const ANX = (() => {
     return typeof row.id === 'string' && /^[a-z0-9_.-]{1,40}$/.test(row.id) ? row.id : 'other';
   }
   function providerStarted(row) { track('provider_setup_started', {provider_preset: presetId(row)}); }
-  /* step: where the wizard ran (first-run setup or the app); reason: the fixed list. */
-  function providerFailed(reason, inOnboarding) {
-    track('provider_setup_failed', {step: inOnboarding ? 'onboarding' : 'settings', reason});
+  /* step: where the wizard ran (first-run setup or the app); reason: the fixed list.
+     ATO-306: the preset too, when the caller has the row, so a failure can be
+     read per provider (Ollama, LM Studio, DeepSeek…) as provider_setup_started is. */
+  function providerFailed(reason, inOnboarding, row) {
+    const props = {step: inOnboarding ? 'onboarding' : 'settings', reason};
+    if (row) props.provider_preset = presetId(row);
+    track('provider_setup_failed', props);
   }
 
   /* ---------- MCP servers ---------- */
