@@ -93,13 +93,21 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "world",
     description: "jump to the Observe → World tab",
   },
+  // ATO-963: finished turns fold into one line; /expand opens the last one,
+  // /steps keeps them all open.
   {
     name: "expand",
-    description: "expand every tool card in the chat log",
+    description:
+      "open the last finished turn's steps | `/expand all` opens every turn and tool card",
   },
   {
     name: "collapse",
-    description: "collapse every tool card in the chat log",
+    description: "fold every finished turn and tool card in the chat log",
+  },
+  {
+    name: "steps",
+    description:
+      "always show steps: `/steps` toggles | `/steps on` keeps finished turns open | `/steps off` folds them",
   },
   {
     name: "session",

@@ -305,6 +305,8 @@ export interface TuiAppCallbacks {
   onPersistLlamaUrl?(url: string): void;
   /** Persist the chosen TUI theme name into the user config (`/theme`). */
   onThemePersistRequested?(themeName: string): void;
+  /** Persist "always show steps" into `tui.showSteps` (`/steps`). */
+  onShowStepsPersistRequested?(on: boolean): void;
   /**
    * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
    * for the current state to be reported without changing it. The

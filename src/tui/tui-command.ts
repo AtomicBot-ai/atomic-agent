@@ -37,6 +37,7 @@ import {
 } from "./persist-user-local-models-config.js";
 import {
   persistUserTuiMouse,
+  persistUserTuiShowSteps,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
@@ -174,6 +175,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const initialLayout: InitialTuiLayoutOptions = {
     onboarding,
     whileBusyMode: config.tui.whileBusySubmit,
+    // Finished turns fold into one line unless the operator asked to
+    // always see their steps (ATO-963).
+    showSteps: config.tui.showSteps,
     // The composer's route controls read these on the home screen, and
     // the local-models slice only refreshes while the Models tab is
     // open — unseeded, a managed install mislabels itself `custom`
@@ -527,6 +531,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
         onThemePersistRequested: (themeName) =>
           persistThemeChoice(themeName, bus),
+        onShowStepsPersistRequested: (on) => persistShowSteps(on, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) =>
@@ -1074,6 +1079,24 @@ function persistThemeChoice(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `theme not saved: ${msg}` });
+  }
+}
+
+function persistShowSteps(
+  on: boolean,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiShowSteps(on);
+    bus.emit({
+      type: "runtime_info",
+      line: on
+        ? "finished turns now keep their steps open"
+        : "finished turns now fold into one line",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `steps setting not saved: ${msg}` });
   }
 }
 
