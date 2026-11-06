@@ -24,6 +24,14 @@ describe("isDeliberatePoll", () => {
     expect(isDeliberatePoll("os.shell.run", { cmd: "grep sleep notes.md" })).toBe(false);
     expect(isDeliberatePoll("os.shell.run", { cmd: "./sleepy-script.sh 30" })).toBe(false);
     expect(isDeliberatePoll("os.shell.run", { wait: false, cmd: "ls" })).toBe(false);
+    expect(isDeliberatePoll("os.shell.run", { cmd: "ls", wait: 0, kill: 0, jobs: false })).toBe(false);
+  });
+
+  it("does not treat a job form the shell tool rejects as a poll", () => {
+    expect(isDeliberatePoll("os.shell.run", { cmd: "ls", wait: 1 })).toBe(false);
+    expect(isDeliberatePoll("os.shell.run", { wait: "soon" })).toBe(false);
+    expect(isDeliberatePoll("os.shell.run", { wait: -2 })).toBe(false);
+    expect(isDeliberatePoll("os.shell.run", { cmd: "sleep 30", jobs: true })).toBe(false);
   });
 
   it("only applies to the shell tool", () => {

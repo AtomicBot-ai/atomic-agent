@@ -1,3 +1,5 @@
+import { classifyShellCall } from "../../tools/os/shell/shell-job-calls.js";
+
 /**
  * Is an `os.shell.run` call a deliberate poll: a call whose whole point
  * is to let time pass and look again?
@@ -11,7 +13,12 @@
  * answer many times in a row while the thing they watch is still busy.
  *
  * Deliberately narrow: a bare `npm test` or `git status` is NOT a poll,
- * however often it runs. A sleep of zero is not a wait either.
+ * however often it runs. A sleep of zero is not a wait either. The job
+ * forms are read the way the shell tool reads them
+ * (`classifyShellCall`): a call it rejects (`{cmd, wait}` mixed, a
+ * `wait` that is not a job id) never waits on anything, so repeating
+ * it is an ordinary repeated error, and a zero-filled `{cmd, wait: 0}`
+ * is a plain command.
  */
 const SLEEP_PATTERNS: readonly RegExp[] = [
   /(?:^|[\s;&|(])sleep\s+(?:0*[1-9]\d*(?:\.\d+)?|0*\.\d*[1-9]\d*)[smhd]?(?=$|[\s;&|)])/,
@@ -23,7 +30,9 @@ export function isDeliberatePoll(tool: string, args: unknown): boolean {
   if (tool !== "os.shell.run") return false;
   if (args === null || typeof args !== "object") return false;
   const record = args as Record<string, unknown>;
-  if (isPresent(record.wait) || record.jobs === true) return true;
+  const form = classifyShellCall(record).kind;
+  if (form === "wait" || form === "jobs") return true;
+  if (form !== "cmd") return false;
   const line = commandLineOf(record);
   return line !== null && SLEEP_PATTERNS.some((pattern) => pattern.test(line));
 }
@@ -36,10 +45,6 @@ function commandLineOf(record: Record<string, unknown>): string | null {
   else if (Array.isArray(cmd)) parts.push(...cmd.filter(isString));
   if (Array.isArray(record.args)) parts.push(...record.args.filter(isString));
   return parts.length === 0 ? null : parts.join(" ").trim();
-}
-
-function isPresent(value: unknown): boolean {
-  return value !== undefined && value !== null && value !== false && value !== "";
 }
 
 function isString(value: unknown): value is string {
