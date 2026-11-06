@@ -1,7 +1,11 @@
 import { closeSync, openSync, readSync } from "node:fs";
 import { open } from "node:fs/promises";
 
-import type { KvLayoutSource } from "../server/context-size.js";
+import {
+  buildKvLayout,
+  countKvLayers,
+  type KvLayoutSource,
+} from "../server/context-size.js";
 
 /**
  * A GGUF header reader for the handful of facts a launch needs to know
@@ -63,6 +67,12 @@ export interface GgufMetadata {
   hasRecurrentState: boolean;
   /** Every scalar and every array of at most `maxArrayElements`, by key. */
   keys: Record<string, GgufValue>;
+  /**
+   * The element count of every array, kept or not: an array longer than
+   * `maxArrayElements` (the tokenizer's) is skipped, but its length (the
+   * vocabulary size) is still known from its header.
+   */
+  arrayLengths?: Record<string, number>;
   /** The byte budget ran out before the last KV pair; `keys` is partial. */
   truncated: boolean;
 }
@@ -250,6 +260,7 @@ export function parseGgufHeader(
   }
 
   const keys: Record<string, GgufValue> = {};
+  const arrayLengths: Record<string, number> = {};
   let truncated = false;
   try {
     for (let i = 0; i < kvCount; i += 1) {
@@ -261,6 +272,7 @@ export function parseGgufHeader(
       }
       const elementType = c.u32();
       const count = c.u64();
+      arrayLengths[key] = count;
       if (elementType === GgufType.ARRAY) {
         throw new GgufFormatError(`nested arrays are not supported (${key})`);
       }
@@ -286,7 +298,7 @@ export function parseGgufHeader(
     truncated = true;
   }
 
-  return interpret(keys, { version, tensorCount, truncated });
+  return { ...interpret(keys, { version, tensorCount, truncated }), arrayLengths };
 }
 
 function num(value: GgufValue | undefined): number | null {
@@ -555,6 +567,77 @@ export function kvLayoutSourceFromMetadata(
     fullAttentionInterval: meta.fullAttentionInterval,
     recurrentLayerPattern: meta.recurrentLayerPattern,
   };
+}
+
+/**
+ * Tokens in the model's vocabulary: `<arch>.vocab_size` when the header
+ * states it, else the length of `tokenizer.ggml.tokens`. `null` when
+ * neither was read; the compute reserve then assumes the largest.
+ */
+export function vocabSizeFromMetadata(meta: GgufMetadata): number | null {
+  const stated = meta.keys[`${meta.architecture}.vocab_size`];
+  if (typeof stated === "number" && Number.isFinite(stated) && stated > 0) {
+    return Math.floor(stated);
+  }
+  const counted = meta.arrayLengths?.["tokenizer.ggml.tokens"];
+  return typeof counted === "number" && counted > 0 ? counted : null;
+}
+
+/**
+ * Bytes of recurrent state one sequence keeps, summed over the model's
+ * recurrent layers, the way llama.cpp sizes it (f32, one copy per
+ * `--parallel` slot):
+ *
+ * - SSM / gated delta-net (`mamba*`, `nemotron_h`, `qwen35`, …): a conv
+ *   state of `(conv_kernel − 1) × (inner + 2 × groups × state)` values
+ *   and a recurrent state of `state × inner` values per layer.
+ * - RWKV (`wkv.head_size`): a token shift of `2 × embedding` values and
+ *   a state of `embedding × head_size` values per layer.
+ *
+ * `0` for a model with no recurrent layers, or whose header does not
+ * give the dimensions.
+ */
+export function recurrentStateBytesPerSequence(meta: GgufMetadata): number {
+  if (!meta.hasRecurrentState && !meta.recurrentLayerPattern) return 0;
+  const k = (suffix: string): number | null => {
+    const v = meta.keys[`${meta.architecture}.${suffix}`];
+    return typeof v === "number" && Number.isFinite(v) && v > 0 ? v : null;
+  };
+  const layers = countRecurrentLayers(meta);
+  if (layers <= 0) return 0;
+  const inner = k("ssm.inner_size");
+  const state = k("ssm.state_size");
+  let valuesPerLayer = 0;
+  if (inner !== null && state !== null) {
+    const conv = k("ssm.conv_kernel") ?? 4;
+    const groups = k("ssm.group_count") ?? 1;
+    valuesPerLayer = (conv - 1) * (inner + 2 * groups * state) + state * inner;
+  } else {
+    const headSize = k("wkv.head_size");
+    const embedding = meta.embeddingLength;
+    if (headSize !== null && embedding !== null && embedding > 0) {
+      valuesPerLayer = 2 * embedding + embedding * headSize;
+    }
+  }
+  return layers * valuesPerLayer * 4;
+}
+
+/**
+ * The model's recurrent layers: from the layout (`full_attention_interval`
+ * or an explicit pattern), else the layers with no KV heads, else every
+ * layer of a model whose header has recurrent keys but no pattern.
+ */
+function countRecurrentLayers(meta: GgufMetadata): number {
+  const source = kvLayoutSourceFromMetadata(meta);
+  if (source) {
+    const counted = countKvLayers(buildKvLayout(source)).recurrent;
+    if (counted > 0) return counted;
+  }
+  if (Array.isArray(meta.headCountKv)) {
+    const noKv = meta.headCountKv.filter((n) => n === 0).length;
+    if (noKv > 0) return noKv;
+  }
+  return meta.hasRecurrentState ? (meta.blockCount ?? 0) : 0;
 }
 
 const prefixReuseCache = new Map<string, Promise<PrefixReuseVerdict | null>>();
