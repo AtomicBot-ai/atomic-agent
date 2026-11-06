@@ -20,6 +20,7 @@ import { connectRuntimeProviders } from "./runtime-inference.js";
 import { createRuntimeTurnService, prepareRuntimeTurnState, type RuntimeTurnDependencies } from "./runtime-turn-service.js";
 import { resolveModelMode } from "../../llm/model-mode.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
+import type { TurnProgress } from "../../session/turn-progress.js";
 
 function deferred<T>() {
   let resolve: (value: T) => void = () => { throw new Error("promise not initialized"); };
@@ -57,6 +58,7 @@ describe("runtime turn ownership recipes", () => {
     const rows = new Map<string, SessionState>();
     const turnRequests = new Map<string, string>();
     const turnPreviousReplies = new Map<string, string>();
+    const checkpoints: Array<{ state: SessionState; progress: TurnProgress }> = [];
     const sessionStore: RuntimeTurnDependencies["sessions"]["sessionStore"] = {
       save: value => { events.push("save"); rows.set(value.id, value); },
       load: id => rows.get(id) ?? null,
@@ -68,6 +70,7 @@ describe("runtime turn ownership recipes", () => {
         return true;
       },
       finishTurn: value => { events.push("finish"); rows.set(value.id, value); },
+      checkpointTurn: (value, progress) => { events.push(`checkpoint:${progress.stepsDone}`); checkpoints.push({ state: value, progress }); return true; },
     };
     const loop = { runTurn: vi.fn(async (value: SessionState, options: RunTurnOptions) => {
       events.push("loop"); expect(traces.turnContext.getStore()?.sessionId).toBe(value.id);
@@ -95,7 +98,7 @@ describe("runtime turn ownership recipes", () => {
       state, lifecycle: { isShutdown: () => closing }, logger,
     };
     const service = createRuntimeTurnService(config, deps);
-    return { config, traces, providers, state, events, rows, turnRequests, turnPreviousReplies, sessionStore, loop, turnController, steeringInbox, deps, service, setClosing: (value: boolean) => { closing = value; } };
+    return { config, traces, providers, state, events, rows, checkpoints, turnRequests, turnPreviousReplies, sessionStore, loop, turnController, steeringInbox, deps, service, setClosing: (value: boolean) => { closing = value; } };
   }
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), "atomic-runtime-turns-")); fixture = await makeFixture(); });
   afterEach(async () => {
@@ -129,9 +132,39 @@ describe("runtime turn ownership recipes", () => {
     await fixture.service.executeTurn(session(), "request", { maxSteps: 17, taskMaxDurationMs: 200, reasoningEffort: "high", maxOutputTokens: 99, toolFilter: filter, signal: abort.signal });
     const options = fixture.loop.runTurn.mock.calls[0]?.[1];
     expect(options).toMatchObject({ maxSteps: 10, taskMaxSteps: 17, taskMaxDurationMs: 200, reasoningEffort: "high", maxOutputTokens: 99, toolFilter: filter, signal: abort.signal });
-    expect(Object.keys(options ?? {})).toEqual(["userMessage", "modelModePolicy", "originalRequest", "reasoningEffort", "maxOutputTokens", "maxSteps", "taskMaxSteps", "taskMaxDurationMs", "toolFilter", "signal"]);
+    expect(Object.keys(options ?? {})).toEqual(["userMessage", "modelModePolicy", "originalRequest", "reasoningEffort", "maxOutputTokens", "maxSteps", "taskMaxSteps", "taskMaxDurationMs", "toolFilter", "signal", "onStepCheckpoint"]);
     await fixture.service.executeTurn(session("other"), "request");
     expect(fixture.loop.runTurn.mock.calls[1]?.[1]).not.toHaveProperty("taskMaxSteps");
+  });
+
+  it("marks the turn's progress at its start and checkpoints every completed step (ATO-1109)", async () => {
+    const begin = vi.spyOn(fixture.sessionStore, "beginTurn");
+    fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) => {
+      fixture.events.push("loop");
+      const afterStep = { ...value, turns: [...value.turns, userTurn("task words")] };
+      options.onStepCheckpoint?.(afterStep, { stepIndex: 0, stepsTaken: 1 });
+      options.onStepCheckpoint?.(afterStep, { stepIndex: 1, stepsTaken: 2 });
+      return result(value, options);
+    });
+    await fixture.service.executeTurn(session(), "[Resumed] note\n\nThe task:\ntask words", {
+      maxSteps: 40, checkpoint: { taskId: "task-1", resumes: 2, request: "task words" },
+    });
+    const initial = begin.mock.calls[0]?.[2];
+    expect(initial).toMatchObject({ stepsDone: 0, lastStepIndex: -1, request: "task words", resumes: 2, options: { taskId: "task-1", maxSteps: 40 } });
+    expect(fixture.checkpoints.map((c) => [c.progress.stepsDone, c.progress.lastStepIndex])).toEqual([[1, 0], [2, 1]]);
+    expect(fixture.checkpoints[1]?.progress).toMatchObject({ request: "task words", resumes: 2, options: { taskId: "task-1" } });
+    expect(fixture.checkpoints[0]?.state.turns.at(-1)).toMatchObject({ kind: "user", text: "task words" });
+    expect(fixture.events).toEqual(["recorder", "pin", "begin", "loop", "checkpoint:1", "checkpoint:2", "finish", "shell-turn", "clear:session", "unpin:session"]);
+  });
+
+  it("a checkpoint that cannot be written does not stop the turn", async () => {
+    vi.spyOn(fixture.sessionStore, "checkpointTurn").mockImplementation(() => { throw new Error("database is locked"); });
+    fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) => {
+      options.onStepCheckpoint?.(value, { stepIndex: 0, stepsTaken: 1 });
+      return result(value, options);
+    });
+    const output = await fixture.service.executeTurn(session(), "request");
+    expect(output.reason).toBe("reply");
   });
 
   it("unknown pins reject before enqueue and before recorder/all other turn work", async () => {

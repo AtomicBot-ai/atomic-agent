@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "./config-validation-error.js";
-import { parseBool, parsePositiveInt } from "./config-primitives.js";
+import { parseBool, parseNonNegativeInt, parsePositiveInt } from "./config-primitives.js";
 
 /**
  * What to do when the model provider stops answering.
@@ -35,6 +35,19 @@ export interface AgentTaskConfig {
    * Off means the historical behaviour: stop at `agent.maxSteps`.
    */
   autoContinue: boolean;
+  /**
+   * Continue a durable task whose run a crash, a kill or a restart cut
+   * off, from its session's per-step checkpoint, with a note telling the
+   * model how far it got (ATO-1109). Off: the run starts over from the
+   * task's message, as before. A run a person stopped is never resumed.
+   */
+  resumeInterrupted: boolean;
+  /**
+   * Resumes after the agent died under a task (crash or kill) before the
+   * task is failed instead: the guard against a task that takes the
+   * agent down every time. `0` fails it at the first such interruption.
+   */
+  maxResumes: number;
 }
 
 export function createProviderWaitDefaults(): ProviderWaitConfig {
@@ -57,6 +70,8 @@ export function createAgentTaskDefaults(): AgentTaskConfig {
     maxSteps: 1000,
     maxDurationMs: 7_200_000,
     autoContinue: true,
+    resumeInterrupted: true,
+    maxResumes: 3,
   };
 }
 
@@ -113,6 +128,14 @@ export function parseAgentTask(
     autoContinue: parseBool(
       task.autoContinue ?? defaults.autoContinue,
       "agent.task.autoContinue",
+    ),
+    resumeInterrupted: parseBool(
+      task.resumeInterrupted ?? defaults.resumeInterrupted,
+      "agent.task.resumeInterrupted",
+    ),
+    maxResumes: parseNonNegativeInt(
+      task.maxResumes ?? defaults.maxResumes,
+      "agent.task.maxResumes",
     ),
   };
 }

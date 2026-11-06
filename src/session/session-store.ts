@@ -36,6 +36,14 @@ import {
   turnOwnerFor,
   type TurnOwnerProbe,
 } from "./turn-owner.js";
+import {
+  ensureTurnProgressColumn,
+  parseTurnProgress,
+  prepareTurnProgressStatements,
+  serializeTurnProgress,
+  type TurnProgress,
+  type TurnProgressStatements,
+} from "./turn-progress.js";
 
 // `turn_owner` names the process running a turn on the row (see
 // `beginTurn`) and is null otherwise — a shutdown's stand-in keeps it
@@ -245,6 +253,13 @@ export class SessionStore {
    */
   private readonly marks: TurnMarkStatements | null;
   private readonly marksUnavailable: string | null;
+  /**
+   * Turn progress markers (`turn-progress.ts`): `null` while this
+   * database has no `turn_progress` column, or no turn marks to guard
+   * them with. Checkpoints are then skipped and the store works as it
+   * did before them.
+   */
+  private readonly progress: TurnProgressStatements | null;
   /** The database file's real path, as marks record it; `undefined` in memory. */
   private readonly dbIdentity: string | undefined;
   /**
@@ -275,6 +290,9 @@ export class SessionStore {
     this.db.exec(SCHEMA);
     this.marksUnavailable = ensureTurnOwnerColumn(this.db);
     const withMarks = this.marksUnavailable === null;
+    // Checkpoints are guarded on the turn's mark, so they need both.
+    const withProgress =
+      withMarks && ensureTurnProgressColumn(this.db) === null;
     this.turnOwnerProbe = options.turnOwnerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(file);
     this.insertStmt = this.db.prepare(
@@ -343,6 +361,9 @@ export class SessionStore {
         )
       : this.updateStmt;
     this.marks = withMarks ? this.prepareMarkStatements() : null;
+    this.progress = withProgress
+      ? prepareTurnProgressStatements(this.db)
+      : null;
   }
 
   /**
@@ -445,7 +466,11 @@ export class SessionStore {
    * TUI's deferred first turn) gets its row from `finishTurn`, as before.
    * Returns whether a row was marked.
    */
-  beginTurn(id: string, now: number = Date.now()): boolean {
+  beginTurn(
+    id: string,
+    now: number = Date.now(),
+    progress?: TurnProgress,
+  ): boolean {
     if (this.marks === null) return false;
     const owner = serializeTurnOwner(
       turnOwnerFor(this.turnOwnerProbe, now, this.dbIdentity),
@@ -455,7 +480,61 @@ export class SessionStore {
     };
     if (result.changes === 0) return false;
     this.ownTurns.set(id, owner);
+    // A new turn replaces whatever an earlier, interrupted one left: its
+    // own marker when it has one, none otherwise.
+    this.progress?.set.run({
+      id,
+      owner,
+      progress: progress === undefined ? null : serializeTurnProgress(progress),
+    });
     return true;
+  }
+
+  /**
+   * One step's checkpoint (ATO-1109): the transcript as the turn now has
+   * it and the turn's progress marker, in one row write, while the row
+   * still carries this store's mark for the turn. Status and title are
+   * not touched: the turn's end (`finishTurn`) writes those. Returns
+   * whether the row was written; a turn on a row this store did not
+   * mark (a deferred first turn, a database without marks) is not
+   * checkpointed.
+   */
+  checkpointTurn(state: SessionState, progress: TurnProgress): boolean {
+    const owner = this.ownTurns.get(state.id);
+    if (owner === undefined || this.progress === null) return false;
+    // The loop's copy was read before the turn started: a rename or the
+    // namer's title written since is only in the row, and replacing the
+    // payload without it would lose it for good (`finishTurn` reads the
+    // row's title to keep it).
+    const row = this.serialize(
+      withStoredTitle(state, this.storedRow(state.id)),
+    );
+    const result = this.progress.checkpoint.run({
+      id: state.id,
+      owner,
+      payload: row.payload,
+      updated_at: row.updated_at,
+      progress: serializeTurnProgress(progress),
+    }) as { changes: number };
+    return result.changes > 0;
+  }
+
+  /**
+   * The progress marker a turn left on the row (`turn-progress.ts`), or
+   * `null` when there is none: no turn was cut off, or the last one
+   * ended on its own.
+   */
+  readTurnProgress(id: string): TurnProgress | null {
+    if (this.progress === null) return null;
+    const row = this.progress.read.get(id) as
+      | { progress: string | null }
+      | undefined;
+    return row === undefined ? null : parseTurnProgress(row.progress);
+  }
+
+  /** Drop a row's progress marker: its work was continued or given up on. */
+  clearTurnProgress(id: string): void {
+    this.progress?.clear.run(id);
   }
 
   /**
@@ -472,6 +551,9 @@ export class SessionStore {
   finishTurn(state: SessionState): void {
     this.write(state, true);
     this.ownTurns.delete(state.id);
+    // A turn that ended on its own leaves nothing to continue; one that
+    // was stopped keeps its marker (`TurnProgress`, "Lifetime").
+    if (state.status !== "cancelled") this.progress?.clear.run(state.id);
   }
 
   /**
@@ -492,6 +574,9 @@ export class SessionStore {
       ...endingParams(ending),
     }) as { changes: number };
     this.ownTurns.delete(id);
+    if (result.changes > 0 && ending.status !== "cancelled") {
+      this.progress?.clear.run(id);
+    }
     return result.changes > 0;
   }
 
@@ -605,36 +690,7 @@ export class SessionStore {
       this.insertStmt.run(this.serialize(next));
       return;
     }
-    const storedUserAt = stored.titleSetByUserAt;
-    const nextUserAt = readUserTitleSetAt(next.metadata);
-    if (
-      stored.title !== null &&
-      storedUserAt !== null &&
-      (nextUserAt === null || nextUserAt < storedUserAt)
-    ) {
-      // The operator's name outranks any copy read before the rename —
-      // a turn that was running, the namer's late answer, a TUI stamp —
-      // whatever title that copy carries.
-      next = {
-        ...next,
-        metadata: {
-          ...next.metadata,
-          [SESSION_TITLE_METADATA_KEY]: stored.title,
-          [SESSION_TITLE_USER_SET_AT_KEY]: storedUserAt,
-        },
-      };
-    } else if (
-      stored.title !== null &&
-      readSessionTitle(next.metadata) === null
-    ) {
-      next = {
-        ...next,
-        metadata: {
-          ...next.metadata,
-          [SESSION_TITLE_METADATA_KEY]: stored.title,
-        },
-      };
-    }
+    next = withStoredTitle(next, stored);
     const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
     update.run(this.serialize(next));
   }
@@ -916,4 +972,49 @@ function ensureTurnOwnerColumn(db: Database.Database): string | null {
     const message = err instanceof Error ? err.message : String(err);
     return /duplicate column/i.test(message) ? null : message;
   }
+}
+
+/**
+ * `next` with the title the stored row carries where `next` should not
+ * replace it: the operator's stamped name over any copy without the
+ * stamp or with an older one, and any stored title over a copy with
+ * none. Shared by every write that replaces a row's payload.
+ */
+function withStoredTitle(
+  next: SessionState,
+  stored: StoredRow | undefined,
+): SessionState {
+  if (stored === undefined) return next;
+  const storedUserAt = stored.titleSetByUserAt;
+  const nextUserAt = readUserTitleSetAt(next.metadata);
+  if (
+    stored.title !== null &&
+    storedUserAt !== null &&
+    (nextUserAt === null || nextUserAt < storedUserAt)
+  ) {
+    // The operator's name outranks any copy read before the rename —
+    // a turn that was running, the namer's late answer, a TUI stamp —
+    // whatever title that copy carries.
+    return {
+      ...next,
+      metadata: {
+        ...next.metadata,
+        [SESSION_TITLE_METADATA_KEY]: stored.title,
+        [SESSION_TITLE_USER_SET_AT_KEY]: storedUserAt,
+      },
+    };
+  }
+  if (
+    stored.title !== null &&
+    readSessionTitle(next.metadata) === null
+  ) {
+    return {
+      ...next,
+      metadata: {
+        ...next.metadata,
+        [SESSION_TITLE_METADATA_KEY]: stored.title,
+      },
+    };
+  }
+  return next;
 }

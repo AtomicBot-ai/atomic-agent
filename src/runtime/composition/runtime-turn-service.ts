@@ -22,6 +22,8 @@ import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
 import { TurnsInFlight } from "../turns-in-flight.js";
+import { checkpointState, turnProgressFor, type TurnCheckpointOptions } from "../turn-checkpoints.js";
+import type { TurnProgress } from "../../session/turn-progress.js";
 import type { createRuntimeTraces } from "./runtime-traces.js";
 import type { createRuntimeObservability } from "./runtime-observability.js";
 import type { RuntimeProviders } from "./runtime-inference.js";
@@ -59,7 +61,7 @@ type RuntimeTraces = ReturnType<typeof createRuntimeTraces>;
 
 export interface RuntimeTurnDependencies {
   sessions: {
-    sessionStore: Pick<SessionStore, "save" | "load" | "beginTurn" | "releaseTurn" | "finishTurn">;
+    sessionStore: Pick<SessionStore, "save" | "load" | "beginTurn" | "releaseTurn" | "finishTurn" | "checkpointTurn">;
     turnContext: RuntimeTraces["turnContext"];
     turnRequests: Map<string, string>;
     /**
@@ -267,12 +269,29 @@ export function createRuntimeTurnService(
    * (`SessionStore.beginTurn`). Bookkeeping only: a mark that cannot be
    * written must not stop the turn.
    */
-  const markTurnRunning = (sessionId: string): void => {
+  const markTurnRunning = (sessionId: string, progress: TurnProgress): void => {
     try {
-      sessionStore.beginTurn(sessionId);
+      sessionStore.beginTurn(sessionId, progress.startedAt, progress);
     } catch (err) {
       logger.warn("could not mark the session running", {
         sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  /**
+   * One completed step's checkpoint (ATO-1109): the transcript so far and
+   * the turn's progress, in one row write. Bookkeeping like the mark: a
+   * write that fails is logged and the turn goes on.
+   */
+  const checkpointStep = (session: SessionState, progress: TurnProgress): void => {
+    try {
+      sessionStore.checkpointTurn(checkpointState(session, progress.updatedAt), progress);
+    } catch (err) {
+      logger.warn("could not checkpoint the turn's step", {
+        sessionId: session.id,
+        stepIndex: progress.lastStepIndex,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -324,6 +343,8 @@ export function createRuntimeTurnService(
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
+      /** What the turn's progress marker records beyond the message (ATO-1109). */
+      checkpoint?: TurnCheckpointOptions;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -431,7 +452,10 @@ export function createRuntimeTurnService(
       // Registered before the mark and ended after the turn's end is
       // written, so `shutdown` waiting on it waits for the row to be right.
       const inFlight = turnsInFlight.begin(runOptions.signal);
-      markTurnRunning(session.id);
+      // The turn's progress marker: written with the mark, then with the
+      // transcript after every completed step (ATO-1109).
+      const progress = turnProgressFor(userMessage, runOptions, Date.now());
+      markTurnRunning(session.id, progress.initial);
       try {
         turnModelModes.set(session.id, modelModePolicy);
         // Recorded for `fusion.delegate`, which quotes it to the workers.
@@ -464,6 +488,8 @@ export function createRuntimeTurnService(
             : {}),
           ...(routeNote !== null ? { routeNote } : {}),
           ...buildLoopTurnBudget(runOptions),
+          onStepCheckpoint: (state, step) =>
+            checkpointStep(state, progress.atStep(step)),
         });
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
@@ -553,6 +579,7 @@ export function createRuntimeTurnService(
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
+      checkpoint?: TurnCheckpointOptions;
     } = {},
   ): Promise<RunTurnResult> => {
     // Before the queue, so a bad pin rejects now rather than after

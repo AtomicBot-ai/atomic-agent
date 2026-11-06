@@ -8,6 +8,12 @@ import type { TurnEventHook, TurnOrigin } from "../runtime/turn-controller.js";
 
 import { nextDelayMs, type BackoffOptions } from "./task-backoff.js";
 import {
+  planTaskResume,
+  type TaskResumePlan,
+  type TaskResumePolicy,
+} from "./task-resume.js";
+import type { TurnProgress } from "../session/turn-progress.js";
+import {
   buildTaskReport,
   isReportableStatus,
   type TaskReportSink,
@@ -21,6 +27,7 @@ import {
   type TriggerSource,
 } from "./task-types.js";
 import type { TaskCreateInput, TaskStore } from "./task-store.js";
+import { TASK_OWNER_GONE_ERROR } from "./task-store.js";
 
 /**
  * Subset of `AgentRuntime` consumed by the task runner. Declared
@@ -37,6 +44,8 @@ export interface TaskRunnerRuntime {
       signal?: AbortSignal;
       origin?: TurnOrigin;
       eventHook?: TurnEventHook;
+      /** The progress marker's task id, resumes and request (ATO-1109). */
+      checkpoint?: { taskId?: string; resumes?: number; request?: string };
     },
   ): Promise<RunTurnResult>;
 }
@@ -117,6 +126,19 @@ export interface TaskRunnerOptions {
    * `setTimeout`; tests substitute a fake to keep the suite fast.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Continue a run cut off by a crash, a kill or a restart instead of
+   * starting it over (`task-resume.ts`, ATO-1109): the policy
+   * (`agent.task.resumeInterrupted`, `agent.task.maxResumes`) and the
+   * session store's progress markers. Absent: every run starts fresh,
+   * as before.
+   */
+  resume?: TaskResumePolicy & {
+    progress: {
+      read(sessionId: string): TurnProgress | null;
+      clear(sessionId: string): void;
+    };
+  };
 }
 
 export interface DrainOptions {
@@ -325,6 +347,13 @@ export class TaskRunner {
 
     this.stampWakeReason(session, claimed);
 
+    // `task` is the row as it was before the claim, which cleared the
+    // reason it was put back for.
+    const plan = this.planResume(task, session.id);
+    if (plan.kind === "give_up") {
+      return this.giveUpResuming(claimed, plan, session.id);
+    }
+
     // Capture the final result text live so a completed report can
     // carry it. Two shapes, matching the loop's two success terminals:
     // `assistant_reply` for the `reply` terminal, and the `finish`
@@ -368,17 +397,32 @@ export class TaskRunner {
     // drain's signal — the scheduler aborts its own when the agent quits
     // — all end the turn through it.
     const run = this.beginRun(claimed.id, runtimeSignal);
+    // Set once the turn is about to start. A crash resume stopped before
+    // that (during its backoff) never wrote its resume count into the
+    // session's marker (`beginTurn` does), so the task goes back still
+    // marked as taken back from a dead agent and the next boot counts
+    // that crash again; otherwise quitting during the wait would reset
+    // the count `agent.task.maxResumes` is checked against.
+    let turnStarted = false;
     try {
       let result: RunTurnResult;
       try {
+        await this.backOffResume(plan, run.signal);
+        if (run.signal.aborted) throw new Error("stopped before resuming");
+        turnStarted = true;
         result = await this.options.runtime.runTurn(
           session,
-          claimed.userMessage,
+          plan.kind === "resume" ? plan.message : claimed.userMessage,
           {
             maxSteps,
             origin: "scheduler",
             signal: run.signal,
             ...(reportHook ? { eventHook: reportHook } : {}),
+            checkpoint: {
+              taskId: claimed.id,
+              resumes: plan.kind === "resume" ? plan.resumes : 0,
+              request: claimed.userMessage,
+            },
           },
         );
       } catch (err) {
@@ -393,6 +437,9 @@ export class TaskRunner {
             claimed,
             err,
             this.interrupted(runtimeSignal),
+            !turnStarted && plan.kind === "resume" && plan.crashed
+              ? TASK_OWNER_GONE_ERROR
+              : undefined,
           );
         }
         return this.handleFailure(claimed, category, err);
@@ -447,6 +494,88 @@ export class TaskRunner {
     } finally {
       run.end();
     }
+  }
+
+  /**
+   * How to start `task`'s run (`planTaskResume`): fresh, continued from
+   * its session's checkpoint, or not at all. Reading the marker is
+   * bookkeeping; a store that cannot answer means a fresh run.
+   */
+  private planResume(task: TaskRecord, sessionId: string): TaskResumePlan {
+    const resume = this.options.resume;
+    if (resume === undefined) return { kind: "fresh" };
+    let progress: TurnProgress | null = null;
+    try {
+      progress = resume.progress.read(sessionId);
+    } catch (err) {
+      this.options.logger?.warn("could not read the task's checkpoint; running it fresh", {
+        taskId: task.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const plan = planTaskResume(task, progress, resume);
+    if (plan.kind === "resume") {
+      this.options.logger?.info("task run interrupted earlier; resuming from its checkpoint", {
+        taskId: task.id,
+        sessionId,
+        stepsDone: progress?.stepsDone,
+        resumes: plan.resumes,
+        crashed: plan.crashed,
+      });
+    }
+    return plan;
+  }
+
+  /**
+   * Crash resumes after the first wait before they start, on the retry
+   * curve (`nextDelayMs`): a task that takes the agent down every time
+   * is not run again the instant the agent is back. The run's own stop
+   * ends the wait.
+   */
+  private async backOffResume(
+    plan: TaskResumePlan,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (plan.kind !== "resume" || !plan.crashed || plan.resumes < 2) return;
+    const delay = nextDelayMs(plan.resumes - 1, this.options.backoff);
+    if (delay <= 0 || signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const done = (): void => {
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      signal.addEventListener("abort", done, { once: true });
+      void this.sleep(delay).then(done, done);
+    });
+  }
+
+  /**
+   * The agent stopped under this task more times than
+   * `agent.task.maxResumes` allows: fail it with a sentence saying so,
+   * and drop the checkpoint, rather than claim it at every boot for ever.
+   */
+  private giveUpResuming(
+    task: TaskRecord,
+    plan: Extract<TaskResumePlan, { kind: "give_up" }>,
+    sessionId: string,
+  ): TaskRecord {
+    const failed = this.options.store.markFailed(task.id, {
+      category: "transport",
+      message: plan.message,
+    });
+    try {
+      this.options.resume?.progress.clear(sessionId);
+    } catch {
+      // The marker is only read for this task; a stale one is harmless.
+    }
+    this.recordTerminal(failed);
+    this.maybeReport(failed, null);
+    this.options.logger?.warn("task interrupted too many times; failed", {
+      taskId: failed.id,
+      sessionId: failed.sessionId,
+      resumes: plan.resumes,
+    });
+    return failed;
   }
 
   /**
@@ -717,6 +846,8 @@ export class TaskRunner {
     task: TaskRecord,
     err: unknown,
     interrupted: boolean,
+    /** `last_error` for a one-shot task put back (`markInterrupted`). */
+    interruptedError?: string,
   ): TaskRecord | null {
     const message = err instanceof Error ? err.message : String(err);
     if (task.recurring && task.schedule) {
@@ -741,6 +872,9 @@ export class TaskRunner {
     if (interrupted) {
       const pending = this.options.store.markInterrupted(task.id, {
         nextScheduledFor: null,
+        ...(interruptedError !== undefined
+          ? { lastError: interruptedError }
+          : {}),
       });
       if (!pending) return this.options.store.get(task.id);
       this.options.logger?.info("task run interrupted; left pending", {

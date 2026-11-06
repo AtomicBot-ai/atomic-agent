@@ -87,7 +87,7 @@ describe("agent configuration ownership", () => {
     const raw = {
       ...defaults,
       get providerWait() { events.push("raw-wait"); return { enabled: false, maxWaitMs: 1 }; },
-      get task() { events.push("raw-task"); return { maxSteps: 2, maxDurationMs: 3, autoContinue: false }; },
+      get task() { events.push("raw-task"); return { maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3 }; },
     };
     const parsed = parseAgentConfig(raw, () => {
       events.push("read-defaults");
@@ -98,7 +98,7 @@ describe("agent configuration ownership", () => {
       "raw-task", "read-defaults", "default-task", "read-defaults",
     ]);
     expect(parsed.providerWait).toEqual({ enabled: false, maxWaitMs: 1 });
-    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false });
+    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3 });
     expect(parsed.task).not.toBe(defaults.task);
   });
 
@@ -110,7 +110,7 @@ describe("agent configuration ownership", () => {
     expect(first.providerWait).toBe(savedWait);
     expect(first.task).toBe(savedTask);
     const nextWait = { enabled: false, maxWaitMs: 2 };
-    const nextTask = { maxSteps: 3, maxDurationMs: 4, autoContinue: false };
+    const nextTask = { maxSteps: 3, maxDurationMs: 4, autoContinue: false, resumeInterrupted: true, maxResumes: 3 };
     const second = parseAgentConfig({
       get providerWait() { current = { ...current, providerWait: nextWait }; return undefined; },
       get task() { current = { ...current, task: nextTask }; return null; },
@@ -163,7 +163,7 @@ describe("agent configuration ownership", () => {
     try {
       USER_CONFIG_DEFAULTS.agent = {
         ...saved, tokenBudget: 11, approvalLevel: 4,
-        task: { maxSteps: 12, maxDurationMs: 13, autoContinue: false },
+        task: { maxSteps: 12, maxDurationMs: 13, autoContinue: false, resumeInterrupted: true, maxResumes: 3 },
       };
       const direct = parseAgentConfig({}, () => USER_CONFIG_DEFAULTS.agent);
       const root = parseUserConfigFile({ agent: {} }).agent;
