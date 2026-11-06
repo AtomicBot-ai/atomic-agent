@@ -543,6 +543,18 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.status",
+    label: "Status of the running turn",
+    group: "run",
+    slash: {
+      name: "status",
+      description:
+        "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
+      rank: 46,
+    },
+  },
+  {
+    kind: "action",
     id: "run.queue",
     label: "Queued messages",
     group: "run",

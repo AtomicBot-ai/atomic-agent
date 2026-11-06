@@ -242,6 +242,12 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "enhance",
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
   },
+  // ATO-965: a status snapshot of the running turn.
+  {
+    name: "status",
+    description:
+      "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
+  },
   {
     name: "uninstall",
     description:

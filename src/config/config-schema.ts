@@ -342,6 +342,18 @@ export interface AtomicAgentConfig {
     report?: { quietHours: string | null };
   };
   /**
+   * Auto status snapshots on long turns and running tasks (ATO-965).
+   * Env-only: `ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_STEPS` (default 10)
+   * and `ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_MS` (default 5 min). A
+   * snapshot goes out once either many more steps or that much more
+   * time has passed since the last one, so a turn shorter than both
+   * never gets one; `0` turns a trigger off, both `0` turn the feature
+   * off. Today the snapshot is the edited status bubble in Telegram (a
+   * chat's own long turn, and tasks that report to Telegram). Optional
+   * so hand-built configs stay valid; absent means off.
+   */
+  statusSnapshot?: { everySteps: number; everyMs: number };
+  /**
    * Self-update controls. Env-only operational tuning (not user-config
    * file material). The TUI checks GitHub Releases on startup and, when
    * a newer version is published, offers an in-app update that re-runs
@@ -1320,6 +1332,10 @@ export const ENV_DEFAULTS = {
   TASKS_SCHEDULER_BATCH: 10,
   TASKS_AGENT_TOOLS_ENABLED: true,
   TASKS_MIN_INTERVAL_MS: 1_000,
+  /** Auto status snapshot after this many more steps (ATO-965); 0 = off. */
+  STATUS_SNAPSHOT_EVERY_STEPS: 10,
+  /** Auto status snapshot after this much more time (ATO-965); 0 = off. */
+  STATUS_SNAPSHOT_EVERY_MS: 5 * 60 * 1_000,
   /** Fire the TUI startup version check against GitHub Releases. */
   UPDATE_CHECK_ON_STARTUP: true,
   /** GitHub `owner/repo` for self-update release lookups + install.sh. */

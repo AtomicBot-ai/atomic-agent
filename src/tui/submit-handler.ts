@@ -15,6 +15,7 @@ import {
   skillSlashCommands,
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
+import { formatTuiStatus } from "./status-snapshot-tui.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import {
   isThemeName,
@@ -285,6 +286,11 @@ export function runSlashCommand(
   }
   if (result.queueVerb)
     runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.triggerStatusSnapshot) {
+    const text = formatTuiStatus(state, Date.now());
+    dispatch({ type: "runtime_info", line: text.split("\n")[0] ?? text });
+    dispatch({ type: "system_message", text });
+  }
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
   if (result.modelModeCommand) {
