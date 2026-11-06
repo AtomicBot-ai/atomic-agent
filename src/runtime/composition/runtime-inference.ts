@@ -333,11 +333,23 @@ export function connectRuntimeFallback(
   ): void => {
     if (sessionId) turnUsageMeter.recordServed(sessionId, servedProviderId);
     const metered = completionUsageForTurn(result);
-    if (!metered || !sessionId) {
+    if (!metered) {
       recordSessionUsage(sessionId, result, servedProviderId, false, undefined);
       return;
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    // ATO-1289: most chat turns stream, so the cost accumulator must see
+    // a streamed completion exactly as it sees a unary one (same gate,
+    // no session required) — otherwise `costTracking` only ever counts
+    // the few non-streamed calls.
+    if (costAccumulator && result.usage) {
+      costAccumulator.recordTurn({
+        modelId: result.modelId,
+        usage: result.usage,
+        ...(model ? { model } : {}),
+      });
+    }
+    if (!sessionId) return;
     recordSessionUsage(sessionId, result, servedProviderId, true, model);
     turnUsageMeter.record({
       sessionId,
