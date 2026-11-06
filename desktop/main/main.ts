@@ -1542,7 +1542,7 @@ function wireIpc(client: AgentClient): void {
     if (typeof approvalId !== "string") return { ok: false, error: "approvalId required" };
     const known = APPROVAL_DECISIONS.find((d) => d === decision);
     if (!known) {
-      return { ok: false, error: "decision must be allow-once, allow-in-chat or deny" };
+      return { ok: false, error: "decision must be allow-once, allow-in-chat, allow-always or deny" };
     }
     try {
       return { ok: true, data: await client.resolveApproval(approvalId, known, reason) };
