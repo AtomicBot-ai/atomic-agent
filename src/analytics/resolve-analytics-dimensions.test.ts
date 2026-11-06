@@ -114,6 +114,20 @@ describe("analytics dimensions", () => {
     expect(otherSurfaceAnalyticsExists("desktop", dir)).toBe(false);
   });
 
+  it("does not count the shared folder as the other surface (ATO-1227)", () => {
+    mkdirSync(join(dir, ".atomic-agent"), { recursive: true });
+    writeFileSync(join(dir, ".atomic-agent", "analytics.json"), "{}");
+    // Desktop 0.0.3+ uses ~/.atomic-agent itself: its own file is not
+    // evidence of the terminal.
+    expect(
+      otherSurfaceAnalyticsExists("desktop", dir, join(dir, ".atomic-agent")),
+    ).toBe(false);
+    // A desktop on its own state dir still sees the terminal's.
+    expect(
+      otherSurfaceAnalyticsExists("desktop", dir, join(dir, "elsewhere")),
+    ).toBe(true);
+  });
+
   it("never looks at the home dir under the test runner", () => {
     mkdirSync(join(dir, ".atomic-agent"), { recursive: true });
     writeFileSync(join(dir, ".atomic-agent", "analytics.json"), "{}");
