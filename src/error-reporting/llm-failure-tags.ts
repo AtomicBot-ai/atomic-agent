@@ -22,6 +22,20 @@ export interface LlmFailureContext {
   requestUrl?: string;
   /** The agent's own engine ports, so `port_class` can say `managed`. */
   managedPorts?: readonly number[];
+  /**
+   * The failed request was refused (`ECONNREFUSED` on the error or its
+   * causes): nothing listened on the model's port (ATO-421). Only then are
+   * `local_engine_alive` and `refused_wait_ms` sent, and `local_engine`
+   * is sent as `unknown` when the link is not a local engine we know.
+   */
+  connectionRefused?: boolean;
+  /**
+   * The managed engine's process as the outage wait judges it
+   * (`readManagedEngineLiveness`): `alive` / `dead` / `no_pid` / `unknown`,
+   * where `unknown` includes a start, load or install under way.
+   * Probed for refusals on the managed engine only.
+   */
+  engineLiveness?: string;
 }
 
 /**
@@ -37,6 +51,22 @@ const KNOWN_PROVIDER_IDS: ReadonlySet<string> = new Set([
 ]);
 const LOCAL_ENGINES: ReadonlySet<string> = new Set(["atomic-core", "llama-server", "external"]);
 const DAEMON_STATES: ReadonlySet<string> = new Set(["alive", "dead", "no_pid", "unknown"]);
+const ENGINE_ALIVE: ReadonlyMap<string, LocalEngineAlive> = new Map([
+  ["alive", "yes"],
+  ["dead", "no"],
+  ["no_pid", "no"],
+]);
+
+/** Whether the managed engine's process was running when a refusal was reported. */
+export type LocalEngineAlive = "yes" | "no" | "unknown";
+
+/**
+ * How long a refused turn had waited, as a fixed bucket. The edges are the
+ * ones the turn loop acts on: the 8 s restart grace after which a dead
+ * managed engine ends the turn (`local_engine_down`, ATO-772), and the
+ * default five-minute outage budget.
+ */
+export type RefusedWaitBucket = "0" | "under_8s" | "8s_to_30s" | "30s_to_2m" | "2m_to_5m" | "5m_plus";
 
 const UNKNOWN = "unknown";
 
@@ -107,6 +137,17 @@ export function classifyPortClass(
   return WELL_KNOWN_PORTS.get(parsed.port) ?? "other";
 }
 
+/** The bucket for a refused turn's outage wait; `unknown` for a value that is not a count. */
+export function bucketRefusedWait(waitedMs: number): RefusedWaitBucket | "unknown" {
+  if (!Number.isFinite(waitedMs) || waitedMs < 0) return UNKNOWN;
+  if (waitedMs === 0) return "0";
+  if (waitedMs < 8_000) return "under_8s";
+  if (waitedMs < 30_000) return "8s_to_30s";
+  if (waitedMs < 120_000) return "30s_to_2m";
+  if (waitedMs < 300_000) return "2m_to_5m";
+  return "5m_plus";
+}
+
 function safeCount(value: number): string {
   return Number.isFinite(value) && value >= 0 ? String(Math.round(value)) : UNKNOWN;
 }
@@ -119,6 +160,9 @@ function safeCount(value: number): string {
  * engine, whose process is the operator's and not ours to inspect.
  * `request_route` and `port_class` are derived from the request URL;
  * the URL, its host and its port number are never tags themselves.
+ * A refused connection adds `local_engine_alive` (`yes` / `no` /
+ * `unknown`) and `refused_wait_ms` (a fixed bucket), so the ATO-421
+ * clusters split into "crashed", "never started" and "external" (ATO-769).
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -143,6 +187,15 @@ export function sanitizeLlmFailureTags(
   if (context.requestUrl !== undefined) {
     tags.request_route = classifyRequestRoute(context.requestUrl);
     tags.port_class = classifyPortClass(context.requestUrl, context.managedPorts);
+  }
+  if (context.connectionRefused === true) {
+    tags.local_engine ??= UNKNOWN;
+    // An external server is the operator's process: we never look at it.
+    tags.local_engine_alive =
+      tags.local_engine === "external" || context.engineLiveness === undefined
+        ? UNKNOWN
+        : (ENGINE_ALIVE.get(context.engineLiveness) ?? UNKNOWN);
+    tags.refused_wait_ms = bucketRefusedWait(context.outageWaitedMs ?? 0);
   }
   return Object.keys(tags).length > 0 ? tags : undefined;
 }
