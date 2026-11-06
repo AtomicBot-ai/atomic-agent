@@ -167,7 +167,8 @@ export function parseApprovalRule(entry: unknown): ApprovalRule | string {
     ) {
       return "commandPrefix must be a non-empty array of non-empty strings";
     }
-    if (rule.category !== undefined && rule.category !== "shell") {
+    // `shell` and its sibling shell categories (`shell_dangerous`).
+    if (rule.category !== undefined && !rule.category.startsWith("shell")) {
       return "commandPrefix applies to shell commands only";
     }
     rule.commandPrefix = [...(e.commandPrefix as string[])];
