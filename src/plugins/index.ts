@@ -27,14 +27,71 @@ export {
   installPluginFromDir,
   PluginInstallError,
   removePlugin,
+  reviewAndCommit,
   setPluginEnabled,
   setPluginPartEnabled,
   stagePluginCopy,
 } from "./plugin-install.js";
-export type { CommitPluginOptions, StagedPlugin } from "./plugin-install.js";
+export type {
+  CommitPluginOptions,
+  PluginReview,
+  PluginReviewContext,
+  PluginReviewDecision,
+  ReviewAndCommitOptions,
+  StagedPlugin,
+} from "./plugin-install.js";
 export { listEnabledPluginSkills, loadEnabledPlugins, resetPluginCache } from "./plugin-runtime.js";
 export type { LoadedPlugin, LoadedPlugins, PluginSkillDir } from "./plugin-runtime.js";
 export { loadPluginMcpServers, expandVars, uniqueName } from "./plugin-mcp.js";
 export type { PluginMcpServers } from "./plugin-mcp.js";
 export { listPluginSubagents, parseSubagentFile } from "./plugin-subagents.js";
 export type { PluginSubagentProfile } from "./plugin-subagents.js";
+export {
+  checkGitUrl,
+  findMarketplaceFile,
+  MARKETPLACE_FILES,
+  MARKETPLACE_NAME_RE,
+  MarketplaceError,
+  parseEntrySource,
+  parseMarketplaceJson,
+  parseMarketplaceObject,
+  readMarketplaceFile,
+} from "./marketplace-manifest.js";
+export type { MarketplaceEntry, MarketplaceManifest, MarketplacePluginSource } from "./marketplace-manifest.js";
+export { createDefaultPluginFetcher, githubUrl } from "./marketplace-fetch.js";
+export type { PluginFetcher } from "./marketplace-fetch.js";
+export {
+  describeMarketplaceSource,
+  marketplaceCheckoutDir,
+  marketplacesRoot,
+  readMarketplaceLock,
+  writeMarketplaceLock,
+} from "./marketplace-store.js";
+export type { MarketplaceLockFile, MarketplaceRecord, MarketplaceSourceRecord } from "./marketplace-store.js";
+export {
+  addMarketplace,
+  applyEntryManifest,
+  installMarketplacePlugin,
+  listMarketplaces,
+  loadMarketplace,
+  looksLikePluginSpec,
+  materialiseEntry,
+  parseMarketplaceInput,
+  parsePluginSpec,
+  removeMarketplace,
+  resolveMarketplacePlugin,
+  updateMarketplaces,
+  updatePlugin,
+} from "./marketplace.js";
+export type {
+  AddMarketplaceResult,
+  LoadedMarketplace,
+  MarketplaceDeps,
+  MarketplaceInstallOptions,
+  MarketplaceInstallResult,
+  PluginUpdateOptions,
+  PluginUpdateResult,
+  RemoveMarketplaceResult,
+  ResolvedMarketplacePlugin,
+  UpdateMarketplaceResult,
+} from "./marketplace.js";
