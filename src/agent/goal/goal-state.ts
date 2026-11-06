@@ -141,12 +141,17 @@ export function setGoalStatus(
 /**
  * Make a stopped goal active again. The person chose to go on, so a
  * used-up round budget and the judge's failure count start over; marks
- * and the last verdict are kept.
+ * and the last verdict are kept. "Used up" is any goal with no round
+ * left, not only one stopped for it: a goal paused or blocked on its
+ * last round, or left active at its limit by a crash, would otherwise
+ * stop again before running a single round.
  */
 export function resumeGoalState(state: GoalState, now: number): GoalState {
+  const usedUp =
+    state.status === "budget_limited" || state.roundsUsed >= state.maxRounds;
   return {
     ...setGoalStatus(state, "active", now),
-    roundsUsed: state.status === "budget_limited" ? 0 : state.roundsUsed,
+    roundsUsed: usedUp ? 0 : state.roundsUsed,
     judgeFailures: 0,
   };
 }

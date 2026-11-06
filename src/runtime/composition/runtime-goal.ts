@@ -143,7 +143,7 @@ export function createRuntimeGoalRunner(deps: RuntimeGoalDeps) {
     const stored = readGoalState((sessionStore.load(session.id) ?? session).metadata);
     const resumed = stored !== null && sameGoalSpec(stored, options.goal) && stored.status !== "complete";
     const goal: GoalState = resumed
-      ? { ...resumeGoalState(stored, Date.now()), maxRounds: normalizeGoalSpec(options.goal).maxRounds }
+      ? resumeGoalState({ ...stored, maxRounds: normalizeGoalSpec(options.goal).maxRounds }, Date.now())
       : createGoalState(options.goal, Date.now());
     const message = userMessage.trim().length > 0
       ? userMessage

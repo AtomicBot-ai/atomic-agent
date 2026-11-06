@@ -71,4 +71,12 @@ describe("goal state", () => {
     const fromPause = resumeGoalState(setGoalStatus({ ...used, roundsUsed: 4 }, "paused", 1), 2);
     expect(fromPause).toMatchObject({ status: "active", roundsUsed: 4, judgeFailures: 0 });
   });
+
+  it("gives a fresh round budget to a goal stopped on its last round", () => {
+    const used = { ...createGoalState({ criteria: ["a"] }, 0), roundsUsed: 10 };
+    expect(resumeGoalState(setGoalStatus(used, "paused", 1, "judge"), 2).roundsUsed).toBe(0);
+    expect(resumeGoalState(setGoalStatus(used, "blocked", 1, "needs you"), 2).roundsUsed).toBe(0);
+    // Left active at the limit by a crash after the round was counted.
+    expect(resumeGoalState(used, 2).roundsUsed).toBe(0);
+  });
 });
