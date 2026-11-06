@@ -9,12 +9,24 @@ import type { ApprovalRequest } from "../approval/approval-gate.js";
  */
 export type ApprovalListener = (request: ApprovalRequest) => void;
 
+/**
+ * ATO-1111: the most requests the pending mirror keeps. Serve prunes it on
+ * every publish; this cap is the backstop for a host that never does, so a
+ * many-hour session cannot grow it without bound. Oldest goes first.
+ */
+export const MAX_MIRRORED_APPROVALS = 100;
+
 export class ApprovalBus {
   private readonly listeners = new Set<ApprovalListener>();
   private readonly pending = new Map<string, ApprovalRequest>();
 
   publish(request: ApprovalRequest): void {
     this.pending.set(request.approvalId, request);
+    while (this.pending.size > MAX_MIRRORED_APPROVALS) {
+      const oldest = this.pending.keys().next().value;
+      if (oldest === undefined) break;
+      this.pending.delete(oldest);
+    }
     for (const listener of this.listeners) {
       try {
         listener(request);
