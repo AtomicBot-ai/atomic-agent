@@ -20,8 +20,9 @@ import { classifyTestCommand } from "./test-command-key.js";
  * never echoed. A caller that wants richer wording (the step verbs of
  * ATO-962, `describeToolCall`) passes its own `describe`.
  *
- * Plan progress is read structurally: the live plan (ATO-486) emits a
- * `plan_updated` event carrying `{ plan: { items: { status }[] } }`, and
+ * Plan progress is read structurally: the live plan (ATO-486) emits the
+ * step event `plan_updated` (inside `llm_event`) carrying
+ * `{ plan: { items: { step, status }[] } }`, and
  * any caller holding a `planProgress(...)` result can hand it in as
  * `plan`. Nothing here imports the plan module, so this file compiles
  * with or without it.
@@ -204,9 +205,18 @@ export function createTurnStatusTracker(options: {
 
   return {
     onEvent(event) {
-      const loose = event as { type: string; plan?: unknown };
-      if (loose.type === "plan_updated") {
-        plan = planProgressOf(loose.plan) ?? plan;
+      // The live plan (ATO-486) arrives as the step event `plan_updated`
+      // inside `llm_event`, with the whole snapshot; `items: []` clears it.
+      // Read structurally (top level too), so this compiles without it.
+      const loose = event as { type: string; plan?: unknown; event?: { type?: string; plan?: unknown } };
+      const planEvent =
+        loose.type === "plan_updated"
+          ? loose
+          : loose.type === "llm_event" && loose.event?.type === "plan_updated"
+            ? loose.event
+            : null;
+      if (planEvent !== null) {
+        plan = isClearedPlan(planEvent.plan) ? null : (planProgressOf(planEvent.plan) ?? plan);
         return;
       }
       switch (event.type) {
@@ -334,6 +344,12 @@ export function planProgressOf(plan: unknown): PlanProgressLike | null {
   return current === undefined
     ? { done, total: items.length }
     : { done, total: items.length, current };
+}
+
+function isClearedPlan(plan: unknown): boolean {
+  if (typeof plan !== "object" || plan === null) return false;
+  const items = (plan as { items?: unknown }).items;
+  return Array.isArray(items) && items.length === 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -161,20 +161,23 @@ describe("createTurnStatusTracker", () => {
     expect(t.state().current).toBeNull();
   });
 
-  it("reads plan progress from a plan_updated event, structurally", () => {
+  it("reads plan progress from the plan_updated step event, structurally", () => {
     const t = createTurnStatusTracker({ startedAt: 0 });
-    t.onEvent({
-      type: "plan_updated",
-      plan: {
-        items: [
-          { step: "unit tests", status: "done" },
-          { step: "integration tests", status: "in_progress" },
-          { step: "docs", status: "pending" },
-        ],
-        updatedAt: 0,
-      },
-    } as unknown as AgentLoopEvent);
+    const planEvent = (items: unknown[]): AgentLoopEvent =>
+      ({
+        type: "llm_event",
+        event: { type: "plan_updated", plan: { items, updatedAt: 0 }, stepIndex: 0 },
+      }) as unknown as AgentLoopEvent;
+    t.onEvent(
+      planEvent([
+        { step: "unit tests", status: "done" },
+        { step: "integration tests", status: "in_progress" },
+        { step: "docs", status: "pending" },
+      ]),
+    );
     expect(t.state().plan).toEqual({ done: 1, total: 3, current: "integration tests" });
+    t.onEvent(planEvent([]));
+    expect(t.state().plan).toBeNull();
   });
 
   it("clears the block once the call ran, and stops the clock at the end", () => {
