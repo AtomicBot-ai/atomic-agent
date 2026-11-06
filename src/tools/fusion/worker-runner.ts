@@ -564,6 +564,13 @@ export interface RunWorkerTasksOptions {
    * is exactly as before.
    */
   briefSuffix?: (taskId: string) => string | undefined;
+  /**
+   * Every tool a worker starts, unthrottled (the feed's lines are capped
+   * per task). The run checkpoint (ATO-617) records side effects from it.
+   */
+  onWorkerTool?: (taskId: string, tool: string) => void;
+  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
+  onTaskFinished?: (result: WorkerTaskResult) => void;
 }
 
 /** The row of a task the turn's cap kept from starting. */
@@ -619,6 +626,11 @@ export async function runWorkerTasks(
         stop === undefined
           ? await runOneTask(deps, options, options.tasks[i]!)
           : notStartedResult(options.tasks[i]!, stop);
+      try {
+        options.onTaskFinished?.(results[i]!);
+      } catch {
+        // An observer never takes the fan-out down.
+      }
     }
   });
   await Promise.all(runners);
@@ -1172,6 +1184,11 @@ async function runOneTask(
           // a batched step, so the dedupe above earns its keep.
           announceStart();
           announceTool(event.event.call.tool);
+          try {
+            options.onWorkerTool?.(task.id, event.event.call.tool);
+          } catch {
+            // An observer never takes the worker down.
+          }
         }
         if (
           event.type === "llm_event" &&

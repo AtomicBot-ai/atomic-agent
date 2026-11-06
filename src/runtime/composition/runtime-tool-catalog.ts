@@ -585,11 +585,12 @@ export function registerRuntimeFusionAndReadScope(input: {
   liveWorkers?: FusionDelegateDeps["liveWorkers"];
   steerWorker?: FusionDelegateDeps["steerWorker"];
   orchestratorTurnSpendUsd?: FusionDelegateDeps["orchestratorTurnSpendUsd"];
+  runCheckpoints?: FusionDelegateDeps["runCheckpoints"];
 }): void {
   const { config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest, declaredInputs,
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
     llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
-    orchestratorTurnSpendUsd, liveWorkers, steerWorker } = input;
+    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints } = input;
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -654,6 +655,9 @@ export function registerRuntimeFusionAndReadScope(input: {
       },
       ...(liveWorkers === undefined ? {} : { liveWorkers }),
       ...(steerWorker === undefined ? {} : { steerWorker }),
+      // Run checkpoints (ATO-617): a fan-out cut off by a restart can be
+      // resumed from its unfinished wave.
+      ...(runCheckpoints === undefined ? {} : { runCheckpoints }),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,

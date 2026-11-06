@@ -138,3 +138,18 @@ export {
   ADVISOR_MAX_OUTPUT_TOKENS,
 } from "./escalation.js";
 export type { LiveWorkerControls, EscalationComplete } from "./escalation.js";
+export {
+  FusionRunStore,
+  FUSION_RUNS_DIR_NAME,
+  FUSION_RUN_RETENTION_MS,
+  toolHasSideEffects,
+} from "./run-checkpoint.js";
+export type {
+  FusionRunCheckpoint,
+  FusionRunRecorder,
+} from "./run-checkpoint.js";
+export {
+  describeResumableRun,
+  planResume,
+  renderResumeRequest,
+} from "./run-resume.js";

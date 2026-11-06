@@ -21,7 +21,7 @@ import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.j
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
 import type { SessionState } from "../session/session-state.js";
@@ -47,7 +47,14 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
-import { FusionLiveWorkers, FusionTurnBudget } from "../tools/fusion/index.js";
+import {
+  FUSION_RUNS_DIR_NAME,
+  FusionLiveWorkers,
+  FusionRunStore,
+  FusionTurnBudget,
+  describeResumableRun,
+  renderResumeRequest,
+} from "../tools/fusion/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
@@ -358,6 +365,11 @@ export async function createAgentRuntime(
   const turnUsageMeter = new TurnUsageMeter();
   const fusionTurnBudget = new FusionTurnBudget();
   const fusionLiveWorkers = new FusionLiveWorkers();
+  // Checkpoints of fan-outs (ATO-617), so one cut off by a restart can be
+  // resumed. Files, not a table: see `run-checkpoint.ts`.
+  const fusionRuns = new FusionRunStore({
+    dir: join(config.paths.stateDir, FUSION_RUNS_DIR_NAME),
+  });
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
@@ -712,6 +724,7 @@ export async function createAgentRuntime(
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
     turnBudget: fusionTurnBudget,
     liveWorkers: fusionLiveWorkers,
+    runCheckpoints: fusionRuns,
     steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
     orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
@@ -748,6 +761,31 @@ export async function createAgentRuntime(
         fusionLiveWorkers.stop(parentSessionId, taskId),
       escalate: (parentSessionId: string, taskId: string) =>
         fusionLiveWorkers.escalate(parentSessionId, taskId),
+    },
+    fusionRuns: {
+      listResumable: (sessionId?: string) =>
+        fusionRuns.listResumable(sessionId).map((run) => ({
+          runId: run.runId,
+          sessionId: run.sessionId,
+          updatedAt: run.updatedAt,
+          summary: describeResumableRun(run),
+        })),
+      resumeMessage: (sessionId: string, runId?: string) => {
+        const run =
+          runId === undefined
+            ? fusionRuns.listResumable(sessionId)[0]
+            : fusionRuns.listResumable(sessionId).find((r) => r.runId === runId);
+        return run === undefined ? null : renderResumeRequest(run);
+      },
+      discard: (sessionId: string, runId?: string) => {
+        const run =
+          runId === undefined
+            ? fusionRuns.listResumable(sessionId)[0]
+            : fusionRuns.listResumable(sessionId).find((r) => r.runId === runId);
+        return run !== undefined && fusionRuns.discard(run.runId)
+          ? run.runId
+          : null;
+      },
     },
     profileStore,
     notesStore,
