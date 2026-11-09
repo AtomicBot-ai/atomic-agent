@@ -132,7 +132,8 @@ export interface TaskRecord {
   /**
    * Spend ceiling for one run of the task, in USD (ATO-1108). `null`
    * leaves it to `agent.task.maxCostUsd` at run time. A retry gets what
-   * earlier attempts left of it (`spentUsd`).
+   * earlier attempts left of it (`spentUsd`). Cloud Fusion workers are
+   * not counted against it.
    */
   maxCostUsd: number | null;
   /**
