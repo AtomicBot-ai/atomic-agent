@@ -26,6 +26,13 @@ export interface CompletionUsage {
    * when the service did not report it.
    */
   cachedTokens?: number;
+  /**
+   * What the service itself says the call cost, in USD (OpenRouter's
+   * `usage.cost`). Preferred over any price-table estimate because it
+   * is the bill, not a guess at it. Absent when the service said
+   * nothing (ATO-569).
+   */
+  costUsd?: number;
 }
 
 /**
@@ -38,7 +45,22 @@ export interface CompletionUsage {
 export type PromptTurn =
   | { kind: "user"; text: string }
   | { kind: "assistant_reply"; text: string }
-  | { kind: "assistant_tool_call"; tool: string; args: Record<string, unknown>; callId?: string }
+  | {
+      kind: "assistant_tool_call";
+      tool: string;
+      args: Record<string, unknown>;
+      callId?: string;
+      /**
+       * The model's own reasoning from the inference that emitted this
+       * call. Set only on calls of the current (un-replied) macro-turn,
+       * and only on the first call of a batch, where the transcript keeps
+       * it. A local server that renders the chat template gets it back as
+       * `reasoning_content`, so a template that keeps thinking between
+       * tool steps (Qwen `preserve_thinking`, Flint) sees it; every other
+       * layout ignores it.
+       */
+      reasoning?: string;
+    }
   | {
       kind: "tool_result";
       tool: string;
@@ -284,6 +306,14 @@ export interface CompletionResult {
    * authoritative.
    */
   servedTransport?: ToolCallTransport;
+  /**
+   * Rate-limit windows the provider reported with this completion: the
+   * response headers on HTTP providers, the CLI's rate-limit events on
+   * subscription CLIs. The latest reading the provider holds for the
+   * account, so it describes the account, not just this one call.
+   * Absent when the provider reported none (ATO-569).
+   */
+  rateLimits?: readonly import("./rate-limits.js").RateLimitWindow[];
   /**
    * The provider's generation id (`id` on the response / SSE chunks),
    * when it sends one. Recorded in the trace so a billed completion

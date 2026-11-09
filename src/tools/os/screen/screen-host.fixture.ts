@@ -13,6 +13,8 @@ export interface RecordedCall {
 export interface FakeHost {
   deps: ScreenDeps;
   calls: RecordedCall[];
+  /** Files `writeText` saved, by path. */
+  written: Map<string, string>;
   /** The screen operations only (`probe`, `click`, ...), in order. */
   ops: () => Record<string, unknown>[];
 }
@@ -38,6 +40,8 @@ export interface FakeHostOptions {
   fileSize?: number;
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
+  /** What a probe with `windows: true` reports, verbatim (default none). */
+  windows?: Record<string, unknown>[];
 }
 
 /**
@@ -46,6 +50,7 @@ export interface FakeHostOptions {
  */
 export function fakeHost(options: FakeHostOptions = {}): FakeHost {
   const calls: RecordedCall[] = [];
+  const written = new Map<string, string>();
   const sizes = [...(options.pixelSizes ?? [{ width: 2880, height: 1800 }])];
   const front: App = options.frontmost === undefined
     ? { name: "TextEdit", bundleId: "com.apple.TextEdit" }
@@ -68,6 +73,7 @@ export function fakeHost(options: FakeHostOptions = {}): FakeHost {
       };
       if (op?.op === "probe") {
         if (op.point) report.ownerAtPoint = options.ownerAtPoint === undefined ? front : options.ownerAtPoint;
+        if (op.windows) report.windows = options.windows ?? [];
       } else {
         Object.assign(report, options.actionReport ?? { done: true });
       }
@@ -89,12 +95,16 @@ export function fakeHost(options: FakeHostOptions = {}): FakeHost {
     env: options.env ?? { TERM_PROGRAM: "Apple_Terminal", PATH: "/usr/bin", OPENROUTER_API_KEY: "sk-or-secret" },
     fileSize: async () => options.fileSize ?? 123_456,
     ensureDir: async () => undefined,
+    writeText: async (path, text) => {
+      written.set(path, text);
+    },
     now: () => new Date(2026, 9, 25, 14, 22, 33, 417),
     tmpDir: "/tmp/t",
   };
   return {
     deps,
     calls,
+    written,
     ops: () => calls.flatMap((call) => (call.op ? [call.op] : [])),
   };
 }

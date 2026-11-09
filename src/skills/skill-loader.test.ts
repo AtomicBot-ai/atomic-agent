@@ -126,4 +126,23 @@ describe("loadSkills", () => {
     expect(result.skills).toHaveLength(1);
     expect(result.skills[0]!.manifest.name).toBe("mac-only");
   });
+
+  it("loads plugin skills as plugin:skill and keeps an installed skill's name", async () => {
+    await writeSkill(global, "demo", "user skill named like the plugin");
+    const pluginRoot = join(base, "plugin");
+    await writeSkill(join(pluginRoot, "skills"), "review", "plugin review");
+    await writeFile(join(pluginRoot, "SKILL.md"), "---\nname: demo\ndescription: root skill\n---\n", "utf8");
+    const res = await loadSkills({
+      globalDir: global,
+      projectDir: null,
+      pluginSkills: () => [
+        { plugin: "demo", dir: join(pluginRoot, "skills", "review"), rootSkill: false },
+        { plugin: "demo", dir: pluginRoot, rootSkill: true },
+      ],
+    });
+    const byName = Object.fromEntries(res.skills.map(s => [s.manifest.name, s]));
+    expect(byName["demo:review"]).toMatchObject({ source: "global", plugin: "demo" });
+    expect(byName["demo"]!.plugin).toBeUndefined();
+    expect(res.errors.some(e => e.error.includes("plugin copy is ignored"))).toBe(true);
+  });
 });

@@ -93,17 +93,21 @@ function ParagraphBlock({ token }: { token: Tokens.Paragraph }): ReactElement {
   return <Text>{renderInline(token.tokens ?? [])}</Text>;
 }
 
+/**
+ * ATO-664: a code block is drawn without its ``` fences (they read as
+ * stray backticks and get copied along with the code). The fence's
+ * language, when it names one, stays as a muted label above the code.
+ */
 function CodeBlock({ token }: { token: Tokens.Code }): ReactElement {
-  const language = token.lang ?? "";
+  const language = (token.lang ?? "").trim();
   const highlighted = highlightCodeBlock(token.text, language);
   const lines = highlighted.split("\n");
   return (
     <Box flexDirection="column" marginY={1} paddingLeft={1}>
-      <Text color={theme.colors.muted}>``` {language}</Text>
+      {language ? <Text color={theme.colors.muted}>{language}</Text> : null}
       {lines.map((line, idx) => (
         <Text key={idx}>{line}</Text>
       ))}
-      <Text color={theme.colors.muted}>```</Text>
     </Box>
   );
 }

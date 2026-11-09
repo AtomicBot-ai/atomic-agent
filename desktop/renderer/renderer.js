@@ -187,9 +187,9 @@ const KIND_ROWS = [
   {id:'openrouter', kind:'openrouter', label:'OpenRouter (cloud chat + optional cloud embed)', env:'OPENROUTER_API_KEY', defaultModel:'openrouter/auto'},
   {id:'aimlapi', kind:'aimlapi', label:'AI/ML API (1000+ models, OpenAI-compatible)', env:'AIMLAPI_API_KEY'},
   {id:'gemini', kind:'gemini', label:'Gemini (Google AI)', env:'GEMINI_API_KEY', defaultModel:'gemini-2.5-flash'},
-  {id:'claude-cli', kind:'subscription-cli', subscriptionCli:'claude', word:'Claude Code', billingEnv:'ANTHROPIC_API_KEY', defaultModel:'sonnet',
+  {id:'claude-cli', kind:'subscription-cli', subscriptionCli:'claude', word:'Claude Code', plan:'Claude', billingEnv:'ANTHROPIC_API_KEY', defaultModel:'sonnet',
    label:'Claude Code subscription: the agent runs on your plan (signed-in `claude`)'},
-  {id:'codex-cli', kind:'subscription-cli', subscriptionCli:'codex', word:'Codex', billingEnv:'OPENAI_API_KEY', defaultModel:'',
+  {id:'codex-cli', kind:'subscription-cli', subscriptionCli:'codex', word:'Codex', plan:'ChatGPT', billingEnv:'OPENAI_API_KEY', defaultModel:'',
    label:'OpenAI Codex subscription: the agent runs on your plan (signed-in `codex`)'},
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
@@ -1167,13 +1167,15 @@ const SETTINGS_SECTIONS = [
   ['memory','Memory','memory',['memory']],
   ['tasks','Tasks','tasks',['tasks']],
   ['skills','Skills','skills',['skills']],
+  // ATO-954: installed plugins (renderer/plugins-pane.js).
+  ['plugins','Plugins','puzzle',['plugins']],
   ['privacy','Privacy','lock',['privacy']],
   ['import','Import','import',['import']],
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['memory','Memory'],
-                       ['tasks','Tasks'],['skills','Skills'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+                       ['tasks','Tasks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -1587,6 +1589,10 @@ const OLLAMA_SIGNPOST = 'Ollama runs its own models: this adds it as a provider 
    new model against the old model's scale. `stamp` is metadata.llm — the
    provider/model the open session last ran on. */
 const CTX055 = {stored:null, route:null, stamp:null};
+/* ATO-569: the open chat's spend and the account's limits, as the agent
+   counts them (usage-meter.js). `sid` is the chat they belong to, so a
+   frame or a refresh for another chat never paints over this one. */
+const USAGE = {state:null, sid:null};
 /* Mid-turn steering. `ahead` is ChatOrchestrator.steeredAhead: a refused
    steer is parked AHEAD of ordinary backlog and behind steers already
    re-routed for the same turn, so typing order survives. `chain`
@@ -1635,6 +1641,8 @@ const P = {
   files:'<path d="M5.5 4.5V3.5A1 1 0 0 1 6.5 2.5h4L13 5v6.5a1 1 0 0 1-1 1h-1"/><path d="M3 5.5a1 1 0 0 1 1-1h4l2.5 2.5v6a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"/>',
   console:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   plus:'<path d="M8 3v10M3 8h10"/>',
+  // ATO-532: an app window (title bar, two lights) — the composer's window picker.
+  appwin:'<rect x="2" y="3" width="12" height="10" rx="2"/><path d="M2 6h12M4.3 4.5h.1M6 4.5h.1"/>',
   minus:'<path d="M3 8h10"/>',
   chevD:'<path d="M4.5 6.5 8 10l3.5-3.5"/>',
   chevR:'<path d="M6.5 4.5 10 8l-3.5 3.5"/>',
@@ -1689,6 +1697,8 @@ const P = {
   term:'<path d="M3 5l3 3-3 3M8.5 11.5H13"/>',
   globe:'<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.9 1.7 1.9 9.3 0 11M8 2.5c-1.9 1.7-1.9 9.3 0 11"/>',
   plug:'<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2a3.5 3.5 0 0 1-7 0zM8 11v2.5"/>',
+  // ATO-954: Settings › Plugins — a puzzle piece.
+  puzzle:'<path d="M3 5.5h2.6a1.4 1.4 0 1 1 2.8 0H11v2.6a1.4 1.4 0 1 1 0 2.8V13H3z"/>',
   branch:'<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="5" r="1.5"/><path d="M4.5 5v6M11.5 6.5c0 3-7 2-7 4.5"/>',
   dots:'<path d="M3.5 8h.01M8 8h.01M12.5 8h.01" stroke-width="2.6"/>',
   clock:'<circle cx="8" cy="8" r="5.5"/><path d="M8 5v3l2 1.5"/>',
@@ -1852,6 +1862,8 @@ const SLASH = [
   // ATO-259: POST /api/sessions/{id}/compact, as the TUI's `/compact`.
   ['compact','summarize older messages to free up context'],
   ['abort','abort the running turn'],
+  // ATO-965: the terminal's and Telegram's /status (status-snapshot.js).
+  ['status','what the running turn is doing: now, last result, waiting on you, time'],
   ['quit','exit Atomic Agent'],
   ['debug','show or hide the console'],
   ['chat','back to the chat'],
@@ -1926,6 +1938,7 @@ const PAL = [
     ['memory','Memory','Settings','⌘ 4','settings:memory'],
     ['tasks','Tasks','Settings','','settings:tasks'],
     ['skills','Skills','Settings','','settings:skills'],
+    ['puzzle','Plugins','Settings','','settings:plugins'],
     ['lock','Privacy','Settings','⇧ ⌘ ,','settings:privacy'],
     ['import','Import','Settings','/import','settings:import'],
     ['gauge','Diagnostics','Settings','','settings:diagnostics'],
@@ -1934,6 +1947,7 @@ const PAL = [
     ['plus','New chat','','⌘ N','session:new'],
     // Calm (S5): the verbs the Settings window's Commands list used to carry.
     ['chat','Switch chat…','','⌘ O','session:switch'],
+    ['import','Continue from Claude Code / Codex…','','','handoff:open'],   // ATO-1156
     ['x','Clear transcript','','','clear'],
     ['gauge','Context window','','','context'],
     ['copy','Show session id','','⌃ ⌘ C','session:id'],
@@ -2123,10 +2137,17 @@ for (const [id, q] of QUEUES) if (id.startsWith('waiting-') && q.queued.length) 
    on there (liveRebuild). A turn that failed or was stopped stays here for a
    while (`ended`), as the store may not have it. */
 const LIVE_TURNS = new Map();
+/** ATO-483: the transcript line for a `provider_switched` frame, '' when it names no switch. */
+function providerSwitchedLine(p) {
+  if (!p || typeof p !== 'object') return '';
+  if (typeof p.notice === 'string' && p.notice.trim()) return p.notice.trim();
+  if (typeof p.from !== 'string' || typeof p.to !== 'string' || !p.from || !p.to) return '';
+  return p.from + ' failed, switched to ' + p.to + (typeof p.to_model === 'string' && p.to_model ? ' (' + p.to_model + ')' : '') + '.';
+}
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
 /* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
@@ -2218,6 +2239,8 @@ function render() {
   // Backlog 28: so does a landed model's start, held by a turn in another chat.
   obFlushDeferredSoon();
   exaKeyRestore(exaHeld);
+  // ATO-568: the caret goes into a worker's Steer field that was just opened.
+  if (typeof fzpAfterRender === 'function') fzpAfterRender();
 }
 
 
@@ -3333,6 +3356,13 @@ function toolLine(m) {
   if (/^memory\..*\.store$/.test(n) && a.content) return 'Remembered ' + quote(a.content);
   if (/^memory\.profile\.set$/.test(n) && a.key) return 'Remembered your ' + esc(String(a.key).replace(/[._]+/g, ' '));
   if (/^memory\..*\.recall$/.test(n)) return a.query ? 'Recalled ' + quote(a.query) : 'Recalled memories';
+  /* ATO-962: a tool this table has no words for (an MCP or Composio tool,
+     a new one) or whose args were cut off in the clipped `label`: the
+     agent's own past-tense line from the whole args (`done_line` on
+     `tool_progress`, src/tools/describe-tool-call.ts), so the card says
+     "Used github: create issue" rather than a bare name. toolTense still
+     words it for running, waiting, denied and failed. */
+  if (typeof m.doneLine === 'string' && m.doneLine) return esc(m.doneLine);
   return esc(toolVerb(n));
 }
 /* A call still running (or waiting on your approval) has not done it yet,
@@ -3356,7 +3386,11 @@ function toolTense(line, state) {
     'Forgot':['Forgetting','forget'], 'Scheduled':['Scheduling','schedule'], 'Cancelled':['Cancelling','cancel'],
     'Checked':['Checking','check'], 'Compared':['Comparing','compare'], 'Restored':['Restoring','restore'],
     'Clicked':['Clicking','click'], 'Typed':['Typing','type'], 'Scrolled':['Scrolling','scroll'],
-    'Sent':['Sending','send'], 'Copied':['Copying','copy'], 'Generated':['Generating','generate']};
+    'Sent':['Sending','send'], 'Copied':['Copying','copy'], 'Generated':['Generating','generate'],
+    // ATO-962: verbs the agent's describe-tool-call lines start with.
+    'Found':['Finding','find'], 'Watched':['Watching','watch'], 'Extracted':['Extracting','extract'],
+    'Stopped':['Stopping','stop'], 'Focused':['Focusing','focus'], 'Created':['Creating','create'],
+    'Commented':['Commenting','comment']};
   const mt = /^(Added to|Looked for|Looked at|Looked up|[A-Z][a-z]+)\b/.exec(line);
   if (state === 'err' && mt && mt[1] === 'Ran' && /\u00b7 exit /.test(line)) return line;
   if (!mt || !forms[mt[1]]) {
@@ -3644,6 +3678,10 @@ function apprCard(m) {
          never `bash -c`), on an agent that takes it (apprChatOk). No key: the
          chords stay Allow once and Deny. */
       + (apprChatOk(m) ? '<button class="btn sm btn-s appr-chat" data-appr="c" title="' + esc('Allow this call, and ' + m.shape + ' commands for the rest of this chat without asking') + '">Allow in this chat</button>' : '')
+      /* ATO-1142: a saved rule, for a request the agent says it can remember
+         (canAlways). The agent's own words name what the rule covers. No key,
+         like Allow in this chat. */
+      + (apprAlwaysOk(m) ? '<button class="btn sm btn-s appr-always" data-appr="w" title="' + esc(apprAlwaysTitle(m)) + '">' + esc(apprAlwaysButton(m)) + '</button>' : '')
       + '<button class="btn sm btn-s apprdeny" data-appr="n" title="Deny' + (current ? ' (' + apprKeyLabel('n') + ')' : '') + '">Deny' + keyOn('n') + '</button>'
       + '<button class="btn sm btn-g apprabort" data-appr="esc" title="Stop the whole run">Abort run</button>'
     + '</div>'
@@ -3709,6 +3747,23 @@ const APPR_FALLBACK = {
 function apprChatOk(m) {
   const decisions = LIVE_CAPS && LIVE_CAPS.agent && LIVE_CAPS.agent.approvalDecisions;
   return !!m.shape && m.cat === 'shell' && Array.isArray(decisions) && decisions.includes('allow-in-chat');
+}
+/** ATO-1142: whether the card offers "Always allow". Only when the agent's
+    `approval_request` frame says `canAlways: true` (a category it may save a
+    rule for, with a rules store installed), and not again on a card whose
+    rule the agent already refused (apprAlwaysReopen). */
+function apprAlwaysOk(m) {
+  return !!m && m.canAlways === true && !m.alwaysRefused;
+}
+/** The button's words: the agent's `alwaysLabel` when it reads as a short
+    button, else "Always allow". The full label is the tooltip either way. */
+function apprAlwaysButton(m) {
+  const label = String(m.alwaysLabel || '').trim();
+  return label && label.length <= 48 ? label : 'Always allow';
+}
+function apprAlwaysTitle(m) {
+  const label = String(m.alwaysLabel || '').trim();
+  return (label || 'Always allow this') + '. Saved as a rule; remove it in Settings, Privacy.';
 }
 /** The question: "Allow Atomic Agent to run `touch approved.txt`?" (html). */
 function apprAsk(m) {
@@ -3861,6 +3916,9 @@ function composer() {
     // ATO-244: the model runs on the processor; last, under every strip that carries a decision or a failure.
     : cpuNoticeShown()
     ? cpuNoticeHTML()
+    // ATO-1044: the best model downloading behind the starter, then Switch now / Later (upgrade-chat.js). Last: it carries no failure.
+    : (typeof upgradeShown === 'function' && upgradeShown())
+    ? upgradeNoticeHTML()
     /* r2 (DMG feedback): the "Ready · <last thing that changed>" strip is
        no longer drawn under the transcript — it read as noise. APPSTATUS is
        still kept (and logged) for diagnostics; only the strip is gone. The
@@ -3870,7 +3928,8 @@ function composer() {
       '<div class="qchip"><span class="qlb">' + (DRAIN_OWED ? 'Sent · waiting' : 'Queued') + '</span><span class="qtx">' + esc(attQueueLabel(t)) + '</span>'
       + '<button class="iconbtn sm qx" data-unqueue="' + i + '" aria-label="Remove">' + ic('x') + '</button></div>').join('') + '</div>' : '';
   const backend = selBackend();
-  return '<div class="composerwrap">' + status + fzLiveHTML() + q
+  // ATO-486: the agent's live plan, above the queue (plan-bar.js).
+  return '<div class="composerwrap">' + status + fzLiveHTML() + planBarHTML(S.sessionId, {esc, ic}) + q
     // Item 2 (voice input): the strip is ALWAYS emitted, hidden and empty
     // when there is nothing to say, so refreshVoice() can repaint it by
     // outerHTML without a render() that would move the caret.
@@ -3898,7 +3957,7 @@ function composer() {
         + (running ? 'Send to steer this turn…'
            : PLAN.on ? 'Type to change the plan — it stays in plan mode…'
            : 'Ask Atomic Agent\u2026') + '"></textarea>'
-      + attButtonHTML() + micButton() + sendButton() + '</div>'
+      + attButtonHTML() + (typeof wsnapButtonHTML === 'function' ? wsnapButtonHTML() : '') + micButton() + sendButton() + '</div>'
       /* B.7, Soft Tactile: Backend · Provider · Model, a
          spacer, then Context · Mode. Every chip is a direct child of `.cfoot`,
          so the popovers can anchor to `#composer .cfoot [data-sel-open=…]`.
@@ -4618,7 +4677,8 @@ function renderInspector() {
   let body = '';
   if (S.inspTab === 'steps') {
     const tools = S.log.filter((m) => m.k === 'tool');
-    body = tools.length ? tools.map((m, i) => '<button class="step" data-goto="' + m.id + '">'
+    // ATO-1249: newest on top unless the viewer chose otherwise (insp-order.js); a step keeps its number.
+    body = tools.length ? inspOrderHTML(tools.length, {esc}) + inspOrdered(tools.map((m, i) => [m, i])).map(([m, i]) => '<button class="step" data-goto="' + m.id + '">'
         + '<span class="ix">' + String(i + 1).padStart(2, '0') + '</span>'
         + '<span class="nm">' + esc(m.name) + '</span>'
         + '<span class="hstack">'
@@ -4635,7 +4695,7 @@ function renderInspector() {
     const r = S.log.filter((m) => m.k === 'reason');
     // Soft Tactile (SH-06): a sentence-case label over a mono well per step.
     // 14: `data-rs` is how a stream frame finds the running block's well.
-    body = r.length ? r.map((m) => '<div class="insp-rs" data-rs="' + esc(m.id) + '"><div class="insp-lbl">Step ' + m.steps + '</div>'
+    body = r.length ? inspOrderHTML(r.length, {esc}) + inspOrdered(r).map((m) => '<div class="insp-rs" data-rs="' + esc(m.id) + '"><div class="insp-lbl">Step ' + m.steps + '</div>'
         + '<pre class="tk-out">' + esc(m.text) + '</pre></div>').join('')
       : '<p class="cap">Reasoning appears here as the turn runs.</p>';
   } else if (S.inspTab === 'world') {
@@ -4654,15 +4714,23 @@ function renderInspector() {
      like the chat. Only for the same tab of the same transcript, rebuilt
      while on screen: a tab switch, another chat, or a panel just shown starts
      at the top as it always has. */
+  /* ATO-1249: with the newest on top, the top is the place that follows new
+     rows, and a reader scrolled down keeps the rows they see (insp-order.js). */
   const prev = el.querySelector('.inspbody');
-  const keep = prev && INSP_VIEW.tab === S.inspTab && INSP_VIEW.log === S.log ? (inspAtEnd(prev) ? 'end' : prev.scrollTop) : null;
+  const keep = prev && INSP_VIEW.tab === S.inspTab && INSP_VIEW.log === S.log
+    ? inspScrollKeep({scrollTop:prev.scrollTop, scrollHeight:prev.scrollHeight, clientHeight:prev.clientHeight}, inspNewestOnTop()) : null;
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
     // Calm (S1): no session-id footer. The id is one palette row away
     // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
     + '<div class="inspbody">' + body + '</div>';
   INSP_VIEW.tab = S.inspTab; INSP_VIEW.log = S.log;
   const now = keep === null ? null : el.querySelector('.inspbody');
-  if (now) now.scrollTop = keep === 'end' ? now.scrollHeight : keep;
+  if (now) now.scrollTop = inspScrollTo(keep, now);
+}
+
+/** ATO-1249: the tab on screen lists newest first (World is not a list). */
+function inspNewestOnTop() {
+  return INSP_ORDER.newestFirst && (S.inspTab === 'steps' || S.inspTab === 'reasoning');
 }
 
 /** 14: the running reasoning block's text, grown in its inspector well in
@@ -4673,9 +4741,19 @@ function growInspectorReasoning(block) {
   const pre = document.querySelector('#inspector .insp-rs[data-rs="' + block.id + '"] > .tk-out');
   if (!pre) { renderInspector(); return; }   // a new block: its well is drawn by a rebuild
   const body = pre.closest('.inspbody');
-  const end = !!body && inspAtEnd(body);
+  // ATO-1249: newest first, the running block is on top and grows at its own end: a reader
+  // inside it stays put, one in the older rows below keeps those rows (insp-order.js).
+  const top = inspNewestOnTop();
+  const end = !!body && !top && inspAtEnd(body);
+  const was = body && top ? {scrollTop:body.scrollTop, scrollHeight:body.scrollHeight, clientHeight:body.clientHeight} : null;
+  const wellAbove = !!was && pre.getBoundingClientRect().bottom <= body.getBoundingClientRect().top;
   growText(pre, block.text);
   if (end) body.scrollTop = body.scrollHeight;
+  else if (was) {
+    // Set, not added to: Chromium's scroll anchoring may already have moved this panel for the same growth.
+    const to = inspGrowScroll(was, body.scrollHeight - was.scrollHeight, wellAbove);
+    if (to !== null) body.scrollTop = to;
+  }
 }
 
 /* ---------------- console ---------------- */
@@ -4698,6 +4776,14 @@ function appSay(text, tone) {
 }
 
 const LOGS = [];
+/* ATO-1111: S.history is a second copy of every message's text that nothing
+   in the window reads back (the drive checks read its newest entry). A chat
+   that ran for hours kept all of it; only the newest HISTORY_KEEP stay now. */
+const HISTORY_KEEP = 200;
+function pushHistory(entry) {
+  S.history.push(entry);
+  if (S.history.length > HISTORY_KEEP) S.history.splice(0, S.history.length - HISTORY_KEEP);
+}
 const LLMLOGS = [];
 function renderConsole() {
   const el = $('#console');
@@ -4879,6 +4965,7 @@ function overlaysHTML() {
   if (S.overlay === 'sesmenu') html += chatMenuHTML();
   if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
+  if (S.overlay === 'handoff') html += handoffSheetHTML();   // ATO-1156 (handoff.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -5760,6 +5847,34 @@ async function projectTrustAct(v) {
     kind === 'trust' ? 'Its project skills and instructions load from the next message' : 'Nothing from this folder is loaded'); }
   else if (res && res.conflict) toast('The folder changed', 'Something new appeared in it; the question shows what is there now');
 }
+/* ATO-1144: Settings › Privacy › Approval rules (renderer/approval-rules.js).
+   Read on every entry to Privacy, for the chat's own folder; an agent
+   without /api/approval-rules says to update it. */
+const ARULES = createApprovalRules({
+  read: (id) => BR && BR.approvalRules ? BR.approvalRules(id) : {supported: false},
+  remove: (id) => BR && BR.approvalRuleDelete ? BR.approvalRuleDelete(id) : {supported: false},
+});
+let ARULES_GEN = null;
+function approvalRulesShown() { return !!S.settings && settingsPaneId(S.settingsPane) === 'privacy'; }
+async function approvalRulesLoad() {
+  if (ARULES_GEN !== AGENT_GEN) { ARULES_GEN = AGENT_GEN; ARULES.reset(); }
+  const pending = ARULES.load(skillSessionId());
+  if (approvalRulesShown()) render();
+  await pending;
+  if (approvalRulesShown()) render();
+}
+function approvalRulesSection() {
+  return approvalRulesHTML(ARULES.state, {esc, categoryPlain: (c) => CATEGORY_PLAIN[c] || CATEGORY_LABEL[c] || '', pathText: apprPath});
+}
+async function approvalRulesAct(v) {
+  if (v === 'reload') { approvalRulesLoad(); return; }
+  if (v.indexOf('del:') !== 0) return;
+  const pending = ARULES.remove(v.slice(4));
+  render();
+  const res = await pending;
+  render();
+  if (res && res.ok) toast('Rule deleted', 'Atomic Agent will ask about it again');
+}
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
   projectTrustCheck();
@@ -5810,11 +5925,14 @@ function settingsPaneEntered(opened) {
   if (TK.lastRefreshedAt === null && !TK.loading) tasksRefresh(true);
   // General (the analytics switch) and Privacy (its cross-link): fetch the effective value once; `r` re-reads on demand.
   if (['general', 'privacy'].includes(settingsPaneId(S.settingsPane)) && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
+  // ATO-1144: the saved approval rules, read again on every entry to Privacy.
+  if (settingsPaneId(S.settingsPane) === 'privacy') approvalRulesLoad();
   // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
   const pane = settingsPaneId(S.settingsPane);
   if (pane === 'skills') skillsTabEntered();
   else if (pane === 'memory') memoryTabEntered();
   else if (pane === 'mcp') mcpTabEntered();
+  else if (pane === 'plugins') pluginsTabEntered();
   // Item 7 part C: the LLM / Telegram / Import tabs' first load on entry.
   else if (pane === 'llm') llmTabEntered();
   else if (pane === 'telegram') telegramTabEntered();
@@ -5836,6 +5954,8 @@ function settingsPane() {
   if (p === 'skills') return skillsTab();
   if (p === 'memory') return memoryTab();
   if (p === 'mcp') return mcpTab();
+  // ATO-954: Settings › Plugins (renderer/plugins-pane.js).
+  if (p === 'plugins') return pluginsTab();
   // Item 7 part C: the LLM, Telegram and Import tabs.
   if (p === 'llm') return llmTab();
   if (p === 'telegram') return telegramTab();
@@ -6365,6 +6485,7 @@ function privacyPane() {
           + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
     + '</div>'
+    + approvalRulesSection()
     + '<p class="set-cap set-privnote">With a cloud model, your messages go to that provider.</p>'
     + privacyNoticesHTML()
     + '</div>';
@@ -6636,14 +6757,22 @@ function act(a) {
 
   // Item 2 (voice input): one seam for every voice verb.
   if (a === 'voice' || a.indexOf('voice:') === 0) { voiceAct(a); return; }
+  // ATO-532: File › Attach App Window… opens the composer's window picker (window-snapshot.js).
+  if (a === 'attach:window') { close(); render(); wsnapOpen(); return; }
   if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
+  // ATO-568: one Fusion worker's Stop / Steer (fusion-panel.js).
+  if (k === 'fzp') { fzpAct(v); return; }
   // ATO-229: the update toast and Settings › General's update rows (app-update.js).
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
   if (k === 'dlc') { dlCardAct(v); return; }
   // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
+  if (k === 'arules') { approvalRulesAct(v || ''); return; }
+  // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
+  // and the settings window down first, so Escape and the scrim close the sheet itself.
+  if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
@@ -6655,6 +6784,7 @@ function act(a) {
      cloud providers, with the provider setup started — what that pane's own
      Add provider button does (llm:add). */
   if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
+  if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -6835,6 +6965,8 @@ function act(a) {
   if (a === 'swx:holdnow') { if (SWX.hold) SWX.hold.end('now'); return; }
   if (a === 'swx:holdcancel') { if (SWX.hold) SWX.hold.end('cancel'); return; }
   // ATO-244: the CPU strip's two ways out; either holds until the next model start.
+  // ATO-1044: the upgrade strip's Switch now / Later / dismiss (upgrade-chat.js).
+  if (/^upg:/.test(a || '') && typeof upgradeAct === 'function' && upgradeAct(a)) return;
   if (a === 'cpu:dismiss') { CPUW.dismissed = CPUW.seq; render(); return; }
   if (a === 'cpu:cloud') { CPUW.dismissed = CPUW.seq; render(); selChooseBackend('cloud'); return; }
   if (k === 'engf') { engfAct(v || ''); return; }
@@ -6844,6 +6976,8 @@ function act(a) {
   if (k === 'skills') { close(); skillsAct(a.slice(7)); return; }
   if (k === 'memory') { close(); memoryAct(a.slice(7)); return; }
   if (k === 'mcp') { close(); mcpAct(a.slice(4)); return; }
+  // ATO-954: Settings › Plugins' verbs (renderer/plugins-pane.js).
+  if (k === 'plugins') { close(); pluginsAct(a.slice(8)); return; }
   // Item 7 part C: the LLM / Telegram / Import tabs' verbs.
   if (k === 'llm') { close(); llmAct(a.slice(4)); return; }
   if (k === 'telegram') { close(); telegramAct(a.slice(9)); return; }
@@ -6869,6 +7003,8 @@ function act(a) {
     S.room = v; render(); return;
   }
   if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
+  // ATO-1249: the side panel's order switch; the list starts again at its top.
+  if (k === 'inspord')   { inspOrderSet(!INSP_ORDER.newestFirst); INSP_VIEW.tab = null; renderInspector(); return; }
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
@@ -7560,6 +7696,12 @@ function runSlash(parts) {
     if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
     compactNow(); return;
   }
+  // ATO-965: a snapshot of the turn running in the chat on screen, as a
+  // system row. Read here, at the press: nothing keeps it up to date.
+  if (name === 'status') {
+    const snap = statusSnapshotOf(S.log, {running: !!(S.busy || S.pending), startedAt: S.turnStartedAt, pending: S.pending || null});
+    S.log.push({id:nid(), k:'system', text: statusSnapshotHTML(snap, esc)}); render(); return;
+  }
   if (nav[name]) { act(nav[name]); return; }
   S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
   render();
@@ -7725,9 +7867,17 @@ document.addEventListener('click', (e) => {
   if (sdet && sdet.parentElement) { SETDET[sdet.dataset.setdet] = !sdet.parentElement.open; return; }
   const adet = t.closest('[data-apprdet]');
   if (adet) { const m = S.log.find((x) => x.id === adet.dataset.apprdet); if (m && adet.parentElement) m.open = !adet.parentElement.open; return; }
+  // ATO-1272: "Show earlier" at the top of the transcript window.
+  if (t.closest('[data-chatwin]')) { chatWindowShowMore(); return; }
   // ATO-464: a finished turn's summary line opens or folds its steps in place.
   const tsum = t.closest('[data-turnsum]');
   if (tsum) { turnSumToggle(tsum.dataset.turnsum); return; }
+  // ATO-1145: the "Auto-approved N actions" list under a turn's summary line.
+  const tsauto = t.closest('[data-tsauto]');
+  if (tsauto) { const id = tsauto.dataset.tsauto; if (TURN_AUTO_OPEN.has(id)) TURN_AUTO_OPEN.delete(id); else TURN_AUTO_OPEN.add(id); if (!repaintTranscript()) render(); return; }
+  // ATO-486: the plan bar folds to its "Plan 3/7" chip and back.
+  const ptog = t.closest('[data-plan-toggle]');
+  if (ptog) { planToggle(ptog.dataset.planToggle); render(); return; }
   const tg = t.closest('[data-toggle]');
   // Scroll-stable cards: no S.stick = false, no render() — repaintEntry swaps the
   // one entry and recomputes stick from geometry.
@@ -7736,6 +7886,7 @@ document.addEventListener('click', (e) => {
   if (sd) { const m = S.log.find((x) => x.id === sd.dataset.sysdet); if (m) { m.detOpen = !m.detOpen; repaintEntry(m, '.sys-det-t'); } return; }
   const go = t.closest('[data-goto]');
   if (go) { let el = document.getElementById('card-' + go.dataset.goto);
+            if (!el && chatWindowReveal(S.log, go.dataset.goto)) { S.stick = false; render(); el = document.getElementById('card-' + go.dataset.goto); }   // ATO-1272
             if (!el && turnSumReveal(go.dataset.goto)) el = document.getElementById('card-' + go.dataset.goto);   // ATO-464
             if (!el && failRunMark(go.dataset.goto)) { render(); el = document.getElementById('card-' + go.dataset.goto); }   // ATO-1257
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
@@ -7836,6 +7987,8 @@ document.addEventListener('compositionend', (e) => {
 document.addEventListener('input', (e) => {
   // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
+  // ATO-568: a worker's Steer field keeps its text across repaints.
+  if (typeof fzpInput === 'function' && fzpInput(e)) return;
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
     // Lane B — item 3: the draft's estimate moves the projected chip only
@@ -8789,6 +8942,8 @@ document.addEventListener('keydown', (e) => {
      candidate, Escape drops it. keyCode 229 is the same key on an engine
      that reports it with isComposing already false. */
   if (e.isComposing || e.keyCode === 229) return;
+  // ATO-568: Enter and Escape in a worker's Steer field are that field's.
+  if (typeof fzpKeydown === 'function' && fzpKeydown(e)) return;
   const k = e.key;
   /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
      physical key on a non-Latin layout (shortcutKey). `k` stays the typed
@@ -9327,7 +9482,7 @@ function startLiveTurn(text) {
   // against what the chip says when the turn ends, so a stance that moved
   // mid-flight cannot put a plan bar over a turn that ran unfettered.
   PLAN.startedMode = MODE.known ? currentMode() : null;
-  S.history.push({role:'user', content:text});
+  pushHistory({role:'user', content:text});
   S.reasonId = null;
   FZ.live = [];
   // Item 38: and the wait strip, which is the turn on screen's: a turn left
@@ -9927,6 +10082,11 @@ function turnFailure(ev) {
      words under Details, before any other wording of the same failure. */
   const full = localContextFullLine(ev, selActiveProviderId());
   if (full) return {text: esc(full), detail: String(ev.error || '')};
+  /* ATO-1206: a local server that turned the request down for another
+     reason (tools, images, a parameter it does not take) says so, with
+     what to do, instead of "Couldn't get a reply". */
+  const invalid = localRequestInvalidLine(ev, selActiveProviderId());
+  if (invalid) return {text: esc(invalid), detail: String(ev.error || '')};
   const line = turnFailureLine(ev);
   if (line !== null) return {text: line, detail: ''};
   /* ATO-391: the provider replied, with an error (a 404 for a model it does
@@ -9969,13 +10129,43 @@ function localWrongServerLine(ev, picked) {
     on a cloud provider and for anything else. */
 function localContextFullLine(ev, picked) {
   const words = /exceeds? the available context size|exceed_context_size_error|(?:no longer fits|does not fit)(?: in)? (?:this|the) (?:local )?model's context window/i;
-  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
-  if (!id || !waitIsLocalServer(id) || localWrongServerLine(ev, picked)) return '';
-  const p = (ev && ev.payload) || {};
-  const code = p.code || (ev && ev.code) || '';
-  if (code ? code !== 'local_context_exceeded' : !words.test(String((ev && ev.error) || ''))) return '';
-  return "The conversation no longer fits in the local model's context window."
+  const phrase = "The conversation no longer fits in the local model's context window."
     + ' Compact this chat or start a new one, or give the model a larger context size.';
+  const code = localFailureCode(ev);
+  /* ATO-1206: the agent sets this code only for a server on this machine
+     (llama.cpp, or an OpenAI-compatible one such as Atomic Chat on 1337),
+     so the code alone is enough; the words alone need a local provider. */
+  if (code === 'local_context_exceeded') {
+    if (localWrongServerLine(ev, picked)) return '';
+    return localFrameAdvice(ev) || phrase;
+  }
+  const id = picked || (LIVE_CONFIG && !LIVE_CONFIG.llm ? 'local-llama' : '');
+  if (code || !id || !waitIsLocalServer(id) || localWrongServerLine(ev, picked)) return '';
+  return words.test(String((ev && ev.error) || '')) ? phrase : '';
+}
+/** ATO-1206: a local server answered 400 with `invalid_request_error` for
+    anything but a full context (the agent's `local_request_invalid`): the
+    agent's sentence and advice from the frame, in the window's words.
+    Only by the code: the raw words ("tools are not supported…") are the
+    server's, too varied to read. A 404/405 stays the wrong server; '' for
+    anything else. The words are the agent's for that code
+    (local-bad-request.ts), kept for a frame with no advice. */
+function localRequestInvalidLine(ev, picked) {
+  if (localFailureCode(ev) !== 'local_request_invalid' || localWrongServerLine(ev, picked)) return '';
+  return localFrameAdvice(ev) || 'The local model server turned the request down as invalid.'
+    + ' The model or the server may not support something the agent sent, such as tools or images.'
+    + ' Try another model, or update the server.';
+}
+/** The machine-readable reason on a failed turn's frame, or ''. */
+function localFailureCode(ev) {
+  const p = (ev && ev.payload) || {};
+  return String(p.code || (ev && ev.code) || '');
+}
+/** The agent's sentence and advice for a local-server code (failure-reason-frame.ts), in the window's words, or ''. */
+function localFrameAdvice(ev) {
+  const p = (ev && ev.payload) || {};
+  const said = String(p.advice || (ev && ev.advice) || '').trim();
+  return said.replace(/the Providers panel/g, 'Settings › Models');
 }
 /** The host a llama-server entry talks to, or ''. Its address is `url`
     (its `baseUrl` is the embeddings server), and selProviders() leaves
@@ -10221,6 +10411,8 @@ function onChatEvent(ev) {
     if (!held || held.after || (engineDownReasonIn(ev) && !engineDownReasonIn(held.ev))) STREAM_ERR.set(ev.turnId, {ev, after:false});
     return;
   }
+  // ATO-569: the chat's spend and limits; bookkeeping only, never a row.
+  if (ev && ev.kind === 'usage_updated') { usageFrame(ev.payload); return; }
   // Backlog 24: whose turn this frame is, read before the bookkeeping below forgets it.
   const turnSid = ev && RUNNING.has(ev.turnId) ? RUNNING.get(ev.turnId) : null;
   /* item 6 — the running dot, bookkept BEFORE the turnId guard below.
@@ -10281,6 +10473,14 @@ function onChatEvent(ev) {
   if (ev && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && ev.turnId && toolCardsTurnEnded(ev)) render();
   // ATO-259: a compaction the turn's end cut short does not spin on.
   if (ev && ev.turnId === S.turnId && (ev.kind === 'done' || ev.kind === 'aborted' || ev.kind === 'error') && compactTurnEnded()) render();
+  /* ATO-486: the live plan, kept per chat whichever chat is on screen
+     (plan-bar.js). The whole plan comes each time, so nothing is replayed
+     later: the chat draws the newest one when it is opened. */
+  if (ev && ev.kind === 'plan_updated') {
+    const sid = pick(ev.payload, 'session_id', 'sessionId') || turnSid;
+    if (planSet(sid, ev.payload && ev.payload.plan) && sid === S.sessionId) render();
+    return;
+  }
   // Item 38: what a turn draws while its rows are not on screen waits for its chat to be opened.
   if (liveTurnFrame(ev)) return;
   if (!ev || ev.turnId !== S.turnId) return;
@@ -10375,6 +10575,19 @@ function onChatEvent(ev) {
     render();
     return;
   }
+  /* ATO-483: the person's fallback provider answered instead of the one they
+     picked. The agent words it ("OpenRouter is rate-limited, switched to
+     Gemini (gemini-2.5-flash)."); one line in the transcript, before the
+     reply, so a switch is never silent. An agent without a `notice` (none
+     sends this frame yet) is worded here from the ids. */
+  if (ev.kind === 'provider_switched') {
+    const p = ev.payload || {};
+    const line = providerSwitchedLine(p);
+    if (line && item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(line)});
+    if (line && !LIVE_REPLAY) appSay(line);
+    render();
+    return;
+  }
   /* Run mode — Fusion. One leg of a fan-out started, ran a tool, ended or was
      cut short (`event: fusion_worker`, agent ≥ desktop/fusion-stream). The
      live list under the composer says what is happening; the transcript
@@ -10391,8 +10604,14 @@ function onChatEvent(ev) {
       summary: typeof p.summary === 'string' ? p.summary : undefined,
       etaSeconds: typeof p.eta_seconds === 'number' ? p.eta_seconds : undefined,
       contextTokens: typeof p.context_tokens === 'number' && p.context_tokens > 0 ? p.context_tokens : undefined,
+      // ATO-568: the chat the fan-out runs in (the address of a row's Stop and
+      // Steer), and the worker's spend when the agent sends it.
+      sessionId: typeof p.session_id === 'string' && p.session_id ? p.session_id : undefined,
+      tokens: typeof p.tokens === 'number' && p.tokens > 0 ? p.tokens : undefined,
+      spentUsd: typeof p.spent_usd === 'number' && Number.isFinite(p.spent_usd) ? p.spent_usd : undefined,
     };
     FZ.live = fzReduceLive(FZ.live, e);
+    if (typeof fzpNoteFrame === 'function') fzpNoteFrame(e);
     tpFzEnsureTick();
     // `usage` (agent with the worker token counts) only moves the live row's
     // context size: one transcript line per completion per worker would bury
@@ -10436,8 +10655,11 @@ function onChatEvent(ev) {
     const arg = pick(ev.payload, 'label') || '';
     // ATO-197: `call_id` (agent with the tool_result frame) is the key the call's outcome comes back under.
     const callId = pick(ev.payload, 'call_id');
+    // ATO-962: the agent's words for the call, past tense (agent ≥ 0.7.0; older ones send none).
+    const doneLine = pick(ev.payload, 'done_line');
     const card = {id:nid(), k:'tool', name, arg, ok:null, open:false, args:arg, startedAt:Date.now(), turn:S.turnId,
-      callId: typeof callId === 'string' && callId ? callId : null};
+      callId: typeof callId === 'string' && callId ? callId : null,
+      doneLine: typeof doneLine === 'string' && doneLine ? doneLine.slice(0, 200) : null};
     S.log.splice(S.log.indexOf(item), 0, card);
     /* ATO-207: the call ends the step its reasoning was for. The next
        reasoning is a row of its own under this card, as a reopened chat
@@ -10563,6 +10785,7 @@ function onChatEvent(ev) {
     S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
+    if (typeof FZP !== 'undefined') { FZP.open = null; FZP.draft = ''; }
     /* Item 1 (plan hand-off): finishTurn's rule, restated —
        src/tui/reducer-helpers.ts: "if (state.codingMode !== 'plan' || outcome
        !== 'completed') return next; return { ...next, planHandoff: true }".
@@ -10589,7 +10812,7 @@ function onChatEvent(ev) {
     refreshContext();
     reconcileToolCards();
     // Cards stay pending until the session store describes them.
-    if (item && item.text) S.history.push({role:'assistant', content:item.text});
+    if (item && item.text) pushHistory({role:'assistant', content:item.text});
     /* r5 review fix (item 4) — the backfilled words are the DESKTOP's, not the
        agent's. `placeholder` marks them so copyMessage refuses rather than
        handing '(no reply)' to the clipboard as if the agent had written it —
@@ -11168,6 +11391,9 @@ function onApprovalEvent(payload) {
     reason: payload.reason || '',
     preview: payload.preview || '(no preview)',
     shape: payload.commandShape || '',
+    // ATO-1142: the agent can save an allow rule for this request, and the words it uses for it.
+    canAlways: payload.canAlways === true,
+    alwaysLabel: typeof payload.alwaysLabel === 'string' ? payload.alwaysLabel : '',
     affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
     affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
     sessionGrants: false,
@@ -11333,9 +11559,42 @@ function apprChatGrantedNote(req) {
   return {id:nid(), k:'system', apprNote:true,
     text:'Allowed in this chat. Atomic Agent won\u2019t ask again about <code>' + esc(req.shape) + '</code> commands until you start a new chat.'};
 }
+/* ATO-1142: "Always allow" the agent did not take. A 400 (it saves no rule
+   for this request, or no rules store is installed) resolves nothing, so the
+   request is still waiting at the gate. A "not pending" answer is the usual
+   no-longer-waiting case, and a failed send is the usual send error. */
+function apprAlwaysRefused(res) {
+  return !!res && res.ok !== false && !!res.data && res.data.resolved !== true && !approvalNotWaiting(res.data);
+}
+/* The card opens again without its Always allow button, with a short line
+   under it: Allow once and Deny still answer it, by click or by key. */
+function apprAlwaysReopen(req, res) {
+  const err = res && res.data && res.data.error;
+  const why = typeof err === 'string' ? err : (err && typeof err.message === 'string' ? err.message : '');
+  LOGS.push([new Date().toTimeString().slice(0, 8), 'warn', 'approval answer: allow-always refused for ' + req.approvalId + (why ? ': ' + why : '')]);
+  delete req.state; delete req.at; delete req.landed;
+  req.alwaysRefused = true;
+  const sid = req.sessionId;
+  if (sid) { PENDING_APPROVALS.set(sid, req.approvalId); APPROVAL_CARDS.set(sid, req); }
+  if (S.log.includes(req) && (!sid || approvalOnScreen(sid))) S.pending = req;
+  // Waiting for an answer again is not "busy" for the chat that asked (onApprovalEvent).
+  if (!sid || sid === S.agentSession) S.busy = false;
+  placeAfterRow(req, {id:nid(), k:'system', apprNote:true, sev:'warn',
+    text:'Couldn\u2019t save that as a rule, so nothing was decided yet. Choose Allow once or Deny.'});
+}
+/* The receipt for a saved rule: what it allows, in the agent's words, and
+   where to remove it. A system row's text is html, so the label is escaped. */
+function apprAlwaysSavedNote(req, data) {
+  const label = String(req.alwaysLabel || '').trim();
+  const rule = data && data.rule;
+  const what = label || (rule && Array.isArray(rule.commandPrefix) && rule.commandPrefix.length ? 'Always allow <code>' + esc(rule.commandPrefix.join(' ')) + '</code>' : 'Always allow this');
+  return {id:nid(), k:'system', apprNote:true,
+    text:'Rule saved: ' + (label ? esc(label) : what) + '. Atomic Agent won\u2019t ask about it again. You can remove it in Settings, Privacy.'};
+}
 function answerLive(req, key) {
-  const approve = key === 'y' || key === 's' || key === 'a' || key === 'c';
+  const approve = key === 'y' || key === 's' || key === 'a' || key === 'c' || key === 'w';
   const inChat = key === 'c' && apprChatOk(req);
+  const always = key === 'w' && apprAlwaysOk(req);
   ANX.apprAnswered(req, key);
   // Backlog 25: an older card answered by its own button (see the click
   // delegator) leaves the newest request, and its card, open.
@@ -11372,9 +11631,12 @@ function answerLive(req, key) {
   /* Q60 review: whether the agent took it, for a replay of the same request
      (onApprovalEvent): only a confirmed answer keeps the card closed. */
   req.answering = true; delete req.landed;
-  const decision = inChat ? 'allow-in-chat' : approve ? 'allow-once' : 'deny';
+  const decision = always ? 'allow-always' : inChat ? 'allow-in-chat' : approve ? 'allow-once' : 'deny';
   BR.approve(req.approvalId, decision).then((res) => apprChatFallback(req, decision, res)).then((res) => {
     req.answering = false;
+    // ATO-1142: a rule the agent would not save (a 400) decided nothing; the card asks again.
+    if (always && apprAlwaysRefused(res)) { apprAlwaysReopen(req, res); render(); return; }
+    if (always && res && res.ok !== false && res.data && res.data.resolved === true) placeAfterRow(req, apprAlwaysSavedNote(req, res.data));
     req.landed = !!(res && res.ok !== false && res.data && res.data.resolved === true);
     if (inChat && req.landed && res.chatGranted) placeAfterRow(req, apprChatGrantedNote(req));
     if (res && res.ok !== false && approvalNotWaiting(res.data)) apprNoLongerWaiting(req);
@@ -11440,7 +11702,8 @@ if (BR) {
        other stderr line still is. */
     const lvl = ['debug', 'info', 'warn', 'error'].includes(entry.level) ? entry.level : (entry.stream === 'stderr' ? 'warn' : 'info');
     LOGS.push([new Date().toTimeString().slice(0, 8), lvl, entry.line]);
-    if (LOGS.length > 300) LOGS.shift();
+    // ATO-1111: `while`, so the pushes elsewhere that skip the trim cannot leave it over the cap.
+    while (LOGS.length > 300) LOGS.shift();
     if (S.consoleOpen) renderConsole();
   });
   /* Item 11: a ⇄ starts a daemon that is down without waiting for it. How that
@@ -14366,9 +14629,42 @@ function obProbeAtomicChat() {
    There are two of them — the first-run flow's and the composer popover's —
    and every time something is added to one and not the other they drift; the
    error slot on the key screen had drifted that way already. One function. */
+/* ATO-32: the agent's Cheap / Balanced / Best picks (GET /api/model-tiers, one
+   data file in the agent: presets/model-tiers.ts). Asked once; a core without
+   the route answers ok:false and the list stays as it was. */
+let MODEL_TIERS = null;
+/* When the next ask may go out: an agent still starting answers ok:false, so a
+   failed ask is tried again a little later rather than never. */
+let MODEL_TIERS_NEXT = 0;
+function modelTiers() {
+  if (MODEL_TIERS === null && Date.now() >= MODEL_TIERS_NEXT && BR && BR.modelTiers) {
+    MODEL_TIERS_NEXT = Infinity;
+    const retry = () => { MODEL_TIERS_NEXT = Date.now() + 15000; };
+    Promise.resolve(BR.modelTiers())
+      .then((r) => { if (r && r.ok && r.data && r.data.tiers) { MODEL_TIERS = r.data.tiers; render(); } else retry(); })
+      .catch(retry);
+  }
+  return MODEL_TIERS;
+}
+/** The tier key of a provider row or entry: its kind, or `<cli>-cli` for a subscription. */
+function modelTierKey(p) {
+  if (!p) return '';
+  const cli = typeof p.subscriptionCli === 'string' ? p.subscriptionCli : p.subscriptionCli && p.subscriptionCli.cli;
+  return p.kind === 'subscription-cli' && cli ? cli + '-cli' : (p.kind || '');
+}
+/** Models with their tier label, the tiered ones first in Cheap, Balanced, Best order; the rest as they were. */
+function withModelTiers(models, key) {
+  const tiers = (modelTiers() || {})[key];
+  if (!Array.isArray(tiers) || !tiers.length) return models;
+  const byId = new Map(models.map((m) => [m.id, m]));
+  const first = tiers.filter((t) => byId.has(t.model)).map((t) => Object.assign({}, byId.get(t.model), {tier: t.label}));
+  const picked = new Set(first.map((m) => m.id));
+  return first.concat(models.filter((m) => !picked.has(m.id)));
+}
+
 function wizModelStepHTML(withFoot) {
   const q = (WIZ.modelFilter || '').trim().toLowerCase();
-  const all = WIZ.models || [];
+  const all = withModelTiers(WIZ.models || [], modelTierKey(WIZ.row));
   const rows = q ? all.filter((m) => (m.id + ' ' + (m.name || '')).toLowerCase().includes(q)) : all;
   const shown = rows.slice(0, 200);
   /* Soft Tactile: every row wears its model's mark. On the first-run layer
@@ -14398,6 +14694,7 @@ function wizModelStepHTML(withFoot) {
           + modelMark(m.id, 'sm')
           + '<span class="col"><span class="nm">' + esc(m.name || m.id) + '</span>'
           + '<span class="ep">' + esc(m.id) + '</span></span>'
+          + (m.tier ? '<span class="ann lit">' + esc(m.tier) + '</span>' : '')
           + (m.id === WIZ.defaultModel ? '<span class="ann lit">Default</span>' : '')
           // r2: the picked row carries a tick on the right; a double click uses it.
           + (m.id === WIZ.modelPick ? '<span class="prow-tick" aria-hidden="true">' + ic('check') + '</span>' : '')
@@ -14484,13 +14781,14 @@ function obWizardHTML() {
     return '<div class="ob-wiz">'
       + '<div class="ob-kicker">Subscription</div>'
       + '<div class="ob-h">' + providerMark(k.id) + esc(wizService(k)) + '</div>'
-      + wizSubscriptionLines(k).map((l) => '<div class="ob-help' + (l.warn ? ' is-warn' : '') + '">' + esc(l.text) + '</div>').join('')
+      + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'div', 'is-warn')).join('')
       + (WIZ.error ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(WIZ.error) + '</span></div>'
           + (wizErrDetail() ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '') : '')
       + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
         + ic('chevL') + 'Back</button><span class="grow"></span>'
-        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
-        + (verifying ? 'Adding…' : 'Add' + ic('arrowR')) + '</button></div>'
+        + '<button class="btn btn-s" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
+        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+        + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>'
       + '</div>';
   }
   /* B.4 — one label, not three: "API key" once as the kicker, the provider
@@ -16642,6 +16940,10 @@ if (BR) {
   if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
   if (typeof starterCatchUp === 'function') starterCatchUp();
   BR.onPull((ev) => { if (typeof starterOnPull === 'function') starterOnPull(ev); });
+  // ATO-1044: the best model for this computer, after the starter (upgrade-chat.js).
+  if (BR.onUpgradeModel) BR.onUpgradeModel((ev) => upgradeOnEvent(ev));
+  if (typeof upgradeCatchUp === 'function') upgradeCatchUp();
+  BR.onPull((ev) => { if (typeof upgradeOnPull === 'function') upgradeOnPull(ev); });
 
   /* First run: the wizard opens itself, exactly as the TUI does.
      r5 item 9 — `fresh` is latched in the main process BEFORE anything can
@@ -16710,7 +17012,7 @@ if (BR) {
        nothing at all until they were listed. Same shape as the defect the
        operator once reported as "when I click on next, nothing happens". */
     if (OB.open && OB.step === 'cloud'
-        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked')) {
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck')) {
       return prevAct(a);
     }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
@@ -18449,6 +18751,7 @@ async function refreshContext(stateDirOverride) {
      session B's numbers, and a stale `= null` would blank a binding line
      the current session legitimately has. */
   let stored055 = null;
+  let usage569 = null;   // ATO-569: staged like stored055, committed past the same guard
   // `stateDirOverride` means "run the ladder as if this agent held no
   // record of this session", so the session row is skipped with the trace
   // file — reading it back off the live agent would contradict the very
@@ -18456,6 +18759,7 @@ async function refreshContext(stateDirOverride) {
   if (!stateDirOverride && S.agentSession && BR.session) {
     const r = await BR.session(S.agentSession);
     const u = r && r.ok && r.data ? r.data.contextUsage : null;
+    usage569 = r && r.ok && r.data ? usageFromAgent(r.data.sessionUsage, Date.now()) : null;
     if (u && u.tokens > 0) {
       stored055 = u;
       const sec = (label) => { const x = (u.sections || []).find((y) => y.label === label); return x ? x.tokens : 0; };
@@ -18500,6 +18804,10 @@ async function refreshContext(stateDirOverride) {
   }
   if (seq !== CTX.seq) return; // a newer refresh is on its way
   CTX055.stored = stored055; // committed only for the session this refresh still owns
+  // ATO-569: a chat with no row yet (or an agent older than the field) has
+  // no spend to show; a live frame for this chat may already have painted
+  // newer figures, which the row then replaces with the saved ones.
+  if (!stateDirOverride) { USAGE.state = usage569; USAGE.sid = S.agentSession || null; }
   if (!usage) {
     // Nothing measured and no trace to project from: the TUI's own
     // "not measured yet" state — chip hidden, never a zero.
@@ -18559,6 +18867,8 @@ function scheduleChipRepaint() {
   CTX.chipTimer = setTimeout(repaintContextChip, 150);
 }
 function repaintContextChip() {
+  // ATO-569: the usage chip rides with the ring, so it is redrawn with it.
+  document.querySelectorAll('.cfoot .usagechip').forEach((n) => n.remove());
   const el = document.querySelector('.cfoot .ctxbtn');
   const html = contextChip();
   if (el) { if (html) el.outerHTML = html; else el.remove(); return; }
@@ -18567,7 +18877,31 @@ function repaintContextChip() {
   if (next) next.insertAdjacentHTML('beforebegin', html);
 }
 
+/** ATO-569: the cost and plan-limit chip after the ring; '' when the chat has no figures. */
+function usageChip() {
+  const u = USAGE.sid && USAGE.sid === S.agentSession ? USAGE.state : null;
+  const now = Date.now();
+  const text = usageChipText(u, now);
+  if (!text) return '';
+  const tip = usageTooltip(u, now);
+  return '<span class="usagechip' + (usageUrgent(u, now) ? ' warn' : '') + '" title="' + esc(tip) + '" aria-label="' + esc(tip.replace(/\n/g, '. ')) + '">'
+    + esc(text) + '</span>';
+}
+
+/** A usage_updated frame of the chat on screen: replace its figures and repaint the chip. */
+function usageFrame(payload) {
+  const sid = payload && (payload.session_id || payload.sessionId);
+  if (!sid || sid !== S.agentSession) return;
+  USAGE.state = usageFromAgent(payload, Date.now());
+  USAGE.sid = sid;
+  repaintContextChip();
+}
+
 function contextChip() {
+  return ringChip() + usageChip();
+}
+
+function ringChip() {
   if (!CTX.tokens) return '';
   const proj = CTX.source === 'projected';
   const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
@@ -19771,7 +20105,13 @@ function fzReduceLive(current, e) {
     model: e.model ?? (prev && prev.model) ?? null,
     tool: done ? null : (usage ? ((prev && prev.tool) ?? null) : (e.tool ?? (prev && prev.tool) ?? null)), done,
     // Kept once the leg is done: the final size answers "which worker ate the window".
-    contextTokens: e.contextTokens ?? (prev && prev.contextTokens) ?? null};
+    contextTokens: e.contextTokens ?? (prev && prev.contextTokens) ?? null,
+    // ATO-568 (fusion-panel.js): where the row's Stop and Steer go, what it spent,
+    // and whether the agent escalated it because it stalled.
+    sessionId: e.sessionId ?? (prev && prev.sessionId) ?? null,
+    tokens: e.tokens ?? (prev && prev.tokens) ?? null,
+    spentUsd: e.spentUsd ?? (prev && prev.spentUsd) ?? null,
+    stalled: (e.phase === 'escalated' && /\((?:stalled|first answer cut):/.test(e.summary || '')) || !!(prev && prev.stalled)};
   Object.assign(next, tpFzClock(prev, e, done));   // tui-parity.js: per-leg clock and estimate
   if (at < 0) return current.concat([next]);
   const copy = current.slice();
@@ -19797,6 +20137,8 @@ function fzWorkerLine(e) {
   // Kept off the transcript (onChatEvent); something true if it is ever printed.
   if (e.phase === 'usage') return who + ': ' + fmtTokens(e.contextTokens ?? 0) + ' ctx';
   if (e.phase === 'cancelled') return who + ': cancelled';
+  // ATO-568: an agent that escalates a stuck worker says what it did (format-fusion-worker-line.ts).
+  if (e.phase === 'escalated') return who + ': ' + (e.summary ?? 'escalated');
   if (e.phase === 'failed') return who + ': failed — ' + (e.summary ?? 'no detail');
   if (e.phase === 'finished') {
     const steps = e.stepCount === undefined ? '' : ' — ' + e.stepCount + ' steps';
@@ -19805,12 +20147,18 @@ function fzWorkerLine(e) {
   }
   return who;
 }
-/** The fan-out under the busy strip while the turn runs. Read-only: the one Stop is the send button. */
+/** The fan-out under the busy strip while the turn runs. ATO-568: a running row
+    carries its own Stop and Steer (fusion-panel.js) when the agent supports them;
+    the send button's Stop still stops the whole turn. */
 function fzLiveHTML() {
   if (!FZ.live.length || !(S.busy || S.pending)) return '';
-  return '<div class="fzlive" aria-live="polite">' + FZ.live.map((w) =>
+  const panel = typeof fzpRowExtrasHTML === 'function';
+  const now = Date.now();
+  return '<div class="fzlive" role="group" aria-label="Fusion workers">' + FZ.live.map((w) =>
     '<div class="fzw' + (w.done ? ' done' : '') + (w.phase === 'failed' ? ' failed' : w.phase === 'cancelled' ? ' cancelled' : '') + '">'
-    + '<span class="fzdot"></span><span class="fzt">' + esc(fzLiveLine(w)) + '</span></div>').join('') + '</div>';
+    + '<span class="fzdot"></span><span class="fzt">' + esc(fzLiveLine(w)) + '</span>'
+    + (panel ? fzpRowExtrasHTML(w, FZ.live, FZP, now) : '') + '</div>'
+    + (panel ? fzpSteerFieldHTML(w, FZP) + fzpNoteHTML(w, FZP, now) : '')).join('') + '</div>';
 }
 
 /* Smoke hooks — read-side ports and a probe that draws the switch for a
@@ -19948,8 +20296,11 @@ function sessionTurnsToLog(turns) {
         .map((a) => ({id:nid(), k:'approval', stored:true, tool:t.tool || 'tool',
           cat:a.category || 'other', kind:CATEGORY_LABEL[a.category] || a.category || 'action',
           state:a.verdict, at: Number.isFinite(a.at) ? new Date(a.at).toTimeString().slice(0, 8) : ''}));
-      // ATO-237: the last answer's time, so the card is timed from it (toolTook).
-      const answered = (Array.isArray(t.approvals) ? t.approvals : []).map((a) => a && a.at).filter(Number.isFinite);
+      // ATO-1145: what the agent allowed by itself (a rule, a chat grant, the risk check), for the turn's summary line.
+      const auto = autoApprovedOf(t.approvals);
+      if (auto.length) card.autoApproved = auto;
+      // ATO-237: the last answer's time, so the card is timed from it (toolTook). An auto-approval is not an answer.
+      const answered = (Array.isArray(t.approvals) ? t.approvals : []).filter((a) => a && a.verdict !== 'auto-approved').map((a) => a && a.at).filter(Number.isFinite);
       if (answered.length) card.apprAt = Math.max(...answered);
       if (receipts.length) {
         let at = log.indexOf(card) + 1;
@@ -20056,6 +20407,8 @@ async function openSession(id) {
     return;
   }
   const data = res.data;
+  // ATO-486: the plan the agent stored with the chat (behind the stream while its turn runs).
+  planRestore(id, data.plan, live);
   const turns = Array.isArray(data.turns) ? data.turns : [];
   const log = sessionTurnsToLog(turns);
   /* Item 38: the stored transcript has nothing of a turn that is running
@@ -20389,12 +20742,13 @@ function wizardHTML() {
   }
   if (k.subscriptionCli) {
     return selShell(wizService(k),
-      '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => '<p class="ob-help' + (l.warn ? ' tk-help--warn' : '') + '">' + esc(l.text) + '</p>').join('')
+      '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'p', 'tk-help--warn')).join('')
       + (WIZ.error ? '<div class="ob-err"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
       + '</div>',
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
-        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
-        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : 'Add') + '</button>',
+        + '<button class="btn btn-s xs" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
+        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>',
       lead);
   }
   /* This is the SECOND place the app asks for an API key — the wizard's own
@@ -20503,10 +20857,54 @@ function wizBillingSet(env) {
     .catch(() => WIZ_BILLING.set(env, false));
   return false;
 }
-/** What the subscription step says, in order: what runs, then the billing warning when it applies. */
+/* ATO-756: is the CLI installed and signed in? Asked once per CLI (main reads
+   files only, runs nothing: subscription-cli-detect.ts) and again on "Check
+   again". null while unknown or when the bridge cannot ask. */
+const WIZ_SUB = new Map();
+function wizSubStatus(k) {
+  const cli = k && k.subscriptionCli;
+  if (!cli || !BR || !BR.subscriptionStatus) return null;
+  if (WIZ_SUB.has(cli)) { const v = WIZ_SUB.get(cli); return v === 'asking' ? null : v; }
+  WIZ_SUB.set(cli, 'asking');
+  Promise.resolve(BR.subscriptionStatus(cli))
+    .then((r) => { WIZ_SUB.set(cli, r && r.ok && r.status ? r.status : {installed: null, signedIn: null}); if (WIZ.row && WIZ.row.subscriptionCli === cli) render(); })
+    .catch(() => WIZ_SUB.set(cli, {installed: null, signedIn: null}));
+  return null;
+}
+function wizSubRecheck(k) { if (k && k.subscriptionCli) WIZ_SUB.delete(k.subscriptionCli); WIZ.error = null; render(); }
+/** Install steps per CLI and platform; the person runs them, the app never does. */
+function wizSubInstallCmd(cli) {
+  const win = /win/i.test(navigator.platform || '');
+  if (cli === 'claude') return win ? 'irm https://claude.ai/install.ps1 | iex' : 'curl -fsSL https://claude.ai/install.sh | bash';
+  return 'npm install -g @openai/codex';
+}
+/** False only when the CLI is known to be missing: the step's button then waits for it. */
+function wizSubReady(k) { const st = wizSubStatus(k); return !(st && st.installed === false); }
+/** What the subscription step says, in order: what is found, what to do, then the billing warning when it applies. */
 function wizSubscriptionLines(k) {
-  const lines = [{text: 'No API key needed. The agent runs your signed-in ' + k.subscriptionCli
-    + ' CLI on your ' + wizService(k) + ' plan, so it must be installed and signed in on ' + THIS_MACHINE + '.'}];
+  const st = wizSubStatus(k);
+  const cli = k.subscriptionCli;
+  const terminal = /win/i.test(navigator.platform || '') ? 'PowerShell' : 'Terminal';
+  const lines = [];
+  if (!st || st.installed === null) {
+    lines.push({text: 'No API key needed. The agent runs your signed-in ' + cli
+      + ' CLI on your ' + wizService(k) + ' plan, so it must be installed and signed in on ' + THIS_MACHINE + '.'});
+  } else if (!st.installed) {
+    lines.push({warn: true, text: wizService(k) + ' is not installed on ' + THIS_MACHINE + '. To use your ' + k.plan + ' subscription:'});
+    lines.push({text: '1. Open ' + terminal + ' and run:'});
+    lines.push({code: true, text: wizSubInstallCmd(cli)});
+    lines.push({text: '2. Run ' + cli + (cli === 'codex' ? ' login' : '') + ' once and sign in with your ' + k.plan + ' account.'});
+    lines.push({text: '3. Come back here and press Check again.'});
+  } else if (st.signedIn === false) {
+    lines.push({warn: true, text: 'Found ' + wizService(k) + ', but it is not signed in' + (st.apiKeyLogin ? ' with ChatGPT (it is using an API key, which bills per token)' : '') + '.'});
+    lines.push({text: '1. Open ' + terminal + ' and run:'});
+    lines.push({code: true, text: cli === 'codex' ? 'codex login' : 'claude'});
+    lines.push({text: '2. Sign in with your ' + k.plan + ' account' + (cli === 'claude' ? ' (type /login if it does not ask)' : '') + ', then press Check again.'});
+  } else if (st.signedIn === true) {
+    lines.push({text: 'Found ' + wizService(k) + ' and you are signed in. Press the button and the agent answers on your ' + k.plan + ' plan, no API key needed.'});
+  } else {
+    lines.push({text: 'Found ' + wizService(k) + '. If the first answer says you are signed out, run ' + cli + (cli === 'codex' ? ' login' : '') + ' in ' + terminal + ' and sign in with your ' + k.plan + ' account.'});
+  }
   if (wizBillingSet(k.billingEnv)) {
     lines.push({warn: true, text: k.billingEnv + ' is set on ' + THIS_MACHINE + ', so the ' + k.subscriptionCli
       + ' CLI may bill your API account per token instead of your plan. Unset it to use only your subscription.'});
@@ -20515,12 +20913,25 @@ function wizSubscriptionLines(k) {
 }
 /** The entry the TUI's wizard writes for this row (buildProviderEntryFromWizard). */
 function wizSubscriptionEntry(k) {
-  return {id: k.id, kind: k.kind, subscriptionCli: {cli: k.subscriptionCli}, ...(k.defaultModel ? {defaultChatModel: k.defaultModel} : {})};
+  /* ATO-756: a CLI found outside the app's PATH (a Dock-opened app gets a short
+     one) is saved with its path, or the agent would not find it. */
+  const st = wizSubStatus(k);
+  const binPath = st && st.installed && st.binPath ? st.binPath : null;
+  return {id: k.id, kind: k.kind, subscriptionCli: {cli: k.subscriptionCli, ...(binPath ? {binPath} : {})}, ...(k.defaultModel ? {defaultChatModel: k.defaultModel} : {})};
+}
+/** The subscription step's main button: "Use my Claude subscription". */
+function wizSubButton(k) { return 'Use my ' + (k.plan || wizService(k)) + ' subscription'; }
+/** One line of the step, a command line drawn as code the person copies. */
+function wizSubLineHTML(l, cls, warnCls) {
+  return '<' + (cls === 'p' ? 'p' : 'div') + ' class="ob-help' + (l.warn ? ' ' + warnCls : '') + '">'
+    + (l.code ? '<code class="mono">' + esc(l.text) + '</code>' : esc(l.text)) + '</' + (cls === 'p' ? 'p' : 'div') + '>';
 }
 async function wizSubscriptionStep(k) {
   const id = k.id;
   /* The model step's second pass: the entry is saved, the choice is made. */
   if (WIZ.modelChosen) return wizActivate(k, id, WIZ.modelPick || '', null);
+  /* ATO-756: Enter reaches here too; a CLI known to be missing is not saved. */
+  if (!wizSubReady(k)) { render(); return; }
   WIZ.phase = 'verifying'; WIZ.error = null; WIZ.errorDetail = null; WIZ.noFundsNote = null; render();
   const res = await BR.upsertProvider(wizSubscriptionEntry(k));
   if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
@@ -20559,6 +20970,25 @@ async function wizNext() {
    ("could not list models from ...") is not an empty server. */
 function wizSaidNoModels(said) {
   return !said || /\bno (?:searchable cloud )?models\b/.test(said);
+}
+
+/* ATO-306: provider_setup_failed's reason, read off the model list's answer.
+   `catalog_empty` used to be every failure that was not a dead server, a
+   certificate or our deadline: a refused key (401/403), a provider's 429/5xx
+   and a list the agent printed and then died at exit (#902) all landed there,
+   so the funnel showed "empty catalogue" for 53 people and "wrong key" for
+   none. Now catalog_empty is only a list that came back empty, or the agent
+   saying the server has no models; anything else unexplained is list_failed. */
+function wizSetupFailReason(listed) {
+  if (listed && listed.certificate) return 'certificate';
+  if (listed && listed.timedOut) return 'timed_out';
+  if (listed && listed.unreachable) return 'server_unreachable';
+  const status = listed && typeof listed.status === 'number' ? listed.status : 0;
+  if (status === 401 || status === 403) return 'key_rejected';
+  if (status === 429 || status >= 500) return 'provider_error';
+  const said = String((listed && listed.error) || '');
+  if ((listed && listed.ok) || (said && wizSaidNoModels(said))) return 'catalog_empty';
+  return 'list_failed';
 }
 
 async function wizNextStep() {
@@ -20668,8 +21098,8 @@ async function wizNextStep() {
     : await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
     // ATO-202: a server that did not answer (or answered with a certificate not trusted) is not an empty catalogue.
-    ANX.providerFailed(listed && listed.certificate ? 'certificate' : listed && listed.timedOut ? 'timed_out'
-      : listed && listed.unreachable ? 'server_unreachable' : 'catalog_empty', OB.open);
+    // ATO-306: nor is a refused key, a provider error or a list that failed some other way (wizSetupFailReason).
+    ANX.providerFailed(wizSetupFailReason(listed), OB.open, k);
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
@@ -20897,6 +21327,9 @@ async function wizActivate(k, id, model, unverified) {
    that told it to step over a notice about the session (a model stamp, the
    parked-steer line, a dismissed plan) stays on those rows as what they are. */
 
+/* ATO-1273: the first row the last paint drew, so the image cache is trimmed
+   when rows leave the window. `var`: renderItems may run before this line. */
+var CHAT_WIN_DRAWN_FROM = 0;
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
@@ -20925,12 +21358,23 @@ function renderItems() {
   const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
     failedOf: (t) => toolState(t) === 'err' && !TOOL_QUIET.has(t.id)});   // red only for what the card itself shows as an error
   const hidden = new Set();
-  for (let i = 0; i < items.length; i++) {
+  /* ATO-1272: only the newest part of the chat is drawn (chat-window.js); the
+     rows above it are one "Show earlier" row. The folds and failures above are
+     still worked out over the whole log, which costs no markup. */
+  let from = 0;
+  if (typeof chatWindowFor === 'function') {
+    from = chatWindowFor(items, folds, (f) => TURN_OPEN.has(f.replyId), !!S.stick);
+    if (from > 0) html += chatWindowMoreHTML(items, from, {esc, ic});
+    // ATO-1273: rows left the window, so the pictures only they showed may leave the cache.
+    if (from > CHAT_WIN_DRAWN_FROM) trimChatImages();
+    CHAT_WIN_DRAWN_FROM = from;
+  }
+  for (let i = from; i < items.length; i++) {
     const m = items[i];
     const fold = folds.get(i);
     if (fold) {
       const open = TURN_OPEN.has(fold.replyId);
-      html += turnSumHTML(fold, open, turnSumMs(fold, items), {esc, ic, dur});
+      html += turnSumHTML(fold, open, turnSumMs(fold, items), {esc, ic, dur, autoWhat: toolLine});
       if (!open) fold.rows.forEach((x) => hidden.add(x));
     }
     if (hidden.has(i)) {
@@ -21010,6 +21454,18 @@ function turnSumToggle(replyId) {
   const h1 = head();
   const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
   if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+/** ATO-1272: the transcript window reaches one step further back; what was
+    on screen stays under the pointer (the rows come in above it). */
+function chatWindowShowMore() {
+  chatWindowMore();
+  const sc = $('#scroller');
+  S.stick = false;
+  if (!sc) { render(); return; }
+  const h0 = sc.scrollHeight, top0 = sc.scrollTop;
+  if (!repaintTranscript()) { render(); return; }
+  sc.scrollTop = top0 + (sc.scrollHeight - h0);
   S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
 }
 /** ATO-1257: open a run of quiet failures in place. */
@@ -21301,6 +21757,11 @@ async function reconcileToolCards(attempt = 0) {
       else if (Array.isArray(result.approvals) && result.approvals.some((a) => a && a.verdict === 'denied')) card.outcome = 'denied';
       else if (card.outcome === 'notrun') delete card.outcome;
     }
+    // ATO-1145: what the agent allowed by itself, for the turn's summary line.
+    if (result) {
+      const auto = autoApprovedOf(result.approvals);
+      if (auto.length) card.autoApproved = auto; else delete card.autoApproved;
+    }
   }
   // Whatever the store still does not describe is finished, just unmeasured.
   // item 5 review fix: `forced` records that this card's status was never
@@ -21383,19 +21844,21 @@ async function applyTraceDurations() {
    prose can land goes through it — the reply body, the tool-card summary and
    the plan hand-off — so they cannot drift apart again.
 
-   It runs on ALREADY-ESCAPED text and only ever inserts tags of its own, so
-   nothing a model writes can become markup. Code spans and fences are lifted
+   It escapes every piece of the model's text it writes and only ever inserts
+   tags of its own, so nothing a model writes can become markup; DOMPurify
+   checks the result again. Code spans and fences are lifted
    out first and put back last: markdown inside code is not markdown.
    --------------------------------------------------------------- */
-/* ATO-1251 / ATO-664: the block parser lives in md-render.js (loaded first):
-   tables with Copy, nested and task lists, callouts, key/value fields,
-   Pros/Cons comparisons, link and file cards. Its contract is this
-   function's: escaped text in, tags of its own out, code held as
-   placeholders that renderProseFresh restores after its link and chip
-   passes — a path in backticks is a path the model wrote literally, not a
-   file to offer a button for, unless the span holds nothing else. */
-function renderMarkdown(escaped) {
-  return mdRender(escaped);
+/* ATO-1251 / ATO-664: md-render.js (loaded first) parses with marked and
+   draws the window's blocks: tables with Copy, nested and task lists,
+   callouts, key/value fields, Pros/Cons comparisons, link and file cards,
+   footnotes. Raw text in (it escapes everything it writes), tags of its own
+   out, code held as placeholders that renderProseFresh restores after its
+   link and chip passes — a path in backticks is a path the model wrote
+   literally, not a file to offer a button for, unless the span holds nothing
+   else. */
+function renderMarkdown(text) {
+  return mdRender(text);
 }
 
 /* ATO-1023: a finished message's markup is the same on every paint, so it is
@@ -21435,7 +21898,7 @@ function renderProseFresh(text) {
   // drive-letter chip below.
   const FILE_RE_HERE = IS_WIN ? /(?<![\p{L}\p{N}_\/:])((?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@+-]+\.[A-Za-z0-9]{1,10})(?![\p{L}\p{N}_\/])/gu : FILE_RE;
   // \u0000 marks held code and \u0001 a chip below, so neither may come from the text itself.
-  const md = renderMarkdown(esc(text).replace(/[\u0000\u0001]/g, ''));
+  const md = renderMarkdown(text.replace(/[\u0000\u0001]/g, ''));
   let html = md.html;
   /* Chat review (Д23): a chip's markup carries its path in two attributes,
      and the drive-letter pass below would find a Windows path there and wrap
@@ -21467,7 +21930,8 @@ function renderProseFresh(text) {
     const raw = code ? code[1].replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&amp;/g, '&').trim() : '';
     return raw && codeSpanIsPath(raw) ? chip(raw, h) : h.startsWith('<pre class="mdpre"') ? codeBlockFrame(h) : h;
   });
-  return html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]);
+  // ATO-664: the finished markup through DOMPurify too (md-render.js), behind the escaping.
+  return mdSanitize(html.replace(/\u0001(\d+)\u0001/g, (m, i) => chips[+i]));
 }
 /** ATO-666: a fenced block gets a header with its language (the fence's
     `data-lang`, when the fence named one) and a Copy button. The header sits
@@ -21776,6 +22240,9 @@ const CHAT_IMG = new Map();
 /* Display copies kept, in data-URL characters, on screen or not; the ones no
    reply on screen shows go first, least recently drawn first. */
 const CHAT_IMG_KEEP_CHARS = 96 * 1024 * 1024;
+/* ATO-1273: and at most this many that no row of the transcript window draws
+   (a reply above it is read from disk again when it comes back). */
+const CHAT_IMG_KEEP_OFF = 24;
 const CHAT_IMG_DISPLAY_EDGE = 1600;
 
 /** The reply's file paths, as the agent sent or stored them: strings, at most 10, once each. */
@@ -21786,31 +22253,21 @@ function replyFilesOf(list) {
   return out.slice(0, REPLY_FILES_MAX);
 }
 
-/** The pictures replies on screen show. */
+/** The pictures replies on screen show. ATO-1273: only the rows the
+    transcript window draws (chat-window.js); a picture of a reply above the
+    window may leave the cache, and chatImage reads it from disk again when
+    that reply is drawn. */
 function chatImagesInUse() {
-  const used = new Set();
-  for (const m of S.log) {
-    for (const p of (m.replyFiles || [])) used.add(p);
-    for (const p of (m.turnPics || [])) used.add(p);   // ATO-1258
-    if (m.shotPic) used.add(m.shotPic);
-  }
-  return used;
+  return chatImagesInUseOf(S.log, CHAT_WIN.log === S.log ? CHAT_WIN.from : 0);
 }
 
 function trimChatImages() {
-  let total = 0;
   const held = [];
-  for (const [p, st] of CHAT_IMG) if (st.state === 'ok') { total += st.url.length; held.push([p, st]); }
-  if (total <= CHAT_IMG_KEEP_CHARS) return;
-  const onScreen = chatImagesInUse();
-  // Off screen first, then the least recently drawn; what is on screen is never dropped.
-  held.sort((a, b) => (onScreen.has(a[0]) - onScreen.has(b[0])) || (a[1].used - b[1].used));
-  for (const [p, st] of held) {
-    if (total <= CHAT_IMG_KEEP_CHARS) break;
-    if (onScreen.has(p)) break;
-    total -= st.url.length;
-    CHAT_IMG.delete(p);
-  }
+  for (const [p, st] of CHAT_IMG) if (st.state === 'ok') held.push([p, st]);
+  /* Off screen first, then the least recently drawn; what is on screen is never
+     dropped. ATO-1273: beyond the size cap, at most CHAT_IMG_KEEP_OFF pictures
+     that the transcript window does not draw stay (chat-window.js chatImagesToDrop). */
+  for (const p of chatImagesToDrop(held, chatImagesInUse(), CHAT_IMG_KEEP_CHARS, CHAT_IMG_KEEP_OFF)) CHAT_IMG.delete(p);
 }
 
 /** A decoded picture as a display copy: no longer side past 1600px, a GIF untouched. */
@@ -23158,6 +23615,7 @@ function settingsKey(e, k, inText) {
   if (pane === 'skills' && skillsKey(e, k, inText)) return true;
   if (pane === 'memory' && memoryKey(e, k, inText)) return true;
   if (pane === 'mcp' && mcpKey(e, k, inText)) return true;
+  if (pane === 'plugins' && pluginsKey(e, k, inText)) return true;
   // Item 7 part C: the LLM / Telegram / Import tabs' keys (the LLM pane's ←/→ switch its mode, not the tab).
   if (pane === 'llm' && llmKey(e, k, inText)) return true;
   if (pane === 'telegram' && telegramKey(e, k, inText)) return true;
@@ -28398,6 +28856,8 @@ function importTab() {
   const report = (IMP.mode === 'preview' || IMP.mode === 'done') && IMP.report;
   const previewing = IMP.mode === 'configure' || (IMP.mode === 'running' && !IMP.applying);
   let body = report ? '' : '<div class="tk-bar sd-imphead">' + impLogoHTML(f.source, 'sm') + '<h3 class="sd-title">' + esc(meta.label) + ' → Atomic Agent</h3>'
+    // ATO-1156: continue one stopped Claude Code / Codex task instead of importing everything.
+    + '<button class="btn btn-g sm" data-act="handoff:open">' + ic('arrowR') + 'Continue a task…</button>'
     + (previewing ? '<span class="grow"></span><button class="btn btn-p sm' + (f.focus === 'run' && IMP.mode === 'configure' ? ' sd-kfocus' : '') + '" data-act="import:preview"'
       + (IMP.busy ? ' disabled' : '') + '>' + ic('eye') + 'Preview import</button>' : '')
     + '</div>';

@@ -1,4 +1,5 @@
 import { ContextChip } from "./context/context-chip.js";
+import { UsageReadout, usageReadoutLabel } from "./context/usage-readout.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
 import {
@@ -80,6 +81,7 @@ import { HotkeyHint } from "./components/hotkey-hint.js";
 import { PromptShell } from "./components/prompt-shell.js";
 import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import { QueuedMessages } from "./components/queued-messages.js";
+import { PlanStrip } from "./components/plan-strip.js";
 import { SessionDeleteModal } from "./session-rail/session-delete-modal.js";
 import { UninstallModal } from "./uninstall/uninstall-modal.js";
 import { answerDesktopQuestion } from "./uninstall/uninstall-key-bindings.js";
@@ -160,6 +162,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { handleIntegrationsTabKey } from "./integrations/integrations-key-bindings.js";
 import { handleSwarmTabKey } from "./swarm/swarm-key-bindings.js";
+import { handlePluginsTabKey } from "./plugins/plugins-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
 import { createDragIntentTracker } from "./mouse/drag-intent.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
@@ -293,6 +296,8 @@ export interface TuiAppCallbacks {
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
   onCompactionRequested?(verb: "run" | "show"): void;
+  /** `/goal …`: act on the open chat's goal (ATO-451). */
+  onGoalCommand?(command: import("./commands/goal-command.js").GoalCommand): void;
   /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */
   onPromptEnhanceRequested?(draft: string): void;
   /** Idle Esc: stop a running `/enhance` (no-op when none is running). */
@@ -305,6 +310,8 @@ export interface TuiAppCallbacks {
   onPersistLlamaUrl?(url: string): void;
   /** Persist the chosen TUI theme name into the user config (`/theme`). */
   onThemePersistRequested?(themeName: string): void;
+  /** Persist "always show steps" into `tui.showSteps` (`/steps`). */
+  onShowStepsPersistRequested?(on: boolean): void;
   /**
    * `/mouse on|off` — flip terminal mouse reporting live. `null` asks
    * for the current state to be reported without changing it. The
@@ -479,6 +486,8 @@ export interface TuiAppCallbacks {
   onSkillsAutoRefreshStart?(): void;
   /** Revalidate a cloud skill and format its explicit request before normal submission. */
   prepareSkillInvocation?(name: string, input: string): string;
+  /** Render a plugin command (`plugin:command`) with its arguments into the message to send. */
+  preparePluginCommand?(name: string, args: string): string;
   /** Refresh the skills panel, count and slash catalog for the selected workspace. */
   onSkillsRefreshRequested?(): void;
   /** Skills tab: load the SKILL.md body and open the detail view. */
@@ -552,6 +561,33 @@ export interface TuiAppCallbacks {
    * without changing the mode.
    */
   onFusionWorkersChangeRequested?(workers: number): void;
+  /**
+   * `/worker stop|escalate <id>` and `/worker steer <id> <note>`: the
+   * person's action on one running fusion worker of `sessionId` (ATO-66,
+   * ATO-568). `text` is the note, for `steer` only. The result is a feed
+   * line.
+   */
+  onFusionWorkerAction?(
+    sessionId: string,
+    taskId: string,
+    action: "stop" | "escalate" | "steer",
+    text?: string,
+  ): void;
+  /**
+   * `/fusion` and `/fusion discard [id]`: list or drop the unfinished
+   * fusion runs of `sessionId` (ATO-617). The result is a feed line.
+   */
+  onFusionRunAction?(
+    sessionId: string,
+    action: "list" | "discard",
+    runId: string | undefined,
+  ): void;
+  /**
+   * `/fusion resume [id]`: the message that makes the orchestrator
+   * continue an unfinished run of `sessionId`, sent as the person's
+   * turn; `null` when there is no such run.
+   */
+  prepareFusionResume?(sessionId: string, runId: string | undefined): string | null;
   /** Providers tab / LLM panel: select an exact chat model for a provider. */
   onProvidersSelectChatModel?(providerId: string, modelId: string): void;
   /**
@@ -755,6 +791,16 @@ export interface TuiAppCallbacks {
   onSwarmPairRequested?(unitId: string): void | Promise<void>;
   /** Swarm tab: restart a unit's channel. */
   onSwarmRestartRequested?(unitId: string): void | Promise<void>;
+  /** Plugins tab: re-read installed plugins and their parts. */
+  onPluginsRefreshRequested?(): void;
+  /** Plugins tab: switch a whole plugin on or off. */
+  onPluginToggleRequested?(name: string, enabled: boolean): void | Promise<void>;
+  /** Plugins tab: switch one part (`skill:x`, `mcp:x`, `hook:Event`, `command:x`, `agent:x`). */
+  onPluginPartToggleRequested?(name: string, partId: string, enabled: boolean): void | Promise<void>;
+  /** Plugins tab: allow or stop the plugin's code (same as `plugin allow-code` / `deny-code`). */
+  onPluginCodeTrustRequested?(name: string, allow: boolean): void | Promise<void>;
+  /** Plugins tab: uninstall a plugin and delete its files (asked first). */
+  onPluginRemoveRequested?(name: string): void | Promise<void>;
   /** Import tab: run a dry-run preview of the Hermes import. */
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
@@ -1040,6 +1086,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "plugins") {
+      callbacks.onPluginsRefreshRequested?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (
       state.uiMode === "debug" &&
       (state.activeTab === "providers" || state.activeTab === "llm")
@@ -1146,6 +1198,8 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "integrations";
   const swarmTabActive =
     state.uiMode === "debug" && state.activeTab === "swarm";
+  const pluginsTabActive =
+    state.uiMode === "debug" && state.activeTab === "plugins";
   const terminalSize = useTerminalSize();
   const sidebarVisible = selectRailVisible(state, terminalSize);
   // The `»` restore control is offered only while the fold is the
@@ -1269,6 +1323,7 @@ export function TuiApp({
         !privacyTabActive &&
         !integrationsTabActive &&
         !swarmTabActive &&
+        !pluginsTabActive &&
         !sidebarFocused &&
         !(
           localModelsTabActive &&
@@ -1344,6 +1399,7 @@ export function TuiApp({
       return handleIntegrationsTabKey(input, key, ctx);
     }
     if (swarmTabActive) return handleSwarmTabKey(input, key, ctx);
+    if (pluginsTabActive) return handlePluginsTabKey(input, key, ctx);
     return null;
   };
 
@@ -2071,13 +2127,31 @@ export function TuiApp({
   // draft itself, so the two stay in step. See
   // `selectComposerContextUsage`.
   const composerContextUsage = selectComposerContextUsage(state);
-  const promptContextSlot = composerContextUsage ? (
-    <ContextChip
-      usage={composerContextUsage}
-      layer={MOUSE_LAYER_PANEL}
-      fusion={promptBackend.kind === "fusion"}
-    />
-  ) : null;
+  // ATO-569: spend and the account's limit beside the gauge, only the
+  // parts that have data. Measured by `selectMetaBarFit` with the same
+  // label function, so the planner reserves exactly what is drawn.
+  const usageNow = Date.now();
+  const usageReadout =
+    usageReadoutLabel(state.sessionUsage, usageNow) !== null ? (
+      <UsageReadout
+        usage={state.sessionUsage}
+        now={usageNow}
+        fusion={promptBackend.kind === "fusion"}
+      />
+    ) : null;
+  const promptContextSlot =
+    composerContextUsage || usageReadout ? (
+      <Box flexDirection="row" flexShrink={0}>
+        {composerContextUsage ? (
+          <ContextChip
+            usage={composerContextUsage}
+            layer={MOUSE_LAYER_PANEL}
+            fusion={promptBackend.kind === "fusion"}
+          />
+        ) : null}
+        {usageReadout}
+      </Box>
+    ) : null;
   // Always drawn, including in `default`. A control that appears only
   // once you are in an unusual mode is a control nobody discovers, and
   // the chip is the only place the app says which rules are in force.
@@ -2463,6 +2537,9 @@ export function TuiApp({
                 ) : null}
                 {composerVisible ? (
                   <>
+                    {/* The live checklist (ATO-486): above the queue,
+                        so the composer's own strip stays next to it. */}
+                    <PlanStrip plan={state.plan} width={mainColumnWidth} />
                     <QueuedMessages
                       queued={state.queuedMessages}
                       width={mainColumnWidth}

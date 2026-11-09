@@ -1,7 +1,7 @@
 import type { ToolDescriptor } from "./stable-prefix.js";
 
 /**
- * `os.screen.*` (ATO-525), spread into `DEFAULT_TOOL_DESCRIPTORS_B` after
+ * `os.screen.*` (ATO-525; `point` ATO-1018), spread into `DEFAULT_TOOL_DESCRIPTORS_B` after
  * the other desktop tools. Rare tier: they leave the prompt entirely
  * unless `tools.screen.enabled` is on and the host is macOS
  * (`GATED_TOOLS.screen`), and when they are on, one line each plus
@@ -11,9 +11,9 @@ export const SCREEN_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
   {
     name: "os.screen.capture",
     summary:
-      "Screenshot of the primary display (macOS); saves a JPEG in the temp folder and returns its path and the pixel-to-point scale. Look at it with vision.describe, then click with os.screen.click using that image's pixel x,y. May ask the user first.",
+      "Screenshot of the primary display or of one app window (macOS); saves a JPEG in the temp folder and returns its path and the pixel-to-point scale. Look at it with vision.describe or show it with reply.attachments, then click with os.screen.click using that image's pixel x,y. May ask the user first.",
     argsSchema:
-      "{ x?: number, y?: number, width?: number, height?: number /* a region in screen points, all four or none; omit for the whole primary display */ }",
+      "{ x?: number, y?: number, width?: number, height?: number /* a region in screen points, all four or none; omit for the whole primary display */, app?: string /* app name or bundle id: snapshot of its front window; a miss lists the windows on screen */, window?: string /* part of the window title */, text?: boolean /* with app/window: also save the window's text */ }",
     tier: "rare",
   },
   {
@@ -36,6 +36,14 @@ export const SCREEN_TOOL_DESCRIPTORS: readonly ToolDescriptor[] = [
     summary:
       'Press a key or shortcut in the frontmost app, e.g. "return", "escape", "down", "cmd+l", "cmd+shift+t". Asks the user first; app and space switchers (cmd+tab, ctrl+arrows, cmd+space) are refused.',
     argsSchema: "{ keys: string }",
+    tier: "rare",
+  },
+  {
+    name: "os.screen.point",
+    summary:
+      'Show the user where to click instead of clicking: arrows, boxes or short labels drawn on their screen by the desktop app, optionally numbered steps. x,y are pixels of the last os.screen.capture image (or global screen points with coords "points"). Only draws; never clicks or types. Then tell the user what to do.',
+    argsSchema:
+      '{ marks: { kind: "arrow"|"box"|"label", x: number, y: number /* arrow tip, box top-left, label anchor */, width?: number, height?: number /* box only */, text?: string /* at most 60 chars */, step?: number }[] /* 1-8 */, coords?: "image"|"points", seconds?: number /* 3-120, default 20 */ }',
     tier: "rare",
   },
 ];

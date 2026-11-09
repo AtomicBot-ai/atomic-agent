@@ -46,6 +46,30 @@ export function maintenanceFrame(event: AgentLoopEvent, sessionId: string): Main
         ...(event.type === "compaction_failed" && result.message ? { message: result.message } : {}),
       });
     }
+    case "usage_updated": {
+      // ATO-569: spend and limits for a host's cost / limit chip. Figures
+      // only: totals, counts, model ids that had no price, limit windows.
+      if (event.sessionId !== sessionId) return null;
+      const u = event.usage;
+      return frame("usage_updated", sessionId, {
+        cost_usd: u.costUsd,
+        priced_calls: u.pricedCalls,
+        unpriced_calls: u.unpricedCalls,
+        local_calls: u.localCalls,
+        plan_calls: u.planCalls ?? 0,
+        cost_sources: u.costSources,
+        limits: u.limits.map((r) => ({
+          provider_id: r.providerId,
+          scope: r.scope,
+          name: r.name,
+          ...(r.usedPercent !== undefined ? { used_percent: r.usedPercent } : {}),
+          ...(r.remaining !== undefined ? { remaining: r.remaining } : {}),
+          ...(r.limit !== undefined ? { limit: r.limit } : {}),
+          ...(r.resetsAt !== undefined ? { resets_at: r.resetsAt } : {}),
+          ...(r.status !== undefined ? { status: r.status } : {}),
+        })),
+      });
+    }
     case "history_trimmed":
       return frame("history_trimmed", sessionId, {
         step_index: event.stepIndex,

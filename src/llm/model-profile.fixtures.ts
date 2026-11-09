@@ -711,3 +711,64 @@ export const MUSE_PROPS = {
     supports_preserve_reasoning: true,
   },
 };
+
+/**
+ * NVIDIA Nemotron 3.5 Bolt E4B (Q4_K_M) on an external llama-server started
+ * without `--alias`, so `/props.model_alias` is the model path. Bolt is
+ * post-trained from Gemma 4 E4B and ships the Gemma 4 template (no ChatML,
+ * no `<think>`): excerpted below from the published `chat_template.jinja`
+ * — the system block with the `<|think|>` switch, the per-role turn opener,
+ * the history thought channel and the generation point. The name says
+ * `nemotron`, the template says Gemma 4; the template must win (ATO-879).
+ */
+export const NEMOTRON_BOLT_E4B_PROPS = {
+  model_alias: "/models/NVIDIA-Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf",
+  model_path: "/models/NVIDIA-Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf",
+  chat_template: `{%- if conversational_mode | default(false) -%}
+    {%- set spoken_instruction = "You are having a spoken conversation with the user. Respond as briefly as possible while still addressing their questions fully." -%}
+{%- endif -%}
+{#- ===== SETUP ===== -#}
+{%- set ns = namespace(prev_message_type=None, prev_non_tool_role=None) -%}
+{%- set loop_messages = messages -%}
+{%- set enable_thinking = enable_thinking | default(false) -%}
+{%- set preserve_thinking = preserve_thinking | default(false) -%}
+{{- bos_token -}}
+{#- Handle System/Tool Definitions Block -#}
+{%- if enable_thinking or tools or (messages and messages[0]['role'] in ['system', 'developer']) -%}
+    {{- '<|turn>system\\n' -}}
+    {#- Inject Thinking token at the very top of the FIRST system turn -#}
+    {%- if enable_thinking -%}
+        {{- '<|think|>\\n' -}}
+        {%- set ns.prev_message_type = 'think' -%}
+    {%- endif -%}
+    {%- if messages and messages[0]['role'] in ['system', 'developer'] -%}
+        {{- messages[0]['content'] | trim -}}
+        {%- set loop_messages = messages[1:] -%}
+    {%- endif -%}
+    {%- if tools -%}
+        {%- for tool in tools %}
+            {{- '<|tool>' -}}
+            {{- format_function_declaration(tool) | trim -}}
+            {{- '<tool|>' -}}
+        {%- endfor %}
+    {%- endif -%}
+    {{- '<turn|>\\n' -}}
+{%- endif -%}
+{%- for message in loop_messages -%}
+    {%- set role = 'model' if message['role'] == 'assistant' else message['role'] -%}
+        {{- '<|turn>' + role + '\\n' }}
+    {%- set thinking_text = message.get('reasoning') or message.get('reasoning_content') -%}
+    {%- if thinking_text and preserve_thinking -%}
+        {{- '<|channel>thought\\n' + thinking_text + '\\n<channel|>' -}}
+    {%- endif -%}
+    {{- message['content'] | trim -}}
+    {{- '<turn|>\\n' -}}
+{%- endfor -%}
+{%- if add_generation_prompt -%}
+    {%- if ns.prev_message_type != 'tool_response' and ns.prev_message_type != 'tool_call' -%}
+        {{- '<|turn>model\\n' -}}
+    {%- elif ns.prev_message_type == 'tool_response' and enable_thinking -%}
+        {{- '<|channel>thought\\n' -}}
+    {%- endif -%}
+{%- endif -%}`,
+};

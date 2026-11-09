@@ -26,6 +26,8 @@ import { registerGithubTools } from "../../tools/github/index.js";
 import { resolveGithubToken } from "../../github/index.js";
 import { registerSkillTools } from "../../tools/skill/index.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
+import { planUpdateTool } from "../../tools/plan/index.js";
+import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
@@ -37,6 +39,8 @@ import { buildFusionDelegateTool, readSlotOccupancy, type FusionDelegateDeps } f
 import { confineReads } from "../../tools/read-scope/index.js";
 import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpResourceListTool, buildMcpResourceReadTool, buildMcpToolDescriptors, createMcpSamplingHandler, mergeMcpDescriptors, applyMcpToolNameRule, buildMcpToolNameRule } from "../../mcp/index.js";
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
+import type { McpServerConfig } from "../../mcp/mcp-types.js";
+import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
@@ -171,6 +175,8 @@ export function registerRuntimeCoreTools(input: {
   registerOsScreenTools(toolRegistry, {
     ...dangerous,
     enabled: config.tools.screen.enabled,
+    // ATO-1018: drawing marks only (and the screenshot it reads), on by default.
+    point: config.tools.screen.point,
   });
   // The read-only `verify.*` family: syntax per file, and (below) a
   // command / service / page run against a throwaway copy of the
@@ -179,6 +185,11 @@ export function registerRuntimeCoreTools(input: {
   registerVerifyTools(toolRegistry, {
     ...dangerous,
     config: { browser: config.browser },
+    // The same guard policy as `os.shell.run`: a `git push` started by
+    // verify.run obeys the remote-sync switch too (ATO-1266).
+    shellPolicy: {
+      isGitRemoteSyncEnabled: () => getConfig().git.remoteSync,
+    },
   });
   // Always registered; each call resolves `GITHUB_TOKEN` afresh so a
   // token saved in the Integrations hub works on the next turn. The
@@ -193,8 +204,12 @@ export function registerRuntimeCoreTools(input: {
     skillRegistry,
     dangerous,
     config.tools.shell.envPassthrough,
+    config.paths.stateDir,
   );
-  toolRegistry.register(buildToolViewTool());
+  // `tool.view` is registered with `tool.search` in the MCP catalog phase:
+  // it reads the same live descriptor list.
+  // The live checklist (ATO-486): pure, always on, no approval.
+  toolRegistry.register(planUpdateTool);
   // Older stored names stay out of the prompt until checked against actual
   // user messages. The background walk never deletes facts or blocks boot.
   const nameGroundingSource = sessionGroundingSource(sessionStore);
@@ -323,9 +338,15 @@ export async function connectRuntimeMcpCatalog(input: {
    * is whether the `mcp.resource.*` / `mcp.prompt.*` tools are registered.
    */
   onMcpToolNameRule?: (rule: string | null, nativeTools: boolean) => void;
+  /**
+   * The live route's context window, when known. `agent.tools.search:
+   * "auto"` defers the non-core tools behind `tool.search` on a small
+   * one (ATO-558). Absent ⇒ only the catalog size decides.
+   */
+  resolveContextWindow?: () => number | null | undefined;
 }) {
   const { config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
-    visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule } = input;
+    visionOnLiveRoute, resolveCurrentRunMode, onMcpToolNameRule, resolveContextWindow } = input;
   let grammar = initialGrammar;
 
   // MCP client subsystem. The manager is always constructed so the
@@ -351,10 +372,14 @@ export async function connectRuntimeMcpCatalog(input: {
     userConfigFile: config.paths.userConfigFile,
     logger,
   });
-  const mcpServerConfigs = [
+  // Servers from installed plugins (ATO-562) ride the same rails, named
+  // `<plugin>-<server>` and always approval-gated. A broken plugin only logs.
+  const ownServers = [
     ...(config.mcp?.servers ?? []),
     ...(composioServerConfig ? [composioServerConfig] : []),
   ];
+  const pluginMcp = safePluginMcpServers(config.paths.stateDir, new Set(ownServers.map(s => s.name)), logger);
+  const mcpServerConfigs = [...ownServers, ...pluginMcp];
   const mcpEnabled = mcpServerConfigs.length > 0;
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
@@ -481,7 +506,10 @@ export async function connectRuntimeMcpCatalog(input: {
       video: { available: openRouterImageKey(getConfig()) !== undefined },
       // Boot-time, like the registration above: the tools exist only when
       // they were switched on before start and the host is a Mac.
-      screen: { enabled: config.tools.screen.enabled && process.platform === "darwin" },
+      screen: {
+        enabled: config.tools.screen.enabled && process.platform === "darwin",
+        point: config.tools.screen.point && process.platform === "darwin",
+      },
     });
     if (!liveMcpEnabled) return base;
     return mergeMcpDescriptors(
@@ -518,19 +546,48 @@ export async function connectRuntimeMcpCatalog(input: {
   // flip, none while the route holds. The image gate too: saving or
   // removing an OpenRouter key adds or drops `image.generate` and
   // `video.generate` (one gate value: they share the key).
+  //
+  // Tool search (ATO-558) is one more gate: when `agent.tools.search`
+  // (live config) and the route's window or the catalog size say so,
+  // the prompt describes only the core tools in full and lists the rest
+  // as one-liners behind `tool.search`. `fullToolDescriptors` keeps the
+  // undeferred list — what `tool.search` searches and loads from.
+  let fullToolDescriptors = rebuildToolDescriptorsFromMcp();
+  const toolSearchOn = (): boolean =>
+    toolSearchActive(
+      getConfig().agent.tools?.search ?? "auto",
+      fullToolDescriptors.length,
+      resolveContextWindow?.(),
+    );
   const liveDescriptorGates = (): string =>
-    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}`;
-  let cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+    `${resolveCurrentRunMode().effective === "fusion"}|${visionOnLiveRoute()}|${openRouterImageKey(getConfig()) !== undefined}|${toolSearchOn()}`;
   let cachedDescriptorGates = liveDescriptorGates();
+  let cachedToolDescriptors = applyToolSearch(fullToolDescriptors, toolSearchOn());
   const rebuildToolDescriptors = (): readonly ToolDescriptor[] => {
+    fullToolDescriptors = rebuildToolDescriptorsFromMcp();
     cachedDescriptorGates = liveDescriptorGates();
-    cachedToolDescriptors = rebuildToolDescriptorsFromMcp();
+    cachedToolDescriptors = applyToolSearch(fullToolDescriptors, toolSearchOn());
     return cachedToolDescriptors;
   };
   const effectiveToolDescriptors = (): readonly ToolDescriptor[] =>
     liveDescriptorGates() === cachedDescriptorGates
       ? cachedToolDescriptors
       : rebuildToolDescriptors();
+  // Registered whatever the mode: its descriptor is only in the prompt
+  // while search mode is on, and a call outside it still searches the
+  // full catalog harmlessly.
+  const toolSearchCatalog = () => {
+    const effective = effectiveToolDescriptors();
+    return {
+      descriptors: fullToolDescriptors,
+      deferred: deferredToolNames(fullToolDescriptors, effective),
+    };
+  };
+  toolRegistry.register(buildToolSearchTool({ catalog: toolSearchCatalog }));
+  // `tool.view` loads by exact name any tool search mode deferred to a
+  // `# extras` one-liner, including the statically frequent ones
+  // (`os.git.status`) and MCP tools the static catalog does not hold.
+  toolRegistry.register(buildToolViewTool({ deferred: toolSearchCatalog }));
   const createRefreshMcp = () => {
 
 
@@ -575,16 +632,25 @@ export function registerRuntimeFusionAndReadScope(input: {
   emitAgentLoopEventFor: FusionDelegateDeps["emitEvent"];
   resolveCurrentRunMode: FusionDelegateDeps["resolveRunMode"];
   providerRegistry: Pick<ProviderRegistry, "getProvider">;
-  llama: Pick<LlamaServerClient, "measuredTokensPerSecond" | "fetchSlots">;
+  llama: Pick<
+    LlamaServerClient,
+    "measuredTokensPerSecond" | "fetchSlots" | "probeHealth"
+  >;
   approvals: ApprovalGate;
   dangerous: DangerousToolOptions;
   slotManager: FusionDelegateDeps["slotManager"];
   workingDir: string;
   logger: StructuredLogger;
+  turnBudget?: FusionDelegateDeps["turnBudget"];
+  liveWorkers?: FusionDelegateDeps["liveWorkers"];
+  steerWorker?: FusionDelegateDeps["steerWorker"];
+  orchestratorTurnSpendUsd?: FusionDelegateDeps["orchestratorTurnSpendUsd"];
+  runCheckpoints?: FusionDelegateDeps["runCheckpoints"];
 }): void {
   const { config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest, declaredInputs,
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
-    llama, approvals, dangerous, slotManager, workingDir, logger } = input;
+    llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
+    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints } = input;
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -623,6 +689,38 @@ export function registerRuntimeFusionAndReadScope(input: {
           return null;
         }
       },
+      // Asked before a local worker is sent after one was cut off
+      // (ATO-917): a server that stopped answering fails the task now.
+      probeLocalHealth: () => llama.probeHealth(),
+      // The turn's $ / time caps (ATO-947), reset at each fusion turn's
+      // start by the loop; read only when a cap is configured.
+      ...(turnBudget === undefined ? {} : { turnBudget }),
+      ...(orchestratorTurnSpendUsd === undefined
+        ? {}
+        : { orchestratorTurnSpendUsd }),
+      // Escalation (ATO-942): one completion pinned to the configured
+      // escalation provider — never the fallback chain, so it cannot
+      // land on a model the operator did not pick for it.
+      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal }) => {
+        const provider = providerRegistry.getProvider(providerId);
+        if (provider === undefined) {
+          throw new Error(`escalation provider ${providerId} is not configured`);
+        }
+        const result = await provider.complete({
+          prompt,
+          maxOutputTokens,
+          signal,
+        });
+        return {
+          content: result.content,
+          ...(result.usage === undefined ? {} : { usage: result.usage }),
+        };
+      },
+      ...(liveWorkers === undefined ? {} : { liveWorkers }),
+      ...(steerWorker === undefined ? {} : { steerWorker }),
+      // Run checkpoints (ATO-617): a fan-out cut off by a restart can be
+      // resumed from its unfinished wave.
+      ...(runCheckpoints === undefined ? {} : { runCheckpoints }),
       approvals,
       approvalRequired: dangerous.approvalRequired,
       slotManager,
@@ -672,4 +770,15 @@ export function registerRuntimeFusionAndReadScope(input: {
       files: getStateSecretPaths(config.paths),
     },
   });
+}
+
+function safePluginMcpServers(stateDir: string, taken: ReadonlySet<string>, logger: StructuredLogger): McpServerConfig[] {
+  try {
+    const { servers, skipped } = loadPluginMcpServers(stateDir, taken);
+    for (const s of skipped) logger.warn("plugin MCP server skipped", { plugin: s.plugin, server: s.server, reason: s.reason });
+    return servers;
+  } catch (err) {
+    logger.warn("plugin MCP servers unavailable", { error: err instanceof Error ? err.message : String(err) });
+    return [];
+  }
 }

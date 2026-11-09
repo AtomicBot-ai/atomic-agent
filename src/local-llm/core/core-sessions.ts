@@ -3,7 +3,7 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CoreUnavailableError } from "./core-errors.js";
 import { setTimeout as delay } from "node:timers/promises";
-import { activeCoreVersion, coreLoopbackPort, coreRoot, coreSessionPath, orphanedCoreSession, readCoreBackend, readCoreJson, writeCoreJson, type CoreSession, type CoreSessionRecord } from "./core-state.js";
+import { activeCoreVersion, coreLoopbackPort, isSupportedCoreVersion, coreRoot, coreSessionPath, orphanedCoreSession, readCoreBackend, readCoreJson, writeCoreJson, type CoreSession, type CoreSessionRecord } from "./core-state.js";
 import { connectCore, ensureCore, withCoreClient } from "./core-client.js";
 import { shutdownIdleCoreClient } from "./core-idle.js";
 import { noteReleaseTimeout, RELEASE_WAIT_MS, waitForProcessRelease } from "../server/process-release.js";
@@ -190,6 +190,12 @@ export async function recoverOrphanedCoreSessions(dataDir: string): Promise<bool
 export async function coreSessionStatus(dataDir: string, role: "chat" | "embedding"): Promise<CoreSession | null> {
   const record = readCoreJson<CoreSessionRecord>(coreSessionPath(dataDir, role));
   if (!record) return null;
+  /* ATO-920: a record from a Core this build does not know (a newer
+     desktop wrote it into the shared folder) is not a session this build
+     can ask about, the same as `readCoreSession` treats it. Connecting
+     would throw "not supported by this Agent build" out of a status poll,
+     which on Windows surfaced as an unhandled rejection. */
+  if (!isSupportedCoreVersion(record.coreVersion)) return null;
   const client = await connectCore(dataDir, record.coreVersion);
   if (!client) return null;
   const snapshot = await client.snapshot();

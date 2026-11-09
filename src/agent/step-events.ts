@@ -1,3 +1,4 @@
+import type { PlanSnapshot } from "./plan/plan-snapshot.js";
 import type { ToolCallPayload } from "../llm/grammar/tool-call-grammar.js";
 import type { CompletionResult } from "../llm/llama-server-client.js";
 import type { LlmFailureCategory, TruncationCause } from "../llm/reliability/index.js";
@@ -152,6 +153,16 @@ export type StepEvent =
    * Rare-tool execution failed; the runtime injected the full schema into
    * `session.loadedTools` so the next step can retry with valid args.
    */
+  /**
+   * The live plan changed in this step (ATO-486): the whole snapshot,
+   * never a delta. An empty `items` list means the plan was cleared.
+   * Emitted at most once per step, after the step's results are applied.
+   */
+  | {
+      type: "plan_updated";
+      plan: PlanSnapshot;
+      stepIndex: number;
+    }
   | {
       type: "rare_tool_autoloaded";
       tool: string;
@@ -175,6 +186,13 @@ export type StepEvent =
        * `assistant_reply` as the turn's answer should expect another.
        */
       progressNote?: true;
+      /**
+       * The reply as the model wrote (and streamed) it, present only when
+       * the reply polish (`reply-polish.ts`, ATO-967) changed it: `text`
+       * is what to show. A consumer that already streamed the deltas
+       * compares against this one so it does not print the body twice.
+       */
+      rawText?: string;
     }
   /**
    * Emitted once when the first `parseToolCall` threw and the executor

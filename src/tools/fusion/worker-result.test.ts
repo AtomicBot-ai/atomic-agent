@@ -9,6 +9,7 @@ import {
   WORKER_HINT_SATURATED,
   WORKER_HINT_UNREACHABLE,
   WORKER_HINT_UNSERVED,
+  WORKER_OPERATOR_ONLY_NOTE,
   WorkerRunCollector,
   classifyWorkerStatus,
   delegateOutcome,
@@ -24,7 +25,13 @@ import {
   workerHintNoFirstToken,
   type WorkerTaskResult,
 } from "./worker-result.js";
-import { FUSION_WORKER_APPROVAL_REFUSED } from "./worker-tool-policy.js";
+import {
+  FUSION_WORKER_APPROVAL_MARKER,
+  FUSION_WORKER_APPROVAL_REFUSED,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_REFUSED,
+  workerRefusalFor,
+} from "./worker-tool-policy.js";
 
 function toolExecuted(
   tool: string,
@@ -188,6 +195,69 @@ describe("WorkerRunCollector", () => {
         durationMs: 5,
       }).status,
     ).toBe("needs_orchestrator");
+  });
+
+  it("notes a step only the user can approve, so the orchestrator does not re-send it (ATO-1222, ATO-1223)", () => {
+    const c = new WorkerRunCollector();
+    c.observe(
+      toolExecuted(
+        "os.shell.run",
+        "error",
+        `os.shell.run was not run: refused without a decision from the user. Reason: ${FUSION_WORKER_OPERATOR_ONLY_REFUSED}`,
+      ),
+    );
+    c.observe(reply("`rm -rf ./build` needs the user"));
+    const result = c.finish({
+      id: "t",
+      title: "T",
+      reason: "reply",
+      stepCount: 2,
+      durationMs: 5,
+    });
+    expect(result.status).toBe("needs_orchestrator");
+    expect(result.notes).toEqual([WORKER_OPERATOR_ONLY_NOTE]);
+  });
+
+  it("adds no such note for the ordinary out-of-scope refusal", () => {
+    const c = new WorkerRunCollector();
+    c.observe(
+      toolExecuted("os.fs.write", "error", `denied: ${FUSION_WORKER_APPROVAL_REFUSED}`),
+    );
+    const result = c.finish({
+      id: "t",
+      title: "T",
+      reason: "reply",
+      stepCount: 1,
+      durationMs: 5,
+    });
+    expect(result.status).toBe("needs_orchestrator");
+    expect(result.notes).toBeUndefined();
+  });
+
+  it("words the refusal by category: operator-only steps keep the general marker too", () => {
+    expect(FUSION_WORKER_OPERATOR_ONLY_REFUSED).toContain(
+      FUSION_WORKER_APPROVAL_MARKER,
+    );
+    expect(FUSION_WORKER_OPERATOR_ONLY_REFUSED).toContain(
+      FUSION_WORKER_OPERATOR_ONLY_MARKER,
+    );
+    expect(FUSION_WORKER_APPROVAL_REFUSED).not.toContain(
+      FUSION_WORKER_OPERATOR_ONLY_MARKER,
+    );
+    for (const category of [
+      "shell_dangerous",
+      "trust_config",
+      "state_secret",
+      "email",
+      "browser_secret",
+    ] as const) {
+      expect(workerRefusalFor({ category }), category).toBe(
+        FUSION_WORKER_OPERATOR_ONLY_REFUSED,
+      );
+    }
+    for (const category of ["shell", "fs_write_home", "fs_read_outside", "other"] as const) {
+      expect(workerRefusalFor({ category }), category).toBeUndefined();
+    }
   });
 
   it("finds the refusal in details.deniedReason as well as the summary", () => {
@@ -774,6 +844,14 @@ describe("WorkerRunCollector — why a worker stopped", () => {
     );
     expect(result.hint).toBe(WORKER_HINT_SATURATED);
     expect(result.notes?.[0]).toMatch(/time limit/);
+  });
+
+  it("says a worker stopped by the spend ceiling hit its spend limit, not its step limit", () => {
+    const c = new WorkerRunCollector();
+    const result = c.finish({ ...base, reason: "reply", stopCause: "cost_ceiling" });
+    expect(result.status).toBe("max_steps");
+    expect(result.notes?.[0]).toMatch(/spend limit/);
+    expect(result.notes?.[0]).not.toMatch(/step limit/);
   });
 
   it("forgets a wait the provider recovered from, and never puts an error on an ok row", () => {

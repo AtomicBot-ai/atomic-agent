@@ -1,3 +1,4 @@
+import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
@@ -17,7 +18,9 @@ import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { IntegrationsAction } from "./integrations/integrations-actions.js";
 import type { SwarmAction } from "./swarm/swarm-actions.js";
+import type { PluginsAction } from "./plugins/plugins-actions.js";
 import type { IssueReportAction } from "./issue-report/issue-report-state.js";
+import type { GoalState } from "../agent/goal/goal-types.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
 import type { LlmPanelAction } from "./llm-panel/llm-panel-actions.js";
 import type { OnboardingAction } from "./onboarding/onboarding-actions.js";
@@ -31,6 +34,7 @@ import type {
   TuiUiMode,
 } from "./tui-state.js";
 import type { ContextUsageState } from "../session/context-usage.js";
+import type { SessionUsageState } from "../session/usage-meter.js";
 
 /**
  * Every action the reducer knows how to fold into `TuiState`. All side
@@ -144,6 +148,11 @@ export type TuiAction =
   /** Orchestrator re-published its pending-message queue (push/drain/clear). */
   | { type: "queue_changed"; queued: readonly string[] }
   /**
+   * The open chat's goal changed (`/goal`, a goal round, a session
+   * switch); `null` when it has none. Drives the goal line (ATO-451).
+   */
+  | { type: "goal_changed"; goal: GoalState | null }
+  /**
    * Flip (or set) what Enter does while a turn is running. `mode`
    * omitted toggles; the persist side-effect lives in the caller, like
    * `theme_set`.
@@ -206,6 +215,15 @@ export type TuiAction =
   | { type: "tool_expand_toggled"; toolCardId: string }
   /** Force-expand or collapse every known tool card at once. */
   | { type: "tool_expand_all_set"; expanded: boolean }
+  /** Open / fold one finished turn's summary line (click on it). */
+  | { type: "turn_expand_toggled"; messageId: string }
+  /**
+   * `/expand` (`scope: "last"`), `/expand all` and `/collapse` (`"all"`):
+   * open or fold the finished turns' summary lines.
+   */
+  | { type: "turn_expand_set"; scope: "last" | "all"; expanded: boolean }
+  /** `/steps on|off`: always show steps (`tui.showSteps`). */
+  | { type: "show_steps_set"; on: boolean }
   /** Open the slash palette with a leading-slash query. */
   | { type: "slash_palette_opened"; query: string }
   /** Update the filter query while the palette is open. */
@@ -216,6 +234,8 @@ export type TuiAction =
   | { type: "menu_closed" }
   /** Flip the composer's context detail panel (chip click, `/context`). */
   | { type: "context_panel_toggled" }
+  /** `/usage`: print the session's spend and limits (ATO-569). `now` keeps the reducer pure. */
+  | { type: "usage_report_requested"; now: number }
   | { type: "context_panel_closed" }
   | { type: "context_pairs_selected"; pairs: number }
   | { type: "menu_query_changed"; query: string }
@@ -278,6 +298,13 @@ export type TuiAction =
        * numbers on screen.
        */
       contextUsage?: ContextUsageState;
+      /**
+       * The target session's live plan (ATO-486), when it has one. Absent
+       * hides the checklist rather than keeping the previous thread's.
+       */
+      plan?: PlanSnapshot;
+      /** The target session's persisted spend and limits (ATO-569). */
+      sessionUsage?: SessionUsageState;
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
   | { type: "llama_url_changed"; url: string }
@@ -368,6 +395,7 @@ export type TuiAction =
   | PrivacyAction
   | IntegrationsAction
   | SwarmAction
+  | PluginsAction
   | IssueReportAction
   | ProvidersAction
   | OnboardingAction

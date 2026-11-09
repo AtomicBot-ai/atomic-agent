@@ -137,9 +137,13 @@ export const EVENTS: Record<string, EventSpec> = {
     /* ATO-202: a model list that did not come back because nothing answered,
        the certificate was not trusted, or our deadline ran out is not an
        empty catalogue. */
+    /* ATO-306: a refused key, a provider's own error and a list that failed
+       otherwise are not an empty catalogue either; the preset says which
+       provider (the same list as provider_setup_started). */
     props: {
       step: en(["onboarding", "settings"]),
-      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "other"]),
+      reason: en(["bad_url", "bad_key_chars", "save_failed", "catalog_empty", "server_unreachable", "certificate", "timed_out", "key_rejected", "provider_error", "list_failed", "other"]),
+      provider_preset: en(PROVIDER_PRESETS, { fallback: "custom" }),
     },
   },
   custom_endpoint_tested: { owner: "ui", props: { kind: en(["chat", "embedding"]), reachable: bool } },
@@ -270,7 +274,7 @@ export const EVENTS: Record<string, EventSpec> = {
   approval_answered: {
     owner: "ui",
     props: {
-      choice: en(["allow_once", "allow_in_chat", "deny", "abort", "deny_with_text"]),
+      choice: en(["allow_once", "allow_in_chat", "allow_always", "deny", "abort", "deny_with_text"]),
       category: en(APPROVAL_CATEGORIES),
       level: int({ max: 9, nullable: true }),
       input: en(["click", "key"]),
@@ -341,6 +345,7 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   task_created: { owner: "main", props: { kind: en(["cron", "interval", "at"]) } },
   task_action: { owner: "main", props: { action: en(["run", "cancel"]) } },
+  overnight_started: { owner: "main", props: { has_budget: bool, hours: int({ min: 1, max: 24 }), notify_telegram: bool } },
   skill_installed: { owner: "main", props: { result: en(["ok", "blocked", "error"]), risk_acknowledged: bool } },
   skill_action: { owner: "main", props: { action: en(["enable", "disable", "remove"]) } },
   mcp_server_added: { owner: "ui", props: { result: en(["ok", "error"]) } },

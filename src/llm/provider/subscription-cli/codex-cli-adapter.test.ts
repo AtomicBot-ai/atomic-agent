@@ -106,6 +106,26 @@ describe("codexCliAdapter parseResult", () => {
       totalTokens: 13459 + 32,
     });
     expect(result.cacheHitTokens).toBe(5888);
+    // `codex exec --json` prints no plan-window state, so none is invented.
+    expect(result.rateLimits).toBeUndefined();
+  });
+
+  it("reads plan-window state when a codex build prints it (ATO-569)", () => {
+    const withLimits = [
+      SUCCESS,
+      JSON.stringify({
+        type: "token_count",
+        rate_limits: {
+          primary: { used_percent: 83, window_minutes: 300, resets_at: 1_800_000_000 },
+          secondary: { used_percent: 20, window_minutes: 10080, resets_at: 1_800_500_000 },
+        },
+      }),
+    ].join("\n");
+    const result = codexCliAdapter.parseResult(withLimits, "");
+    expect(result.rateLimits).toEqual([
+      { scope: "subscription", name: "5h", usedPercent: 83, resetsAt: 1_800_000_000_000 },
+      { scope: "subscription", name: "weekly", usedPercent: 20, resetsAt: 1_800_500_000_000 },
+    ]);
   });
 
   it("throws on turn.failed even though codex exits 0", () => {

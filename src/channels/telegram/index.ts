@@ -12,12 +12,16 @@ export type {
   TelegramChannelDeps,
 } from "./telegram-channel.js";
 export {
+  formatTaskReportDigest,
   formatTaskReportMessage,
+  splitTaskReportDigest,
+  TASK_REPORT_DIGEST_MAX_REPORTS,
   TASK_REPORT_ERROR_MAX_CHARS,
   TASK_REPORT_PROMPT_PREVIEW_CHARS,
   TASK_REPORT_RESULT_MAX_CHARS,
   TASK_REPORT_TRUNCATION_MARKER,
 } from "./task-report-message.js";
+export { formatTaskLiveStatus } from "./task-status-message.js";
 export type {
   InboundContext,
   InboundTextUpdate,

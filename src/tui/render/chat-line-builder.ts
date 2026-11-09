@@ -5,7 +5,8 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { formatToolArgsBlock, previewToolArgs } from "./tool-args-preview.js";
+import { describeToolCall } from "../../tools/describe-tool-call.js";
+import { formatToolArgsBlock } from "./tool-args-preview.js";
 import { wrapText } from "./wrap-text.js";
 import { theme } from "../theme/theme.js";
 import type {
@@ -245,37 +246,37 @@ function appendToolCard(
     : "pending";
   const color = toolColor(status);
   const glyph = toolGlyph(status);
-  const argsPreview = previewToolArgs(card.args);
   const duration =
     isFinalised && card.finishedAt
       ? `${card.finishedAt - card.startedAt}ms`
       : "…";
   const truncated = isFinalised && card.truncated;
+  // ATO-962: the call in words, not `os.fs.read path="…"`; the raw name
+  // and args are in the expanded block. ATO-914: one row, always — the
+  // words are clipped to what the row has left after the frame and the
+  // duration, so a long edit path no longer runs off the right edge.
+  const prefix = `  ${theme.glyphs.toolBoxTopLeft}${theme.glyphs.toolBoxHorizontal} ${glyph} `;
+  const durationText = ` ${theme.glyphs.dotSeparator} ${duration}`;
+  const truncatedText = truncated ? ` ${theme.glyphs.dotSeparator} truncated` : "";
+  const room = Math.max(
+    8,
+    ctx.columns - prefix.length - durationText.length - truncatedText.length,
+  );
+  const described = describeToolCall({
+    name: card.tool,
+    args: card.args,
+    ...(status === "pending" ? {} : { ok: status === "ok" }),
+  }).line;
 
   const headerKey = `cl-${b.next++}`;
   b.lines.push(
     createElement(
       Text,
-      { key: headerKey },
-      createElement(
-        Text,
-        { color },
-        `  ${theme.glyphs.toolBoxTopLeft}${theme.glyphs.toolBoxHorizontal} ${glyph} ${card.tool}`,
-      ),
-      createElement(
-        Text,
-        { color: theme.colors.muted },
-        ` ${theme.glyphs.dotSeparator} ${duration}`,
-      ),
+      { key: headerKey, wrap: "truncate-end" },
+      createElement(Text, { color }, prefix + clipOneLine(described, room)),
+      createElement(Text, { color: theme.colors.muted }, durationText),
       truncated
-        ? createElement(
-            Text,
-            { color: theme.colors.warn },
-            ` ${theme.glyphs.dotSeparator} truncated`,
-          )
-        : null,
-      argsPreview
-        ? createElement(Text, { color: theme.colors.muted }, `  ${argsPreview}`)
+        ? createElement(Text, { color: theme.colors.warn }, truncatedText)
         : null,
     ),
   );
@@ -300,6 +301,7 @@ function appendToolCard(
 
   // Expanded: args + result.
   const innerWidth = Math.max(10, ctx.columns - 4);
+  pushPlain(b, clipOneLine(`    tool ${card.tool}`, Math.max(10, ctx.columns)), theme.colors.muted);
   pushPlain(b, "    args", theme.colors.muted);
   for (const row of wrapText(formatToolArgsBlock(card.args), innerWidth)) {
     pushPlain(b, `    ${row}`);

@@ -17,8 +17,9 @@ export interface CompressedToolResult {
   fullOutput?: string;
   fullOutputTruncated?: boolean;
   /**
-   * Prompted approvals answered while the call ran. Stamped by the batch
-   * executor, never by a tool; see `approval-ledger.ts`.
+   * Prompted approvals answered while the call ran, plus non-level
+   * auto-approvals. Stamped by the batch executor, never by a tool; see
+   * `approval-ledger.ts`.
    */
   approvals?: readonly ToolApprovalRecord[];
 }

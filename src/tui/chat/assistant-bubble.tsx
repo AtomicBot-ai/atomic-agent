@@ -1,6 +1,6 @@
 import { Box, Text } from "ink";
 import type { ReactElement } from "react";
-import { closeStreamingMarkdown } from "../render/close-streaming-markdown.js";
+import { closeStreamingMarkdown } from "../../agent/close-streaming-markdown.js";
 import { MarkdownRenderer } from "../render/markdown-renderer.js";
 import { fusionInk } from "../theme/fusion-tint.js";
 import { theme } from "../theme/theme.js";

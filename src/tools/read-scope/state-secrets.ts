@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, resolve } from "node:path";
 
 import { isInside } from "../../approval/fanout-scope.js";
+import { isTrustDirectoryEntry } from "../../config/config-file.js";
 import { resolveUserPath } from "../os/expand-home.js";
 import type { ToolContext } from "../tool-registry.js";
 import { canonical } from "./read-scope.js";
@@ -48,7 +49,10 @@ export interface StateSecrets {
    * Absolute files holding a secret or the trust config
    * (`getStateSecretPaths` in `src/config/config-file.ts`). Injected,
    * like `trustConfigPaths`: the tools layer never derives where the
-   * agent keeps its keys.
+   * agent keeps its keys. An entry ending in a path separator is a
+   * directory of code the agent runs: a shell command naming anything
+   * under it asks, a read tool does not (a skill's own files are meant
+   * to be read).
    */
   files: readonly string[];
 }
@@ -70,6 +74,8 @@ interface CanonicalSecrets {
    * home-wide search is out of this check's reach and its business.
    */
   folders: string[];
+  /** Directories whose whole content a shell command must not touch unasked. */
+  directories: string[];
 }
 
 function canonicalSecrets(secrets: StateSecrets): CanonicalSecrets {
@@ -77,12 +83,19 @@ function canonicalSecrets(secrets: StateSecrets): CanonicalSecrets {
   const states = [lexicalState, canonical(lexicalState)];
   const files = new Set<string>();
   const folders = new Set<string>();
+  const directories = new Set<string>();
   for (const file of secrets.files) {
     const lexical = resolve(file);
+    const directory = isTrustDirectoryEntry(file);
     // Both spellings: a command names the path it was told, a symlinked
     // state directory (`/tmp` vs `/private/tmp`) resolves elsewhere.
     for (const spelling of [lexical, canonical(lexical)]) {
-      files.add(spelling);
+      if (directory) {
+        directories.add(spelling);
+        folders.add(spelling);
+      } else {
+        files.add(spelling);
+      }
       const state = states.find((dir) => isInside(dir, spelling));
       if (state === undefined) continue;
       for (let dir = dirname(spelling); isInside(state, dir); dir = dirname(dir)) {
@@ -91,7 +104,7 @@ function canonicalSecrets(secrets: StateSecrets): CanonicalSecrets {
       }
     }
   }
-  return { files: [...files], folders: [...folders] };
+  return { files: [...files], folders: [...folders], directories: [...directories] };
 }
 
 /** Same absolute path; via `relative`, so case-insensitive on Windows as the filesystem is. */
@@ -116,6 +129,15 @@ function secretNamedBy(
     return path;
   }
   return null;
+}
+
+/** The protected directory `path` lies in, or `null`. */
+function directoryHolding(path: string, known: CanonicalSecrets): string | null {
+  const real = canonical(path);
+  return (
+    known.directories.find((dir) => isInside(dir, path) || isInside(dir, real)) ??
+    null
+  );
 }
 
 /**
@@ -229,7 +251,7 @@ export function findShellStateSecrets(
   const hits = new Set<string>();
   // A secret spelled out in full anywhere on the line, glued to code
   // (`python3 -c open(/…/.env)`) or not.
-  for (const file of known.files) {
+  for (const file of [...known.files, ...known.directories]) {
     if (spelledOut(line, file)) hits.add(file);
   }
   const candidates = [...known.files, ...known.folders];
@@ -244,7 +266,7 @@ export function findShellStateSecrets(
       }
       continue;
     }
-    const hit = secretNamedBy(path, known, true);
+    const hit = secretNamedBy(path, known, true) ?? directoryHolding(path, known);
     if (hit !== null) hits.add(hit);
   }
   return dedupe([...hits]);
@@ -284,7 +306,7 @@ export function stateSecretShellPrompt(
 ): string {
   return (
     `run \`${commandLine}\` — it names the agent's own secret files ` +
-    `(API keys, tokens, approval settings): ${paths.join(", ")}; ` +
+    `(API keys, tokens, approval settings, hooks, plugins): ${paths.join(", ")}; ` +
     `asked every time, never granted for the session`
   );
 }

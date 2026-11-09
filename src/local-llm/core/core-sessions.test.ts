@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
 import { CORE_VERSION, coreSessionPath, coreVersionDir, writeCoreJson } from "./core-state.js";
-import { loadCoreSession, recoverOrphanedCoreSessions, refreshCoreKeyForUrl, retireIdleCore, stopCoreSession, stopIdleCore } from "./core-sessions.js";
+import { coreSessionStatus, loadCoreSession, recoverOrphanedCoreSessions, refreshCoreKeyForUrl, retireIdleCore, stopCoreSession, stopIdleCore } from "./core-sessions.js";
 import { connectCore, ensureCore } from "./core-client.js";
 
 const fake = vi.hoisted(() => ({ call: vi.fn(), snapshot: vi.fn(), instanceId: "owned" }));
@@ -277,5 +277,21 @@ describe("stopping a Core session on Windows (ATO-304)", () => {
     await expect(stopCoreSession(dir, "chat", { releaseWaitMs: 5_000 })).resolves.toBe(true);
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(existsSync(join(dir, "llama-server.log"))).toBe(false);
+  });
+});
+
+describe("a session record from a Core this build does not know (ATO-920)", () => {
+  it("reads as no session instead of throwing out of a status poll", async () => {
+    // A newer desktop shares the folder and recorded its own, newer Core.
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: "99.0.0", instanceId: "newer" });
+    await expect(coreSessionStatus(dir, "chat")).resolves.toBeNull();
+    expect(connectCore).not.toHaveBeenCalled();
+  });
+
+  it("still asks Core about a record of a version it knows", async () => {
+    writeCoreJson(coreSessionPath(dir, "chat"), { ...session, coreVersion: CORE_VERSION, instanceId: "owned" });
+    vi.mocked(connectCore).mockResolvedValue(null);
+    await expect(coreSessionStatus(dir, "chat")).resolves.toBeNull();
+    expect(connectCore).toHaveBeenCalledWith(dir, CORE_VERSION);
   });
 });

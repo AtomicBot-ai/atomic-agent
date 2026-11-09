@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "./config-validation-error.js";
-import { parseBool, parseNonNegativeInt, parseNonEmptyString } from "./config-primitives.js";
+import { isSetAsideString, parseBool, parseNonNegativeInt, parseNonEmptyString } from "./config-primitives.js";
 import { parseSessionRailConfig, type SessionRailConfig } from "./session-rail-config.js";
 
 /**
@@ -35,6 +35,7 @@ export interface TuiNotifyConfig {
  * to what they see it doing.
  */
 export type WhileBusySubmitMode = "steer" | "queue";
+export const WHILE_BUSY_SUBMIT_MODES: readonly WhileBusySubmitMode[] = ["steer", "queue"];
 
 /**
  * First-run flow state (config v43, extended in v44). Five nullable
@@ -73,6 +74,14 @@ export interface TuiConfig {
   theme: string;
   whileBusySubmit: WhileBusySubmitMode;
   mouse: boolean;
+  /**
+   * Always show steps (ATO-963): keep every finished turn's tool cards and
+   * reasoning open in the chat, as before. Off by default: a finished turn
+   * folds into one "Used 6 tools · 40s" line. Additive and unversioned, a
+   * file without it reads `false`. A display preference only; the agent
+   * never reads it.
+   */
+  showSteps: boolean;
   onboarding: OnboardingState;
   sessionRail: SessionRailConfig;
   notify: TuiNotifyConfig;
@@ -83,6 +92,7 @@ export function createTuiDefaults(): TuiConfig {
     theme: "auto",
     whileBusySubmit: "steer",
     mouse: true,
+    showSteps: false,
     notify: { enabled: true, minDurationMs: 30_000 },
     sessionRail: { order: [], pinned: [] },
     onboarding: {
@@ -222,6 +232,13 @@ export function parseTuiNotifyWithDefaults(
   };
 }
 
+/** ATO-1241: a mode a newer build added reads as the default here; `parseWhileBusySubmit` stays strict for typed input. */
+function readWhileBusySubmit(raw: unknown, readDefaults: () => TuiConfig): WhileBusySubmitMode {
+  const fallback = readDefaults().whileBusySubmit;
+  if (isSetAsideString(raw, WHILE_BUSY_SUBMIT_MODES, "tui.whileBusySubmit", fallback)) return fallback;
+  return parseWhileBusySubmit(raw ?? fallback, "tui.whileBusySubmit");
+}
+
 export function parseTuiConfig(
   tui: Record<string, unknown>,
   readDefaults: () => TuiConfig,
@@ -231,13 +248,14 @@ export function parseTuiConfig(
       tui.theme ?? readDefaults().theme,
       "tui.theme",
     ),
-    whileBusySubmit: parseWhileBusySubmit(
-      tui.whileBusySubmit ?? readDefaults().whileBusySubmit,
-      "tui.whileBusySubmit",
-    ),
+    whileBusySubmit: readWhileBusySubmit(tui.whileBusySubmit, readDefaults),
     mouse: parseBool(
       tui.mouse ?? readDefaults().mouse,
       "tui.mouse",
+    ),
+    showSteps: parseBool(
+      tui.showSteps ?? readDefaults().showSteps,
+      "tui.showSteps",
     ),
     onboarding: parseOnboardingStateWithDefaults(
       tui.onboarding,

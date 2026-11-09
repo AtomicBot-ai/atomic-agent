@@ -14,6 +14,8 @@ export interface InstallConfirmDeps {
   /** Free-text prompt. Defaults to a readline question. */
   ask?: (prompt: string) => Promise<string>;
   writeErr?: (text: string) => void;
+  /** Question after the findings; defaults to the skill wording. */
+  question?: string;
 }
 
 export function createInstallConfirm(
@@ -27,7 +29,7 @@ export function createInstallConfirm(
   const writeErr = deps.writeErr ?? ((t: string) => process.stderr.write(t));
   return async (scan) => {
     writeErr(formatScanFindings(scan));
-    const answer = await ask("Install this skill anyway? [y/N] ");
+    const answer = await ask(deps.question ?? "Install this skill anyway? [y/N] ");
     return /^y(es)?$/i.test(answer.trim());
   };
 }

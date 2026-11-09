@@ -21,7 +21,7 @@ import { createRuntimeMemoryStores } from "./composition/runtime-memory-stores.j
 import { createMemoryEmbeddingSwitch } from "./composition/runtime-memory-embedding-switch.js";
 import { createRuntimeMemoryServices, createRuntimeMemoryConsolidator } from "./composition/runtime-memory-services.js";
 import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
-import { resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
 import type { SessionState } from "../session/session-state.js";
@@ -38,8 +38,10 @@ import { SwarmRegistry } from "../channels/swarm/index.js";
 import { installTransportDeadlines } from "../llm/transport-deadlines.js";
 
 import { ApprovalGate } from "../approval/approval-gate.js";
+import { ApprovalRulesStore } from "../approval/approval-rules-store.js";
 
 import { ApprovalRouter } from "../approval/approval-router.js";
+import { installRiskReviewer } from "./composition/runtime-risk-review.js";
 
 import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
@@ -47,10 +49,19 @@ import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
+import {
+  FUSION_RUNS_DIR_NAME,
+  FusionLiveWorkers,
+  FusionRunStore,
+  FusionTurnBudget,
+  describeResumableRun,
+  renderResumeRequest,
+} from "../tools/fusion/index.js";
 
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
+import { SessionUsageLedger } from "../session/usage-meter.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
@@ -76,6 +87,7 @@ import { AgentLoop } from "../agent/agent-loop.js";
 import { TurnUsageMeter } from "../analytics/index.js";
 
 import { installGlobalErrorHandlers } from "../error-reporting/index.js";
+import { ToolHookEngine, installToolHooks } from "../hooks/index.js";
 
 /**
  * One-stop factory that wires the whole agent runtime. Both the CLI
@@ -153,8 +165,17 @@ export async function createAgentRuntime(
       linkUnavailable: (llm, id) => isLocalLinkWithoutModel(llm, id, getConfig()),
       logger,
     }),
-    noticeSink: (notice) =>
-      emitAgentLoopEvent({ type: "provider_switched", ...notice }),
+    noticeSink: (notice) => {
+      // The fallback's model, so the turn can say "switched to
+      // Gemini (gemini-2.5-flash)" (ATO-483).
+      const to = resolveLlmConfig(getConfig()).providers.find((p) => p.id === notice.to);
+      const toModel = to?.defaultChatModel ?? to?.model;
+      emitAgentLoopEvent({
+        type: "provider_switched",
+        ...notice,
+        ...(notice.direction === "away" && toModel ? { toModel } : {}),
+      });
+    },
     logger,
   });
 
@@ -170,6 +191,12 @@ export async function createAgentRuntime(
     emit: (request) => approvalRouter.emit(request),
     level: options.approvalLevel,
   });
+  // Saved "always allow" / ask / deny rules (ATO-1141): the global file in
+  // the state dir, plus ask / deny from a project's own file.
+  approvals.setRules(new ApprovalRulesStore({
+    stateDir: config.paths.stateDir,
+    warn: (message, fields) => logger.warn(message, fields),
+  }));
   // Tools are registered with `approvalRequired: true` unconditionally;
   // the gate's approval level carries the boot-time value instead. Every
   // request reaches the gate with its category and the gate decides
@@ -182,6 +209,11 @@ export async function createAgentRuntime(
     approvals,
     approvalRequired: true,
   };
+  // PreToolUse / PostToolUse hooks (ATO-493): `<stateDir>/hooks.json` plus
+  // hooks of enabled plugins the user let run code. Read per call (cached
+  // on mtime), so editing hooks.json needs no restart. A hook's `ask` goes
+  // to the same approval gate as the tools' own prompts.
+  installToolHooks(new ToolHookEngine({ stateDir: config.paths.stateDir, approvals, logger }));
 
   // Issue #112. Every local text probe below hangs off this one answer,
   // and it is available here — hundreds of lines before
@@ -355,6 +387,21 @@ export async function createAgentRuntime(
   // behind the same analytics opt-out, since nothing is emitted unless
   // `captureMessageSent` fires.
   const turnUsageMeter = new TurnUsageMeter();
+  const fusionTurnBudget = new FusionTurnBudget();
+  const fusionLiveWorkers = new FusionLiveWorkers();
+  // Checkpoints of fan-outs (ATO-617), so one cut off by a restart can be
+  // resumed. Files, not a table: see `run-checkpoint.ts`.
+  const fusionRuns = new FusionRunStore({
+    dir: join(config.paths.stateDir, FUSION_RUNS_DIR_NAME),
+  });
+
+  // ATO-569: what each session has spent and the account limits last
+  // seen, for the composer readout. Every change goes out as a
+  // session-scoped `usage_updated` event (TUI, HTTP stream frame).
+  const sessionUsage = new SessionUsageLedger({
+    onChange: (sessionId, usage) =>
+      emitAgentLoopEventFor(sessionId, { type: "usage_updated", sessionId, usage }),
+  });
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
@@ -366,6 +413,11 @@ export async function createAgentRuntime(
     config, options, toolRegistry, logger, dangerous, llama, initialGrammar,
     visionOnLiveRoute, resolveCurrentRunMode,
     ...mcpGrammarHookFor(profileManager),
+    // `agent.tools.search: "auto"` reads the live route's window (ATO-558):
+    // a local link's served window once `/props` has answered, else the catalogue's.
+    resolveContextWindow: () => resolveActiveLlmSlice().isLlamaServer
+      ? connectedLocal.getLiveProfile().contextWindow ?? resolveCatalogContextWindow()
+      : resolveCatalogContextWindow(),
   });
   const { mcpManager, getGrammar, effectiveToolDescriptors } = mcpCatalog;
 
@@ -380,7 +432,14 @@ export async function createAgentRuntime(
 
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
-    costAccumulator, turnUsageMeter, resolveModelPricing, resolveCatalogContextWindow,
+    costAccumulator, turnUsageMeter, sessionUsage, resolveModelPricing, resolveCatalogContextWindow,
+  });
+  // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
+  installRiskReviewer({
+    approvals, readConfig: () => getConfig(), complete: (params) => llmComplete(params),
+    resolveTransport: (providerId) => resolveActiveLlmSlice(providerId).transport,
+    sideCallSlotId: () => slotManager.sideCallSlotId(),
+    userRequest: (sessionId) => turnRequests.get(sessionId), logger,
   });
   const { taskStore, webhookSessionStore } = createRuntimeTaskStores({ config, logger });
   const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
@@ -485,8 +544,19 @@ export async function createAgentRuntime(
     // reads, so the tool the orchestrator is being pushed towards is
     // always in the catalog when the push happens.
     isFusionMode: () => resolveCurrentRunMode().effective === "fusion",
-    clearFanoutTurnGrant: (sessionId: string) =>
-      approvals.fanoutScopes.clearTurnGrant(sessionId),
+    // A fusion turn starts: its fan-out grant is dropped and its $ /
+    // time caps (ATO-947) start from zero.
+    clearFanoutTurnGrant: (sessionId: string) => {
+      approvals.fanoutScopes.clearTurnGrant(sessionId);
+      // A turn that did not come through `runTurn` (sidecar, scheduler)
+      // has no meter bucket; open one so the cap sees the planner's own
+      // spend, measured from what it reads now.
+      turnUsageMeter.ensureOpen(sessionId);
+      fusionTurnBudget.begin(
+        sessionId,
+        turnUsageMeter.peekCostUsd(sessionId) ?? 0,
+      );
+    },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
     slotManager,
     grammar: getGrammar(),
@@ -528,6 +598,10 @@ export async function createAgentRuntime(
     // local leg) is built for the pinned link's wire shape, not the
     // active provider's that the four getters below describe.
     contextProviderId: (sessionId: string) => fallbackChain.standingOverrideFor(sessionId) ?? undefined,
+    // The task spend ceiling (ATO-1108) prices each step's completion the
+    // way compaction prices its own: cache-aware, unpriced (local) = $0.
+    priceCompletion: (result: CompletionResult, providerId: string | undefined) =>
+      compactionCost(result, providerId ?? providerRegistry.activeText.id),
     resolveLlmSlice: (providerId: string) => {
       const slice = resolveActiveLlmSlice(providerId);
       return {
@@ -679,11 +753,11 @@ export async function createAgentRuntime(
   const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
-  const { executeTurn, steer, runTurn } = createRuntimeTurnService(config, {
+  const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
-    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter },
+    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage },
     state: turnState, lifecycle, logger,
   });
 
@@ -696,6 +770,11 @@ export async function createAgentRuntime(
     config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest: (id) => turnRequests.get(id),
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
+    turnBudget: fusionTurnBudget,
+    liveWorkers: fusionLiveWorkers,
+    runCheckpoints: fusionRuns,
+    steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),
+    orchestratorTurnSpendUsd: (sessionId) => turnUsageMeter.peekCostUsd(sessionId),
   });
 
   const scheduler = createRuntimeScheduler({
@@ -724,6 +803,40 @@ export async function createAgentRuntime(
     turnController,
     steeringInbox,
     steer,
+    fusionWorkers: {
+      running: (parentSessionId: string) => fusionLiveWorkers.running(parentSessionId),
+      stop: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.stop(parentSessionId, taskId),
+      escalate: (parentSessionId: string, taskId: string) =>
+        fusionLiveWorkers.escalate(parentSessionId, taskId),
+      steer: (parentSessionId: string, taskId: string, text: string) =>
+        fusionLiveWorkers.steer(parentSessionId, taskId, text),
+    },
+    fusionRuns: {
+      listResumable: (sessionId?: string) =>
+        fusionRuns.listResumable(sessionId).map((run) => ({
+          runId: run.runId,
+          sessionId: run.sessionId,
+          updatedAt: run.updatedAt,
+          summary: describeResumableRun(run),
+        })),
+      resumeMessage: (sessionId: string, runId?: string) => {
+        const run =
+          runId === undefined
+            ? fusionRuns.listResumable(sessionId)[0]
+            : fusionRuns.listResumable(sessionId).find((r) => r.runId === runId);
+        return run === undefined ? null : renderResumeRequest(run);
+      },
+      discard: (sessionId: string, runId?: string) => {
+        const run =
+          runId === undefined
+            ? fusionRuns.listResumable(sessionId)[0]
+            : fusionRuns.listResumable(sessionId).find((r) => r.runId === runId);
+        return run !== undefined && fusionRuns.discard(run.runId)
+          ? run.runId
+          : null;
+      },
+    },
     profileStore,
     notesStore,
     lessonStore,
@@ -747,6 +860,7 @@ export async function createAgentRuntime(
     createSession,
     createEphemeralSession,
     runTurn,
+    controlGoal,
     executeTurn,
     previewPrompt,
     compactSession: compaction.compactSession,

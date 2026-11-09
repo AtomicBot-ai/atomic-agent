@@ -1,4 +1,5 @@
 import {
+  DEFAULT_APPEND_LOCAL,
   lacksRequiredApiKeyIn,
   resolveFallbackChain,
 } from "../../../llm/fallback/index.js";
@@ -34,7 +35,7 @@ export interface FallbackChainView {
 export function buildFallbackChainView(
   resolved: ResolvedLlmConfig,
 ): FallbackChainView {
-  const appendLocal = resolved.fallback?.appendLocal ?? true;
+  const appendLocal = resolved.fallback?.appendLocal ?? DEFAULT_APPEND_LOCAL;
   const explicitChain = resolved.fallback?.chain ?? [];
   const explicit = new Set(explicitChain);
   const localId = resolved.providers.find((p) => p.kind === LOCAL_KIND)?.id;

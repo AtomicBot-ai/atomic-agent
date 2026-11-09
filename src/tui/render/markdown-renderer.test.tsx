@@ -28,13 +28,29 @@ describe("MarkdownRenderer", () => {
     expect(text).toContain("body");
   });
 
-  it("renders fenced code blocks with fence markers", () => {
+  it("renders fenced code blocks without the ``` fences, language as a label", () => {
     const { lastFrame } = render(
       <MarkdownRenderer text={"```ts\nconst x = 1;\n```"} />,
     );
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("```");
+    expect(text).not.toContain("```");
+    expect(text).toContain("ts");
     expect(text).toContain("const x = 1;");
+  });
+
+  it("renders a fence with no language and a still-open fence without backticks", () => {
+    const closed = strip(
+      render(<MarkdownRenderer text={"```\nnpm test\n```"} />).lastFrame() ??
+        "",
+    );
+    expect(closed).not.toContain("```");
+    expect(closed).toContain("npm test");
+    const open = strip(
+      render(<MarkdownRenderer text={"Run:\n```sh\nnpm test\n"} />)
+        .lastFrame() ?? "",
+    );
+    expect(open).not.toContain("```");
+    expect(open).toContain("npm test");
   });
 
   it("renders links with the label", () => {

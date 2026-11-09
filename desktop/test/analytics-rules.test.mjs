@@ -4,7 +4,7 @@
 // id order, the inherited opt-out, upgrader seeding, backend_switched, the
 // bounded transport and the Sentry envelope. Each test fails if the rule it
 // names is removed.
-import { test } from "node:test";
+import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -25,6 +25,16 @@ const SU = require("../out/main/analytics/setup.js");
 const CORE = require("../out/main/analytics/core.js");
 const ENV = require("../out/main/sentry/envelope.js");
 const HERE = dirname(fileURLToPath(import.meta.url));
+
+// The code under test bounds its waits with unref'd timers on purpose (they must
+// never hold the app open). In a test, a stand-in that never answers then leaves
+// nothing alive but those timers, and on a loaded machine node:test can see an
+// empty event loop and fail the test as "still pending" before they fire
+// (ATO-1255). One ref'd handle for the whole file keeps the loop alive until
+// the last test is done.
+let keepAlive;
+before(() => { keepAlive = setInterval(() => {}, 60_000); });
+after(() => clearInterval(keepAlive));
 
 /* ---- ui_action: camelCase in, ids out ---- */
 
@@ -186,6 +196,14 @@ test("gate: an opt-out in the terminal config is inherited only when the desktop
   assert.equal(E.analyticsEnabledFor({ analytics: { enabled: true } }, off), true);
   assert.equal(E.analyticsEnabledFor({}, {}), true);
   assert.equal(E.inheritedOptOut({}, off), true);
+});
+
+test("DO_NOT_TRACK=1 turns analytics off; 0, false and empty do not (ATO-1189)", () => {
+  for (const v of ["1", "true", "TRUE", "yes", "on", " 1 "]) assert.equal(E.doNotTrackIn({ DO_NOT_TRACK: v }), true, v);
+  for (const v of ["0", "false", "", "no"]) assert.equal(E.doNotTrackIn({ DO_NOT_TRACK: v }), false, JSON.stringify(v));
+  assert.equal(E.doNotTrackIn({}), false);
+  const core = readFileSync(new URL("../main/analytics/core.ts", import.meta.url), "utf8");
+  assert.match(core, /if \(doNotTrackIn\(\)\) return false;/);
 });
 
 test("test and dev runs: --dev, NODE_ENV=development and unpackaged builds send nothing", () => {

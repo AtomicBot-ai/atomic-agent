@@ -22,7 +22,7 @@ function fn(name) {
 
 const NAMES = [
   "providerHost", "providerFailure", "providerReplied", "turnWaited", "turnFailure",
-  "turnFailureLine", "localWrongServerLine", "localContextFullLine", "localServerHost", "waitIsLocalServer",
+  "turnFailureLine", "localWrongServerLine", "localContextFullLine", "localRequestInvalidLine", "localFailureCode", "localFrameAdvice", "localServerHost", "waitIsLocalServer",
   "selProviders", "selActiveProviderId", "llmBlock", "llmProviders", "llmProvider", "llmLocalModels",
 ];
 
@@ -93,5 +93,55 @@ test("the frame's code wins over the words", () => {
 test("a 404 or 405 is still the wrong server, even with context words in it", () => {
   const row = window(external("http://127.0.0.1:8090"));
   const r = row({ kind: "error", category: "transport", error: "llama-server returned http 404: exceeds the available context size" });
+  assert.match(r.text, /^The server at 127\.0\.0\.1:8090 is not a model server/);
+});
+
+// ATO-1206: the agent's code and advice for a local 400 are the row's words.
+const INVALID = "The local model server turned the request down as invalid."
+  + " The model or the server may not support something the agent sent, such as tools or images."
+  + " Try another model, or update the server.";
+
+test("a local request the server would not take reads as the agent's advice, raw words under Details", () => {
+  const row = window(external("http://127.0.0.1:8090"));
+  const said = "llama-server returned http 400: tools are not supported by this model";
+  const advice = "The local model server turned the request down as invalid. Try another model, or update the server.";
+  const r = row({ kind: "error", category: "transport", error: said, payload: { code: "local_request_invalid", advice } });
+  assert.equal(r.text, advice);
+  assert.equal(r.detail, said);
+  // A frame with no advice still gets the agent's sentence for that code.
+  const bare = row({ kind: "error", category: "transport", error: said, payload: { code: "local_request_invalid" } });
+  assert.equal(bare.text, INVALID);
+  assert.equal(bare.detail, said);
+});
+
+test("the frame's advice wins for a full context, and the TUI's panel reads as Settings › Models", () => {
+  const row = window(external("http://127.0.0.1:8090"));
+  const advice = "The conversation no longer fits in the local model's context window. Compact this chat, or pick a model with a larger window in the Providers panel.";
+  const r = row({ kind: "error", category: "transport", error: LLAMA_400, payload: { code: "local_context_exceeded", advice } });
+  assert.equal(r.text, advice.replace("the Providers panel", "Settings › Models"));
+  assert.equal(r.detail, LLAMA_400);
+});
+
+test("the code is enough on an OpenAI-compatible local server (Atomic Chat on 1337)", () => {
+  const config = {
+    localModels: { mode: "external", url: "http://127.0.0.1:8090" },
+    llm: { activeTextProvider: "atomic-chat", providers: [
+      { id: "atomic-chat", kind: "openai", baseUrl: "http://127.0.0.1:1337/v1" },
+    ] },
+  };
+  const row = window(config);
+  const said = '"atomic-chat" rejected the request (400). The local Atomic Chat server at 127.0.0.1:1337 turned the request down (400).';
+  const full = row({ kind: "error", category: "transport", error: said, payload: { code: "local_context_exceeded" } });
+  assert.equal(full.text, PHRASE);
+  const invalid = row({ kind: "error", category: "transport", error: said, payload: { code: "local_request_invalid" } });
+  assert.equal(invalid.text, INVALID);
+});
+
+test("a cloud 400 with no code reads as before, and a 404/405 is still the wrong server", () => {
+  const cloud = window(external("http://127.0.0.1:8090", "openrouter"));
+  const said = '"openrouter" answered 400 (bad request): tools are not supported';
+  assert.equal(cloud({ kind: "error", category: "transport", error: said }).text, "Couldn't get a reply from OpenRouter.");
+  const row = window(external("http://127.0.0.1:8090"));
+  const r = row({ kind: "error", category: "transport", error: "llama-server returned http 404", payload: { code: "local_request_invalid" } });
   assert.match(r.text, /^The server at 127\.0\.0\.1:8090 is not a model server/);
 });

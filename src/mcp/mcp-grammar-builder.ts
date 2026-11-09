@@ -28,10 +28,16 @@ const TOOL_NAME_RULE_RE = /^tool-name ::= .*$/m;
 
 const MCP_SERVER_TOOL = "mcp-server-tool";
 const MCP_NATIVE_TOOL = "mcp-native-tool";
-/** Where each reference goes back, so the rule reads as it did before ATO-1029. */
-const REFERENCE_ANCHOR: Readonly<Record<string, string>> = {
-  [MCP_SERVER_TOOL]: MCP_NATIVE_TOOL,
-  [MCP_NATIVE_TOOL]: "verify-tool",
+/**
+ * What each reference goes back after, so the rule reads as the static
+ * grammar writes it: `mcp-native-tool` closes the built-in groups. The
+ * last anchor present wins. A rule that went out and came back must be
+ * byte-identical to one that never left, or the profile manager's
+ * grammar drifts from the catalog's (ATO-1029).
+ */
+const REFERENCE_ANCHORS: Readonly<Record<string, readonly string[]>> = {
+  [MCP_SERVER_TOOL]: [MCP_NATIVE_TOOL],
+  [MCP_NATIVE_TOOL]: ["verify-tool", "plan-tool"],
 };
 
 /**
@@ -102,7 +108,7 @@ function setToolNameReference(grammar: string, ref: string, referenced: boolean)
     if (!referenced) {
       return `tool-name ::= ${alternatives.filter((alt) => alt !== ref).join(" | ")}`;
     }
-    const at = alternatives.indexOf(REFERENCE_ANCHOR[ref] ?? "");
+    const at = Math.max(-1, ...(REFERENCE_ANCHORS[ref] ?? []).map((anchor) => alternatives.indexOf(anchor)));
     alternatives.splice(at === -1 ? alternatives.length : at + 1, 0, ref);
     return `tool-name ::= ${alternatives.join(" | ")}`;
   });

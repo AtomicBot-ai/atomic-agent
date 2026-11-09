@@ -15,6 +15,7 @@ import {
   skillSlashCommands,
 } from "./commands/slash-commands.js";
 import type { TuiAction } from "./tui-action.js";
+import { formatTuiStatus } from "./status-snapshot-tui.js";
 import { isKnownLocalModelId } from "../local-llm/index.js";
 import {
   isThemeName,
@@ -202,6 +203,24 @@ function runEnhanceCurrentDraft(
   callbacks.onPromptEnhanceRequested?.(draft);
 }
 
+/**
+ * The message a skill or plugin command turns into. A plugin command is
+ * rendered from its template (`$ARGUMENTS`, `$1`..`$9`) and then sent
+ * exactly as if the user had typed it.
+ */
+function prepareInvocationText(result: SlashDispatchResult, callbacks: TuiAppCallbacks): string {
+  if (result.skillInvocation) {
+    if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
+    const { name, input } = result.skillInvocation;
+    return callbacks.prepareSkillInvocation(name, input);
+  }
+  if (!result.pluginCommandInvocation || !callbacks.preparePluginCommand) throw new Error("Plugin commands are unavailable");
+  const { name, args } = result.pluginCommandInvocation;
+  const text = callbacks.preparePluginCommand(name, args);
+  if (text.trim().length === 0) throw new Error(`plugin command /${name} rendered an empty message`);
+  return text;
+}
+
 export function runSlashCommand(
   raw: string,
   state: TuiState,
@@ -209,12 +228,10 @@ export function runSlashCommand(
   callbacks: TuiAppCallbacks,
 ): void {
   const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
-  if (result.skillInvocation) {
+  if (result.skillInvocation || result.pluginCommandInvocation) {
     if (!canTypeMessage(state)) return;
     try {
-      if (!callbacks.prepareSkillInvocation) throw new Error("Skill invocation is unavailable");
-      const { name, input } = result.skillInvocation;
-      const text = callbacks.prepareSkillInvocation(name, input);
+      const text = prepareInvocationText(result, callbacks);
       dispatch({ type: "slash_palette_closed" });
       if (canAcceptMessage(state)) {
         dispatch({ type: "message_submitted" });
@@ -285,16 +302,38 @@ export function runSlashCommand(
   }
   if (result.queueVerb)
     runQueueVerb(result.queueVerb, state, dispatch, callbacks);
+  if (result.triggerStatusSnapshot) {
+    const text = formatTuiStatus(state, Date.now());
+    dispatch({ type: "runtime_info", line: text.split("\n")[0] ?? text });
+    dispatch({ type: "system_message", text });
+  }
   if (result.runModeVerb)
     runRunModeVerb(result.runModeVerb, state, dispatch, callbacks);
   if (result.modelModeCommand) {
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.fusionWorkerAction !== undefined) {
+    const worker = result.fusionWorkerAction;
+    if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {
+      dispatch({ type: "system_message", text: "no fusion worker is running here" });
+    } else {
+      callbacks.onFusionWorkerAction(
+        state.session.sessionId,
+        worker.taskId,
+        worker.action,
+        worker.action === "steer" ? worker.text : undefined,
+      );
+    }
+  }
+  if (result.fusionRunAction !== undefined) {
+    runFusionRunAction(result.fusionRunAction, state, dispatch, callbacks);
+  }
   if (result.runModeWorkers !== undefined) {
     callbacks.onFusionWorkersChangeRequested?.(result.runModeWorkers);
   }
   if (result.compactionVerb) callbacks.onCompactionRequested?.(result.compactionVerb);
+  if (result.goalCommand) callbacks.onGoalCommand?.(result.goalCommand);
   if (result.enhancePromptText !== undefined) {
     callbacks.onPromptEnhanceRequested?.(result.enhancePromptText);
   }
@@ -362,6 +401,16 @@ export function runSlashCommand(
     callbacks.onMouseSupportRequested?.(
       result.mouseVerb === "status" ? null : result.mouseVerb === "on",
     );
+  }
+  // `/steps`: the toggle needs the live value, which the pure dispatcher
+  // does not have. Applied here, then written to `tui.showSteps`.
+  if (result.showStepsVerb) {
+    const on =
+      result.showStepsVerb === "toggle"
+        ? !state.showSteps
+        : result.showStepsVerb === "on";
+    dispatch({ type: "show_steps_set", on });
+    callbacks.onShowStepsPersistRequested?.(on);
   }
 }
 
@@ -484,6 +533,52 @@ export function submitWhileBusy(
   }
   dispatch({ type: "message_queued", text });
   callbacks.onMessageSubmitted(text);
+}
+
+/**
+ * `/fusion [resume|discard] [runId]` (ATO-617). A resume is sent as the
+ * person's own turn — the same path as a skill invocation — so the
+ * orchestrator continues the run with `fusion.delegate { resume }`, in
+ * the transcript, where its result is merged like any fan-out.
+ */
+function runFusionRunAction(
+  request: NonNullable<SlashDispatchResult["fusionRunAction"]>,
+  state: TuiState,
+  dispatch: Dispatch,
+  callbacks: TuiAppCallbacks,
+): void {
+  const sessionId = state.session.sessionId;
+  if (sessionId === null) {
+    dispatch({ type: "system_message", text: "no unfinished fusion run in this session" });
+    return;
+  }
+  if (request.action !== "resume") {
+    if (callbacks.onFusionRunAction === undefined) {
+      dispatch({ type: "system_message", text: "no unfinished fusion run in this session" });
+      return;
+    }
+    callbacks.onFusionRunAction(sessionId, request.action, request.runId);
+    return;
+  }
+  if (!canTypeMessage(state)) return;
+  const text = callbacks.prepareFusionResume?.(sessionId, request.runId) ?? null;
+  if (text === null) {
+    dispatch({
+      type: "system_message",
+      text:
+        request.runId === undefined
+          ? "no unfinished fusion run in this session"
+          : `no unfinished fusion run ${request.runId} in this session`,
+    });
+    return;
+  }
+  dispatch({ type: "slash_palette_closed" });
+  if (canAcceptMessage(state)) {
+    dispatch({ type: "message_submitted" });
+    callbacks.onMessageSubmitted(text);
+  } else {
+    submitWhileBusy(text, "queue", dispatch, callbacks);
+  }
 }
 
 /**

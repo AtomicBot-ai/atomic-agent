@@ -21,8 +21,8 @@
  *    `createFallbackStreamer` prepare each link before the attempt).
  *
  * The second path is not a one-off: a rate-limited or down cloud primary
- * falls over on *every* turn, and `appendLocal` defaults to `true`, so
- * that is the shape of the default config under an outage. Restoring
+ * falls over on *every* turn when `appendLocal` is on (off by default
+ * since ATO-349), so that is the shape of such a config under an outage. Restoring
  * once is not enough there — the operator can still swap the model
  * behind `llama-server` mid-outage, and the active provider stays cloud
  * the whole time, so the loop's own turn-start refresh never re-opens.

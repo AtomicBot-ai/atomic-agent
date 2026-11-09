@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-const {STEPS, stepsAlwaysSet, turnFoldable, turnFoldsOf, turnSumLabel, turnSumHTML} =
+const {STEPS, stepsAlwaysSet, turnFoldable, turnFoldsOf, turnSumLabel, turnSumHTML,
+  TURN_AUTO_OPEN, autoApprovedOf, autoViaText, turnAutoHTML} =
   createRequire(import.meta.url)('../renderer/turn-summary.js');
 
 // ATO-464 (U-42): a finished turn's steps fold into one summary line.
@@ -123,4 +124,68 @@ test('the page loads turn-summary.js before renderer.js, which draws with it', a
   assert.match(renderer, /t\.closest\('\[data-turnsum\]'\)/);
   // ATO-1257: a failure the agent went on from (TOOL_QUIET) is not counted red on the line.
   assert.match(renderer, /turnFoldsOf\(items, \{runningId: S\.turnId \? S\.streamId : null, always: STEPS\.always,\s*failedOf: \(t\) => toolState\(t\) === 'err' && !TOOL_QUIET\.has\(t\.id\)\}\)/);
+});
+
+// ATO-1145: what the agent allowed by itself, under the turn's summary line.
+
+test('auto-approved records are read from a call\'s approvals; prompted ones are not', () => {
+  const got = autoApprovedOf([
+    {verdict: 'approved', category: 'shell', at: 1},
+    {verdict: 'auto-approved', category: 'shell', at: 2, via: 'rule', reason: 'auto-approved (rule r_1)'},
+    {verdict: 'auto-approved', category: 'http', at: 3, via: 'something-new'},
+    null,
+  ]);
+  assert.deepEqual(got, [
+    {via: 'rule', reason: 'auto-approved (rule r_1)', category: 'shell', at: 2},
+    {via: null, reason: '', category: 'http', at: 3},
+  ]);
+  assert.deepEqual(autoApprovedOf(undefined), []);
+  assert.equal(autoViaText('rule'), 'your rule');
+  assert.equal(autoViaText('grant'), 'allowed earlier in this chat');
+  assert.equal(autoViaText('risk-review'), 'risk check');
+  assert.equal(autoViaText(null), 'automatic');
+});
+
+test('a turn with auto-approved calls says how many; one with none says nothing', () => {
+  const a = tool({name: 'os.shell.run', autoApproved: [{via: 'rule', reason: 'auto-approved (rule r_1)'}]});
+  const b = tool({name: 'os.shell.run', autoApproved: [{via: 'grant', reason: ''}, {via: 'risk-review', reason: 'auto-approved (risk review: low)'}]});
+  const log = [user(), a, tool(), b, reply()];
+  const f = turnFoldsOf(log, {}).get(1);
+  assert.equal(f.auto.length, 3);
+  assert.equal(f.auto[0].row, a);
+  const closed = turnSumHTML(f, false, null, deps);
+  assert.match(closed, /<span class="ts-l">Auto-approved 3 actions<\/span>/);
+  assert.match(closed, /data-tsauto="[^"]+" aria-expanded="false"/);
+  assert.doesNotMatch(closed, /ts-autolist/, 'the list waits for a click');
+
+  const plain = turnFoldsOf([user(), tool(), tool(), reply()], {}).values().next().value;
+  assert.deepEqual(plain.auto, []);
+  assert.equal(turnAutoHTML(plain, deps), '');
+  assert.doesNotMatch(turnSumHTML(plain, false, null, deps), /Auto-approved/);
+});
+
+test('one auto-approved call is singular, and the opened list says what, how and why', () => {
+  const a = tool({name: 'os.shell.run', autoApproved: [{via: 'rule', reason: 'auto-approved (rule r_1)'}]});
+  const log = [user(), a, reply()];
+  const f = turnFoldsOf(log, {}).get(1);
+  TURN_AUTO_OPEN.add(f.replyId);
+  try {
+    const html = turnAutoHTML(f, Object.assign({}, deps, {autoWhat: (row) => 'Ran <span class="tl-m">git status</span>'}));
+    assert.match(html, /Auto-approved 1 action</);
+    assert.match(html, /aria-expanded="true"/);
+    assert.match(html, /<div class="ts-autorow">Ran <span class="tl-m">git status<\/span> · your rule · <span class="ts-autowhy">auto-approved \(rule r_1\)<\/span><\/div>/);
+    // Without a describer, the tool's name, escaped.
+    const esc = (s) => String(s).replace(/</g, '&lt;');
+    const bare = turnAutoHTML(Object.assign({}, f, {auto: [{row: {name: '<x>'}, via: 'grant', reason: ''}]}), Object.assign({}, deps, {esc}));
+    assert.match(bare, /&lt;x> · allowed earlier in this chat<\/div>/);
+  } finally { TURN_AUTO_OPEN.delete(f.replyId); }
+});
+
+test('the renderer reads auto-approvals from the store, live and on reopen, and toggles the list by delegation', async () => {
+  const {readFileSync} = await import('node:fs');
+  const renderer = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  assert.match(renderer, /const auto = autoApprovedOf\(t\.approvals\);/);
+  assert.match(renderer, /const auto = autoApprovedOf\(result\.approvals\);/);
+  assert.match(renderer, /t\.closest\('\[data-tsauto\]'\)/);
+  assert.match(renderer, /turnSumHTML\(fold, open, turnSumMs\(fold, items\), \{esc, ic, dur, autoWhat: toolLine\}\)/);
 });

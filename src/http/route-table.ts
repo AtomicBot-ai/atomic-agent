@@ -5,6 +5,7 @@ import { createChatCompletionsHandler } from "./openai-chat-completions.js";
 import { createCancelCompletionHandler } from "./openai-completions-cancel.js";
 import { createHealthHandler } from "./route-health.js";
 import { createLocalModelRecheckHandler } from "./route-local-model-recheck.js";
+import { createModelTiersHandler } from "./route-model-tiers.js";
 import { createModelsHandler } from "./route-models.js";
 import { createCapabilitiesHandler } from "./route-capabilities.js";
 import {
@@ -32,9 +33,19 @@ import {
 } from "./route-sessions.js";
 import { createRenameSessionHandler } from "./route-session-title.js";
 import {
+  createEscalateFusionWorkerHandler,
+  createListFusionWorkersHandler,
+  createSteerFusionWorkerHandler,
+  createStopFusionWorkerHandler,
+} from "./route-fusion-workers.js";
+import {
   createApprovalEventsHandler,
   createResolveApprovalHandler,
 } from "./route-approval.js";
+import {
+  createDeleteApprovalRuleHandler,
+  createListApprovalRulesHandler,
+} from "./route-approval-rules.js";
 import {
   createCancelTaskHandler,
   createCreateTaskHandler,
@@ -104,6 +115,8 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/capabilities",
       handler: createCapabilitiesHandler(),
     },
+    // ATO-32: the Cheap / Balanced / Best picks (presets/model-tiers.ts).
+    { method: "GET", path: "/api/model-tiers", handler: createModelTiersHandler() },
     { method: "POST", path: "/api/sessions/{id}/compact", handler: createSessionCompactionHandler(true) },
     { method: "GET", path: "/api/sessions/{id}/compaction", handler: createSessionCompactionHandler(false) },
     { method: "GET", path: "/api/config", handler: createGetConfigHandler() },
@@ -184,6 +197,12 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/sessions/{id}/steer",
       handler: createAckUndeliveredSteersHandler(),
     },
+    // ATO-568: the person's stop / steer / escalate on one running fusion
+    // worker of this session's fan-out (the desktop's subagent panel).
+    { method: "GET", path: "/api/sessions/{id}/fusion/workers", handler: createListFusionWorkersHandler() },
+    { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/stop", handler: createStopFusionWorkerHandler() },
+    { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/steer", handler: createSteerFusionWorkerHandler() },
+    { method: "POST", path: "/api/sessions/{id}/fusion/workers/{taskId}/escalate", handler: createEscalateFusionWorkerHandler() },
     {
       method: "POST",
       path: "/api/approval/resolve",
@@ -194,6 +213,9 @@ export function buildRouteTable(): RouteDefinition[] {
       path: "/api/events",
       handler: createApprovalEventsHandler(),
     },
+    // ATO-1141: saved "always allow" / ask / deny rules.
+    { method: "GET", path: "/api/approval-rules", handler: createListApprovalRulesHandler() },
+    { method: "DELETE", path: "/api/approval-rules/{id}", handler: createDeleteApprovalRuleHandler() },
     // The two routes the desktop needs and the TUI does not: the coding-mode
     // stance it projects onto the approval ladder, and the context figure it
     // shows before the first message of a session.

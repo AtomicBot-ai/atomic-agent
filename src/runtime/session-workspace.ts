@@ -3,6 +3,7 @@ import type { SessionState } from "../session/session-state.js";
 import type { SessionWorkspace, WorkspacePrepareOptions } from "../session/workspace-context.js";
 import { instructionTrust, projectTrustHint, skillTrust } from "../skills/project-trust.js";
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
+import { listEnabledPluginSkills } from "../plugins/plugin-runtime.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import { createProjectInstructionsCache } from "./project-instructions.js";
 
@@ -15,7 +16,8 @@ export function createWorkspaceLoader(config: AtomicAgentConfig, logger?: Pick<S
   return (session: Pick<SessionState, "workingDir">, cloud: boolean, signal?: AbortSignal, options: WorkspacePrepareOptions = {}): SessionWorkspace => {
     signal?.throwIfAborted();
     const skills = loadWorkspaceSkills(session.workingDir, { globalDir: config.paths.globalSkillsDir,
-      projectDirName: config.paths.projectSkillsDirName, configFile: config.paths.userConfigFile, defaults: config.skills }, cloud);
+      projectDirName: config.paths.projectSkillsDirName, configFile: config.paths.userConfigFile, defaults: config.skills,
+      pluginSkills: () => listEnabledPluginSkills(config.paths.stateDir) }, cloud);
     // Instruction files a folder ships load only once the operator trusted them (ATO-298),
     // judged with the same policy snapshot the skill scan just read.
     const trust = skills.projectTrust;

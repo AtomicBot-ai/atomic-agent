@@ -66,6 +66,14 @@ export function packedConversationTurns(packed: PackedTurns): PromptTurn[] {
           kind: "assistant_tool_call",
           tool: turn.tool,
           args: turn.args,
+          // Only the current macro-turn's reasoning goes back: the model
+          // is still working on that request and its templates drop the
+          // thinking of answered turns anyway (ATO-887).
+          ...(options.inCurrentMacroTurn === true &&
+          turn.reasoning !== undefined &&
+          turn.reasoning.length > 0
+            ? { reasoning: turn.reasoning }
+            : {}),
         });
         break;
       case "tool_result":

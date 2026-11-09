@@ -1,3 +1,4 @@
+import type { TurnCheckpointOptions } from "./turn-checkpoints.js";
 import type { CompactionResult, SessionCompaction } from "../session/session-compaction.js";
 import type { BuiltPrompt } from "../prompt/build-prompt-types.js";
 import type { AtomicAgentConfig } from "../config/index.js";
@@ -5,6 +6,7 @@ import type { LlmStreamParams } from "../agent/step/step-contract.js";
 import type { TurnController } from "./turn-controller.js";
 import type { SteeringInbox } from "./steering-inbox.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
+import type { AnswerChannel } from "../prompt/answer-style.js";
 import type { ChannelStatus } from "./channel-status.js";
 import type { TelegramChannel } from "../channels/telegram/index.js";
 import type { DiscordChannel } from "../channels/discord/index.js";
@@ -31,6 +33,7 @@ import type { SkillRegistry } from "../skills/skill-registry.js";
 import type { CapabilitiesSummary, SkillCatalogEntry, ToolDescriptor } from "../prompt/stable-prefix.js";
 import type { AgentLoop } from "../agent/agent-loop.js";
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-contract.js";
+import type { GoalSpec, GoalState } from "../agent/goal/index.js";
 import type { SessionStore, FusionWorkerMeta, SessionState } from "../session/index.js";
 import type { TaskRunner, TaskStore } from "../tasks/index.js";
 import type { Scheduler } from "../scheduler/index.js";
@@ -226,6 +229,40 @@ export interface AgentRuntime {
    */
   steer(sessionId: string, text: string): boolean;
   /**
+   * The running fusion workers of `parentSessionId`'s fan-out, by task
+   * id, and the person's two actions on one (ATO-66, ATO-942): `stop`
+   * cancels that worker alone (`false` when it is not running);
+   * `escalate` asks the configured escalation model to advise it and
+   * resolves with one line saying what happened and what it cost
+   * (`null` when it is not running); `steer` queues the person's note
+   * for that worker alone (ATO-568), read at its next step boundary the
+   * way {@link AgentRuntime.steer} is for the session, and returns
+   * `false` (nothing queued) when the worker is not running, its turn
+   * no longer takes steers, the text is blank or its inbox is full.
+   * Every call is addressed by the parent session: a task id alone
+   * never reaches another session's worker.
+   */
+  readonly fusionWorkers: {
+    running(parentSessionId: string): string[];
+    stop(parentSessionId: string, taskId: string): boolean;
+    escalate(parentSessionId: string, taskId: string): Promise<string | null>;
+    steer(parentSessionId: string, taskId: string, text: string): boolean;
+  };
+  /**
+   * Fusion runs cut off by a crash, a quit or an update (ATO-617), read
+   * from their checkpoints. `listResumable` names the runs nobody is
+   * working on (of one session, or all); `resumeMessage` is the person's
+   * turn that makes the orchestrator continue one (`null` when there is
+   * none) — the re-dispatch itself is `fusion.delegate { resume }`;
+   * `discard` drops one and returns its id. Without `runId`, the newest.
+   * Optional so embedders and test runtimes need not provide it.
+   */
+  readonly fusionRuns?: {
+    listResumable(sessionId?: string): ResumableFusionRun[];
+    resumeMessage(sessionId: string, runId?: string): string | null;
+    discard(sessionId: string, runId?: string): string | null;
+  };
+  /**
    * Durable user-profile store. Present even when
    * `memory.profile.enabled` is `false`, because the store owns the
    * SQLite connection used by any future feature that reuses the same
@@ -409,6 +446,8 @@ export interface AgentRuntime {
       origin?: TurnOrigin;
       providerId?: string;
       taskMaxDurationMs?: number;
+      /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
+      taskMaxCostUsd?: number;
       /**
        * Hide tools from this turn (see `RunTurnOptions.toolFilter`).
        * `fusion.delegate` narrows a worker's catalog with it.
@@ -427,8 +466,36 @@ export interface AgentRuntime {
        * ATO-334). Absent: unattended, the window is halved without asking.
        */
       interactive?: boolean;
+      /**
+       * What the turn's progress marker records beyond the message: the
+       * durable task it runs for, resumes already spent, the request
+       * when the message carries a resume note (ATO-1109).
+       */
+      checkpoint?: TurnCheckpointOptions;
+      /**
+       * Goal mode (ATO-451, `RunTurnOptions.goal`): run rounds of
+       * ordinary turns until the acceptance list is green, a person is
+       * needed or a limit is reached. The goal is stored with the session
+       * (`metadata.goal`); the same list resumes a stored goal.
+       */
+      goal?: GoalSpec;
+      /** Called after every goal state change, for a live goal line. */
+      onGoalProgress?: (goal: GoalState) => void;
+      /**
+       * The surface showing the reply when `origin` cannot tell it (an
+       * HTTP extensions client is the desktop app). Picks the reply's
+       * `### answer-style` and its polish (ATO-966, ATO-967).
+       */
+      answerChannel?: AnswerChannel;
     },
   ): Promise<RunTurnResult>;
+  /**
+   * Ask the goal running on a session to stop after its current round:
+   * `pause` keeps it stored as paused, `clear` removes it. `false` when no
+   * goal runs there (the caller then edits `metadata.goal` itself).
+   * Optional so embedders and test doubles need not implement it.
+   */
+  controlGoal?(sessionId: string, verb: "pause" | "clear"): boolean;
   /**
    * Inline counterpart to `runTurn` — runs the agent loop and
    * persists the result without acquiring the per-session lock. Use
@@ -450,12 +517,24 @@ export interface AgentRuntime {
       signal?: AbortSignal;
       providerId?: string;
       taskMaxDurationMs?: number;
+      /** Spend ceiling in USD (see `RunTurnOptions.taskMaxCostUsd`). */
+      taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       /** See `runTurn`'s `interactive`. */
       interactive?: boolean;
+      /** See `runTurn`'s `checkpoint`. */
+      checkpoint?: TurnCheckpointOptions;
+      /**
+       * Where the turn came in. `runTurn` passes its own; a frontend
+       * calling this directly (the desktop sidecar) names itself so the
+       * reply gets that surface's `### answer-style` (ATO-966).
+       */
+      origin?: TurnOrigin;
+      /** See `runTurn`'s `answerChannel`; wins over `origin`. */
+      answerChannel?: AnswerChannel;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -639,4 +718,13 @@ export interface AgentRuntime {
   setPlanMode(on: boolean): void;
   /** Close all resources (browser, sqlite, llama client). Safe to call twice. */
   shutdown(): Promise<void>;
+}
+
+/** One unfinished fusion run, as `AgentRuntime.fusionRuns` lists it. */
+export interface ResumableFusionRun {
+  readonly runId: string;
+  readonly sessionId: string;
+  readonly updatedAt: number;
+  /** One plain line: what is done, what is left. */
+  readonly summary: string;
 }

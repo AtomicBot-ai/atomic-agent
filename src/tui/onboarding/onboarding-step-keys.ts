@@ -49,7 +49,9 @@ export interface OnboardingKeyContext {
  */
 export function onboardingPickRows(): readonly LocalPickRow[] {
   return buildLocalPickRows(
-    orderLocalModelPicks(buildLocalModelPicks(hostRamGb())),
+    orderLocalModelPicks(
+      buildLocalModelPicks(hostRamGb(), undefined, { quickStart: true }),
+    ),
   );
 }
 

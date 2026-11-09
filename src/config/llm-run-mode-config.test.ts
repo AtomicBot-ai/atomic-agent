@@ -5,6 +5,8 @@ import {
   DEFAULT_FUSION_REVIEW_STALL_STEPS,
   DEFAULT_FUSION_WORKERS,
   FUSION_REVIEW_STALL_STEPS_MAX,
+  FUSION_TASK_TREE_MAX_DEPTH,
+  FUSION_TASK_TREE_MAX_NODES_MAX,
   FUSION_WORKERS_MAX,
   FUSION_WORKERS_MIN,
   parseLlmRunModeConfig,
@@ -28,12 +30,13 @@ describe("parseLlmRunModeConfig", () => {
     });
   });
 
-  it("rejects an unknown mode", () => {
+  it("ATO-1241: leaves a mode a newer build added unset; rejects a non-string mode", () => {
+    expect(parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode")).toEqual({});
     expect(() =>
-      parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode"),
+      parseLlmRunModeConfig({ mode: 3 }, providers, "llm.runMode"),
     ).toThrow(ConfigValidationError);
     expect(() =>
-      parseLlmRunModeConfig({ mode: "hybrid" }, providers, "llm.runMode"),
+      parseLlmRunModeConfig({ mode: 3 }, providers, "llm.runMode"),
     ).toThrow(/llm\.runMode\.mode/);
   });
 
@@ -236,6 +239,56 @@ describe("scrubRunModeProviderPins", () => {
       fusion: { orchestratorModel: "gpt-5" },
     });
   });
+
+  it("drops escalation and judge pins that name the removed provider (ATO-1264)", () => {
+    const block = {
+      mode: "fusion" as const,
+      fusion: {
+        orchestratorProvider: "openrouter",
+        workerProvider: "local-llama",
+        escalation: "advisor" as const,
+        escalationProvider: "claude-cli",
+        escalationMaxUsd: 0.5,
+        judge: "on" as const,
+        judgeProvider: "claude-cli",
+      },
+    };
+    const scrubbed = scrubRunModeProviderPins(block, "claude-cli");
+    expect(scrubbed).toEqual({
+      mode: "fusion",
+      fusion: {
+        orchestratorProvider: "openrouter",
+        workerProvider: "local-llama",
+        escalation: "advisor",
+        escalationMaxUsd: 0.5,
+        judge: "on",
+      },
+    });
+    // The scrubbed block must load again without the removed provider.
+    const remaining = providers.filter((p) => p.id !== "claude-cli");
+    expect(() =>
+      parseLlmRunModeConfig(scrubbed, remaining, "llm.runMode"),
+    ).not.toThrow();
+  });
+
+  it("keeps escalation and judge pins that name another provider", () => {
+    const block = {
+      mode: "fusion" as const,
+      fusion: {
+        workerProvider: "local-llama",
+        escalationProvider: "openrouter",
+        judgeProvider: "claude-cli",
+      },
+    };
+    expect(scrubRunModeProviderPins(block, "local-llama")).toEqual({
+      mode: "fusion",
+      fusion: { escalationProvider: "openrouter", judgeProvider: "claude-cli" },
+    });
+    expect(scrubRunModeProviderPins(block, "claude-cli")).toEqual({
+      mode: "fusion",
+      fusion: { workerProvider: "local-llama", escalationProvider: "openrouter" },
+    });
+  });
 });
 
 describe("cloudWorkers (F21)", () => {
@@ -277,8 +330,12 @@ describe("workerReasoning / workerMaxOutputTokens (F20)", () => {
     );
     expect(parsed.fusion).toEqual({ workerReasoning: "low", workerMaxOutputTokens: 12_000 });
     expect(parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion).toEqual({});
+    // ATO-1241: a level a newer build added reads as unset; a non-string is still rejected.
+    expect(
+      parseLlmRunModeConfig({ fusion: { workerReasoning: "max" } }, providers, "llm.runMode").fusion,
+    ).toEqual({});
     expect(() =>
-      parseLlmRunModeConfig({ fusion: { workerReasoning: "max" } }, providers, "llm.runMode"),
+      parseLlmRunModeConfig({ fusion: { workerReasoning: 2 } }, providers, "llm.runMode"),
     ).toThrow(/llm\.runMode\.fusion\.workerReasoning/);
     for (const bad of [0, -1, 2.5, "8192", 1_000_001]) {
       expect(() =>
@@ -321,5 +378,68 @@ describe("reviewStallSteps (F41)", () => {
       ).toThrow(/llm\.runMode\.fusion\.reviewStallSteps/);
     }
     expect(DEFAULT_FUSION_REVIEW_STALL_STEPS).toBe(6);
+  });
+
+  it("accepts fusion.isolation off|worktree, leaves a newer value unset and rejects a wrong type (ATO-946)", () => {
+    for (const isolation of ["off", "worktree"] as const) {
+      expect(
+        parseLlmRunModeConfig({ fusion: { isolation } }, providers, "llm.runMode"),
+      ).toEqual({ fusion: { isolation } });
+    }
+    expect(
+      parseLlmRunModeConfig({ fusion: { isolation: "on" } }, providers, "llm.runMode"),
+    ).toEqual({ fusion: {} });
+    expect(() =>
+      parseLlmRunModeConfig({ fusion: { isolation: 1 } }, providers, "llm.runMode"),
+    ).toThrow(/llm\.runMode\.fusion\.isolation/);
+  });
+});
+
+describe("taskTree (ATO-940)", () => {
+  const providers = [
+    { id: "openrouter", kind: "openrouter" },
+    { id: "local-llama", kind: "llama-server" },
+  ];
+  it("is optional, and each field is validated when present", () => {
+    expect(
+      parseLlmRunModeConfig({ fusion: {} }, providers, "llm.runMode").fusion
+        ?.taskTree,
+    ).toBeUndefined();
+    expect(
+      parseLlmRunModeConfig(
+        { fusion: { taskTree: { enabled: true, maxDepth: 3, maxNodes: 24 } } },
+        providers,
+        "llm.runMode",
+      ).fusion?.taskTree,
+    ).toEqual({ enabled: true, maxDepth: 3, maxNodes: 24 });
+    expect(
+      parseLlmRunModeConfig(
+        { fusion: { taskTree: {} } },
+        providers,
+        "llm.runMode",
+      ).fusion?.taskTree,
+    ).toEqual({});
+  });
+
+  it("caps the depth at 3 and refuses a malformed block, naming the field", () => {
+    expect(FUSION_TASK_TREE_MAX_DEPTH).toBe(3);
+    const bad: Array<[unknown, RegExp]> = [
+      [true, /llm\.runMode\.fusion\.taskTree/],
+      [{ enabled: "yes" }, /taskTree\.enabled/],
+      [{ maxDepth: 4 }, /taskTree\.maxDepth/],
+      [{ maxDepth: 0 }, /taskTree\.maxDepth/],
+      [{ maxDepth: 2.5 }, /taskTree\.maxDepth/],
+      [{ maxNodes: 0 }, /taskTree\.maxNodes/],
+      [{ maxNodes: FUSION_TASK_TREE_MAX_NODES_MAX + 1 }, /taskTree\.maxNodes/],
+    ];
+    for (const [taskTree, field] of bad) {
+      expect(() =>
+        parseLlmRunModeConfig(
+          { fusion: { taskTree } },
+          providers,
+          "llm.runMode",
+        ),
+      ).toThrow(field);
+    }
   });
 });

@@ -172,31 +172,73 @@ function storedKey(check: Check): void {
    makes (`config get`, then `config set '<whole file>'`), against a throwaway
    state directory. What goes in comes back — the plain key and the bad one —
    so the agent's config layer stores a key as it is given, and the refusal
-   has to happen before it. */
+   has to happen before it.
+
+   ATO-925: this check failed now and then in full runs and passed on the
+   retry, and its detail could not say why: a CLI call that failed (timed out
+   on a loaded machine, killed, printed something that was not JSON) showed
+   only as `status: null` / `back: undefined`. A call that FAILS is now tried
+   once more and, when it still fails, named with its status, signal and
+   stderr. What the check asserts is unchanged: a value that comes back
+   different is never retried. */
+type CliRun = { status: number | null; signal: string | null; out: string; err: string };
 function writePath(check: Check): void {
   const bin = resolveBinary();
   const dir = mkdtempSync(join(tmpdir(), "aa-t32-"));
   try {
     const env = { ...process.env, ATOMIC_AGENT_STATE_DIR: dir };
-    const read = () => {
-      const r = bin ? spawnSync(bin, ["config", "get"], { env, encoding: "utf8", timeout: 60_000 }) : null;
-      try { return r && r.status === 0 ? JSON.parse(r.stdout) as Record<string, unknown> : null; } catch { return null; }
+    const failures: string[] = [];
+    const run = (args: string[]): CliRun => {
+      const r = spawnSync(bin!, args, { env, encoding: "utf8", timeout: 60_000 });
+      return {
+        status: r.status, signal: r.signal ?? (r.error ? String(r.error.message) : null),
+        out: r.stdout ?? "", err: (r.stderr ?? "").trim().split("\n").slice(-2).join(" | ").slice(0, 300),
+      };
+    };
+    const note = (what: string, r: CliRun): void => {
+      failures.push(`${what}: status ${r.status}, signal ${r.signal}, stderr ${q(r.err)}, stdout ${q(r.out.slice(0, 120))}`);
+    };
+    const parse = (r: CliRun): Record<string, unknown> | null => {
+      if (r.status !== 0) return null;
+      try { return JSON.parse(r.out) as Record<string, unknown>; } catch { return null; }
+    };
+    /** `config get`, once more if the call itself failed. */
+    const read = (): Record<string, unknown> | null => {
+      if (!bin) return null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const r = run(["config", "get"]);
+        const cfg = parse(r);
+        if (cfg) return cfg;
+        note(`config get (try ${attempt})`, r);
+      }
+      return null;
+    };
+    /** `config set '<json>'`, once more if the call itself failed (the write is whole-file, so repeating it is safe). */
+    const write = (cfg: Record<string, unknown>): number | null => {
+      let last: CliRun | null = null;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        last = run(["config", "set", JSON.stringify(cfg)]);
+        if (last.status === 0) return 0;
+        note(`config set (try ${attempt})`, last);
+      }
+      return last?.status ?? null;
     };
     const roundTrip = (key: string): { status: number | null; back: unknown } => {
       const cfg = read();
       if (!cfg) return { status: null, back: undefined };
       cfg["llm"] = { activeTextProvider: "local-llama", providers: [{ id: ID, kind: "aimlapi", apiKey: key, defaultChatModel: MODEL }] };
       normaliseLlmBlock(cfg);
-      const set = spawnSync(bin!, ["config", "set", JSON.stringify(cfg)], { env, encoding: "utf8", timeout: 60_000 });
+      const status = write(cfg);
       const back = providersOf(read()).find((p) => p.id === ID)?.apiKey;
-      return { status: set.status, back };
+      return { status, back };
     };
     const plain = roundTrip(PASTED_CLEAN);
     const odd = roundTrip(CYRILLIC);
+    const ok = !!bin && plain.status === 0 && plain.back === PASTED_CLEAN && odd.status === 0 && odd.back === CYRILLIC;
     check(
       "T32: the config write stores a key exactly as it is given — nothing added, nothing taken away, a bad character included",
-      !!bin && plain.status === 0 && plain.back === PASTED_CLEAN && odd.status === 0 && odd.back === CYRILLIC,
-      show({ bin: !!bin, plain, odd }),
+      ok,
+      show({ bin: !!bin, plain, odd }) + (failures.length ? `; CLI calls that failed: ${failures.join("; ")}` : ""),
     );
   } finally {
     rmSync(dir, { recursive: true, force: true });

@@ -8,6 +8,8 @@ import { clampMenuCursor } from "./menu/menu-selectors.js";
 import { filterSlashCommands, skillSlashCommands } from "./commands/slash-commands.js";
 import { selectSidebarTasks } from "./sidebar-tasks-selector.js";
 import { THEME_NAMES } from "./theme/theme.js";
+import { goalSummaryLine } from "../agent/goal/goal-state.js";
+import { lastTurnFoldId, turnFoldsOf } from "./render/turn-collapse.js";
 import type { TuiAction } from "./tui-action.js";
 import type { TuiState } from "./tui-state.js";
 
@@ -78,6 +80,40 @@ export function reduceUiAction(
         next[card.id] = action.expanded;
       return { ...state, toolsExpandedById: next };
     }
+    case "turn_expand_toggled": {
+      const open = state.turnsExpandedById[action.messageId] === true;
+      return {
+        ...state,
+        turnsExpandedById: {
+          ...state.turnsExpandedById,
+          [action.messageId]: !open,
+        },
+      };
+    }
+    case "turn_expand_set": {
+      if (action.scope === "all") {
+        if (!action.expanded) return { ...state, turnsExpandedById: {} };
+        const next: Record<string, boolean> = {};
+        const folds = turnFoldsOf(state.messages, {
+          running: state.status === "running",
+        });
+        for (const id of folds.keys()) next[id] = true;
+        return { ...state, turnsExpandedById: next };
+      }
+      const last = lastTurnFoldId(state.messages, {
+        running: state.status === "running",
+      });
+      if (last === null) return state;
+      return {
+        ...state,
+        turnsExpandedById: {
+          ...state.turnsExpandedById,
+          [last]: action.expanded,
+        },
+      };
+    }
+    case "show_steps_set":
+      return { ...state, showSteps: action.on };
     case "menu_opened":
       // Always reopen at the root with an empty query: a menu that resumes
       // where it was last left makes the same keypress mean different
@@ -204,6 +240,8 @@ export function reduceUiAction(
           (text) => !action.queued.includes(text),
         ),
       };
+    case "goal_changed":
+      return { ...state, goalLine: action.goal === null ? null : goalSummaryLine(action.goal) };
     case "plan_handoff_dismissed":
       // Mode untouched: dismissing a plan is declining this one, not
       // leaving the mode you are planning in.
@@ -288,6 +326,7 @@ export function reduceUiAction(
         streamingToolCalls: [],
         streamingToolCards: [],
         toolsExpandedById: {},
+        turnsExpandedById: {},
         lastRunStatus: null,
         // `/clear` drops the transcript, so the window it filled is
         // gone too. Leaving the old figure up would claim tokens that
@@ -465,6 +504,9 @@ export function reduceUiAction(
         // carrying the old thread's figure over would claim this one is
         // exactly as full as the one just left.
         contextUsage: action.contextUsage ?? EMPTY_CONTEXT_USAGE,
+        // The checklist belongs to the thread on screen too (ATO-486).
+        plan: action.plan ?? null,
+        sessionUsage: action.sessionUsage ?? null,
         messages: [...action.messages],
         reasoning: [],
         feed: [],
@@ -473,6 +515,7 @@ export function reduceUiAction(
         streamingToolCalls: [],
         streamingToolCards: [],
         toolsExpandedById: {},
+        turnsExpandedById: {},
         currentTurnToolSteps: 0,
         currentStep: 0,
         stepStartedAt: null,
@@ -491,6 +534,8 @@ export function reduceUiAction(
         sidebarDrag: null,
         sidebarTasksCursor: 0,
         queuedMessages: [],
+        // The orchestrator re-publishes the new thread's goal right after.
+        goalLine: null,
         // Both belong to the thread being left: its queue drains into
         // its own turns, and a steer aimed at its running turn is not
         // aimed at anything on this screen.

@@ -2,6 +2,7 @@ import { lstat, readlink, realpath } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ApprovalCategory } from "../../../approval/approval-level.js";
+import { isTrustDirectoryEntry } from "../../../config/config-file.js";
 
 /**
  * Where a filesystem mutation lands, from the approval ladder's point
@@ -33,9 +34,10 @@ export interface FsScopeOptions {
   homeDir?: string;
   /**
    * Absolute paths that hold the agent's own trust configuration — the
-   * user config file and the `.env` with API tokens. A write/edit/patch
-   * whose realpath matches one of these is categorised `trust_config`
-   * (asks until level 5) regardless of scope.
+   * user config file, the `.env` with API tokens, hooks and plugins. A
+   * write/edit/patch whose realpath matches one of these is categorised
+   * `trust_config` (asks until level 5) regardless of scope. An entry
+   * ending in a path separator is a directory: anything under it matches.
    *
    * Injected by the caller, exactly like `workingDir`: the tools layer
    * must not know *where* the agent's trust surface lives. The bootstrap
@@ -63,8 +65,9 @@ export interface FsScopeOptions {
  *  - `extract` (os.fs.archive.extract): `fs_write_home` inside
  *    workspace or home — the ladder admits extraction at level 3, not
  *    level 2, because an archive materialises content the operator has
- *    not reviewed line-by-line — `other` outside. (Extraction targets a
- *    directory, so the config-file guard does not apply.)
+ *    not reviewed line-by-line — `other` outside. `trust_config` when
+ *    the destination is inside a trusted directory or holds a trusted
+ *    path: an archive can put a file anywhere under its destination.
  *
  * Multiple paths combine to the weakest scope (any `outside` path makes
  * the whole call `outside`); a single `trust_config` target makes the
@@ -75,11 +78,9 @@ export async function categorizeFsMutation(
   absolutePaths: readonly string[],
   options: FsScopeOptions,
 ): Promise<ApprovalCategory> {
-  if (kind !== "extract") {
-    const trustPaths = options.trustConfigPaths ?? [];
-    if (await touchesTrustConfig(absolutePaths, trustPaths)) {
-      return "trust_config";
-    }
+  const trustPaths = options.trustConfigPaths ?? [];
+  if (await touchesTrustConfig(absolutePaths, trustPaths, kind === "extract")) {
+    return "trust_config";
   }
   const scope = await resolveFsScope(absolutePaths, options);
   switch (kind) {
@@ -233,29 +234,50 @@ function isContained(parent: string, child: string): boolean {
   return !rel.startsWith("..") && !isAbsolute(rel);
 }
 
+interface TrustTarget {
+  path: string;
+  /** Everything under `path` counts, not just `path` itself. */
+  directory: boolean;
+}
+
 /**
- * True when any target path resolves to a trust-config file. Compared on
- * realpath (or the dangling-symlink target) so a symlink or a `..`
- * detour to `config.json` is caught, not just a literal string match.
- * The trust paths themselves are canonicalised, and a not-yet-existing
- * trust file (fresh install writing its first `.env`) still matches via
- * the deepest-existing-ancestor + suffix comparison.
+ * True when any target path resolves to a trust-config file or under a
+ * trusted directory. Compared on realpath (or the dangling-symlink
+ * target) so a symlink or a `..` detour to `config.json` is caught, not
+ * just a literal string match. The trust paths themselves are
+ * canonicalised, and a not-yet-existing trust file (fresh install
+ * writing its first `.env`) still matches via the
+ * deepest-existing-ancestor + suffix comparison.
+ *
+ * With `holdsTrust` a target that contains a trust path counts too:
+ * that is an extraction, whose target is the directory the archive
+ * spreads over.
  */
 async function touchesTrustConfig(
   absolutePaths: readonly string[],
   trustPaths: readonly string[],
+  holdsTrust: boolean,
 ): Promise<boolean> {
   if (trustPaths.length === 0) return false;
-  const canonicalTrust = await Promise.all(
-    trustPaths.map((p) => canonicalizeMutationTarget(p)),
+  const targets = await Promise.all(
+    trustPaths.map(async (entry): Promise<TrustTarget | null> => {
+      const directory = isTrustDirectoryEntry(entry);
+      const path = await canonicalizeMutationTarget(
+        directory ? entry.replace(/[\\/]+$/, "") : entry,
+      );
+      return path === null ? null : { path, directory };
+    }),
   );
-  const trustSet = new Set(
-    canonicalTrust.filter((p): p is string => p !== null),
-  );
-  if (trustSet.size === 0) return false;
+  const trust = targets.filter((t): t is TrustTarget => t !== null);
+  if (trust.length === 0) return false;
   for (const path of absolutePaths) {
     const canonical = await canonicalizeMutationTarget(path);
-    if (canonical !== null && trustSet.has(canonical)) return true;
+    if (canonical === null) continue;
+    for (const target of trust) {
+      if (canonical === target.path) return true;
+      if (target.directory && isContained(target.path, canonical)) return true;
+      if (holdsTrust && isContained(canonical, target.path)) return true;
+    }
   }
   return false;
 }

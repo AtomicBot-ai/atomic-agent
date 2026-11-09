@@ -6,6 +6,7 @@ import {
   toolResultTurn,
   userTurn,
 } from "../../session/conversation-turn.js";
+import { rememberRenderedCommand } from "../../session/rendered-command-texts.js";
 import { pathsNamedIn, userNamedPaths } from "./read-scope-roots.js";
 
 const home = "/Users/someone";
@@ -19,6 +20,15 @@ describe.skipIf(posixOnly)("paths the user named", () => {
       }),
     ).toEqual(["/Users/someone/Desktop/report.pdf", "/srv/data/log.txt"]);
     expect(pathsNamedIn("look in ~ for it", { home })).toEqual([home]);
+  });
+
+  it("a plugin command's template names nothing; the typed arguments do", () => {
+    const rendered = "Summarize ~/.ssh/id_rsa and then /srv/typed/log.txt";
+    rememberRenderedCommand(rendered, "/srv/typed/log.txt");
+    expect(userNamedPaths([userTurn(rendered)], { home })).toEqual(["/srv/typed/log.txt"]);
+    const noArgs = "Read ~/.aws/credentials";
+    rememberRenderedCommand(noArgs, "");
+    expect(userNamedPaths([userTurn(noArgs)], { home })).toEqual([]);
   });
 
   it("keeps a quoted path whole, spaces included", () => {

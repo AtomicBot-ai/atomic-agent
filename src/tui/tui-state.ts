@@ -7,6 +7,8 @@ import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
+import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
+import type { SessionUsageState } from "../session/usage-meter.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -66,6 +68,10 @@ import {
   type IntegrationsPanelState,
 } from "./integrations/integrations-panel-state.js";
 import type { IssueReportState } from "./issue-report/issue-report-state.js";
+import {
+  createInitialPluginsPanelState,
+  type PluginsPanelState,
+} from "./plugins/plugins-panel-state.js";
 import {
   createInitialSwarmPanelState,
   type SwarmPanelState,
@@ -127,7 +133,8 @@ export type TuiTab =
   | "import"
   | "privacy"
   | "integrations"
-  | "swarm";
+  | "swarm"
+  | "plugins";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -482,6 +489,19 @@ export interface TuiState {
   metrics: RollingMetrics;
   /** Live context-window occupancy, driving the composer's context chip. */
   contextUsage: ContextUsageState;
+  /**
+   * The live plan of the session on screen (ATO-486): the checklist strip
+   * above the composer and the `plan 3/7` tag in the status bar. `null`
+   * hides both. Follows `plan_updated` events of this session, and is
+   * restored from the stored session on a switch.
+   */
+  plan: PlanSnapshot | null;
+  /**
+   * Spend and account limits of the session on screen (ATO-569), from the
+   * `usage_updated` event or the session's persisted snapshot. `null`
+   * until the session has made a call.
+   */
+  sessionUsage: SessionUsageState | null;
   /** Transient maintenance activity, retained per chat across session switches. */
   contextCompactions: Readonly<Record<string, {
     phase: "queued" | "running";
@@ -584,6 +604,18 @@ export interface TuiState {
   menuCursor: number;
   /** Which tool cards are shown expanded by the user. */
   toolsExpandedById: Readonly<Record<string, boolean>>;
+  /**
+   * Finished turns the operator opened from their folded summary line
+   * (ATO-963), by assistant message id. Absent means folded. See
+   * `render/turn-collapse.ts`.
+   */
+  turnsExpandedById: Readonly<Record<string, boolean>>;
+  /**
+   * Always show steps: finished turns keep their tool cards and reasoning
+   * open instead of folding into one line. Seeded from `tui.showSteps`
+   * and flipped with `/steps on|off` (persisted).
+   */
+  showSteps: boolean;
   /** Is the session picker overlay visible? */
   sessionPickerOpen: boolean;
   /** Entries shown in the picker, newest first. */
@@ -644,6 +676,8 @@ export interface TuiState {
   /** State slice driving the Integrations tab (third-party credentials). */
   integrationsPanel: IntegrationsPanelState;
   swarmPanel: SwarmPanelState;
+  /** State slice driving the Plugins tab (installed plugins, their parts and code consent). */
+  pluginsPanel: PluginsPanelState;
   /** The "Report an issue on GitHub" popup, or `null` when closed. */
   issueReport: IssueReportState | null;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
@@ -742,6 +776,12 @@ export interface TuiState {
    * can show what is parked without reaching into the orchestrator.
    */
   queuedMessages: readonly string[];
+  /**
+   * The open chat's goal as one line (`Goal: 3/5 criteria green · round
+   * 2/10`), or `null` without a goal. Published by the orchestrator via
+   * `goal_changed`; the goal itself lives in the session's metadata.
+   */
+  goalLine: string | null;
   /**
    * Messages folded into the turn already running (steer mode), from
    * the moment they are sent until the loop picks one up. They are not
@@ -844,6 +884,8 @@ export interface InitialTuiLayoutOptions {
   activeTab?: TuiTab;
   /** Seeds {@link TuiState.whileBusyMode} from the persisted user config. */
   whileBusyMode?: WhileBusySubmitMode;
+  /** Seeds {@link TuiState.showSteps} from `tui.showSteps`. */
+  showSteps?: boolean;
   /**
    * Seeds the local-models slice's config-derived facts (mode + chosen
    * model), so the composer's route controls are right on the home
@@ -905,6 +947,8 @@ export function createInitialTuiState(
       toolsError: 0,
     },
     contextUsage: EMPTY_CONTEXT_USAGE,
+    plan: null,
+    sessionUsage: null,
     contextCompactions: {},
     logs: [],
     uiMode: layout?.uiMode ?? "chat",
@@ -930,6 +974,8 @@ export function createInitialTuiState(
     menuQuery: "",
     menuCursor: 0,
     toolsExpandedById: {},
+    turnsExpandedById: {},
+    showSteps: layout?.showSteps ?? false,
     sessionPickerOpen: false,
     sessionPickerList: [],
     sessionPickerCursor: 0,
@@ -950,6 +996,7 @@ export function createInitialTuiState(
     privacyPanel: createInitialPrivacyPanelState(),
     integrationsPanel: createInitialIntegrationsPanelState(),
     swarmPanel: createInitialSwarmPanelState(),
+    pluginsPanel: createInitialPluginsPanelState(),
     issueReport: null,
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,
@@ -972,6 +1019,7 @@ export function createInitialTuiState(
     sidebarTasksCursor: 0,
     chatScrollOffset: 0,
     queuedMessages: [],
+    goalLine: null,
     pendingSteers: [],
     whileBusyMode: layout?.whileBusyMode ?? "steer",
     abortArmed: false,

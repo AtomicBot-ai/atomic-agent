@@ -1,5 +1,11 @@
 import { ConfigValidationError } from "./config-validation-error.js";
-import { parseModelMode, parseModelModes, type ModelMode } from "./model-mode.js";
+import { isSetAsideString } from "./config-primitives.js";
+import {
+  setAsideActiveStandIn,
+  setAsideUnknownProviders,
+  withoutSetAsideProviderRefs,
+} from "./llm-set-aside-providers.js";
+import { parseModelMode, parseModelModes, readModelMode, type ModelMode } from "./model-mode.js";
 import {
   parseLlmRunModeConfig,
   type UserLlmRunModeConfig,
@@ -7,6 +13,7 @@ import {
 import { SUBSCRIPTION_CLI_KIND } from "./provider-auth-mode.js";
 
 export type UserLlmToolTransport = "auto" | "grammar" | "native_tools";
+export const LLM_TOOL_TRANSPORTS: readonly UserLlmToolTransport[] = ["auto", "grammar", "native_tools"];
 
 /** Vendor CLIs a `subscription-cli` provider knows how to drive. */
 export const SUBSCRIPTION_CLIS = ["claude", "codex"] as const;
@@ -272,9 +279,15 @@ function parseOptionalHeaders(
   return out;
 }
 
+/**
+ * `fromFile`: the entry is read from config.json, where a model mode a
+ * newer build added is left unset (ATO-1241). A provider typed in by the
+ * operator stays strict.
+ */
 export function parseLlmProviderEntry(
   raw: unknown,
   field: string,
+  fromFile = false,
 ): UserLlmProviderEntry {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError(field, "expected object");
@@ -303,8 +316,8 @@ export function parseLlmProviderEntry(
   return {
     id,
     kind,
-    ...(obj.modelMode == null ? {} : { modelMode: parseModelMode(obj.modelMode, `${field}.modelMode`) }),
-    ...(obj.modelModes == null ? {} : { modelModes: parseModelModes(obj.modelModes, `${field}.modelModes`) }),
+    ...modelModeField(obj.modelMode, `${field}.modelMode`, fromFile),
+    ...(obj.modelModes == null ? {} : { modelModes: parseModelModes(obj.modelModes, `${field}.modelModes`, fromFile) }),
     url: parseOptionalString(obj.url, `${field}.url`),
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
     model: parseOptionalString(obj.model, `${field}.model`),
@@ -402,6 +415,11 @@ export function parseLlmProviderEntry(
       `${field}.subscriptionCli`,
     ),
   };
+}
+
+function modelModeField(raw: unknown, field: string, fromFile: boolean): { modelMode?: ModelMode } {
+  const modelMode = raw == null ? undefined : fromFile ? readModelMode(raw, field) : parseModelMode(raw, field);
+  return modelMode === undefined ? {} : { modelMode };
 }
 
 function parseSubscriptionCliOptions(
@@ -618,6 +636,7 @@ function parseOptionalUserModels(
 export function parseLlmProviders(
   raw: unknown,
   field: string,
+  fromFile = false,
 ): UserLlmProviderEntry[] {
   if (!Array.isArray(raw)) {
     throw new ConfigValidationError(field, "expected array");
@@ -625,7 +644,7 @@ export function parseLlmProviders(
   const seen = new Set<string>();
   const out: UserLlmProviderEntry[] = [];
   for (let i = 0; i < raw.length; i++) {
-    const entry = parseLlmProviderEntry(raw[i], `${field}[${i}]`);
+    const entry = parseLlmProviderEntry(raw[i], `${field}[${i}]`, fromFile);
     if (seen.has(entry.id)) {
       throw new ConfigValidationError(
         `${field}[${i}].id`,
@@ -741,10 +760,18 @@ export function parseUserLlmFileConfig(
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError("llm", "expected object");
   }
-  const obj = raw as Record<string, unknown>;
-  const providers = parseLlmProviders(
-    obj.providers ?? defaults.providers,
+  // ATO-1241: a provider a newer build added is set aside, with every reference to it.
+  const { entries, setAside } = setAsideUnknownProviders(
+    (raw as Record<string, unknown>).providers ?? defaults.providers,
     "llm.providers",
+    PROVIDER_KINDS,
+    SUBSCRIPTION_CLIS,
+  );
+  const providers = parseLlmProviders(entries, "llm.providers", true);
+  const obj = withoutSetAsideProviderRefs(
+    raw as Record<string, unknown>,
+    setAside,
+    setAsideActiveStandIn(providers.map((p) => p.id), defaults.activeTextProvider),
   );
   const activeTextProvider = parseProviderId(
     obj.activeTextProvider ?? defaults.activeTextProvider,
@@ -782,7 +809,10 @@ export function parseUserLlmFileConfig(
       `unknown provider id ${JSON.stringify(activeEmbeddingProvider)}`,
     );
   }
-  const toolTransportRaw = obj.toolTransport ?? defaults.toolTransport;
+  // ATO-1241: a transport a newer build added reads as the default here.
+  const toolTransportRaw = isSetAsideString(obj.toolTransport, LLM_TOOL_TRANSPORTS, "llm.toolTransport", defaults.toolTransport)
+    ? defaults.toolTransport
+    : obj.toolTransport ?? defaults.toolTransport;
   if (
     toolTransportRaw !== "auto" &&
     toolTransportRaw !== "grammar" &&

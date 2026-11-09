@@ -11,6 +11,7 @@ import { buildOsFsTrashTool } from "./fs/fs-trash.js";
 import { osFsListTool } from "./fs/fs-list.js";
 import { osFsGlobTool } from "./fs/fs-glob.js";
 import { buildOsFsLocateProjectTool } from "./fs/fs-locate-project.js";
+import { buildOsFsCodeMapTool } from "./code-map/index.js";
 import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
@@ -80,7 +81,7 @@ export type { WebSearchKeyHelp } from "./web-search/index.js";
 export { osClipboardReadTool, osClipboardWriteTool } from "./clipboard.js";
 export { osWindowListTool, osWindowFocusTool } from "./window.js";
 export { osNotifyTool } from "./notify.js";
-export { OS_SCREEN_TOOL_NAMES, registerOsScreenTools } from "./screen/index.js";
+export { claimScreenOverlay, OS_SCREEN_TOOL_NAMES, registerOsScreenTools } from "./screen/index.js";
 export type { RegisterOsScreenToolsOptions } from "./screen/index.js";
 export { buildOsEmailInboxTool, buildOsEmailSendTool } from "./email.js";
 export { osFsHashTool } from "./fs/fs-hash.js";
@@ -245,6 +246,7 @@ export function registerOsTools(
       projectRoots: options.config.projects.roots,
     }),
   );
+  registry.register(buildOsFsCodeMapTool());
   registry.register(buildOsFsGrepTool());
   registry.register(buildOsFsEditTool(fsMutation));
   registry.register(buildOsFsReadDocumentTool());

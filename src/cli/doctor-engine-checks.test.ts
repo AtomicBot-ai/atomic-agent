@@ -1,7 +1,33 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { AtomicAgentConfig } from "../config/index.js";
 import { runEngineChecks, verifyTargetForEntry, type EngineProbes } from "./doctor-engine-checks.js";
+
+// resolveLlmProviderApiKey (src/config/resolve-llm-api-key.ts) falls back to
+// these env vars when a provider entry carries no inline apiKey, so an
+// OPENROUTER_API_KEY exported in the shell would turn the keyless cases below
+// from `warn` into `ok`. Clear them for the suite and restore on teardown.
+const PROVIDER_KEY_ENV_VARS = [
+  "OPENROUTER_API_KEY",
+  "AIMLAPI_API_KEY",
+  "GEMINI_API_KEY",
+  "OPENAI_COMPAT_API_KEY",
+  "OPENAI_API_KEY",
+  "ATOMIC_AGENT_OPENAI_API_KEY",
+] as const;
+const savedProviderKeyEnv = new Map<string, string | undefined>();
+beforeAll(() => {
+  for (const name of PROVIDER_KEY_ENV_VARS) {
+    savedProviderKeyEnv.set(name, process.env[name]);
+    delete process.env[name];
+  }
+});
+afterAll(() => {
+  for (const [name, value] of savedProviderKeyEnv) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 function cfg(over: { mode?: string; modelId?: string | null; active?: string; providers?: unknown[] } = {}): AtomicAgentConfig {
   return {

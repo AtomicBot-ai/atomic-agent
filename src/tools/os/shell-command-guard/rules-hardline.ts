@@ -1,4 +1,5 @@
 import type { GuardVerdict, NormalisedCommand, Rule } from "./guard-types.js";
+import { matchHardlineRm } from "./rules-dangerous-argv.js";
 
 interface PatternRule {
   id: string;
@@ -93,7 +94,7 @@ export const hardlineRule: Rule = {
   id: "hardline",
   layer: "hardline",
   match(input) {
-    return matchPattern(input, HARDLINE_PATTERNS, "block");
+    return matchPattern(input, HARDLINE_PATTERNS, "block") ?? matchHardlineRm(input);
   },
 };
 

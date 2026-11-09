@@ -152,6 +152,28 @@ function quoteContract(contract: DelegateContract, taskId: string): string[] {
   ];
 }
 
+/**
+ * Workers of one fan-out run side by side, so a file a sibling writes
+ * may not exist yet when this worker looks for it. Measured (ATO-919): a
+ * worker re-read a neighbour's not-yet-written file until the loop
+ * detector stopped it on `read_repeat`, 15.5K tokens on a small GPU.
+ * Only a contract `requires` orders tasks into waves; without one there
+ * is nothing to wait for, and with one a missing provider has failed.
+ * Either way, re-reading cannot make the file appear.
+ */
+export function siblingFilesRule(hasContract: boolean): string {
+  const names = hasContract ? "the CONTRACT and your task" : "your task";
+  return `- A file another task of this fan-out writes may not exist yet: workers run at the same time. If a file you did not write is missing, do not read it again, list its directory again or wait for it — build against the names ${names} gives, and say in your reply which file was missing.`;
+}
+
+/**
+ * Measured (ATO-919): workers "checked" browser JS with `node -e` /
+ * `require`, got "Cannot find module" or "document is not defined",
+ * and spent steps on an error that says nothing about their code.
+ */
+export const BROWSER_CODE_RULE =
+  "- Code meant for the browser (it uses `window`, `document`, the DOM or `<script>` loading) does not run under node: `node -e`, `require` or `import` of it fails with \"Cannot find module\" or \"document is not defined\", which says nothing about your code. Check its syntax with `verify.syntax` instead of running it.";
+
 export function renderWorkerBrief(
   task: DelegateTask,
   options: {
@@ -183,6 +205,8 @@ export function renderWorkerBrief(
     `- \`os.fs.write\` creates any missing parent directories itself, so \`mkdir\` is never needed before a write.`,
     `- The operator authorised this fan-out to write files AND run commands in the directories the task names, so working there needs no permission: write the files, run the build, run the tests, read the output. Anything outside them is refused, not queued: a tool result carrying "${FUSION_WORKER_APPROVAL_MARKER}" means nobody can approve it here. Stop retrying it and say in your reply exactly what was blocked and where, so the orchestrator can re-send the task with that path named — it cannot run the action for you.`,
     `- Read files only inside ${options.workingDir} and the directories this task writes in; a read anywhere else is refused. Do not search other projects for context — ${request.length > 0 ? "your task, its FILES and the original request are" : "your task and its FILES are"} the context you have.`,
+    siblingFilesRule(options.contract !== undefined),
+    BROWSER_CODE_RULE,
     `- Finish with \`reply\` carrying the concise result of this task (about ${WORKER_REPLY_CHAR_BUDGET} characters at most). That reply is the ONLY thing the orchestrator receives — findings, file paths, decisions and anything it needs to merge your part must be inside it.`,
     ...(options.contract
       ? [

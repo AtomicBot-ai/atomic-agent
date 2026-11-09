@@ -67,3 +67,25 @@ test("the Windows status codes seen in Sentry get a word", () => {
   assert.equal(R.windowsExitStatus(1), null);
   assert.equal(R.windowsExitStatus(null), null);
 });
+
+// ATO-1111: the exit_status word, and the agent's last memory sample as buckets.
+test("exit_status reads 0xC000009A and the memory guard's clean exit apart", () => {
+  assert.equal(R.agentExitStatus(3221225626), "insufficient_resources");
+  assert.equal(R.agentExitStatus(R.AGENT_MEMORY_GUARD_EXIT_CODE), "memory_guard");
+  assert.equal(R.AGENT_MEMORY_GUARD_EXIT_CODE, 86, "must match src/cli/serve-memory-guard.ts MEMORY_GUARD_EXIT_CODE");
+  assert.equal(R.agentExitStatus(1), null);
+  assert.equal(R.agentExitStatus(undefined), null);
+});
+
+test("agent rss and shares are buckets, never the figures", () => {
+  assert.equal(R.agentRssBucket(300), "lt_512m");
+  assert.equal(R.agentRssBucket(1500), "lt_2g");
+  assert.equal(R.agentRssBucket(5000), "lt_8g");
+  assert.equal(R.agentRssBucket(9000), "gte_8g");
+  assert.equal(R.agentRssBucket(null), null);
+  assert.equal(R.shareBucket(3800, 4096), "gte_90");
+  assert.equal(R.shareBucket(1024, 4096), "lt_50");
+  assert.equal(R.shareBucket(100, 4096), "lt_25");
+  assert.equal(R.shareBucket(1, 0), null);
+  assert.equal(R.shareBucket(undefined, 4096), null);
+});

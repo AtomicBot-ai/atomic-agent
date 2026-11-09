@@ -1775,7 +1775,7 @@ export class LlamaServerClient {
               continue;
             }
           }
-          throw keyRefusedError(err);
+          throw keyRefusedError(err, headers.authorization !== undefined);
         }
         if (!isRetryableLlamaError(err) || i >= maxAttempts) throw err;
         await this.sleep(computeBackoffMs(backoffMs, i));
@@ -1939,12 +1939,20 @@ function isUnauthorized(err: unknown): err is LlamaServerError {
 /**
  * A 401 that a fresh key did not cure. Still a 401, so it classifies as
  * before; the words say what fixes it instead of a bare status.
+ *
+ * `keySent` false is a server started with `--api-key` while the agent
+ * has no key for it at all (ATO-313): "refused the agent's key" and a
+ * restart would send the operator the wrong way, so it names the key to set.
  */
-function keyRefusedError(err: LlamaServerError): LlamaServerError {
-  return new LlamaServerError(
-    `${err.message}. The local model server refused the agent's key. ` +
+export function keyRefusedError(err: LlamaServerError, keySent = true): LlamaServerError {
+  const advice = keySent
+    ? "The local model server refused the agent's key. " +
       "For the model the agent runs, restart it (atomic-agent models stop, then atomic-agent models start); " +
-      "for your own server, check localModels.apiKey or ATOMIC_AGENT_LLAMA_API_KEY.",
+      "for your own server, check localModels.apiKey or ATOMIC_AGENT_LLAMA_API_KEY."
+    : "The local model server needs an API key and the agent has none for it. " +
+      "Set ATOMIC_AGENT_LLAMA_API_KEY (or localModels.apiKey) to the key the server was started with.";
+  return new LlamaServerError(
+    `${err.message}. ${advice}`,
     401,
     err.url,
     false,

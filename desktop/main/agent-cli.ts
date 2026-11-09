@@ -552,6 +552,17 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
   return models.length ? { ok: true, models } : { ok: false, error: "could not parse the model catalog" };
 }
 
+/**
+ * ATO-1044: `atag models recommend --json` (ATO-1043) — the best model for
+ * this computer and whether it beats the active one. `null` from an agent
+ * without the subcommand, or under a remote agent (its models are not here).
+ */
+export async function modelsRecommend(): Promise<string | null> {
+  if (remoteModels) return null;
+  const res = await cli(["models", "recommend", "--json"], 30_000);
+  return res.ok ? res.stdout : null;
+}
+
 export function modelsUse(id: string): Promise<CliResult> {
   return withConfigLock(() => modelsUseNow(id));
 }
@@ -1013,7 +1024,8 @@ export async function modelsSearch(
     if (!/^[\w.-]{1,48}$/.test(provider)) return { ok: false, error: "bad provider id" };
     args.push("--provider", provider);
   }
-  const res = await cli(args, 60_000);
+  // ATO-1197: a list printed before the agent died at exit is still the answer (#902).
+  const res = answeredBeforeCrash(await cli(args, 60_000));
   if (!res.ok) return { ok: false, error: res.error };
   const parsed = parseModelList(res.stdout);
   return parsed ? { ok: true, models: parsed } : { ok: false, error: notJson(res.stdout) };
@@ -2057,16 +2069,15 @@ export function modelWindow(providerId: string, kind: string, model: string): Pr
   const args = ["models", "search", model, "--provider", providerId, "--limit", "5", "--json"];
   if (!bundled) args.push("--refresh");
   const value = (async (): Promise<number | null> => {
-    const res = await cli(args, 60_000);
+    /* ATO-1197: the same "list printed, then the agent died at exit" as
+       providerModels (#902): the printed list is the answer. parseModelList
+       also reads past a notice line printed around the JSON. */
+    const res = answeredBeforeCrash(await cli(args, 60_000));
     if (!res.ok) return null;
-    try {
-      const parsed = JSON.parse(res.stdout) as SearchedModel[];
-      if (!Array.isArray(parsed)) return null;
-      const exact = parsed.find((m) => m.id === model && typeof m.contextWindow === "number" && m.contextWindow > 0);
-      return exact ? exact.contextWindow! : null;
-    } catch {
-      return null;
-    }
+    const parsed = parseModelList(res.stdout);
+    if (!parsed) return null;
+    const exact = parsed.find((m) => m.id === model && typeof m.contextWindow === "number" && m.contextWindow > 0);
+    return exact ? exact.contextWindow! : null;
   })();
   const entry = { value, at: Date.now() };
   WINDOW_CACHE.set(key, entry);

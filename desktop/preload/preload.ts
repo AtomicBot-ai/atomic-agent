@@ -84,10 +84,15 @@ contextBridge.exposeInMainWorld("atomic", {
   /** Read-only resources, each `{ok, data}` or `{ok:false, error}`. */
   capabilities: () => ipcRenderer.invoke("agent:capabilities"),
   config: () => ipcRenderer.invoke("agent:config"),
+  // ATO-32: {ok, data: {tiers: {<key>: [{tier, label, model}]}}}; ok:false on a core without the route.
+  modelTiers: () => ipcRenderer.invoke("agent:modelTiers"),
   skills: (sessionId?: string | null) => ipcRenderer.invoke("agent:skills", sessionId),
   /** ATO-1250: GET/POST /api/project-trust — {supported:false} against an agent without the route. */
   projectTrust: (sessionId?: string | null) => ipcRenderer.invoke("agent:projectTrust", sessionId),
   projectTrustAnswer: (body: unknown) => ipcRenderer.invoke("agent:projectTrustAnswer", body),
+  /** ATO-1144: the saved approval rules, and removing one of the global file's. */
+  approvalRules: (sessionId?: string | null) => ipcRenderer.invoke("agent:approvalRules", sessionId),
+  approvalRuleDelete: (id: string) => ipcRenderer.invoke("agent:approvalRuleDelete", id),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
@@ -106,7 +111,7 @@ contextBridge.exposeInMainWorld("atomic", {
 
   /** Approvals raised by gated tools. */
   onApproval: (cb: (payload: unknown) => void) => on("agent:approval", cb),
-  approve: (approvalId: string, decision: "allow-once" | "allow-in-chat" | "deny", reason?: string) =>
+  approve: (approvalId: string, decision: "allow-once" | "allow-in-chat" | "allow-always" | "deny", reason?: string) =>
     ipcRenderer.invoke("agent:approve", { approvalId, decision, reason }),
   /** B01 QA, ATO-198: the turns main streams, for a page that loads while they run. */
   liveTurns: () => ipcRenderer.invoke("agent:liveTurns"),
@@ -138,6 +143,8 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-161: an empty key field — a saved key or a variable behind it? Yes or no.
   providerKeyPresent: (entry: { id?: string; kind: string; apiKeyEnvVar?: string; baseUrl?: string }) =>
     ipcRenderer.invoke("cli:providerKeyPresent", entry),
+  // ATO-756: {ok, status: {cli, installed, binPath, signedIn, apiKeyLogin?}} — never a token.
+  subscriptionStatus: (cli: "claude" | "codex") => ipcRenderer.invoke("cli:subscriptionStatus", cli),
   removeProvider: (id: string) => ipcRenderer.invoke("cli:removeProvider", id),
   modelsStart: () => ipcRenderer.invoke("cli:modelsStart"),
   traceUsage: (stateDir: string, sessionId: string) =>
@@ -232,6 +239,9 @@ contextBridge.exposeInMainWorld("atomic", {
   attachDiscard: (path: string) => ipcRenderer.invoke("attachments:discard", path),
   attachCheck: (path: string) => ipcRenderer.invoke("attachments:check", path),
   attachOpen: (path: string) => ipcRenderer.invoke("attachments:open", path),
+  /** ATO-532: other apps' windows for the composer's window picker, and one of them captured (main/window-snapshot-ipc.ts). */
+  snapshotWindows: () => ipcRenderer.invoke("snapshot:windows"),
+  snapshotCapture: (id: string) => ipcRenderer.invoke("snapshot:capture", id),
   /** A dropped File's path on disk ("" for one that has none); the sandboxed window cannot read it itself. */
   pathForFile: (file: File) => {
     try {
@@ -266,6 +276,11 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
   onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
   starterGet: () => ipcRenderer.invoke("app:starterGet"),
+  // ATO-1044: the best model for this computer, downloading behind the starter, then the ask.
+  onUpgradeModel: (cb: (ev: unknown) => void) => on("app:upgradeModel", cb),
+  upgradeGet: () => ipcRenderer.invoke("app:upgradeGet"),
+  upgradeSwitch: () => ipcRenderer.invoke("app:upgradeSwitch"),
+  upgradeLater: () => ipcRenderer.invoke("app:upgradeLater"),
 
   /** Item 7 (settings surface): tasks, health, schedule preview. */
   task: (id: string) => ipcRenderer.invoke("agent:task", id),
@@ -286,6 +301,10 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>
     ipcRenderer.invoke("app:taskPreview", { form, now }),
+  /** ATO-1113: "Run overnight": pick its folder (the chat's own does not change), then start the task. */
+  overnightPickFolder: (current?: string) => ipcRenderer.invoke("overnight:pickFolder", current),
+  overnightStart: (input: { message: string; folder: string; maxCostUsd: number | null; hours: number; notifyTelegram: boolean }) =>
+    ipcRenderer.invoke("overnight:start", input),
   quit: () => ipcRenderer.invoke("app:quit"),
   skillList: (sessionId?: string | null) => ipcRenderer.invoke("cli:skillList", sessionId),
   configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),
@@ -299,6 +318,11 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:skillSetDisabled", { name, disabled, scope, sessionId }),
   skillProjectEnabled: (enabled: boolean, sessionId?: string | null) =>
     ipcRenderer.invoke("cli:skillProjectEnabled", { enabled, sessionId }),
+  /** ATO-954: Settings › Plugins (main/plugins-ipc.ts). */
+  pluginList: () => ipcRenderer.invoke("cli:pluginList"),
+  pluginSet: (name: string, op: "enable" | "disable" | "allow-code" | "deny-code", part?: string) =>
+    ipcRenderer.invoke("cli:pluginSet", { name, op, part }),
+  pluginRemove: (name: string) => ipcRenderer.invoke("cli:pluginRemove", name),
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
   /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
   skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),
@@ -346,6 +370,9 @@ contextBridge.exposeInMainWorld("atomic", {
   configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),
   importRun: (input: Record<string, unknown>) => ipcRenderer.invoke("cli:importRun", input),
   importDefaults: () => ipcRenderer.invoke("app:importDefaults"),
+  // ATO-1156: `atag handoff` — fresh Claude Code / Codex sessions, and continue one in a new chat.
+  handoffList: (agent: string) => ipcRenderer.invoke("cli:handoffList", agent),
+  handoffStart: (agent: string, id: string) => ipcRenderer.invoke("cli:handoffStart", agent, id),
   llamaLogTail: (dataDir: string | null) => ipcRenderer.invoke("app:llamaLogTail", dataDir),
   llamaProbe: (url: string) => ipcRenderer.invoke("app:llamaProbe", url),
   dotenvKeys: (stateDir: string) => ipcRenderer.invoke("app:dotenvKeys", stateDir),
@@ -454,6 +481,12 @@ contextBridge.exposeInMainWorld("atomic", {
   undeliveredSteers: (sessionId: string) => ipcRenderer.invoke("agent:undeliveredSteers", sessionId),
   ackSteers: (sessionId: string, through: number, discarded: number) =>
     ipcRenderer.invoke("agent:ackSteers", { sessionId, through, discarded }),
+  /** ATO-568 — one Fusion worker's Stop / Steer, and what the agent supports (404 on an older agent). */
+  fusionWorkersList: (sessionId: string) => ipcRenderer.invoke("agent:fusionWorkers", sessionId),
+  fusionWorkerStop: (sessionId: string, taskId: string) =>
+    ipcRenderer.invoke("agent:fusionWorkerStop", { sessionId, taskId }),
+  fusionWorkerSteer: (sessionId: string, taskId: string, text: string) =>
+    ipcRenderer.invoke("agent:fusionWorkerSteer", { sessionId, taskId, text }),
 
   /** ATO-229 — app updates (main/updater.ts). Nothing downloads or installs
    *  except through updateDownload / updateInstall, each a click. Every call
