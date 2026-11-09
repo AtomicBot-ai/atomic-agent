@@ -96,6 +96,15 @@
 .sesrows > .row .meta{font-size:var(--fs-label);color:var(--ink-2)}
 .sesempty{padding:14px 12px;font-size:var(--fs-cap);color:var(--ink-2)}
 
+/* ATO-1156: Continue from Claude Code / Codex: agent switch, then session rows with a Continue button each. */
+.sheet-handoff .seg{margin:0 6px 8px}
+.sheet-handoff .sd-cap{margin:0 12px 8px;font-size:var(--fs-cap);color:var(--ink-2)}
+.handoffrows > .row{display:flex;align-items:center;gap:12px;padding:7px 12px}
+.handoffrows > .row .main{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.handoffrows > .row .t{font-size:var(--fs-ui);font-weight:500;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.handoffrows > .row .s{font-size:var(--fs-label);color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.handoffrows > .row .btn .tk-spin{margin-right:6px}
+
 /* Keyboard shortcuts: two columns of label · keycaps rows with a hairline under each. */
 .kbgrid{display:grid;grid-template-columns:1fr 1fr;column-gap:28px;padding:0 12px 4px}
 .kbgrid > .kbrow{min-height:36px;padding:0;gap:12px;border-radius:0;box-shadow:inset 0 -1px 0 var(--divider)}

@@ -364,6 +364,9 @@ contextBridge.exposeInMainWorld("atomic", {
   configUnset: (key: string) => ipcRenderer.invoke("cli:configUnset", key),
   importRun: (input: Record<string, unknown>) => ipcRenderer.invoke("cli:importRun", input),
   importDefaults: () => ipcRenderer.invoke("app:importDefaults"),
+  // ATO-1156: `atag handoff` — fresh Claude Code / Codex sessions, and continue one in a new chat.
+  handoffList: (agent: string) => ipcRenderer.invoke("cli:handoffList", agent),
+  handoffStart: (agent: string, id: string) => ipcRenderer.invoke("cli:handoffStart", agent, id),
   llamaLogTail: (dataDir: string | null) => ipcRenderer.invoke("app:llamaLogTail", dataDir),
   llamaProbe: (url: string) => ipcRenderer.invoke("app:llamaProbe", url),
   dotenvKeys: (stateDir: string) => ipcRenderer.invoke("app:dotenvKeys", stateDir),
