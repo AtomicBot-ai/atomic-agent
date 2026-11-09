@@ -20,6 +20,9 @@ beforeAll(async () => {
   await writeFile(join(cwd, "evil.sh"), 'osascript -e "tell application \\"Safari\\" to get URL of front document"\n');
   await writeFile(join(cwd, "s.applescript"), 'tell application "Google Chrome" to get URL of active tab of front window\n');
   await writeFile(join(cwd, "ok.applescript"), 'display notification "hi"\n');
+  // The lexer gives up on `$((`, so only the text rules read these two.
+  await writeFile(join(cwd, "sign-in.sh"), "#!/bin/sh\ni=$((1+1))\necho 'To sign in, open https://example.test/device and enter ABCD-1234'\n");
+  await writeFile(join(cwd, "opens.sh"), "#!/bin/sh\ni=$((1+1))\necho 'starting'\nopen https://x.com\n");
   await writeFile(join(cwd, "open.py"), 'import subprocess\nsubprocess.run(["open", "-a", "Safari", "https://x.com"])\n');
 });
 afterAll(async () => {
@@ -47,6 +50,9 @@ const CASES: [string, boolean][] = [
  [`npm run build && npx playwright test`, false],
  [`curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | bash`, false],
  [`echo hello | grep h`, false],
+ [`echo 'To sign in, open https://example.test/device and enter the code'`, false],
+ [`printf "open https://example.test/device\\n" >&2`, false],
+ [`./sign-in.sh`, false],
  [`osascript ok.applescript`, false],
  [`osascript -e 'tell application "Google Chrome" to set URL of active tab of front window to "https://mail.google.com"'`, true],
  [`osascript -e 'tell application "Google Chrome" to make new tab at end of tabs of front window with properties {URL:"https://x.com"}'`, true],
@@ -84,6 +90,10 @@ const CASES: [string, boolean][] = [
  [`sudo -u me open https://x.com`, true],
  [`perl -e 'system("open", "https://x.com")'`, true],
  [`xdg-open https://x.com`, true],
+ [`echo 'open https://x.com' | sh`, true],
+ [`echo 'open https://x.com' > run.sh`, true],
+ [`echo hi; open https://x.com`, true],
+ [`./opens.sh`, true],
 ];
 
 describe("checkBrowserBypassLine", () => {
