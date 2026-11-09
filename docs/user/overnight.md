@@ -14,7 +14,7 @@ atomic-agent overnight "migrate the tests to vitest" --budget 5 --hours 8 --dir 
 | Flag | What it does |
 |---|---|
 | `--budget <usd>` | Stop once the run has spent this many dollars. Without it, `agent.task.maxCostUsd` applies (`0`, the default, means no cap). |
-| `--hours <h>` | Stop after this many hours. Default 8, from 1 minute (about `0.017`) to 168. |
+| `--hours <h>` | Stop after this many hours. Default 8, from 1 minute (about `0.017`) to 24. |
 | `--dir <path>` | The folder the run works in. Default: the current folder. |
 | `--notify telegram` | Send the report to your paired Telegram chat when the run ends. |
 | `--detach` | Run in the background. Prints the task id, the log path (`<stateDir>/logs/overnight-<id>.log`) and the command to check on it. |
