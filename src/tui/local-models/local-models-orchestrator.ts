@@ -205,6 +205,13 @@ export interface LocalModelsOrchestratorHooks {
    */
   onManagedModelActivated?: () => void;
   /**
+   * Whether a turn is running on any session. A background download that
+   * finishes meanwhile waits for it before it restarts the daemon.
+   */
+  isTurnRunning?: () => boolean;
+  /** How often a held landing re-checks `isTurnRunning`. Default 1s. */
+  heldLandingPollMs?: number;
+  /**
    * Atomic Core could not be installed or started, and the panel now
    * offers "download again". For `local_engine_failed`.
    */
@@ -235,8 +242,19 @@ export interface LocalModelsOrchestratorHooks {
   openIntegration?: (id: string, message: string) => void;
 }
 
+/** A finished background download waiting for the running turn to end. */
+interface HeldLanding {
+  def: LocalModelDef;
+  mode: "with-mmproj" | "gguf-only" | "mmproj-only";
+  projectorError: string | null;
+  selectionRevision: number;
+  jobId: string;
+}
+
 export class LocalModelsOrchestrator {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private heldLanding: HeldLanding | null = null;
+  private heldLandingTimer: ReturnType<typeof setTimeout> | null = null;
   private logsTimer: ReturnType<typeof setInterval> | null = null;
   private activeTimer: ReturnType<typeof setInterval> | null = null;
   private supervised = false;
@@ -457,6 +475,9 @@ export class LocalModelsOrchestrator {
     if (getConfig().localModels.managed.engine === "atomic-core") await this.backendPullInFlight;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    // A held landing keeps its `done` record: the next launch lands it.
+    if (this.heldLandingTimer) clearTimeout(this.heldLandingTimer);
+    this.heldLandingTimer = null;
     // The workers are on their own: quitting must not stop a download.
     // Only the watches end here; the next launch re-adopts the jobs.
     for (const watch of this.watchedDownloads.values()) watch.detach();
@@ -704,7 +725,15 @@ export class LocalModelsOrchestrator {
       }
 
       this.bus.emit({ type: "local_models_pull_finished", kind: "chat" });
-      await this.finishChatPull(def, mode, projectorError, selectionRevision);
+      const finished = await this.finishChatPull(
+        def,
+        mode,
+        projectorError,
+        selectionRevision,
+        opts?.unattended ? downloadJobId("chat", id) : null,
+      );
+      // Held for a running turn: the record stays until it really lands.
+      if (!finished) return;
       // The record has served its purpose: the files are on disk and
       // the follow-up ran. Leaving it would make the next launch run
       // the follow-up again.
@@ -728,20 +757,85 @@ export class LocalModelsOrchestrator {
    * `projectorError` is the worker's `mmprojError`: the weights landed
    * but the projector did not, so the landing says why vision is off
    * and the daemon comes up text-only. Never set for `mmproj-only`.
+   *
+   * `unattendedJobId` names the record of a download nobody here asked
+   * to land now (the upgrade after the starter, a `--background` pull).
+   * Landing restarts the daemon, so while a turn is running it is held
+   * instead, and this answers false: the caller keeps the record.
    */
   private async finishChatPull(
     def: LocalModelDef,
     mode: "with-mmproj" | "gguf-only" | "mmproj-only",
     projectorError: string | null = null,
     selectionRevision = this.selectionRevision,
-  ): Promise<void> {
+    unattendedJobId: string | null = null,
+  ): Promise<boolean> {
     return this.operations.run(async () => {
       if (selectionRevision !== this.selectionRevision) {
         await this.refresh();
-        return;
+        return true;
+      }
+      if (unattendedJobId !== null && mode !== "mmproj-only" && this.hooks?.isTurnRunning?.()) {
+        this.holdLanding({ def, mode, projectorError, selectionRevision, jobId: unattendedJobId });
+        return false;
       }
       await this.finishChatPullNow(def, mode, projectorError);
-    }, undefined, false);
+      return true;
+    }, true, false);
+  }
+
+  private holdLanding(landing: HeldLanding): void {
+    // One slot: of two held downloads the later one would have won anyway.
+    if (this.heldLanding && this.heldLanding.jobId !== landing.jobId) {
+      removeDownloadJob(getConfig().paths.localModelsDataDir, this.heldLanding.jobId);
+    }
+    this.heldLanding = landing;
+    this.bus.emit({
+      type: "runtime_info",
+      line: `local-llm: ${landing.def.name} is ready. Switching to it when the current answer finishes.`,
+    });
+    this.scheduleHeldLandingCheck();
+  }
+
+  private scheduleHeldLandingCheck(): void {
+    if (this.heldLandingTimer || this.closing) return;
+    this.heldLandingTimer = setTimeout(() => {
+      this.heldLandingTimer = null;
+      void this.checkHeldLanding();
+    }, this.hooks?.heldLandingPollMs ?? 1000);
+    this.heldLandingTimer.unref?.();
+  }
+
+  private async checkHeldLanding(): Promise<void> {
+    const landing = this.heldLanding;
+    if (!landing || this.closing) return;
+    if (this.hooks?.isTurnRunning?.()) {
+      this.scheduleHeldLandingCheck();
+      return;
+    }
+    this.heldLanding = null;
+    const dataDir = getConfig().paths.localModelsDataDir;
+    let finished = true;
+    try {
+      // Removed by the operator while it was held: nothing to land.
+      if (isModelDownloaded(dataDir, landing.def)) {
+        finished = await this.finishChatPull(
+          landing.def,
+          landing.mode,
+          landing.projectorError,
+          landing.selectionRevision,
+          landing.jobId,
+        );
+      }
+    } catch (e) {
+      this.bus.emit({
+        type: "local_models_pull_failed",
+        kind: "chat",
+        error: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      if (finished) removeDownloadJob(dataDir, landing.jobId);
+    }
   }
 
   private async finishChatPullNow(
@@ -1212,7 +1306,7 @@ export class LocalModelsOrchestrator {
         // The job's own ping (a CLI `--notify`, or whatever was armed in
         // an earlier life) stands; a job nobody just started is not a
         // moment to ask.
-        void this.pullModel(job.modelId, job.mode, { askNotify: false });
+        void this.pullModel(job.modelId, job.mode, { askNotify: false, unattended: true });
       } else {
         if (!isKnownEmbeddingModelId(job.modelId)) {
           removeDownloadJob(dataDir, job.id);
@@ -1247,6 +1341,7 @@ export class LocalModelsOrchestrator {
   ): Promise<void> {
     const dataDir = getConfig().paths.localModelsDataDir;
     const projectorError = job.mmprojError ?? null;
+    let finished = true;
     try {
       if (projectorError && job.mode === "mmproj-only") {
         this.bus.emit({
@@ -1255,7 +1350,7 @@ export class LocalModelsOrchestrator {
         });
         return;
       }
-      await this.finishChatPull(def, job.mode, projectorError);
+      finished = await this.finishChatPull(def, job.mode, projectorError, this.selectionRevision, job.id);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       this.bus.emit({
@@ -1264,7 +1359,7 @@ export class LocalModelsOrchestrator {
         error: msg,
       });
     } finally {
-      removeDownloadJob(dataDir, job.id);
+      if (finished) removeDownloadJob(dataDir, job.id);
     }
   }
 
@@ -3704,6 +3799,8 @@ function resolveMmprojStatus(
 export interface PullOptions {
   /** `false` skips the "tell me when it lands?" prompt (onboarding has its own flow). */
   askNotify?: boolean;
+  /** Adopted, not asked for here: its landing waits for a running turn. */
+  unattended?: boolean;
 }
 
 /** `"Qwen 3.5 4B (gguf)"` → `"Qwen 3.5 4B"`: the phase is worker detail. */
