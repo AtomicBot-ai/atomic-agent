@@ -483,6 +483,7 @@ export interface WorkerRunnerDeps {
   localLegHealth?: LocalLegHealth;
   /** `LlamaServerClient.probeHealth`, the question the check above asks. */
   probeLocalHealth?: () => Promise<LocalHealthAnswer>;
+  /**
    * One completion on the escalation provider (ATO-942). Absent, nothing
    * is ever escalated, manual or automatic.
    */

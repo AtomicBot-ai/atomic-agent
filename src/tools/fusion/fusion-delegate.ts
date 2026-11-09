@@ -47,6 +47,7 @@ import {
 import {
   TaskTreeState,
   expandSplits,
+  hasSplitProposal,
   renderSplitInstructions,
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
@@ -694,22 +695,35 @@ export function buildFusionDelegateTool(
           : {
               onWorkerTool: (taskId: string, tool: string): void =>
                 run.noteTool(taskId, tool),
-              onTaskFinished: (result: WorkerTaskResult): void =>
-                run.recordTask(
-                  result,
+              onTaskFinished: (result: WorkerTaskResult): void => {
+                const costUsd =
                   pricing !== undefined && result.usage !== undefined
                     ? estimateUsageCostUsd(result.usage, pricing)
-                    : 0,
-                ),
+                    : 0;
+                // A proposal is not an answer: its row is written once the
+                // split closed (`expandWave`), its spend now. Under isolation
+                // nothing has reached the folder yet: `runTasks` writes the
+                // row after the merge.
+                if (mode.isolation === "worktree" || awaitsExpansion(result)) {
+                  run.addSpend(costUsd);
+                } else {
+                  run.recordTask(result, costUsd);
+                }
+              },
             };
       const checkpointOptions = checkpointOptionsFor(workerPricing);
-      // The task tree (ATO-940): off unless configured, and then only
-      // the wave runs below read proposals — a judge's retry does not.
+      // The task tree (ATO-940): off unless configured, and then the wave
+      // runs and a judge's retry read proposals.
       const tree =
         mode.taskTree === undefined
           ? undefined
           : new TaskTreeState(mode.taskTree, workerModel);
       tree?.addRoots(parsed.tasks, parsed.contract);
+      // One of the orchestrator's own tasks whose worker proposed a split.
+      const awaitsExpansion = (row: WorkerTaskResult): boolean =>
+        tree !== undefined &&
+        tree.depthOf(row.id) === 1 &&
+        hasSplitProposal(row.reply);
       const canProposeSplit =
         tree === undefined
           ? undefined
@@ -730,7 +744,8 @@ export function buildFusionDelegateTool(
       // of tasks (a wave, a judge's retry) gets a workspace per task and
       // is merged back before anything reads the folder. Off: unchanged.
       // Inside a wave the tasks are split across the role legs (ATO-943).
-      const merges: MergeTaskSuggestion[] = [];
+      // A resumed run still owes the merges it was cut off with.
+      const merges: MergeTaskSuggestion[] = [...(resumedFrom?.merges ?? [])];
       const runTasks = async (
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
@@ -749,6 +764,10 @@ export function buildFusionDelegateTool(
             runAcrossLegs(rebased, contract, briefSuffix, taskWorkspace, allowSplit),
         });
         merges.push(...wave.merges);
+        run?.recordMerges(wave.merges);
+        for (const row of wave.results) {
+          if (!awaitsExpansion(row)) run?.recordTask(row);
+        }
         return wave.results;
       };
       const runOnLeg = (
@@ -914,13 +933,13 @@ export function buildFusionDelegateTool(
       // A proposal's children: run through the same runner (width, caps,
       // approval scope), then their own contract is checked before their
       // parent closes on them.
-      const expandWave = (
+      const expandWave = async (
         tasks: readonly DelegateTask[],
         rows: WorkerTaskResult[],
-      ): Promise<WorkerTaskResult[]> =>
-        tree === undefined
-          ? Promise.resolve(rows)
-          : expandSplits(tasks, rows, {
+      ): Promise<WorkerTaskResult[]> => {
+        if (tree === undefined) return rows;
+        const proposed = new Set(rows.filter(awaitsExpansion).map((r) => r.id));
+        const expanded = await expandSplits(tasks, rows, {
               tree,
               workingDir: ctx.workingDir,
               ...(parsed.contract === undefined
@@ -928,8 +947,16 @@ export function buildFusionDelegateTool(
                 : { parentContract: parsed.contract }),
               workerMaxSteps: mode.workerMaxSteps,
               workerTimeoutMs: mode.workerTimeoutMs,
-              runChildren: (children, childContract, suffix) =>
-                runTasks(children, childContract, suffix, true),
+              runChildren: (children, childContract, suffix) => {
+                // A split stays on the leg its parent ran on and is billed at.
+                for (const child of children) {
+                  const parentId = tree.parentOf(child.id);
+                  const leg =
+                    parentId === undefined ? undefined : taskLegs.get(parentId);
+                  if (leg !== undefined) taskLegs.set(child.id, leg);
+                }
+                return runTasks(children, childContract, suffix, true);
+              },
               evaluateChildren: async (rows, children, childContract) => {
                 const provides = await inspectContractProvides(
                   childContract,
@@ -958,6 +985,15 @@ export function buildFusionDelegateTool(
                 stoppedBy === undefined &&
                 budgetStop() === undefined,
             });
+        // The closed parents. One a stop cut short stays unsettled, so a
+        // resume runs it again instead of reporting half a split.
+        for (const row of expanded) {
+          if (proposed.has(row.id) && (row.status === "ok" || !ctx.signal.aborted)) {
+            run?.recordTask(row);
+          }
+        }
+        return expanded;
+      };
 
       let results: WorkerTaskResult[];
       try {
@@ -1204,13 +1240,20 @@ export function buildFusionDelegateTool(
               renderRetryFindings(acceptance.get(id) ?? [], verdict),
             ]),
           );
-          const retried = await runTasks(
-            parsed.tasks.filter((t) => retryIds.has(t.id)),
-            contractForWave(parsed.contract, [...waveWarnings]),
-            (taskId) =>
-              [acceptanceSuffix?.(taskId), findings.get(taskId)]
-                .filter((part): part is string => part !== undefined)
-                .join("\n\n"),
+          // The retry keeps the right to split: a task judged red for being
+          // too big would only fail again in one piece.
+          const retryTasks = parsed.tasks.filter((t) => retryIds.has(t.id));
+          const retried = await expandWave(
+            retryTasks,
+            await runTasks(
+              retryTasks,
+              contractForWave(parsed.contract, [...waveWarnings]),
+              (taskId) =>
+                [waveSuffix?.(taskId), findings.get(taskId)]
+                  .filter((part): part is string => part !== undefined)
+                  .join("\n\n"),
+              true,
+            ),
           );
           const merged = results.map(
             (r) => retried.find((x) => x.id === r.id) ?? r,
@@ -1248,10 +1291,16 @@ export function buildFusionDelegateTool(
       // facts above, with the attempts it has left. The planner's next
       // step is held to `fusion.delegate` by the loop while any task is
       // pending (`fusion-replan.ts`); exhausted tasks are to be reported.
+      // A task waiting for the person's yes after a restart is theirs to
+      // decide: held to `fusion.delegate`, the planner could only repeat
+      // the commands the question exists to guard.
+      const awaitingYes = new Set(
+        resume?.needsConfirmation.map((r) => r.id) ?? [],
+      );
       const replan =
         autoReplan > 0 && stoppedBy === undefined && !ctx.signal.aborted
           ? describeReplan(
-              results,
+              results.filter((r) => !awaitingYes.has(r.id)),
               (id) => turnBudget.attempts(ctx.sessionId, id),
               autoReplan,
             )
@@ -1259,8 +1308,14 @@ export function buildFusionDelegateTool(
       const contractLine =
         contract === undefined ? undefined : renderContractLine(contract);
       // The run ended here. Stopped by the person or by a quit, its file
-      // stays for a resume; otherwise there is nothing left to resume.
-      run?.finish(ctx.signal.aborted ? "interrupted" : "complete");
+      // stays for a resume, and so it does while a task waits for the
+      // person's yes: the confirm call resumes from it. Otherwise there
+      // is nothing left to resume.
+      run?.finish(
+        ctx.signal.aborted || (resume?.needsConfirmation.length ?? 0) > 0
+          ? "interrupted"
+          : "complete",
+      );
       const resumeNote =
         resume === undefined
           ? ""

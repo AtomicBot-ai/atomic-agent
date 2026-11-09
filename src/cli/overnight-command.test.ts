@@ -54,6 +54,7 @@ describe("overnightCommand", () => {
     expect(await overnightCommand(["--help"])).toBe(0);
     expect(out.join("")).toContain('atomic-agent overnight "<task>"');
     expect(out.join("")).not.toContain("--task-id");
+    expect(out.join("")).toContain("Fusion cloud-worker spend does not count against this cap");
   });
 
   it("refuses a bad flag before starting anything", async () => {
