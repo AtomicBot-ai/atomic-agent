@@ -215,7 +215,7 @@ describe("ToolCard [copy path]", () => {
       attempt < 40 && app.dispatched.length === 0;
       attempt += 1
     ) {
-      app.clickAt("os.fs.read");
+      app.clickAt("Read main.ts");
       await delay(25);
     }
     expect(app.dispatched).toEqual([
