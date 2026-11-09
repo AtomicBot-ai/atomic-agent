@@ -93,7 +93,7 @@ async function untilGone(pid, ms = 20000) {
   return !alive(pid);
 }
 
-const lastMatch = (text, re) => [...text.matchAll(re)].at(-1);
+const lastMatch = (text, re) => [...text.matchAll(new RegExp(re.source, re.flags.replaceAll('g', '') + 'g'))].at(-1);
 
 export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ app, model, workspace }) => {
   const at = (name) => join(workspace, name);
