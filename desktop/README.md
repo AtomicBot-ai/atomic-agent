@@ -710,6 +710,9 @@ Honestly degraded, and labelled as such in the UI:
   If the projector download fails or is cancelled the model is **not**
   activated at all: the weights are on disk and the pane says so, rather than
   starting a daemon that would serve a vision model text-only.
+  Catalogue vision models take the other route (ATO-1331): main adds
+  `--mmproj` to every `models pull` of one (`pull-projector.ts`), so weights
+  and projector share one bar and one Cancel.
   **Hugging Face mirror.** The listing and the projector honour the same
   endpoint as `atag models pull`: `HF_ENDPOINT` in the environment, then
   `HF_ENDPOINT` in `<stateDir>/.env`, then `localModels.download.hfEndpoint`

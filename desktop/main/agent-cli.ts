@@ -23,6 +23,7 @@ import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
 export { managedDataDir } from "./local-llama-key.js";
 // r7 models — the description + RAM figures `atag models list` cannot print.
 import { curatedMeta } from "./model-catalog.js";
+import { projectorOnDisk } from "./pull-projector.js";
 import { pruneIncompleteProviders } from "./provider-hygiene.js";
 import { defaultProviderModelMode, type ModelMode } from "./provider-model-mode.js";
 import { SUBSCRIPTION_CLI_KIND, subscriptionCliModels } from "./subscription-cli-models.js";
@@ -498,6 +499,8 @@ export interface CatalogModel {
   /** The vision projector a pull fetches with the weights, in GB. */
   mmprojSizeGb?: number;
   vision?: boolean;
+  /** On disk without its projector, so it would serve text only (ATO-1331). */
+  projectorMissing?: boolean;
   /** Recommendation order, 1 first (catalogue `recommendRank`). */
   recommendRank?: number;
   tag?: string;
@@ -519,18 +522,21 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
   const res = await cli(["models", "list"], 45_000);
   if (!res.ok) return { ok: false, error: res.error };
   const models: CatalogModel[] = [];
+  // The table says whether the weights are on disk, and nothing about the projector.
+  const modelsDir = remoteModels ? null : join(managedDataDirNow(), "models");
   for (const line of res.stdout.split("\n")) {
     if (!line.includes("|")) continue;
     const cells = line.split("|").map((c) => c.trim());
     if (cells.length < 5 || cells[0] === "ID" || !cells[0]) continue;
     const id = cells[0]!;
     const meta = curatedMeta(id);
+    const downloaded = (cells[4] ?? "").toLowerCase() === "yes";
     models.push({
       id,
       family: cells[1] ?? "",
       size: cells[2] ?? "",
       context: cells[3] ?? "",
-      downloaded: (cells[4] ?? "").toLowerCase() === "yes",
+      downloaded,
       active: (cells[5] ?? "").includes("*"),
       ...(meta
         ? {
@@ -541,6 +547,7 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
             sizeGb: meta.sizeGb,
             ...(meta.mmprojSizeGb ? { mmprojSizeGb: meta.mmprojSizeGb } : {}),
             vision: meta.vision,
+            ...(meta.vision && downloaded && modelsDir && !projectorOnDisk(join(modelsDir, id)) ? { projectorMissing: true } : {}),
             ...(meta.recommendRank ? { recommendRank: meta.recommendRank } : {}),
             ...(meta.tag ? { tag: meta.tag } : {}),
             ...(meta.uncensored ? { uncensored: true } : {}),
