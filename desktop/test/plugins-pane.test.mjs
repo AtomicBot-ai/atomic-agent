@@ -7,7 +7,7 @@ import { createRequire } from "node:module";
 import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
-const { plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct } = require("../renderer/plugins-pane.js");
+const { plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct, plgStopCodeNeedsRestart, plgStopCodeNotice } = require("../renderer/plugins-pane.js");
 const {
   parsePluginSetRequest, pluginCliArgs, parsePluginListOutput, isUnsupportedPluginCli,
 } = require("../out/main/plugins-cli.js");
@@ -37,6 +37,25 @@ test("a part says why it is not in use", () => {
   const part = { id: "mcp:gh", kind: "mcp", name: "gh", enabled: true, active: false, runsCode: true, missingKeys: ["T"] };
   assert.deepEqual(plgPartNotes(plugin(), part).map((n) => n.text), ["Runs code", "Off until code is allowed", "Needs T"]);
   assert.deepEqual(plgPartNotes(plugin({ enabled: false }), part).map((n) => n.text), ["Runs code", "Needs T"]);
+});
+
+test("Stop its code asks for a restart only while a code-running MCP server is in use", () => {
+  const mcp = { id: "mcp:gh", kind: "mcp", name: "gh", enabled: true, active: true, runsCode: true, missingKeys: [] };
+  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [mcp] })), true);
+  // A remote server with no key is not governed by the code switch, and an inactive one is not running.
+  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [{ ...mcp, runsCode: false }] })), false);
+  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [{ ...mcp, active: false }] })), false);
+  // Hooks and skill scripts stop at once, so they need no restart.
+  assert.equal(plgStopCodeNeedsRestart(plugin({ trust: "code-allowed", parts: [{ ...mcp, kind: "hook" }] })), false);
+  assert.equal(plgStopCodeNeedsRestart(plugin({ parts: undefined })), false);
+  assert.equal(plgStopCodeNeedsRestart(null), false);
+  assert.match(plgStopCodeNotice("demo"), /^demo's hooks and scripts are off\. Its MCP servers keep running until you restart the agent\.$/);
+});
+
+test("Stop its code passes the restart flag and the honest notice to the write", () => {
+  const pane = readFileSync(new URL("../renderer/plugins-pane.js", import.meta.url), "utf8");
+  assert.match(pane, /BR\.pluginSet\(p\.name, 'deny-code'\), restart, restart \? plgStopCodeNotice\(p\.name\) : undefined\)/);
+  assert.doesNotMatch(pane, /'deny-code'\), false\)/);
 });
 
 test("act strings carry the plugin and the whole part id", () => {

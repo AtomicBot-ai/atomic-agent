@@ -7,6 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { readFileSync } from "node:fs";
 
 const require = createRequire(import.meta.url);
 const O = require("../out/main/overnight-task.js");
@@ -47,6 +48,39 @@ test("refusals are sentences for the dialog", () => {
   assert.match(O.overnightTaskBody({ ...base, maxCostUsd: -1 }).error, /budget/);
   assert.match(O.overnightTaskBody({ ...base, maxCostUsd: "lots" }).error, /budget/);
   assert.equal(O.overnightTaskBody(null).ok, false);
+});
+
+test("a remote agent gets its own folder, never the one from this computer", () => {
+  const r = O.overnightTaskBody(base, "/srv/agent");
+  assert.equal(r.ok, true);
+  assert.equal(r.body.workingDir, "/srv/agent");
+  // The dialog has no folder to give, and the path is the other computer's, so this one's rules do not judge it.
+  assert.equal(O.overnightTaskBody({ ...base, folder: "" }, "/srv/agent").body.workingDir, "/srv/agent");
+  assert.equal(O.overnightTaskBody(base, "C:\\work").body.workingDir, "C:\\work");
+  // Everything else is still checked.
+  assert.match(O.overnightTaskBody({ ...base, message: " " }, "/srv/agent").error, /what the agent should do/);
+});
+
+test("the remote folder comes from the agent's health answer", () => {
+  assert.equal(O.remoteAgentFolder({ workingDir: " /srv/agent " }), "/srv/agent");
+  assert.equal(O.remoteAgentFolder({ workingDir: "" }), null);
+  assert.equal(O.remoteAgentFolder({ workingDir: 42 }), null);
+  assert.equal(O.remoteAgentFolder({}), null);
+  assert.equal(O.remoteAgentFolder(null), null);
+});
+
+test("a remote agent without the workingDir route is named as the problem", () => {
+  const raw = "sessionId and userMessage are required strings";
+  assert.match(O.overnightErrorText(raw, true), /cannot take Run overnight from another computer/);
+  assert.equal(O.overnightErrorText(raw, false), raw);
+  assert.equal(O.overnightErrorText("workingDir does not exist", true), "workingDir does not exist");
+});
+
+test("overnight:start reads the remote agent's folder before building the body", () => {
+  const ipc = readFileSync(new URL("../main/overnight-ipc.ts", import.meta.url), "utf8");
+  assert.match(ipc, /if \(deps\.client\.isRemote\)/);
+  assert.match(ipc, /remoteAgentFolder\(await deps\.client\.turnsHealth\(\)/);
+  assert.match(ipc, /overnightTaskBody\(input, remoteFolder\)/);
 });
 
 test("overnight_started keeps only the limits' shape, never the task or the folder", () => {

@@ -61,6 +61,23 @@ test("status lines for running and finished runs", () => {
   assert.equal(O.ovnStatusLine({ ...run, task: { status: "cancelled", startedAt: 0, completedAt: H } }, 9 * H), "Stopped after 1h 00m");
 });
 
+test("a run the agent cut short says which limit stopped it", () => {
+  const run = { startedAt: 0, limitMs: 8 * H, budget: 5 };
+  const line = (stopCause, spentUsd) => O.ovnStatusLine({ ...run, task: { status: "completed", completedAt: 8 * H, stopCause, ...(spentUsd === undefined ? {} : { spentUsd }) } }, 9 * H);
+  assert.equal(line("time_ceiling"), "Stopped at the time limit after 8h 00m");
+  assert.equal(line("cost_ceiling", 5), "Stopped at the budget after 8h 00m · $5.00 of $5.00");
+  assert.equal(line("step_ceiling"), "Stopped at the step limit after 8h 00m");
+  assert.equal(line("no_progress"), "Stopped, no progress after 8h 00m");
+  assert.equal(line("credit_exhausted"), "Stopped, out of credit after 8h 00m");
+  assert.equal(line("something_new"), "Stopped early after 8h 00m");
+  assert.equal(line("constructor"), "Stopped early after 8h 00m");
+  // An agent that does not send the field, or sends null: the plain finished line.
+  assert.equal(line(undefined), "Done after 8h 00m");
+  assert.equal(line(null), "Done after 8h 00m");
+  // Only a completed run is read this way; the other endings keep their own word.
+  assert.equal(O.ovnStatusLine({ ...run, task: { status: "failed", completedAt: H, stopCause: "time_ceiling" } }, 9 * H), "Failed after 1h 00m");
+});
+
 test("the dialog: budget hidden for local models, Telegram switch only when paired, defaults filled in", () => {
   const st = { local: false, tgPaired: true, busy: false, error: null,
     form: { message: "", folder: "/Users/me/app", budget: "", hours: String(O.OVN_DEFAULT_HOURS), notify: true } };
@@ -74,6 +91,26 @@ test("the dialog: budget hidden for local models, Telegram switch only when pair
   assert.match(local, /cost \$0/);
   assert.doesNotMatch(local, /data-ovn="notify"/);
   assert.match(local, /Pair Telegram/);
+});
+
+test("in Fusion the budget field says it covers the planning model only", () => {
+  const st = { local: false, fusion: false, tgPaired: false, busy: false, error: null,
+    form: { message: "", folder: "/x", budget: "", hours: "8", notify: false } };
+  assert.match(O.ovnDialogHTML(st, h), /The run stops when it has spent this much/);
+  const fusion = O.ovnDialogHTML({ ...st, fusion: true }, h);
+  assert.match(fusion, /when the planning model has spent this much/);
+  assert.match(fusion, /Spend by Fusion workers is not counted/);
+  assert.doesNotMatch(fusion, /when it has spent this much/);
+});
+
+test("the dialog offers no folder picker for a remote agent", () => {
+  const st = { local: false, tgPaired: false, busy: false, error: null, remote: false,
+    form: { message: "", folder: "/Users/me/app", budget: "", hours: "8", notify: false } };
+  assert.match(O.ovnDialogHTML(st, h), /data-ovn="pick"/);
+  const remote = O.ovnDialogHTML({ ...st, remote: true }, h);
+  assert.doesNotMatch(remote, /data-ovn="pick"/);
+  assert.doesNotMatch(remote, /\/Users\/me\/app/);
+  assert.match(remote, /own folder on the other computer/);
 });
 
 test("the runs card: Stop while running, Dismiss when finished, nothing when empty", () => {

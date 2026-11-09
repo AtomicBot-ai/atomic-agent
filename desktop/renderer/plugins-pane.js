@@ -79,6 +79,18 @@ function plgParseAct(what) {
   return j === -1 ? {verb, name: rest || null, part: null} : {verb, name: rest.slice(0, j), part: rest.slice(j + 1)};
 }
 
+/* Local and key-reading MCP servers start with the agent and are never re-checked,
+   so "Stop its code" reaches them only at the next agent start (hooks and skill
+   scripts re-read the record and stop at once). True when this plugin has one in use. */
+function plgStopCodeNeedsRestart(p) {
+  return !!p && (p.parts || []).some((pt) => pt.kind === 'mcp' && pt.runsCode && pt.active);
+}
+
+/* What the screen says after "Stop its code" when servers are still up. */
+function plgStopCodeNotice(name) {
+  return name + '\'s hooks and scripts are off. Its MCP servers keep running until you restart the agent.';
+}
+
 /* ---- data ---- */
 
 function pluginsTabEntered() { pluginsRefresh(); }
@@ -112,14 +124,14 @@ function pluginsRefresh() {
 
 function plgFind(name) { return (PLG.rows || []).find((p) => p.name === name) || null; }
 
-/* One `atag plugin …` write, then a re-read. MCP changes need the agent restarted, so that message carries the button. */
-function plgWrite(name, call, restart) {
+/* One `atag plugin …` write, then a re-read. MCP changes need the agent restarted, so that message carries the button; `text` replaces the agent's own line. */
+function plgWrite(name, call, restart, text) {
   if (PLG.busy) return Promise.resolve();
   PLG.busy = name; PLG.msg = null; PLG.err = null;
   render();
   return call().then((res) => {
     PLG.busy = null;
-    if (res && res.ok) PLG.msg = {text: res.message || 'Done.', restart: !!restart};
+    if (res && res.ok) PLG.msg = {text: text || res.message || 'Done.', restart: !!restart};
     else PLG.err = (res && res.error) || 'The agent did not answer.';
     return pluginsRefresh();
   }, (err) => { PLG.busy = null; PLG.err = String(err && err.message || err); render(); });
@@ -140,8 +152,11 @@ function pluginsAct(what) {
     return;
   }
   if (verb === 'code' && p && p.runsCode) {
-    // Stopping code is safe at once; allowing it is asked first, listing what would run.
-    if (p.trust === 'code-allowed') plgWrite(p.name, () => BR.pluginSet(p.name, 'deny-code'), false);
+    // Stopping code needs no question; allowing it is asked first, listing what would run.
+    if (p.trust === 'code-allowed') {
+      const restart = plgStopCodeNeedsRestart(p);
+      plgWrite(p.name, () => BR.pluginSet(p.name, 'deny-code'), restart, restart ? plgStopCodeNotice(p.name) : undefined);
+    }
     else { PLG.codeConfirm = {name: p.name, parts: p.codeParts || [], error: null, submitting: false}; render(); }
     return;
   }
@@ -289,4 +304,4 @@ function pluginsTab() {
   return '<div class="set-pane set-plugins">' + bar + err + msg + body + overlay + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct};
+if (typeof module !== 'undefined') module.exports = {plgCountsText, plgTrustText, plgBadges, plgPartNotes, plgParseAct, plgStopCodeNeedsRestart, plgStopCodeNotice};
