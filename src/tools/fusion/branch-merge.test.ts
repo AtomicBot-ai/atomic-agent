@@ -20,6 +20,7 @@ import {
 import { createBranchSet, BRANCH_MERGE_DIR } from "./branch-workspace.js";
 import type { DelegateTask } from "./delegate-args.js";
 import { buildFusionDelegateTool, type FusionDelegateDeps } from "./fusion-delegate.js";
+import { FusionRunStore, type FusionRunCheckpoint } from "./run-checkpoint.js";
 import type { WorkerTaskResult, WorkerTaskStatus } from "./worker-result.js";
 
 const cleanup: string[] = [];
@@ -394,6 +395,45 @@ describe("fusion.delegate with isolation", () => {
     expect(dirs).toEqual([repo, repo]);
     expect(result.details.merges).toBeUndefined();
     expect(await readFile(join(repo, "one.txt"), "utf8")).toBe("one\n");
+  });
+
+  it("worktree: a task reaches the checkpoint only after its merge", async () => {
+    const repo = await gitRepo({ "a.txt": "a\n" });
+    const { d } = deps(repo, { isolation: "worktree" });
+    const runsDir = await tmpRoot();
+    const store = new FusionRunStore({ dir: runsDir });
+    d.runCheckpoints = store;
+    const seen: Record<string, FusionRunCheckpoint | null> = {};
+    let oneOnDiskAtTwo = false;
+    const runTurn = d.runTurn;
+    d.runTurn = async (session, message, options) => {
+      const taskId = (session.metadata as { fusionWorker: { taskId: string } }).fusionWorker.taskId;
+      const [file] = (await readdir(runsDir)).filter((f) => f.endsWith(".json"));
+      seen[taskId] = store.load(file!.replace(/\.json$/, ""));
+      if (taskId === "two") {
+        oneOnDiskAtTwo = await readFile(join(repo, "one.txt"), "utf8").then(() => true, () => false);
+      }
+      return runTurn(session, message, options);
+    };
+    await buildFusionDelegateTool(d).run(
+      {
+        tasks: [
+          { id: "one", title: "One", instructions: "write one.txt" },
+          { id: "side", title: "Side", instructions: "write side.txt" },
+          { id: "two", title: "Two", instructions: "write two.txt" },
+        ],
+        maxWorkers: 1,
+        contract: {
+          provides: [{ task: "one", kind: "other", name: "done" }],
+          requires: [{ task: "two", name: "done" }],
+        },
+      },
+      ctx(repo),
+    );
+    // "side" runs in the same wave as "one", after it: nothing merged yet.
+    expect(seen.side!.tasks.find((t) => t.id === "one")!.result).toBeUndefined();
+    expect(seen.two!.tasks.find((t) => t.id === "one")!.result?.status).toBe("ok");
+    expect(oneOnDiskAtTwo).toBe(true);
   });
 
   it("worktree: each worker runs in its own workspace and the work lands in the folder", async () => {

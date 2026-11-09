@@ -410,6 +410,22 @@ describe("resuming a fusion run (ATO-617)", () => {
       expect(parent.result?.reply).toContain("Split by the worker into 2 subtasks");
     });
 
+    it("carries a wave's merge suggestions into a resume", () => {
+      const merge = { id: "merge-t1", title: "Merge One", instructions: "merge it", files: ["a.txt"] };
+      const run = store.start({
+        sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1,
+      });
+      run.recordMerges([merge]);
+      run.finish("interrupted");
+      const kept = store.load(run.runId)!;
+      expect(kept.merges).toEqual([merge]);
+      const resumed = store.start({
+        runId: kept.runId, sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1, resumedFrom: kept,
+      });
+      expect(resumed.snapshot().merges).toEqual([merge]);
+      resumed.finish("complete");
+    });
+
     it("keeps the spend written before the row is", () => {
       const run = store.start({
         sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1,

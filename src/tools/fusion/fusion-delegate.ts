@@ -701,9 +701,14 @@ export function buildFusionDelegateTool(
                     ? estimateUsageCostUsd(result.usage, pricing)
                     : 0;
                 // A proposal is not an answer: its row is written once the
-                // split closed (`expandWave`), its spend now.
-                if (awaitsExpansion(result)) run.addSpend(costUsd);
-                else run.recordTask(result, costUsd);
+                // split closed (`expandWave`), its spend now. Under isolation
+                // nothing has reached the folder yet: `runTasks` writes the
+                // row after the merge.
+                if (mode.isolation === "worktree" || awaitsExpansion(result)) {
+                  run.addSpend(costUsd);
+                } else {
+                  run.recordTask(result, costUsd);
+                }
               },
             };
       const checkpointOptions = checkpointOptionsFor(workerPricing);
@@ -739,7 +744,8 @@ export function buildFusionDelegateTool(
       // of tasks (a wave, a judge's retry) gets a workspace per task and
       // is merged back before anything reads the folder. Off: unchanged.
       // Inside a wave the tasks are split across the role legs (ATO-943).
-      const merges: MergeTaskSuggestion[] = [];
+      // A resumed run still owes the merges it was cut off with.
+      const merges: MergeTaskSuggestion[] = [...(resumedFrom?.merges ?? [])];
       const runTasks = async (
         tasks: readonly DelegateTask[],
         contract: DelegateContract | undefined,
@@ -758,6 +764,10 @@ export function buildFusionDelegateTool(
             runAcrossLegs(rebased, contract, briefSuffix, taskWorkspace, allowSplit),
         });
         merges.push(...wave.merges);
+        run?.recordMerges(wave.merges);
+        for (const row of wave.results) {
+          if (!awaitsExpansion(row)) run?.recordTask(row);
+        }
         return wave.results;
       };
       const runOnLeg = (

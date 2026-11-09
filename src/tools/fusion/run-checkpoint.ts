@@ -16,6 +16,7 @@ import {
   turnOwnerFor,
   type TurnOwnerProbe,
 } from "../../session/turn-owner.js";
+import type { MergeTaskSuggestion } from "./branch-merge.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type {
   WorkerTaskResult,
@@ -152,6 +153,8 @@ export interface FusionRunCheckpoint {
   tasks: CheckpointTask[];
   /** Priced spend so far (workers, escalations, judge), carried into a resume's cap. */
   spentUsd: number;
+  /** Merges the planner still owes, from waves already merged back. */
+  merges?: MergeTaskSuggestion[];
   startedAt: number;
   updatedAt: number;
   /** How many times the run was resumed. */
@@ -234,6 +237,9 @@ export class FusionRunStore {
           : { ...prior, title: t.title };
       }),
       spentUsd: input.resumedFrom?.spentUsd ?? 0,
+      ...(input.resumedFrom?.merges === undefined
+        ? {}
+        : { merges: input.resumedFrom.merges }),
       startedAt: input.resumedFrom?.startedAt ?? at,
       updatedAt: at,
       resumes: (input.resumedFrom?.resumes ?? -1) + 1,
@@ -398,6 +404,13 @@ export class FusionRunRecorder {
   addSpend(usd: number): void {
     if (this.ended || !Number.isFinite(usd) || usd <= 0) return;
     this.checkpoint.spentUsd += usd;
+    this.flush();
+  }
+
+  /** A wave's merge conflicts, kept for the planner across a restart. */
+  recordMerges(merges: readonly MergeTaskSuggestion[]): void {
+    if (this.ended || merges.length === 0) return;
+    this.checkpoint.merges = [...(this.checkpoint.merges ?? []), ...merges];
     this.flush();
   }
 
