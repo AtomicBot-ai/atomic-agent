@@ -32,6 +32,8 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
   ["os.fs.archive.list", pathArg],
   ["os.fs.archive.read_entry", pathArg],
   ["os.fs.grep", pathArg],
+  // A folder to map or one file to outline; omitted = the working dir.
+  ["os.fs.code_map", pathArg],
   [
     "os.fs.glob",
     // `cwd` wins over `path` inside the tool; either names the root.

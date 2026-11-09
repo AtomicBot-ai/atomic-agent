@@ -11,6 +11,7 @@ import { buildOsFsTrashTool } from "./fs/fs-trash.js";
 import { osFsListTool } from "./fs/fs-list.js";
 import { osFsGlobTool } from "./fs/fs-glob.js";
 import { buildOsFsLocateProjectTool } from "./fs/fs-locate-project.js";
+import { buildOsFsCodeMapTool } from "./code-map/index.js";
 import type { RecentSessionDir } from "./fs/fs-locate-project-sources.js";
 import { buildOsFsGrepTool } from "./fs/fs-grep.js";
 import { buildOsFsEditTool } from "./fs/fs-edit.js";
@@ -245,6 +246,7 @@ export function registerOsTools(
       projectRoots: options.config.projects.roots,
     }),
   );
+  registry.register(buildOsFsCodeMapTool());
   registry.register(buildOsFsGrepTool());
   registry.register(buildOsFsEditTool(fsMutation));
   registry.register(buildOsFsReadDocumentTool());

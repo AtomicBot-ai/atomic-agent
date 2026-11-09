@@ -587,6 +587,7 @@ describe("registerOsTools", () => {
         "os.fs.archive.extract",
         "os.fs.archive.list",
         "os.fs.archive.read_entry",
+        "os.fs.code_map",
         "os.fs.diff",
         "os.fs.edit",
         "os.fs.glob",
