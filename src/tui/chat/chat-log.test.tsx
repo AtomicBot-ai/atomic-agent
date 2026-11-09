@@ -374,7 +374,7 @@ describe("ChatLog", () => {
       const text = strip(lastFrame() ?? "");
       expect(text).toContain("Used 2 tools · 1 failed · 40s ▸");
       expect(text).toContain("Here you go.");
-      expect(text).not.toContain("os.fs.list");
+      expect(text).not.toContain("Listed files in src");
       expect(text).not.toContain("LISTING-BODY");
       expect(text).not.toMatch(/2 tool steps/);
     });
@@ -386,8 +386,8 @@ describe("ChatLog", () => {
       );
       const text = strip(lastFrame() ?? "");
       expect(text).toContain("Used 2 tools · 1 failed · 40s ▾");
-      expect(text).toContain("os.fs.list");
-      expect(text).toContain("os.shell.run");
+      expect(text).toContain("Listed files in src");
+      expect(text).toContain("Ran false");
       expect(text).toContain("EXIT-1-BODY");
       expect(text).not.toContain("LISTING-BODY");
     });
@@ -415,7 +415,7 @@ describe("ChatLog", () => {
       const { lastFrame } = renderAtSize(<ChatLog state={running} />, BIG);
       const text = strip(lastFrame() ?? "");
       expect(text).not.toContain("Used 2 tools");
-      expect(text).toContain("os.fs.list");
+      expect(text).toContain("Listed files in src");
     });
   });
 });

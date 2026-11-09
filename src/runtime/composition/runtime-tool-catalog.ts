@@ -206,7 +206,8 @@ export function registerRuntimeCoreTools(input: {
     config.tools.shell.envPassthrough,
     config.paths.stateDir,
   );
-  toolRegistry.register(buildToolViewTool());
+  // `tool.view` is registered with `tool.search` in the MCP catalog phase:
+  // it reads the same live descriptor list.
   // The live checklist (ATO-486): pure, always on, no approval.
   toolRegistry.register(planUpdateTool);
   // Older stored names stay out of the prompt until checked against actual
@@ -583,11 +584,9 @@ export async function connectRuntimeMcpCatalog(input: {
     };
   };
   toolRegistry.register(buildToolSearchTool({ catalog: toolSearchCatalog }));
-  // `tool.view` again, now search-aware: it loads by exact name any
-  // tool search mode deferred to a `# extras` one-liner, including the
-  // statically frequent ones (`os.git.status`) and MCP tools the static
-  // catalog does not hold. Same name, so this replaces the plain
-  // registration made with the static tools.
+  // `tool.view` loads by exact name any tool search mode deferred to a
+  // `# extras` one-liner, including the statically frequent ones
+  // (`os.git.status`) and MCP tools the static catalog does not hold.
   toolRegistry.register(buildToolViewTool({ deferred: toolSearchCatalog }));
   const createRefreshMcp = () => {
 

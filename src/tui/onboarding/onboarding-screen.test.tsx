@@ -209,7 +209,7 @@ describe("OnboardingScreen", () => {
     expect(frame).toContain("Cloud models");
     expect(frame).toContain("Custom endpoint");
     // What each one costs the operator, on the screen rather than behind it.
-    expect(frame).toContain("Private, free per token");
+    expect(frame).toContain("Private, no key, free per token");
     expect(frame).toContain("needs an API key");
     expect(frame).toContain("Nothing is downloaded");
     // The copy describes a choice, not the health probe that used to

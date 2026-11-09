@@ -140,11 +140,19 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.screen.click": { summary: "Click at x,y of the last capture (asks first).", tier: RARE },
   "os.screen.type": { summary: "Type text into the frontmost app (asks first).", tier: RARE },
   "os.screen.key": { summary: "Press a key or shortcut (asks first).", tier: RARE },
+  "os.screen.point": {
+    summary: "Draw arrows, boxes or labels on the user's screen to show where to click; never clicks.",
+    tier: RARE,
+  },
   "skill.view": { summary: "Load a skill's full instructions." },
   "tool.view": { summary: "Load the full args of a tool listed under # extras." },
   "tool.search": {
     summary: "Find a tool listed under # extras by what it should do; loads the best matches to call next step.",
     examples: ['{"query":"create a github issue"}'],
+  },
+  "plan.update": {
+    summary: "Show a live checklist for work of 3+ steps; send the whole plan each call.",
+    tier: RARE,
   },
   "skill.run_script": { summary: "Run a skill's script (may require approval).", tier: RARE },
   "memory.profile.set": {

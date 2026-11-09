@@ -92,6 +92,15 @@ function makeRuntime(events: AgentLoopEvent[], release?: Promise<void>): AgentRu
   } as unknown as AgentRuntime;
 }
 
+/** Holds a turn open, so what it queued lands while it still runs. */
+function holdTurn(): { wait: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const wait = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { wait, release };
+}
+
 describe("Telegram status snapshots (ATO-965)", () => {
   let dir: string;
   let pointer: TelegramSessionPointer;
@@ -131,7 +140,11 @@ describe("Telegram status snapshots (ATO-965)", () => {
       reply("done"),
     ];
     const api = makeApi();
-    await handleInboundText(update("do the long thing"), ctx(makeRuntime(events), api));
+    const hold = holdTurn();
+    const turn = handleInboundText(update("do the long thing"), ctx(makeRuntime(events, hold.wait), api));
+    await vi.waitFor(() => expect(api.edits.some((e) => e.text.includes("Blocked:"))).toBe(true));
+    hold.release();
+    await turn;
     const snapshots = api.edits.filter((e) => e.text.includes("Blocked:"));
     expect(snapshots).toHaveLength(1);
     expect(snapshots[0]!.messageId).toBe(1); // the progress bubble, not a new message
@@ -152,7 +165,11 @@ describe("Telegram status snapshots (ATO-965)", () => {
   it("posts a new bubble when the old one can no longer be edited", async () => {
     const api = makeApi(new Error("Bad Request: message to edit not found"));
     const events = [...Array.from({ length: 10 }, (_, i) => stepFinished(i)), reply("done")];
-    await handleInboundText(update("long"), ctx(makeRuntime(events), api));
+    const hold = holdTurn();
+    const turn = handleInboundText(update("long"), ctx(makeRuntime(events, hold.wait), api));
+    await vi.waitFor(() => expect(api.sent.length).toBeGreaterThanOrEqual(2));
+    hold.release();
+    await turn;
     const texts = api.sent.map((m) => m.text);
     expect(texts[0]).toBe("🤔 Thinking…");
     expect(texts[1]).toContain("Blocked: no");

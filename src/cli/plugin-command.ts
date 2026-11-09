@@ -30,13 +30,11 @@ import {
   resetPluginCache,
   setPluginCodeAllowed,
   setPluginEnabled,
-  updatePluginRecord,
   type InstalledPluginRecord,
   setPluginPartEnabled,
   type PluginBundle,
   type PluginReview,
 } from "../plugins/index.js";
-import { userKeyRefs } from "../plugins/plugin-keys.js";
 
 const HELP = [
   "atomic-agent plugin — manage plugins (Claude / Codex / Cursor plugin packages)",
