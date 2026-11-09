@@ -808,11 +808,44 @@ describe("runWorkerTasks", () => {
     }
   });
 
+  it("fails an ok task whose declared file was overwritten with a placeholder (ATO-883)", async () => {
+    // Measured: a 367-line file replaced with "..." 3 s later, reply "...", status ok.
+    const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
+    try {
+      const { deps } = harness(async ({ options }) => {
+        writeFileSync(join(dir, "scene.js"), "...");
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "..." },
+        });
+        return turnResult({ stepCount: 3 });
+      });
+      deps.workingDir = dir;
+      const results = await runWorkerTasks(deps, {
+        ...BASE,
+        tasks: [{ id: "t0", title: "Scene", instructions: "Write it", files: ["scene.js"] }],
+        maxWorkers: 1,
+        signal: new AbortController().signal,
+      });
+      expect(results[0]).toMatchObject({
+        status: "failed",
+        error: 'declared file scene.js is only the placeholder "..."',
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("leaves an ok task ok when every declared file was written", async () => {
     const dir = mkdtempSync(join(tmpdir(), "fusion-runner-files-"));
     try {
-      const { deps } = harness(async () => {
+      const { deps } = harness(async ({ options }) => {
         writeFileSync(join(dir, "index.html"), "<html></html>");
+        // A reply that reports something: an empty one is noted (ATO-883).
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: "Wrote index.html" },
+        });
         return turnResult({ stepCount: 2 });
       });
       deps.workingDir = dir;
