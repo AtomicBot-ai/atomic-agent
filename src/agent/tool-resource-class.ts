@@ -355,8 +355,9 @@ const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
     // `shell_dangerous`, which only full trust silences and no grant
     // reaches (ATO-1220): below level 5 a shell batch is not unattended.
     "os.shell.run": ["shell", "shell_dangerous"],
-    // Same rung as a shell command: it runs one, in a copy.
-    "verify.run": ["shell"],
+    // Same rung as a shell command: it runs one, in a copy, and a
+    // dangerous one asks as `shell_dangerous` too (ATO-1266).
+    "verify.run": ["shell", "shell_dangerous"],
     "os.fs.write": FS_WRITE_CATEGORIES,
     "os.fs.edit": FS_WRITE_CATEGORIES,
     "os.fs.patch": FS_WRITE_CATEGORIES,

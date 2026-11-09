@@ -8,19 +8,32 @@
  * asks under the same category as `os.shell.run`; an authorised fan-out
  * scope covers it the way it covers a worker's shell command. At level
  * 5 (`--no-approval`) it runs without asking.
+ *
+ * The copy is not a sandbox, so every command it starts first passes
+ * the shell guard (ATO-1266): a hardline or policy rule refuses the call
+ * before anything runs, at every level; a `dangerous.*` match asks as
+ * `shell_dangerous`, which no fan-out scope and no `shell` grant covers.
  */
 import { requireApproval, type DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import type { ShellGuardPolicy } from "../os/shell-command-guard/index.js";
 import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserLauncher } from "./run-page-kind.js";
 import { runVerify } from "./run-verify.js";
 import { parseVerifyRunArgs, type VerifyRunArgs } from "./verify-run-args.js";
+import { guardVerifyRun } from "./verify-run-guard.js";
 
 export const VERIFY_RUN_TOOL = "verify.run";
 
 export interface VerifyRunToolOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "browser">;
+  /**
+   * Operator policy for the shell guard (the git remote-sync switch),
+   * the same predicates `os.shell.run` gets. Omitted by embedders and
+   * tests, which then get the static rule set.
+   */
+  shellPolicy?: ShellGuardPolicy;
   /** Test seam: replaces the real browser launch. */
   launchBrowser?: BrowserLauncher;
 }
@@ -52,16 +65,43 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
         return { tool: VERIFY_RUN_TOOL, status: "error", summary: message, details: { error: message }, truncated: false };
       }
       const description = describeVerifyRun(args);
+      // Same pre-exec guard as `os.shell.run` (ATO-1266): the copy takes
+      // the writes inside it, not `rm -rf ~` or `sudo`.
+      const guard = guardVerifyRun(args, ctx.workingDir, options.shellPolicy);
+      if (guard.blocked !== null) {
+        const { verdict } = guard.blocked;
+        const message = `verify.run: blocked by shell guard: ${verdict.rule} - ${verdict.reason}`;
+        return {
+          tool: VERIFY_RUN_TOOL,
+          status: "error",
+          summary: message,
+          details: {
+            error: message,
+            description,
+            guardVerdict: verdict.action,
+            guardRule: verdict.rule,
+            guardReason: verdict.reason,
+          },
+          truncated: false,
+        };
+      }
+      const dangerous = guard.dangerous.length > 0;
+      // A fan-out's directory covers ordinary checks, never a dangerous
+      // command: the operator approved a directory of work, not those.
       const scopedByFanout =
-        options.approvals.fanoutScopes?.allows(ctx.sessionId, [ctx.workingDir]) ?? false;
+        !dangerous &&
+        (options.approvals.fanoutScopes?.allows(ctx.sessionId, [ctx.workingDir]) ?? false);
       if (!scopedByFanout) {
+        const reason = dangerous
+          ? `${guard.dangerous.map((c) => c.verdict.reason).join("; ")} — verify (${args.kind}) in a throwaway copy of ${ctx.workingDir}; the copy is not a sandbox`
+          : `verify (${args.kind}) in a throwaway copy of ${ctx.workingDir}`;
         await requireApproval(
           options,
           {
             sessionId: ctx.sessionId,
             tool: VERIFY_RUN_TOOL,
-            category: "shell",
-            reason: `verify (${args.kind}) in a throwaway copy of ${ctx.workingDir}`,
+            category: dangerous ? "shell_dangerous" : "shell",
+            reason,
             preview: description,
             affectedResources: [ctx.workingDir],
           },
