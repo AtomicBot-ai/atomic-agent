@@ -15,15 +15,30 @@ export const GRAMMAR_EXIT_TOOL = "reply";
 /**
  * Tools whose calls have their own branch of `tool-call`, outside
  * `tool-name`, because their args have required fields the generic
- * `object` rule cannot enforce (`grammars/tool-call.gbnf`): `os.shell.run`
- * needs a non-empty `cmd`, `os.fs.read` a non-empty `path`, `os.fs.write`
- * a non-empty `path` and a `content` string. Listed in the order the
- * branches appear in the rule.
+ * `object` rule cannot enforce (`grammars/tool-call.gbnf`): under it
+ * `{"args":{}}` is legal and small local models take that way out.
+ * `os.shell.run` needs a non-empty `cmd`, `os.fs.read` a non-empty
+ * `path`, `os.fs.write` a non-empty `path` and a `content` string; the
+ * rest (ATO-1114) are held to their own tool's check the same way, as
+ * the grammar file lists. Listed in the order the branches appear in the
+ * rule.
  */
 const DEDICATED_BRANCHES: ReadonlyArray<{ tool: string; rule: string }> = [
   { tool: "os.shell.run", rule: "shell-call" },
   { tool: "os.fs.read", rule: "fs-read-call" },
   { tool: "os.fs.write", rule: "fs-write-call" },
+  { tool: "os.fs.edit", rule: "fs-edit-call" },
+  { tool: "os.fs.move", rule: "fs-move-call" },
+  { tool: "os.fs.list", rule: "fs-list-call" },
+  { tool: "os.fs.grep", rule: "fs-grep-call" },
+  { tool: "os.fs.glob", rule: "fs-glob-call" },
+  { tool: "os.web.search", rule: "web-search-call" },
+  { tool: "os.web.fetch", rule: "web-fetch-call" },
+  { tool: "os.http.request", rule: "http-request-call" },
+  { tool: "skill.view", rule: "skill-view-call" },
+  { tool: "tool.view", rule: "tool-view-call" },
+  { tool: "memory.notes.store", rule: "notes-store-call" },
+  { tool: "memory.notes.recall", rule: "notes-recall-call" },
 ];
 
 /**

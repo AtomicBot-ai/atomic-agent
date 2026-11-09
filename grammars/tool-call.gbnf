@@ -13,7 +13,7 @@ root ::= tool-call-array
 # and the sampler has to escape the quote instead. The args are strict
 # (`text`, then optional `attachments`) so the generic object cannot
 # carry a reply around the rule; `tool-name` does not list "reply".
-tool-call ::= reply-call | shell-call | fs-read-call | fs-write-call | other-call
+tool-call ::= reply-call | shell-call | fs-read-call | fs-write-call | fs-edit-call | fs-move-call | fs-list-call | fs-grep-call | fs-glob-call | web-search-call | web-fetch-call | http-request-call | skill-view-call | tool-view-call | notes-store-call | notes-recall-call | other-call
 reply-call ::= "{" ws "\"tool\"" ws ":" ws "\"reply\"" ws "," ws "\"args\"" ws ":" ws reply-args ws "}"
 other-call ::= "{" ws "\"tool\"" ws ":" ws tool-name ws "," ws "\"args\"" ws ":" ws object ws "}"
 # `os.shell.run` has its own branch too: under the generic `object` rule its
@@ -32,18 +32,56 @@ shell-args ::= "{" ws "\"cmd\"" ws ":" ws required-string ( ws "," ws pair )* ws
 # empty (an empty file is a real write). The required keys come first,
 # in the order the descriptors teach; every other key stays free-form,
 # as the tool decides what it accepts. `required-string` is a non-empty
-# string whose first character is not `<` or `|`, so a reasoning
-# profile's marker guard (`chars`) still sees every `<|`; it may open on
-# an escape (a JSON-escaped UNC path does). `tool-name` lists neither
-# name. Known limit, here and in `shell-args`: the free keys may repeat a
-# required one (`{"path":"a","content":"x","path":""}`), and JSON.parse
-# keeps the last, so the tool still sees an empty value and refuses it;
-# ruling that out would mean a key rule that excludes each required name.
-fs-read-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.read\"" ws "," ws "\"args\"" ws ":" ws fs-read-args ws "}"
-fs-read-args ::= "{" ws "\"path\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
+# string (`chars-nonempty`: `chars` with at least one character), so a
+# reasoning profile's marker guard, which rewrites both rules, sees every
+# character, the first included; it may open on an escape (a JSON-escaped
+# UNC path does) or on `<` (an `oldString` of `<div>`). `tool-name` lists
+# none of the names with a branch. Known limit, here and in `shell-args`:
+# the free keys may repeat a required one
+# (`{"path":"a","content":"x","path":""}`), and JSON.parse keeps the
+# last, so the tool still sees an empty value and refuses it; ruling that
+# out would mean a key rule that excludes each required name.
+fs-read-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.read\"" ws "," ws "\"args\"" ws ":" ws path-args ws "}"
 fs-write-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.write\"" ws "," ws "\"args\"" ws ":" ws fs-write-args ws "}"
 fs-write-args ::= "{" ws "\"path\"" ws ":" ws required-string ws "," ws "\"content\"" ws ":" ws string ( ws "," ws pair )* ws "}"
-required-string ::= "\"" ( [^"\\\x00-\x1f<|] | "\\" escape ) chars "\""
+# ATO-1114: the rest of the tools a small model uses in an ordinary
+# coding or file session, each held to its own check the same way.
+# `os.fs.edit` (`parseEditArgs`): non-empty `path` and `oldString`, a
+# `newString` string that may be empty (a deletion). `os.fs.list`
+# (`parseListArgs`): non-empty `path`. `os.fs.grep`: non-empty `pattern`.
+# `os.fs.glob`: `pattern` as a non-empty string or a non-empty list of
+# them. `os.web.search`: non-empty `query`. `os.web.fetch` and
+# `os.http.request`: non-empty `url`. `skill.view` and `tool.view`:
+# non-empty `name`. `memory.notes.store`: non-empty `content`.
+# `memory.notes.recall`: `query` (any string, the tool takes it as is)
+# or `id`.
+fs-edit-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.edit\"" ws "," ws "\"args\"" ws ":" ws fs-edit-args ws "}"
+fs-edit-args ::= "{" ws "\"path\"" ws ":" ws required-string ws "," ws "\"oldString\"" ws ":" ws required-string ws "," ws "\"newString\"" ws ":" ws string ( ws "," ws pair )* ws "}"
+# `os.fs.move` (`parseMoveArgs`) takes `{from, to}` or `{moves: [{from,
+# to}, ...]}`, every path non-empty. The source-side aliases small models
+# send instead (`paths`, `sources`, `src`, `source`, read by
+# `fs-move-aliases.ts`, ATO-899) still open the args, with any value: the
+# alias reader decides, as before. What is gone is `{}`.
+fs-move-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.move\"" ws "," ws "\"args\"" ws ":" ws fs-move-args ws "}"
+fs-move-args ::= "{" ws ( fs-move-pair | "\"moves\"" ws ":" ws fs-move-list | fs-move-alias ws ":" ws value ) ( ws "," ws pair )* ws "}"
+fs-move-pair ::= "\"from\"" ws ":" ws required-string ws "," ws "\"to\"" ws ":" ws required-string
+fs-move-list ::= "[" ws fs-move-item ( ws "," ws fs-move-item )* ws "]"
+fs-move-item ::= "{" ws fs-move-pair ( ws "," ws pair )* ws "}"
+fs-move-alias ::= "\"" ( "paths" | "sources" | "src" | "source" ) "\""
+fs-list-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.list\"" ws "," ws "\"args\"" ws ":" ws path-args ws "}"
+fs-grep-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.grep\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"pattern\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
+fs-glob-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.fs.glob\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"pattern\"" ws ":" ws ( required-string | "[" ws required-string ( ws "," ws required-string )* ws "]" ) ( ws "," ws pair )* ws "}" ws "}"
+web-search-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.web.search\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"query\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
+web-fetch-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.web.fetch\"" ws "," ws "\"args\"" ws ":" ws url-args ws "}"
+http-request-call ::= "{" ws "\"tool\"" ws ":" ws "\"os.http.request\"" ws "," ws "\"args\"" ws ":" ws url-args ws "}"
+skill-view-call ::= "{" ws "\"tool\"" ws ":" ws "\"skill.view\"" ws "," ws "\"args\"" ws ":" ws name-args ws "}"
+tool-view-call ::= "{" ws "\"tool\"" ws ":" ws "\"tool.view\"" ws "," ws "\"args\"" ws ":" ws name-args ws "}"
+notes-store-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.store\"" ws "," ws "\"args\"" ws ":" ws "{" ws "\"content\"" ws ":" ws required-string ( ws "," ws pair )* ws "}" ws "}"
+notes-recall-call ::= "{" ws "\"tool\"" ws ":" ws "\"memory.notes.recall\"" ws "," ws "\"args\"" ws ":" ws "{" ws ( "\"query\"" ws ":" ws string | "\"id\"" ws ":" ws value ) ( ws "," ws pair )* ws "}" ws "}"
+path-args ::= "{" ws "\"path\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
+url-args ::= "{" ws "\"url\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
+name-args ::= "{" ws "\"name\"" ws ":" ws required-string ( ws "," ws pair )* ws "}"
+required-string ::= "\"" chars-nonempty "\""
 reply-args ::= "{" ws "\"text\"" ws ":" ws reply-text ( ws "," ws "\"attachments\"" ws ":" ws value )? ws "}"
 reply-text ::= "\"" reply-pending "\""
 # Right recursion over the last character: `reply-chars` may end (the
@@ -57,9 +95,9 @@ reply-soft ::= [ :(\[{=,]
 tool-call-array ::= "[" ws tool-call ( ws "," ws tool-call ){0,15} ws "]"
 tool-name ::= browser-tool | os-tool | discovery-tool | memory-tool | tasks-tool | vision-tool | image-tool | fusion-tool | verify-tool | mcp-native-tool | "\"finish\""
 browser-tool ::= "\"browser." ( "navigate" | "click" | "type" | "read_aria" | "search" | "tabs" | "scroll" ) "\""
-os-tool ::= "\"os." ( "fs.read_document" | "fs.trash" | "fs.list" | "fs.grep" | "fs.glob" | "fs.locate_project" | "fs.edit" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.move" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "http.request" | "web.search" | "web.fetch" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
-discovery-tool ::= "\"skill." ( "view" | "run_script" ) "\"" | "\"tool.view\""
-memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.store" | "notes.recall" | "notes.forget" | "lessons.recall" | "procedures.recall" ) "\""
+os-tool ::= "\"os." ( "fs.read_document" | "fs.trash" | "fs.locate_project" | "fs.hash" | "fs.diff" | "fs.patch" | "fs.restore" | "fs.watch" | "fs.archive.list" | "fs.archive.read_entry" | "fs.archive.extract" | "git.status" | "git.log" | "git.diff" | "git.show" | "git.blame" | "git.branch" | "git.init" | "git.add" | "git.commit" | "git.checkout" | "git.clone" | "git.remote" | "git.fetch" | "git.pull" | "git.push" | "proc.list" | "proc.kill" | "clipboard.read" | "clipboard.write" | "window.list" | "window.focus" | "notify" | "email.inbox" | "email.send" ) "\""
+discovery-tool ::= "\"skill.run_script\""
+memory-tool ::= "\"memory." ( "profile.set" | "profile.remove" | "profile.list" | "profile.history" | "notes.forget" | "lessons.recall" | "procedures.recall" ) "\""
 tasks-tool ::= "\"tasks." ( "schedule" | "cron" | "list" | "cancel" | "show" ) "\""
 vision-tool ::= "\"vision.describe\""
 image-tool ::= "\"image.generate\""
@@ -102,6 +140,7 @@ array ::= "[" ws ( value ( ws "," ws value )* )? ws "]"
 
 string ::= "\"" chars "\""
 chars ::= char*
+chars-nonempty ::= char chars
 char ::= [^"\\\x00-\x1f] | "\\" escape
 escape ::= "\"" | "\\" | "/" | "b" | "f" | "n" | "r" | "t" | "u" hex hex hex hex
 hex ::= [0-9a-fA-F]
