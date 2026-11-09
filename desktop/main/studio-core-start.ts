@@ -262,6 +262,34 @@ export async function ensureStudioCore(dataDir: string, version: string, opts: E
   });
 }
 
+/**
+ * Ask a running Core to shut down when it serves nothing, as the agent's own
+ * `shutdownIdleCoreClient` does: a model session, the enabled embedding module
+ * or another client keeps it up (Core's `/shutdown` checks the other leases).
+ * Never starts Core, never forces it. False when Core was left running.
+ */
+export async function shutdownIdleStudioCore(dataDir: string, version: string, waitMs = 2_000): Promise<boolean> {
+  return withStudioOperation(dataDir, async () => {
+    const client = await connectStudioCore(dataDir, version);
+    if (!client) return false;
+    const lease = await client.call<{ client: { id: string } }>("/clients", { name: "Atomic Agent Studio", pid: process.pid });
+    const id = lease.client.id;
+    let stopping = false;
+    try {
+      const snap = await client.call<{ sessions?: unknown[] }>("/snapshot");
+      if ((snap.sessions?.length ?? 0) > 0) return false;
+      // An older Core without the module answers 404: nothing to keep.
+      const embedding = await client.call<{ enabled?: boolean }>("/embedding/status").catch(() => null);
+      if (embedding?.enabled) return false;
+      await client.call("/shutdown", { client_id: id });
+      stopping = true;
+      return true;
+    } finally {
+      if (!stopping) await client.call(`/clients/${encodeURIComponent(id)}`, undefined, { method: "DELETE" }).catch(() => {});
+    }
+  }, waitMs).catch(() => false);
+}
+
 /** A client lease: Core neither idles out nor counts itself unused while one is held. */
 export interface StudioLease { id: string; release: () => Promise<void> }
 

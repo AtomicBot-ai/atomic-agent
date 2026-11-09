@@ -25,7 +25,7 @@ import { isAbsolute, join } from "node:path";
 import { normalizeLocalFamilies, normalizeProviderModels, type StudioCatalogSection, type StudioKind } from "./studio-catalog.js";
 import { StudioCoreError, type StudioCoreClient } from "./studio-core-client.js";
 import type { CoreSeedResult } from "./core-seed.js";
-import { acquireStudioLease, connectStudioCore, ensureStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
+import { acquireStudioLease, connectStudioCore, ensureStudioCore, shutdownIdleStudioCore, studioCorePaths, type StudioLease } from "./studio-core-start.js";
 import type { MachineProfile } from "./studio-local.js";
 import { queuedLine, type GpuShare } from "./studio-gpu-share.js";
 import { StudioLocalModels, type LocalEngineStatus, type LocalEvent } from "./studio-local-models.js";
@@ -555,8 +555,13 @@ export class StudioMedia {
     const s = readStudioSettings(this.deps.stateDir);
     const chosen = kind === "video" ? s.videoOutputDir : s.imageOutputDir;
     try {
-      const status = await (await this.ready()).call<{ outputDir?: string; videoOutputDir?: string }>("/diffusion/status");
-      this.lastDirs = { image: status.outputDir, video: status.videoOutputDir };
+      /* ATO-857: the window asks for these folders as it loads, Studio open or not.
+         Only a Core already set up for Studio is asked; a folder name never starts one. */
+      const running = this.configuredFor ? await connectStudioCore(this.deps.dataDir(), this.deps.coreVersion) : null;
+      if (running && running.instanceId === this.configuredFor) {
+        const status = await running.call<{ outputDir?: string; videoOutputDir?: string }>("/diffusion/status");
+        this.lastDirs = { image: status.outputDir, video: status.videoOutputDir };
+      }
     } catch { /* Core down: what Settings or the default says */ }
     const reported = kind === "video" ? this.lastDirs.video : this.lastDirs.image;
     return { path: reported ?? chosen ?? this.defaultDirs[kind], isDefault: !chosen };
@@ -572,6 +577,19 @@ export class StudioMedia {
     writeStudioSettings(this.deps.stateDir, s);
     if (this.client) { this.configuredFor = ""; await this.ready(); }
     return this.outputDir(kind);
+  }
+
+  /**
+   * ATO-857: the quit's stop for a Core Studio used, when no `models stop` is
+   * coming (the chat model is not managed, or stopOnExit is off). Core stays
+   * up while a model session, the embedding module or another client needs it.
+   */
+  async retireCoreOnQuit(): Promise<boolean> {
+    if (!this.client) return false;
+    if (this.leaseTimer) { clearTimeout(this.leaseTimer); this.leaseTimer = null; }
+    await this.lease?.release().catch(() => undefined);
+    this.lease = null;
+    return shutdownIdleStudioCore(this.deps.dataDir(), this.deps.coreVersion);
   }
 
   dispose(): void {
