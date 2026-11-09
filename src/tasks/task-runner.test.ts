@@ -752,7 +752,7 @@ describe("TaskRunner", () => {
             });
           executed({ tool: "os.fs.write", details: { path: "/w/a.ts", lines: 4, mode: "replace", existed: false } });
           executed({ tool: "os.shell.run", status: "error", details: { cmd: "npm", args: ["test"], exitCode: 1, timedOut: false } });
-          options?.eventHook?.({ type: "step_finished", stepIndex: 0, summary: "wrote a.ts", durationMs: 1 });
+          options?.eventHook?.({ type: "step_finished", stepIndex: 0, summary: "raw tool output", durationMs: 1 });
           liveDuringTurn = runner.liveStatus();
           options?.eventHook?.({
             type: "llm_event",
@@ -781,7 +781,7 @@ describe("TaskRunner", () => {
       await runner.runOne(t.id);
       expect(liveDuringTurn).toHaveLength(1);
       expect(liveDuringTurn[0]).toMatchObject({ taskId: t.id, userMessage: "overnight fix" });
-      expect(liveDuringTurn[0]?.summary.lastStep).toBe("wrote a.ts");
+      expect(liveDuringTurn[0]?.summary.lastStep).toBe("os.fs.write ok, os.shell.run failed");
       expect(runner.liveStatus()).toEqual([]);
       expect(reports).toHaveLength(1);
       const r = reports[0]!;

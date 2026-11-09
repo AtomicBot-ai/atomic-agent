@@ -62,7 +62,13 @@ export interface TaskRunSummary {
   creditExhausted: boolean;
   /** Steps finished so far (`step_finished` events). */
   steps: number;
-  /** The last finished step's one-line summary, for live status. */
+  /**
+   * The last finished step for live status, built from tool names and
+   * ok/failed only (`describeStepTools`), e.g. `os.fs.read ok,
+   * os.shell.run failed`. Never `step_finished.summary`: that is the tail
+   * of raw tool output (file contents, a key) and `/status` goes to
+   * Telegram, whose history outlives the session (ATO-1293).
+   */
   lastStep: string | null;
 }
 
@@ -81,6 +87,8 @@ export const SUMMARY_MAX_APPROVALS = 20;
 export const SUMMARY_MAX_OPEN_ITEMS = 20;
 export const SUMMARY_MAX_QUESTIONS = 3;
 const LINE_MAX_CHARS = 200;
+/** Tools named in `lastStep` before the rest is counted as "+N more". */
+export const LAST_STEP_MAX_TOOLS = 4;
 
 export interface TaskRunSummaryCollector {
   /** Install as (or call from) the turn's `eventHook`. */
@@ -102,6 +110,7 @@ export function createTaskRunSummaryCollector(): TaskRunSummaryCollector {
   let creditExhausted = false;
   let steps = 0;
   let lastStep: string | null = null;
+  let stepTools: StepTool[] = [];
 
   const pushError = (text: string): void => {
     if (errors.length < SUMMARY_MAX_ERRORS) errors.push(clip(text, LINE_MAX_CHARS));
@@ -114,6 +123,7 @@ export function createTaskRunSummaryCollector(): TaskRunSummaryCollector {
   };
 
   const onToolResult = (result: CompressedToolResult): void => {
+    stepTools.push({ tool: result.tool, ok: result.status === "ok" });
     if (result.tool === "finish" && result.status === "ok") {
       // `details.summary` is the uncompressed argument; the compressed
       // `summary` is the fallback (same rule the runner always used).
@@ -162,9 +172,13 @@ export function createTaskRunSummaryCollector(): TaskRunSummaryCollector {
   return {
     onEvent(event) {
       switch (event.type) {
+        case "step_started":
+          stepTools = [];
+          return;
         case "step_finished":
           steps += 1;
-          lastStep = clip(event.summary, LINE_MAX_CHARS);
+          lastStep = clip(describeStepTools(stepTools), LINE_MAX_CHARS);
+          stepTools = [];
           return;
         case "credit_exhausted":
           creditExhausted = true;
@@ -233,6 +247,25 @@ export function questionsIn(text: string | null): string[] {
     if (out.length >= SUMMARY_MAX_QUESTIONS) break;
   }
   return out;
+}
+
+interface StepTool {
+  tool: string;
+  ok: boolean;
+}
+
+/**
+ * One line for a finished step from stable identifiers only: each tool's
+ * registry name and ok/failed, in call order, the tail counted. A step
+ * with no tool calls reads "no tool calls".
+ */
+export function describeStepTools(tools: readonly StepTool[]): string {
+  if (tools.length === 0) return "no tool calls";
+  const shown = tools
+    .slice(0, LAST_STEP_MAX_TOOLS)
+    .map((t) => `${t.tool} ${t.ok ? "ok" : "failed"}`);
+  const more = tools.length - shown.length;
+  return more > 0 ? `${shown.join(", ")} +${more} more` : shown.join(", ");
 }
 
 function firstLine(text: string): string {
