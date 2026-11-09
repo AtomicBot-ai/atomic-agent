@@ -98,6 +98,8 @@ export interface BranchMergeOutcome {
   conflicts: string[];
   /** Declared inputs the task would have removed or cut down. */
   refused: RefusedPath[];
+  /** Paths that could neither be written nor saved: this task's change is gone. */
+  lost?: string[];
   /** Where the conflicting sides were saved, relative to the working directory. */
   savedDir?: string;
 }
@@ -187,46 +189,57 @@ export async function mergeBranch(
       readOrNull(basePath),
       readOrNull(realPath),
     ]);
-    // Touched, not changed: nothing to bring back.
-    if (same(task, base)) continue;
-    if (protectedPaths.has(rel)) {
-      const reason = inputReplacement(base, task);
-      if (reason !== undefined) {
-        outcome.refused.push({ path: rel, reason });
-        continue;
+    // One path that cannot be written (a file where its folder should be,
+    // a read-only target) must not cost the rest of the wave.
+    try {
+      // Touched, not changed: nothing to bring back.
+      if (same(task, base)) continue;
+      if (protectedPaths.has(rel)) {
+        const reason = inputReplacement(base, task);
+        if (reason !== undefined) {
+          outcome.refused.push({ path: rel, reason });
+          continue;
+        }
       }
-    }
-    // Already what the task wants (another task did the same).
-    if (same(current, task)) continue;
-    if (same(current, base)) {
-      if (task === null) await rm(realPath, { force: true });
-      else await writeKeepingMode(taskPath, realPath);
-      outcome.applied.push(rel);
-      continue;
-    }
-    // Both sides moved since the snapshot.
-    if (
-      task !== null &&
-      base !== null &&
-      current !== null &&
-      mergeableText(task) &&
-      mergeableText(base) &&
-      mergeableText(current)
-    ) {
-      const merged = await mergeFile({
-        current: realPath,
-        base: basePath,
-        other: taskPath,
-        cwd: set.realDir,
-      });
-      if (merged.clean) {
-        await writeBuffer(realPath, Buffer.from(merged.merged, "utf8"));
+      // Already what the task wants (another task did the same).
+      if (same(current, task)) continue;
+      if (same(current, base)) {
+        if (task === null) await rm(realPath, { force: true });
+        else await writeKeepingMode(taskPath, realPath);
         outcome.applied.push(rel);
         continue;
       }
+      // Both sides moved since the snapshot.
+      if (
+        task !== null &&
+        base !== null &&
+        current !== null &&
+        mergeableText(task) &&
+        mergeableText(base) &&
+        mergeableText(current)
+      ) {
+        const merged = await mergeFile({
+          current: realPath,
+          base: basePath,
+          other: taskPath,
+          cwd: set.realDir,
+        });
+        if (merged.clean) {
+          await writeBuffer(realPath, Buffer.from(merged.merged, "utf8"));
+          outcome.applied.push(rel);
+          continue;
+        }
+      }
+      await save(rel, base, task);
+      outcome.conflicts.push(rel);
+    } catch {
+      try {
+        await save(rel, base, task);
+        outcome.conflicts.push(rel);
+      } catch {
+        (outcome.lost ??= []).push(rel);
+      }
     }
-    outcome.conflicts.push(rel);
-    await save(rel, base, task);
   }
   return outcome;
 }
@@ -287,6 +300,11 @@ export function applyMergeOutcome(
   }
   for (const refused of outcome.refused) {
     problems.push(`merge refused for ${refused.path}: ${refused.reason}, a declared input`);
+  }
+  if (outcome.lost !== undefined && outcome.lost.length > 0) {
+    problems.push(
+      `could not write or save ${outcome.lost.join(", ")}: this task's change to ${outcome.lost.length === 1 ? "it" : "them"} is lost and has to be made again`,
+    );
   }
   if (problems.length === 0) {
     return notes.length === (row.notes ?? []).length ? row : { ...row, notes };
