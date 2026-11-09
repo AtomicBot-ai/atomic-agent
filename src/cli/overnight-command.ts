@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import type { ApprovalDecision } from "../approval/approval-gate.js";
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
@@ -49,6 +50,7 @@ const HELP = [
   "  --budget <usd>    Stop once the estimated spend reaches this many dollars, with a",
   "                    closing summary. Default: agent.task.maxCostUsd (0 = no cap).",
   "                    Local models count as $0.",
+  "                    Fusion cloud-worker spend does not count against this cap.",
   `  --hours <h>       Wall-clock cap, e.g. 8 or 1.5. Default: ${OVERNIGHT_DEFAULT_HOURS}.`,
   "  --dir <path>      Folder the agent works in. Default: the current folder.",
   "  --notify telegram Send the final result to the paired Telegram chat.",
@@ -149,13 +151,16 @@ export function installStopSignals(
  * The task row an overnight run creates. `maxSteps` is the task-wide
  * ceiling (`agent.task.maxSteps`): left unset, the runner would fall
  * back to the per-leg `agent.maxSteps` and end the night at step 25.
+ * The money cap the banner promises goes on the row too, a config cap
+ * included: only a cap on the row is tracked across resumes.
  */
 export function overnightTaskInput(
   args: OvernightArgs,
   taskId: string,
   sessionId: string,
-  config: { agent: { task: { maxSteps: number } } },
+  config: { agent: { task: { maxSteps: number; maxCostUsd: number } } },
 ): TaskCreateInput {
+  const capUsd = args.budgetUsd ?? config.agent.task.maxCostUsd;
   return {
     id: taskId,
     sessionId,
@@ -165,7 +170,7 @@ export function overnightTaskInput(
     maxAttempts: 1,
     maxSteps: config.agent.task.maxSteps,
     maxDurationMs: args.durationMs,
-    ...(args.budgetUsd !== null ? { maxCostUsd: args.budgetUsd } : {}),
+    ...(capUsd > 0 ? { maxCostUsd: capUsd } : {}),
     ...(args.notify ? { notify: args.notify } : {}),
   };
 }
@@ -174,6 +179,19 @@ export interface OvernightDeps {
   spawn?: typeof nodeSpawn;
   newTaskId?: () => string;
   cwd?: string;
+}
+
+/**
+ * The answer to a prompt nobody is there to see. `automatic`, so the
+ * model is not told a person pressed Deny and to ask what they want.
+ */
+export function unattendedDenial(approvalId: string): ApprovalDecision {
+  return {
+    approvalId,
+    approved: false,
+    automatic: true,
+    reason: "this is an unattended overnight run and nobody is there to approve it",
+  };
 }
 
 export async function overnightCommand(argv: string[], deps: OvernightDeps = {}): Promise<number> {
@@ -296,8 +314,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
       },
     },
   });
-  // No reason on a deny: it would reach the model as the user's own words.
-  resolveApproval = (approvalId) => runtime.approvals.resolve({ approvalId, approved: false });
+  resolveApproval = (approvalId) => runtime.approvals.resolve(unattendedDenial(approvalId));
   // This process runs one task. Its scheduler would otherwise take
   // leadership whenever no desktop holds it and drain unrelated due
   // tasks from the shared queue for hours, under this run's approval

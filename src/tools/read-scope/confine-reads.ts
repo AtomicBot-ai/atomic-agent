@@ -1,4 +1,5 @@
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
+import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { ReadScope } from "../../config/index.js";
 import { isFusionWorkerSessionId } from "../../session/fusion-worker-session.js";
 import type { ToolDefinition, ToolRegistry } from "../tool-registry.js";
@@ -17,7 +18,12 @@ import {
   shellCommandLine,
   type ShellScopeEnv,
 } from "./read-scope-shell.js";
-import { READ_TOOL_TARGETS, SHELL_TOOL } from "./read-scope-targets.js";
+import {
+  READ_TOOL_TARGETS,
+  SHELL_TOOL,
+  VERIFY_TOOL,
+  verifyRunShellCalls,
+} from "./read-scope-targets.js";
 import {
   findShellStateSecrets,
   findStateSecretReads,
@@ -140,9 +146,13 @@ export function confineReads(
     });
   }
 
-  if (asker !== null && registry.has(SHELL_TOOL)) {
-    const inner = registry.get(SHELL_TOOL);
-    install(SHELL_TOOL, async (args, ctx) => {
+  if (asker !== null) {
+    // Checked per command before the tool runs; `null` lets the command by.
+    const checkCommand = async (
+      tool: string,
+      args: Record<string, unknown>,
+      ctx: Parameters<ToolDefinition["run"]>[1],
+    ): Promise<CompressedToolResult | null> => {
       // A command naming a secret file asks at every level below full
       // trust, though the shell itself runs unasked from level 4 and a
       // fan-out's directory scope would let it through: neither a level
@@ -156,7 +166,7 @@ export function confineReads(
       if (secretPaths.length > 0) {
         const commandLine = shellCommandLine(args);
         await asker.confirmStateSecret(
-          SHELL_TOOL,
+          tool,
           ctx,
           {
             reason: stateSecretShellPrompt(commandLine, secretPaths),
@@ -165,7 +175,7 @@ export function confineReads(
           secretPaths,
         );
       }
-      if (!scoped()) return inner.run(args, ctx);
+      if (!scoped()) return null;
       if (isFusionWorkerSessionId(ctx.sessionId)) {
         // A worker's world is its task's directories, and there is
         // nobody to ask: the refusal, as for its reads.
@@ -177,11 +187,11 @@ export function confineReads(
           options.shellEnv,
         );
         return outside === null
-          ? inner.run(args, ctx)
-          : workerReadRefusal(SHELL_TOOL, outside, ctx, granted);
+          ? null
+          : workerReadRefusal(tool, outside, ctx, granted);
       }
-      const refusal = await asker.admit(
-        SHELL_TOOL,
+      return asker.admit(
+        tool,
         ctx,
         (roots) =>
           findShellPathOutsideScope(
@@ -198,8 +208,24 @@ export function confineReads(
             root,
           ),
       );
-      return refusal ?? inner.run(args, ctx);
-    });
+    };
+    const commandTools: [string, (args: Record<string, unknown>) => Record<string, unknown>[]][] = [
+      [SHELL_TOOL, (args) => [args]],
+      // Its copy of the workspace takes the writes, not the reads: `cat`
+      // of an absolute path works there, and the output comes back.
+      [VERIFY_TOOL, verifyRunShellCalls],
+    ];
+    for (const [name, callsOf] of commandTools) {
+      if (!registry.has(name)) continue;
+      const inner = registry.get(name);
+      install(name, async (args, ctx) => {
+        for (const call of callsOf(args)) {
+          const refusal = await checkCommand(name, call, ctx);
+          if (refusal !== null) return refusal;
+        }
+        return inner.run(args, ctx);
+      });
+    }
   }
   return confined;
 }

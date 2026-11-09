@@ -323,3 +323,73 @@ describe("splitCommandSegments", () => {
     expect(segments.flat()).toContain("-f");
   });
 });
+
+describe("dangerous.plugin_code_consent", () => {
+  it.each([
+    "atomic-agent plugin allow-code demo",
+    "atag plugin allow-code demo",
+    "npx atomic-agent plugin allow-code demo",
+    "node dist/index.js plugin allow-code demo",
+    "atomic-agent plugin install ./demo --accept-code --acknowledge-risk --yes",
+    "atomic-agent plugin update demo --accept-code",
+    "cd x && atomic-agent plugin allow-code demo",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.plugin_code_consent",
+    });
+  });
+
+  it.each([
+    "atomic-agent plugin list",
+    "atomic-agent plugin deny-code demo",
+    "atomic-agent plugin install ./demo",
+    "atomic-agent plugin update demo",
+  ])("%s stays on the ordinary path", (line) => {
+    expectNotDangerous(line);
+  });
+});
+
+describe("rm flags and nested shells, read from parsed words", () => {
+  it.each([
+    ["rm -v -rf x", "dangerous.rm_recursive"],
+    ["rm --verbose -r x", "dangerous.rm_recursive"],
+    ["rm x -R", "dangerous.rm_recursive"],
+    ["rm -v -f x", "dangerous.rm_force"],
+    ["rm --verbose --force x", "dangerous.rm_force"],
+    ["bash -lc ls", "dangerous.shell_dash_c"],
+    ["env bash -c ls", "dangerous.shell_dash_c"],
+    ["nohup sh -c ls", "dangerous.shell_dash_c"],
+    ["cd x && bash -c ls", "dangerous.shell_dash_c"],
+    ["bash -o pipefail -c ls", "dangerous.shell_dash_c"],
+  ])("%s asks as %s", (line, rule) => {
+    expect(guardLine(line)).toMatchObject({ action: "approval_required", rule });
+  });
+
+  it.each([
+    ["rm -rf -v ~", "hardline.rm_home"],
+    ["rm -v -rf ~/x", "hardline.rm_home"],
+    ["rm -rf --no-preserve-root /", "hardline.rm_root"],
+    ["rm -v -rf /", "hardline.rm_root"],
+    ["rm -r -f /*", "hardline.rm_root_glob"],
+  ])("%s is blocked as %s", (line, rule) => {
+    expect(guardLine(line)).toMatchObject({ action: "block", rule });
+  });
+
+  it("does not credit a script's own -c to the shell", () => {
+    expectNotDangerous("bash run.sh -c fast");
+  });
+
+  it("a plain rm of one file stays on the ordinary path", () => {
+    expectNotDangerous("rm notes.txt");
+    expectNotDangerous("rm -v notes.txt");
+    expectNotDangerous("rm -- -rf");
+  });
+
+  it("-r without force on a deep path is dangerous, not blocked", () => {
+    expect(guardLine("rm -r -v /tmp/x")).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.rm_recursive",
+    });
+  });
+});

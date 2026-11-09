@@ -26,7 +26,7 @@ import {
   type TaskRunSummaryCollector,
 } from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
-import { remainingCostUsd } from "./task-budget.js";
+import { formatRunTime, remainingCostUsd, remainingDurationMs } from "./task-budget.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
@@ -105,6 +105,12 @@ export interface TaskRunnerOptions {
    * value. Resolved from the runtime config at bootstrap.
    */
   defaultMaxSteps: number;
+  /**
+   * `agent.task.maxSteps`: used instead of `defaultMaxSteps` by a task
+   * that has a money or time budget but no step count, so the budget
+   * ends it and not the per-leg step default.
+   */
+  budgetedMaxSteps?: number;
   backoff: BackoffOptions;
   /** When `false`, `drainPending` is a no-op (mirrors `tasks.enabled=false`). */
   enabled: boolean;
@@ -388,6 +394,21 @@ export class TaskRunner {
       return blocked;
     }
 
+    // The same for the time limit: a resume after a restart, clean or
+    // not, gets what is left of it, not a new one.
+    const timeLeft = remainingDurationMs(claimed);
+    if (timeLeft === "exhausted") {
+      const blocked = this.options.store.markBlocked(claimed.id, {
+        category: "tool",
+        message:
+          `time_spent: ${formatRunTime(claimed.elapsedMs ?? 0)} of ` +
+          `${formatRunTime(claimed.maxDurationMs ?? 0)} already used by earlier attempts`,
+      });
+      this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
+      return blocked;
+    }
+
     this.stampWakeReason(session, claimed);
 
     // `task` is the row as it was before the claim, which cleared the
@@ -450,15 +471,38 @@ export class TaskRunner {
             this.options.store.recordSpend(claimed.id, spentBefore + event.spendUsd);
           }
         : undefined;
-    const eventHook: TurnEventHook | undefined =
-      reportHook && spendHook
+    // Run time is written the same way, so a process that dies mid-run
+    // loses at most the step it was on.
+    const elapsedBefore = claimed.elapsedMs ?? 0;
+    let runStartedAt: number | null = null;
+    const recordElapsed = (): void => {
+      if (claimed.maxDurationMs === null || runStartedAt === null) return;
+      this.options.store.recordElapsed(
+        claimed.id,
+        elapsedBefore + (Date.now() - runStartedAt),
+      );
+    };
+    const elapsedHook: TurnEventHook | undefined =
+      claimed.maxDurationMs !== null
         ? (event: AgentLoopEvent): void => {
-            reportHook(event);
-            spendHook(event);
+            if (event.type === "step_finished") recordElapsed();
           }
-        : (reportHook ?? spendHook);
+        : undefined;
+    const hooks = [reportHook, spendHook, elapsedHook].filter(
+      (hook): hook is TurnEventHook => hook !== undefined,
+    );
+    const eventHook: TurnEventHook | undefined =
+      hooks.length > 0
+        ? (event: AgentLoopEvent): void => {
+            for (const hook of hooks) hook(event);
+          }
+        : undefined;
 
-    const maxSteps = claimed.maxSteps ?? this.options.defaultMaxSteps;
+    const hasBudget = claimed.maxCostUsd !== null || claimed.maxDurationMs !== null;
+    const maxSteps =
+      claimed.maxSteps ??
+      (hasBudget ? this.options.budgetedMaxSteps : undefined) ??
+      this.options.defaultMaxSteps;
     // Every run gets a stop of its own: an operator cancelling the task
     // (`cancel`), the runner stopping for shutdown (`stop`), and the
     // drain's signal — the scheduler aborts its own when the agent quits
@@ -480,6 +524,7 @@ export class TaskRunner {
         await this.backOffResume(plan, run.signal);
         if (run.signal.aborted) throw new Error("stopped before resuming");
         turnStarted = true;
+        runStartedAt = Date.now();
         result = await this.options.runtime.runTurn(
           session,
           plan.kind === "resume" ? plan.message : claimed.userMessage,
@@ -488,9 +533,7 @@ export class TaskRunner {
             origin: "scheduler",
             signal: run.signal,
             ...(eventHook ? { eventHook } : {}),
-            ...(claimed.maxDurationMs !== null
-              ? { taskMaxDurationMs: claimed.maxDurationMs }
-              : {}),
+            ...(timeLeft !== undefined ? { taskMaxDurationMs: timeLeft } : {}),
             ...(costLeft !== undefined ? { taskMaxCostUsd: costLeft } : {}),
             checkpoint: {
               taskId: claimed.id,
@@ -500,6 +543,7 @@ export class TaskRunner {
           },
         );
       } catch (err) {
+        recordElapsed();
         if (this.endedElsewhere(claimed)) {
           return this.options.store.get(claimed.id);
         }
@@ -518,6 +562,7 @@ export class TaskRunner {
         }
         return this.handleFailure(claimed, category, err, runFacts(null));
       }
+      recordElapsed();
       // What this run spent joins what earlier attempts spent, whatever
       // the outcome: the morning report and a retry's budget read it.
       if (result.spendUsd !== undefined) {
@@ -563,6 +608,11 @@ export class TaskRunner {
           new Error("loop reported failed"),
           runFacts(result),
         );
+      }
+      // `completed` also covers a run a ceiling ended; the row says which,
+      // so a reader does not take unfinished work for finished.
+      if (result.stopCause !== undefined) {
+        this.options.store.recordStopCause(claimed.id, result.stopCause);
       }
       const completed = this.options.store.markCompleted(claimed.id);
       this.recordTerminal(completed);

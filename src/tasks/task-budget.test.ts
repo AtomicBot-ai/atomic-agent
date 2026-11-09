@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  formatRunTime,
   remainingCostUsd,
+  remainingDurationMs,
   validateMaxCostUsd,
   validateMaxDurationMs,
 } from "./task-budget.js";
@@ -17,6 +19,20 @@ describe("task budget rules", () => {
     expect(remainingCostUsd({ maxCostUsd: 2, spentUsd: 0.5 })).toBe(1.5);
     expect(remainingCostUsd({ maxCostUsd: 2, spentUsd: 2 })).toBe("exhausted");
     expect(remainingCostUsd({ maxCostUsd: 2, spentUsd: 2.4 })).toBe("exhausted");
+  });
+
+  it("treats the time limit the same way", () => {
+    expect(remainingDurationMs({ maxDurationMs: null, elapsedMs: 5 })).toBeUndefined();
+    expect(remainingDurationMs({ maxDurationMs: 100, elapsedMs: null })).toBe(100);
+    expect(remainingDurationMs({ maxDurationMs: 100, elapsedMs: 70 })).toBe(30);
+    expect(remainingDurationMs({ maxDurationMs: 100, elapsedMs: 100 })).toBe("exhausted");
+    expect(remainingDurationMs({ maxDurationMs: 100, elapsedMs: 130 })).toBe("exhausted");
+  });
+
+  it("spells a run time in minutes, then hours", () => {
+    expect(formatRunTime(45 * 60_000)).toBe("45 min");
+    expect(formatRunTime(8 * 3_600_000)).toBe("8 h");
+    expect(formatRunTime(90 * 60_000)).toBe("90 min");
   });
 
   it("validates the budget inputs", () => {

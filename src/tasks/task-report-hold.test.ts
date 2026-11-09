@@ -192,6 +192,40 @@ describe("TaskReportHold", () => {
     expect(h.timers.at(-1)?.ms).toBe(0);
   });
 
+  it("a running agent picks up a report another process held after it started", async () => {
+    const h = harness(at(3));
+    h.hold.start();
+    const poll = h.timers.at(-1)!;
+    expect(poll.ms).toBe(5 * 60_000);
+
+    // An `overnight` process held this one and exited.
+    h.store.add(report("night"), at(5).getTime());
+    h.setNow(at(5));
+    poll.fn();
+    const release = h.timers.find((t) => t.ms === 3 * 3_600_000);
+    expect(release).toBeDefined();
+
+    h.setNow(at(8));
+    release!.fn();
+    await h.hold.release();
+    expect(h.digests).toEqual([["night"]]);
+  });
+
+  it("the check re-arms itself and does nothing while no report is held", () => {
+    const h = harness(at(3));
+    h.hold.start();
+    h.timers.at(-1)!.fn();
+    expect(h.timers).toHaveLength(2);
+    expect(h.timers.at(-1)?.ms).toBe(5 * 60_000);
+  });
+
+  it("stop() ends the check for held reports", () => {
+    const h = harness(at(3));
+    h.hold.start();
+    h.hold.stop();
+    expect(h.timers.every((t) => t.cancelled)).toBe(true);
+  });
+
   it("stop() cancels the pending release", async () => {
     const h = harness(at(3));
     await h.hold.sink(report("a"));

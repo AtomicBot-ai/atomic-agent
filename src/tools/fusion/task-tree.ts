@@ -55,6 +55,8 @@ export const MIN_SPLIT_TASKS = 2;
 const GOAL_CHARS = 200;
 /** How much of each child's reply the parent's reply carries. */
 const CHILD_REPLY_CHARS = 600;
+/** The same, when the parent declared no files: the replies are the deliverable. */
+const CHILD_DELIVERABLE_CHARS = 4_000;
 
 export interface TaskTreeLimits {
   /** Deepest level a node may sit at; the orchestrator's tasks are 1. */
@@ -117,6 +119,10 @@ export class TaskTreeState {
 
   depthOf(taskId: string): number {
     return this.byId.get(taskId)?.depth ?? 1;
+  }
+
+  parentOf(taskId: string): string | undefined {
+    return this.byId.get(taskId)?.parentId;
   }
 
   /** Whether a node at `depth` may still propose a split. */
@@ -652,9 +658,11 @@ async function closeParent(
         : open.length === 0
           ? "ok"
           : "needs_orchestrator";
+  const replyCap =
+    (task.files?.length ?? 0) > 0 ? CHILD_REPLY_CHARS : CHILD_DELIVERABLE_CHARS;
   const summary = children.map(
     (c) =>
-      `[${c.id}] ${c.status} — ${c.title}: ${oneLine(c.error ?? c.reply, CHILD_REPLY_CHARS)}`,
+      `[${c.id}] ${c.status} — ${c.title}: ${oneLine(c.error ?? c.reply, replyCap)}`,
   );
   const tools = sumTools(row, children);
   const usage = sumUsage([row, ...children]);

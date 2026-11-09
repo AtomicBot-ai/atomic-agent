@@ -10,6 +10,7 @@ import {
   parseBoundedPositiveInt,
   parseNonNegativeInt,
   parseHalfOpenUnitInterval,
+  isSetAsideString,
 } from "../config-primitives.js";
 import { parseProviderWait, parseAgentTask } from "../agent-execution-config.js";
 
@@ -35,7 +36,9 @@ export const TOOL_SEARCH_MODES: readonly ToolSearchMode[] = ["auto", "on", "off"
 
 /**
  * `agent.tools` (ATO-558). Absent or missing `search` keeps the
- * default; a value outside the three modes fails like any enum here.
+ * default; a string outside the three modes reads as the default with
+ * one notice (a newer build may have written it, ATO-1241), and anything
+ * else fails like any enum here.
  */
 export function parseAgentToolsConfig(raw: unknown, defaults: AgentToolsConfig | undefined): AgentToolsConfig {
   const fallback: AgentToolsConfig = defaults ?? { search: "auto" };
@@ -44,6 +47,7 @@ export function parseAgentToolsConfig(raw: unknown, defaults: AgentToolsConfig |
     throw new ConfigValidationError("agent.tools", `expected an object, got ${JSON.stringify(raw)}`);
   }
   const search = (raw as Record<string, unknown>).search ?? fallback.search;
+  if (isSetAsideString(search, TOOL_SEARCH_MODES, "agent.tools.search", fallback.search)) return { ...fallback };
   if (typeof search !== "string" || !(TOOL_SEARCH_MODES as readonly string[]).includes(search)) {
     throw new ConfigValidationError(
       "agent.tools.search",

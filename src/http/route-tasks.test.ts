@@ -96,6 +96,25 @@ describe("/api/tasks", () => {
     expect(stored?.maxDurationMs).toBe(8 * 60 * 60 * 1000);
   });
 
+  it("returns the stop cause of a run a ceiling ended", async () => {
+    const session = harness.runtime.createSession();
+    const store = harness.runtime.taskStore;
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "overnight",
+      origin: "http",
+      maxAttempts: 1,
+    });
+    store.markRunning(task.id);
+    store.recordStopCause(task.id, "time_ceiling");
+    store.markCompleted(task.id);
+    const res = await fetch(`${harness.baseUrl}/api/tasks/${task.id}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as TaskJson & { stopCause: string | null };
+    expect(body.status).toBe("completed");
+    expect(body.stopCause).toBe("time_ceiling");
+  });
+
   it("leaves the budget null when the create body omits it", async () => {
     const session = harness.runtime.createSession();
     const res = await fetch(`${harness.baseUrl}/api/tasks`, {

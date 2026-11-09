@@ -1,4 +1,4 @@
-import { isSetAsideString } from "./config-primitives.js";
+import { emitConfigNoticeOnce, isSetAsideString } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 
 /**
@@ -243,6 +243,8 @@ export const FUSION_ESCALATION_MODES: readonly FusionEscalationMode[] = [
 ];
 export const DEFAULT_FUSION_ESCALATION_MAX_USD = 0.25;
 
+export const FUSION_JUDGE_MODES: readonly NonNullable<UserLlmFusionConfig["judge"]>[] = ["off", "on"];
+
 export type UserLlmRunModeConfig = {
   mode?: RunModeName;
   fusion?: UserLlmFusionConfig;
@@ -483,7 +485,10 @@ function parseFusion(
       FUSION_TURN_BUDGET_USD_MAX,
     );
   }
-  if (obj.escalation !== undefined) {
+  // ATO-1241: a value a newer build added to these three is left unset (off).
+  if (obj.escalation !== undefined && !isSetAsideString(
+    obj.escalation, FUSION_ESCALATION_MODES, `${field}.escalation`, undefined,
+  )) {
     if (
       typeof obj.escalation !== "string" ||
       !FUSION_ESCALATION_MODES.includes(obj.escalation as FusionEscalationMode)
@@ -519,7 +524,7 @@ function parseFusion(
       1_000,
     );
   }
-  if (obj.judge !== undefined) {
+  if (obj.judge !== undefined && !isSetAsideString(obj.judge, FUSION_JUDGE_MODES, `${field}.judge`, undefined)) {
     if (obj.judge !== "off" && obj.judge !== "on") {
       throw new ConfigValidationError(`${field}.judge`, "expected off|on");
     }
@@ -540,7 +545,7 @@ function parseFusion(
       FUSION_AUTO_REPLAN_MAX,
     );
   }
-  if (obj.isolation !== undefined) {
+  if (obj.isolation !== undefined && !isSetAsideString(obj.isolation, FUSION_ISOLATION_MODES, `${field}.isolation`, undefined)) {
     if (obj.isolation !== "off" && obj.isolation !== "worktree") {
       throw new ConfigValidationError(
         `${field}.isolation`,
@@ -586,10 +591,11 @@ function parseRoles(
   const out: FusionRoleProviders = {};
   for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!FUSION_ROLES.includes(key as FusionRole)) {
-      throw new ConfigValidationError(
-        `${field}.${key}`,
-        `unknown role; expected ${FUSION_ROLES.join("|")}`,
+      // ATO-1241: a role a newer build added; `keepSetAsideConfigValues` keeps its pin on a write.
+      emitConfigNoticeOnce(
+        `[atomic-agent] ${field}.${key} is a role this build does not know (a newer app may have written it); it is not used here — update atomic-agent to use it`,
       );
+      continue;
     }
     out[key as FusionRole] = parseLegProviderId(
       value,

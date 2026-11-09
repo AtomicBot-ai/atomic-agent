@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import {
   GEMMA4_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
@@ -934,5 +935,48 @@ describe("os.shell.run cannot be called with empty args", () => {
     expect(grammarToolNames(g)).toEqual(["os.shell.run", "reply"]);
     expect(gbnfAccepts(g, "root", CMD_ONLY)).toBe(true);
     expect(gbnfAccepts(g, "root", '[{"tool":"os.fs.read","args":{"path":"a"}}]')).toBe(false);
+  });
+});
+
+describe("the base grammar's vocabulary", () => {
+  // Older gaps, listed so the check below stays strict for anything new.
+  // Remove a name here when the grammar learns it.
+  const NOT_YET_IN_GRAMMAR = new Set([
+    "browser.screenshot",
+    "github.issue.comment",
+    "github.issue.create",
+    "github.issue.list",
+    "github.pr.create",
+    "github.pr.list",
+    "github.whoami",
+    "video.generate",
+  ]);
+
+  const admits = (grammar: string, name: string): boolean =>
+    gbnfAccepts(grammar, "tool-name", JSON.stringify(name)) ||
+    // Tools with required args have their own `tool-call` branch.
+    grammar.includes(`"\\"tool\\"" ws ":" ws "\\"${name}\\""`);
+
+  it("admits every default tool descriptor, so a local model can call it", async () => {
+    const grammar = await readFile(GRAMMAR_FILE, "utf8");
+    const missing = DEFAULT_TOOL_DESCRIPTORS.map((d) => d.name).filter(
+      (name) => !NOT_YET_IN_GRAMMAR.has(name) && !admits(grammar, name),
+    );
+    expect(missing).toEqual([]);
+  });
+
+  it("admits the plan and screen tools through the generic branch", async () => {
+    const grammar = await readFile(GRAMMAR_FILE, "utf8");
+    for (const name of [
+      "plan.update",
+      "os.screen.point",
+      "os.screen.capture",
+      "os.screen.click",
+      "os.screen.type",
+      "os.screen.key",
+    ]) {
+      const call = `[{"tool":"${name}","args":{}}]`;
+      expect(gbnfAccepts(grammar, "root", call), name).toBe(true);
+    }
   });
 });

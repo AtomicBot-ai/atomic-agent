@@ -13,6 +13,9 @@ import { buildSkillRunScriptTool } from "../tools/skill/skill-run-script.js";
 import { buildSkillViewTool } from "../tools/skill/skill-view.js";
 import { SkillRegistry } from "./skill-registry.js";
 import { loadWorkspaceSkills } from "./workspace-skills.js";
+import { installPluginFromDir } from "../plugins/plugin-install.js";
+import { readPluginState } from "../plugins/plugin-store.js";
+import { writeClaudePlugin } from "../plugins/plugin-test-helpers.js";
 
 describe("session workspace skills and live policy", () => {
   let base: string; let a: string; let b: string;
@@ -31,6 +34,22 @@ describe("session workspace skills and live policy", () => {
   function load(dir = a, compatible = true) {
     const c = getConfig(); return loadWorkspaceSkills(dir, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile, defaults: c.skills }, compatible);
   }
+
+  it("a plugin skill is switched in the plugin's record and never lands in config.json", () => {
+    const stateDir = getConfig().paths.stateDir;
+    installPluginFromDir(stateDir, writeClaudePlugin(join(base, "plugin"), { name: "demo" }));
+    setSkillDisabled("demo:review", true);
+    expect(readPluginState(stateDir).plugins.demo?.disabledParts).toEqual(["skill:review"]);
+    expect(readUserConfigFileSync(getConfig().paths.userConfigFile)?.skills.disabled ?? []).toEqual([]);
+    setSkillDisabled("demo:review", false);
+    expect(readPluginState(stateDir).plugins.demo?.disabledParts).toEqual([]);
+  });
+
+  it("a plugin skill cannot be switched per folder, and an unknown plugin is an error", () => {
+    expect(() => setSkillDisabled("demo:review", true, a)).toThrow(/--part skill:review/);
+    expect(() => setSkillDisabled("missing:review", true)).toThrow(/plugin not installed: missing/);
+    expect(readUserConfigFileSync(getConfig().paths.userConfigFile)?.skills.cloudWorkspaces ?? []).toEqual([]);
+  });
 
   it("deduplicates all copies by name, global first then project source priority, with root-only discovery", () => {
     const dirs = [".atomic-agent/skills", ".agents/skills", ".claude/skills", ".cursor/skills", ".pi/skills"].map(p => join(a, p));

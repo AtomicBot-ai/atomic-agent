@@ -236,6 +236,57 @@ describe("a node closes only on a green list (ATO-944)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("lets the retry of a task with no files split it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "judge-s-"));
+    const proposal =
+      "Too big.\n```split_proposal\n" +
+      JSON.stringify({
+        tasks: [
+          { id: "a", title: "A", instructions: "research part a" },
+          { id: "b", title: "B", instructions: "research part b" },
+        ],
+      }) +
+      "\n```";
+    let judged = 0;
+    const briefs: string[] = [];
+    const d = deps(
+      dir,
+      async () => {
+        judged += 1;
+        return {
+          content: JSON.stringify({
+            items: [{ id: "a1", pass: judged > 1, why: judged > 1 ? "covered" : "too thin" }],
+          }),
+        };
+      },
+      { resolveRunMode: () => mode({ taskTree: { maxDepth: 2, maxNodes: 24 } }) },
+    );
+    d.runTurn = async (_session, message, options) => {
+      briefs.push(message);
+      const text = message.includes("research part")
+        ? "part done"
+        : briefs.length === 1
+          ? "thin answer"
+          : proposal;
+      options.eventHook?.({ type: "llm_event", event: { type: "assistant_reply", text } });
+      return {
+        session: createEmptySessionState({ id: "s-w", workingDir: dir }),
+        reason: "reply",
+        stepCount: 1,
+      } as RunTurnResult;
+    };
+    const result = await buildFusionDelegateTool(d).run(
+      { tasks: [{ id: "t", title: "T", instructions: "research the market" }] },
+      { workingDir: dir, sessionId: "s-p", stepIndex: 0, signal: new AbortController().signal },
+    );
+    expect(briefs[1]).toContain("If this task is too big");
+    expect(result.details.taskTree).toMatchObject({ splits: 1 });
+    const row = (result.details.tasks as Array<{ status: string; reply: string }>)[0]!;
+    expect(row.reply).toContain("[t/a] ok");
+    expect(row.status).toBe("ok");
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it("keeps the status of a retry that ended without being judged (stopped by the person)", async () => {
     const dir = mkdtempSync(join(tmpdir(), "judge-c-"));
     let runs = 0;

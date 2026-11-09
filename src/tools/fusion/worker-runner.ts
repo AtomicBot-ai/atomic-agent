@@ -483,6 +483,7 @@ export interface WorkerRunnerDeps {
   localLegHealth?: LocalLegHealth;
   /** `LlamaServerClient.probeHealth`, the question the check above asks. */
   probeLocalHealth?: () => Promise<LocalHealthAnswer>;
+  /**
    * One completion on the escalation provider (ATO-942). Absent, nothing
    * is ever escalated, manual or automatic.
    */
@@ -855,6 +856,9 @@ async function runOneTask(
       onPrompt: "refuse",
       reason: FUSION_WORKER_APPROVAL_REFUSED,
       reasonFor: workerRefusalFor,
+      // A throwaway worktree is still the parent's project: its saved
+      // rules hold here too.
+      ...(isolated !== undefined ? { ruleWorkdir: deps.workingDir } : {}),
     });
     // …and the half that lets it work at all. The operator answered one
     // question at the fan-out naming these directories; inside them this

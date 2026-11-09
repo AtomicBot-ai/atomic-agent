@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readPluginBundle } from "./plugin-bundle.js";
@@ -14,7 +14,7 @@ import {
 } from "./plugin-permissions.js";
 import { writeClaudePlugin } from "./plugin-test-helpers.js";
 
-const empty: PluginPermissionSnapshot = { name: "p", version: "1", runsCode: false, hooks: [], mcpServers: [], scripts: [], skills: [], commands: [], agents: [] };
+const empty: PluginPermissionSnapshot = { name: "p", version: "1", runsCode: false, hooks: [], mcpServers: [], scripts: [], treeSha256: "", treeComplete: true, skills: [], commands: [], agents: [] };
 
 describe("plugin permissions", () => {
   let base: string;
@@ -50,6 +50,50 @@ describe("plugin permissions", () => {
     const diff = diffPluginPermissions(a, b);
     expect(diff.codeChanged).toBe(false);
     expect(describePermissionDiff(diff)).toEqual([]);
+  });
+
+  it("a changed file a local server runs is a code change, whatever it is called", () => {
+    const mcp = { db: { command: "node", args: ["${CLAUDE_PLUGIN_ROOT}/dist/server"] } };
+    const aRoot = writeClaudePlugin(join(base, "a"), { mcp });
+    const bRoot = writeClaudePlugin(join(base, "b"), { mcp });
+    mkdirSync(join(aRoot, "dist"));
+    mkdirSync(join(bRoot, "dist"));
+    writeFileSync(join(aRoot, "dist", "server"), "good");
+    writeFileSync(join(bRoot, "dist", "server"), "bad");
+    const a = pluginPermissionSnapshot(readPluginBundle(aRoot));
+    const b = pluginPermissionSnapshot(readPluginBundle(bRoot));
+    const diff = diffPermissionSnapshots(a, b);
+    expect(diff).toMatchObject({ codeChanged: true, treeChanged: true, scriptsChanged: [] });
+    expect(describePermissionDiff(diff)).toEqual(["Other files of this plugin changed; its servers, hooks or scripts can run them."]);
+    expect(codeConsentIdOf(a)).not.toBe(codeConsentIdOf(b));
+  });
+
+  it("a version bump in the manifest alone changes no code", () => {
+    const hooks = { hooks: true };
+    const a = readPluginBundle(writeClaudePlugin(join(base, "a"), hooks));
+    const b = readPluginBundle(writeClaudePlugin(join(base, "b"), { ...hooks, manifest: { version: "9.9.9" } }));
+    expect(diffPluginPermissions(a, b)).toMatchObject({ codeChanged: false, treeChanged: false });
+  });
+
+  it("a walk that could not read everything never keeps consent", () => {
+    const code = { ...empty, runsCode: true };
+    expect(diffPermissionSnapshots({ ...code, treeComplete: false }, code).codeChanged).toBe(true);
+    expect(diffPermissionSnapshots(code, { ...code, treeComplete: false }).codeChanged).toBe(true);
+    expect(diffPermissionSnapshots(code, code).codeChanged).toBe(false);
+  });
+
+  it("a changed environment of a local server is shown and is a code change", () => {
+    const server = (env?: Record<string, string>) => ({ db: { command: "node", args: ["s.js"], ...(env ? { env } : {}) } });
+    const a = readPluginBundle(writeClaudePlugin(join(base, "a"), { mcp: server() }));
+    const b = readPluginBundle(writeClaudePlugin(join(base, "b"), { mcp: server({ NODE_OPTIONS: "--require ./x.js" }) }));
+    const diff = diffPluginPermissions(a, b);
+    expect(diff.codeChanged).toBe(true);
+    expect(describePermissionDiff(diff)).toEqual([
+      "MCP server db now runs: node s.js (was: node s.js) (environment: NODE_OPTIONS=--require ./x.js)",
+    ]);
+    expect(describePluginCode(pluginPermissionSnapshot(b))).toContain(
+      "local MCP server db: node s.js (environment: NODE_OPTIONS=--require ./x.js)",
+    );
   });
 
   it("a changed script, a new hook or a new local server is a code change", () => {

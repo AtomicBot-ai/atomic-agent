@@ -58,7 +58,12 @@ export function matchDangerousArgv(
   input: NormalisedCommand,
 ): GuardVerdict | null {
   const segments = splitCommandSegments(input.joined);
-  const hit = matchGit(segments) ?? matchFind(segments);
+  const hit =
+    matchGit(segments) ??
+    matchFind(segments) ??
+    matchRm(segments) ??
+    matchNestedShell(segments) ??
+    matchPluginConsent(segments);
   if (hit === null) return null;
   return { action: "approval_required", rule: hit.id, reason: hit.reason };
 }
@@ -294,6 +299,152 @@ function matchFind(segments: readonly (readonly string[])[]): ArgvCheck | null {
             reason: "find -exec removing files",
           };
         }
+      }
+    }
+  }
+  return null;
+}
+
+interface RmInvocation {
+  recursive: boolean;
+  force: boolean;
+  targets: readonly string[];
+}
+
+/** Every `rm` of the line, with flags read wherever they stand. */
+function rmInvocations(
+  segments: readonly (readonly string[])[],
+): RmInvocation[] {
+  return invocationsOf(segments, "rm").map((args) => {
+    let recursive = false;
+    let force = false;
+    const targets: string[] = [];
+    let options = true;
+    for (const word of args) {
+      if (options && word === "--") {
+        options = false;
+        continue;
+      }
+      const letters = options ? shortOptionLetters(word) : null;
+      if (letters !== null) {
+        if (letters.includes("r") || letters.includes("R")) recursive = true;
+        if (letters.includes("f")) force = true;
+      } else if (options && word.startsWith("--") && word.length > 2) {
+        if (isLongOption(word, "--recursive", 3)) recursive = true;
+        if (isLongOption(word, "--force", 3)) force = true;
+      } else {
+        targets.push(word);
+      }
+    }
+    return { recursive, force, targets };
+  });
+}
+
+/** `rm -v -rf x`, `rm --verbose -r x`: the patterns read only the first flag. */
+function matchRm(segments: readonly (readonly string[])[]): ArgvCheck | null {
+  const all = rmInvocations(segments);
+  if (all.some((rm) => rm.recursive)) {
+    return { id: "dangerous.rm_recursive", reason: "recursive remove" };
+  }
+  if (all.some((rm) => rm.force)) {
+    return { id: "dangerous.rm_force", reason: "force remove" };
+  }
+  return null;
+}
+
+const HOME_TARGET = /^(?:~|\$home|\$\{home\})(?:\/|$)/i;
+
+/**
+ * `rm -rf` of the filesystem root or the home directory with the flags
+ * anywhere (`rm -rf -v ~`, `rm -rf --no-preserve-root /`). The rule ids
+ * are the hardline patterns' own.
+ */
+export function matchHardlineRm(input: NormalisedCommand): GuardVerdict | null {
+  for (const rm of rmInvocations(splitCommandSegments(input.joined))) {
+    if (!rm.recursive || !rm.force) continue;
+    for (const target of rm.targets) {
+      if (target === "/") {
+        return { action: "block", rule: "hardline.rm_root", reason: "recursive delete of filesystem root" };
+      }
+      if (target.startsWith("/*")) {
+        return { action: "block", rule: "hardline.rm_root_glob", reason: "recursive delete of /*" };
+      }
+      if (HOME_TARGET.test(target)) {
+        return { action: "block", rule: "hardline.rm_home", reason: "recursive delete of home directory" };
+      }
+    }
+  }
+  return null;
+}
+
+const SHELL_PROGRAMS: readonly string[] = ["bash", "sh", "zsh", "dash", "ksh"];
+
+/**
+ * `bash -lc …`, `env bash -c …`, `cd x && sh -c …`: a nested shell
+ * however it is started. Only the options before the first script
+ * argument count: `bash run.sh -c` passes `-c` to the script.
+ */
+function matchNestedShell(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const program of SHELL_PROGRAMS) {
+    for (const args of invocationsOf(segments, program)) {
+      for (let i = 0; i < args.length; i += 1) {
+        const word = args[i] ?? "";
+        if (!word.startsWith("-") || word === "-" || word === "--") break;
+        if (isLongOption(word, "--command")) {
+          return { id: "dangerous.shell_dash_c", reason: "nested shell command" };
+        }
+        if (word === "--rcfile" || word === "--init-file") {
+          i += 1;
+          continue;
+        }
+        const letters = shortOptionLetters(word, "oO");
+        if (letters === null) continue;
+        if (letters.includes("c")) {
+          return { id: "dangerous.shell_dash_c", reason: "nested shell command" };
+        }
+        // `-o pipefail`: the value is the next word.
+        if (letters.at(-1) === "o" || letters.at(-1) === "O") i += 1;
+      }
+    }
+  }
+  return null;
+}
+
+/** The `plugin` subcommands whose consent flag lets a plugin run code. */
+const PLUGIN_CONSENT_FLAG_VERBS: ReadonlySet<string> = new Set([
+  "install",
+  "update",
+  "upgrade",
+]);
+
+/**
+ * The agent granting itself plugin consent: `atomic-agent plugin
+ * allow-code x`, or `plugin install|update … --accept-code`. Consent
+ * only ever comes from a person, so these ask every time whatever the
+ * level below full trust, and no `shell` grant covers them. Matched on
+ * the words after `plugin`, not on the binary name: the same command
+ * also runs as `atag`, `npx atomic-agent` or `node dist/index.js`.
+ */
+function matchPluginConsent(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const words of segments) {
+    for (let i = 0; i < words.length - 1; i += 1) {
+      if (words[i] !== "plugin") continue;
+      const verb = words[i + 1];
+      const rest = words.slice(i + 2);
+      if (
+        verb === "allow-code" ||
+        (verb !== undefined &&
+          PLUGIN_CONSENT_FLAG_VERBS.has(verb) &&
+          rest.includes("--accept-code"))
+      ) {
+        return {
+          id: "dangerous.plugin_code_consent",
+          reason: "allow a plugin to run code",
+        };
       }
     }
   }

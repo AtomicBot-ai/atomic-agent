@@ -1,3 +1,6 @@
+import { resolve as resolvePath } from "node:path";
+
+import { getProjectApprovalRulesPath } from "../../../approval/approval-rules-store.js";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import {
@@ -24,9 +27,8 @@ import { ARCHIVE_SUMMARY_MAX_CHARS } from "./list-tool.js";
 const REPORT_MAX_LINES = 44;
 
 /**
- * Extraction ignores `trustConfigPaths` (it targets a directory, so the
- * config-file guard never fires) but accepts the shared fs-tool option
- * shape so the bootstrap can pass one object to every fs factory.
+ * The shared fs-tool option shape: `trustConfigPaths` keeps an archive
+ * from landing on the agent's own trust surface (`categorizeFsMutation`).
  */
 export interface ExtractArchiveToolOptions extends FsDangerousToolOptions {
   backends?: ArchiveBackendFactories;
@@ -81,15 +83,25 @@ export function buildOsFsArchiveExtractTool(
         options.backends,
       );
 
+      // An archive that carries the project's saved rules replaces them,
+      // so that one extract is judged as a write of the rules file.
+      const rulesPath = getProjectApprovalRulesPath(ctx.workingDir);
+      const entries = await resolved.backend.list(resolved.data);
+      const replacesRules = entries.some(
+        (entry) =>
+          resolvePath(destDir, entry.path).toLowerCase() === rulesPath.toLowerCase(),
+      );
+
       await requireFsApproval(
         options,
         {
-          kind: "extract",
-          paths: [destDir],
+          kind: replacesRules ? "write" : "extract",
+          paths: replacesRules ? [destDir, rulesPath] : [destDir],
           sessionId: ctx.sessionId,
           tool: "os.fs.archive.extract",
           reason: `extract ${resolved.format} ${resolved.absolute} → ${destDir}`,
           workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
           preview: buildApprovalPreview({
             source: resolved.absolute,
             dest: destDir,

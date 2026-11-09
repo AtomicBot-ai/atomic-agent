@@ -94,7 +94,7 @@ export function userNamedPaths(
   const found: string[] = [];
   for (const turn of turns) {
     if (turn.kind !== "user") continue;
-    for (const path of pathsNamedIn(turn.text, options)) {
+    for (const path of pathsNamedIn(turn.namedPathsText ?? turn.text, options)) {
       if (!found.includes(path)) found.push(path);
     }
   }

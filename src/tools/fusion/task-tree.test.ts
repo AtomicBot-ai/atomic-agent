@@ -267,6 +267,35 @@ describe("expandSplits", () => {
     ]);
   });
 
+  it("keeps a child's long reply when the parent has no files, and cuts it when it has", async () => {
+    const long = "x".repeat(3000);
+    const longChildren: ExpandSplitsDeps["runChildren"] = async (tasks) =>
+      tasks.map((t) => row(t.id, "ok", long));
+    const proposal = [row("build", "ok", fence({ tasks: TWO }))];
+    const plain = setup(undefined, longChildren);
+    const [deliverable] = await expandSplits([PARENT], proposal, plain.deps);
+    expect(deliverable?.reply).toContain(long);
+    const withFiles = setup(undefined, longChildren);
+    const [summary] = await expandSplits(
+      [{ ...PARENT, files: ["game.js"] }],
+      proposal,
+      withFiles.deps,
+    );
+    expect(summary?.reply).toContain("x".repeat(600));
+    expect(summary?.reply).not.toContain("x".repeat(601));
+  });
+
+  it("knows each child's parent", async () => {
+    const { deps, tree } = setup();
+    await expandSplits(
+      [PARENT],
+      [row("build", "ok", fence({ tasks: TWO }))],
+      deps,
+    );
+    expect(tree.parentOf("build/engine")).toBe("build");
+    expect(tree.parentOf("build")).toBeUndefined();
+  });
+
   it("hands the parent back to the orchestrator when a child did not close", async () => {
     const { deps } = setup(undefined, async (tasks) => [
       row(tasks[0]!.id, "ok"),

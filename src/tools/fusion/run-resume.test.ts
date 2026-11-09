@@ -279,6 +279,40 @@ describe("resuming a fusion run (ATO-617)", () => {
       expect(d.ran.sort()).toEqual(["t2", "t3"]);
     });
 
+    it("keeps the run for the confirm call that follows the first resume", async () => {
+      const checkpoint = cutOff(["t1"], ["t2"]);
+      const d = deps({ runCheckpoints: store });
+      const tool = buildFusionDelegateTool(d);
+      await tool.run({ resume: checkpoint.runId }, ctx());
+      expect(d.ran).toEqual(["t3"]);
+      expect(store.listResumable("s-parent").map((c) => c.runId)).toEqual([checkpoint.runId]);
+
+      const confirmed = await tool.run(
+        { resume: checkpoint.runId, confirm: ["t2"] },
+        ctx(),
+      );
+      expect(confirmed.details?.reason).toBeUndefined();
+      expect(d.ran).toEqual(["t3", "t2"]);
+      expect(store.listResumable()).toEqual([]);
+    });
+
+    it("leaves a task awaiting confirmation out of the automatic replan", async () => {
+      const checkpoint = cutOff(["t1"], ["t2"]);
+      const d = deps({
+        runCheckpoints: store,
+        resolveRunMode: () => mode({ autoReplan: 2 }),
+      });
+      const result = await buildFusionDelegateTool(d).run({ resume: checkpoint.runId }, ctx());
+      const details = result.details as {
+        tasks: WorkerTaskResult[];
+        replan?: { pending: { id: string }[] };
+      };
+      expect(details.tasks.find((t) => t.id === "t2")!.status).toBe("needs_orchestrator");
+      expect((details.replan?.pending ?? []).map((t) => t.id)).not.toContain("t2");
+      expect(result.summary).not.toContain("- t2 (needs_orchestrator)");
+      expect(d.ran).toEqual(["t3"]);
+    });
+
     it("counts the spend before the restart toward the turn's cap", async () => {
       const checkpoint = cutOff(["t1"], [], 5);
       const turnBudget = new FusionTurnBudget();
@@ -308,6 +342,97 @@ describe("resuming a fusion run (ATO-617)", () => {
     it("refuses a resume without a store", async () => {
       const result = await buildFusionDelegateTool(deps({})).run({ resume: "fr-x" }, ctx());
       expect(result.details?.reason).toBe("resume-unknown");
+    });
+  });
+
+  describe("a task its worker split", () => {
+    const PROPOSAL =
+      "Too big.\n```split_proposal\n" +
+      JSON.stringify({
+        reason: "two parts",
+        tasks: [
+          { id: "a", title: "A", instructions: "part a" },
+          { id: "b", title: "B", instructions: "part b" },
+        ],
+      }) +
+      "\n```";
+    const treeMode = (): ResolvedRunMode =>
+      mode({ taskTree: { maxDepth: 2, maxNodes: 24 } });
+    const splitting = (
+      onTurn: (taskId: string) => void,
+    ): FusionDelegateDeps["runTurn"] =>
+      async (session, _message, options) => {
+        const id = taskIdOf(session);
+        onTurn(id);
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: id === "t1" ? PROPOSAL : "done" },
+        });
+        return {
+          session: createEmptySessionState({ id: "s-w", workingDir: "/repo" }),
+          reason: "reply",
+          stepCount: 1,
+        } as RunTurnResult;
+      };
+
+    it("is not settled when a stop cuts its children off", async () => {
+      const controller = new AbortController();
+      const d = deps({
+        runCheckpoints: store,
+        resolveRunMode: treeMode,
+        runTurn: splitting((id) => {
+          if (id.startsWith("t1/")) controller.abort();
+        }),
+      });
+      await buildFusionDelegateTool(d).run(
+        { tasks: TASKS.slice(0, 1) },
+        ctx({ signal: controller.signal }),
+      );
+      const [kept] = store.listResumable("s-parent");
+      expect(kept!.tasks[0]!.result).toBeUndefined();
+      expect(planResume(kept!).rerun).toEqual(["t1"]);
+    });
+
+    it("is written as the closed parent once its children finished", async () => {
+      let atT2: FusionRunCheckpoint | null = null;
+      const d = deps({
+        runCheckpoints: store,
+        resolveRunMode: treeMode,
+        runTurn: splitting((id) => {
+          if (id !== "t2") return;
+          const [file] = readdirSync(dir).filter((f) => f.endsWith(".json"));
+          atT2 = store.load(file!.replace(/\.json$/, ""));
+        }),
+      });
+      await buildFusionDelegateTool(d).run(ORDERED, ctx());
+      const parent = atT2!.tasks.find((t) => t.id === "t1")!;
+      expect(parent.result?.status).toBe("ok");
+      expect(parent.result?.reply).toContain("Split by the worker into 2 subtasks");
+    });
+
+    it("carries a wave's merge suggestions into a resume", () => {
+      const merge = { id: "merge-t1", title: "Merge One", instructions: "merge it", files: ["a.txt"] };
+      const run = store.start({
+        sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1,
+      });
+      run.recordMerges([merge]);
+      run.finish("interrupted");
+      const kept = store.load(run.runId)!;
+      expect(kept.merges).toEqual([merge]);
+      const resumed = store.start({
+        runId: kept.runId, sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1, resumedFrom: kept,
+      });
+      expect(resumed.snapshot().merges).toEqual([merge]);
+      resumed.finish("complete");
+    });
+
+    it("keeps the spend written before the row is", () => {
+      const run = store.start({
+        sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1,
+      });
+      run.addSpend(1.5);
+      expect(store.load(run.runId)!.spentUsd).toBeCloseTo(1.5);
+      run.finish("complete");
     });
   });
 
