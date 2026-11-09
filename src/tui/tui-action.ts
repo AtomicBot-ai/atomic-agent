@@ -1,3 +1,4 @@
+import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { ProjectTrustPrompt } from "./project-trust/project-trust-state.js";
 import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
@@ -294,6 +295,11 @@ export type TuiAction =
        * numbers on screen.
        */
       contextUsage?: ContextUsageState;
+      /**
+       * The target session's live plan (ATO-486), when it has one. Absent
+       * hides the checklist rather than keeping the previous thread's.
+       */
+      plan?: PlanSnapshot;
     }
   /** Header/runtime: user saved a new llama-server base URL (e.g. via /llama). */
   | { type: "llama_url_changed"; url: string }

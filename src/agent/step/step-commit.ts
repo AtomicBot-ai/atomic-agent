@@ -10,7 +10,8 @@ import type { CompressedToolResult } from "../../compressor/result-compressor.js
 import { compressToolResult, fullToolResult } from "../../compressor/result-compressor.js";
 import { evidenceMarks } from "./step-evidence.js";
 import type { SessionState } from "../../session/session-state.js";
-import { rememberConversationPackStart, recordLoadedTool, recordLatestResult, recordTurn, recordLoadedSkill, recordWorldSnapshot } from "../../session/session-state.js";
+import { rememberConversationPackStart, recordLoadedTool, recordLatestResult, recordTurn, recordLoadedSkill, recordWorldSnapshot, recordPlan } from "../../session/session-state.js";
+import { readPlanSnapshot, samePlanItems } from "../plan/plan-snapshot.js";
 import { getConfig } from "../../config/index.js";
 import { isRareToolName, getToolDescriptorByName } from "../../prompt/tool-descriptors.js";
 import { resourceClassFor } from "../tool-resource-class.js";
@@ -152,6 +153,15 @@ export function commitStepBatch(args: StepCommitArgs): StepOutcome {
       ...(result.details !== undefined ? { details: result.details } : {}),
     });
     nextSession = applyStateEffects(nextSession, result, modelMode);
+  }
+  // ATO-486: a step that changed the live plan says so once, with the
+  // whole snapshot, so every surface redraws the checklist from it.
+  if (!samePlanItems(ctx.session.plan, nextSession.plan)) {
+    deps.onEvent?.({
+      type: "plan_updated",
+      plan: nextSession.plan ?? { items: [], updatedAt: Date.now() },
+      stepIndex: ctx.stepIndex,
+    });
   }
 
   // Terminal classification looks at the **last** call of the batch:
@@ -441,7 +451,8 @@ function readTurnField(result: CompressedToolResult): {
 /**
  * Inspect well-known tool-result fields and fold them into the session
  * state. Tools communicate state updates through `details.skillLoaded`
- * (`skill.view`), `details.toolLoaded` (`tool.view`), and
+ * (`skill.view`), `details.toolLoaded` (`tool.view`),
+ * `details.planSnapshot` (`plan.update`), and
  * `details.worldSnapshot` (for browser actions) so the step executor
  * stays generic and tools remain pure.
  */
@@ -504,6 +515,18 @@ export function applyStateEffects(
         body: entry.body,
         loadedAt: Date.now(),
       });
+    }
+    // `plan.update` (ATO-486): the whole checklist, newest call wins. An
+    // empty list clears the plan. An errored call carries no snapshot.
+    const planDetail = (details as Record<string, unknown>).planSnapshot;
+    if (result.status === "ok" && planDetail && typeof planDetail === "object") {
+      const items = (planDetail as { items?: unknown }).items;
+      if (Array.isArray(items) && items.length === 0) {
+        next = recordPlan(next, null);
+      } else {
+        const plan = readPlanSnapshot(planDetail);
+        if (plan !== null) next = recordPlan(next, plan);
+      }
     }
     const snapshot = (details as Record<string, unknown>).worldSnapshot;
     if (

@@ -7,6 +7,7 @@ import type { CodingMode } from "./coding-mode/coding-mode.js";
 import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.js";
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
+import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -487,6 +488,13 @@ export interface TuiState {
   metrics: RollingMetrics;
   /** Live context-window occupancy, driving the composer's context chip. */
   contextUsage: ContextUsageState;
+  /**
+   * The live plan of the session on screen (ATO-486): the checklist strip
+   * above the composer and the `plan 3/7` tag in the status bar. `null`
+   * hides both. Follows `plan_updated` events of this session, and is
+   * restored from the stored session on a switch.
+   */
+  plan: PlanSnapshot | null;
   /** Transient maintenance activity, retained per chat across session switches. */
   contextCompactions: Readonly<Record<string, {
     phase: "queued" | "running";
@@ -932,6 +940,7 @@ export function createInitialTuiState(
       toolsError: 0,
     },
     contextUsage: EMPTY_CONTEXT_USAGE,
+    plan: null,
     contextCompactions: {},
     logs: [],
     uiMode: layout?.uiMode ?? "chat",

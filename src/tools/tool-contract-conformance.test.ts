@@ -40,6 +40,7 @@ import { registerVerifyTools } from "./verify/index.js";
 import { registerGithubTools } from "./github/github-tools.js";
 import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
+import { planUpdateTool } from "./plan/index.js";
 import { registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerVisionTools } from "./vision/index.js";
@@ -295,6 +296,7 @@ beforeAll(() => {
   registerGithubTools(registry, dangerous);
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
+  registry.register(planUpdateTool);
   registerMemoryTools(registry, memoryOptions(true));
   registerTaskTools(registry, taskOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });

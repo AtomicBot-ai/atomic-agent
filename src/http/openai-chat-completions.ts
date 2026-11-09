@@ -442,6 +442,8 @@ async function handleStream(
  *    else.
  *  - `reasoning_delta` → `event: reasoning_progress` (extensions opt-in
  *    only)
+ *  - `plan_updated` → `event: plan_updated` with the whole checklist
+ *    (extensions opt-in only, ATO-486)
  *  - compaction lifecycle and `history_trimmed` → named frames of the
  *    same names (extensions opt-in only, `stream-maintenance-frames.ts`)
  *  - `step_error` / `loop_failed` → `emitStreamError` (shape depends on
@@ -599,6 +601,23 @@ export function buildStreamEventHook(
           ...(inner.result.approvals !== undefined && inner.result.approvals.length > 0
             ? { approvals: inner.result.approvals }
             : {}),
+        });
+      } else if (inner.type === "plan_updated") {
+        /* ATO-486: the live checklist, whole, each time it changes. A
+           host draws its plan bar from the newest one; `items: []` means
+           the plan was cleared. Extensions-only: not OpenAI's protocol. */
+        if (!env.request.extensionsEnabled) return;
+        sse.writeEvent("plan_updated", {
+          id: env.completionId,
+          object: "chat.completion.plan_updated",
+          created: env.created,
+          model: env.request.model,
+          session_id: env.session.id,
+          step_index: inner.stepIndex,
+          plan: {
+            items: inner.plan.items.map((item) => ({ step: item.step, status: item.status })),
+            updatedAt: inner.plan.updatedAt,
+          },
         });
       } else if (inner.type === "assistant_delta") {
         if (inner.text.length === 0) return;

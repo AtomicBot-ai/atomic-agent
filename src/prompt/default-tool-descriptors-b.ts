@@ -309,6 +309,20 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     ],
   },
   {
+    // Frequent tier: a checklist only helps when the model keeps it from
+    // the first step, and a model that must `tool.view` first never
+    // starts one (ATO-486). Placed after the git duplicates so their
+    // pinned catalog positions do not move.
+    name: "plan.update",
+    summary:
+      "Show the user a live checklist for multi-step work. Send the WHOLE plan every call (it replaces the previous one): each step with status pending, in_progress or done, at most one in_progress. Call it when you start work of 3+ steps and whenever a step finishes or the plan changes; items: [] clears it. Skip it for one-step answers.",
+    argsSchema:
+      "{ items: [{ step: string, status: 'pending' | 'in_progress' | 'done' }] }",
+    examples: [
+      '{"items":[{"step":"Read the failing test","status":"done"},{"step":"Fix the date parser","status":"in_progress"},{"step":"Run the test suite","status":"pending"}]}',
+    ],
+  },
+  {
     name: "reply",
     summary:
       "Final natural-language answer; ends the macro-turn. Never use to announce a pending action; keep text short (no huge dumps). If the task requires an exact answer format or marker, `text` must be ONLY that bare value or marker line — no preamble or commentary. `attachments`: paths of existing files to deliver with the reply (a report you wrote, a screenshot, a converted file) — on Telegram/Discord they are sent as files after the text; never paste a file's contents into `text` when you can attach it.",

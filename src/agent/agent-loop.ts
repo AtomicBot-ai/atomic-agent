@@ -44,6 +44,7 @@ import { OUTCOME_REPEAT_WARNING_THRESHOLD, READ_REPEAT_WARNING_THRESHOLD, TEST_R
 import { formatOutcomeRepeatNotice, formatReadRepeatNotice, formatRepeatNotice, formatTestRepeatNotice, formatWanderingRedirect, formatForcedLoopReply } from "./progress/loop-notices.js";
 import type { BatchLoopSignal } from "./dispatch/batch-contract.js";
 import { composeSteerNotice } from "./steer-notice.js";
+import { planReminderNotice } from "./plan/plan-snapshot.js";
 
 import { getConfig } from "../config/index.js";
 
@@ -141,6 +142,13 @@ export class AgentLoop {
     const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes, unknownTools } = policies;
     let { fusionState, reviewStall, replan } = policies;
     const turn = createTurnLoopState();
+    // ATO-486: a new message on a session whose plan is still open gets
+    // one short reminder on the turn's first step, so the model carries
+    // the checklist on or says it is dropped. Never on a plan that is
+    // complete, never past the first step.
+    if (options.userMessage !== undefined) {
+      turn.pendingNotice = planReminderNotice(state.plan);
+    }
     // One overflow compaction per turn (ATO-1028): a refused request is
     // compacted and retried once, never in a loop.
     let overflowCompactionAttempted = false;

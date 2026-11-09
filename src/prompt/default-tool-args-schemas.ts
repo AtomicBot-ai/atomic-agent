@@ -436,6 +436,29 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── skill / tool ─────────────────────────────────────────────────────────
   ["skill.view", obj({ name: stringSchema }, ["name"])],
   ["tool.view", obj({ name: stringSchema }, ["name"])],
+  // ATO-486. No minItems/maxItems: the runtime caps the list
+  // (`PLAN_MAX_ITEMS`) and an empty list is how the plan is cleared.
+  [
+    "plan.update",
+    obj(
+      {
+        items: {
+          type: "array",
+          items: obj(
+            {
+              step: stringSchema,
+              status: {
+                type: "string",
+                enum: ["pending", "in_progress", "done"],
+              },
+            },
+            ["step", "status"],
+          ),
+        },
+      },
+      ["items"],
+    ),
+  ],
   [
     "skill.run_script",
     obj(

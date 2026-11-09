@@ -37,6 +37,7 @@ describe("worker tool policy", () => {
         "os.screen.key",
         "os.screen.point",
         "os.screen.type",
+        "plan.update",
         "tasks.cancel",
         "tasks.cron",
         "tasks.schedule",
