@@ -89,6 +89,39 @@ them. It calls nothing — no `window.__*`, no config write, no seeded state
 beyond the `.env` a person would already have — so a step that cannot be
 reached with the pointer is reported as the finding it is.
 
+## The live smoke tier
+
+`test/live/` runs the real Electron window, the real `atag serve` built from
+this checkout, the real tools, real clicks and real files on disk. Only the
+model is replaced: `live/scripted-model.mjs` is a loopback llama-server whose
+answers each scenario writes in advance. A run is deterministic and needs no
+GPU and no cloud key.
+
+```sh
+npm run build                   # at the repo root: the agent
+cd desktop && npm run smoke:live
+node test/live/run-all.mjs L01  # one scenario, once desktop/ is built
+```
+
+Each scenario gets a new temp directory with its own state, workspace and
+`HOME`. The seeded config aims the external llama route at the scripted
+server and marks first run done, so there is no wizard and nothing managed is
+downloaded or started. Provider keys are removed from the child environment
+and analytics are off. On failure the run directory is kept, with
+`failure.png`, `model-requests.json` and `app-output.log`.
+
+`ATAG_LIVE_PORT` sets the debugging port (default 9414), `ATAG_LIVE_DIR` the
+parent of the run directories, and `ATAG_LIVE_KEEP=1` keeps them after a pass.
+
+A step is one completion in the form the agent parses, a JSON array of
+`{tool, args}`. `call()`, `calls()` and `reply()` build it; a bare string is a
+reply. The step queue running out fails the scenario with the request shown.
+
+What this tier does not prove: anything about model quality. The model says
+what the script says, so a pass means the app, the agent and the tools handle
+that answer correctly, not that a real model would give it. It also does not
+cover the cloud route, the wizard, or the managed engine.
+
 ## Running one
 
 ```sh
