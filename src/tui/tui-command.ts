@@ -51,6 +51,7 @@ import { createSelectionPassthrough } from "./mouse/selection-passthrough.js";
 import { isLocalBackendConfigured } from "./local-backend-readiness.js";
 import { makeEscalatingSignalHandler } from "./signal-escalation.js";
 import { restoreTerminalNow } from "./terminal-restore.js";
+import { takeModelSpotlightHint } from "./local-models/model-spotlight-hint.js";
 import { needsOnboarding } from "./onboarding/needs-onboarding.js";
 import { createOnboardingState } from "./onboarding/onboarding-state.js";
 import {
@@ -969,6 +970,13 @@ export async function tuiCommand(args: string[]): Promise<number> {
   if (fusionStartupNotice !== null) {
     bus.emit({ type: "system_message", text: fusionStartupNotice });
   }
+  // A model launch: one line, once per model id (`spotlight` in the catalog).
+  const spotlightHint = takeModelSpotlightHint({
+    stateDir: config.paths.stateDir,
+    dataDir: config.paths.localModelsDataDir,
+    firstRun: onboarding !== null || needsOnboarding(),
+  });
+  if (spotlightHint) bus.emit({ type: "system_message", text: spotlightHint });
 
   // If the user is in managed mode and the backend + model are ready
   // on disk, start the daemon immediately so there is no extra
