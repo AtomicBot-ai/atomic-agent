@@ -39,7 +39,11 @@ const PROVIDER_REF_KEYS: ReadonlyArray<readonly [string, string?]> = [
   ["llm.fallback.chain"],
   ["llm.runMode.fusion.orchestratorProvider", "llm.runMode.fusion.orchestratorModel"],
   ["llm.runMode.fusion.workerProvider", "llm.runMode.fusion.workerModel"],
+  ["llm.runMode.fusion.escalationProvider"],
+  ["llm.runMode.fusion.judgeProvider"],
 ];
+
+const FUSION_ROLES_KEY = "llm.runMode.fusion.roles";
 
 /**
  * The write half of reading a newer build's values leniently. A
@@ -92,6 +96,12 @@ function keepSetAsideProviders(out: Tree, disk: Tree, read: UserConfigFile): Tre
     if (!refers(getPath(disk, ref))) continue;
     next = keepAt(next, disk, read, ref);
     if (label) next = keepAt(next, disk, read, label);
+  }
+  const roles = getPath(disk, FUSION_ROLES_KEY);
+  if (isPlain(roles)) {
+    for (const [role, id] of Object.entries(roles)) {
+      if (refers(id)) next = keepAt(next, disk, read, `${FUSION_ROLES_KEY}.${role}`);
+    }
   }
   return next;
 }

@@ -162,6 +162,67 @@ describe("a provider a newer build added (ATO-1241)", () => {
     expect(disk().llm.providers.at(-1)).toEqual(tree.llm.providers.at(-1));
   });
 
+  describe("escalation, judge and role pins", () => {
+    function pinnedTree(): Tree {
+      const tree = baseTree();
+      tree.llm.providers.push({ id: "future", kind: "quantum-cloud-1241", baseUrl: "https://future.example.com" });
+      tree.llm.runMode = {
+        mode: "fusion",
+        fusion: {
+          escalationProvider: "future",
+          judgeProvider: "future",
+          roles: { build: "future", review: "cloud" },
+        },
+      };
+      return tree;
+    }
+    beforeEach(() => writeTree(pinnedTree()));
+
+    it("read as unpinned instead of refusing the file", () => {
+      const fusion = readUserConfigFileSync(path)!.llm!.runMode!.fusion!;
+      expect(fusion.escalationProvider).toBeUndefined();
+      expect(fusion.judgeProvider).toBeUndefined();
+      expect(fusion.roles).toEqual({ review: "cloud" });
+    });
+
+    it("leave no empty roles block when every role was pinned to the provider", () => {
+      const tree = pinnedTree();
+      tree.llm.runMode.fusion.roles = { build: "future" };
+      writeTree(tree);
+      expect(readUserConfigFileSync(path)!.llm!.runMode!.fusion!.roles).toBeUndefined();
+    });
+
+    it("come back on a whole-file write of an unrelated change", () => {
+      writeUnrelated(readUserConfigFileSync(path)!);
+      expect(disk().llm).toEqual(pinnedTree().llm);
+    });
+
+    it("a pin chosen here replaces the newer one", () => {
+      const parsed = readUserConfigFileSync(path)!;
+      const llm = parsed.llm!;
+      writeUserConfigFileSync(path, {
+        ...parsed,
+        llm: {
+          ...llm,
+          runMode: {
+            ...llm.runMode!,
+            fusion: { ...llm.runMode!.fusion!, judgeProvider: "cloud", roles: { build: "cloud", review: "cloud" } },
+          },
+        },
+      });
+      const fusion = disk().llm.runMode.fusion;
+      expect(fusion.judgeProvider).toBe("cloud");
+      expect(fusion.roles).toEqual({ build: "cloud", review: "cloud" });
+      expect(fusion.escalationProvider).toBe("future");
+    });
+
+    it("a pin that names no provider at all is still a broken file", () => {
+      const tree = pinnedTree();
+      tree.llm.runMode.fusion.judgeProvider = "nobody";
+      expect(() => parseUserConfigFile(tree)).toThrow(/llm\.runMode\.fusion\.judgeProvider/);
+    });
+  });
+
   it("a kind of the wrong type is still a broken file, and a provider typed in stays strict", () => {
     const tree = baseTree();
     tree.llm.providers.push({ id: "bad", kind: 7 });
