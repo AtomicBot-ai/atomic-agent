@@ -55,7 +55,7 @@ test('selector downloads dismiss the overlay, allow reopening the picker and off
     toast:(...a)=>notices.push(a),selRows:()=>[],selShell:(title,body)=>title+body,selBackend:()=>'local',
     modelDiskFit:()=>({ok:true}),document:{querySelector:()=>null},
   });
-  for(const name of ['selPull','selectorHTML'])vm.runInContext(functions.get(name),c);
+  for(const name of ['selPull','selPullFinished','selectorHTML'])vm.runInContext(functions.get(name),c);
   const a=source.indexOf('if (BR) {\n  // The composer');
   const b=source.indexOf('/* Hooks for',a);
   vm.runInContext(source.slice(a,b),c);

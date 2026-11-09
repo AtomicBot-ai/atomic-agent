@@ -237,6 +237,7 @@ import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMetaIds, spotlightIds } from "./model-catalog.js";
+import { catalogPullWantsProjector, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -1684,10 +1685,12 @@ function wireIpc(client: AgentClient): void {
     A.composioConfigWrite(key, value, res);
     return res;
   });
-  ipcMain.handle("cli:modelsList", () => modelsList());
+  // The window's lists only: while a pull runs the weights are on disk before the projector is (ATO-1331).
+  const listedNow = <R extends Parameters<typeof withoutLivePullGap>[0]>(list: R): R => withoutLivePullGap(list, downloadRunning()?.id ?? null);
+  ipcMain.handle("cli:modelsList", () => modelsList().then(listedNow));
   // Review fix (item 5): the chat route's half of the catalogue, subtracted
   // by the CLI's own embedding catalogue instead of by a guess at names.
-  ipcMain.handle("cli:chatModelsList", () => chatModelsList());
+  ipcMain.handle("cli:chatModelsList", () => chatModelsList().then(listedNow));
   ipcMain.handle("cli:modelsUse", (_event, id: unknown) =>
     typeof id === "string" ? modelsUse(id) : { ok: false, error: "model id required" },
   );
@@ -1699,7 +1702,7 @@ function wireIpc(client: AgentClient): void {
   /* The weights download, for the window's pull and for the launch's starter
      model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
      download card follows either (dlAdopt). `onDone` hears how it ended. */
-  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void, mmproj = false) {
+  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult, projectorSkipped: boolean) => void, mmproj = false) {
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
     const running = downloadRunning();
     // A refusal for the download already running is the window following it (dlAdopt), not a failure.
@@ -1707,20 +1710,23 @@ function wireIpc(client: AgentClient): void {
     if (smokeOffline) return { ok: false, error: SMOKE_OFFLINE };
     let slot: DownloadSlot | null = null;
     A.downloadStarted(id, trigger);
+    const withProjector = mmproj || catalogPullWantsProjector(id);   // ATO-1331: every catalogue pull, whoever asked
+    const whole = withProjector ? wholePullProgress(id) : null;
     const started = modelsPull(id, (line) => {
-      const progress = parsePullProgress(line, "weights");
+      const parsed = parsePullProgress(line, "weights");
+      const progress = whole ? whole(line, parsed) : parsed;
       A.downloadProgress(id, progress);
       pullFrame(slot, { id, line, ...progress });
-    }, mmproj);
+    }, withProjector);
     pull = slot = { ...started, kind: "weights", id, last: null };
     void started.done.then((res) => {
       pull = null;
-      A.downloadFinished(id, res);
       /* `models pull --mmproj` exits 0 when only the projector failed, and says
          so on stderr (src/cli/models-downloads.ts describeProjectorSkipped). */
-      const projectorSkipped = mmproj && res.ok && /^note: projector download failed/m.test(res.stderr);
+      const projectorSkipped = withProjector && res.ok && /^note: projector download failed/m.test(res.stderr);
+      A.downloadFinished(id, res, projectorSkipped);
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null, ...(projectorSkipped ? { projectorSkipped: true } : {}) });
-      onDone?.(res);
+      onDone?.(res, projectorSkipped);
     });
     return { ok: true, started: true };
   }
@@ -1791,9 +1797,9 @@ function wireIpc(client: AgentClient): void {
       activeModelId: lm?.managed?.modelId ?? null,
     };
   };
-  const offerUpgrade = (model: UpgradeModel) => {
+  const offerUpgrade = (model: UpgradeModel, textOnly = false) => {
     upgradeModel = model;
-    upgradeSay({ id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "ready" });
+    upgradeSay({ id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "ready", ...(textOnly ? { textOnly: true } : {}) });
   };
   fetchUpgradeModel = async () => {
     if (SMOKE || FIRST_RUN_PROBE || quitting) return;
@@ -1812,13 +1818,13 @@ function wireIpc(client: AgentClient): void {
     const model = verdict.model;
     if (verdict.act === "offer") { offerUpgrade(model); return; }
     upgradeModel = model;
-    const r = startModelPull(model.id, "upgrade", (res) => {
+    const r = startModelPull(model.id, "upgrade", (res, projectorSkipped) => {
       if (quitting) return;
       if (!res.ok) { upgradeSay({ id: model.id, name: model.name, phase: "failed", error: res.error ?? null }); return; }
       // Chosen something else meanwhile (a cloud key, their own server, this very model): nothing to ask.
       void upgradeState().then((after) => {
         if (!upgradeStillWanted({ id: model.id, ...after })) { upgradeLast = null; send("app:upgradeModel", { id: model.id, phase: "done" }); return; }
-        offerUpgrade(model);
+        offerUpgrade(model, projectorSkipped);
       }).catch(() => undefined);
     });
     if (r.ok) upgradeSay({ id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "downloading" });
