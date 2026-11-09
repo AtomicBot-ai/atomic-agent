@@ -65,7 +65,7 @@ Every call resolves (never rejects) to
 | `galleryDelete(kind, ids: string[])` | `{ deleted: number }` (files are removed by Core, not to the Trash) |
 | `pin(kind, id, on)` | `StudioItem \| null` |
 | `setPoster(id, bytes: Uint8Array)` | `StudioItem \| null` (video, with `thumbnailPath` now set). PNG bytes only, ≤16 MB (Core refuses anything else); Core `PUT /diffusion/video/gallery/:id/poster` `{png: base64}`, kept as `<id>.thumb.png` beside the clip |
-| `outputDir(kind)` | `{ path: string, isDefault: boolean }` |
+| `outputDir(kind)` | `{ path: string, isDefault: boolean }`. Never starts or installs Core |
 | `chooseOutputDir(kind)` | folder dialog, then as `outputDir`; `null` when cancelled |
 | `setOutputDir(kind, path \| null)` | `null` = back to default. A string is accepted only if `chooseOutputDir` returned it this session |
 | `price(modelId, PriceParams)` | `StudioPrice \| null` |
