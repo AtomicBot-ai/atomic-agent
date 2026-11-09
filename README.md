@@ -314,7 +314,10 @@ atomic-agent tui --cwd /path/to/work
 atomic-agent skill list
 atomic-agent task list
 atomic-agent trace list --limit 10
+atomic-agent overnight "migrate the tests to vitest" --budget 5 --hours 8 --dir /path/to/work --detach
 ```
+
+`overnight` runs one long task unattended: it stops at the `--budget` dollar cap (estimated; local models count as $0) or after `--hours` (default 8), whichever comes first, and ends with a summary of what got done. An action that needs approval is denied, since nobody is there to answer; pass `--no-approval` to allow everything. `--detach` keeps it going in the background; check it with `atomic-agent task show <id>`.
 
 **Context.** The chip at the right of the composer shows the transcript against its ceiling and the model's window. History is limited in tasks, not tokens: one task is a thing you asked plus everything the agent did answering it, and `agent.conversationMaxPairs` (1-1000, default 200) sets how many the prompt carries. Click the chip or run `/context` to change the count and see the cost before you send.
 
