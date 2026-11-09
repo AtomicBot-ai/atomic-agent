@@ -113,9 +113,12 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       expect(registry.list().slice(0, 2).map(tool => tool.name)).toEqual(["finish", "reply"]);
       // Registered once, beside `tool.search`, when the MCP catalog connects.
       expect(registry.has("tool.view")).toBe(false);
-      // Computer use is opt-in (`tools.screen.enabled`, default off): nothing registered.
+      // Computer use is opt-in (`tools.screen.enabled`, default off): no input tool registered.
       expect(config.tools.screen.enabled).toBe(false);
-      expect(registry.has("os.screen.capture")).toBe(false); expect(registry.has("os.screen.click")).toBe(false);
+      for (const name of ["os.screen.click", "os.screen.type", "os.screen.key"]) expect(registry.has(name), name).toBe(false);
+      // Pointing is on by default (ATO-1018), macOS only: the marks and the screenshot they read.
+      expect(config.tools.screen.point).toBe(true);
+      for (const name of ["os.screen.point", "os.screen.capture"]) expect(registry.has(name), name).toBe(process.platform === "darwin");
       // No surface named: the web-search error keeps the desktop / .env advice.
       expect(wired.webSearchKeyHelp).toBeUndefined();
     } finally { shellJobs.endAll(); notesStore.close(); profileStore.close(); }
@@ -175,7 +178,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     await owner.mcpManager.removeServerLive("disabled"); list.mockReturnValue([]); await refresh();
     expect(owner.getGrammar()).toBe(grammar);
     expect(owner.effectiveToolDescriptors().some(tool => tool.name.startsWith("mcp."))).toBe(false);
-    expect(input.toolRegistry.list()).toHaveLength(5);
+    // `tool.search`, `tool.view` and the four MCP meta tools, which stay.
+    expect(input.toolRegistry.list()).toHaveLength(6);
   });
 
   it("hands every MCP tool-name rule it applies to the profile manager's hook (ATO-1029)", async () => {
