@@ -403,13 +403,25 @@ export function buildAlwaysRule(
       source: "prompt",
     };
   }
+  const readRoot = request.category === "fs_read_outside" ? alwaysReadRoot(request) : undefined;
   return {
     decision: "allow",
     tool: request.tool,
     category: request.category,
+    ...(readRoot !== undefined ? { path: readRoot } : {}),
     project,
     source: "prompt",
   };
+}
+
+/**
+ * The directory an "Allow always" of a read outside the project covers:
+ * the one the prompt named. Without it the rule would open every file on
+ * the machine to this project, for good.
+ */
+function alwaysReadRoot(request: ApprovalRequest): string | undefined {
+  const root = request.affectedResources?.[0];
+  return root !== undefined && isAbsolute(root) ? root : undefined;
 }
 
 /**
@@ -425,6 +437,10 @@ export function canGrantAlways(request: ApprovalRequest): boolean {
   if (request.category === "shell") {
     return (request.commandArgv?.length ?? 0) > 0;
   }
+  // A rule cannot say "this one file in home": it would cover any file
+  // there, `.zshrc` included, from then on.
+  if (request.category === "fs_write_home") return false;
+  if (request.category === "fs_read_outside") return alwaysReadRoot(request) !== undefined;
   return true;
 }
 
@@ -434,7 +450,10 @@ export function describeAlwaysRule(request: ApprovalRequest): string {
   if (prefix !== null) {
     return `Always allow "${prefix.join(" ")}" in this project`;
   }
-  return `Always allow ${request.tool} (${APPROVAL_CATEGORY_LABELS[request.category]}) in this project`;
+  const under = request.category === "fs_read_outside" ? alwaysReadRoot(request) : undefined;
+  return `Always allow ${request.tool} (${APPROVAL_CATEGORY_LABELS[request.category]})${
+    under !== undefined ? ` under ${under}` : ""
+  } in this project`;
 }
 
 /** One line naming what a rule matches, for a denial reason or a list. */

@@ -234,6 +234,33 @@ describe("Allow always", () => {
     expect(describeAlwaysRule(request)).toBe("Always allow os.http.request (HTTP request) in this project");
   });
 
+  describe("path-wide categories", () => {
+    const base = { approvalId: "a", sessionId: "s", reason: "r", workdir: "/w" };
+
+    it("a read outside the project is saved for the directory the prompt named", () => {
+      const request: ApprovalRequest = {
+        ...base,
+        tool: "os.fs.read",
+        category: "fs_read_outside",
+        affectedResources: ["/data/reports"],
+      };
+      expect(buildAlwaysRule(request)).toMatchObject({ path: "/data/reports", project: "/w" });
+      expect(describeAlwaysRule(request)).toContain("under /data/reports");
+      const rules = [rule({ decision: "allow", tool: "os.fs.read", category: "fs_read_outside", path: "/data/reports" })];
+      expect(matchRules(rules, { ...request, affectedResources: ["/home/me/.ssh"] })).toBeNull();
+    });
+
+    it("a read with no directory named is not offered", () => {
+      expect(canGrantAlways({ ...base, tool: "os.fs.read", category: "fs_read_outside" })).toBe(false);
+    });
+
+    it("a write in the home directory is not offered", () => {
+      const request: ApprovalRequest = { ...base, tool: "os.fs.write", category: "fs_write_home" };
+      expect(canGrantAlways(request)).toBe(false);
+      expect(buildAlwaysRule(request)).toBeNull();
+    });
+  });
+
   it("is offered only for grantable requests with a project and, for shell, an argv", () => {
     expect(canGrantAlways(shell(["git", "status"], { workdir: "/w" }))).toBe(true);
     expect(canGrantAlways(shell(["git", "status"]))).toBe(false);
