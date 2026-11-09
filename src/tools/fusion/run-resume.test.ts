@@ -279,6 +279,23 @@ describe("resuming a fusion run (ATO-617)", () => {
       expect(d.ran.sort()).toEqual(["t2", "t3"]);
     });
 
+    it("keeps the run for the confirm call that follows the first resume", async () => {
+      const checkpoint = cutOff(["t1"], ["t2"]);
+      const d = deps({ runCheckpoints: store });
+      const tool = buildFusionDelegateTool(d);
+      await tool.run({ resume: checkpoint.runId }, ctx());
+      expect(d.ran).toEqual(["t3"]);
+      expect(store.listResumable("s-parent").map((c) => c.runId)).toEqual([checkpoint.runId]);
+
+      const confirmed = await tool.run(
+        { resume: checkpoint.runId, confirm: ["t2"] },
+        ctx(),
+      );
+      expect(confirmed.details?.reason).toBeUndefined();
+      expect(d.ran).toEqual(["t3", "t2"]);
+      expect(store.listResumable()).toEqual([]);
+    });
+
     it("counts the spend before the restart toward the turn's cap", async () => {
       const checkpoint = cutOff(["t1"], [], 5);
       const turnBudget = new FusionTurnBudget();

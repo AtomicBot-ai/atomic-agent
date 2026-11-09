@@ -1259,8 +1259,14 @@ export function buildFusionDelegateTool(
       const contractLine =
         contract === undefined ? undefined : renderContractLine(contract);
       // The run ended here. Stopped by the person or by a quit, its file
-      // stays for a resume; otherwise there is nothing left to resume.
-      run?.finish(ctx.signal.aborted ? "interrupted" : "complete");
+      // stays for a resume, and so it does while a task waits for the
+      // person's yes: the confirm call resumes from it. Otherwise there
+      // is nothing left to resume.
+      run?.finish(
+        ctx.signal.aborted || (resume?.needsConfirmation.length ?? 0) > 0
+          ? "interrupted"
+          : "complete",
+      );
       const resumeNote =
         resume === undefined
           ? ""
