@@ -47,6 +47,7 @@ import {
 import {
   TaskTreeState,
   expandSplits,
+  hasSplitProposal,
   renderSplitInstructions,
 } from "./task-tree.js";
 import type { FusionRunRecorder, FusionRunStore } from "./run-checkpoint.js";
@@ -694,13 +695,16 @@ export function buildFusionDelegateTool(
           : {
               onWorkerTool: (taskId: string, tool: string): void =>
                 run.noteTool(taskId, tool),
-              onTaskFinished: (result: WorkerTaskResult): void =>
-                run.recordTask(
-                  result,
+              onTaskFinished: (result: WorkerTaskResult): void => {
+                const costUsd =
                   pricing !== undefined && result.usage !== undefined
                     ? estimateUsageCostUsd(result.usage, pricing)
-                    : 0,
-                ),
+                    : 0;
+                // A proposal is not an answer: its row is written once the
+                // split closed (`expandWave`), its spend now.
+                if (awaitsExpansion(result)) run.addSpend(costUsd);
+                else run.recordTask(result, costUsd);
+              },
             };
       const checkpointOptions = checkpointOptionsFor(workerPricing);
       // The task tree (ATO-940): off unless configured, and then only
@@ -710,6 +714,11 @@ export function buildFusionDelegateTool(
           ? undefined
           : new TaskTreeState(mode.taskTree, workerModel);
       tree?.addRoots(parsed.tasks, parsed.contract);
+      // One of the orchestrator's own tasks whose worker proposed a split.
+      const awaitsExpansion = (row: WorkerTaskResult): boolean =>
+        tree !== undefined &&
+        tree.depthOf(row.id) === 1 &&
+        hasSplitProposal(row.reply);
       const canProposeSplit =
         tree === undefined
           ? undefined
@@ -914,13 +923,13 @@ export function buildFusionDelegateTool(
       // A proposal's children: run through the same runner (width, caps,
       // approval scope), then their own contract is checked before their
       // parent closes on them.
-      const expandWave = (
+      const expandWave = async (
         tasks: readonly DelegateTask[],
         rows: WorkerTaskResult[],
-      ): Promise<WorkerTaskResult[]> =>
-        tree === undefined
-          ? Promise.resolve(rows)
-          : expandSplits(tasks, rows, {
+      ): Promise<WorkerTaskResult[]> => {
+        if (tree === undefined) return rows;
+        const proposed = new Set(rows.filter(awaitsExpansion).map((r) => r.id));
+        const expanded = await expandSplits(tasks, rows, {
               tree,
               workingDir: ctx.workingDir,
               ...(parsed.contract === undefined
@@ -958,6 +967,15 @@ export function buildFusionDelegateTool(
                 stoppedBy === undefined &&
                 budgetStop() === undefined,
             });
+        // The closed parents. One a stop cut short stays unsettled, so a
+        // resume runs it again instead of reporting half a split.
+        for (const row of expanded) {
+          if (proposed.has(row.id) && (row.status === "ok" || !ctx.signal.aborted)) {
+            run?.recordTask(row);
+          }
+        }
+        return expanded;
+      };
 
       let results: WorkerTaskResult[];
       try {

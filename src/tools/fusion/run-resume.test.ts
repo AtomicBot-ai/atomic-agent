@@ -345,6 +345,81 @@ describe("resuming a fusion run (ATO-617)", () => {
     });
   });
 
+  describe("a task its worker split", () => {
+    const PROPOSAL =
+      "Too big.\n```split_proposal\n" +
+      JSON.stringify({
+        reason: "two parts",
+        tasks: [
+          { id: "a", title: "A", instructions: "part a" },
+          { id: "b", title: "B", instructions: "part b" },
+        ],
+      }) +
+      "\n```";
+    const treeMode = (): ResolvedRunMode =>
+      mode({ taskTree: { maxDepth: 2, maxNodes: 24 } });
+    const splitting = (
+      onTurn: (taskId: string) => void,
+    ): FusionDelegateDeps["runTurn"] =>
+      async (session, _message, options) => {
+        const id = taskIdOf(session);
+        onTurn(id);
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "assistant_reply", text: id === "t1" ? PROPOSAL : "done" },
+        });
+        return {
+          session: createEmptySessionState({ id: "s-w", workingDir: "/repo" }),
+          reason: "reply",
+          stepCount: 1,
+        } as RunTurnResult;
+      };
+
+    it("is not settled when a stop cuts its children off", async () => {
+      const controller = new AbortController();
+      const d = deps({
+        runCheckpoints: store,
+        resolveRunMode: treeMode,
+        runTurn: splitting((id) => {
+          if (id.startsWith("t1/")) controller.abort();
+        }),
+      });
+      await buildFusionDelegateTool(d).run(
+        { tasks: TASKS.slice(0, 1) },
+        ctx({ signal: controller.signal }),
+      );
+      const [kept] = store.listResumable("s-parent");
+      expect(kept!.tasks[0]!.result).toBeUndefined();
+      expect(planResume(kept!).rerun).toEqual(["t1"]);
+    });
+
+    it("is written as the closed parent once its children finished", async () => {
+      let atT2: FusionRunCheckpoint | null = null;
+      const d = deps({
+        runCheckpoints: store,
+        resolveRunMode: treeMode,
+        runTurn: splitting((id) => {
+          if (id !== "t2") return;
+          const [file] = readdirSync(dir).filter((f) => f.endsWith(".json"));
+          atT2 = store.load(file!.replace(/\.json$/, ""));
+        }),
+      });
+      await buildFusionDelegateTool(d).run(ORDERED, ctx());
+      const parent = atT2!.tasks.find((t) => t.id === "t1")!;
+      expect(parent.result?.status).toBe("ok");
+      expect(parent.result?.reply).toContain("Split by the worker into 2 subtasks");
+    });
+
+    it("keeps the spend written before the row is", () => {
+      const run = store.start({
+        sessionId: "s-parent", workingDir: "/repo", args: { tasks: TASKS }, tasks: TASKS, waveCount: 1,
+      });
+      run.addSpend(1.5);
+      expect(store.load(run.runId)!.spentUsd).toBeCloseTo(1.5);
+      run.finish("complete");
+    });
+  });
+
   describe("the words", () => {
     it("reads resume and confirm off the call", () => {
       expect(readResumeRequest({ tasks: [] })).toBeNull();

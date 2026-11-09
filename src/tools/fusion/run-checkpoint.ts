@@ -394,10 +394,11 @@ export class FusionRunRecorder {
     this.flush();
   }
 
-  /** Spend that is not one task's (an escalation, the judge). */
+  /** Spend not on a finished row (an escalation, the judge, a split's parent). */
   addSpend(usd: number): void {
     if (this.ended || !Number.isFinite(usd) || usd <= 0) return;
     this.checkpoint.spentUsd += usd;
+    this.flush();
   }
 
   /** `done` waves have finished. */
