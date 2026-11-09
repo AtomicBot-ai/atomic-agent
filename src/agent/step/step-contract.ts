@@ -356,6 +356,8 @@ export interface StepContext {
   originalRequest?: string;
   /** `RunTurnOptions.routeNote`, rendered as `### route` (`build-prompt.ts`). */
   routeNote?: string;
+  /** `RunTurnOptions.answerChannel`, rendered as `### answer-style` (`answer-style.ts`). */
+  answerChannel?: import("../../prompt/answer-style.js").AnswerChannel;
   /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
   reasoningEffort?: ReasoningEffort;
   /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */

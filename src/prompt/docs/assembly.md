@@ -7,6 +7,8 @@ Owner: src/prompt/
 
 `buildStablePrefix` owns persona, rules, skill catalog, tools, capabilities and instructions. Catalog/role changes intentionally alter these bytes; loading a tool/skill or writing a profile does not. The grammar is sent per request, outside the cached prefix.
 
+`### answer-style` ([answer-style.ts](../answer-style.ts)) follows `### rules` when the turn names the surface that shows the reply: terminal (TUI), desktop (sidecar), Telegram or Discord, mapped from the turn origin. It says how the final reply should read (answer first, no retold tool output, paths as code, headings only for long replies) plus that surface's limits (Telegram: no tables, under 3500 characters). A cloud model mode gets the full form (~130-150 tokens); local or unset gets a one-line short form (~40 tokens). The bytes depend only on channel and mode, so the prefix stays cache-stable within a session. Fusion workers, scheduler, HTTP and CLI turns pass no channel and get no block.
+
 ## Local variable tail
 
 The actual flat assembly in `build-prompt.ts` is:

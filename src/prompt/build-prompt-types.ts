@@ -14,6 +14,7 @@ import type {
   ToolDescriptor,
 } from "./stable-prefix.js";
 import type { TokenBudgetLimits } from "./token-budget.js";
+import type { AnswerChannel } from "./answer-style.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
@@ -57,6 +58,14 @@ export interface BuildPromptInput {
    * pre-role output.
    */
   toolRole?: ToolRole;
+  /**
+   * The surface that shows this turn's reply (`answer-style.ts`). Set,
+   * the stable prefix carries `### answer-style` for that channel, in
+   * its short form unless `modelMode` is `cloud`. Omitted (benchmarks,
+   * fusion workers, HTTP, scheduler), no block: the prefix is
+   * byte-identical to before ATO-966.
+   */
+  answerChannel?: AnswerChannel;
   /**
    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
    * `CURRENT DATE:` line in the variable tail just before `### respond`.
