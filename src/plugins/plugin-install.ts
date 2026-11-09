@@ -115,6 +115,65 @@ export function commitStagedPlugin(stateDir: string, staged: StagedPlugin, optio
   return record;
 }
 
+/** What the review step learns about the install it is looking at. */
+export interface PluginReviewContext {
+  mode: "install" | "update";
+  source: PluginSourceRecord;
+  /** The record being replaced (update or `--force`), if any. */
+  previous?: InstalledPluginRecord;
+  /** The installed copy being replaced, parsed before the swap; null when unreadable. */
+  previousBundle?: PluginBundle | null;
+}
+
+/** What the review step decided; fields left out keep commit defaults. */
+export interface PluginReviewDecision {
+  enabled?: boolean;
+  runsCodeAccepted?: boolean;
+}
+
+/**
+ * Looks at a staged plugin before it is moved into place: the security
+ * scan, the permission diff and the runs-code question plug in here.
+ * Throwing cancels the install and the staged copy is deleted.
+ */
+export type PluginReview = (staged: StagedPlugin, context: PluginReviewContext) => Promise<PluginReviewDecision | void>;
+
+export interface ReviewAndCommitOptions {
+  mode: "install" | "update";
+  source: PluginSourceRecord;
+  force?: boolean;
+  review?: PluginReview;
+}
+
+/** Run the review on a staged plugin, then commit it, or discard it when the review says no. */
+export async function reviewAndCommit(stateDir: string, staged: StagedPlugin, options: ReviewAndCommitOptions): Promise<InstalledPluginRecord> {
+  const name = staged.bundle.name;
+  const previous = readPluginState(stateDir).plugins[name];
+  if (previous && !options.force && options.mode === "install") {
+    discardStagedPlugin(staged);
+    throw new PluginInstallError(`plugin ${name} is already installed; use --force to replace it or \`plugin update ${name}\``);
+  }
+  let decision: PluginReviewDecision | void = undefined;
+  if (options.review) {
+    let previousBundle: PluginBundle | null | undefined;
+    if (previous) {
+      try { previousBundle = readPluginBundle(installedPluginDir(stateDir, name)); } catch { previousBundle = null; }
+    }
+    try {
+      decision = await options.review(staged, { mode: options.mode, source: options.source, previous, previousBundle });
+    } catch (err) {
+      discardStagedPlugin(staged);
+      throw err;
+    }
+  }
+  return commitStagedPlugin(stateDir, staged, {
+    source: options.source,
+    force: options.force || options.mode === "update",
+    ...(decision?.enabled !== undefined ? { enabled: decision.enabled } : {}),
+    ...(decision?.runsCodeAccepted !== undefined ? { runsCodeAccepted: decision.runsCodeAccepted } : {}),
+  });
+}
+
 /** Copy + record in one go, for a local folder. Callers that scan use stage/commit instead. */
 export function installPluginFromDir(stateDir: string, srcDir: string, options: { force?: boolean; acceptCode?: boolean } = {}): InstalledPluginRecord {
   const staged = stagePluginCopy(stateDir, srcDir);

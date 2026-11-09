@@ -15,7 +15,11 @@ A plugin is a folder that bundles skills, slash commands, subagent profiles, hoo
 - [plugin-mcp.ts](plugin-mcp.ts): plugin MCP servers for the runtime catalog, named `<plugin>-<server>`. A plugin's own `trust` is dropped, and local (stdio) servers start only after `plugin allow-code`.
 - [plugin-subagents.ts](plugin-subagents.ts): `agents/*.md` profiles, listed for Fusion worker profiles; nothing runs them yet.
 - [plugin-commands.ts](plugin-commands.ts): `commands/**/*.md` as slash commands `/plugin:command`; renders `$ARGUMENTS`, `$1`..`$9` and `${CLAUDE_PLUGIN_ROOT}`, never runs anything.
-- CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts).
+- [marketplace-manifest.ts](marketplace-manifest.ts): reads `.claude-plugin/marketplace.json` (and `.omp-plugin/`), each entry's source kind, and the git URL allowlist.
+- [marketplace-fetch.ts](marketplace-fetch.ts): `PluginFetcher`, the only network code: shallow `git` checkout with hooks off, and https download of a bare marketplace.json.
+- [marketplace-store.ts](marketplace-store.ts): lock file `<stateDir>/plugins/marketplaces.json` (source, ref, pinned commit, fetch time) and checkouts in `plugins/marketplaces/<name>/`.
+- [marketplace.ts](marketplace.ts): marketplace add / list / update / remove, `plugin install name@marketplace`, `plugin update`. Installs go fetch, stage, `review`, commit (`reviewAndCommit` in plugin-install.ts).
+- CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts). Marketplaces: [docs/marketplaces.md](docs/marketplaces.md).
 
 ## Ownership and dependencies
 

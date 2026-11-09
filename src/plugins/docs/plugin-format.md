@@ -51,3 +51,5 @@ The desktop app does not list plugin commands yet.
 ## Switching parts off
 
 `disabledParts` in the install record holds `skill:<folder>`, `mcp:<server>`, `agent:<name>`, `command:<name>` and `hook:<event>` entries. The whole plugin is switched with `enabled`.
+
+Installing from a marketplace: [marketplaces.md](marketplaces.md).
