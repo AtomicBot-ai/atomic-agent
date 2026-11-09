@@ -221,6 +221,18 @@ export function setPluginPartEnabled(stateDir: string, name: string, part: strin
 }
 
 /**
+ * The plugin part behind a namespaced skill name (`plugin:skill`), or null
+ * for a plain skill. Such a skill is switched in the plugin's own record:
+ * `skills.disabled` in config.json only takes plain names on older builds,
+ * which refuse to start on anything else.
+ */
+export function pluginSkillPart(name: string): { plugin: string; part: string } | null {
+  const colon = name.indexOf(":");
+  if (colon <= 0 || colon === name.length - 1) return null;
+  return { plugin: name.slice(0, colon), part: `skill:${name.slice(colon + 1)}` };
+}
+
+/**
  * Allow or stop a plugin's code-running parts (local MCP servers, hooks,
  * skill scripts). The one writer behind `plugin allow-code` / `deny-code`,
  * the terminal `/plugins` panel and the desktop Plugins screen.
