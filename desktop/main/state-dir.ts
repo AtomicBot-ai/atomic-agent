@@ -56,6 +56,7 @@ import { join } from "node:path";
 import { isAbsoluteOn, isUnder, trimTrailingSep } from "./platform.js";
 import { agentAnalyticsEnv } from "./analytics/environment.js";
 import { SESSION_PARENT_PID_ENV } from "./model-sessions.js";
+import { withInstallerBinDirs } from "./installer-path.js";
 
 function absoluteEnv(name: string): string | null {
   return absoluteValue(process.env[name]);
@@ -185,9 +186,14 @@ export function claimPortsIn(cfg: Record<string, unknown>): boolean {
  * exists to end — so every spawn site names it.
  */
 export function agentEnv(): NodeJS.ProcessEnv {
+  /* ATO-1203: an app opened from Finder or the Dock has launchd's short PATH;
+     the folders CLI installers use (claude, codex, …) are appended, never
+     put in front (installer-path.ts). */
+  const path = withInstallerBinDirs(process.env.PATH, process.platform, homedir());
   // Analytics: the agent tags its own events surface=desktop, with this install channel and desktop version.
   return {
     ...process.env,
+    ...(path !== undefined && path !== process.env.PATH ? { PATH: path } : {}),
     ...agentAnalyticsEnv(DESKTOP_STATE_DIR),
     ATOMIC_AGENT_STATE_DIR: DESKTOP_STATE_DIR,
     /* ATO-416: the desktop holds a model-session marker of its own under the
