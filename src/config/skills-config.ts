@@ -92,7 +92,8 @@ export interface UserSkillsConfig {
  */
 export const DEFAULT_SKILLS_CATALOG_BUDGET = 512;
 
-const SKILL_NAME_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
+// `plugin:skill` is how a skill from an installed plugin is named (src/plugins).
+const SKILL_NAME_RE = /^(?:[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?:)?[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 const TAP_REPO_RE =
   /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})\/[A-Za-z0-9._-]{1,100}$/;

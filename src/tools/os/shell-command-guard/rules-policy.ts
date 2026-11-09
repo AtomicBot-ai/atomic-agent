@@ -26,6 +26,7 @@ const GLOBAL_OPTIONS_WITH_VALUE: ReadonlySet<string> = new Set([
   "--work-tree",
   "--namespace",
   "--exec-path",
+  "--config-env",
 ]);
 
 export const GIT_REMOTE_SYNC_OFF_RULE = "policy.git_remote_sync_off";
@@ -39,6 +40,20 @@ export const GIT_REMOTE_SYNC_OFF_REASON =
 export function readGitSubcommand(
   args: readonly string[],
 ): { verb: string; next: string | undefined } | null {
+  const found = findGitSubcommand(args);
+  if (!found) return null;
+  return { verb: found.verb, next: args[found.index + 1] };
+}
+
+/**
+ * Index and lowercased name of the git subcommand in `args` (the words
+ * after `git`), skipping global options and their values: `-C dir`,
+ * `-c k=v`, `--git-dir=x`, `--work-tree x`, `--no-pager`, `-P`.
+ * `null` when there is no subcommand.
+ */
+export function findGitSubcommand(
+  args: readonly string[],
+): { verb: string; index: number } | null {
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i] ?? "";
     if (GLOBAL_OPTIONS_WITH_VALUE.has(arg)) {
@@ -46,7 +61,7 @@ export function readGitSubcommand(
       continue;
     }
     if (arg.startsWith("-")) continue;
-    return { verb: arg.toLowerCase(), next: args[i + 1] };
+    return { verb: arg.toLowerCase(), index: i };
   }
   return null;
 }

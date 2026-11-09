@@ -15,6 +15,7 @@ import type { ProfileFact } from "../../memory/profile-store.js";
 import { formatTurnFailedRecord } from "./parse-failure-recovery.js";
 import { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn-memory-context.js";
 import { formatPauseDigest } from "./pause-digest.js";
+import { costCeilingHeadline } from "./turn-spend.js";
 
 export type TurnFinalizationDependencies = Pick<
   AgentLoopDependencies,
@@ -28,6 +29,11 @@ interface TurnCompletionState {
   turnIndex: number;
   turnStartedAt: number;
   surfacedLessonIds: ReadonlySet<number>;
+  /**
+   * The turn's priced spend (ATO-1108); absent when no pricing seam is
+   * wired, so the result carries no figure rather than a false `$0`.
+   */
+  spendUsd?: number;
 }
 
 export interface TurnFinalizationContext extends TurnCompletionState {
@@ -39,6 +45,8 @@ export interface TurnFinalizationContext extends TurnCompletionState {
   endedOnFinalizationStep: boolean;
   surfacedProcedureIds: ReadonlySet<number>;
   surfacedNoteIds: ReadonlySet<number>;
+  /** The task's spend ceiling, `0` when none; named by a `cost_ceiling` stop. */
+  costCeilingUsd?: number;
 }
 
 export interface FailedTurnFinalizationContext extends TurnCompletionState {
@@ -55,9 +63,21 @@ export function formatTaskStoppedReply(input: {
   elapsedMs: number;
   /** For `credit_exhausted`: who said so, and what they said. */
   credit?: { provider: string; detail: string };
+  /** For `cost_ceiling`: what the turn spent, and the budget it had. */
+  budget?: { spentUsd: number; ceilingUsd: number };
 }): string {
   const minutes = Math.max(1, Math.round(input.elapsedMs / 60_000));
   const spent = `${input.stepsTaken} steps over ~${minutes} min`;
+  if (input.cause === "cost_ceiling") {
+    const headline = costCeilingHeadline(
+      input.budget?.spentUsd ?? 0,
+      input.budget?.ceilingUsd ?? 0,
+    );
+    return (
+      `(${headline}, after ${spent}.) ` +
+      "Here is where I got to. The work so far is kept in this session. Say `continue` to pick up from here with a fresh budget, or raise `agent.task.maxCostUsd` (or the task's `--max-cost-usd`) for longer runs."
+    );
+  }
   if (input.cause === "credit_exhausted") {
     const who = input.credit?.provider ?? "the provider";
     const said =
@@ -73,7 +93,9 @@ export function formatTaskStoppedReply(input: {
     input.cause === "time_ceiling"
       ? `(paused: this task hit its time limit after ${spent}.)`
       : input.cause === "no_progress"
-        ? `(paused: nothing came back from my last ${spent} of tool calls — something in the environment is failing.)`
+        ? // `spent` is the whole task, not the leg that failed: on a long
+          // run "my last 2400 steps" would overstate it by hours.
+          `(paused: for a whole stretch of steps nothing came back from my tool calls, ${spent} into this task. Something in the environment is failing.)`
         : `(paused: this task hit its step ceiling of ${input.stepCeiling} after ${spent}.)`;
   const tail =
     input.cause === "no_progress"
@@ -91,7 +113,7 @@ export function finalizeAgentTurn(
   const {
     options, reason, stepsTaken, turnIndex, turnStartedAt, taskStartedAt,
     stepCeiling, stopCause, creditStop, endedOnFinalizationStep,
-    surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
+    surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds, spendUsd,
   } = context;
   if (reason === "cancelled") {
     state = recordStopMarker(state, options);
@@ -104,6 +126,9 @@ export function finalizeAgentTurn(
       stepCeiling,
       elapsedMs: Date.now() - taskStartedAt,
       ...(creditStop !== null ? { credit: creditStop } : {}),
+      ...(stopCause === "cost_ceiling"
+        ? { budget: { spentUsd: spendUsd ?? 0, ceilingUsd: context.costCeilingUsd ?? 0 } }
+        : {}),
     });
     // A `max_steps` close means the model's own summary never arrived:
     // the reserved final step overran its deadline or was spent on
@@ -312,6 +337,7 @@ export function finalizeAgentTurn(
     ...(reason === "max_steps" || endedOnFinalizationStep
       ? { stopCause }
       : {}),
+    ...(spendUsd !== undefined ? { spendUsd } : {}),
     undelivered: flushSteering(state.id),
   };
 }
@@ -324,7 +350,7 @@ export function finalizeFailedAgentTurn(
   let { state } = context;
   const {
     options, cancelled, category, runError, creditRefused,
-    stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+    stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds, spendUsd,
   } = context;
   if (cancelled) {
     state = recordStopMarker(state, options);
@@ -343,6 +369,7 @@ export function finalizeFailedAgentTurn(
       session: state,
       reason: "cancelled",
       stepCount: stepsTaken,
+      ...(spendUsd !== undefined ? { spendUsd } : {}),
       undelivered: flushSteering(state.id),
     };
   }
@@ -402,6 +429,7 @@ export function finalizeFailedAgentTurn(
     session: state,
     reason: "failed",
     stepCount: stepsTaken,
+    ...(spendUsd !== undefined ? { spendUsd } : {}),
     undelivered: flushSteering(state.id),
   };
 }

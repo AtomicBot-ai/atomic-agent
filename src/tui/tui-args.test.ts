@@ -94,3 +94,22 @@ describe("parseTuiArgs --onboarding", () => {
     ).toHaveProperty("error");
   });
 });
+
+describe("parseTuiArgs --session / --send", () => {
+  it("stays off by default", () => {
+    expect(parseTuiArgs([])).toMatchObject({ sessionId: null, send: null });
+  });
+
+  it("captures the chat to open and the message to send", () => {
+    expect(
+      parseTuiArgs(["--session", "s-abc", "--send", "- continue the task"]),
+    ).toMatchObject({ sessionId: "s-abc", send: "- continue the task" });
+  });
+
+  it("refuses a missing value", () => {
+    expect(parseTuiArgs(["--session"])).toHaveProperty("error");
+    expect(parseTuiArgs(["--session", "--no-mouse"])).toHaveProperty("error");
+    expect(parseTuiArgs(["--send"])).toHaveProperty("error");
+    expect(parseTuiArgs(["--send", "  "])).toHaveProperty("error");
+  });
+});

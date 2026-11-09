@@ -25,9 +25,13 @@ export function formatProviderFalloverNotice(
   to: string,
   reason: string,
   cause: FalloverCause = classifyFalloverReason(reason),
+  /** The plain "switched to" sentence (`falloverSentence`), when known. */
+  headline?: string,
 ): string {
   return [
-    `Switched from ${from} to ${to}: ${reason}`,
+    headline !== undefined
+      ? `${headline} (${reason})`
+      : `Switched from ${from} to ${to}: ${reason}`,
     cause === "billing"
       ? `${from} is refusing requests over credit or quota, which will not clear by itself — top it up, or lower that provider's maxOutputTokens so a request fits. Until then every answer comes from ${to}.`
       : cause === "auth"

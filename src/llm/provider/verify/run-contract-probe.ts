@@ -49,6 +49,10 @@
 
 import { openAiFetch, type OpenAiHttpDeps } from "../openai/openai-http.js";
 import {
+  modelParamProfile,
+  resolveTemperature,
+} from "../openai/model-params.js";
+import {
   accumulateProbeStream,
   type ProbeStreamObservation,
 } from "./accumulate-probe-stream.js";
@@ -416,10 +420,13 @@ function probeBody(
   model: string,
   mode: ProbeToolChoiceMode | null,
 ): Record<string, unknown> {
+  // Zero where the model takes any value; none for OpenAI's reasoning
+  // models, Kimi K3.1's one allowed value (`model-params.ts`).
+  const temperature = resolveTemperature(modelParamProfile(model), 0, 0);
   const body: Record<string, unknown> = {
     model,
     messages: [{ role: "user", content: PROBE_PROMPT }],
-    temperature: 0,
+    ...(temperature !== undefined ? { temperature } : {}),
     max_tokens: PROBE_MAX_TOKENS,
     stream: true,
     stream_options: { include_usage: true },

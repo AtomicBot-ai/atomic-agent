@@ -27,3 +27,11 @@ export function estimateUsageCostUsd(
     (usage.completionTokens / 1_000_000) * pricing.output
   );
 }
+
+/**
+ * A spend estimate in plain dollars: two decimals, or four below one
+ * cent so a cheap run does not read as `$0.00`.
+ */
+export function formatUsd(usd: number): string {
+  return usd > 0 && usd < 0.01 ? `$${usd.toFixed(4)}` : `$${usd.toFixed(2)}`;
+}

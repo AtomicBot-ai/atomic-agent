@@ -1,6 +1,7 @@
 import type {
   HubCardState,
   HubSkillRow,
+  PluginCommandRow,
   SkillInstallConfirmState,
   SkillRemoveConfirmState,
   SkillSummaryRow,
@@ -23,6 +24,7 @@ export type SkillsAction =
       at: number;
     }
   | { type: "skills_refresh_failed"; error: string }
+  | { type: "skills_plugin_commands_set"; commands: readonly PluginCommandRow[] }
   | { type: "skills_cursor_moved"; delta: 1 | -1 | number }
   | { type: "skills_cursor_set"; row: number }
   | { type: "skills_filter_cycled"; direction: 1 | -1 }

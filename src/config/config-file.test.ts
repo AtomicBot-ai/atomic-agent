@@ -8,16 +8,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
+import { getApprovalRulesPath } from "../approval/approval-rules-store.js";
 import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
+import { userHooksPath } from "../hooks/hook-config.js";
+import { installedPluginDir, pluginsRoot } from "../plugins/plugin-store.js";
 import {
   ensureUserConfigFileSync,
   getDotenvPath,
   getStateSecretPaths,
   getTrustConfigPaths,
+  isTrustDirectoryEntry,
   getUserConfigPath,
   readUserConfigFileSync,
   readUserConfigSnapshotSync,
@@ -928,6 +932,24 @@ describe("config file sha256", () => {
 });
 
 describe("the state's secret files (ATO-877)", () => {
+  it("lists hooks and plugins where their owners put them", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    const trust = getTrustConfigPaths(paths);
+    expect(trust).toContain(userHooksPath(stateDir));
+    expect(trust).toContain(join(pluginsRoot(stateDir), "plugins.json"));
+    expect(trust).toContain(join(pluginsRoot(stateDir), "marketplaces.json"));
+    // A directory entry: its trailing separator is what makes it a prefix.
+    expect(trust).toContain(dirname(installedPluginDir(stateDir, "x")) + sep);
+    expect(isTrustDirectoryEntry(dirname(installedPluginDir(stateDir, "x")) + sep)).toBe(true);
+    expect(isTrustDirectoryEntry(userHooksPath(stateDir))).toBe(false);
+    expect(getStateSecretPaths(paths)).toEqual(expect.arrayContaining([...trust]));
+  });
+
   it("lists the trust surface and every key file, where their owners put them", () => {
     const stateDir = join(tmpdir(), "atomic-state");
     const paths = {
@@ -946,5 +968,18 @@ describe("the state's secret files (ATO-877)", () => {
     ]);
     expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);
+  });
+
+  it("protects the saved approval rules like config.json (ATO-1141)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    // Writing it asks as trust_config, reading it as state_secret: the
+    // model must not be able to grant itself an "always allow".
+    expect(getTrustConfigPaths(paths)).toContain(getApprovalRulesPath(stateDir));
+    expect(getStateSecretPaths(paths)).toContain(getApprovalRulesPath(stateDir));
   });
 });

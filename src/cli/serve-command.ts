@@ -82,7 +82,13 @@ export async function serveCommand(args: string[]): Promise<number> {
         // factory's parameter makes that a compile error now, and
         // `serve-command.test.ts` reads what is passed here.
         logSinks: [createStderrSink()],
-        onApprovalRequest: (request) => approvalBus.publish(request),
+        onApprovalRequest: (request) => {
+          // ATO-1111: drop mirrored prompts whose turn was aborted, so a
+          // window that never reconnects /api/events does not keep them.
+          const live = runtime;
+          if (live) approvalBus.prune((r) => live.approvals.isPending(r.approvalId));
+          approvalBus.publish(request);
+        },
       },
     });
     handle = await createHttpServer({

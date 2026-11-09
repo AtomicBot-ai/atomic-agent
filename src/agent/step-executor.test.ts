@@ -1956,15 +1956,17 @@ describe("executeStep approval-gated batches that would not prompt", () => {
     expect(outcome.trimmedBatchNotice).toBeDefined();
   });
 
-  it("uses the session's category grants: a shell grant runs a shell batch whole, not a write", async () => {
+  it("uses the session's category grants: a shell grant does not run a shell batch unattended (shell_dangerous still asks)", async () => {
     const shellGrant: StepApprovalPostureSource = {
       getLevel: () => 1,
       sessionGrants: () => ({ categories: ["shell"] }),
     };
     const shells = JSON.stringify([
-      { tool: "os.shell.run", args: { command: "ls" } },
-      { tool: "os.shell.run", args: { command: "pwd" } },
+      { tool: "os.shell.run", args: { cmd: "ls" } },
+      { tool: "os.shell.run", args: { cmd: "pwd" } },
     ]);
+    // A shell call may still be a dangerous one (`rm -rf`), which no
+    // grant covers (ATO-1220): the batch runs whole, behind barriers.
     const whole = await run(shells, shellGrant);
     expect(whole.outcome.toolCalls).toHaveLength(2);
     expect(whole.outcome.trimmedBatchNotice).toBeUndefined();
@@ -1983,7 +1985,7 @@ describe("executeStep approval-gated batches that would not prompt", () => {
       behind.events.find((e) => e.type === "batch_approval_barriers"),
     ).toMatchObject({ barriers: 2, invalidated: 0 });
     expect(whole.events.some((e) => e.type === "batch_approval_barriers")).toBe(
-      false,
+      true,
     );
   });
 

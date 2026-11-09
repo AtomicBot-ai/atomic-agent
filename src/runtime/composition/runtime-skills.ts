@@ -4,6 +4,7 @@ import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { SkillCatalogEntry } from "../../prompt/stable-prefix.js";
 import { SkillRegistry } from "../../skills/skill-registry.js";
+import { listEnabledPluginSkills } from "../../plugins/plugin-runtime.js";
 import { buildSkillCatalogSection } from "../../skills/skill-catalog.js";
 import { seedStarterSkillsIfMissing } from "../../skills/seed-starter-skills.js";
 import { createProjectSkillTrustGate, projectTrustHint } from "../../skills/project-trust.js";
@@ -24,6 +25,8 @@ export async function prepareRuntimeSkills(
     {
       globalDir: config.paths.globalSkillsDir,
       projectDir: join(workingDir, config.paths.projectSkillsDirName),
+      // Skills from installed, enabled plugins (ATO-562); re-read on every refresh.
+      pluginSkills: () => listEnabledPluginSkills(config.paths.stateDir),
     },
     config.skills.disabled,
     // Project skills load only after the operator trusted this folder (ATO-298).

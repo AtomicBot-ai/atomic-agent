@@ -292,8 +292,36 @@ describe("claudeCliAdapter parseStreamEvent", () => {
         }),
       ),
     ).toEqual({
-      kind: "notice",
-      message: "claude rate limit rejected (five_hour)",
+      kind: "rate_limit",
+      windows: [{ scope: "subscription", name: "5h", status: "rejected" }],
+      notice: "claude rate limit rejected (five_hour)",
+    });
+  });
+
+  it("carries the plan window's use and reset time to the usage meter (ATO-569)", () => {
+    expect(
+      claudeCliAdapter.parseStreamEvent(
+        JSON.stringify({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "allowed",
+            rateLimitType: "seven_day",
+            resetsAt: 1_800_000_000,
+            utilization: 0.83,
+          },
+        }),
+      ),
+    ).toEqual({
+      kind: "rate_limit",
+      windows: [
+        {
+          scope: "subscription",
+          name: "weekly",
+          usedPercent: 83,
+          resetsAt: 1_800_000_000_000,
+          status: "allowed",
+        },
+      ],
     });
   });
 

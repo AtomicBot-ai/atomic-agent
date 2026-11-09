@@ -1,4 +1,5 @@
 import type { ContextCompactionControl, CompactionEvent } from "./compaction-control.js";
+import type { SessionUsageState } from "../session/usage-meter.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
@@ -8,7 +9,7 @@ import type { ModelProfile } from "../llm/model-profile.js";
 import type { ModelProfileManager } from "../llm/model-profile-manager.js";
 import type { LocalBackendGate } from "../llm/local-backend-gate.js";
 import type { ToolRegistry } from "../tools/tool-registry.js";
-import type { FailureVerdict } from "../llm/reliability/failure-catalog.js";
+import type { FailureCauseId, FailureVerdict } from "../llm/reliability/failure-catalog.js";
 import type { ProviderWaitCause, ProviderWaitFailure } from "../llm/reliability/provider-wait-cause.js";
 import type { LlmFailureCategory, TruncationCause } from "../llm/index.js";
 import type { SessionState } from "../session/session-state.js";
@@ -218,6 +219,18 @@ export interface AgentLoopDependencies {
   resolveLlmSlice?: (providerId: string) => ResolvedTurnLlmSlice;
   /** Sticky fallback expected to serve this session; an explicit turn pin wins. */
   contextProviderId?: (sessionId: string) => string | undefined;
+  /**
+   * Estimated USD spend of one step's completion, for the task spend
+   * ceiling and `RunTurnResult.spendUsd` (ATO-1108). Cache-aware
+   * (`estimateUsageCostUsd`); `undefined` or `0` for an unpriced model or
+   * a completion without usage. `providerId` is the link the step was
+   * routed to (`undefined`: the active provider). Absent (tests,
+   * embedders): every step counts $0, so no spend ceiling can fire.
+   */
+  priceCompletion?: (
+    completion: CompletionResult,
+    providerId: string | undefined,
+  ) => number | undefined;
   /**
    * Optional hot-swap supervisor. When provided, the loop re-probes
    * `/props` at the start of every turn and inspects the `modelId` of
@@ -461,13 +474,19 @@ export interface SteeringChannel {
 }
 
 /**
- * Why a task stopped without the model closing it. The three ceilings
- * are the loop's own; `credit_exhausted` is the provider's — the account
- * cannot pay for the next request, so the turn parks where it is and
- * resumes after a top-up, the same way as after a ceiling.
+ * Why a task stopped without the model closing it. The ceilings are the
+ * loop's own; `credit_exhausted` is the provider's — the account cannot
+ * pay for the next request, so the turn parks where it is and resumes
+ * after a top-up, the same way as after a ceiling. `cost_ceiling` is the
+ * task's spend budget (`taskMaxCostUsd`): it ends the task through the
+ * same reserved summary step as `time_ceiling`.
  */
 export type TaskStopCause =
-  "step_ceiling" | "time_ceiling" | "no_progress" | "credit_exhausted";
+  | "step_ceiling"
+  | "time_ceiling"
+  | "cost_ceiling"
+  | "no_progress"
+  | "credit_exhausted";
 
 export interface RunTurnOptions {
   /** Frozen policy for this turn, its workers and background reflection. */
@@ -485,6 +504,15 @@ export interface RunTurnOptions {
   taskMaxSteps?: number;
   /** Wall-clock ceiling. Defaults to `config.agent.task.maxDurationMs`. */
   taskMaxDurationMs?: number;
+  /**
+   * Spend ceiling in USD (ATO-1108). Defaults to
+   * `config.agent.task.maxCostUsd`; `0` means no cap. Checked after each
+   * step's completion is priced (`AgentLoopDependencies.priceCompletion`):
+   * once the turn's spend reaches it, the next step is the reserved
+   * summary step and the task stops with `stopCause: "cost_ceiling"`.
+   * Unpriced completions (a local model) count as $0.
+   */
+  taskMaxCostUsd?: number;
   /**
    * Carry on past a leg boundary while the work progresses. Defaults to
    * `config.agent.task.autoContinue`; `false` restores the historical
@@ -516,6 +544,13 @@ export interface RunTurnOptions {
    * once per change, so the next turn carries none.
    */
   routeNote?: string;
+  /**
+   * The surface that shows this turn's reply (terminal, desktop,
+   * Telegram, Discord), from the turn's origin. Reaches every step's
+   * stable prefix as `### answer-style` (`prompt/answer-style.ts`).
+   * Absent, no block.
+   */
+  answerChannel?: import("../prompt/answer-style.js").AnswerChannel;
   /**
    * Reasoning effort for every completion of this turn, mapped per
    * provider family by the body builder. A fusion worker's
@@ -574,6 +609,30 @@ export interface RunTurnOptions {
    * there is nobody to answer).
    */
   localOutOfMemory?: "ask" | "auto";
+  /**
+   * Called after every completed step that does not end the turn, with
+   * the session as it now stands (ATO-1109). The runtime writes it to
+   * the session store with the turn's progress marker, so a crash or a
+   * kill mid-turn loses at most the step in flight. A throw is logged
+   * and ignored (`turn/turn-checkpoint.ts`).
+   */
+  onStepCheckpoint?: (session: SessionState, step: StepCheckpoint) => void;
+  /**
+   * Goal mode (ATO-451): keep working, round after round, until the
+   * acceptance list is green. Not read by the loop itself: the runtime
+   * wraps the loop's turns in the goal controller (`./goal/`), which runs
+   * `checks` after each round, asks a judge about `criteria`, and starts
+   * the next round with what is still open, up to `maxRounds`.
+   */
+  goal?: import("./goal/goal-types.js").GoalSpec;
+}
+
+/** One completed step, as `RunTurnOptions.onStepCheckpoint` reports it. */
+export interface StepCheckpoint {
+  /** Index of the step that just completed. */
+  stepIndex: number;
+  /** Steps completed in this turn so far, this one included. */
+  stepsTaken: number;
 }
 
 /** Why a `runTurn` invocation returned. */
@@ -582,6 +641,15 @@ export type AgentLoopReason =
 
 export type AgentLoopEvent =
   | CompactionEvent
+  /**
+   * The session's spend or the account's rate-limit reading changed
+   * (ATO-569). Emitted by the runtime after each completion that reported
+   * usage or limits; carries the whole snapshot, so a consumer only ever
+   * replaces what it holds. Scoped by `sessionId` like the compaction
+   * events: the runtime may emit it for a session other than the one a
+   * surface is showing.
+   */
+  | { type: "usage_updated"; sessionId: string; usage: SessionUsageState }
   | { type: "user_message"; text: string }
   /**
    * A message the user sent mid-turn was folded into the prompt for
@@ -797,7 +865,14 @@ export type AgentLoopEvent =
        * `usage` is not a line: it carries a fresh `contextTokens` for the
        * live worker row and the feed renders nothing for it.
        */
-      phase: "started" | "tool" | "usage" | "finished" | "failed" | "cancelled";
+      phase:
+        | "started"
+        | "tool"
+        | "usage"
+        | "escalated"
+        | "finished"
+        | "failed"
+        | "cancelled";
       /**
        * Which leg this line is about. `worker` when absent, so the
        * event's original shape still reads correctly. The orchestrator
@@ -820,6 +895,13 @@ export type AgentLoopEvent =
        * under-counted). Measured, never estimated.
        */
       contextTokens?: number;
+      /**
+       * `phase: "usage"`: tokens this worker has spent so far (prompt +
+       * reply, every completion), and what they cost when its model is
+       * priced — escalations included (ATO-947 / TUI row).
+       */
+      tokens?: number;
+      spentUsd?: number;
       /** `phase: "tool"` only: the tool this leg just started. */
       tool?: string;
       /**
@@ -833,6 +915,11 @@ export type AgentLoopEvent =
       durationMs?: number;
       /** One line about the outcome; the worker's reply, clipped. */
       summary?: string;
+      /**
+       * `phase: "escalated"`: what that escalation cost, when the
+       * escalation model is priced (ATO-942).
+       */
+      costUsd?: number;
     }
   /** `### profile` was clipped at `memory.profile.maxTokens` (issue #407). */
   | ProfileClippedEvent
@@ -844,6 +931,12 @@ export type AgentLoopEvent =
       stepIndex: number;
       summary: string;
       durationMs: number;
+      /**
+       * The turn's estimated USD spend so far (ATO-1108), present once a
+       * priced step has run. Lets a watcher show spend against a
+       * `taskMaxCostUsd` budget without pricing completions itself.
+       */
+      spendUsd?: number;
       /**
        * The step kept a `reply` batched with work tools as a progress
        * note and the turn went on (`progress-note-reply.ts`).
@@ -936,6 +1029,10 @@ export type AgentLoopEvent =
       reason: string;
       /** The failure's kind, read off the error (`falloverCause`). */
       cause?: "billing" | "auth" | "other";
+      /** The failure-catalog cause behind an "away" (ATO-483). */
+      failure?: FailureCauseId;
+      /** The fallback link's model, when its entry names one. */
+      toModel?: string;
     }
   /**
    * A memory sub-call (reflection, link generation, voting, query
@@ -978,4 +1075,18 @@ export interface RunTurnResult {
    * when no call reported any, so a missing figure never reads as zero.
    */
   usage?: { promptTokens: number; completionTokens: number };
+  /**
+   * Estimated USD the turn's own step completions cost (ATO-1108),
+   * priced through `AgentLoopDependencies.priceCompletion`. `0` when
+   * nothing priced ran (a local model); absent when no pricing seam is
+   * wired. Sub-calls outside the step loop (memory, compaction) and
+   * fusion workers' own turns are not included.
+   */
+  spendUsd?: number;
+  /**
+   * Where the goal stands after a goal-mode run (`RunTurnOptions.goal`):
+   * its status, per-criterion marks and rounds used. Absent on an
+   * ordinary turn and when the operator cleared the goal mid-run.
+   */
+  goal?: import("./goal/goal-types.js").GoalState;
 }

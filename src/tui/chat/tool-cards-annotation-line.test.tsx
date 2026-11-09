@@ -51,6 +51,9 @@ function card(
 function withCards(cards: readonly ToolCardEntry[]): TuiState {
   return {
     ...createInitialTuiState(SESSION),
+    // The line sits under the cards of an open turn; a folded turn
+    // (ATO-963, the default) hides both behind its summary line.
+    showSteps: true,
     messages: [
       {
         id: "m1",
@@ -82,7 +85,7 @@ describe("ToolCardsAnnotationLine in the transcript", () => {
       `${theme.glyphs.dotSeparator} read 2 files, ran 1 command`,
     );
     // Under the last card, above the reply.
-    const lastCard = lines.findIndex((l) => l.includes("os.shell.run"));
+    const lastCard = lines.findIndex((l) => l.includes("Ran npm test"));
     const reply = lines.findIndex((l) => l.includes("all done"));
     expect(lastCard).toBeLessThan(at);
     expect(at).toBeLessThan(reply);
@@ -94,7 +97,7 @@ describe("ToolCardsAnnotationLine in the transcript", () => {
       <ChatLog state={withCards([card("os.shell.run", { command: "ls" })])} />,
     );
     const text = strip(app.lastFrame() ?? "");
-    expect(text).toContain("os.shell.run");
+    expect(text).toContain("Ran ls");
     expect(text).not.toContain("ran 1 command");
     app.unmount();
   });
@@ -150,8 +153,9 @@ describe("ToolCardsAnnotationLine in the transcript", () => {
     expect(line.length).toBeLessThanOrEqual(60);
     expect(line).toContain("…");
     expect(line.endsWith("· 2 failed")).toBe(true);
-    // Nothing spilled onto a second row.
-    expect(lines.filter((l) => l.includes("failed"))).toHaveLength(1);
+    // Nothing spilled onto a second row. (The failed command's own
+    // header says "Ran false · failed", ATO-962, so match the count.)
+    expect(lines.filter((l) => l.includes("2 failed"))).toHaveLength(1);
     expect(lines.some((l) => l.includes("web step"))).toBe(false);
     app.unmount();
   });

@@ -12,6 +12,10 @@
 
 import { openAiFetch, type OpenAiHttpDeps } from "../openai/openai-http.js";
 import {
+  modelParamProfile,
+  resolveTemperature,
+} from "../openai/model-params.js";
+import {
   classifyVerifyResponse,
   classifyVerifyTransportError,
   isAbortError,
@@ -177,17 +181,21 @@ export async function verifyProviderKey(
 /**
  * One token, no sampling, no tools. Hand-built rather than reusing
  * `buildOpenAiChatBody`, which pulls token limits out of the config and
- * adds tool plumbing a probe has no use for.
+ * adds tool plumbing a probe has no use for. The temperature still
+ * follows the model's own rule (`model-params.ts`): none for OpenAI's
+ * reasoning models, the one allowed value for Kimi K3.1 — a 0 there is
+ * a 400 that would read as a dead model.
  */
 function probeBody(
   model: string,
   tokenField: "max_tokens" | "max_completion_tokens",
 ): Record<string, unknown> {
+  const temperature = resolveTemperature(modelParamProfile(model), 0, 0);
   return {
     model,
     messages: [{ role: "user", content: "ping" }],
     [tokenField]: 1,
-    temperature: 0,
+    ...(temperature !== undefined ? { temperature } : {}),
     stream: false,
   };
 }

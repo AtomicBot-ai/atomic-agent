@@ -22,13 +22,28 @@ export interface SkillManifest {
    * cross-platform skill's manifest stays byte-identical to before.
    */
   platforms?: SkillPlatform[];
+  /**
+   * Agent Skills spec fields (agentskills.io, ATO-610). Each key is set
+   * only when the frontmatter has it, so older manifests stay unchanged.
+   * `allowedTools` is a hint the skill gives about itself: it never
+   * grants an approval on its own.
+   */
+  license?: string;
+  compatibility?: string;
+  metadata?: Record<string, string>;
+  allowedTools?: string[];
 }
 
 export interface ParsedSkillFile {
   manifest: SkillManifest;
   body: string;
   disableModelInvocation?: boolean;
+  /** Spec limits that were exceeded (name 64, description 1024, body 500 lines). Warnings, never a refusal. */
+  warnings?: string[];
 }
+
+/** Limits from the Agent Skills specification; exceeding them only warns. */
+export const SKILL_SPEC_LIMITS = { name: 64, description: 1024, compatibility: 500, bodyLines: 500 } as const;
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$/;
 
@@ -98,7 +113,9 @@ export function parseSkillFile(content: string, compatibility?: { fallbackName?:
   const manifest = validateManifest(raw, compatibility !== undefined);
   const disabled = compatibility && raw && typeof raw === "object"
     ? (raw as Record<string, unknown>)["disable-model-invocation"] : undefined;
-  return { manifest, body, ...(compatibility ? { disableModelInvocation: disabled === true || /^(true|yes|on|1)$/i.test(String(disabled)) } : {}) };
+  const warnings = specWarnings(manifest, body);
+  return { manifest, body, ...(compatibility ? { disableModelInvocation: disabled === true || /^(true|yes|on|1)$/i.test(String(disabled)) } : {}),
+    ...(warnings.length ? { warnings } : {}) };
 }
 
 function validateManifest(raw: unknown, compatible = false): SkillManifest {
@@ -161,7 +178,45 @@ function validateManifest(raw: unknown, compatible = false): SkillManifest {
   // cross-platform manifest stays `{...}` without the key (keeps strict
   // `toEqual` snapshots green).
   if (platforms !== undefined) manifest.platforms = platforms;
+  if (typeof obj.license === "string" && obj.license.trim()) manifest.license = obj.license.trim();
+  if (typeof obj.compatibility === "string" && obj.compatibility.trim()) manifest.compatibility = obj.compatibility.trim();
+  const metadata = stringMap(obj.metadata);
+  if (metadata) manifest.metadata = metadata;
+  const allowed = allowedToolsList(obj["allowed-tools"] ?? obj.allowed_tools);
+  if (allowed) manifest.allowedTools = allowed;
   return manifest;
+}
+
+/** `allowed-tools` is a space-separated string in the spec; Claude files also use commas or lists. */
+function allowedToolsList(value: unknown): string[] | undefined {
+  if (typeof value === "string") {
+    const list = value.split(/[\s,]+/).map(v => v.trim()).filter(Boolean);
+    return list.length ? list : undefined;
+  }
+  if (Array.isArray(value)) {
+    const list = value.filter((v): v is string => typeof v === "string" && v.trim().length > 0).map(v => v.trim());
+    return list.length ? list : undefined;
+  }
+  return undefined;
+}
+
+function stringMap(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") out[k] = String(v);
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function specWarnings(manifest: SkillManifest, body: string): string[] {
+  const out: string[] = [];
+  if (manifest.name.length > SKILL_SPEC_LIMITS.name) out.push(`name is longer than ${SKILL_SPEC_LIMITS.name} characters`);
+  if (manifest.description.length > SKILL_SPEC_LIMITS.description) out.push(`description is longer than ${SKILL_SPEC_LIMITS.description} characters`);
+  if ((manifest.compatibility?.length ?? 0) > SKILL_SPEC_LIMITS.compatibility) out.push(`compatibility is longer than ${SKILL_SPEC_LIMITS.compatibility} characters`);
+  const lines = body.split("\n").length;
+  if (lines > SKILL_SPEC_LIMITS.bodyLines) out.push(`SKILL.md body has ${lines} lines; the spec recommends at most ${SKILL_SPEC_LIMITS.bodyLines}`);
+  return out;
 }
 
 /**

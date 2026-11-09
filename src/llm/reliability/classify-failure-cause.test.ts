@@ -167,7 +167,7 @@ const SAMPLES: ReadonlyArray<
     "out_of_credit",
     "switch-model",
   ],
-  ["a 401 for a bad key", stepFailure(http(401, "Invalid API key")), "auth_rejected", "switch-model"],
+  ["a 401 for a bad key", stepFailure(http(401, "Invalid API key")), "auth_rejected", "fix-key"],
   ["a 404 for a model the provider lacks", stepFailure(http(404, "no such model")), "model_not_found", "switch-model"],
   ["a 422 the provider refused", stepFailure(http(422, "bad tool schema")), "request_rejected", "switch-model"],
   ["a 503 from the provider", stepFailure(http(503, "busy")), "provider_trouble", "retry"],

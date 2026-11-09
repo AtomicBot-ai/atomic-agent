@@ -13,6 +13,10 @@ import {
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
 import { formatApprovalCategory } from "../approval/approval-level.js";
+import {
+  canGrantAlways,
+  describeAlwaysRule,
+} from "../approval/approval-rules.js";
 import { approvalPreviewTruncated } from "./approval-preview-pages.js";
 import type { WhileBusySubmitMode } from "../config/index.js";
 import {
@@ -262,8 +266,15 @@ export function isPanelModalOpen(state: TuiState): boolean {
       // must not cycle the nav away mid-typing.
       (state.llmPanel.mode === "cloud" &&
         state.llmPanel.cloudModelFilterFocused));
+  // The remove / allow-code question claims y / Esc: Tab must not leave
+  // it armed behind the user, and Esc must cancel it, not the turn.
+  const pluginsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "plugins" &&
+    state.pluginsPanel.mode !== "list";
   return (
     tasksTabBusy ||
+    pluginsTabBusy ||
     skillsTabBusy ||
     memoryTabBusy ||
     localModelsTabBusy ||
@@ -876,6 +887,10 @@ function grantConfirmation(
   request: ApprovalRequest,
   scope: ApprovalGrantScope,
 ): string {
+  if (scope === "always") {
+    // Unlike a session grant this one is saved: say where it went.
+    return `saved: ${describeAlwaysRule(request)} (rule kept in approval-rules.json in the agent's state folder)`;
+  }
   if (scope === "shape" && request.commandShape) {
     return `granted: ${request.commandShape} commands for this session`;
   }
@@ -923,6 +938,7 @@ export type ApprovalHotkey =
   | "approve"
   | "grant_category"
   | "grant_shape"
+  | "grant_always"
   | "edit_path"
   | "view_full"
   | "deny"
@@ -961,6 +977,12 @@ export type ApprovalHotkey =
  *
  * That leaves `ctrl+y`, `ctrl+d`, `ctrl+f` and `ctrl+b`.
  *
+ * **`ctrl+n` saves an "Allow always" rule (ATO-1142).** Global, but the
+ * new-window chord stands down while an approval is pending (see
+ * `handleAppKey`), so a press there did nothing before; it is offered
+ * only where `canGrantAlways` holds and the button names the rule it
+ * saves.
+ *
  * **`ctrl+z` pages the full command (ATO-876).** It is not a verdict,
  * so it may be the odd one out: it is offered only while the preview
  * is cut, and every press shows the next page of the whole command,
@@ -985,6 +1007,8 @@ export const APPROVAL_CHORDS = {
   contextual: "b",
   /** Next page of a cut preview; only while the preview is cut. */
   viewFull: "z",
+  /** Save an "Allow always" rule; only where `canGrantAlways` holds. */
+  grantAlways: "n",
 } as const;
 
 /**
@@ -1021,6 +1045,9 @@ export function approvalHotkey(
   if (lower === APPROVAL_CHORDS.deny) return "deny";
   if (lower === APPROVAL_CHORDS.grantCategory && canGrantCategory(request)) {
     return "grant_category";
+  }
+  if (lower === APPROVAL_CHORDS.grantAlways && canGrantAlways(request)) {
+    return "grant_always";
   }
   if (lower === APPROVAL_CHORDS.contextual) {
     if (canGrantShape(request)) return "grant_shape";
@@ -1140,6 +1167,9 @@ function handleApprovalKey(
       return true;
     case "grant_shape":
       decideApproval(request, true, ctx, "shape");
+      return true;
+    case "grant_always":
+      decideApproval(request, true, ctx, "always");
       return true;
     case "edit_path":
       ctx.dispatch({

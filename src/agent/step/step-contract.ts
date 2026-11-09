@@ -99,6 +99,12 @@ export interface LlmStreamParams {
   reasoningEffort?: ReasoningEffort;
   /** See `CompletionRequest.disableThinking`. */
   disableThinking?: boolean;
+  /**
+   * Sampling temperature for a side call that must be deterministic (the
+   * smart-approval risk review sends `0`). The main loop leaves it unset
+   * and the provider's own default applies, as before.
+   */
+  temperature?: number;
   /** OpenAI tools payload — set when `toolTransport === "native_tools"`. */
   tools?: ReadonlyArray<Record<string, unknown>>;
   toolChoice?: unknown;
@@ -152,6 +158,12 @@ export interface StepDependencies {
   modelModePolicy?: import("../../llm/model-mode.js").ModelModePolicy;
   modelMode?: import("../../llm/model-mode.js").ResolvedModelMode;
   registry: ToolRegistry;
+  /**
+   * Per-session compact-prompt decision (ATO-1116), owned by the loop.
+   * Absent (tests, one-off callers): decided per step from config and
+   * the step's window, with nothing held between steps.
+   */
+  compactPromptLatch?: import("../../prompt/compact-prompt.js").CompactPromptLatch;
   /**
    * Plan mode, read per call rather than captured once — same contract
    * as `BatchExecutionContext.isPlanMode`. Absent ⇒ off.
@@ -350,6 +362,8 @@ export interface StepContext {
   originalRequest?: string;
   /** `RunTurnOptions.routeNote`, rendered as `### route` (`build-prompt.ts`). */
   routeNote?: string;
+  /** `RunTurnOptions.answerChannel`, rendered as `### answer-style` (`answer-style.ts`). */
+  answerChannel?: import("../../prompt/answer-style.js").AnswerChannel;
   /** The turn's reasoning effort — see `LlmStreamParams.reasoningEffort`. */
   reasoningEffort?: ReasoningEffort;
   /** The turn's output ceiling — see `LlmStreamParams.maxOutputTokens`. */

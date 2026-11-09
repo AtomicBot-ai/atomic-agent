@@ -82,8 +82,31 @@ describe("tool_result over SSE", () => {
         status: "ok",
         duration_ms: 42,
         summary: "wrote test2.txt (12 bytes)",
+        line: "Wrote test2.txt",
       },
     ]);
+    // ATO-962: the start frame says the call in words too.
+    expect(progress[0]!.line).toBe("Writing test2.txt");
+    expect(progress[0]!.done_line).toBe("Wrote test2.txt");
+  });
+
+  it("words a failed command's result in the past tense (ATO-962)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    hook({ type: "step_started", stepIndex: 1 });
+    hook({
+      type: "llm_event",
+      event: {
+        type: "tool_call_parsed",
+        call: { tool: "os.shell.run", args: { cmd: "npm", args: ["test"] } },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    } as AgentLoopEvent);
+    hook(executed(result({ tool: "os.shell.run", status: "error", summary: "exit: 1" }), 0));
+
+    expect(frames(sse, "tool_result")[0]!.line).toBe("Ran npm test \u00b7 failed");
   });
 
   it("keys each call of a batch by its place in it, whatever order the results land in", () => {
@@ -171,6 +194,41 @@ describe("tool_result over SSE", () => {
     expect(sent[0]!.key_required).toEqual(keyRequired);
     expect(sent[1]).not.toHaveProperty("key_required");
     expect(sent[2]).not.toHaveProperty("key_required");
+  });
+
+  it("carries an ok os.screen.point's marks as screen_marks, and nothing otherwise (ATO-1018)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const screenMarks = { marks: [{ kind: "arrow", x: 812, y: 440, text: "Save", step: 1 }], seconds: 20 };
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "os.screen.point", summary: "Showing 1 mark", details: { screenMarks } }), 0));
+    hook(executed(result({ tool: "os.screen.point", status: "error", summary: "no overlay", details: { screenMarks } }), 1));
+    hook(executed(result({ tool: "os.fs.write", details: { screenMarks } }), 2));
+    hook(executed(result({ tool: "os.screen.point", details: { screenMarks: { marks: [], seconds: 20 } } }), 3));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.screen_marks).toEqual(screenMarks);
+    for (const frame of sent.slice(1)) expect(frame).not.toHaveProperty("screen_marks");
+  });
+
+  it("carries the call's approval records, auto-approvals included, and nothing when there are none (ATO-1145)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    const approvals = [
+      { verdict: "auto-approved" as const, category: "shell" as const, at: 1, via: "grant" as const, reason: "session grant: git" },
+      { verdict: "auto-approved" as const, category: "fs_write_workspace" as const, at: 2, via: "risk-review" as const, reason: "risk review: low (writes notes.md)" },
+    ];
+
+    hook({ type: "step_started", stepIndex: 0 });
+    hook(executed(result({ tool: "os.shell.run", approvals }), 0));
+    hook(executed(result({ tool: "os.fs.read" }), 1));
+
+    const sent = frames(sse, "tool_result");
+    expect(sent[0]!.approvals).toEqual(approvals);
+    // An auto-approval is not a denial.
+    expect(sent[0]!.status).toBe("ok");
+    expect(sent[1]).not.toHaveProperty("approvals");
   });
 
   it("sends nothing to an OpenAI-compatible client", () => {

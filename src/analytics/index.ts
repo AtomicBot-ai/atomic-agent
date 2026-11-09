@@ -58,7 +58,9 @@ export {
 } from "./resolve-shared-install-id.js";
 export {
   ANALYTICS_KILL_SWITCH_ENV,
+  DO_NOT_TRACK_ENV,
   isAnalyticsKilledByEnv,
+  isDoNotTrackSet,
 } from "./read-analytics-kill-switch.js";
 export { reportAnalyticsOptOut } from "./report-analytics-opt-out.js";
 export {

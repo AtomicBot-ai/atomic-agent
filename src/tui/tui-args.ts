@@ -31,6 +31,16 @@ export interface TuiArgs {
    * running a stale binary. `null` in normal operation.
    */
   fakeUpdateVersion: string | null;
+  /**
+   * `--session <id>`: open this saved chat instead of a fresh one
+   * (`atag handoff` uses it to land on the chat it just saved).
+   */
+  sessionId: string | null;
+  /**
+   * `--send <text>`: send this message once the TUI is up, as if typed.
+   * Used by `atag handoff` for the continuation message.
+   */
+  send: string | null;
 }
 
 export type TuiArgsResult = TuiArgs | { error: string } | { help: true };
@@ -52,6 +62,8 @@ export const TUI_HELP =
     "  --mouse              Force terminal mouse support on for this run",
     "  --no-mouse           Disable mouse support; restores drag-to-select",
     "  --fake-update <ver>  Dev: pretend version <ver> is released (no real install)",
+    "  --session <id>       Open this saved chat instead of a new one",
+    "  --send <text>        Send this message once the interface is up",
     "",
     "Needs an interactive terminal; in scripts use `atomic-agent run`.",
   ].join("\n") + "\n";
@@ -77,6 +89,8 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
   let onboarding = false;
   let mouse: boolean | null = null;
   let fakeUpdateVersion: string | null = null;
+  let sessionId: string | null = null;
+  let send: string | null = null;
   for (let i = 0; i < args.length; i += 1) {
     const flag = args[i];
     switch (flag) {
@@ -126,6 +140,22 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
         fakeUpdateVersion = value.replace(/^v/, "");
         break;
       }
+      case "--session": {
+        const value = args[++i];
+        if (!value || value.startsWith("-"))
+          return { error: "--session requires a session id" };
+        sessionId = value;
+        break;
+      }
+      case "--send": {
+        const value = args[++i];
+        // Free text may start with a dash, so only a missing or blank
+        // value is refused here.
+        if (value === undefined || value.trim().length === 0)
+          return { error: "--send requires a message" };
+        send = value;
+        break;
+      }
       default:
         return { error: `unknown flag: ${flag}` };
     }
@@ -142,6 +172,8 @@ export function parseTuiArgs(args: string[]): TuiArgsResult {
     onboarding,
     mouse,
     fakeUpdateVersion,
+    sessionId,
+    send,
   };
 }
 

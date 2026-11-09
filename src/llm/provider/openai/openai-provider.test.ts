@@ -311,6 +311,45 @@ describe("OpenAiProvider strictTools wiring", () => {
   });
 });
 
+describe("OpenAiProvider — billed cost and rate limits (ATO-569)", () => {
+  it("reads usage.cost and stamps the response's rate-limit headers on the result", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "m",
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12, cost: 0.0042 },
+          }),
+          {
+            status: 200,
+            headers: {
+              "content-type": "application/json",
+              "x-ratelimit-limit-requests": "100",
+              "x-ratelimit-remaining-requests": "10",
+            },
+          },
+        ),
+    );
+    const result = await provider(fetchImpl as unknown as typeof fetch, undefined).complete({
+      prompt: "hi",
+    });
+    expect(result.usage?.costUsd).toBe(0.0042);
+    expect(result.rateLimits).toEqual([
+      { scope: "api", name: "requests", limit: 100, remaining: 10, usedPercent: 90 },
+    ]);
+  });
+
+  it("adds nothing when the service reports neither", async () => {
+    const fetchImpl = fakeFetch({ role: "assistant", content: "ok" });
+    const result = await provider(fetchImpl as unknown as typeof fetch, undefined).complete({
+      prompt: "hi",
+    });
+    expect(result.usage?.costUsd).toBeUndefined();
+    expect(result.rateLimits).toBeUndefined();
+  });
+});
+
 describe("OpenAiProvider — cached prompt tokens", () => {
   it("reads prompt_tokens_details.cached_tokens on the unary path", async () => {
     const fetchImpl = vi.fn(

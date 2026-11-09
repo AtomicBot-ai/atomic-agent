@@ -14,6 +14,7 @@ import type {
   ToolDescriptor,
 } from "./stable-prefix.js";
 import type { TokenBudgetLimits } from "./token-budget.js";
+import type { AnswerChannel } from "./answer-style.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 
 export interface BuildPromptInput {
@@ -58,6 +59,14 @@ export interface BuildPromptInput {
    */
   toolRole?: ToolRole;
   /**
+   * The surface that shows this turn's reply (`answer-style.ts`). Set,
+   * the stable prefix carries `### answer-style` for that channel, in
+   * its short form unless `modelMode` is `cloud`. Omitted (benchmarks,
+   * fusion workers, HTTP, scheduler), no block: the prefix is
+   * byte-identical to before ATO-966.
+   */
+  answerChannel?: AnswerChannel;
+  /**
    * Pre-formatted current date (see `formatCurrentDate`) rendered as a
    * `CURRENT DATE:` line in the variable tail just before `### respond`.
    * Lives in the tail, not the stable prefix, so it never affects
@@ -86,6 +95,22 @@ export interface BuildPromptInput {
    * UI can still tell a probed window from a catalogued one.
    */
   contextWindow?: number | null;
+  /**
+   * Render the compact scaffold (ATO-1116, `compact-prompt.ts`). The
+   * agent step passes its session-latched decision
+   * (`CompactPromptLatch`) so the stable prefix cannot flip
+   * mid-session. Omitted: decided here from `agent.prompt.compact` and
+   * the resolved window, statelessly.
+   */
+  compactPrompt?: boolean;
+  /**
+   * The window the latched {@link compactPrompt} decision was made
+   * from. When set (including `null`), the compact skill catalog budget
+   * is scaled to it instead of this step's window, so a step that
+   * cannot see the window keeps the same catalog bytes. Ignored without
+   * `compactPrompt`.
+   */
+  compactPromptWindow?: number | null;
   /**
    * Whether `profile.contextWindow` describes the model *this* prompt
    * is being built for. Default `true` — every single-leg caller.

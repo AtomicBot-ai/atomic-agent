@@ -1640,7 +1640,7 @@ describe("parseUserConfigFile", () => {
         maxJobs: 3,
         envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
       },
-      screen: { enabled: false },
+      screen: { enabled: false, point: true },
     });
   });
 
@@ -2065,11 +2065,17 @@ describe("tui.whileBusySubmit", () => {
     expect(parsed.tui.theme).toBe("nord");
   });
 
-  it("rejects an unknown mode instead of silently defaulting", () => {
-    expect(() =>
+  it("ATO-1241: reads a mode a newer build added as the default; rejects a non-string", () => {
+    expect(
       parseUserConfigFile({
         version: USER_CONFIG_VERSION,
         tui: { theme: "auto", whileBusySubmit: "interrupt" },
+      }).tui.whileBusySubmit,
+    ).toBe("steer");
+    expect(() =>
+      parseUserConfigFile({
+        version: USER_CONFIG_VERSION,
+        tui: { theme: "auto", whileBusySubmit: true },
       }),
     ).toThrow(/whileBusySubmit/);
   });

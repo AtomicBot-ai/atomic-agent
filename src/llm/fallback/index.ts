@@ -9,6 +9,7 @@ export {
   withoutKeylessLinks,
   withoutUnavailableLinks,
   withoutUnbuiltLinks,
+  DEFAULT_APPEND_LOCAL,
   DEFAULT_FALLBACK_TIMING,
   type FallbackTiming,
   type ResolvedFallbackChain,
@@ -19,6 +20,7 @@ export {
 } from "./missing-api-key.js";
 export { shouldAdvance, type AdvanceDecision } from "./should-advance.js";
 export { runWithFallback } from "./run-with-fallback.js";
+export { falloverSentence } from "./fallover-sentence.js";
 export {
   attachFailingLink,
   describeFailedAttempts,

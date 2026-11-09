@@ -1,8 +1,10 @@
 import {
   requireApproval,
+  savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import type { ApprovalCategory } from "../../../approval/approval-level.js";
+import { getProjectApprovalRulesPath } from "../../../approval/approval-rules-store.js";
 import {
   categorizeFsMutation,
   type FsMutationKind,
@@ -15,8 +17,7 @@ import type { FileRestoreStore } from "./fs-restore-store.js";
  * filesystem-mutating tool needs. The bootstrap resolves the paths once
  * (`getTrustConfigPaths` in `src/config/config-file.ts`) and passes them
  * through `registerOsTools` into each fs tool factory; the tools never
- * read `getConfig()` themselves. Extraction ignores `trustConfigPaths`
- * but accepts the shape for a uniform factory signature.
+ * read `getConfig()` themselves.
  */
 export interface FsDangerousToolOptions extends DangerousToolOptions {
   /**
@@ -72,9 +73,8 @@ export interface FsApprovalRequest {
    *    `trust_config` on a config / `.env` target, else `other`.
    *  - `extract` (os.fs.archive.extract) → `fs_write_home` inside
    *    workspace or home (extraction lands at level 3, not 2), else
-   *    `other`. The trust-config guard does not apply — extraction
-   *    targets a directory, so `destDir` is passed as the sole path and
-   *    `trustConfigPaths` is irrelevant to the outcome.
+   *    `other`; `trust_config` when `destDir` is inside a trusted
+   *    directory or holds a trust path.
    */
   kind: FsMutationKind;
   /**
@@ -93,8 +93,8 @@ export interface FsApprovalRequest {
   workingDir: string;
   /**
    * Absolute paths of the agent's trust surface (`config.json`, `.env`),
-   * injected from the bootstrap. Omitted / empty disables the guard;
-   * `extract` ignores it. Never re-derived inside the tools layer.
+   * injected from the bootstrap. Omitted / empty disables the guard.
+   * Never re-derived inside the tools layer.
    */
   trustConfigPaths?: readonly string[];
   /**
@@ -149,11 +149,20 @@ export async function requireFsApproval(
   request: FsApprovalRequest,
   signal: AbortSignal,
 ): Promise<FsApprovalOutcome> {
+  // The project's saved rules live in the workspace, but editing them
+  // changes what the agent may do next. An extract never matches by file
+  // (its one path is the destination), so the extract tool passes the
+  // rules file itself when the archive contains it.
+  const trustConfigPaths =
+    request.kind === "extract"
+      ? request.trustConfigPaths
+      : [
+          ...(request.trustConfigPaths ?? []),
+          getProjectApprovalRulesPath(request.workingDir),
+        ];
   const category = await categorizeFsMutation(request.kind, request.paths, {
     workingDir: request.workingDir,
-    ...(request.trustConfigPaths !== undefined
-      ? { trustConfigPaths: request.trustConfigPaths }
-      : {}),
+    ...(trustConfigPaths !== undefined ? { trustConfigPaths } : {}),
   });
   // A fan-out the operator authorised once covers every write its
   // workers make inside the directory that prompt named — except the
@@ -166,6 +175,9 @@ export async function requireFsApproval(
   // Nor a file the user declined this turn: a worker writing it under
   // the fan-out's yes would be the way round their no, so that call goes
   // to the gate, which refuses it (`ApprovalGate.hasDeclinedTarget`).
+  //
+  // Nor a call a saved deny or ask rule covers: the scope speaks for a
+  // directory, the rule for this action.
   const targetPaths = request.targetPaths ?? [];
   if (
     category !== "trust_config" &&
@@ -177,7 +189,17 @@ export async function requireFsApproval(
         category,
         targetPaths: [...targetPaths],
       }) ?? false
-    )
+    ) &&
+    !savedRuleOverridesScope(options.approvals, {
+      sessionId: request.sessionId,
+      tool: request.tool,
+      category,
+      targetPaths: [...targetPaths],
+      ...(request.affectedResources !== undefined
+        ? { affectedResources: request.affectedResources }
+        : {}),
+      workdir: request.workingDir,
+    })
   ) {
     return { category };
   }

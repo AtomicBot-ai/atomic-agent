@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { startTestHarness, type Harness } from "./test-harness.js";
@@ -65,6 +69,95 @@ describe("/api/tasks", () => {
       body: JSON.stringify({ userMessage: "missing session" }),
     });
     expect(res.status).toBe(400);
+  });
+
+  it("stores maxCostUsd and maxDurationMs from the create body", async () => {
+    const session = harness.runtime.createSession();
+    const res = await fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.id,
+        userMessage: "overnight",
+        maxAttempts: 1,
+        maxCostUsd: 5,
+        maxDurationMs: 8 * 60 * 60 * 1000,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as TaskJson & {
+      maxCostUsd: number | null;
+      maxDurationMs: number | null;
+    };
+    expect(created.maxCostUsd).toBe(5);
+    expect(created.maxDurationMs).toBe(8 * 60 * 60 * 1000);
+    const stored = harness.runtime.taskStore.get(created.id);
+    expect(stored?.maxCostUsd).toBe(5);
+    expect(stored?.maxDurationMs).toBe(8 * 60 * 60 * 1000);
+  });
+
+  it("returns the stop cause of a run a ceiling ended", async () => {
+    const session = harness.runtime.createSession();
+    const store = harness.runtime.taskStore;
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "overnight",
+      origin: "http",
+      maxAttempts: 1,
+    });
+    store.markRunning(task.id);
+    store.recordStopCause(task.id, "time_ceiling");
+    store.markCompleted(task.id);
+    const res = await fetch(`${harness.baseUrl}/api/tasks/${task.id}`);
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as TaskJson & { stopCause: string | null };
+    expect(body.status).toBe("completed");
+    expect(body.stopCause).toBe("time_ceiling");
+  });
+
+  it("leaves the budget null when the create body omits it", async () => {
+    const session = harness.runtime.createSession();
+    const res = await fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.id,
+        userMessage: "no budget",
+        maxAttempts: 1,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as {
+      maxCostUsd: number | null;
+      maxDurationMs: number | null;
+    };
+    expect(created.maxCostUsd).toBeNull();
+    expect(created.maxDurationMs).toBeNull();
+  });
+
+  it.each([
+    { maxCostUsd: 0 },
+    { maxCostUsd: -1 },
+    { maxCostUsd: "5" },
+    { maxDurationMs: 0 },
+    { maxDurationMs: 1.5 },
+    { maxDurationMs: "3600000" },
+  ])("rejects an invalid budget %j with 400", async (budget) => {
+    const session = harness.runtime.createSession();
+    const res = await fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.id,
+        userMessage: "bad budget",
+        maxAttempts: 1,
+        ...budget,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(
+      harness.runtime.taskStore.list({ sessionId: session.id, limit: 10 }),
+    ).toHaveLength(0);
   });
 
   it("returns 404 for unknown task ids on GET / DELETE / run", async () => {
@@ -180,5 +273,60 @@ describe("tasks.minIntervalMs at runtime (#548)", () => {
       kind: "interval",
       everyMs: 30_000,
     });
+  });
+});
+
+describe("POST /api/tasks with workingDir and notify (ATO-1113)", () => {
+  let harness: Harness;
+  let dir: string;
+
+  beforeEach(async () => {
+    harness = await startTestHarness();
+    dir = mkdtempSync(join(tmpdir(), "task-dir-"));
+  });
+
+  afterEach(async () => {
+    await harness.cleanup();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  const post = (body: unknown) =>
+    fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  it("opens a new session in the folder and keeps notify", async () => {
+    const res = await post({ userMessage: "tidy the repo", workingDir: dir, maxAttempts: 1, notify: "telegram" });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { sessionId: string; notify: string | null };
+    expect(created.notify).toBe("telegram");
+    const session = harness.runtime.sessionStore.load(created.sessionId);
+    expect(session?.workingDir).toBe(dir);
+  });
+
+  it("refuses a folder that does not exist and leaves no session behind", async () => {
+    const before = harness.runtime.sessionStore.listRecent(200).length;
+    const res = await post({ userMessage: "x", workingDir: join(dir, "missing") });
+    expect(res.status).toBe(400);
+    expect(harness.runtime.sessionStore.listRecent(200).length).toBe(before);
+  });
+
+  it("deletes the session it opened when the task itself is refused", async () => {
+    const before = harness.runtime.sessionStore.listRecent(200).length;
+    const res = await post({ userMessage: "x".repeat(16_001), workingDir: dir });
+    expect(res.status).toBe(400);
+    expect(harness.runtime.sessionStore.listRecent(200).length).toBe(before);
+  });
+
+  it("refuses sessionId and workingDir together, and a notify target it does not know", async () => {
+    const session = harness.runtime.createSession();
+    expect((await post({ userMessage: "x", sessionId: session.id, workingDir: dir })).status).toBe(400);
+    expect((await post({ userMessage: "x", workingDir: dir, notify: "email" })).status).toBe(400);
+  });
+
+  it("still requires a session or a folder", async () => {
+    expect((await post({ userMessage: "x" })).status).toBe(400);
   });
 });

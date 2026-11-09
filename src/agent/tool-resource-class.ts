@@ -94,6 +94,7 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   [OS_FS_LIST_CONTRACT.name]: OS_FS_LIST_CONTRACT.resourceClass,
   [OS_FS_GLOB_CONTRACT.name]: OS_FS_GLOB_CONTRACT.resourceClass,
   [OS_FS_LOCATE_PROJECT_CONTRACT.name]: OS_FS_LOCATE_PROJECT_CONTRACT.resourceClass,
+  "os.fs.code_map": "pure_read",
   [OS_FS_GREP_CONTRACT.name]: OS_FS_GREP_CONTRACT.resourceClass,
   [OS_FS_HASH_CONTRACT.name]: OS_FS_HASH_CONTRACT.resourceClass,
   [OS_FS_DIFF_CONTRACT.name]: OS_FS_DIFF_CONTRACT.resourceClass,
@@ -171,10 +172,17 @@ const TOOL_RESOURCE_CLASS: Record<string, ResourceClass> = {
   "os.screen.click": "approval_gated",
   "os.screen.type": "approval_gated",
   "os.screen.key": "approval_gated",
+  // Draws marks through the desktop overlay and asks nothing; serialised
+  // like `os.notify`, a small side effect on a shared OS resource.
+  "os.screen.point": "memory_write",
 
   // discovery
   "skill.view": "pure_read",
   "tool.view": "pure_read",
+  // The live plan (ATO-486): writes only the session's own record, so it
+  // batches with anything; the step commit applies results in order.
+  "plan.update": "pure_read",
+  "tool.search": "pure_read",
   "skill.run_script": "approval_gated",
 
   // memory.*
@@ -348,9 +356,13 @@ const FS_WRITE_CATEGORIES: readonly ApprovalCategory[] = [
  */
 const APPROVAL_CATEGORIES_BY_TOOL: Record<string, readonly ApprovalCategory[]> =
   {
-    "os.shell.run": ["shell"],
-    // Same rung as a shell command: it runs one, in a copy.
-    "verify.run": ["shell"],
+    // A command the guard's dangerous layer matched asks as
+    // `shell_dangerous`, which only full trust silences and no grant
+    // reaches (ATO-1220): below level 5 a shell batch is not unattended.
+    "os.shell.run": ["shell", "shell_dangerous"],
+    // Same rung as a shell command: it runs one, in a copy, and a
+    // dangerous one asks as `shell_dangerous` too (ATO-1266).
+    "verify.run": ["shell", "shell_dangerous"],
     "os.fs.write": FS_WRITE_CATEGORIES,
     "os.fs.edit": FS_WRITE_CATEGORIES,
     "os.fs.patch": FS_WRITE_CATEGORIES,

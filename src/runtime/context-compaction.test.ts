@@ -74,9 +74,11 @@ describe("compaction configuration and projection", () => {
     expect(parseCompactionConfig({ reasoningReserveTokens: 0 }, createCompactionDefaults()).reasoningReserveTokens).toBe(0);
     expect(parseCompactionConfig({ timeoutMs: 120000 }, createCompactionDefaults())).toMatchObject({ mode: "auto", timeoutMs: 120000, maxTotalTimeoutMs: 600000 });
     for (const mode of ["auto", "model", "extractive"]) expect(parseCompactionConfig({ mode }, createCompactionDefaults()).mode).toBe(mode);
-    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { reasoningReserveTokens: -1 }, { reasoningReserveTokens: 1.5 }, { mode: "fast" }, { mode: 1 }]) {
+    for (const raw of [{ targetRatio: 0 }, { targetRatio: .95 }, { triggerRatio: 1 }, { timeoutMs: 0 }, { maxTotalTimeoutMs: -1 }, { reasoningReserveTokens: -1 }, { reasoningReserveTokens: 1.5 }, { mode: 1 }]) {
       expect(() => parseCompactionConfig(raw, createCompactionDefaults())).toThrow();
     }
+    // ATO-1241: a mode a newer build added reads as the default.
+    expect(parseCompactionConfig({ mode: "fast" }, createCompactionDefaults()).mode).toBe("auto");
   });
   it("ignores damaged checkpoints with a diagnostic and leaves old sessions intact", () => {
     const state = history();
@@ -221,6 +223,8 @@ describe("compaction on small context windows (ATO-257)", () => {
   function windowed(window: number) {
     return (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: window, conversationMaxTokens: 0,
       completionMaxTokens: 16_384,
+      // The worst case these pin: the full scaffold, which config can still select over the auto compact one.
+      compactPrompt: false,
       toolDescriptors: padWords > 0 ? [{ name: "reference.pad", summary: "word ".repeat(padWords).trim(), argsSchema: "{}" }] : [] });
   }
   beforeEach(() => {

@@ -377,3 +377,115 @@ describe("the context panel", () => {
     expect(next.contextPanelOpen).toBe(false);
   });
 });
+
+describe("reduceUiAction finished-turn folds (ATO-963)", () => {
+  function withTurns() {
+    const card = (id: string) => ({
+      id,
+      stepIndex: 0,
+      tool: "os.fs.read",
+      args: {},
+      status: "ok" as const,
+      summary: "ok",
+      truncated: false,
+      startedAt: 1,
+      finishedAt: 2,
+    });
+    return {
+      ...createInitialTuiState(SESSION),
+      messages: [
+        { id: "u1", role: "user" as const, text: "a", timestamp: 1 },
+        {
+          id: "a1",
+          role: "assistant" as const,
+          text: "one",
+          toolCards: [card("c1")],
+          timestamp: 2,
+        },
+        { id: "u2", role: "user" as const, text: "b", timestamp: 3 },
+        {
+          id: "a2",
+          role: "assistant" as const,
+          text: "two",
+          toolCards: [card("c2")],
+          timestamp: 4,
+        },
+      ],
+    };
+  }
+
+  it("toggles one turn open and folded again", () => {
+    const opened = reduceUiAction(withTurns(), {
+      type: "turn_expand_toggled",
+      messageId: "a1",
+    });
+    expect(opened?.turnsExpandedById).toEqual({ a1: true });
+    const folded = reduceUiAction(opened!, {
+      type: "turn_expand_toggled",
+      messageId: "a1",
+    });
+    expect(folded?.turnsExpandedById).toEqual({ a1: false });
+  });
+
+  it("opens only the newest folded turn for scope last", () => {
+    const next = reduceUiAction(withTurns(), {
+      type: "turn_expand_set",
+      scope: "last",
+      expanded: true,
+    });
+    expect(next?.turnsExpandedById).toEqual({ a2: true });
+  });
+
+  it("skips the running turn for scope last", () => {
+    const state = { ...withTurns(), status: "running" as const };
+    const next = reduceUiAction(state, {
+      type: "turn_expand_set",
+      scope: "last",
+      expanded: true,
+    });
+    expect(next?.turnsExpandedById).toEqual({ a1: true });
+  });
+
+  it("opens every folded turn for scope all and folds them back", () => {
+    const opened = reduceUiAction(withTurns(), {
+      type: "turn_expand_set",
+      scope: "all",
+      expanded: true,
+    });
+    expect(opened?.turnsExpandedById).toEqual({ a1: true, a2: true });
+    const folded = reduceUiAction(opened!, {
+      type: "turn_expand_set",
+      scope: "all",
+      expanded: false,
+    });
+    expect(folded?.turnsExpandedById).toEqual({});
+  });
+
+  it("is a no-op for scope last when nothing is folded", () => {
+    const state = createInitialTuiState(SESSION);
+    const next = reduceUiAction(state, {
+      type: "turn_expand_set",
+      scope: "last",
+      expanded: true,
+    });
+    expect(next).toBe(state);
+  });
+
+  it("sets always-show-steps, off by default", () => {
+    const state = createInitialTuiState(SESSION);
+    expect(state.showSteps).toBe(false);
+    expect(
+      createInitialTuiState(SESSION, undefined, { showSteps: true }).showSteps,
+    ).toBe(true);
+    expect(reduceUiAction(state, { type: "show_steps_set", on: true })?.showSteps).toBe(true);
+  });
+
+  it("forgets opened turns when the chat is cleared", () => {
+    const opened = reduceUiAction(withTurns(), {
+      type: "turn_expand_toggled",
+      messageId: "a1",
+    });
+    const cleared = reduceUiAction(opened!, { type: "chat_cleared" });
+    expect(cleared?.turnsExpandedById).toEqual({});
+  });
+});

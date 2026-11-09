@@ -1,4 +1,5 @@
 import type { CompactionConfig } from "./compaction-config.js";
+import type { PromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
 
@@ -16,6 +17,19 @@ import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-con
  * Fusion workers are confined regardless (and more narrowly).
  */
 export type ReadScope = "working-dir" | "unrestricted";
+
+/**
+ * How the tool catalog reaches the prompt (ATO-558). `auto` describes
+ * only the core tools in full on a small window or a big catalog and
+ * lists the rest as one-liners behind `tool.search`; `on` always does,
+ * `off` never does. See `src/tools/tool-search/tool-search-policy.ts`.
+ */
+export type ToolSearchMode = "auto" | "on" | "off";
+
+/** `agent.tools`: additive (no schema version bump). */
+export interface AgentToolsConfig {
+  search: ToolSearchMode;
+}
 
 export interface RuntimeAgentConfig {
   /**
@@ -51,6 +65,10 @@ export interface RuntimeAgentConfig {
    * the ApprovalGate; see `runtime.setApprovalLevel`.
    */
   approvalLevel: ApprovalLevel;
+  /** Smart approval: a model rates a request before it prompts. See the user type. */
+  smartApproval: boolean;
+  /** Provider id the risk review runs on; `null` = automatic. See the user type. */
+  smartApprovalModel: string | null;
   stablePrefixHashSalt: string;
   /**
    * Safety-net ceiling for the `### conversation` section of the prompt.
@@ -114,6 +132,8 @@ export interface RuntimeAgentConfig {
    * edge cases where compression misses (huge SVG trees, etc.).
    */
   worldSnapshotMaxTokens: number;
+  /** `agent.tools.search` (ATO-558); absent reads as `auto`. */
+  tools?: AgentToolsConfig;
   /**
    * Max `### loaded-tools` rare-schema entries kept per session (LRU
    * by `loadedAt`). Env-only: `ATOMIC_AGENT_LOADED_TOOLS_CAP`.
@@ -186,6 +206,15 @@ export interface RuntimeAgentConfig {
   loopHistorySize: number;
   loopWanderingThreshold: number;
   loopWanderingEscalation: number;
+  /**
+   * Deterministic clean-up of the final reply before a chat surface shows
+   * it (`src/agent/reply-polish.ts`). On unless set to a false value.
+   * Optional so hand-built configs keep compiling; absent means on.
+   * Env-only: `ATOMIC_AGENT_REPLY_POLISH`.
+   */
+  replyPolish?: boolean;
+  /** Mirrors `UserAgentConfig.prompt`. */
+  prompt: PromptConfig;
 }
 
 export interface UserAgentConfig {
@@ -266,4 +295,30 @@ export interface UserAgentConfig {
    */
   sessionSectionsMaxTokens: number;
   worldSnapshotMaxTokens: number;
+  /**
+   * Smart approval (ATO-465). When on, a request that would prompt, of a
+   * category the operator could grant for the session, is first rated by
+   * a model (`src/approval/risk-review.ts`): `low` runs it without a
+   * prompt, anything else and every failure prompts as before, with the
+   * rating shown. Off by default. Read live: no restart needed.
+   */
+  smartApproval: boolean;
+  /**
+   * The `llm.providers[].id` the risk review runs on. `null` (default):
+   * a local `llama-server` link that has a model, else the active provider.
+   */
+  smartApprovalModel: string | null;
+  /**
+   * Stable-prefix shape. `compact` (default `"auto"`): the short
+   * scaffold for small context windows; `auto` turns it on when the
+   * model's known window is at most 64K tokens. See
+   * `src/prompt/compact-prompt.ts`.
+   */
+  prompt: PromptConfig;
+  /**
+   * Tool catalog on demand (ATO-558): `tools.search` is `auto`, `on`
+   * or `off`. Optional so configs and fixtures written before it stay
+   * valid; the parser always fills it.
+   */
+  tools?: AgentToolsConfig;
 }

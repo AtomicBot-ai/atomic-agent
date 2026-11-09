@@ -552,24 +552,23 @@ describe("llm-config", () => {
     ).toThrow(/subscriptionCli/);
   });
 
-  it("rejects an unknown cli name", () => {
-    expect(() =>
-      parseUserConfigFile({
-        version: USER_CONFIG_VERSION,
-        llm: {
-          activeTextProvider: "gemini-cli",
-          activeEmbeddingProvider: "gemini-cli",
-          toolTransport: "auto",
-          providers: [
-            {
-              id: "gemini-cli",
-              kind: "subscription-cli",
-              subscriptionCli: { cli: "gemini" },
-            },
-          ],
-        },
-      }),
-    ).toThrow(/subscriptionCli\.cli/);
+  it("ATO-1241: sets aside an entry with an unknown cli name; a non-string cli is rejected", () => {
+    const llm = (cli: unknown) => ({
+      version: USER_CONFIG_VERSION,
+      llm: {
+        activeTextProvider: "gemini-cli",
+        activeEmbeddingProvider: "gemini-cli",
+        toolTransport: "auto",
+        providers: [
+          { id: "local-llama", kind: "llama-server" },
+          { id: "gemini-cli", kind: "subscription-cli", subscriptionCli: { cli } },
+        ],
+      },
+    });
+    const parsed = parseUserConfigFile(llm("gemini"));
+    expect(parsed.llm?.providers.map((p) => p.id)).toEqual(["local-llama"]);
+    expect(parsed.llm?.activeTextProvider).toBe("local-llama");
+    expect(() => parseUserConfigFile(llm(7))).toThrow(/subscriptionCli\.cli/);
   });
 
   it("rejects non-string extraArgs", () => {

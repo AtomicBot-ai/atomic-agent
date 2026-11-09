@@ -30,6 +30,10 @@ import {
   type ApprovalGrantScope,
   type ApprovalRequest,
 } from "../approval/approval-gate.js";
+import {
+  canGrantAlways,
+  describeAlwaysRule,
+} from "../approval/approval-rules.js";
 import { formatSkillCatalogOmittedNote } from "../skills/index.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
 import {
@@ -149,6 +153,10 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
   if (grantShape) {
     options.push(`a = allow all ${request.commandShape} this session`);
   }
+  // Saved, unlike the two above (ATO-1142).
+  if (canGrantAlways(request)) {
+    options.push(`w = ${describeAlwaysRule(request)}`);
+  }
   options.push("N = deny");
   if (!grantCategory) {
     lines.push(`  (${formatNeverGrantedNote(request.category)})`);
@@ -159,18 +167,19 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
 
 /**
  * Whether a stdin line answers an approval prompt: one of the offered
- * keys (`y`, `s`, `a`, `n`), `yes` / `no`, or an empty line (Enter, the
- * default `N`), in any case. Anything else is a message for the agent,
- * not an answer.
+ * keys (`y`, `s`, `a`, `w`, `n`), `yes` / `no`, or an empty line (Enter,
+ * the default `N`), in any case. Anything else is a message for the
+ * agent, not an answer.
  */
 export function isApprovalAnswer(line: string): boolean {
-  return /^(y|yes|n|no|s|a|)$/.test(line.trim().toLowerCase());
+  return /^(y|yes|n|no|s|a|w|)$/.test(line.trim().toLowerCase());
 }
 
 /**
  * Interactive approval over stdin. We ask the operator to confirm each
  * dangerous action; `y`/`yes` approves this call, `s` also grants the
- * category for the session, `a` grants this shell command shape.
+ * category for the session, `a` grants this shell command shape, `w`
+ * saves an "always allow" rule for this project (`canGrantAlways`).
  * Any other answer (`n`, `no`, Enter, a grant key this request does not
  * offer) is a refusal. The grant options mirror the TUI prompt;
  * they are offered here too because a CLI operator has the same physical
@@ -214,6 +223,12 @@ async function promptApproval(
       `\n  granted: ${request.commandShape} commands for this session\n`,
     );
     return { approved: true, grant: "shape" };
+  }
+  if (answer === "w" && canGrantAlways(request)) {
+    process.stderr.write(
+      `\n  saved: ${describeAlwaysRule(request)} (approval-rules.json in the agent's state folder)\n`,
+    );
+    return { approved: true, grant: "always" };
   }
   return { approved: /^(y|yes)$/.test(answer) };
 }
