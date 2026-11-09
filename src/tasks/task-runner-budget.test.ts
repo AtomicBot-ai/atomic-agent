@@ -145,6 +145,62 @@ describe("TaskRunner budgets", () => {
     expect(afterSecond?.spentUsd).toBeCloseTo(1.75, 6);
   });
 
+  it("gives a resumed task only the time earlier runs left", async () => {
+    const { runner, seen } = runnerWith([{}]);
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "resume me",
+      origin: "cli",
+      maxAttempts: 1,
+      maxDurationMs: 8 * 3_600_000,
+    });
+    store.recordElapsed(task.id, 7 * 3_600_000);
+    await runner.runOne(task.id);
+    expect(seen[0]?.taskMaxDurationMs).toBe(3_600_000);
+  });
+
+  it("adds the run's time to what earlier runs used", async () => {
+    const { runner } = runnerWith([{}]);
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "timed",
+      origin: "cli",
+      maxAttempts: 1,
+      maxDurationMs: 60_000,
+    });
+    store.recordElapsed(task.id, 1_000);
+    const final = await runner.runOne(task.id);
+    expect(final?.elapsedMs).toBeGreaterThanOrEqual(1_000);
+  });
+
+  it("does not track time for a task without a time limit", async () => {
+    const { runner } = runnerWith([{}]);
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "untimed",
+      origin: "cli",
+      maxAttempts: 1,
+    });
+    const final = await runner.runOne(task.id);
+    expect(final?.elapsedMs).toBeNull();
+  });
+
+  it("blocks a task whose time earlier runs already used up, without running it", async () => {
+    const { runner, seen } = runnerWith([{}]);
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "out of time",
+      origin: "cli",
+      maxAttempts: 1,
+      maxDurationMs: 3_600_000,
+    });
+    store.recordElapsed(task.id, 3_600_000);
+    const final = await runner.runOne(task.id);
+    expect(seen).toHaveLength(0);
+    expect(final?.status).toBe("blocked");
+    expect(final?.lastError).toMatch(/^time_spent: 60 min of 60 min/);
+  });
+
   it("blocks a retry whose budget earlier attempts already used up, without running it", async () => {
     const { runner, seen } = runnerWith([{ reason: "failed", spendUsd: 2.4 }]);
     const task = store.create({

@@ -32,6 +32,7 @@ const BASE: TaskRecord = {
   maxCostUsd: null,
   maxDurationMs: null,
   spentUsd: null,
+  elapsedMs: null,
 };
 
 describe("formatScheduleLabel", () => {

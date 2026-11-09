@@ -4,7 +4,7 @@ import { TaskValidationError, type TaskRecord } from "./task-types.js";
 
 /**
  * Per-task budgets (ATO-1108): a spend ceiling, a wall-clock ceiling and
- * what the task's runs have spent so far, as three nullable `tasks`
+ * what the task's runs have used of them so far, as nullable `tasks`
  * columns.
  *
  * Added outside the numbered migrations, like `run_owner`: the desktop
@@ -18,12 +18,13 @@ export const TASK_BUDGET_COLUMNS = [
   { name: "max_cost_usd", type: "REAL" },
   { name: "max_duration_ms", type: "INTEGER" },
   { name: "spent_usd", type: "REAL" },
+  { name: "elapsed_ms", type: "INTEGER" },
 ] as const;
 
 /**
  * Give `tasks` its budget columns. Returns why they are missing (the
  * write lock was not granted, the file is read-only), or `null` when all
- * three are there. Without them the store keeps working, but refuses to
+ * are there. Without them the store keeps working, but refuses to
  * create a task that asks for a budget rather than silently dropping it.
  */
 export function ensureBudgetColumns(db: Database.Database): string | null {
@@ -85,4 +86,23 @@ export function remainingCostUsd(
   if (task.maxCostUsd === null) return undefined;
   const left = task.maxCostUsd - (task.spentUsd ?? 0);
   return left > 0 ? left : "exhausted";
+}
+
+/**
+ * How long the next run of `task` may take, by the same rules as
+ * `remainingCostUsd`: earlier runs count, a resume after a restart
+ * included, so a run cut off at hour 7 of 8 gets one hour.
+ */
+export function remainingDurationMs(
+  task: Pick<TaskRecord, "maxDurationMs" | "elapsedMs">,
+): number | undefined | "exhausted" {
+  if (task.maxDurationMs === null) return undefined;
+  const left = task.maxDurationMs - (task.elapsedMs ?? 0);
+  return left > 0 ? left : "exhausted";
+}
+
+/** A run time for a task's error line. */
+export function formatRunTime(ms: number): string {
+  const minutes = Math.round(ms / 60_000);
+  return minutes < 120 ? `${minutes} min` : `${Math.round(minutes / 6) / 10} h`;
 }
