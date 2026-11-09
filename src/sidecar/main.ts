@@ -116,6 +116,11 @@ export async function bootstrapSidecar(): Promise<{
               status: inner.result.status,
               summary: inner.result.summary,
               truncated: inner.result.truncated,
+              // ATO-1145: approval records, auto-approvals included.
+              ...(inner.result.approvals !== undefined &&
+              inner.result.approvals.length > 0
+                ? { approvals: inner.result.approvals }
+                : {}),
               ...(inner.batchSize > 1
                 ? {
                     batchIndex: inner.batchIndex,
@@ -143,6 +148,13 @@ export async function bootstrapSidecar(): Promise<{
               sessionId,
               stepIndex: inner.stepIndex,
               text: inner.text,
+            });
+          } else if (inner.type === "plan_updated") {
+            // ATO-486: the whole live checklist; `items: []` clears it.
+            protocol.emitEvent("plan_updated", {
+              sessionId,
+              stepIndex: inner.stepIndex,
+              plan: inner.plan,
             });
           } else if (inner.type === "step_error") {
             protocol.emitEvent("error", {
@@ -340,6 +352,8 @@ export async function bootstrapSidecar(): Promise<{
           // `null`, which the old `??` also treated as "not given".
           ...(typeof maxSteps === "number" ? { maxSteps } : {}),
           signal: active.controller.signal,
+          // The desktop app: picks the reply's `### answer-style`.
+          origin: "sidecar",
         });
       },
     });

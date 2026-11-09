@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readdirSync, realpathSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
+import type { PluginSkillDir } from "../plugins/plugin-runtime.js";
 import { readUserConfigFileSync } from "../config/config-file.js";
 import type { ProjectTrustRecord, RuntimeSkillsConfig } from "../config/skills-config.js";
 import type { SkillRecord } from "./skill-loader.js";
@@ -35,6 +36,8 @@ export interface WorkspaceSkillsOptions {
   projectDirName: string;
   configFile: string;
   defaults: RuntimeSkillsConfig;
+  /** Skill folders from enabled plugins; they load as user-installed skills named `plugin:skill`. */
+  pluginSkills?: () => readonly PluginSkillDir[];
 }
 
 export function workspaceSkillBody(entry: WorkspaceSkill): string {
@@ -115,6 +118,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
         bytes += Buffer.byteLength(file.content);
         const parsed = parseSkillFile(file.content, compatibility ? (source.claude ? { fallbackName: name } : {}) : undefined);
         if (!isSkillEligibleForPlatform(parsed.manifest, process.platform)) continue;
+        if (parsed.warnings) diagnostics.push(`Skill ${parsed.manifest.name} at ${file.path}: ${parsed.warnings.join("; ")} (Agent Skills spec limits).`);
         if (parsed.disableModelInvocation) diagnostics.push(`Skill ${parsed.manifest.name} at ${file.path}: disable-model-invocation excludes automatic loading.`);
         const reasons = [
           ...(config.disabled.includes(parsed.manifest.name) ? ["disabled globally"] : []),
@@ -132,6 +136,35 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
       }
     }
   }
+  for (const plugin of options.pluginSkills ? safePluginSkills(options.pluginSkills, diagnostics) : []) {
+    const manifestPath = join(plugin.dir, "SKILL.md");
+    try {
+      const pluginRoot = realpathSync(plugin.dir);
+      const file = readWorkspaceFile(pluginRoot, manifestPath);
+      if (!file) continue;
+      const parsed = parseSkillFile(file.content, { fallbackName: basename(plugin.dir) });
+      const name = plugin.rootSkill ? plugin.plugin : `${plugin.plugin}:${parsed.manifest.name}`;
+      if (!isSkillEligibleForPlatform(parsed.manifest, process.platform)) continue;
+      const existing = byName.get(name);
+      if (existing?.some(e => e.record.source === "global")) {
+        diagnostics.push(`Skill ${name}: another installed or plugin skill already has this name; the plugin copy at ${file.path} is ignored.`);
+        continue;
+      }
+      if (++count > 4096) { diagnostics.push("Workspace skill discovery stopped at 4096 entries; later plugin skills were not loaded."); break; }
+      const reasons = [
+        ...(config.disabled.includes(name) ? ["disabled globally"] : []),
+        ...(policy?.disabled.includes(name) ? ["disabled in workspace"] : []),
+        ...(parsed.disableModelInvocation ? ["disable-model-invocation"] : []),
+      ];
+      const entry: WorkspaceSkill = { record: { manifest: { ...parsed.manifest, name }, manifestPath: file.path, rootDir: dirname(file.path), source: "global", plugin: plugin.plugin },
+        body: parsed.body, fingerprint: createHash("sha256").update(file.content).digest("hex"), disabledReasons: reasons, sources: [manifestPath] };
+      // A project copy of the same name is shadowed, as with a skill the user installed.
+      if (existing?.length) diagnostics.push(`Skill ${name}: using the plugin copy ${file.path}; shadowed ${existing.flatMap(e => e.sources).join(", ")}`);
+      byName.set(name, [entry, ...(existing ?? [])]);
+    } catch (error) {
+      diagnostics.push(`${manifestPath}: ${String(error)}`);
+    }
+  }
   const entries = [...byName.values()].map(copies => {
     // A global copy wins: a checked-out repository cannot shadow a skill the user installed.
     const chosen = copies.find(e => e.record.source === "global") ?? copies[0]!;
@@ -147,4 +180,9 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
       if (!original || current.record.manifestPath !== original.record.manifestPath || current.fingerprint !== original.fingerprint) throw new Error(`Skill ${name} changed since this request; refresh context before using it.`);
       return original;
     } };
+}
+
+function safePluginSkills(list: () => readonly PluginSkillDir[], diagnostics: string[]): readonly PluginSkillDir[] {
+  try { return list(); }
+  catch (error) { diagnostics.push(`Plugin skills unavailable: ${error instanceof Error ? error.message : String(error)}`); return []; }
 }

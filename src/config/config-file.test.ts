@@ -10,6 +10,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { getApprovalRulesPath } from "../approval/approval-rules-store.js";
 import { resolveSessionPath } from "../atomic-mail/atomic-mail-store.js";
 import { resolveApiKeyFilePath } from "../local-llm/backend-paths.js";
 import { coreSessionPath } from "../local-llm/core/core-state.js";
@@ -946,5 +947,18 @@ describe("the state's secret files (ATO-877)", () => {
     ]);
     expect(getStateSecretPaths(paths)).toContain(getDotenvPath(stateDir));
     expect(getStateSecretPaths(paths)).toContain(paths.userConfigFile);
+  });
+
+  it("protects the saved approval rules like config.json (ATO-1141)", () => {
+    const stateDir = join(tmpdir(), "atomic-state");
+    const paths = {
+      stateDir,
+      userConfigFile: getUserConfigPath(stateDir),
+      localModelsDataDir: join(stateDir, "models"),
+    };
+    // Writing it asks as trust_config, reading it as state_secret: the
+    // model must not be able to grant itself an "always allow".
+    expect(getTrustConfigPaths(paths)).toContain(getApprovalRulesPath(stateDir));
+    expect(getStateSecretPaths(paths)).toContain(getApprovalRulesPath(stateDir));
   });
 });

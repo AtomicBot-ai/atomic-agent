@@ -248,6 +248,23 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "place",
+    id: "go.manage.plugins",
+    label: "Plugins",
+    group: "go",
+    // `p` is Privacy; `x` (extensions) is free.
+    chord: "x",
+    slash: {
+      name: "plugins",
+      description:
+        "open the Plugins tab: installed plugins, what each brings, on/off switches for a plugin and its parts, code permission and missing keys",
+      rank: 46,
+    },
+    section: "manage",
+    tab: "plugins",
+    parent: "go.manage",
+  },
+  {
+    kind: "place",
     id: "go.manage.memory",
     label: "Memory",
     group: "go",
@@ -437,6 +454,15 @@ export const MENU: readonly MenuNode[] = [
     slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
   },
   {
+    kind: "action", id: "session.goal", label: "Goal mode…", group: "session",
+    slash: {
+      name: "goal",
+      description:
+        "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
+      rank: 46,
+    },
+  },
+  {
     kind: "action",
     id: "session.context",
     label: "Context window",
@@ -445,6 +471,18 @@ export const MENU: readonly MenuNode[] = [
       name: "context",
       description: "show where this session's context window went",
       rank: 38,
+    },
+  },
+  {
+    kind: "action",
+    id: "session.usage",
+    label: "Cost and limits",
+    group: "session",
+    slash: {
+      name: "usage",
+      description: "show this session's cost and the account's rate limits",
+      aliases: ["cost"],
+      rank: 38.5,
     },
   },
   {
@@ -543,6 +581,20 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.status",
+    label: "Status of the running turn",
+    group: "run",
+    slash: {
+      name: "status",
+      description:
+        "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
+      // Next to /steer and /queue, its run-time siblings; a fraction so
+      // it never collides with the integer ranks other commands append.
+      rank: 35.5,
+    },
+  },
+  {
+    kind: "action",
     id: "run.queue",
     label: "Queued messages",
     group: "run",
@@ -579,24 +631,63 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.worker",
+    label: "Stop, steer or escalate a fusion worker",
+    group: "run",
+    slash: {
+      name: "worker",
+      description:
+        "act on one running fusion worker: `/worker stop <id>` · `/worker steer <id> <note>` (it reads the note at its next step) · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
+      rank: 46,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.fusion-resume",
+    label: "Resume or discard an unfinished fusion run",
+    group: "run",
+    slash: {
+      name: "fusion",
+      description:
+        "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
+      rank: 47,
+    },
+  },
+  {
+    kind: "action",
     id: "run.expand",
-    label: "Expand all tool cards",
+    label: "Show the last turn's steps",
     group: "run",
     slash: {
       name: "expand",
-      description: "expand every tool card in the chat log",
+      description:
+        "open the last finished turn's steps | `/expand all` opens every turn and tool card",
       rank: 16,
     },
   },
   {
     kind: "action",
     id: "run.collapse",
-    label: "Collapse all tool cards",
+    label: "Fold all turns and tool cards",
     group: "run",
     slash: {
       name: "collapse",
-      description: "collapse every tool card in the chat log",
+      description: "fold every finished turn and tool card in the chat log",
       rank: 17,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.steps",
+    label: "Always show steps on/off",
+    group: "run",
+    slash: {
+      name: "steps",
+      description:
+        "always show steps: `/steps` toggles | `/steps on` keeps finished turns open | `/steps off` folds them",
+      // Between /collapse (17) and the next integer rank: the palette keeps
+      // the three fold commands together.
+      rank: 17.5,
     },
   },
   {

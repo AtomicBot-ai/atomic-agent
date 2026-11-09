@@ -6,9 +6,16 @@ import { join } from "node:path";
 import {
   ApprovalDeniedError,
   ApprovalGate,
+  canGrantCategory,
+  canGrantShape,
   type ApprovalLevel,
   type ApprovalRequest,
 } from "../../approval/index.js";
+import {
+  FUSION_WORKER_APPROVAL_REFUSED,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+  workerRefusalFor,
+} from "../fusion/worker-tool-policy.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ReadScope } from "../../config/index.js";
 import { ToolRegistry, type ToolContext } from "../tool-registry.js";
@@ -309,6 +316,72 @@ posix("a secret-file call asks as state_secret, whatever the level grants", () =
     expect(prompts.map((p) => p.category)).toEqual(["state_secret", "state_secret"]);
     expect(innerShells).toBe(1);
     expect(innerReads).toBe(1);
+  });
+
+  // ATO-1222: the Linear checks, as one table. Each command asks as
+  // state_secret with no session option, at level 4 and at level 1
+  // with a shell grant; the ordinary ones pass as before.
+  const SECRET_COMMANDS: readonly Record<string, unknown>[] = [
+    { cmd: "sed -i 's/1/5/' ~/.atomic-agent/config.json" },
+    { cmd: "cat ~/.atomic-agent/.env" },
+    { cmd: "echo x >> $HOME/.atomic-agent/.env" },
+    { cmd: "echo x >> ${HOME}/.atomic-agent/.env" },
+    { cmd: "cat", args: ["${HOME}/.atomic-agent/config.json"] },
+  ];
+  const ORDINARY_COMMANDS: readonly Record<string, unknown>[] = [
+    { cmd: "cat ./README.md" },
+    { cmd: "cat .env.example" },
+  ];
+
+  for (const posture of ["level 4", "level 1 with a shell grant"] as const) {
+    it(`asks before each secret command with no session option (${posture})`, async () => {
+      if (posture === "level 4") install(4);
+      else {
+        install(1);
+        answer = { approved: true, grant: "category" };
+        await gate.request({ sessionId: "s-plain", tool: "os.shell.run", category: "shell", reason: "x" });
+        expect(gate.sessionGrants("s-plain").categories).toEqual(["shell"]);
+      }
+      prompts = [];
+      answer = { approved: false };
+      for (const args of SECRET_COMMANDS) {
+        await expect(shell(args), JSON.stringify(args)).rejects.toBeInstanceOf(ApprovalDeniedError);
+      }
+      expect(prompts.map((p) => p.category)).toEqual(SECRET_COMMANDS.map(() => "state_secret"));
+      for (const prompt of prompts) {
+        expect(canGrantCategory(prompt)).toBe(false);
+        expect(canGrantShape(prompt)).toBe(false);
+      }
+      expect(innerShells).toBe(0);
+
+      prompts = [];
+      for (const args of ORDINARY_COMMANDS) await shell(args);
+      expect(prompts).toEqual([]);
+      expect(innerShells).toBe(ORDINARY_COMMANDS.length);
+    });
+  }
+
+  it("a fusion worker is refused at once, with a reason that says not to re-send it", async () => {
+    install(1);
+    const worker = "s-w-secret-1";
+    gate.setSessionPolicy(worker, {
+      onPrompt: "refuse",
+      reason: FUSION_WORKER_APPROVAL_REFUSED,
+      reasonFor: workerRefusalFor,
+    });
+    for (const args of SECRET_COMMANDS) {
+      const err = await registry.invoke("os.shell.run", args, ctx(worker)).then(
+        () => null,
+        (e: unknown) => e,
+      );
+      expect(err, JSON.stringify(args)).toBeInstanceOf(ApprovalDeniedError);
+      expect((err as ApprovalDeniedError).byUser).toBe(false);
+      expect((err as ApprovalDeniedError).message).toContain(
+        FUSION_WORKER_OPERATOR_ONLY_MARKER,
+      );
+    }
+    expect(prompts).toEqual([]);
+    expect(innerShells).toBe(0);
   });
 
   it("level 5 (full trust) runs it unasked, like a trust_config write", async () => {

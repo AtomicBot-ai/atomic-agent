@@ -1,5 +1,7 @@
+import type { RunTurnResult } from "../agent/agent-contract.js";
 import type { LlmFailureCategory } from "../llm/reliability/index.js";
 
+import type { TaskRunSummary } from "./task-run-summary.js";
 import type { TaskRecord, TaskSchedule, TaskStatus } from "./task-types.js";
 
 /**
@@ -34,6 +36,42 @@ export interface TaskReport {
   replyText: string | null;
   errorMessage: string | null;
   errorCategory: LlmFailureCategory | null;
+  /**
+   * Estimated USD the task's runs spent (`TaskRecord.spentUsd`, ATO-1108).
+   * Absent when nothing was recorded.
+   */
+  spentUsd?: number;
+  /** The task's own spend ceiling, USD; absent when it has none. */
+  maxCostUsd?: number;
+  /**
+   * What the harness saw during the run (ATO-964). Absent on reports
+   * built before a turn ran (a session that could not be loaded).
+   */
+  summary?: TaskRunSummary | null;
+  /** Steps the turn took, from `RunTurnResult.stepCount`. */
+  stepCount?: number | null;
+  /**
+   * Why a ceiling, not the model, ended the turn
+   * (`RunTurnResult.stopCause`): `step_ceiling`, `time_ceiling`,
+   * `no_progress`, `credit_exhausted`, and `cost_ceiling` once the
+   * budget change lands. A plain string so a cause added later still
+   * renders.
+   */
+  stopCause?: string | null;
+  /**
+   * Estimated spend of the run in USD, when the turn reported one
+   * (`RunTurnResult.spendUsd`, added by the budget change). Absent or
+   * `null`: unknown, never zero.
+   */
+  spendUsd?: number | null;
+}
+
+/** Run facts the runner captured from the turn, folded into a report. */
+export interface TaskReportRun {
+  summary: TaskRunSummary | null;
+  stepCount: number | null;
+  stopCause: string | null;
+  spendUsd: number | null;
 }
 
 /**
@@ -44,6 +82,25 @@ export interface TaskReport {
  * affects the task's own status.
  */
 export type TaskReportSink = (report: TaskReport) => void | Promise<void>;
+
+/**
+ * Fold a turn's outcome into report fields. `result` is `null` when the
+ * turn threw (no result came back); the summary still says what ran.
+ * `spendUsd` is read structurally: the field arrives with the budget
+ * change, and until then (or on an unpriced run) it is simply absent.
+ */
+export function taskReportRunFrom(
+  result: Pick<RunTurnResult, "stepCount" | "stopCause"> | null,
+  summary: TaskRunSummary | null,
+): TaskReportRun {
+  const spend = (result as unknown as { spendUsd?: unknown } | null)?.spendUsd;
+  return {
+    summary,
+    stepCount: result?.stepCount ?? summary?.steps ?? null,
+    stopCause: result?.stopCause ?? null,
+    spendUsd: typeof spend === "number" && Number.isFinite(spend) ? spend : null,
+  };
+}
 
 /** Allow-list gate for the statuses in `TaskReportStatus`. */
 export function isReportableStatus(
@@ -62,8 +119,10 @@ export function buildTaskReport(
   task: TaskRecord,
   status: TaskReportStatus,
   replyText: string | null,
+  run?: TaskReportRun,
 ): TaskReport {
   return {
+    ...(run ?? {}),
     taskId: task.id,
     status,
     userMessage: task.userMessage,
@@ -77,5 +136,7 @@ export function buildTaskReport(
     replyText,
     errorMessage: task.lastError,
     errorCategory: task.lastErrorCategory,
+    ...(task.spentUsd !== null ? { spentUsd: task.spentUsd } : {}),
+    ...(task.maxCostUsd !== null ? { maxCostUsd: task.maxCostUsd } : {}),
   };
 }

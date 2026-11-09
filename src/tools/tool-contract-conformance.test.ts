@@ -15,7 +15,7 @@ import { TaskStore } from "../tasks/task-store.js";
 import { TaskRunner } from "../tasks/task-runner.js";
 import { SkillRegistry } from "../skills/skill-registry.js";
 import { StructuredLogger } from "../tracing/structured-logger.js";
-import { DEFAULT_TOOL_DESCRIPTORS, getToolDescriptorByName } from "../prompt/tool-descriptors.js";
+import { DEFAULT_TOOL_DESCRIPTORS, getToolDescriptorByName, isViewableRareTool } from "../prompt/tool-descriptors.js";
 import type { ToolDescriptor } from "../prompt/stable-prefix.js";
 import { getDefaultArgsJsonSchema } from "../prompt/default-tool-args-schemas.js";
 import { listKnownToolResourceClasses, resourceClassFor, setDynamicResourceClassResolver } from "../agent/tool-resource-class.js";
@@ -40,6 +40,8 @@ import { registerVerifyTools } from "./verify/index.js";
 import { registerGithubTools } from "./github/github-tools.js";
 import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
+import { planUpdateTool } from "./plan/index.js";
+import { buildToolSearchTool } from "./tool-search/index.js";
 import { registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerVisionTools } from "./vision/index.js";
@@ -195,13 +197,24 @@ interface Catalog {
   schemaNames: readonly string[];
   classes: ReadonlyMap<string, string>;
 }
+/**
+ * A descriptor without its compact-prompt form (`compact`), which
+ * `tool-descriptors.ts` attaches from its own table like
+ * `argsJsonSchema`: neither is part of a tool's contract or of a known
+ * duplicate's fingerprint.
+ */
+function withoutCompactForm(descriptor: ToolDescriptor): ToolDescriptor {
+  const core = { ...descriptor };
+  delete core.compact;
+  return core;
+}
 function conformanceErrors(catalog: Catalog): string[] {
   const errors: string[] = [];
   const admittedDebt = new Set<string>();
   for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
     const entries = catalog.descriptors.flatMap((descriptor, index) => descriptor.name === name ? [{ descriptor, index }] : []);
     const indices = entries.map((entry) => entry.index);
-    const fingerprints = entries.map((entry) => createHash("sha256").update(JSON.stringify(entry.descriptor)).digest("hex"));
+    const fingerprints = entries.map((entry) => createHash("sha256").update(JSON.stringify(withoutCompactForm(entry.descriptor))).digest("hex"));
     if (JSON.stringify(indices) === JSON.stringify(debt.indices) && JSON.stringify(fingerprints) === JSON.stringify(debt.fingerprints)) admittedDebt.add(name);
     else errors.push(`changed known descriptor debt: ${name}`);
   }
@@ -233,7 +246,7 @@ function conformanceErrors(catalog: Catalog): string[] {
     const descriptor = catalog.descriptors.find((item) => item.name === contract.name);
     if (definition && (definition.description !== contract.description || definition.readonly !== contract.readonly)) errors.push(`core registration mismatch: ${contract.name}`);
     if (descriptor) {
-      const { argsJsonSchema, ...fields } = descriptor;
+      const { argsJsonSchema, ...fields } = withoutCompactForm(descriptor);
       if (JSON.stringify(fields) !== JSON.stringify(contract.descriptor)) errors.push(`core descriptor mismatch: ${contract.name}`);
       if (JSON.stringify(argsJsonSchema) !== JSON.stringify(contract.argsJsonSchema)) errors.push(`core schema mismatch: ${contract.name}`);
     }
@@ -258,7 +271,7 @@ const gates: ToolGateConfig = {
   tasks: { agentToolsEnabled: true }, email: { available: true }, mcp: { enabled: true }, github: { connected: true }, fusion: { enabled: true },
   image: { available: true },
   video: { available: true },
-  screen: { enabled: true },
+  screen: { enabled: true, point: true },
 };
 
 let directory: string;
@@ -290,11 +303,14 @@ beforeAll(() => {
     http: USER_CONFIG_DEFAULTS.http, projects: USER_CONFIG_DEFAULTS.projects, tools: USER_CONFIG_DEFAULTS.tools,
     web: { fetch: USER_CONFIG_DEFAULTS.web.fetch, search: { ...USER_CONFIG_DEFAULTS.web.search, provider: "duckduckgo", persistCache: false } },
   } });
-  registerOsScreenTools(registry, { ...dangerous, enabled: true, platform: "darwin" });
+  registerOsScreenTools(registry, { ...dangerous, enabled: true, point: true, platform: "darwin" });
   registerVerifyTools(registry, { ...dangerous, config: { browser: { enabled: true, channel: "chromium", headless: true, cdpUrl: null, connect: "agent", userChromeDataDir: null, executablePath: null, noSandbox: false, launchTimeoutMs: 1000, blockedDomains: [], allowedDomains: [] } } });
   registerGithubTools(registry, dangerous);
   registerSkillTools(registry, new SkillRegistry({ globalDir: join(directory, "skills"), projectDir: null }), dangerous);
   registry.register(buildToolViewTool());
+  registry.register(planUpdateTool);
+  // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
+  registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
   registerTaskTools(registry, taskOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
@@ -331,8 +347,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(96);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(93);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(98);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(95);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
@@ -444,7 +460,7 @@ describe("whole built-in tool catalog conformance", () => {
     const tasks = new RecordingRegistry(); registerTaskTools(tasks, taskOptions(true));
     expect(new Set(names(tasks.registrations))).toEqual(new Set(GATED_TOOL_NAMES.tasks));
     expect(new Set(names(buildBrowserTools(browser, dangerous)))).toEqual(new Set(GATED_TOOL_NAMES.browser));
-    const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, platform: "darwin" });
+    const screen = new RecordingRegistry(); registerOsScreenTools(screen, { ...dangerous, enabled: true, point: true, platform: "darwin" });
     expect(names(screen.registrations)).toEqual([...GATED_TOOL_NAMES.screen]);
   });
 
@@ -467,7 +483,7 @@ describe("whole built-in tool catalog conformance", () => {
         const operation = view.run({ name: descriptor.name }, { workingDir: directory, sessionId: "catalog", stepIndex: 0, signal: new AbortController().signal, toolRole: role });
         const discoveryDescriptor = getToolDescriptorByName(descriptor.name);
         if (!discoveryDescriptor) throw new Error(`Descriptor disappeared from discovery: ${descriptor.name}`);
-        if (discoveryDescriptor.tier === "rare" || !roleAdmits(role, descriptor.name)) {
+        if (isViewableRareTool(discoveryDescriptor) || !roleAdmits(role, descriptor.name)) {
           const result = await operation;
           expect(result.details?.toolLoaded).toMatchObject({ name: descriptor.name, argsSchema: discoveryDescriptor.argsSchema, source: "explicit" });
         } else await expect(operation).rejects.toThrow("not in the # extras list");

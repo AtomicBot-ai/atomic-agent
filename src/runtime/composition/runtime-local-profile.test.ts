@@ -5,7 +5,7 @@ import { resolveLlmConfig } from "../../llm/provider/index.js";
 import { LlamaServerClient } from "../../llm/llama-server-client.js";
 import * as health from "../../llm/llama-server-health.js";
 import { PLAIN_INSTRUCT_PROFILE } from "../../llm/model-profile.js";
-import { QWEN3_PROPS } from "../../llm/model-profile.fixtures.js";
+import { GEMMA4_PROPS, NEMOTRON_BOLT_E4B_PROPS, NEMOTRON_PROPS, QWEN3_PROPS } from "../../llm/model-profile.fixtures.js";
 import { StructuredLogger, type LogRecord } from "../../tracing/structured-logger.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import { connectRuntimeLocalProfile, managedLocalLlmHealthFailureHint, prepareRuntimeLocalProfile } from "./runtime-local-profile.js";
@@ -135,5 +135,42 @@ describe("runtime local profile phases", () => {
     expect(connected.localBackend.isActive()).toBe(false);
     config = { ...config, llm: { ...resolveLlmConfig(config), activeTextProvider: "renamed-local", providers: [{ id: "renamed-local", kind: "llama-server" }] } };
     expect(connected.localBackend.isActive()).toBe(true);
+  });
+
+  // ATO-1115 / ATO-879. The managed daemon serves under the catalog (or
+  // `custom-…`) id, an external server under the model path or any
+  // `--alias`. Both reach `detectModelProfile` with the same template and
+  // model path, so the same GGUF must land on the same profile.
+  describe("same GGUF, managed id or external path alias", () => {
+    const cases = [
+      { name: "Qwen 3.5 4B", props: QWEN3_PROPS, managed: "qwen-3.5-4b", file: "/models/Qwen3.5-4B-Q4_K_M.gguf", expected: "qwen-think" },
+      { name: "Gemma 4 E4B", props: GEMMA4_PROPS, managed: "gemma-4-e4b", file: "/models/gemma-4-E4B-it-Q4_K_M.gguf", expected: "gemma4-think" },
+      { name: "Nemotron 3.5 30B", props: NEMOTRON_PROPS, managed: "nemotron-3.5-30b-a3b", file: "/models/NVIDIA-Nemotron-3.5-30B-A3B-Q4_K_M.gguf", expected: "qwen-think" },
+      { name: "Nemotron 3.5 Bolt E4B", props: NEMOTRON_BOLT_E4B_PROPS, managed: "custom-nvidia-nvidia-nemotron-3.5-bolt-e4b-4gb-nvidia-nemotron-3.5-bolt-e4b-q4_k_m", file: "/models/NVIDIA-Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf", expected: "gemma4-think" },
+    ] as const;
+
+    for (const c of cases) {
+      it(`${c.name}: ${c.expected} either way`, async () => {
+        const resolved: string[] = [];
+        for (const [mode, alias] of [["managed", c.managed], ["external", c.file]] as const) {
+          config.localModels.mode = mode;
+          vi.mocked(LlamaServerClient.prototype.fetchProps).mockResolvedValue({ ...c.props, model_alias: alias, model_path: c.file });
+          const local = await prepareRuntimeLocalProfile(config, {}, logger);
+          resolved.push(local.profile.id);
+        }
+        expect(resolved).toEqual([c.expected, c.expected]);
+      });
+    }
+
+    it("the lazy /props refresh resolves Bolt E4B the same as the boot probe", async () => {
+      cloud();
+      const options = { overrides: { deferLlamaHealthCheck: true } };
+      const local = await prepareRuntimeLocalProfile(config, options, logger);
+      const connected = await connectRuntimeLocalProfile(config, options, logger, local);
+      expect(connected.getLiveProfile().id).toBe("plain-instruct");
+      vi.mocked(LlamaServerClient.prototype.fetchProps).mockResolvedValue(NEMOTRON_BOLT_E4B_PROPS);
+      expect(await connected.localBackend.ensureProbed()).toBe(true);
+      expect(connected.getLiveProfile().id).toBe("gemma4-think");
+    });
   });
 });

@@ -1,3 +1,4 @@
+import { isSetAsideString } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 
 /**
@@ -96,7 +97,151 @@ export type UserLlmFusionConfig = {
    * Default 6. See `src/agent/review-stall.ts`.
    */
   reviewStallSteps?: number;
+  /**
+   * Spend cap for one fusion turn, in USD (ATO-947): the orchestrator's
+   * own priced completions plus every worker's, counted with the prompt
+   * cache discount. Once reached, the turn starts no new delegation and
+   * no new worker, and the orchestrator is told to say so plainly. Unset
+   * or `0`: no cap, as before. Unpriced (local) tokens count as $0.
+   */
+  turnBudgetUsd?: number;
+  /**
+   * Wall-clock cap for one fusion turn, in ms, measured from the turn's
+   * start (ATO-947). Same effect as `turnBudgetUsd` when reached. Unset
+   * or `0`: no cap.
+   */
+  turnTimeBudgetMs?: number;
+  /**
+   * Automatic escalation of a stuck worker (ATO-942). `"advisor"`: when a
+   * worker stalls (same result 3x, read-only for 6 steps) or its first
+   * answer is cut by its time limit, the escalation model reads a
+   * compressed trace of that node and sends the worker a short hint; the
+   * worker carries on. At most one automatic escalation per worker.
+   * Default `"off"`: nothing is escalated unless the person asks for it.
+   */
+  escalation?: FusionEscalationMode;
+  /**
+   * Behind a flag, default `false`: a worker that stays stuck after its
+   * advisor hint is stopped and its task re-run on the escalation model
+   * with what was found so far. Needs a priced escalation model, so the
+   * per-escalation cap can be enforced.
+   */
+  escalationReplace?: boolean;
+  /**
+   * The model escalations go to. Must name a configured provider that is
+   * not the worker leg. Default: the orchestrator leg.
+   */
+  escalationProvider?: string;
+  /** Spend cap for one escalation, in USD. Default 0.25. */
+  escalationMaxUsd?: number;
+  /**
+   * The trimmed judge (ATO-944). `"on"`: every task gets an acceptance
+   * checklist in its brief, built from the contract (checks, provides,
+   * declared files) plus its deliverable; after the work, failed facts
+   * and a fresh-context judge decide whether the task closes. A red list
+   * re-runs the task once, then is reported as failed. Default `"off"`.
+   */
+  judge?: "off" | "on";
+  /** The judge's model: a configured provider. Default: the orchestrator leg. */
+  judgeProvider?: string;
+  /**
+   * Automatic replanning (ATO-941): how many times one task may be sent
+   * back to the planner after it did not close (failed, judged red,
+   * handed back, out of steps or time). After a fan-out with such tasks
+   * the planner's next step admits only `fusion.delegate`, with the
+   * facts in front of it, so the turn goes on without the person typing
+   * "continue"; tasks that depend on a failed one in a later wave are
+   * held for the replan instead of run against missing inputs. Once a
+   * task's attempts are used, the planner is told to report it plainly.
+   * `0` (default): off, as before.
+   */
+  autoReplan?: number;
+  /**
+   * Models by role (ATO-943): each names a configured provider, the same
+   * shape as `escalationProvider`. A provider entry serves one model, so
+   * a role's model IS its provider entry (two cloud models = two
+   * entries). The planner tags a task with `role` (or names one of these
+   * models in `model`) and that task runs there; a task with neither runs
+   * on the worker leg, as before. `review` is also the judge's model when
+   * `judgeProvider` is unset. `plan` is listed to the planner and usable
+   * by a task, but does not switch the orchestrator itself (that stays
+   * `orchestratorProvider`). Unset: every task runs on the worker leg.
+   */
+  roles?: FusionRoleProviders;
+  /**
+   * This machine can serve a second local model next to the session's
+   * own (ATO-943). Without it, a role whose provider is another
+   * llama-server entry is not used while the session already holds a
+   * local model: its tasks run on the worker leg and the row says so.
+   * Default `false`. Cloud role models never need it.
+   */
+  mixLocalModels?: boolean;
+  /**
+   * Branch isolation (ATO-946). `"worktree"`: every task of a fan-out
+   * works in a workspace of its own (a detached git worktree inside a
+   * git repo, a folder copy elsewhere); after its wave the changes are
+   * merged back into the working directory file by file with a
+   * three-way merge, a conflicting file is left as it was and handed to
+   * the planner as a merge task, and a failed task's changes are
+   * dropped with its workspace. `"off"` (default): workers write
+   * straight into the working directory, as before.
+   */
+  isolation?: FusionIsolationMode;
+  /**
+   * The task tree (ATO-940). Off by default. On, a worker whose task is
+   * too big (no write by half its step budget, or its first answer cut
+   * off) may reply with a `split_proposal` instead of failing; the
+   * delegate validates it like delegate args and hands the subtasks out
+   * as a new wave under the parent task, which then closes on its
+   * children and its own contract. Workers still never call
+   * `fusion.delegate` themselves.
+   */
+  taskTree?: UserFusionTaskTreeConfig;
 };
+
+/** Roles a fusion task can be given (ATO-943). */
+export type FusionRole = "plan" | "build" | "review" | "explore" | "utility";
+export const FUSION_ROLES: readonly FusionRole[] = [
+  "plan",
+  "build",
+  "review",
+  "explore",
+  "utility",
+];
+/** `llm.runMode.fusion.roles`: role → configured provider id. */
+export type FusionRoleProviders = Partial<Record<FusionRole, string>>;
+
+export type FusionIsolationMode = "off" | "worktree";
+export const FUSION_ISOLATION_MODES: readonly FusionIsolationMode[] = [
+  "off",
+  "worktree",
+];
+
+export type UserFusionTaskTreeConfig = {
+  /** Default `false`: the tree is flat, as before. */
+  enabled?: boolean;
+  /**
+   * How deep the tree may grow, counting the orchestrator's own tasks as
+   * depth 1. Default 2 (one level of split); hard-capped at 3.
+   */
+  maxDepth?: number;
+  /** Every node of one fan-out, the orchestrator's tasks included. Default 24. */
+  maxNodes?: number;
+};
+
+/** The tree never grows deeper than this, whatever the file says (ATO-940). */
+export const FUSION_TASK_TREE_MAX_DEPTH = 3;
+export const DEFAULT_FUSION_TASK_TREE_DEPTH = 2;
+export const DEFAULT_FUSION_TASK_TREE_MAX_NODES = 24;
+/** Upper bound on `taskTree.maxNodes`: each node is one worker turn. */
+export const FUSION_TASK_TREE_MAX_NODES_MAX = 64;
+
+export type FusionEscalationMode = "off" | "advisor";
+export const FUSION_ESCALATION_MODES: readonly FusionEscalationMode[] = [
+  "off",
+  "advisor",
+];
+export const DEFAULT_FUSION_ESCALATION_MAX_USD = 0.25;
 
 export type UserLlmRunModeConfig = {
   mode?: RunModeName;
@@ -147,6 +292,10 @@ export const DEFAULT_FUSION_WORKER_TIMEOUT_MS = 2_700_000;
  */
 export const DEFAULT_FUSION_REVIEW_STALL_STEPS = 6;
 export const FUSION_REVIEW_STALL_STEPS_MAX = 1000;
+/** Upper bound on `autoReplan`: replans per task in one turn. */
+export const FUSION_AUTO_REPLAN_MAX = 5;
+/** Upper bound on `turnBudgetUsd`; anything larger is a typo. */
+export const FUSION_TURN_BUDGET_USD_MAX = 10_000;
 
 export type RunModeProviderRef = { readonly id: string; readonly kind: string };
 
@@ -194,6 +343,26 @@ function parseBoundedInt(
     throw new ConfigValidationError(
       field,
       `expected an integer ${min}-${max}, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw;
+}
+
+function parseBoundedNumber(
+  raw: unknown,
+  field: string,
+  min: number,
+  max: number,
+): number {
+  if (
+    typeof raw !== "number" ||
+    !Number.isFinite(raw) ||
+    raw < min ||
+    raw > max
+  ) {
+    throw new ConfigValidationError(
+      field,
+      `expected a number ${min}-${max}, got ${JSON.stringify(raw)}`,
     );
   }
   return raw;
@@ -258,7 +427,10 @@ function parseFusion(
       FUSION_CLOUD_WORKERS_MAX,
     );
   }
-  if (obj.workerReasoning !== undefined) {
+  if (obj.workerReasoning !== undefined && !isSetAsideString(
+    obj.workerReasoning, FUSION_WORKER_REASONING_LEVELS, `${field}.workerReasoning`, undefined,
+  )) {
+    // ATO-1241: a level a newer build added is left unset (the provider's default).
     const level = obj.workerReasoning;
     if (
       typeof level !== "string" ||
@@ -303,6 +475,159 @@ function parseFusion(
       FUSION_REVIEW_STALL_STEPS_MAX,
     );
   }
+  if (obj.turnBudgetUsd !== undefined) {
+    out.turnBudgetUsd = parseBoundedNumber(
+      obj.turnBudgetUsd,
+      `${field}.turnBudgetUsd`,
+      0,
+      FUSION_TURN_BUDGET_USD_MAX,
+    );
+  }
+  if (obj.escalation !== undefined) {
+    if (
+      typeof obj.escalation !== "string" ||
+      !FUSION_ESCALATION_MODES.includes(obj.escalation as FusionEscalationMode)
+    ) {
+      throw new ConfigValidationError(
+        `${field}.escalation`,
+        `expected ${FUSION_ESCALATION_MODES.join("|")}`,
+      );
+    }
+    out.escalation = obj.escalation as FusionEscalationMode;
+  }
+  if (obj.escalationReplace !== undefined) {
+    if (typeof obj.escalationReplace !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.escalationReplace`,
+        "expected boolean",
+      );
+    }
+    out.escalationReplace = obj.escalationReplace;
+  }
+  if (obj.escalationProvider !== undefined) {
+    out.escalationProvider = parseLegProviderId(
+      obj.escalationProvider,
+      providers,
+      `${field}.escalationProvider`,
+    );
+  }
+  if (obj.escalationMaxUsd !== undefined) {
+    out.escalationMaxUsd = parseBoundedNumber(
+      obj.escalationMaxUsd,
+      `${field}.escalationMaxUsd`,
+      0,
+      1_000,
+    );
+  }
+  if (obj.judge !== undefined) {
+    if (obj.judge !== "off" && obj.judge !== "on") {
+      throw new ConfigValidationError(`${field}.judge`, "expected off|on");
+    }
+    out.judge = obj.judge;
+  }
+  if (obj.judgeProvider !== undefined) {
+    out.judgeProvider = parseLegProviderId(
+      obj.judgeProvider,
+      providers,
+      `${field}.judgeProvider`,
+    );
+  }
+  if (obj.autoReplan !== undefined) {
+    out.autoReplan = parseBoundedInt(
+      obj.autoReplan,
+      `${field}.autoReplan`,
+      0,
+      FUSION_AUTO_REPLAN_MAX,
+    );
+  }
+  if (obj.isolation !== undefined) {
+    if (obj.isolation !== "off" && obj.isolation !== "worktree") {
+      throw new ConfigValidationError(
+        `${field}.isolation`,
+        "expected off|worktree",
+      );
+    }
+    out.isolation = obj.isolation;
+  }
+  if (obj.turnTimeBudgetMs !== undefined) {
+    out.turnTimeBudgetMs = parseBoundedInt(
+      obj.turnTimeBudgetMs,
+      `${field}.turnTimeBudgetMs`,
+      0,
+      86_400_000,
+    );
+  }
+  if (obj.roles !== undefined) {
+    out.roles = parseRoles(obj.roles, providers, `${field}.roles`);
+  }
+  if (obj.mixLocalModels !== undefined) {
+    if (typeof obj.mixLocalModels !== "boolean") {
+      throw new ConfigValidationError(
+        `${field}.mixLocalModels`,
+        "expected boolean",
+      );
+    }
+    out.mixLocalModels = obj.mixLocalModels;
+  }
+  if (obj.taskTree !== undefined) {
+    out.taskTree = parseTaskTree(obj.taskTree, `${field}.taskTree`);
+  }
+  return out;
+}
+
+function parseRoles(
+  raw: unknown,
+  providers: ReadonlyArray<RunModeProviderRef>,
+  field: string,
+): FusionRoleProviders {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const out: FusionRoleProviders = {};
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!FUSION_ROLES.includes(key as FusionRole)) {
+      throw new ConfigValidationError(
+        `${field}.${key}`,
+        `unknown role; expected ${FUSION_ROLES.join("|")}`,
+      );
+    }
+    out[key as FusionRole] = parseLegProviderId(
+      value,
+      providers,
+      `${field}.${key}`,
+    );
+  }
+  return out;
+}
+
+function parseTaskTree(raw: unknown, field: string): UserFusionTaskTreeConfig {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected object");
+  }
+  const obj = raw as Record<string, unknown>;
+  const out: UserFusionTaskTreeConfig = {};
+  if (obj.enabled !== undefined) {
+    if (typeof obj.enabled !== "boolean") {
+      throw new ConfigValidationError(`${field}.enabled`, "expected boolean");
+    }
+    out.enabled = obj.enabled;
+  }
+  if (obj.maxDepth !== undefined) {
+    out.maxDepth = parseBoundedInt(
+      obj.maxDepth,
+      `${field}.maxDepth`,
+      1,
+      FUSION_TASK_TREE_MAX_DEPTH,
+    );
+  }
+  if (obj.maxNodes !== undefined) {
+    out.maxNodes = parseBoundedInt(
+      obj.maxNodes,
+      `${field}.maxNodes`,
+      1,
+      FUSION_TASK_TREE_MAX_NODES_MAX,
+    );
+  }
   return out;
 }
 
@@ -322,7 +647,8 @@ export function parseLlmRunModeConfig(
   }
   const obj = raw as Record<string, unknown>;
   const out: UserLlmRunModeConfig = {};
-  if (obj.mode !== undefined) {
+  // ATO-1241: a mode a newer build added is left unset, which resolves as before the block existed.
+  if (obj.mode !== undefined && !isSetAsideString(obj.mode, RUN_MODE_NAMES, `${field}.mode`, undefined)) {
     const mode = obj.mode;
     if (
       typeof mode !== "string" ||
@@ -346,8 +672,11 @@ export function parseLlmRunModeConfig(
  * refuses a pin to an unknown id, so leaving one behind would make the
  * file unreadable on the next start. A leg's model pin goes with its
  * provider pin: it named a model of the removed provider, and left
- * behind it would label and price the leg that takes over. Returns the
- * input untouched when nothing is pinned to `removedId`.
+ * behind it would label and price the leg that takes over. The
+ * escalation and judge pins (ATO-1264) go the same way; both fall back
+ * to the orchestrator leg when unset, which is what the parser would
+ * have chosen had they never been pinned. Returns the input untouched
+ * when nothing is pinned to `removedId`.
  */
 export function scrubRunModeProviderPins(
   runMode: UserLlmRunModeConfig | undefined,
@@ -359,15 +688,44 @@ export function scrubRunModeProviderPins(
     orchestratorModel,
     workerProvider,
     workerModel,
+    roles,
+    escalationProvider,
+    judgeProvider,
     ...rest
   } = runMode.fusion;
   const keepOrchestrator = orchestratorProvider !== removedId;
   const keepWorker = workerProvider !== removedId;
-  if (keepOrchestrator && keepWorker) return runMode;
+  // A role pinned to the removed provider goes too (ATO-943); the task
+  // tagged with it then runs on the worker leg.
+  const keptRoles =
+    roles === undefined
+      ? undefined
+      : (Object.fromEntries(
+          Object.entries(roles).filter(([, id]) => id !== removedId),
+        ) as FusionRoleProviders);
+  const rolesChanged =
+    roles !== undefined &&
+    Object.keys(keptRoles ?? {}).length !== Object.keys(roles).length;
+  const keepEscalation = escalationProvider !== removedId;
+  const keepJudge = judgeProvider !== removedId;
+  if (
+    keepOrchestrator &&
+    keepWorker &&
+    !rolesChanged &&
+    keepEscalation &&
+    keepJudge
+  ) {
+    return runMode;
+  }
   return {
     ...runMode,
     fusion: {
       ...rest,
+      ...(keptRoles !== undefined && Object.keys(keptRoles).length > 0
+        ? { roles: keptRoles }
+        : {}),
+      ...(escalationProvider && keepEscalation ? { escalationProvider } : {}),
+      ...(judgeProvider && keepJudge ? { judgeProvider } : {}),
       ...(orchestratorProvider && keepOrchestrator
         ? { orchestratorProvider }
         : {}),

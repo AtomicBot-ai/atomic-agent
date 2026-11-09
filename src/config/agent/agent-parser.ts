@@ -1,6 +1,7 @@
 import { parseCompactionConfig } from "./compaction-config.js";
+import { parsePromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
-import type { ReadScope, UserAgentConfig } from "./agent-types.js";
+import type { AgentToolsConfig, ReadScope, ToolSearchMode, UserAgentConfig } from "./agent-types.js";
 import { ConfigValidationError } from "../config-validation-error.js";
 import {
   coerceIntLike,
@@ -28,6 +29,28 @@ export function parseReadScope(raw: unknown, field: string): ReadScope {
     field,
     `expected ${READ_SCOPES.join("|")}, got ${JSON.stringify(raw)}`,
   );
+}
+
+export const TOOL_SEARCH_MODES: readonly ToolSearchMode[] = ["auto", "on", "off"];
+
+/**
+ * `agent.tools` (ATO-558). Absent or missing `search` keeps the
+ * default; a value outside the three modes fails like any enum here.
+ */
+export function parseAgentToolsConfig(raw: unknown, defaults: AgentToolsConfig | undefined): AgentToolsConfig {
+  const fallback: AgentToolsConfig = defaults ?? { search: "auto" };
+  if (raw === undefined || raw === null) return { ...fallback };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    throw new ConfigValidationError("agent.tools", `expected an object, got ${JSON.stringify(raw)}`);
+  }
+  const search = (raw as Record<string, unknown>).search ?? fallback.search;
+  if (typeof search !== "string" || !(TOOL_SEARCH_MODES as readonly string[]).includes(search)) {
+    throw new ConfigValidationError(
+      "agent.tools.search",
+      `expected ${TOOL_SEARCH_MODES.join("|")}, got ${JSON.stringify(search)}`,
+    );
+  }
+  return { search: search as ToolSearchMode };
 }
 
 export function parseApprovalLevel(raw: unknown, field: string): ApprovalLevel {
@@ -164,5 +187,35 @@ export function parseAgentConfig(
         readDefaults().worldSnapshotMaxTokens,
       "agent.worldSnapshotMaxTokens",
     ),
+    // Additive and unversioned: a file without them reads off / automatic.
+    smartApproval: parseBool(
+      agent.smartApproval ?? readDefaults().smartApproval,
+      "agent.smartApproval",
+    ),
+    smartApprovalModel: parseSmartApprovalModel(
+      agent.smartApprovalModel === undefined
+        ? readDefaults().smartApprovalModel
+        : agent.smartApprovalModel,
+      "agent.smartApprovalModel",
+    ),
+    prompt: parsePromptConfig(agent.prompt, readDefaults().prompt),
+    tools: parseAgentToolsConfig(agent.tools, readDefaults().tools),
   };
+}
+
+/**
+ * `agent.smartApprovalModel`: a provider id, or `null` for automatic. An
+ * empty or blank string reads as `null` (what clearing the field in a
+ * settings form sends); anything else that is not a string is an error.
+ */
+export function parseSmartApprovalModel(raw: unknown, field: string): string | null {
+  if (raw === null) return null;
+  if (typeof raw === "string") {
+    const trimmed = raw.trim();
+    return trimmed.length === 0 ? null : trimmed;
+  }
+  throw new ConfigValidationError(
+    field,
+    `expected a provider id or null, got ${JSON.stringify(raw)}`,
+  );
 }

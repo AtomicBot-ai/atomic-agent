@@ -10,6 +10,8 @@ export type {
   TaskStoreOptions,
 } from "./task-store.js";
 export { TaskRunner } from "./task-runner.js";
+export { planTaskResume, resumeNote, wasInterruptedFromOutside } from "./task-resume.js";
+export type { TaskResumePlan, TaskResumePolicy } from "./task-resume.js";
 export type {
   DrainOptions,
   DrainOutcome,
@@ -20,9 +22,38 @@ export type {
 } from "./task-runner.js";
 export type {
   TaskReport,
+  TaskReportRun,
   TaskReportSink,
   TaskReportStatus,
 } from "./task-report.js";
+export { buildTaskReportCard, stopCauseLine } from "./task-report-card.js";
+export type { TaskReportCard, TaskReportCardInput } from "./task-report-card.js";
+export { createTaskRunSummaryCollector } from "./task-run-summary.js";
+export { startTaskSnapshots } from "./task-snapshot.js";
+export type { TaskSnapshotLoop, TaskSnapshotSink } from "./task-snapshot.js";
+export type {
+  CommandRun,
+  FileChange,
+  TaskLiveStatus,
+  TaskRunSummary,
+  TaskRunSummaryCollector,
+} from "./task-run-summary.js";
+export {
+  isQuietAt,
+  nextQuietEnd,
+  parseQuietHours,
+} from "./task-report-quiet-hours.js";
+export type { QuietHours } from "./task-report-quiet-hours.js";
+export { HELD_REPORT_RETRY_MS, TaskReportHold } from "./task-report-hold.js";
+export type { TaskReportHoldOptions } from "./task-report-hold.js";
+export {
+  HELD_REPORTS_MAX,
+  SqliteHeldReportStore,
+} from "./task-report-hold-store.js";
+export type {
+  HeldReportStore,
+  HeldTaskReport,
+} from "./task-report-hold-store.js";
 export { nextDelayMs } from "./task-backoff.js";
 export type { BackoffOptions } from "./task-backoff.js";
 export {

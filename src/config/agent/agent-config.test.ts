@@ -6,8 +6,11 @@ import {
   CONVERSATION_MAX_PAIRS_MIN,
   parseAgentConfig,
   parseApprovalLevel,
+  parseAgentToolsConfig,
   parseReadScope,
+  parseSmartApprovalModel,
   READ_SCOPES,
+  TOOL_SEARCH_MODES,
 } from "./agent-parser.js";
 import {
   parseUserConfigFile,
@@ -42,6 +45,37 @@ describe("agent configuration ownership", () => {
       .toBeInstanceOf(ConfigValidationError);
   });
 
+  it("parses smart approval: off and automatic by default, strings accepted, garbage rejected", () => {
+    const defaults = createAgentDefaults();
+    expect(defaults.smartApproval).toBe(false);
+    expect(defaults.smartApprovalModel).toBeNull();
+    const absent = parseAgentConfig({}, () => defaults);
+    expect(absent.smartApproval).toBe(false);
+    expect(absent.smartApprovalModel).toBeNull();
+    const on = parseAgentConfig(
+      { smartApproval: "true", smartApprovalModel: " local-llama " },
+      () => defaults,
+    );
+    expect(on.smartApproval).toBe(true);
+    expect(on.smartApprovalModel).toBe("local-llama");
+    expect(parseAgentConfig({ smartApprovalModel: "" }, () => defaults).smartApprovalModel).toBeNull();
+    expect(parseAgentConfig({ smartApprovalModel: null }, () => defaults).smartApprovalModel).toBeNull();
+    expect(thrownError(() => parseAgentConfig({ smartApproval: "maybe" }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(thrownError(() => parseAgentConfig({ smartApprovalModel: 3 }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(parseSmartApprovalModel("cloud-x", "f")).toBe("cloud-x");
+  });
+
+  it("reads smart approval through the whole-file parser", () => {
+    const parsed = parseUserConfigFile({
+      ...USER_CONFIG_DEFAULTS,
+      agent: { ...USER_CONFIG_DEFAULTS.agent, smartApproval: true, smartApprovalModel: "openrouter" },
+    });
+    expect(parsed.agent.smartApproval).toBe(true);
+    expect(parsed.agent.smartApprovalModel).toBe("openrouter");
+  });
+
   it("constructs the old ordered mutable defaults and fresh execution policies", () => {
     const first = createAgentDefaults();
     const second = createAgentDefaults();
@@ -50,6 +84,9 @@ describe("agent configuration ownership", () => {
       "tokenBudget", "maxSteps", "providerWait", "task", "toolTimeoutMs",
       "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
+      "smartApproval", "smartApprovalModel",
+      "prompt",
+      "tools",
     ]);
     expect(first.providerWait).not.toBe(second.providerWait);
     expect(first.task).not.toBe(second.task);
@@ -87,7 +124,7 @@ describe("agent configuration ownership", () => {
     const raw = {
       ...defaults,
       get providerWait() { events.push("raw-wait"); return { enabled: false, maxWaitMs: 1 }; },
-      get task() { events.push("raw-task"); return { maxSteps: 2, maxDurationMs: 3, autoContinue: false }; },
+      get task() { events.push("raw-task"); return { maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0 }; },
     };
     const parsed = parseAgentConfig(raw, () => {
       events.push("read-defaults");
@@ -98,7 +135,7 @@ describe("agent configuration ownership", () => {
       "raw-task", "read-defaults", "default-task", "read-defaults",
     ]);
     expect(parsed.providerWait).toEqual({ enabled: false, maxWaitMs: 1 });
-    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false });
+    expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0 });
     expect(parsed.task).not.toBe(defaults.task);
   });
 
@@ -110,7 +147,7 @@ describe("agent configuration ownership", () => {
     expect(first.providerWait).toBe(savedWait);
     expect(first.task).toBe(savedTask);
     const nextWait = { enabled: false, maxWaitMs: 2 };
-    const nextTask = { maxSteps: 3, maxDurationMs: 4, autoContinue: false };
+    const nextTask = { maxSteps: 3, maxDurationMs: 4, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0 };
     const second = parseAgentConfig({
       get providerWait() { current = { ...current, providerWait: nextWait }; return undefined; },
       get task() { current = { ...current, task: nextTask }; return null; },
@@ -163,7 +200,7 @@ describe("agent configuration ownership", () => {
     try {
       USER_CONFIG_DEFAULTS.agent = {
         ...saved, tokenBudget: 11, approvalLevel: 4,
-        task: { maxSteps: 12, maxDurationMs: 13, autoContinue: false },
+        task: { maxSteps: 12, maxDurationMs: 13, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0 },
       };
       const direct = parseAgentConfig({}, () => USER_CONFIG_DEFAULTS.agent);
       const root = parseUserConfigFile({ agent: {} }).agent;
@@ -174,9 +211,28 @@ describe("agent configuration ownership", () => {
         "tokenBudget", "maxSteps", "providerWait", "nameSessions", "task", "toolTimeoutMs",
         "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
         "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
+        "smartApproval", "smartApprovalModel",
+        "prompt", "tools",
       ]);
     } finally {
       USER_CONFIG_DEFAULTS.agent = saved;
     }
+  });
+});
+
+describe("agent.tools.search (ATO-558)", () => {
+  it("defaults to auto, accepts the three modes and refuses anything else", () => {
+    expect(TOOL_SEARCH_MODES).toEqual(["auto", "on", "off"]);
+    expect(createAgentDefaults().tools).toEqual({ search: "auto" });
+    expect(parseAgentToolsConfig(undefined, { search: "auto" })).toEqual({ search: "auto" });
+    expect(parseAgentToolsConfig({}, { search: "off" })).toEqual({ search: "off" });
+    expect(parseAgentToolsConfig({ search: "on" }, undefined)).toEqual({ search: "on" });
+    expect(thrownError(() => parseAgentToolsConfig({ search: "always" }, undefined))).toBeInstanceOf(ConfigValidationError);
+    expect(thrownError(() => parseAgentToolsConfig("on", undefined))).toBeInstanceOf(ConfigValidationError);
+  });
+
+  it("round-trips through the whole-file parser without a version bump", () => {
+    expect(parseUserConfigFile({ agent: { tools: { search: "off" } } }).agent.tools).toEqual({ search: "off" });
+    expect(parseUserConfigFile({ agent: {} }).agent.tools).toEqual({ search: "auto" });
   });
 });

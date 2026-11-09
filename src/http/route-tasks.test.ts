@@ -67,6 +67,76 @@ describe("/api/tasks", () => {
     expect(res.status).toBe(400);
   });
 
+  it("stores maxCostUsd and maxDurationMs from the create body", async () => {
+    const session = harness.runtime.createSession();
+    const res = await fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.id,
+        userMessage: "overnight",
+        maxAttempts: 1,
+        maxCostUsd: 5,
+        maxDurationMs: 8 * 60 * 60 * 1000,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as TaskJson & {
+      maxCostUsd: number | null;
+      maxDurationMs: number | null;
+    };
+    expect(created.maxCostUsd).toBe(5);
+    expect(created.maxDurationMs).toBe(8 * 60 * 60 * 1000);
+    const stored = harness.runtime.taskStore.get(created.id);
+    expect(stored?.maxCostUsd).toBe(5);
+    expect(stored?.maxDurationMs).toBe(8 * 60 * 60 * 1000);
+  });
+
+  it("leaves the budget null when the create body omits it", async () => {
+    const session = harness.runtime.createSession();
+    const res = await fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.id,
+        userMessage: "no budget",
+        maxAttempts: 1,
+      }),
+    });
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as {
+      maxCostUsd: number | null;
+      maxDurationMs: number | null;
+    };
+    expect(created.maxCostUsd).toBeNull();
+    expect(created.maxDurationMs).toBeNull();
+  });
+
+  it.each([
+    { maxCostUsd: 0 },
+    { maxCostUsd: -1 },
+    { maxCostUsd: "5" },
+    { maxDurationMs: 0 },
+    { maxDurationMs: 1.5 },
+    { maxDurationMs: "3600000" },
+  ])("rejects an invalid budget %j with 400", async (budget) => {
+    const session = harness.runtime.createSession();
+    const res = await fetch(`${harness.baseUrl}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: session.id,
+        userMessage: "bad budget",
+        maxAttempts: 1,
+        ...budget,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect(
+      harness.runtime.taskStore.list({ sessionId: session.id, limit: 10 }),
+    ).toHaveLength(0);
+  });
+
   it("returns 404 for unknown task ids on GET / DELETE / run", async () => {
     const get = await fetch(`${harness.baseUrl}/api/tasks/missing`);
     expect(get.status).toBe(404);

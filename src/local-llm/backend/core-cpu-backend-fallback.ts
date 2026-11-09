@@ -35,12 +35,16 @@ const MODEL_LEVEL =
  * Failures the CPU build would hit just the same, so they never cause the
  * switch: memory, a missing or unreadable model file, a model llama.cpp
  * cannot read, a port or a session already taken, Core's load timeout
- * (a slow load, or a hang that a CPU build would not be sure to fix).
- * Matched against Core's message and code.
+ * (a slow load, or a hang that a CPU build would not be sure to fix), a
+ * load that was cancelled (a person or a newer start stopped it; nothing
+ * crashed). Matched against Core's message and code. "Aborted" is not in
+ * the list on purpose: a `GGML_ASSERT` ends llama-server with `abort()`,
+ * which is exactly the crash the switch is for.
  */
 const NOT_A_BUILD_CRASH = [
   MODEL_LEVEL,
   /time(d)? ?out|timeout/i,
+  /cancel/i,
   /out of (device |host )?memory|\boom\b|failed to allocate|cannot allocate|not enough memory|insufficient memory|outofdevicememory|cudamalloc|_memory\b/i,
   /no such file|not found|does not exist|cannot find|enoent|failed to open|invalid (gguf|magic)|not a gguf|_not_found\b/i,
   /address already in use|eaddrinuse|(couldn't|could not|failed to) bind|port .*(in use|busy|taken)|already (running|loaded)|_port\b|_busy\b|conflict/i,

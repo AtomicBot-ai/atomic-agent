@@ -182,6 +182,11 @@ export interface BatchExecutionContext {
    * Absent ⇒ legacy single-wave fan-out.
    */
   maxWaveSize?: number;
+  /**
+   * PreToolUse / PostToolUse hooks (`src/hooks/`). Absent ⇒ the engine the
+   * runtime installed at boot; `null` ⇒ no hooks for this batch.
+   */
+  toolHooks?: import("../../hooks/hook-engine.js").ToolHookEngine | null;
 }
 
 export interface BatchExecutionResult {

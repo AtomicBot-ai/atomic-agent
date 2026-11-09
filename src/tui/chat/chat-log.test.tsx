@@ -7,6 +7,7 @@ import {
   type TuiState,
 } from "../tui-state.js";
 import { ChatLog } from "./chat-log.js";
+import { renderAtSize } from "../test-sized-render.js";
 
 const BASE_SESSION: TuiSessionInfo = fakeSession({
   sessionId: "abc",
@@ -139,7 +140,8 @@ describe("ChatLog", () => {
     };
     const { lastFrame } = render(<ChatLog state={state} />);
     const text = strip(lastFrame() ?? "");
-    expect(text).toContain("os.fs.read");
+    // ATO-962: the header says the call in words.
+    expect(text).toContain("Read index.ts");
     expect(text).not.toContain('text="Done"');
   });
 
@@ -319,5 +321,101 @@ describe("ChatLog", () => {
     // Exactly one button: the notice with `retryText` earns it, the
     // plain runtime notice under it does not.
     expect(text.match(/\[try again\]/g)).toHaveLength(1);
+  });
+
+  describe("finished turns fold into one line (ATO-963)", () => {
+    // Tall enough that the whole turn, open, fits the chat viewport.
+    const BIG = { columns: 120, rows: 80 };
+
+    function turnState(overrides: Partial<TuiState> = {}): TuiState {
+      return {
+        ...createInitialTuiState(BASE_SESSION),
+        messages: [
+          { id: "u1", role: "user", text: "list it", timestamp: 1_000 },
+          {
+            id: "a1",
+            role: "assistant",
+            text: "Here you go.",
+            toolSteps: 2,
+            reasoningBlocks: ["let me look"],
+            toolCards: [
+              {
+                id: "c1",
+                stepIndex: 0,
+                tool: "os.fs.list",
+                args: { path: "src" },
+                status: "ok",
+                summary: "LISTING-BODY",
+                truncated: false,
+                startedAt: 1_100,
+                finishedAt: 1_200,
+              },
+              {
+                id: "c2",
+                stepIndex: 1,
+                tool: "os.shell.run",
+                args: { command: "false" },
+                status: "error",
+                summary: "EXIT-1-BODY",
+                truncated: false,
+                startedAt: 1_300,
+                finishedAt: 1_400,
+              },
+            ],
+            timestamp: 41_000,
+          },
+        ],
+        ...overrides,
+      };
+    }
+
+    it("hides the tool cards behind one summary line", () => {
+      const { lastFrame } = renderAtSize(<ChatLog state={turnState()} />, BIG);
+      const text = strip(lastFrame() ?? "");
+      expect(text).toContain("Used 2 tools · 1 failed · 40s ▸");
+      expect(text).toContain("Here you go.");
+      expect(text).not.toContain("os.fs.list");
+      expect(text).not.toContain("LISTING-BODY");
+      expect(text).not.toMatch(/2 tool steps/);
+    });
+
+    it("shows the cards under the line once opened, with only the failure's preview", () => {
+      const { lastFrame } = renderAtSize(
+        <ChatLog state={turnState({ turnsExpandedById: { a1: true } })} />,
+        BIG,
+      );
+      const text = strip(lastFrame() ?? "");
+      expect(text).toContain("Used 2 tools · 1 failed · 40s ▾");
+      expect(text).toContain("os.fs.list");
+      expect(text).toContain("os.shell.run");
+      expect(text).toContain("EXIT-1-BODY");
+      expect(text).not.toContain("LISTING-BODY");
+    });
+
+    it("keeps every step open with always-show-steps, as before", () => {
+      const { lastFrame } = renderAtSize(
+        <ChatLog state={turnState({ showSteps: true })} />,
+        BIG,
+      );
+      const text = strip(lastFrame() ?? "");
+      expect(text).not.toContain("Used 2 tools");
+      expect(text).toContain("LISTING-BODY");
+      expect(text).toMatch(/2 tool steps/);
+    });
+
+    it("does not fold the turn that is still running", () => {
+      const base = turnState();
+      const running: TuiState = {
+        ...base,
+        status: "running",
+        messages: base.messages.map((m) =>
+          m.id === "a1" ? { ...m, progressNote: true } : m,
+        ),
+      };
+      const { lastFrame } = renderAtSize(<ChatLog state={running} />, BIG);
+      const text = strip(lastFrame() ?? "");
+      expect(text).not.toContain("Used 2 tools");
+      expect(text).toContain("os.fs.list");
+    });
   });
 });

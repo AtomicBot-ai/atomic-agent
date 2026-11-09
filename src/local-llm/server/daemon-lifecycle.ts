@@ -12,7 +12,15 @@ import { verifyGuardedEndpoint } from "../../llm/llama-server-auth-probe.js";
 import { getConfig } from "../../config/index.js";
 import type { LocalLegRole } from "./worker-slots.js";
 import { holdEmbeddingForLowMemory, type EmbeddingMemoryVerdict } from "./embedding-memory-gate.js";
-import { resolveConfiguredSlots } from "./worker-slots.js";
+import { MAX_AUTO_SLOTS, resolveConfiguredSlots } from "./worker-slots.js";
+import { currentRunLog } from "./server-fault.js";
+import { readLogTail } from "./log-tail.js";
+import {
+  decidePartialOffloadShrink,
+  parseGpuOffload,
+  type GpuOffload,
+  type PartialOffloadShrink,
+} from "./partial-offload.js";
 import { execSync, spawn } from "node:child_process";
 import {
   appendFileSync,
@@ -40,20 +48,31 @@ import {
 } from "../backend-paths.js";
 import {
   buildKvLayout,
+  DEFAULT_UBATCH_SIZE,
+  estimateComputeReserveMiB,
   estimateContextSize,
   estimateLaunchKvBytes,
+  fitContextForSlots,
   MANAGED_KV_CACHE_TYPE,
+  VISION_UBATCH_SIZE,
   resolveDeviceFreeVramMiB,
   resolveKvBudgetMiB,
   resolveUnifiedMemoryHeadroomMiB,
   UNIFIED_MEMORY_KV_SHARE,
   type KvLayoutSource,
 } from "./context-size.js";
-import { GPU_AUTO_MAX_CONTEXT, resolveDedicatedGpuAutoContext } from "./context-growth.js";
+import {
+  GPU_AUTO_MAX_CONTEXT,
+  GPU_AUTO_MAX_SLOTS,
+  GPU_GROWING_MAX_SLOTS,
+  resolveDedicatedGpuAutoContext,
+} from "./context-growth.js";
 import {
   classifyPrefixReuse,
   kvLayoutSourceFromMetadata,
   readGgufMetadataSync,
+  recurrentStateBytesPerSequence,
+  vocabSizeFromMetadata,
   type GgufMetadata,
 } from "../catalog/gguf-metadata.js";
 import {
@@ -149,6 +168,13 @@ export interface DaemonStartOptions {
    * window on a GPU with its own memory. A pinned `parallel` ignores it.
    */
   autoSlotsCap?: number;
+  /**
+   * Internal: the one restart `startDaemon` makes when the model server
+   * left part of the model on the CPU under an auto window
+   * (`decidePartialOffloadShrink`, ATO-868). The auto window is held to
+   * `to`; the record also marks the retry, so it is never made twice.
+   */
+  offloadShrink?: PartialOffloadShrink;
   /**
    * Multi-GPU ratios (`localModels.managed.tensorSplit`). A non-empty
    * list appends `--split-mode layer --tensor-split <r0,r1,…>` so the
@@ -715,6 +741,20 @@ async function resolveEffectiveContextSize(
     /** `DaemonStartOptions.growContext` / `.autoContextAtLeast`. */
     growContext?: boolean;
     autoContextAtLeast?: number;
+    /**
+     * What the compute reserve needs from the header
+     * (`estimateComputeReserveMiB`): the vocabulary (`null`: unknown, the
+     * largest is assumed) and the recurrent state one slot keeps.
+     */
+    reserve?: { vocabSize: number | null; recurrentStateBytesPerSlot: number };
+    /** How the launch's `--parallel` is resolved (`buildLlamaServerArgs`). */
+    slots?: {
+      parallel?: number | "auto";
+      localLegRole?: LocalLegRole;
+      completionMaxTokens?: number;
+    };
+    /** `DaemonStartOptions.offloadShrink.to`: the auto window's ceiling. */
+    autoContextAtMost?: number;
   },
 ): Promise<{
   contextSize: number;
@@ -723,6 +763,8 @@ async function resolveEffectiveContextSize(
   kvBudgetBytes: number | null;
   deviceBudgetBytes: number | null;
   note: string | null;
+  /** What was set aside beside weights and cache, for the daemon log. */
+  reserveNote: string | null;
 }> {
   let freeVramMiB: number | null = null;
   let systemMemoryMiB: number | null = null;
@@ -744,7 +786,71 @@ async function resolveEffectiveContextSize(
     kvLayout: opts.kvLayout ? buildKvLayout(opts.kvLayout) : null,
     cacheType: MANAGED_KV_CACHE_TYPE,
   };
-  const fitContext = estimateContextSize({ ...input, systemMemoryMiB });
+  // What the server holds besides weights and cache grows with the
+  // micro-batch, the vocabulary, a projector and, on a hybrid model, the
+  // slot count (ATO-333). The slots are derived from the context on
+  // `parallel: "auto"`, so the two are fitted together: the reserve
+  // always covers the slots the launch is given.
+  const ubatchSize = opts.hasMmproj ? VISION_UBATCH_SIZE : DEFAULT_UBATCH_SIZE;
+  const vocabSize = opts.reserve?.vocabSize ?? null;
+  const recurrentStateBytesPerSlot = opts.reserve?.recurrentStateBytesPerSlot ?? 0;
+  const reserveFor = (slots: number): number =>
+    estimateComputeReserveMiB({
+      ubatchSize,
+      vocabSize,
+      hasVision: opts.hasMmproj,
+      slots,
+      recurrentStateBytesPerSlot,
+    });
+  const dedicatedGpu =
+    opts.configured <= 0 && freeVramMiB !== null && freeVramMiB > 0 && systemMemoryMiB === null;
+  const slotCap = dedicatedGpu
+    ? opts.growContext === true
+      ? GPU_GROWING_MAX_SLOTS
+      : GPU_AUTO_MAX_SLOTS
+    : MAX_AUTO_SLOTS;
+  const parallel = opts.slots?.parallel;
+  const slotsFor = (contextSize: number): number =>
+    parallel === undefined
+      ? 2
+      : resolveConfiguredSlots(parallel, {
+          contextSize: contextSize > 0 ? contextSize : null,
+          cpuOnly: device === "cpu",
+          ...(opts.slots?.completionMaxTokens === undefined
+            ? {}
+            : { completionMaxTokens: opts.slots.completionMaxTokens }),
+          ...(opts.slots?.localLegRole === undefined
+            ? {}
+            : { localLegRole: opts.slots.localLegRole }),
+          ...(dedicatedGpu ? { maxSlots: slotCap } : {}),
+        });
+  const fitWith = (computeReserveMiB: number, withSystemMemory: boolean): number =>
+    estimateContextSize({
+      ...input,
+      systemMemoryMiB: withSystemMemory ? systemMemoryMiB : null,
+      computeReserveMiB,
+    });
+  const sized =
+    parallel === "auto"
+      ? fitContextForSlots({
+          maxSlots: slotCap,
+          reserveFor,
+          fit: (reserveMiB) => fitWith(reserveMiB, true),
+          slotsFor,
+        })
+      : (() => {
+          const slots = parallel === undefined ? 2 : Math.max(1, Math.floor(parallel));
+          const computeReserveMiB = reserveFor(slots);
+          return { contextSize: fitWith(computeReserveMiB, true), slots, computeReserveMiB };
+        })();
+  const computeReserveMiB = sized.computeReserveMiB;
+  // ATO-868: a restart after the server left layers on the CPU holds the
+  // auto window (and with it the ceiling a growing window may reach) to
+  // half of what it had.
+  const fitContext =
+    opts.configured <= 0 && typeof opts.autoContextAtMost === "number" && opts.autoContextAtMost > 0
+      ? Math.min(sized.contextSize, opts.autoContextAtMost)
+      : sized.contextSize;
   // A GPU with memory of its own, auto-sized: held to
   // `GPU_AUTO_MAX_CONTEXT`, and started small when the owner grows it
   // with the conversation (`context-growth.ts`).
@@ -764,7 +870,7 @@ async function resolveEffectiveContextSize(
     note = `held to ${GPU_AUTO_MAX_CONTEXT} on a GPU with its own memory (${fitContext} would fit)`;
   }
   if (systemMemoryMiB !== null) {
-    const fits = estimateContextSize(input);
+    const fits = fitWith(computeReserveMiB, false);
     if (fits > contextSize) {
       note =
         `held to ${Math.round(systemMemoryMiB / 1024)} GB of unified memory: ` +
@@ -780,11 +886,22 @@ async function resolveEffectiveContextSize(
           modelSizeGb: model.fileSizeGb,
           mmprojSizeGb,
           systemMemoryMiB: withSystemMemory ? systemMemoryMiB : null,
+          computeReserveMiB,
         }) *
         1024 *
         1024
       : null;
   const kvBudgetBytes = budgetBytes(true);
+  const reserveNote =
+    freeVramMiB !== null && freeVramMiB > 0 && opts.configured <= 0
+      ? `reserved ${computeReserveMiB} MiB beside weights and KV cache for ${sized.slots} slot(s)` +
+        ` (ubatch ${ubatchSize}, vocab ${vocabSize ?? "unknown"}` +
+        (opts.hasMmproj ? ", vision encoder" : "") +
+        (recurrentStateBytesPerSlot > 0
+          ? `, ${Math.ceil(recurrentStateBytesPerSlot / (1024 * 1024))} MiB recurrent state per slot`
+          : "") +
+        ")"
+      : null;
   return {
     contextSize,
     autoContextCeiling: gpu ? gpu.ceiling : null,
@@ -792,7 +909,36 @@ async function resolveEffectiveContextSize(
     kvBudgetBytes: kvBudgetBytes === null ? null : Math.max(0, kvBudgetBytes),
     deviceBudgetBytes: budgetBytes(false),
     note,
+    reserveNote,
   };
+}
+
+/**
+ * `decidePartialOffloadShrink` for the launch that just came up, reading
+ * this run's part of the chat log. Best-effort: an unreadable log means
+ * no restart.
+ */
+function partialOffloadShrinkAfterStart(
+  opts: DaemonStartOptions,
+  launch: { contextSize: number; device: string | undefined },
+): PartialOffloadShrink | null {
+  if (opts.signal?.aborted) return null;
+  let offload: GpuOffload | null = null;
+  try {
+    const path = resolveLogFilePath(opts.dataDir);
+    if (existsSync(path)) {
+      offload = parseGpuOffload(currentRunLog(readLogTail(path, 256 * 1024).text));
+    }
+  } catch {
+    return null;
+  }
+  return decidePartialOffloadShrink({
+    configuredContextSize: opts.contextSize ?? 0,
+    device: launch.device,
+    contextSize: launch.contextSize,
+    offload,
+    alreadyRetried: opts.offloadShrink !== undefined,
+  });
 }
 
 /**
@@ -1147,6 +1293,8 @@ export async function startDaemon(
   const header = readModelHeader(modelPath);
   const kvLayout = header ? kvLayoutSourceFromMetadata(header) : null;
   const prefixReuse = header ? classifyPrefixReuse(header) : null;
+  const completionMaxTokens =
+    opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
   const {
     contextSize,
     autoContextCeiling,
@@ -1154,6 +1302,7 @@ export async function startDaemon(
     kvBudgetBytes,
     deviceBudgetBytes,
     note: contextNote,
+    reserveNote,
   } = await resolveEffectiveContextSize(device, model, {
     configured: opts.contextSize ?? 0,
     hasMmproj: Boolean(opts.mmprojFile),
@@ -1161,6 +1310,16 @@ export async function startDaemon(
     listDevices,
     ...(opts.growContext === true ? { growContext: true } : {}),
     ...(opts.autoContextAtLeast === undefined ? {} : { autoContextAtLeast: opts.autoContextAtLeast }),
+    reserve: {
+      vocabSize: header ? vocabSizeFromMetadata(header) : null,
+      recurrentStateBytesPerSlot: header ? recurrentStateBytesPerSequence(header) : 0,
+    },
+    slots: {
+      ...(opts.parallel === undefined ? {} : { parallel: opts.parallel }),
+      ...(opts.localLegRole === undefined ? {} : { localLegRole: opts.localLegRole }),
+      ...(completionMaxTokens === undefined ? {} : { completionMaxTokens }),
+    },
+    ...(opts.offloadShrink ? { autoContextAtMost: opts.offloadShrink.to } : {}),
   });
   const swaFull =
     opts.swaFullFlag !== undefined
@@ -1212,8 +1371,6 @@ export async function startDaemon(
     opts.throughputProbe === false
       ? null
       : readReusableThroughput(opts.dataDir, speedBasis);
-  const completionMaxTokens =
-    opts.completionMaxTokens ?? readConfiguredCompletionMaxTokens();
   const apiKey =
     opts.apiKey ??
     resolveManagedServerApiKey(opts.dataDir, readConfiguredApiKey());
@@ -1249,6 +1406,13 @@ export async function startDaemon(
     `[atomic-agent] launch: --ctx-size ${contextSize || "(llama.cpp default)"}` +
       (kvLayout ? " fitted from the model's KV layout" : " fitted from the file-size fallback") +
       (contextNote ? `, ${contextNote}` : ""),
+    ...(reserveNote ? [`[atomic-agent] launch: ${reserveNote}`] : []),
+    ...(opts.offloadShrink
+      ? [
+          `[atomic-agent] launch: shrunk --ctx-size ${opts.offloadShrink.from} to ${opts.offloadShrink.to}` +
+            ` because ${opts.offloadShrink.offloaded}/${opts.offloadShrink.total} layers on GPU`,
+        ]
+      : []),
     `[atomic-agent] launch: ${swaFull.reason}`,
     `[atomic-agent] launch: prefix reuse ${effectivePrefixReuse ?? "unknown"}${reuseWhy}`,
     "",
@@ -1272,6 +1436,11 @@ export async function startDaemon(
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
     writeFileSync(pidPath, String(session.pid), "utf8");
+    const coreShrink = partialOffloadShrinkAfterStart(opts, { contextSize, device });
+    if (coreShrink) {
+      await stopDaemon(opts.dataDir, { port: opts.port });
+      return startDaemon({ ...opts, offloadShrink: coreShrink });
+    }
     // Core's session is a llama-server on this port that takes the
     // session's key: its speed is measured, or carried over, as ours is.
     const tokensPerSecond = await recordStartThroughput({
@@ -1328,6 +1497,14 @@ export async function startDaemon(
     } catch (err) {
       abandonChild(child.pid, pidPath);
       throw err;
+    }
+    // ATO-868: llama.cpp's fit left part of the model on the CPU under an
+    // auto window. Restart once with half the window rather than serve at
+    // a fraction of the speed with no sign of why.
+    const shrink = partialOffloadShrinkAfterStart(opts, { contextSize, device });
+    if (shrink) {
+      await stopDaemon(opts.dataDir, { port: opts.port });
+      return await startDaemon({ ...opts, offloadShrink: shrink });
     }
     const tokensPerSecond = await recordStartThroughput({
       dataDir: opts.dataDir,

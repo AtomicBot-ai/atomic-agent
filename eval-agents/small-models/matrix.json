@@ -1,0 +1,89 @@
+{
+  "$comment": "Small-model bench matrix (ATO-1118). The ONE place for models, windows, repeats and llama-server flags. Nothing here runs by itself: run.mjs reads it, --dry-run prints the plan.",
+  "repeats": 3,
+  "windows": [32768, 65536],
+  "thinking": ["off", "on"],
+  "server": {
+    "$comment": "Same flags for every model: plain f16 KV cache, no TurboQuant, one slot, so rows compare models and not server tweaks. {gguf} {alias} {port} {window} are filled per cell. --jinja is required for tool calls.",
+    "bin": "llama-server",
+    "host": "127.0.0.1",
+    "port": 18190,
+    "args": [
+      "-m", "{gguf}",
+      "--alias", "{alias}",
+      "--host", "{host}",
+      "--port", "{port}",
+      "-ngl", "999",
+      "-c", "{window}",
+      "--jinja",
+      "--parallel", "1",
+      "-fa", "auto",
+      "--ctx-checkpoints", "32",
+      "--checkpoint-min-step", "0",
+      "--no-webui"
+    ],
+    "healthTimeoutSec": 300
+  },
+  "agent": {
+    "$comment": "Only what a headless run needs; everything else stays at the product default because the bench measures what users get. Per-task maxSteps comes from the task. thinking is set per cell (localModels.thinking).",
+    "configOverrides": {},
+    "env": {
+      "ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS": "1800000"
+    }
+  },
+  "models": [
+    {
+      "id": "qwen3.5-4b",
+      "size": "4b",
+      "label": "Qwen3.5 4B Q4_K_M",
+      "gguf": "Qwen3.5-4B-Q4_K_M.gguf",
+      "source": "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF",
+      "approxGB": 2.7,
+      "default": true
+    },
+    {
+      "id": "qwen3.5-9b",
+      "size": "9b",
+      "label": "Qwen3.5 9B Q4_K_M",
+      "gguf": "Qwen3.5-9B-Q4_K_M.gguf",
+      "source": "https://huggingface.co/unsloth/Qwen3.5-9B-GGUF",
+      "approxGB": 5.7,
+      "default": true
+    },
+    {
+      "id": "qwen3.5-27b",
+      "size": "27b",
+      "label": "Qwen3.5 27B Q4_K_M",
+      "gguf": "Qwen3.5-27B-Q4_K_M.gguf",
+      "source": "https://huggingface.co/unsloth/Qwen3.5-27B-GGUF (confirm the repo before the first download)",
+      "approxGB": 16.5,
+      "default": true
+    },
+    {
+      "id": "gemma-4-e4b",
+      "size": "4b",
+      "label": "Gemma 4 E4B (QAT UD-Q4_K_XL, as in the app catalog)",
+      "gguf": "gemma-4-E4B-it-qat-UD-Q4_K_XL.gguf",
+      "source": "https://huggingface.co/unsloth/gemma-4-E4B-it-qat-GGUF",
+      "approxGB": 5,
+      "default": false
+    },
+    {
+      "id": "nemotron-bolt-e4b",
+      "size": "4b",
+      "label": "Nemotron 3.5 Bolt E4B Q4_K_M",
+      "gguf": "Nemotron-3.5-Bolt-E4B-Q4_K_M.gguf",
+      "source": "set the repo before the first download",
+      "approxGB": 6.2,
+      "default": false,
+      "$comment": "Until ATO-879 lands the agent does not recognise Bolt by name; the 23.10 stand also ran it with --alias nemotron-bolt-e4b-gemma4. Put that in alias to reproduce.",
+      "alias": "nemotron-bolt-e4b"
+    }
+  ],
+  "profiles": {
+    "$comment": "Named subsets. 'release' is the pre-release gate; 'quick' is a smoke of the stand itself; 'full' is everything above.",
+    "quick": { "models": ["qwen3.5-4b"], "windows": [32768], "thinking": ["off"], "tasks": "core", "repeats": 1 },
+    "release": { "models": ["qwen3.5-4b", "qwen3.5-9b", "qwen3.5-27b"], "windows": [32768, 65536], "thinking": ["off"], "tasks": "all", "repeats": 3 },
+    "full": { "models": "default", "windows": [32768, 65536], "thinking": ["off", "on"], "tasks": "all", "repeats": 3 }
+  }
+}

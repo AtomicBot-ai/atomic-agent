@@ -43,6 +43,7 @@ import { OS_FS_LOCATE_PROJECT_CONTRACT } from "../tools/os/fs/fs-locate-project-
  */
 
 import { OS_FS_HASH_CONTRACT } from "../tools/os/fs/fs-hash-contract.js";
+import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
 import { DOCUMENT_FORMATS } from "../tools/os/read-document/extractors/extractor-types.js";
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { GITHUB_TOOL_ARGS_SCHEMAS } from "./github-tool-args-schemas.js";
@@ -166,6 +167,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   [OS_FS_LIST_CONTRACT.name, OS_FS_LIST_CONTRACT.argsJsonSchema],
   [OS_FS_GLOB_CONTRACT.name, OS_FS_GLOB_CONTRACT.argsJsonSchema],
   [OS_FS_LOCATE_PROJECT_CONTRACT.name, OS_FS_LOCATE_PROJECT_CONTRACT.argsJsonSchema],
+  [OS_FS_CODE_MAP_CONTRACT.name, OS_FS_CODE_MAP_CONTRACT.argsJsonSchema],
   [OS_FS_GREP_CONTRACT.name, OS_FS_GREP_CONTRACT.argsJsonSchema],
   [OS_FS_EDIT_CONTRACT.name, OS_FS_EDIT_CONTRACT.argsJsonSchema],
   [
@@ -436,6 +438,30 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── skill / tool ─────────────────────────────────────────────────────────
   ["skill.view", obj({ name: stringSchema }, ["name"])],
   ["tool.view", obj({ name: stringSchema }, ["name"])],
+  // ATO-486. No minItems/maxItems: the runtime caps the list
+  // (`PLAN_MAX_ITEMS`) and an empty list is how the plan is cleared.
+  [
+    "plan.update",
+    obj(
+      {
+        items: {
+          type: "array",
+          items: obj(
+            {
+              step: stringSchema,
+              status: {
+                type: "string",
+                enum: ["pending", "in_progress", "done"],
+              },
+            },
+            ["step", "status"],
+          ),
+        },
+      },
+      ["items"],
+    ),
+  ],
+  ["tool.search", obj({ query: stringSchema, limit: numberSchema }, ["query"])],
   [
     "skill.run_script",
     obj(
@@ -636,6 +662,13 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
               // planner's estimate of the work, not a malformed call.
               maxSteps: { type: "integer", minimum: 1 },
               timeoutMs: { type: "integer", minimum: 1 },
+              // Models by role (ATO-943): the task runs on that role's
+              // model, or on the named one from the `### fusion` list.
+              role: {
+                type: "string",
+                enum: ["plan", "build", "review", "explore", "utility"],
+              },
+              model: stringSchema,
             },
             ["id", "instructions"],
           ),
@@ -694,8 +727,14 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
             items: objOpen({ task: stringSchema }),
           },
         }),
+        // ATO-617: continue a run cut off by a restart. With `resume`
+        // the call's own arguments come from the run's checkpoint, so
+        // `tasks` is not required here; `parseDelegateArgs` still
+        // requires it on every call that is not a resume.
+        resume: stringSchema,
+        confirm: { ...stringArraySchema, maxItems: 16 },
       },
-      ["tasks"],
+      [],
     ),
   ],
   ["verify.syntax", obj({ files: stringArraySchema }, ["files"])],

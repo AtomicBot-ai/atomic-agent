@@ -679,9 +679,13 @@ describe("os-tool names the local-model grammar admits", () => {
     );
     const osToolLine =
       grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
-    for (const name of ["email.inbox", "email.send", "notify", "web.fetch"]) {
+    for (const name of ["email.inbox", "email.send", "notify"]) {
       expect(osToolLine).toContain(`"${name}"`);
     }
+    // `os.web.fetch` has its own branch (ATO-1114), with a required `url`.
+    expect(
+      gbnfAccepts(grammar, "root", '[{"tool":"os.web.fetch","args":{"url":"https://example.com"}}]'),
+    ).toBe(true);
   });
 
   it("includes os.fs.restore — the undo the replace guard's note tells the model to call", () => {
@@ -710,9 +714,8 @@ describe("os-tool names the local-model grammar admits", () => {
       resolve(__dirname, "../../../grammars/tool-call.gbnf"),
       "utf8",
     );
-    const osToolLine =
-      grammar.split("\n").find((l) => l.startsWith("os-tool ::=")) ?? "";
-    expect(osToolLine).toContain('"fs.move"');
+    // Its own branch since ATO-1114: `{}` is gone, both forms stay.
+    expect(grammar).toMatch(/^tool-call ::= .*\bfs-move-call\b/m);
     expect(
       gbnfAccepts(
         grammar,
@@ -773,7 +776,7 @@ describe("buildGrammarForTools — the per-request grammar", () => {
       GEMMA4_THINK_PROFILE,
     ]) {
       const base = await buildGrammar(profile);
-      const narrowed = buildGrammarForTools(base, ["os.fs.list", "reply"]);
+      const narrowed = buildGrammarForTools(base, ["os.git.status", "reply"]);
       const baseLines = base.split("\n");
       const narrowedLines = narrowed.split("\n");
       expect(narrowedLines.length, profile.id).toBe(baseLines.length);
@@ -781,7 +784,7 @@ describe("buildGrammarForTools — the per-request grammar", () => {
         if (baseLines[i]!.startsWith("tool-name ::=")) {
           // `reply` has its own branch (#681): `tool-name` lists the rest.
           expect(narrowedLines[i], profile.id).toBe(
-            'tool-name ::= "\\"os.fs.list\\""',
+            'tool-name ::= "\\"os.git.status\\""',
           );
         } else if (baseLines[i]!.startsWith("tool-call ::=")) {
           // No tool with a dedicated branch is in this set, so those branches are dropped.
@@ -791,7 +794,7 @@ describe("buildGrammarForTools — the per-request grammar", () => {
         }
       }
       expect(grammarToolNames(narrowed), profile.id).toEqual([
-        "os.fs.list",
+        "os.git.status",
         "reply",
       ]);
     }
@@ -910,17 +913,17 @@ describe("os.shell.run cannot be called with empty args", () => {
 
   it("a request that admits the shell keeps its branch and lists it", async () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
-    const g = buildGrammarForTools(base, ["os.fs.list", "os.shell.run"]);
+    const g = buildGrammarForTools(base, ["os.git.status", "os.shell.run"]);
     expect(g).toMatch(/^tool-call ::= reply-call \| shell-call \| other-call$/m);
-    expect(g).toMatch(/^tool-name ::= "\\"os\.fs\.list\\""$/m);
-    expect(grammarToolNames(g)).toEqual(["os.fs.list", "os.shell.run", "reply"]);
+    expect(g).toMatch(/^tool-name ::= "\\"os\.git\.status\\""$/m);
+    expect(grammarToolNames(g)).toEqual(["os.git.status", "os.shell.run", "reply"]);
   });
 
   it("a request without the shell drops its branch, so no shell call can be emitted", async () => {
     const base = await buildGrammar(PLAIN_INSTRUCT_PROFILE);
-    const g = buildGrammarForTools(base, ["os.fs.list"]);
+    const g = buildGrammarForTools(base, ["os.git.status"]);
     expect(g).toMatch(/^tool-call ::= reply-call \| other-call$/m);
-    expect(grammarToolNames(g)).toEqual(["os.fs.list", "reply"]);
+    expect(grammarToolNames(g)).toEqual(["os.git.status", "reply"]);
     expect(gbnfAccepts(g, "root", CMD)).toBe(false);
   });
 

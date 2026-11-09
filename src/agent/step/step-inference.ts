@@ -6,7 +6,8 @@ import { descriptorsForRole } from "../../tools/tool-roles.js";
 import { narrowDescriptorsToToolSet, toolSetAdmits } from "../policies/step-tool-set.js";
 import type { BuildPromptInput } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
-import { buildPrompt } from "../../prompt/build-prompt.js";
+import { buildPrompt, resolvePromptContextWindow } from "../../prompt/build-prompt.js";
+import { decideCompactPrompt } from "../../prompt/compact-prompt.js";
 import { hashPrefix } from "../../llm/slot-manager.js";
 import { checkProfilePromptAligned } from "../../llm/profile-invariants.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
@@ -88,7 +89,7 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
     ctx.toolSet !== undefined
       ? narrowDescriptorsToToolSet(roleToolDescriptors, ctx.toolSet)
       : roleToolDescriptors;
-  const promptInput: BuildPromptInput = {
+  const basePromptInput: BuildPromptInput = {
     ...(ctx.workspace ? { workspace: ctx.workspace } : {}),
     session: ctx.session,
     toolDescriptors: stepToolDescriptors,
@@ -141,13 +142,29 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
       ? { originalRequest: ctx.originalRequest }
       : {}),
     ...(ctx.routeNote !== undefined ? { routeNote: ctx.routeNote } : {}),
+    ...(ctx.answerChannel !== undefined
+      ? { answerChannel: ctx.answerChannel }
+      : {}),
   };
-  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors };
+  // Compact scaffold for small windows (ATO-1116), latched per session
+  // by the loop so the stable prefix (scaffold and window-scaled skill
+  // catalog) does not flip between steps.
+  const compactMode = getConfig().agent.prompt?.compact ?? "auto";
+  const promptWindow = resolvePromptContextWindow(basePromptInput);
+  const compactDecision = deps.compactPromptLatch
+    ? deps.compactPromptLatch.resolve(ctx.session.id, compactMode, promptWindow)
+    : decideCompactPrompt(compactMode, promptWindow);
+  const promptInput: BuildPromptInput = {
+    ...basePromptInput,
+    compactPrompt: compactDecision.compact,
+    compactPromptWindow: compactDecision.contextWindow,
+  };
+  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision };
 }
 
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   if (!ctx.workspace) refreshStepWorkspace(ctx, deps);
-  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors } = prepareStepPrompt(ctx, deps);
+  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision } = prepareStepPrompt(ctx, deps);
   const prompt = buildPrompt(promptInput);
   if (prompt.cloudContext) ctx.session = { ...ctx.session, cloudContext: prompt.cloudContext };
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -183,6 +200,13 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
         pending: false,
       };
   if (ctx.stepIndex === 0) {
+    // One line per turn so a bench log shows which scaffold ran.
+    deps.logger?.info("prompt scaffold", {
+      sessionId: ctx.session.id,
+      compact: compactDecision.compact,
+      reason: compactDecision.reason,
+      stablePrefixTokens: prompt.tokens.stablePrefix,
+    });
     const promptViolations = checkProfilePromptAligned(
       deps.profile,
       prompt.text,
@@ -303,8 +327,13 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   };
   if (deps.modelModePolicy) {
     llmParams.prepareForLink = (link) => {
-      const linkDeps = { ...deps, modelMode: link.modelMode, toolTransport: link.transport };
-      if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, link.contextWindow ? { ...linkDeps, contextWindow: link.contextWindow } : linkDeps);
+      // No latch and no primary window for a link: neither the primary's
+      // session decision nor its window speaks for a fallback link. A
+      // link with no known window gets `null`, so its compact decision
+      // (and workspace) falls back to the full scaffold under `auto`.
+      const linkDeps: StepDependencies = { ...deps, modelMode: link.modelMode, toolTransport: link.transport,
+        contextWindow: link.contextWindow ?? null, profileWindowApplies: false, compactPromptLatch: undefined };
+      if (ctx.workspace?.cloud !== (link.modelMode.mode === "cloud")) refreshStepWorkspace(ctx, linkDeps);
       const linked = deps.prepareWorkspace ? prepareStepPrompt(ctx, linkDeps) : null;
       const linkDescriptors = linked?.stepDescriptors ?? stepDescriptors;
       const wire = linked ? buildLlmStreamParams({ promptText: "", deps: linkDeps,
@@ -313,7 +342,12 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       }) : null;
       const template = link.transport === "native_tools" ? NO_SERVER_TEMPLATE
         : resolveServerTemplatePolicy(getConfig().localModels, deps.profile);
-      const next = buildPrompt({ ...(linked?.promptInput ?? promptInput), session: ctx.session, modelMode: link.modelMode,
+      // The link's prompt decides compact vs full from the link's own
+      // window, not from the primary's latched decision.
+      const linkPromptInput: BuildPromptInput = { ...(linked?.promptInput ?? promptInput) };
+      delete linkPromptInput.compactPrompt;
+      delete linkPromptInput.compactPromptWindow;
+      const next = buildPrompt({ ...linkPromptInput, session: ctx.session, modelMode: link.modelMode,
         toolTransport: link.transport, contextWindow: link.contextWindow, profileWindowApplies: false,
         suppressReasoningPrefill: link.transport === "native_tools" || template.useServerTemplate,
         completionMaxTokens: link.maxTokens ?? ctx.maxOutputTokens ?? getConfig().localModels.completionMaxTokens,

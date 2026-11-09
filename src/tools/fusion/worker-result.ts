@@ -1,4 +1,6 @@
+import type { FusionRole } from "../../config/llm-run-mode-config.js";
 import type { CompletionUsage } from "../../llm/provider/completion-types.js";
+import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import type {
   AgentLoopEvent,
   AgentLoopReason,
@@ -10,7 +12,21 @@ import {
   replacedInputsOf,
   type ReplacedInput,
 } from "./replaced-inputs.js";
-import { FUSION_WORKER_APPROVAL_MARKER } from "./worker-tool-policy.js";
+import {
+  FUSION_WORKER_APPROVAL_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+} from "./worker-tool-policy.js";
+import type { JudgeSummary } from "./judge.js";
+
+/**
+ * The note on a task a worker could not finish because a step needs the
+ * operator directly (`FUSION_WORKER_OPERATOR_ONLY_REFUSED`). Read by the
+ * orchestrator: sending the task out again only asks the operator about
+ * a wider fan-out and is refused again.
+ */
+export const WORKER_OPERATOR_ONLY_NOTE =
+  "blocked on a step only the user can approve (a dangerous command, or the agent's own config or secret files); " +
+  "no fan-out can authorise it, so do not send it out again: tell the user exactly what to run or change";
 
 /**
  * What one delegated task produced, as the orchestrator sees it.
@@ -180,6 +196,15 @@ export interface WorkerTaskResult {
    * status stands; the row and the head line carry the fact.
    */
   replacedInputs?: ReplacedInput[];
+  /** The judge's verdict on this task's acceptance list (ATO-944), when it ran. */
+  judge?: JudgeSummary;
+  /**
+   * The model the task ran on, set when models by role are configured
+   * (ATO-943); absent, it ran on the worker leg as every task did.
+   */
+  model?: string;
+  /** The role that picked `model`, when one did (ATO-943). */
+  modelRole?: FusionRole;
 }
 
 export interface TaskCheckSummary {
@@ -221,6 +246,8 @@ export function describeChecks(
 export class WorkerRunCollector {
   private replyText = "";
   private approvalRefused = false;
+  /** A refusal no fan-out can lift (`FUSION_WORKER_OPERATOR_ONLY_MARKER`). */
+  private operatorOnlyRefused = false;
   private calls = 0;
   private errors = 0;
   private writes = 0;
@@ -277,6 +304,9 @@ export class WorkerRunCollector {
       else if (FILE_WRITING_TOOLS.has(result.tool)) this.writes += 1;
       if (resultCarriesApprovalRefusal(result.summary, result.details)) {
         this.approvalRefused = true;
+        if (resultCarriesOperatorOnlyRefusal(result.summary, result.details)) {
+          this.operatorOnlyRefused = true;
+        }
       }
       // The guard's hit is in the result's details whatever its status:
       // the write landed before the guard spoke.
@@ -297,6 +327,16 @@ export class WorkerRunCollector {
               promptTokens: prev.promptTokens + next.promptTokens,
               completionTokens: prev.completionTokens + next.completionTokens,
               totalTokens: prev.totalTokens + next.totalTokens,
+              // Kept through the sum (ATO-918): dropping it priced every
+              // cached prompt token at the full input rate, which on a
+              // multi-step worker overstated its cost about threefold.
+              ...(prev.cachedTokens === undefined &&
+              next.cachedTokens === undefined
+                ? {}
+                : {
+                    cachedTokens:
+                      (prev.cachedTokens ?? 0) + (next.cachedTokens ?? 0),
+                  }),
             };
     }
   }
@@ -368,6 +408,9 @@ export class WorkerRunCollector {
       status !== "cancelled"
         ? [stopCauseNote(input.stopCause, input.stepCount)]
         : [];
+    if (this.operatorOnlyRefused && status === "needs_orchestrator") {
+      notes.push(WORKER_OPERATOR_ONLY_NOTE);
+    }
     return {
       id: input.id,
       title: input.title,
@@ -402,6 +445,9 @@ function stopCauseNote(cause: WorkerStopCause, stepCount: number): string {
   if (cause === "no_progress") {
     return "stopped after a whole leg of steps made no progress";
   }
+  if (cause === "cost_ceiling") {
+    return "stopped at its spend limit; any reply was written on the forced final step and may describe work that was not done";
+  }
   return `stopped at its step limit (${stepCount} steps); the reply was written on the forced final step and may describe work that was not done`;
 }
 
@@ -414,6 +460,19 @@ export function resultCarriesApprovalRefusal(
   const reason = details.deniedReason ?? details.reason;
   return (
     typeof reason === "string" && reason.includes(FUSION_WORKER_APPROVAL_MARKER)
+  );
+}
+
+/** Whether a tool result is the refusal no fan-out can lift. */
+export function resultCarriesOperatorOnlyRefusal(
+  summary: string,
+  details: Record<string, unknown>,
+): boolean {
+  if (summary.includes(FUSION_WORKER_OPERATOR_ONLY_MARKER)) return true;
+  const reason = details.deniedReason ?? details.reason;
+  return (
+    typeof reason === "string" &&
+    reason.includes(FUSION_WORKER_OPERATOR_ONLY_MARKER)
   );
 }
 
@@ -744,6 +803,8 @@ const TABLE_DETAIL_CHARS = 160;
 export interface WorkerPricing {
   input: number;
   output: number;
+  /** Cached prompt tokens' rate; absent, they are billed at `input`. */
+  cacheRead?: number;
 }
 
 /** What a fan-out cost on its worker leg, for the status table header. */
@@ -752,12 +813,25 @@ export interface FanoutSpend {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  /** Of `promptTokens`, the ones served from the prompt cache, when reported. */
+  cachedTokens?: number;
+}
+
+/** One task's cost at `pricing`, cache discount included (`estimateUsageCostUsd`). */
+export function taskSpendUsd(
+  result: Pick<WorkerTaskResult, "usage">,
+  pricing: WorkerPricing,
+): number {
+  return result.usage === undefined
+    ? 0
+    : estimateUsageCostUsd(result.usage, pricing);
 }
 
 /**
  * Σ over the tasks' usage at `pricing`, the same arithmetic as the
- * turn cost line (`turn-usage-meter.ts`). Tasks with no usage (a turn
- * that died before its first completion) contribute nothing.
+ * turn cost line (`turn-usage-meter.ts`): cached prompt tokens at the
+ * `cacheRead` rate (ATO-918). Tasks with no usage (a turn that died
+ * before its first completion) contribute nothing.
  */
 export function fanoutSpend(
   results: readonly WorkerTaskResult[],
@@ -766,15 +840,24 @@ export function fanoutSpend(
 ): FanoutSpend {
   let promptTokens = 0;
   let completionTokens = 0;
+  let cachedTokens: number | undefined;
+  let usd = 0;
   for (const r of results) {
     if (r.usage === undefined) continue;
     promptTokens += r.usage.promptTokens;
     completionTokens += r.usage.completionTokens;
+    if (r.usage.cachedTokens !== undefined) {
+      cachedTokens = (cachedTokens ?? 0) + r.usage.cachedTokens;
+    }
+    usd += taskSpendUsd(r, pricing);
   }
-  const usd =
-    (promptTokens / 1_000_000) * pricing.input +
-    (completionTokens / 1_000_000) * pricing.output;
-  return { usd, model, promptTokens, completionTokens };
+  return {
+    usd,
+    model,
+    promptTokens,
+    completionTokens,
+    ...(cachedTokens === undefined ? {} : { cachedTokens }),
+  };
 }
 
 function formatUsd(usd: number): string {
@@ -827,7 +910,7 @@ function renderStatusTable(
   const cost =
     spend === null
       ? ""
-      : ` — cloud spend ${formatUsd(spend.usd)} on ${spend.model} (${spend.promptTokens.toLocaleString("en-US")} in / ${spend.completionTokens.toLocaleString("en-US")} out)`;
+      : ` — cloud spend ${formatUsd(spend.usd)} on ${spend.model} (${spend.promptTokens.toLocaleString("en-US")} in${spend.cachedTokens === undefined || spend.cachedTokens === 0 ? "" : `, ${spend.cachedTokens.toLocaleString("en-US")} cached`} / ${spend.completionTokens.toLocaleString("en-US")} out)`;
   const replacedCount = countReplacedInputs(results);
   const replaced = replacedCount === null ? "" : ` — ${replacedCount}`;
   // The order the contract imposed, on the head line: which tasks

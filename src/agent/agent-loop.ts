@@ -5,6 +5,7 @@ import type { StepContext, StepDependencies } from "./step/step-contract.js";
 import type { BuildPromptInput } from "../prompt/build-prompt-types.js";
 import { contextWindowExhaustedError, isConversationSizeRefusal, planOverflowCompaction } from "./turn/overflow-compaction.js";
 import { createTurnLoopState } from "./turn/turn-state.js";
+import { checkpointStep } from "./turn/turn-checkpoint.js";
 import { recoverTurnStep, abortableSleep, reportTurnFailure } from "./turn/turn-recovery.js";
 import { recoverFromOutOfMemory } from "./turn/out-of-memory-recovery.js";
 import type { AgentLoopDependencies, RunTurnOptions, RunTurnResult } from "./agent-contract.js";
@@ -13,9 +14,12 @@ import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLo
 import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-memory-context.js";
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
+import { costCeilingNotice, costCeilingReached, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
 import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
+import { observeReplanStep, replanToolSet, takeReplanNotice } from "./fusion-replan.js";
+import type { StepToolSet } from "./policies/step-tool-set.js";
 
 import type { CompletionResult } from "../llm/llama-server-client.js";
 
@@ -40,11 +44,13 @@ import { OUTCOME_REPEAT_WARNING_THRESHOLD, READ_REPEAT_WARNING_THRESHOLD, TEST_R
 import { formatOutcomeRepeatNotice, formatReadRepeatNotice, formatRepeatNotice, formatTestRepeatNotice, formatWanderingRedirect, formatForcedLoopReply } from "./progress/loop-notices.js";
 import type { BatchLoopSignal } from "./dispatch/batch-contract.js";
 import { composeSteerNotice } from "./steer-notice.js";
+import { planReminderNotice } from "./plan/plan-snapshot.js";
 
 import { getConfig } from "../config/index.js";
 
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
+import { CompactPromptLatch } from "../prompt/compact-prompt.js";
 
 /**
  * What the user reads when the step loop ran out before the model
@@ -63,6 +69,11 @@ export class AgentLoop {
   private readonly profileClipWarnings = new ProfileClipWarnings();
   /** Once-per-cut notice that the packer left older history out (ATO-295). */
   private readonly historyTrimWarnings = new HistoryTrimWarnings();
+  /**
+   * Compact-prompt decision per session (ATO-1116): keeps the stable
+   * prefix from flipping when a step cannot see the model's window.
+   */
+  private readonly compactPromptLatch = new CompactPromptLatch();
 
   constructor(private readonly deps: AgentLoopDependencies) {}
 
@@ -135,8 +146,15 @@ export class AgentLoop {
     await preparedTurn.profileSynced;
     const policies = prepareTurnPolicies(session.id, options, this.deps);
     const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes, unknownTools } = policies;
-    let { fusionState, reviewStall } = policies;
+    let { fusionState, reviewStall, replan } = policies;
     const turn = createTurnLoopState();
+    // ATO-486: a new message on a session whose plan is still open gets
+    // one short reminder on the turn's first step, so the model carries
+    // the checklist on or says it is dropped. Never on a plan that is
+    // complete, never past the first step.
+    if (options.userMessage !== undefined) {
+      turn.pendingNotice = planReminderNotice(state.plan);
+    }
     // One overflow compaction per turn (ATO-1028): a refused request is
     // compacted and retried once, never in a loop.
     let overflowCompactionAttempted = false;
@@ -151,7 +169,7 @@ export class AgentLoop {
       overflowWindow !== null && (lastPromptWindow === null || lastPromptWindow > overflowWindow)
         ? { ...input, contextWindow: overflowWindow, profileWindowApplies: false }
         : input;
-    const { legSteps, stepCeiling, durationCeilingMs, taskStartedAt } =
+    const { legSteps, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt } =
       prepareTurnBudgets(options);
     // Provider-outage parking. A transport failure means "this link is
     // not answering", which is a state of the world, not a verdict on
@@ -305,14 +323,34 @@ export class AgentLoop {
       const elapsedMs = Date.now() - taskStartedAt;
       const outOfTime =
         turn.ceilingFiredMidRequest || elapsedMs >= durationCeilingMs;
+      // The spend ceiling (ATO-1108) is read here too, after the last
+      // step's completion was priced and before this one starts.
+      const outOfBudget =
+        !outOfTime && costCeilingReached(turn.spendUsd, costCeilingUsd);
       if (outOfTime) turn.stopCause = "time_ceiling";
-      const finalizationStep = i === stepCeiling - 1 || outOfTime;
+      else if (outOfBudget) turn.stopCause = "cost_ceiling";
+      const finalizationStep = i === stepCeiling - 1 || outOfTime || outOfBudget;
       // The stalled-review phase this step runs under, read before the
       // prompt is built (`review-stall.ts`): the notice joins the step's
       // `### notice` — inside `noticeForThisStep`, so a retry of the
       // step carries it like every other notice — and the cut narrows
       // the step's tool set. Not on the reserved final step, which is
       // narrower already.
+      // A fan-out left tasks open (ATO-941): this step is held to
+      // `fusion.delegate`, which outranks the stalled-review cut (a
+      // subset of it). Not on the reserved final step.
+      let replanSet: StepToolSet | null = null;
+      if (replan !== null && !finalizationStep) {
+        replanSet = replanToolSet(replan);
+        const taken = takeReplanNotice(replan);
+        replan = taken.state;
+        if (taken.notice !== null) {
+          noticeForThisStep =
+            noticeForThisStep === undefined
+              ? taken.notice
+              : `${noticeForThisStep}\n\n${taken.notice}`;
+        }
+      }
       let stallSignal: ReviewStallSignal | null = null;
       if (reviewStall !== null && !finalizationStep) {
         stallSignal = reviewStallSignal(reviewStall);
@@ -335,9 +373,10 @@ export class AgentLoop {
       }
       const effectiveTransport: ToolCallTransport =
         pinnedSlice?.toolTransport ?? this.deps.toolTransport ?? "grammar";
-      const finalizationNotice =
-        "This is the final allowed step. Do not call any non-terminal tool; " +
-        "summarize the completed work with reply, or end the session with finish.";
+      const finalizationNotice = outOfBudget
+        ? costCeilingNotice(turn.spendUsd, costCeilingUsd)
+        : "This is the final allowed step. Do not call any non-terminal tool; " +
+          "summarize the completed work with reply, or end the session with finish.";
       // The ceiling holds while waiting on a provider: the step's
       // completion request gets the task's remaining time as a deadline
       // (composed with the user's signal), so a turn parked in a queue
@@ -404,9 +443,11 @@ export class AgentLoop {
                 }
               : {}),
             ...(finalizationStep ? { terminalOnly: true } : {}),
-            ...(stallSignal?.phase === "cut"
-              ? { toolSet: reviewStallToolSet() }
-              : {}),
+            ...(replanSet !== null
+              ? { toolSet: replanSet }
+              : stallSignal?.phase === "cut"
+                ? { toolSet: reviewStallToolSet() }
+                : {}),
             ...(options.toolFilter ? { toolFilter: options.toolFilter } : {}),
             toolRole,
             ...(turn.truncationRetry?.stepIndex === i &&
@@ -422,6 +463,9 @@ export class AgentLoop {
               : {}),
             ...(options.routeNote !== undefined
               ? { routeNote: options.routeNote }
+              : {}),
+            ...(options.answerChannel !== undefined
+              ? { answerChannel: options.answerChannel }
               : {}),
             ...(options.reasoningEffort !== undefined
               ? { reasoningEffort: options.reasoningEffort }
@@ -441,6 +485,7 @@ export class AgentLoop {
         const stepDeps: StepDependencies = {
             prepareWorkspace: this.deps.prepareWorkspace,
             registry: this.deps.registry,
+            compactPromptLatch: this.compactPromptLatch,
             commitSession: (next) => {
               state = next;
               stepContext.session = next;
@@ -521,6 +566,15 @@ export class AgentLoop {
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              // Every completion the provider bills is priced (ATO-1108),
+              // not only the one a step commits: a repair attempt, an
+              // answer continuation, and a completion that is then
+              // thrown away (unparseable, truncated, empty, retried)
+              // all cost money, and they are the runaway cases the
+              // spend ceiling exists for.
+              if (event.type === "llm_completed") {
+                recordStepSpend(turn, event.completion, contextProviderId, this.deps.priceCompletion);
+              }
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
                 lastPromptWindow = event.prompt.contextWindow;
@@ -618,6 +672,9 @@ export class AgentLoop {
         // A completed step is what the review-stall count observes: a
         // fan-out resets it, a step of reading (or of refusals) adds
         // one. The mutation predicate is the orchestrator gate's own.
+        if (replan !== null) {
+          replan = observeReplanStep(replan, outcome.toolResults);
+        }
         if (reviewStall !== null) {
           reviewStall = observeReviewStep(reviewStall, {
             results: outcome.toolResults,
@@ -694,6 +751,7 @@ export class AgentLoop {
           stepIndex: i,
           summary,
           durationMs,
+          ...(turn.spendPriced ? { spendUsd: turn.spendUsd } : {}),
           ...(outcome.progressNote !== undefined ? { progressNote: true } : {}),
           ...(stallSignal !== null ? { reviewStall: stallSignal } : {}),
         });
@@ -717,6 +775,9 @@ export class AgentLoop {
           turn.reason = "max_steps";
           break;
         }
+        // The step is done and the turn goes on: make it durable now, so
+        // a crash before the turn's end loses only the step in flight.
+        checkpointStep(options, state, { stepIndex: i, stepsTaken: turn.stepsTaken }, this.deps.logger);
         // A trimmed-batch step (auto-split: approval-gated solo) seeds
         // the next step's `pendingNotice` so the model sees which calls
         // were dropped and can retry them as length-1 arrays. The
@@ -1021,6 +1082,7 @@ export class AgentLoop {
             state, options, cancelled: false, category: failed.category,
             runError: failed.runError, creditRefused: false,
             stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+            ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
           }, this.deps, (sessionId) => this.flushSteering(sessionId));
         }
         if (decision.kind === "retry_same") { i -= 1; continue; }
@@ -1035,6 +1097,7 @@ export class AgentLoop {
           state, options, cancelled: decision.cancelled, category: decision.category,
           runError: decision.runError, creditRefused: decision.creditRefused,
           stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+          ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
         }, this.deps, (sessionId) => this.flushSteering(sessionId));
 
       }
@@ -1043,7 +1106,8 @@ export class AgentLoop {
     return finalizeAgentTurn({
       state, options, reason: turn.reason, stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt,
       taskStartedAt, stepCeiling, stopCause: turn.stopCause, creditStop: turn.creditStop, endedOnFinalizationStep: turn.endedOnFinalizationStep,
-      surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
+      surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds, costCeilingUsd,
+      ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
     }, this.deps, (sessionId) => this.flushSteering(sessionId));
 
   }

@@ -3,6 +3,9 @@ export {
   isWorkerVisibleTool,
   FUSION_WORKER_APPROVAL_REFUSED,
   FUSION_WORKER_APPROVAL_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_MARKER,
+  FUSION_WORKER_OPERATOR_ONLY_REFUSED,
+  workerRefusalFor,
 } from "./worker-tool-policy.js";
 export {
   humaniseTaskId,
@@ -128,3 +131,30 @@ export {
   FUSION_DELEGATE_TOOL,
 } from "./fusion-delegate.js";
 export type { FusionDelegateDeps } from "./fusion-delegate.js";
+export {
+  FusionTurnBudget,
+  TURN_BUDGET_INSTRUCTION,
+} from "./turn-budget.js";
+export type { TurnBudgetLimits, TurnBudgetStop } from "./turn-budget.js";
+export {
+  FusionLiveWorkers,
+  ADVISOR_MAX_OUTPUT_TOKENS,
+} from "./escalation.js";
+export type { LiveWorkerControls, EscalationComplete } from "./escalation.js";
+export { SPLIT_PROPOSAL_TAG, TaskTreeState } from "./task-tree.js";
+export type { TaskTreeNode, TaskTreeReport } from "./task-tree.js";
+export {
+  FusionRunStore,
+  FUSION_RUNS_DIR_NAME,
+  FUSION_RUN_RETENTION_MS,
+  toolHasSideEffects,
+} from "./run-checkpoint.js";
+export type {
+  FusionRunCheckpoint,
+  FusionRunRecorder,
+} from "./run-checkpoint.js";
+export {
+  describeResumableRun,
+  planResume,
+  renderResumeRequest,
+} from "./run-resume.js";

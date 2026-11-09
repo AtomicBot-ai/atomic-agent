@@ -10,13 +10,16 @@ import { ensureUtf8Console } from "./windows-console-utf8.js";
 import { runAgentCommand } from "./run-agent.js";
 import { debugReplCommand } from "./debug-repl.js";
 import { skillCommand } from "./skill.js";
+import { pluginCommand } from "./plugin-command.js";
 import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
+import { overnightCommand } from "./overnight-command.js";
 import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
+import { handoffCommand } from "./handoff-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
@@ -75,6 +78,11 @@ const COMMANDS: CommandDescriptor[] = [
     run: skillCommand,
   },
   {
+    name: "plugin",
+    summary: "Manage plugins: Claude-format packages of skills, commands, MCP servers (list|show|install|update|enable|disable|remove|marketplace)",
+    run: pluginCommand,
+  },
+  {
     name: "config",
     summary: "View or replace the user config file (get|set '<json>')",
     run: configCommand,
@@ -108,6 +116,11 @@ const COMMANDS: CommandDescriptor[] = [
     run: taskCommand,
   },
   {
+    name: "overnight",
+    summary: "Run one long task unattended with a money and a time cap (--budget, --hours, --detach)",
+    run: overnightCommand,
+  },
+  {
     name: "memory",
     summary: "Inspect, export + reindex the cross-session memory store (export|reindex)",
     run: memoryCommand,
@@ -123,6 +136,12 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Import skills, sessions + more from another agent (import --help lists sources)",
     run: importCommand,
+  },
+  {
+    name: "handoff",
+    summary:
+      "Continue a Claude Code or Codex session here (e.g. after its usage limit)",
+    run: (args) => handoffCommand(args, { openTui: tuiCommand }),
   },
   {
     name: "doctor",

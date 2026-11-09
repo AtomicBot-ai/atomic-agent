@@ -158,5 +158,21 @@ export function buildFusionGuidance(
   facts: FusionMachineFacts = NO_FUSION_MACHINE_FACTS,
 ): string {
   const machine = formatFusionMachineLine(facts);
-  return machine === null ? FUSION_GUIDANCE : `${FUSION_GUIDANCE}\n${machine}`;
+  const roles = formatFusionRolesLine(facts);
+  return [FUSION_GUIDANCE, machine, roles]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
+/**
+ * The models by role (ATO-943), one line, or `null` when none are
+ * configured — the block then reads exactly as before.
+ */
+export function formatFusionRolesLine(
+  facts: FusionMachineFacts,
+): string | null {
+  const roles = facts.roleModels ?? [];
+  if (roles.length === 0) return null;
+  const list = roles.map((r) => `${r.role} \`${r.model}\``).join(", ");
+  return `Models by role: ${list}. Give a task \`role\` to run it on that model, or \`model\` naming one of them (or the workers' model); a task with neither runs on the workers' model.`;
 }

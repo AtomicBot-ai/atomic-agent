@@ -6,6 +6,21 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import type { TurnOrigin } from "../../runtime/turn-controller.js";
 import type { DelegateTask } from "./delegate-args.js";
 import type { DelegateContract } from "./contract.js";
+import type { CompletionUsage } from "../../llm/provider/completion-types.js";
+import type { FusionEscalationTarget } from "../../llm/run-mode/index.js";
+import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
+import {
+  describeTrigger,
+  formatAdvisorSteer,
+  formatCost,
+  formatPersonSteer,
+  renderAdvisorPrompt,
+  requestAdvice,
+  type EscalationComplete,
+  type EscalationTrigger,
+  type FusionLiveWorkers,
+} from "./escalation.js";
+import type { WorkerPricing } from "./worker-result.js";
 import { resolveContractInputs } from "./contract-inputs.js";
 import {
   applyDeclaredFileReport,
@@ -32,9 +47,17 @@ import {
   FUSION_WORKER_APPROVAL_REFUSED,
   WORKER_TOOL_ROLE,
   isWorkerVisibleTool,
+  workerRefusalFor,
 } from "./worker-tool-policy.js";
 import type { ToolRole } from "../tool-roles.js";
 import { fingerprintToolOutcome } from "../../agent/progress/loop-fingerprints.js";
+import {
+  LOCAL_LEG_UNRESPONSIVE_ERROR,
+  LOCAL_LEG_UNRESPONSIVE_HINT,
+  type LocalHealthAnswer,
+  type LocalLegHealth,
+} from "./local-leg-health.js";
+import { hasSplitProposal, splitSteer } from "./task-tree.js";
 
 /**
  * How many `phase: "tool"` lines one worker may put in the parent's
@@ -327,11 +350,13 @@ export const READ_ONLY_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.grep",
   "os.fs.watch",
   "os.fs.locate_project",
+  "os.fs.code_map",
   "os.fs.archive.list",
   "os.fs.archive.read_entry",
   "os.proc.list",
   "os.window.list",
   "tool.view",
+  "tool.search",
 ]);
 
 /**
@@ -450,7 +475,26 @@ export interface WorkerRunnerDeps {
   probeSlotOccupancy?: () => Promise<SlotOccupancy | null>;
   /** Where a raised task budget is logged. Absent, it is only noted on the row. */
   logger?: Pick<StructuredLogger, "info">;
+  /**
+   * The local leg's dispatch health across fan-outs (ATO-917): marked
+   * when a local worker is cut off, checked before the next local worker
+   * is sent. Absent (tests, embedders, a cloud leg) nothing is checked.
+   */
+  localLegHealth?: LocalLegHealth;
+  /** `LlamaServerClient.probeHealth`, the question the check above asks. */
+  probeLocalHealth?: () => Promise<LocalHealthAnswer>;
+   * One completion on the escalation provider (ATO-942). Absent, nothing
+   * is ever escalated, manual or automatic.
+   */
+  escalationComplete?: EscalationComplete;
+  /** `runtime.steer`: how an advisor's hint reaches a running worker. */
+  steerWorker?: (sessionId: string, text: string) => boolean;
+  /** Where running workers are registered for the person's stop / escalate. */
+  liveWorkers?: FusionLiveWorkers;
 }
+
+/** Escalations one worker may get, automatic and manual together. */
+export const MAX_ESCALATIONS_PER_WORKER = 2;
 
 export interface RunWorkerTasksOptions {
   parentSessionId: string;
@@ -515,6 +559,77 @@ export interface RunWorkerTasksOptions {
    */
   contract?: DelegateContract;
   signal: AbortSignal;
+  /**
+   * Asked before each task starts: a reason means the task is not
+   * started and comes back `cancelled` with that reason (the turn's cap,
+   * ATO-947). Absent, every task starts as before.
+   */
+  shouldStart?: () => string | undefined;
+  /** Every worker completion's usage, as it lands (live spend, ATO-947). */
+  onWorkerUsage?: (taskId: string, usage: CompletionUsage) => void;
+  /**
+   * Where a stuck worker may be escalated, and that model's price when
+   * known (ATO-942). Absent: no escalation of any kind.
+   */
+  escalation?: { target: FusionEscalationTarget; pricing?: WorkerPricing };
+  /** What an escalation cost, as it lands, for the turn's cap. */
+  onEscalationSpend?: (taskId: string, usd: number) => void;
+  /** The worker model's price, for the live $ on its row. Absent: tokens only. */
+  workerPricing?: WorkerPricing;
+  /**
+   * Text appended to a task's brief: its acceptance checklist and, on a
+   * judge's retry, what was found not met (ATO-944). Absent: the brief
+   * is exactly as before.
+   */
+  briefSuffix?: (taskId: string) => string | undefined;
+  /**
+   * The workspace a task runs in instead of the working directory, and
+   * the write scope rebased onto it (branch isolation, ATO-946). Absent,
+   * or `undefined` for a task: the working directory, as before.
+   */
+  taskWorkspace?: (
+    taskId: string,
+  ) => { workingDir: string; writeScope: readonly string[] } | undefined;
+  /**
+   * The task tree (ATO-940): whether this task may still propose a
+   * split. True, the half-budget hand-back and a cut first answer first
+   * steer the worker toward a `split_proposal` (once, with
+   * `SPLIT_GRACE_STEPS` more steps), and a reply that carries one skips
+   * the declared-file check: the files are its children's to write.
+   * Absent: exactly as before.
+   */
+  canProposeSplit?: (taskId: string) => boolean;
+  /**
+   * Every tool a worker starts, unthrottled (the feed's lines are capped
+   * per task). The run checkpoint (ATO-617) records side effects from it.
+   */
+  onWorkerTool?: (taskId: string, tool: string) => void;
+  /** Each task's row as soon as it is final, before the fan-out returns (ATO-617). */
+  onTaskFinished?: (result: WorkerTaskResult) => void;
+}
+
+/**
+ * Steps a worker steered toward a split proposal gets to write one
+ * before the half-budget hand-back fires after all (ATO-940).
+ */
+export const SPLIT_GRACE_STEPS = 2;
+
+/** The row of a task the turn's cap kept from starting. */
+export function notStartedResult(
+  task: Pick<DelegateTask, "id" | "title">,
+  reason: string,
+): WorkerTaskResult {
+  return {
+    ...new WorkerRunCollector().finish({
+      id: task.id,
+      title: task.title,
+      reason: "cancelled",
+      stepCount: 0,
+      durationMs: 0,
+      error: `not started: ${reason}`,
+    }),
+    queueWaitMs: null,
+  };
 }
 
 /**
@@ -547,7 +662,16 @@ export async function runWorkerTasks(
   const width = Math.max(1, Math.min(options.maxWorkers, options.tasks.length));
   const runners = Array.from({ length: width }, async () => {
     for (let i = claim(); i < options.tasks.length; i = claim()) {
-      results[i] = await runOneTask(deps, options, options.tasks[i]!);
+      const stop = options.shouldStart?.();
+      results[i] =
+        stop === undefined
+          ? await runOneTask(deps, options, options.tasks[i]!)
+          : notStartedResult(options.tasks[i]!, stop);
+      try {
+        options.onTaskFinished?.(results[i]!);
+      } catch {
+        // An observer never takes the fan-out down.
+      }
     }
   });
   await Promise.all(runners);
@@ -561,10 +685,16 @@ async function runOneTask(
 ): Promise<WorkerTaskResult> {
   const startedAt = Date.now();
   const collector = new WorkerRunCollector();
+  // Branch isolation (ATO-946): the task's own workspace stands in for
+  // the working directory everywhere below. Without it, nothing changes.
+  const isolated = options.taskWorkspace?.(task.id);
+  const workingDir = isolated?.workingDir ?? deps.workingDir;
+  const sessionDir =
+    isolated !== undefined || deps.inheritWorkspace ? workingDir : undefined;
   const session = deps.createEphemeralSession({
     parentSessionId: options.parentSessionId,
     taskId: task.id,
-  }, deps.inheritWorkspace ? deps.workingDir : undefined);
+  }, sessionDir);
   // A worker that queued on the parent id would wait behind the
   // orchestrator's own turn — which is the turn calling this — and the
   // fan-out would deadlock rather than run. `createEphemeralSession`
@@ -578,6 +708,49 @@ async function runOneTask(
       durationMs: 0,
       error: "worker session id collided with the parent session id",
     });
+  }
+
+  // A local leg that went silent after a worker on it was cut off is not
+  // sent another worker to wait out its queue budget on (ATO-917): the
+  // server is asked first, and a server that does not answer fails the
+  // task now, saying so.
+  if (
+    options.localLeg === true &&
+    deps.localLegHealth !== undefined &&
+    !(await deps.localLegHealth.readyForDispatch(
+      deps.probeLocalHealth,
+      undefined,
+      options.signal,
+    ))
+  ) {
+    const cause = deps.localLegHealth.cause();
+    const refused: WorkerTaskResult = {
+      ...collector.finish({
+        id: task.id,
+        title: task.title,
+        reason: null,
+        stepCount: 0,
+        durationMs: Date.now() - startedAt,
+        error: LOCAL_LEG_UNRESPONSIVE_ERROR,
+      }),
+      hint: LOCAL_LEG_UNRESPONSIVE_HINT,
+      notes: [
+        `not sent: the local server did not answer /health${cause === null ? "" : ` after ${cause}`}`,
+      ],
+      queueWaitMs: null,
+    };
+    deps.emitEvent(options.parentSessionId, {
+      type: "fusion_worker",
+      taskId: task.id,
+      title: task.title,
+      phase: "failed",
+      role: "worker",
+      model: options.workerModel,
+      stepCount: 0,
+      durationMs: refused.durationMs,
+      summary: summarise(refused),
+    });
+    return refused;
   }
 
   // `started` fires when the turn actually begins stepping, not when it
@@ -640,9 +813,16 @@ async function runOneTask(
   // a token is. One event per completion that moved it, and no feed
   // line — it would be one per step, per worker.
   let lastContextTokens = 0;
-  const announceUsage = (contextTokens: number): void => {
-    if (contextTokens <= 0 || contextTokens === lastContextTokens) return;
-    lastContextTokens = contextTokens;
+  // What this worker has spent so far, for its row: tokens always, $
+  // when the worker model is priced, escalations folded in.
+  let spentTokens = 0;
+  let spentUsd = 0;
+  let priced = options.workerPricing !== undefined;
+  const announceUsage = (contextTokens: number, spendMoved = false): void => {
+    const contextMoved =
+      contextTokens > 0 && contextTokens !== lastContextTokens;
+    if (!contextMoved && !spendMoved) return;
+    if (contextMoved) lastContextTokens = contextTokens;
     deps.emitEvent(options.parentSessionId, {
       type: "fusion_worker",
       taskId: task.id,
@@ -650,45 +830,74 @@ async function runOneTask(
       phase: "usage",
       role: "worker",
       model: options.workerModel,
-      contextTokens,
+      ...(lastContextTokens > 0 ? { contextTokens: lastContextTokens } : {}),
+      ...(spentTokens > 0 ? { tokens: spentTokens } : {}),
+      ...(priced ? { spentUsd } : {}),
     });
   };
-  // A worker has no operator: an approval prompt would park the turn
-  // until process exit. Refuse instead, with the reason the brief told
-  // the model to hand back up.
-  deps.approvals.setSessionPolicy(session.id, {
-    onPrompt: "refuse",
-    reason: FUSION_WORKER_APPROVAL_REFUSED,
-  });
-  // …and the half that lets it work at all. The operator answered one
-  // question at the fan-out naming these directories; inside them this
-  // worker writes unprompted. The refuse policy above still catches
-  // everything else, so straying outside the scope comes back as
-  // `needs_orchestrator` — a task to re-delegate, not a dead worker.
-  const writeScope = options.writeScope ?? [];
-  if (writeScope.length > 0) {
-    deps.approvals.fanoutScopes?.grant(session.id, writeScope);
-  }
-  // A file the user declined on the orchestrator's turn stays declined
-  // for its workers: inside the scope or not, a write of it goes to the
-  // gate, which refuses it (`ApprovalGate.followDeclined`).
-  deps.approvals.followDeclined?.(session.id, options.parentSessionId);
-  // The contract's inputs (F51), resolved as this worker's tools will
-  // resolve them: `os.fs.write` on one is refused whatever the brief
-  // says, with no `overwrite` exemption — the orchestrator redeclares.
-  const inputs = resolveContractInputs(
-    options.contract?.inputs ?? [],
-    deps.workingDir,
-  );
-  if (inputs.length > 0) deps.declaredInputs?.declare(session.id, inputs);
+  const addSpend = (tokens: number, usd: number | null): void => {
+    spentTokens += Math.max(0, tokens);
+    if (usd !== null) {
+      spentUsd += usd;
+      priced = true;
+    }
+  };
+  // The worker's session is armed and disarmed the same way for the
+  // local turn and, when it runs, the escalation model's re-run.
+  const armWorkerSession = (id: string): void => {
+    // A worker has no operator: an approval prompt would park the turn
+    // until process exit. Refuse instead, with the reason the brief told
+    // the model to hand back up.
+    // A step no fan-out can authorise (a dangerous command, the agent's
+    // own `.env`) gets a refusal that says so, rather than one inviting
+    // the orchestrator to re-send it with the path and loop.
+    deps.approvals.setSessionPolicy(id, {
+      onPrompt: "refuse",
+      reason: FUSION_WORKER_APPROVAL_REFUSED,
+      reasonFor: workerRefusalFor,
+    });
+    // …and the half that lets it work at all. The operator answered one
+    // question at the fan-out naming these directories; inside them this
+    // worker writes unprompted. The refuse policy above still catches
+    // everything else, so straying outside the scope comes back as
+    // `needs_orchestrator` — a task to re-delegate, not a dead worker.
+    const writeScope = isolated?.writeScope ?? options.writeScope ?? [];
+    if (writeScope.length > 0) {
+      deps.approvals.fanoutScopes?.grant(id, writeScope);
+    }
+    // A file the user declined on the orchestrator's turn stays declined
+    // for its workers: inside the scope or not, a write of it goes to the
+    // gate, which refuses it (`ApprovalGate.followDeclined`).
+    deps.approvals.followDeclined?.(id, options.parentSessionId);
+    // The contract's inputs (F51), resolved as this worker's tools will
+    // resolve them: `os.fs.write` on one is refused whatever the brief
+    // says, with no `overwrite` exemption — the orchestrator redeclares.
+    const inputs = resolveContractInputs(
+      options.contract?.inputs ?? [],
+      workingDir,
+    );
+    if (inputs.length > 0) deps.declaredInputs?.declare(id, inputs);
+  };
+  const disarmWorkerSession = (id: string): void => {
+    // Always: the gate is process-wide and a stale refusal policy keyed
+    // to a dead session is a slow leak, not a visible bug.
+    deps.approvals.clearSessionPolicy(id);
+    deps.approvals.fanoutScopes?.clear(id);
+    // Its declines and the link to the parent's, with nothing else to
+    // drop: a worker never gets a grant of its own.
+    deps.approvals.clearSessionGrants?.(id);
+    deps.declaredInputs?.clear(id);
+  };
+  armWorkerSession(session.id);
 
-  const brief = renderWorkerBrief(task, {
-    workingDir: deps.workingDir,
+  const suffix = options.briefSuffix?.(task.id);
+  const brief = `${renderWorkerBrief(task, {
+    workingDir,
     ...(options.originalRequest === undefined
       ? {}
       : { originalRequest: options.originalRequest }),
     ...(options.contract === undefined ? {} : { contract: options.contract }),
-  });
+  })}${suffix === undefined ? "" : `\n\n${suffix}`}`;
   const declaredFiles = task.files?.length ?? 0;
   // Per-task budgets the orchestrator sized itself, clamped into what
   // this install allows. A task that asked for nothing keeps the
@@ -861,6 +1070,17 @@ async function runOneTask(
   // Why the step half fired, when it did; carried onto the note so the
   // orchestrator re-briefs against the cause, not just the count.
   let stall: string | undefined;
+  // The task tree (ATO-940): the step at which this worker was steered
+  // toward a split proposal, once. It then has `SPLIT_GRACE_STEPS` steps
+  // to reply with one before the hand-back fires as it always did.
+  const mayPropose = options.canProposeSplit?.(task.id) === true;
+  let splitAskedAt: number | undefined;
+  const askForSplit = (cause: "half-budget" | "answer-cut"): boolean => {
+    if (!mayPropose || splitAskedAt !== undefined) return false;
+    const steered = deps.steerWorker?.(session.id, splitSteer(cause)) ?? false;
+    if (steered) splitAskedAt = stepsFinished;
+    return steered;
+  };
   const maybeHandBack = (): void => {
     if (declaredFiles === 0 || wroteSomething || handBack.signal.aborted)
       return;
@@ -872,6 +1092,13 @@ async function runOneTask(
     const pastHalfSteps =
       stepsFinished >= stepThreshold && stalled !== undefined;
     if (!pastHalfSteps && !pastHalfTime) return;
+    if (askForSplit("half-budget")) return;
+    if (
+      splitAskedAt !== undefined &&
+      stepsFinished < splitAskedAt + SPLIT_GRACE_STEPS
+    ) {
+      return;
+    }
     stall = stalled;
     handBack.abort(
       new Error("handed back early: no file written by half the budget"),
@@ -906,6 +1133,162 @@ async function runOneTask(
   // before any step had completed; read once the turn is over.
   let firstCutTokens: number | undefined;
 
+  // Escalation (ATO-942, ATO-66). The person's stop, the advisor that
+  // reads a stuck worker's trace and steers it, and — behind
+  // `escalationReplace` — the re-run of the task on the stronger model.
+  const stopByPerson = new AbortController();
+  const replaceAbort = new AbortController();
+  let escalations = 0;
+  let escalating = false;
+  let replaceRequested = false;
+  const escalationNotes: string[] = [];
+  const target = options.escalation?.target;
+  const targetLabel = target?.model ?? target?.providerId ?? "";
+  const announceEscalation = (summary: string, costUsd?: number): void => {
+    deps.emitEvent(options.parentSessionId, {
+      type: "fusion_worker",
+      taskId: task.id,
+      title: task.title,
+      phase: "escalated",
+      role: "worker",
+      model: targetLabel,
+      summary,
+      ...(costUsd === undefined ? {} : { costUsd }),
+    });
+  };
+  const escalate = async (trigger: EscalationTrigger): Promise<string> => {
+    if (target === undefined || deps.escalationComplete === undefined) {
+      return "not escalated: no configured model other than the worker leg";
+    }
+    if (escalating) return "not escalated: an escalation is already running";
+    if (escalations >= MAX_ESCALATIONS_PER_WORKER) {
+      return `not escalated: this worker was already escalated ${escalations} times`;
+    }
+    const capped = options.shouldStart?.();
+    if (capped !== undefined) return `not escalated: ${capped}`;
+    escalating = true;
+    escalations += 1;
+    announceEscalation(`asking ${targetLabel} for advice (${describeTrigger(trigger)})`);
+    const outcome = await requestAdvice({
+      target,
+      pricing: options.escalation?.pricing,
+      prompt: renderAdvisorPrompt({
+        brief,
+        trigger,
+        findings: collector.findings(),
+      }),
+      complete: deps.escalationComplete,
+      signal: AbortSignal.any([options.signal, stopByPerson.signal]),
+    });
+    escalating = false;
+    if (outcome.costUsd !== null && outcome.costUsd > 0) {
+      options.onEscalationSpend?.(task.id, outcome.costUsd);
+    }
+    if (outcome.costUsd !== null || (outcome.ok && outcome.usage !== undefined)) {
+      addSpend(
+        outcome.ok && outcome.usage !== undefined
+          ? outcome.usage.promptTokens + outcome.usage.completionTokens
+          : 0,
+        outcome.costUsd,
+      );
+      announceUsage(0, true);
+    }
+    if (!outcome.ok) {
+      const line = `escalation to ${targetLabel} not used (${describeTrigger(trigger)}): ${outcome.reason}`;
+      escalationNotes.push(line);
+      announceEscalation(line, outcome.costUsd ?? undefined);
+      return line;
+    }
+    const steered =
+      deps.steerWorker?.(session.id, formatAdvisorSteer(targetLabel, outcome.hint)) ??
+      false;
+    const line = `escalated to ${targetLabel} as advisor (${describeTrigger(trigger)}): ${formatCost(outcome.costUsd)}${steered ? "" : " — the worker's turn had ended, so the hint was not used"}`;
+    escalationNotes.push(line);
+    announceEscalation(line, outcome.costUsd ?? undefined);
+    return line;
+  };
+  /**
+   * An automatic trigger: the first one asks the advisor, a later one
+   * (after a hint did not help) re-runs the task on the stronger model
+   * when the operator turned that on and the model is priced.
+   */
+  const autoEscalate = (trigger: EscalationTrigger): void => {
+    if (target === undefined || !target.auto || replaceRequested) return;
+    if (escalations === 0) {
+      // The stall that triggered it is spent: the hint gets fresh steps
+      // before the stall half of the hand-back may fire.
+      steps.length = 0;
+      void escalate(trigger);
+      return;
+    }
+    if (
+      target.replace &&
+      !escalating &&
+      options.escalation?.pricing !== undefined &&
+      options.shouldStart?.() === undefined
+    ) {
+      replaceRequested = true;
+      replaceAbort.abort(new Error("replaced by the escalation model"));
+    }
+  };
+  // The person's notes to this worker (ATO-568). They ride the same
+  // steering inbox the session's own steers do, keyed by the worker's
+  // ephemeral session id, which its `runTurn` opens on entry and drains
+  // at every step boundary: no second delivery path to keep honest.
+  // Kept here so the row can say how many arrived and how many the turn
+  // handed back unread because it ended first.
+  const personNotes: string[] = [];
+  let personNotesUnread = 0;
+  // Notes sent to each worker session and not yet seen folded into a
+  // step (`steer_applied`). A turn that returns hands its unread notes
+  // back as `undelivered`; one that THROWS hands back nothing, and the
+  // loop's own `finally` drains the inbox into a log line. Without this
+  // ledger a note sent just before the throw was counted as sent and
+  // never as unread, so the orchestrator believed the worker had read
+  // the person's word (ATO-1269).
+  const notesInFlight = new Map<string, string[]>();
+  const steerByPerson = (workerSessionId: string, text: string): boolean => {
+    if (text.trim().length === 0) return false;
+    const note = formatPersonSteer(text);
+    const steered = deps.steerWorker?.(workerSessionId, note) ?? false;
+    if (steered) {
+      personNotes.push(note);
+      const pending = notesInFlight.get(workerSessionId) ?? [];
+      pending.push(note);
+      notesInFlight.set(workerSessionId, pending);
+    }
+    return steered;
+  };
+  const markNoteRead = (workerSessionId: string, event: AgentLoopEvent): void => {
+    if (event.type !== "steer_applied") return;
+    const pending = notesInFlight.get(workerSessionId);
+    const at = pending?.indexOf(event.text) ?? -1;
+    if (pending !== undefined && at >= 0) pending.splice(at, 1);
+  };
+  const countUnreadNotes = (
+    workerSessionId: string,
+    undelivered: readonly string[] | undefined,
+  ): void => {
+    notesInFlight.delete(workerSessionId);
+    if (undelivered === undefined) return;
+    personNotesUnread += undelivered.filter((text) => personNotes.includes(text)).length;
+  };
+  // The throw path: every note this session took and never folded into
+  // a step went unread.
+  const countNotesLostToThrow = (workerSessionId: string): void => {
+    personNotesUnread += notesInFlight.get(workerSessionId)?.length ?? 0;
+    notesInFlight.delete(workerSessionId);
+  };
+  const unregisterLive = deps.liveWorkers?.register(
+    options.parentSessionId,
+    task.id,
+    {
+      stop: () => stopByPerson.abort(new Error("stopped by the person")),
+      escalate: () => escalate({ kind: "manual" }),
+      steer: (text) => steerByPerson(session.id, text),
+    },
+  );
+
   let result: WorkerTaskResult;
   try {
     const turn = await deps.runTurn(session, brief, {
@@ -919,7 +1302,13 @@ async function runOneTask(
         ? {}
         : { reasoningEffort: options.workerReasoning }),
       ...(replyCap === undefined ? {} : { maxOutputTokens: replyCap }),
-      signal: AbortSignal.any([options.signal, timeLimit, handBack.signal]),
+      signal: AbortSignal.any([
+        options.signal,
+        timeLimit,
+        handBack.signal,
+        stopByPerson.signal,
+        replaceAbort.signal,
+      ]),
       eventHook: (event) => {
         // The first token — not `turn_started`, which fires before the
         // request is even sent — is what ends the queue wait.
@@ -941,6 +1330,10 @@ async function runOneTask(
           currentFingerprints = [];
           currentBusy = false;
           stepsFinished += 1;
+          const stalled = detectStall(steps);
+          if (stalled !== undefined) {
+            autoEscalate({ kind: "stall", detail: stalled });
+          }
           maybeHandBack();
         }
         if (
@@ -952,12 +1345,33 @@ async function runOneTask(
           // a batched step, so the dedupe above earns its keep.
           announceStart();
           announceTool(event.event.call.tool);
+          try {
+            options.onWorkerTool?.(task.id, event.event.call.tool);
+          } catch {
+            // An observer never takes the worker down.
+          }
         }
         if (
           event.type === "llm_event" &&
           event.event.type === "llm_completed"
         ) {
-          announceUsage(event.event.completion.timing?.promptTokens ?? 0);
+          const completed = event.event.completion;
+          if (completed.usage !== undefined) {
+            options.onWorkerUsage?.(task.id, completed.usage);
+            addSpend(
+              completed.usage.promptTokens + completed.usage.completionTokens,
+              options.workerPricing === undefined
+                ? null
+                : estimateUsageCostUsd(completed.usage, options.workerPricing),
+            );
+          } else {
+            addSpend(
+              (completed.timing?.promptTokens ?? 0) +
+                (completed.timing?.predictedTokens ?? 0),
+              null,
+            );
+          }
+          announceUsage(completed.timing?.promptTokens ?? 0, true);
           // Counted rather than read off `finish_reason`: llama-server's
           // own endpoint reports none, and the count is what says the
           // cap, not the context window, was the wall.
@@ -974,6 +1388,11 @@ async function runOneTask(
             spent + REPLY_CAP_SLACK_TOKENS >= timeFittedCap
           ) {
             firstCutTokens = spent;
+            askForSplit("answer-cut");
+            autoEscalate({
+              kind: "first-answer-cut",
+              detail: `${spent} tokens against a time-fitted cap of ${timeFittedCap}`,
+            });
           }
         }
         if (
@@ -989,9 +1408,11 @@ async function runOneTask(
             currentBusy = true;
           }
         }
+        markNoteRead(session.id, event);
         collector.observe(event);
       },
     });
+    countUnreadNotes(session.id, turn.undelivered);
     const timedOut = turn.reason === "cancelled" && hitTimeLimit();
     timedOutOutcome = timedOut;
     queuedOutcome = turn.reason === "cancelled" && hitQueueLimit();
@@ -1012,6 +1433,7 @@ async function runOneTask(
         : {}),
     });
   } catch (error) {
+    countNotesLostToThrow(session.id);
     const timedOut = hitTimeLimit();
     timedOutOutcome = timedOut;
     queuedOutcome = hitQueueLimit();
@@ -1037,16 +1459,158 @@ async function runOneTask(
     });
   } finally {
     settled = true;
+    unregisterLive?.();
     clearTimeout(queueTimer);
     if (wallTimer !== undefined) clearTimeout(wallTimer);
-    // Always: the gate is process-wide and a stale refusal policy keyed
-    // to a dead session is a slow leak, not a visible bug.
-    deps.approvals.clearSessionPolicy(session.id);
-    deps.approvals.fanoutScopes?.clear(session.id);
-    // Its declines and the link to the parent's, with nothing else to
-    // drop: a worker never gets a grant of its own.
-    deps.approvals.clearSessionGrants?.(session.id);
-    deps.declaredInputs?.clear(session.id);
+    disarmWorkerSession(session.id);
+  }
+
+  // The advisor's hint did not help and the operator allowed the
+  // replacement path (`escalationReplace`): the task runs again on the
+  // escalation model, with what the local worker found, under the
+  // per-escalation cap and the turn's own (ATO-942).
+  const pricing = options.escalation?.pricing;
+  if (
+    replaceRequested &&
+    target !== undefined &&
+    pricing !== undefined &&
+    !options.signal.aborted &&
+    !stopByPerson.signal.aborted
+  ) {
+    const replaceSession = deps.createEphemeralSession(
+      { parentSessionId: options.parentSessionId, taskId: task.id },
+      sessionDir,
+    );
+    armWorkerSession(replaceSession.id);
+    const replaceCollector = new WorkerRunCollector();
+    const capAbort = new AbortController();
+    const replaceTimer = setTimeout(
+      () => capAbort.abort(new Error("time limit")),
+      timeoutMs,
+    );
+    replaceTimer.unref?.();
+    let replaceSpent = 0;
+    const unregisterReplace = deps.liveWorkers?.register(
+      options.parentSessionId,
+      task.id,
+      {
+        stop: () => stopByPerson.abort(new Error("stopped by the person")),
+        escalate: async () => "not escalated: the task is already running on the escalation model",
+        steer: (text) => steerByPerson(replaceSession.id, text),
+      },
+    );
+    announceEscalation(
+      `re-running the task on ${targetLabel}: the advisor's hint did not unstick the local worker`,
+    );
+    const localFindings = collector.findings();
+    try {
+      const turn = await deps.runTurn(
+        replaceSession,
+        `${brief}\n\n## Already tried\nA local worker worked on this task first and stayed stuck after advice. What it found: ${localFindings}`,
+        {
+          origin: "fusion",
+          providerId: target.providerId,
+          maxSteps: stepBudget.value,
+          taskMaxDurationMs: timeoutMs,
+          toolFilter: isWorkerVisibleTool,
+          toolRole: WORKER_TOOL_ROLE,
+          signal: AbortSignal.any([
+            options.signal,
+            stopByPerson.signal,
+            capAbort.signal,
+          ]),
+          eventHook: (event) => {
+            markNoteRead(replaceSession.id, event);
+            replaceCollector.observe(event);
+            if (
+              event.type === "llm_event" &&
+              event.event.type === "llm_completed" &&
+              event.event.completion.usage !== undefined
+            ) {
+              const usd = estimateUsageCostUsd(
+                event.event.completion.usage,
+                pricing,
+              );
+              replaceSpent += usd;
+              options.onEscalationSpend?.(task.id, usd);
+              addSpend(
+                event.event.completion.usage.promptTokens +
+                  event.event.completion.usage.completionTokens,
+                usd,
+              );
+              announceUsage(0, true);
+              if (
+                replaceSpent >= target.maxUsd ||
+                options.shouldStart?.() !== undefined
+              ) {
+                capAbort.abort(new Error("escalation cap"));
+              }
+            }
+          },
+        },
+      );
+      countUnreadNotes(replaceSession.id, turn.undelivered);
+      result = replaceCollector.finish({
+        id: task.id,
+        title: task.title,
+        reason: turn.reason,
+        stepCount: turn.stepCount,
+        durationMs: Date.now() - startedAt,
+        ...(turn.stopCause === undefined ? {} : { stopCause: turn.stopCause }),
+        ...(turn.reason === "failed" && turn.session.lastError
+          ? { error: turn.session.lastError }
+          : {}),
+      });
+    } catch (error) {
+      countNotesLostToThrow(replaceSession.id);
+      result = replaceCollector.finish({
+        id: task.id,
+        title: task.title,
+        reason: isAbortError(error) ? "cancelled" : null,
+        stepCount: 0,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      clearTimeout(replaceTimer);
+      unregisterReplace?.();
+      disarmWorkerSession(replaceSession.id);
+    }
+    // The local turn's own endings no longer describe the row.
+    timedOutOutcome = false;
+    queuedOutcome = false;
+    stoppedByHandBack = false;
+    const line = `re-run on ${targetLabel} after the local worker stayed stuck: ${formatCost(replaceSpent)}${capAbort.signal.aborted ? " — stopped at the escalation or turn cap" : ""}`;
+    escalationNotes.push(line);
+    announceEscalation(line, replaceSpent);
+  }
+  if (stopByPerson.signal.aborted) {
+    escalationNotes.push("stopped by the person");
+  }
+  if (personNotes.length > 0) {
+    // The orchestrator reads the row: a worker that changed course on
+    // the person's word should not look like one that ignored its brief.
+    const sent = `the person sent this worker ${personNotes.length} note${personNotes.length === 1 ? "" : "s"} while it ran`;
+    escalationNotes.push(
+      personNotesUnread === 0
+        ? sent
+        : `${sent}; ${personNotesUnread} arrived after its last step and ${personNotesUnread === 1 ? "was" : "were"} not read`,
+    );
+  }
+
+  // A local worker that ended by an abort — its clock, its queue wait,
+  // its hand-back or the operator — may have left the server wedged
+  // (ATO-917); the next local dispatch asks the server first.
+  if (
+    options.localLeg === true &&
+    (timedOutOutcome ||
+      queuedOutcome ||
+      stoppedByHandBack ||
+      options.signal.aborted)
+  ) {
+    deps.localLegHealth?.noteCut(
+      `task ${task.id} was ${timedOutOutcome ? "timed out" : queuedOutcome ? "never served" : stoppedByHandBack ? "handed back" : "cancelled"}`,
+    );
   }
 
   // How long the server took to say anything. The one number that tells
@@ -1064,6 +1628,13 @@ async function runOneTask(
   // remedy for that is a longer deadline, not a bigger step budget.
   if (timedOutOutcome) {
     result = { ...result, status: "timeout" };
+  }
+
+  if (escalationNotes.length > 0) {
+    result = {
+      ...result,
+      notes: [...(result.notes ?? []), ...escalationNotes],
+    };
   }
 
   // A budget the orchestrator asked for and did not get is something it
@@ -1192,7 +1763,12 @@ async function runOneTask(
   // that wrote nothing at all is `no_changes`. Only for statuses that
   // still claim some work; a failed or cancelled task is expected to
   // have left its files missing.
+  // A worker that proposed a split (ATO-940) wrote nothing by design:
+  // its files are its children's, and the delegate checks them on the
+  // parent once they ran.
+  const proposedSplit = mayPropose && hasSplitProposal(result.reply);
   if (
+    !proposedSplit &&
     task.files !== undefined &&
     task.files.length > 0 &&
     (result.status === "ok" ||
@@ -1201,7 +1777,7 @@ async function runOneTask(
   ) {
     const report = await inspectDeclaredFiles(
       task.files,
-      deps.workingDir,
+      workingDir,
       startedAt,
     );
     result = applyNoChangesRule(

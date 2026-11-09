@@ -154,14 +154,16 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(phases.slice(0, 3)).toEqual(["start", "started", "catalog"]);
     expect(sampling).toHaveBeenCalledWith({ llamaServerClient: input.llama, server: "*" });
     const names = registration.mock.calls.map(([tool]) => tool.name);
-    expect(names).toEqual(["mcp.resource.list", "mcp.resource.read", "mcp.prompt.list", "mcp.prompt.get"]);
+    // `tool.search` (ATO-558) is registered once the descriptor list
+    // exists, and `tool.view` again beside it, search-aware.
+    expect(names).toEqual(["mcp.resource.list", "mcp.resource.read", "mcp.prompt.list", "mcp.prompt.get", "tool.search", "tool.view"]);
     const refresh = owner.createRefreshMcp(); await refresh(); await refresh();
-    expect(registration).toHaveBeenCalledTimes(4);
+    expect(registration).toHaveBeenCalledTimes(6);
   });
 
   it("updates grammar from the immutable baseline after add/remove while an external snapshot stays unchanged", async () => {
     const { input } = deps(); const owner = await connect(input); const snapshot = owner.getGrammar();
-    expect(input.toolRegistry.list()).toHaveLength(0);
+    expect(input.toolRegistry.list().map(tool => tool.name)).toEqual(["tool.search", "tool.view"]);
     await owner.mcpManager.addServerLive(disabledServer);
     const list = vi.spyOn(owner.mcpManager, "listAllToolMeta").mockReturnValue([meta("first")]);
     const refresh = owner.createRefreshMcp(); await refresh();
@@ -172,7 +174,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     await owner.mcpManager.removeServerLive("disabled"); list.mockReturnValue([]); await refresh();
     expect(owner.getGrammar()).toBe(grammar);
     expect(owner.effectiveToolDescriptors().some(tool => tool.name.startsWith("mcp."))).toBe(false);
-    expect(input.toolRegistry.list()).toHaveLength(4);
+    expect(input.toolRegistry.list()).toHaveLength(5);
   });
 
   it("hands every MCP tool-name rule it applies to the profile manager's hook (ATO-1029)", async () => {
@@ -218,6 +220,33 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(owner.effectiveToolDescriptors().map(tool => tool.name)).toEqual(initial.map(tool => tool.name));
   });
 
+  it("tool search (ATO-558): auto defers non-core tools on a small window, off never, and tool.search loads them", async () => {
+    const { input } = deps();
+    let window: number | null = 131_072;
+    const owner = await connect({ ...input, resolveContextWindow: () => window });
+    const wide = owner.effectiveToolDescriptors();
+    expect(wide.some(tool => tool.name === "tool.search")).toBe(false);
+    expect(owner.effectiveToolDescriptors()).toBe(wide);
+    window = 16_384;
+    const small = owner.effectiveToolDescriptors();
+    expect(small).not.toBe(wide);
+    expect(small.find(tool => tool.name === "tool.search")?.tier ?? "frequent").toBe("frequent");
+    expect(small.find(tool => tool.name === "os.fs.read")).toBe(wide.find(tool => tool.name === "os.fs.read"));
+    const git = small.find(tool => tool.name === "os.git.status");
+    if (git) expect(git.tier).toBe("rare");
+    expect(owner.effectiveToolDescriptors()).toBe(small);
+    const search = input.toolRegistry.get("tool.search");
+    const result = await search.run({ query: "git status" }, { workingDir: directory, sessionId: "s", stepIndex: 0, signal: new AbortController().signal });
+    expect(result.summary).toContain("os.git.status");
+    expect((result.details.toolsLoaded as Array<{ name: string }>).map(t => t.name)).toContain("os.git.status");
+    // `os.git.status` is frequent in the static catalog; deferred, `tool.view` loads it by name.
+    const view = input.toolRegistry.get("tool.view");
+    const viewed = await view.run({ name: "os.git.status" }, { workingDir: directory, sessionId: "s", stepIndex: 0, signal: new AbortController().signal });
+    expect((viewed.details.toolLoaded as { name: string }).name).toBe("os.git.status");
+    input.config.agent.tools = { search: "off" };
+    expect(owner.effectiveToolDescriptors().some(tool => tool.name === "tool.search")).toBe(false);
+  });
+
   it("uses the latest channel handler and retains isolated sampling slot wiring", async () => {
     const { input } = deps(); input.config.mcp.servers = [disabledServer];
     const oldHandler = vi.fn(), nextHandler = vi.fn();
@@ -259,7 +288,7 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     registerRuntimeFusionAndReadScope({ config, toolRegistry, approvals, dangerous, declaredInputs: new osTools.DeclaredInputsRegistry(),
       resolveOriginalRequest, runTurn: async () => externalOperation(), createEphemeralSession: () => createEmptySessionState({ id: "worker", workingDir: directory }),
       prepareLocalLink: async () => {}, emitAgentLoopEventFor: () => {}, resolveCurrentRunMode: () => resolveRunMode(resolveLlmConfig(config)),
-      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }) }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
+      providerRegistry: { getProvider: () => undefined }, llama: { measuredTokensPerSecond: () => null, fetchSlots: async () => ({ slots: [] }), probeHealth: async () => "answered" as const }, slotManager: { poolSize: () => 2 }, workingDir: directory, logger });
     const wired = builder.mock.calls[0]?.[0]; const protectedReads = confinement.mock.calls[0]?.[1];
     if (!wired || !protectedReads) throw new Error("late tool phase missing");
     expect(wired.approvals).toBe(approvals); expect(wired.approvalRequired).toBe(true);

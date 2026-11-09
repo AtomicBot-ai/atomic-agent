@@ -60,6 +60,7 @@ describe("GET /api/capabilities", () => {
     expect(body.agent.approvalDecisions).toEqual([
       "allow-once",
       "allow-in-chat",
+      "allow-always",
       "deny",
     ]);
   });

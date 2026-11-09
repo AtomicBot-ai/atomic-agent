@@ -14,6 +14,7 @@ import type {
   VisionResult,
 } from "../llm-provider.js";
 import { VisionUnsupportedError } from "../llm-provider.js";
+import type { RateLimitWindow } from "../rate-limits.js";
 import type { ToolCallAdapter } from "../adapters/tool-call-adapter.js";
 import type { CliAdapterDescriptor } from "./cli-adapter-descriptor.js";
 import { resolveCliBinary } from "./resolve-cli-binary.js";
@@ -185,6 +186,7 @@ export class SubscriptionCliProvider implements LlmProvider {
     const lines = this.streamCli(this.runOptions(args, request));
     let final: string | null = null;
     let sawDelta = false;
+    let rateLimits: readonly RateLimitWindow[] | undefined;
 
     for await (const line of lines) {
       const event = this.descriptor.parseStreamEvent(line);
@@ -195,13 +197,20 @@ export class SubscriptionCliProvider implements LlmProvider {
         final = event.raw;
       } else if (event.kind === "notice") {
         this.onNotice?.(event.message);
+      } else if (event.kind === "rate_limit") {
+        rateLimits = mergeWindows(rateLimits, event.windows);
+        if (event.notice) this.onNotice?.(event.notice);
       }
     }
 
     if (final === null) {
       throw new Error(`${this.binary} stream ended without a result envelope`);
     }
-    const result = this.descriptor.parseResult(final, this.model);
+    const parsed = this.descriptor.parseResult(final, this.model);
+    const result: CompletionResult =
+      rateLimits === undefined
+        ? parsed
+        : { ...parsed, rateLimits: mergeWindows(parsed.rateLimits, rateLimits) };
     // Safety net for a stream schema we do not control: if no delta was
     // recognised, emit the authoritative text once so a mismatch
     // degrades to buffered behaviour instead of an empty turn.
@@ -293,4 +302,19 @@ export class SubscriptionCliProvider implements LlmProvider {
       ...(request.signal ? { signal: request.signal } : {}),
     };
   }
+}
+
+/**
+ * Newer readings replace older ones of the same window; a window the
+ * newer batch does not mention keeps its last reading (the CLI reports
+ * one window per `rate_limit_event`).
+ */
+function mergeWindows(
+  older: readonly RateLimitWindow[] | undefined,
+  newer: readonly RateLimitWindow[],
+): readonly RateLimitWindow[] {
+  if (!older || older.length === 0) return newer;
+  const key = (w: RateLimitWindow) => `${w.scope}/${w.name}`;
+  const fresh = new Set(newer.map(key));
+  return [...older.filter((w) => !fresh.has(key(w))), ...newer];
 }

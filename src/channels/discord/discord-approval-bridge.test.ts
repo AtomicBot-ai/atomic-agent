@@ -73,6 +73,72 @@ describe("buttonsFor", () => {
   });
 });
 
+describe("Allow always from Discord (ATO-1142)", () => {
+  const ALWAYS: ApprovalRequest = {
+    ...REQUEST,
+    preview: "git status",
+    commandShape: "git",
+    commandArgv: ["git", "status"],
+    workdir: "/work/app",
+  };
+
+  function makeAlwaysBridge(canGrantAlways: boolean) {
+    const api = {
+      sendMessage: vi.fn(async () => "msg-1"),
+      updateInteraction: vi.fn(async () => undefined),
+      editMessage: vi.fn(async () => undefined),
+    };
+    const approvals = { resolve: vi.fn(() => true), canGrantAlways: () => canGrantAlways };
+    const bridge = new DiscordApprovalBridge({
+      api: api as never,
+      approvals,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() } as never,
+      ownerUserIds: () => [OWNER],
+    });
+    return { bridge, api, approvals };
+  }
+
+  it("adds a third button labelled with the rule when the gate offers it", async () => {
+    const { bridge, api } = makeAlwaysBridge(true);
+    bridge.handlerFor("c1")(ALWAYS);
+    await new Promise((r) => setImmediate(r));
+    const rows = (api.sendMessage.mock.calls[0] as unknown[])[2] as ReturnType<typeof buttonsFor>;
+    expect(rows[0]?.components[2]).toMatchObject({
+      label: 'Always allow "git status" in this project',
+      custom_id: "atomic:approve:always:ap-1",
+    });
+  });
+
+  it("posts only two buttons when it is not offered", async () => {
+    const { bridge, api } = makeAlwaysBridge(false);
+    bridge.handlerFor("c1")(ALWAYS);
+    await new Promise((r) => setImmediate(r));
+    const rows = (api.sendMessage.mock.calls[0] as unknown[])[2] as ReturnType<typeof buttonsFor>;
+    expect(rows[0]?.components).toHaveLength(2);
+  });
+
+  it("resolves the always click as an approval with grant always", async () => {
+    const { bridge, approvals } = makeAlwaysBridge(true);
+    bridge.handlerFor("c1")(ALWAYS);
+    await new Promise((r) => setImmediate(r));
+    expect(await bridge.handleInteraction(click("always", OWNER))).toBe(true);
+    expect(approvals.resolve).toHaveBeenCalledWith({
+      approvalId: "ap-1",
+      approved: true,
+      reason: "approved from Discord",
+      grant: "always",
+    });
+  });
+
+  it("ignores an always click for a prompt that never offered it", async () => {
+    const { bridge, approvals } = makeAlwaysBridge(false);
+    bridge.handlerFor("c1")(ALWAYS);
+    await new Promise((r) => setImmediate(r));
+    await bridge.handleInteraction(click("always", OWNER));
+    expect(approvals.resolve).not.toHaveBeenCalled();
+  });
+});
+
 describe("DiscordApprovalBridge", () => {
   it("posts the prompt with buttons into the originating channel", async () => {
     const { bridge, api } = makeBridge();
@@ -182,5 +248,42 @@ describe("DiscordApprovalBridge", () => {
     bridge.handlerFor("c1")(REQUEST);
     await new Promise((r) => setImmediate(r));
     expect(approvals.resolve).not.toHaveBeenCalled();
+  });
+});
+
+describe("DiscordApprovalBridge and a dangerous shell command (ATO-1224)", () => {
+  const DANGEROUS: ApprovalRequest = {
+    ...REQUEST,
+    approvalId: "ap-rm",
+    category: "shell_dangerous",
+    reason: "recursive remove",
+    preview: "rm -rf build",
+  };
+
+  it("posts approve and deny only, and no click grants anything", async () => {
+    const { bridge, api, approvals } = makeBridge();
+    bridge.handlerFor("c1")(DANGEROUS);
+    await new Promise((r) => setImmediate(r));
+    const rows = (api.sendMessage.mock.calls[0] as unknown[])[2] as ReturnType<
+      typeof buttonsFor
+    >;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.components.map((c) => c.custom_id)).toEqual([
+      "atomic:approve:yes:ap-rm",
+      "atomic:approve:no:ap-rm",
+    ]);
+
+    // A forged grant verb is not a yes.
+    await bridge.handleInteraction(click("session", OWNER, "ap-rm"));
+    expect(approvals.resolve).toHaveBeenLastCalledWith({
+      approvalId: "ap-rm",
+      approved: false,
+    });
+    await bridge.handleInteraction(click("yes", OWNER, "ap-rm"));
+    expect(approvals.resolve).toHaveBeenLastCalledWith({
+      approvalId: "ap-rm",
+      approved: true,
+      reason: "approved from Discord",
+    });
   });
 });

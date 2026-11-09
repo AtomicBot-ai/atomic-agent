@@ -14,6 +14,11 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.move",
 ]);
 
+/** One of the tools whose success means the workspace moved, landed or not. */
+export function isWriteTool(tool: string): boolean {
+  return WRITE_TOOLS.has(tool);
+}
+
 /** A write, edit or patch that landed — the reset event for the outcome-repeat detector. */
 export function isSuccessfulWrite(
   tool: string,

@@ -1,5 +1,6 @@
 import { validRollingSummary, validSessionCompaction } from "./session-compaction.js";
 import type { SessionState } from "./session-state.js";
+import { readPlanSnapshot } from "../agent/plan/plan-snapshot.js";
 
 /**
  * Fill in the fields a parsed payload may lack. Rows written before a
@@ -36,5 +37,12 @@ export function normalizeSessionState(raw: unknown): SessionState {
   // A stale rolling summary (edited, forked or already compacted history) is
   // routine and only costs speed at the next compaction: dropped silently.
   if (normalized.rollingSummary && !validRollingSummary(normalized)) delete normalized.rollingSummary;
+  // The live plan (ATO-486) is drawn on reopen: a malformed one is dropped
+  // rather than crashing the checklist.
+  if (normalized.plan !== undefined) {
+    const plan = readPlanSnapshot(normalized.plan);
+    if (plan === null) delete normalized.plan;
+    else normalized.plan = plan;
+  }
   return normalized;
 }

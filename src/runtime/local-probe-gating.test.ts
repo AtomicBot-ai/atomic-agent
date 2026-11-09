@@ -403,6 +403,9 @@ describe("issue #112 — local probe gating at CLI bootstrap", () => {
           },
           LOCAL_EMBED_PROVIDER,
         ],
+        // The person put the local model behind the cloud one (ATO-349:
+        // it is no longer appended unasked).
+        fallback: { appendLocal: true },
       },
     });
     const runtime = await boot();

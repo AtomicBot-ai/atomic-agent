@@ -40,16 +40,33 @@ const TOOL_CARDS_ANNOTATION_ROWS = 1;
  * why the row is charged here and not in `estimateStreamingTailHeight`.
  */
 const MESSAGE_FOOTER_ROWS = 1;
+/** `TurnFoldLine`: a `height={1}` row that truncates, plus its `marginTop`. */
+const TURN_FOLD_LINE_ROWS = 2;
 
 function bodyLines(text: string): number {
   if (text.length === 0) return 1;
   return text.split("\n").length;
 }
 
-export function estimateMessageHeight(message: ChatMessage): number {
+/**
+ * How a finished turn's steps are drawn (ATO-963): `none` — no fold, the
+ * message renders as it always did; `closed` — one summary line instead of
+ * the reasoning bubble and tool cards; `open` — the summary line above the
+ * steps.
+ */
+export type MessageFoldState = "none" | "closed" | "open";
+
+export function estimateMessageHeight(
+  message: ChatMessage,
+  fold: MessageFoldState = "none",
+): number {
   const bodyRows = bodyLines(message.text);
   let total = bodyRows + BUBBLE_OVERHEAD_ROWS + MESSAGE_FOOTER_ROWS;
   if (message.role === "assistant") {
+    if (fold !== "none") total += TURN_FOLD_LINE_ROWS;
+    // A folded turn's reply drops its "N tool steps" footer: the fold
+    // line counts the tools.
+    if (fold === "closed") return total;
     if (message.reasoningBlocks && message.reasoningBlocks.length > 0) {
       total += REASONING_BUBBLE_OVERHEAD_ROWS + 1;
     }
@@ -63,7 +80,7 @@ export function estimateMessageHeight(message: ChatMessage): number {
     if (toolCardsAnnotationParts(visibleToolCards) !== null) {
       total += TOOL_CARDS_ANNOTATION_ROWS;
     }
-    if ((message.toolSteps ?? 0) > 0) {
+    if (fold === "none" && (message.toolSteps ?? 0) > 0) {
       total += ASSISTANT_FOOTER_ROWS;
     }
   }

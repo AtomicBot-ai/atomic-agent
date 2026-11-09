@@ -9,8 +9,13 @@ import type { AgentRuntime } from "../runtime/bootstrap.js";
 import { describeMemoryEmbeddingReconnect } from "./local-models/describe-memory-embedding-reconnect.js";
 import {
   isFailedSessionStatus,
+  recordPlan,
   type SessionState,
 } from "../session/session-state.js";
+import { planHasOpenItems } from "../agent/plan/plan-snapshot.js";
+import { seedPlanFromReply } from "../agent/plan/plan-seed.js";
+import { previousReplyText as lastAssistantReplyText } from "../prompt/request-section.js";
+import { EXECUTE_PLAN_MESSAGE } from "./coding-mode/plan-handoff.js";
 import type { SessionSummary } from "../session/session-summary.js";
 import {
   sessionSummaryCursorAfter,
@@ -63,6 +68,7 @@ import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrator.js";
 import { SwarmOrchestrator } from "./swarm/swarm-orchestrator.js";
+import { PluginsOrchestrator } from "./plugins/plugins-orchestrator.js";
 import { IssueReportOrchestrator } from "./issue-report/index.js";
 import {
   RAIL_PAGE_SIZE,
@@ -72,6 +78,9 @@ import {
 } from "./session-rail/index.js";
 import type { TuiEventBus } from "./tui-app.js";
 import { formatAgentErrorForChat } from "./chat/format-agent-error-for-chat.js";
+import { readGoalState, type GoalState } from "../agent/goal/index.js";
+import type { GoalCommand } from "./commands/goal-command.js";
+import { activeGoalSpec, createGoalProgressReporter, runGoalCommand } from "./goal/goal-commands.js";
 import {
   ChatPullMirror,
   evaluateLocalTurnGate,
@@ -79,6 +88,7 @@ import {
   type LocalTurnGateFacts,
 } from "./local-turn-gate.js";
 import { turnsToMessages } from "./chat/turns-to-messages.js";
+import { formatSessionFusionNotice } from "./fusion-resume-notice.js";
 import { createHeapGuard } from "../runtime/heap-guard.js";
 import type { SessionPickerEntry, TuiState } from "./tui-state.js";
 
@@ -289,6 +299,7 @@ export class ChatOrchestrator {
   public readonly privacy: PrivacyOrchestrator;
   public readonly integrations: IntegrationsOrchestrator;
   public readonly swarm: SwarmOrchestrator;
+  public readonly plugins: PluginsOrchestrator;
   public readonly issueReport: IssueReportOrchestrator;
   private readonly sessionRail: SessionRailOrchestrator;
   private readonly stopWatchingRoute: (() => void) | null;
@@ -401,6 +412,7 @@ export class ChatOrchestrator {
       this.telegram,
     );
     this.swarm = new SwarmOrchestrator(runtime, bus);
+    this.plugins = new PluginsOrchestrator(bus);
     this.issueReport = new IssueReportOrchestrator(runtime, bus, {
       currentSessionId: () => this.session?.id ?? null,
     });
@@ -1001,6 +1013,9 @@ export class ChatOrchestrator {
       // turn (absent on threads that never ran one — the reducer then
       // resets the chip rather than keeping the old thread's figure).
       ...(loaded.contextUsage ? { contextUsage: loaded.contextUsage } : {}),
+      // The live checklist this thread persisted (ATO-486).
+      ...(loaded.plan ? { plan: loaded.plan } : {}),
+      ...(loaded.sessionUsage ? { sessionUsage: loaded.sessionUsage } : {}),
     });
     // The stored snapshot above misses everything the still-running
     // turn has said (a turn saves only when it finishes — for a thread
@@ -1020,9 +1035,17 @@ export class ChatOrchestrator {
     // Each thread keeps the model it ran on: entering one whose stamp
     // differs from the active provider/model re-applies it.
     this.restoreSessionModel(loaded);
+    this.showGoal(readGoalState(loaded.metadata));
     // After `session_switched`, so they land in the new transcript
     // rather than the one that was just replaced.
     for (const notice of notices) this.notify(notice);
+    // A fusion run of this thread that a restart cut off (ATO-617).
+    const fusionNotice = formatSessionFusionNotice(
+      this.runtime.fusionRuns?.listResumable(loaded.id) ?? [],
+    );
+    if (fusionNotice !== null) {
+      this.bus.emit({ type: "system_message", text: fusionNotice });
+    }
     // A turn parked on an approval in THIS thread asked its question
     // while another transcript was on screen, where it surfaced only as
     // a pointer notice (approval keys never answer for an off-screen
@@ -1062,6 +1085,36 @@ export class ChatOrchestrator {
         id: plan.providerId,
       });
     }
+  }
+
+  /**
+   * Seed the live plan from the plan-mode reply the operator just
+   * approved (ATO-486). Only for the "run it" message, only when the
+   * reply holds a list, and never over a plan the model is already
+   * keeping open: that one is newer than the prose. The session is
+   * saved only when it is already persisted; a deferred one carries the
+   * seed into its first save.
+   */
+  private seedPlanForExecution(text: string): void {
+    const session = this.session;
+    if (!session || text !== EXECUTE_PLAN_MESSAGE) return;
+    if (planHasOpenItems(session.plan)) return;
+    const reply = lastAssistantReplyText(session.turns);
+    if (reply === undefined) return;
+    const seeded = seedPlanFromReply(reply, Date.now());
+    if (seeded === null) return;
+    this.session = recordPlan(session, seeded);
+    if (this.runtime.sessionStore.load(session.id) !== null) {
+      this.runtime.sessionStore.save(this.session);
+    }
+    this.bus.emit({
+      type: "agent_event",
+      sessionId: session.id,
+      event: {
+        type: "llm_event",
+        event: { type: "plan_updated", plan: seeded, stepIndex: -1 },
+      },
+    });
   }
 
   /**
@@ -1296,6 +1349,7 @@ export class ChatOrchestrator {
       type: "runtime_info",
       line: `new session ${this.session.id} created`,
     });
+    this.showGoal(null);
     for (const notice of notices) this.notify(notice);
   }
 
@@ -1548,6 +1602,11 @@ export class ChatOrchestrator {
       return;
     }
     if (gate.kind === "notice") this.notify(gate.text);
+    // "Run it" on an approved plan: its steps become the live checklist
+    // before the turn starts (ATO-486). A model that calls `plan.update`
+    // replaces it; one that never does still leaves the operator a
+    // checklist of exactly the steps it proposed.
+    this.seedPlanForExecution(text);
     // The operator can switch threads while this runs; every
     // this-session decision below re-checks against the id the turn
     // started on rather than trusting the live pointer.
@@ -1597,7 +1656,18 @@ export class ChatOrchestrator {
       controller.signal.throwIfAborted();
       this.waitingModelMessages.delete(turnSessionId);
       dispatched = true;
+      // An active goal (ATO-451) turns this message into goal rounds.
+      const goal = activeGoalSpec(turnSession);
       const result = await this.runtime.runTurn(turnSession, text, {
+        ...(goal === undefined
+          ? {}
+          : {
+              goal,
+              onGoalProgress: createGoalProgressReporter(
+                (line) => { if (this.session?.id === turnSessionId) this.bus.emit({ type: "system_message", text: line }); },
+                (state) => { if (this.session?.id === turnSessionId) this.showGoal(state); },
+              ),
+            }),
         // Only an operator-given ceiling. Absent, the runtime takes the
         // leg length and the task ceiling from config.
         ...(this.options.maxSteps === undefined
@@ -1614,6 +1684,7 @@ export class ChatOrchestrator {
       // operator switched to — its state is already saved to its own
       // session by `executeTurn`.
       if (attached) this.session = result.session;
+      if (attached && goal !== undefined) this.showGoal(readGoalState(result.session.metadata));
       // A cancelled turn means the operator stopped the agent — Esc,
       // Ctrl+C or /abort. Re-queueing its undelivered steers here would
       // make the post-abort drain START a turn out of them: the exact
@@ -1719,6 +1790,10 @@ export class ChatOrchestrator {
         messages: turnsToMessages(this.session.turns),
         ...(this.session.contextUsage
           ? { contextUsage: this.session.contextUsage }
+          : {}),
+        ...(this.session.plan ? { plan: this.session.plan } : {}),
+        ...(this.session.sessionUsage
+          ? { sessionUsage: this.session.sessionUsage }
           : {}),
       });
     }
@@ -1906,6 +1981,31 @@ export class ChatOrchestrator {
       );
     }
     this.currentController?.abort();
+  }
+
+  /** `/goal …` (ATO-451); the decisions live in `goal/goal-commands.ts`. */
+  goalCommand(command: GoalCommand): void {
+    if (this.quitting) return;
+    const session = this.ensureSession();
+    runGoalCommand(command, {
+      session,
+      turnRunning: this.currentController !== null,
+      ...(this.runtime.controlGoal
+        ? { controlGoal: (id: string, verb: "pause" | "clear") => this.runtime.controlGoal?.(id, verb) ?? false }
+        : {}),
+      save: (next) => {
+        this.session = next;
+        this.runtime.sessionStore.save(next);
+      },
+      send: (text) => this.sendMessage(text),
+      say: (text) => this.bus.emit({ type: "system_message", text }),
+      show: (goal) => this.showGoal(goal),
+      now: () => Date.now(),
+    });
+  }
+
+  private showGoal(goal: GoalState | null): void {
+    this.bus.emit({ type: "goal_changed", goal });
   }
 
   quit(): void {

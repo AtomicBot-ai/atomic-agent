@@ -135,7 +135,10 @@ export function OnboardingScreen(props: {
   );
 
   const picks = useMemo(
-    () => orderLocalModelPicks(buildLocalModelPicks(ramGb)),
+    () =>
+      orderLocalModelPicks(
+        buildLocalModelPicks(ramGb, undefined, { quickStart: true }),
+      ),
     [ramGb],
   );
   const pickRows = useMemo(() => buildLocalPickRows(picks), [picks]);

@@ -70,9 +70,9 @@ describe.skipIf(process.platform === "win32")(
       };
     }
 
-    it("an explicit timeoutMs of 0 disables the default", async () => {
+    it("an explicit timeoutMs of -1 disables the default", async () => {
       const result = await approvingTool(300).run(
-        { cmd: "sleep", args: ["1"], timeoutMs: 0 },
+        { cmd: "sleep", args: ["1"], timeoutMs: -1 },
         makeCtx(),
       );
       expect(result.status).toBe("ok");

@@ -76,6 +76,39 @@ describe("context maintenance over SSE", () => {
     ]);
   });
 
+  it("forwards the session's spend and limits as a usage frame (ATO-569)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+    hook({
+      type: "usage_updated",
+      sessionId: "s1",
+      usage: {
+        costUsd: 0.31, pricedCalls: 3, unpricedCalls: 0, localCalls: 0, planCalls: 0,
+        costSources: ["catalog"], unpricedModels: [], updatedAt: 1,
+        limits: [{ scope: "subscription", name: "5h", usedPercent: 83, resetsAt: 9, providerId: "codex", modelId: null, observedAt: 1 }],
+      },
+    });
+    hook({
+      type: "usage_updated",
+      sessionId: "other",
+      usage: {
+        costUsd: 9, pricedCalls: 1, unpricedCalls: 0, localCalls: 0, planCalls: 0,
+        costSources: [], unpricedModels: [], updatedAt: 1, limits: [],
+      },
+    });
+    expect(sse.written).toEqual([
+      {
+        name: "usage_updated",
+        payload: {
+          object: "atomic.usage_updated", session_id: "s1",
+          cost_usd: 0.31, priced_calls: 3, unpriced_calls: 0, local_calls: 0, plan_calls: 0,
+          cost_sources: ["catalog"],
+          limits: [{ provider_id: "codex", scope: "subscription", name: "5h", used_percent: 83, resets_at: 9 }],
+        },
+      },
+    ]);
+  });
+
   it("ignores another session's compaction", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));

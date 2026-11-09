@@ -166,7 +166,28 @@ describe("progressLabel", () => {
     expect(progressLabel(event)).toBe("✅ Step 3 done");
   });
 
-  it("keeps the tool-name and step labels", () => {
+  it("says a tool call in words (ATO-962)", () => {
+    const label = (tool: string, args: unknown) =>
+      progressLabel({
+        type: "llm_event",
+        event: { type: "tool_call_parsed", call: { tool, args } },
+      } as unknown as AgentLoopEvent);
+    expect(label("os.fs.read", { path: "/Users/someone/src/config.ts" })).toBe("🔧 Reading config.ts");
+    expect(label("os.shell.run", { cmd: "npm", args: ["test"] })).toBe("🔧 Running npm test");
+    expect(label("acme.do_thing", {})).toBe("🔧 Using acme do thing");
+  });
+
+  it("masks a credential typed into a command", () => {
+    const key = `sk-or-v1-${"a1b2c3d4".repeat(8)}`;
+    const text = progressLabel({
+      type: "llm_event",
+      event: { type: "tool_call_parsed", call: { tool: "os.shell.run", args: { cmd: `echo ${key}` } } },
+    } as unknown as AgentLoopEvent);
+    expect(text).not.toContain("a1b2c3d4a1b2");
+    expect(text).toContain("redacted");
+  });
+
+  it("keeps the step labels", () => {
     expect(
       progressLabel({ type: "step_started", stepIndex: 0 } as AgentLoopEvent),
     ).toBe("⚙️ Working… (step 1)");
@@ -175,6 +196,6 @@ describe("progressLabel", () => {
         type: "llm_event",
         event: { type: "tool_call_parsed", call: { tool: "browser.navigate" } },
       } as unknown as AgentLoopEvent),
-    ).toBe("🔧 browser.navigate");
+    ).toBe("🔧 Opening a web page");
   });
 });

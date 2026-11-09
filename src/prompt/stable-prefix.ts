@@ -2,12 +2,19 @@ import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import { COMPOSIO_GUIDANCE, isComposioActive } from "./composio-guidance.js";
 import { GITHUB_GUIDANCE, isGithubActive } from "./github-guidance.js";
 import { buildFusionGuidance, isFusionActive } from "./fusion-guidance.js";
+import {
+  ANSWER_STYLE_HEADER,
+  buildAnswerStyleGuidance,
+  type AnswerStyleInput,
+} from "./answer-style.js";
 import type { FusionMachineFacts } from "./fusion-machine-facts.js";
 import {
   formatSkillCatalogLine,
   formatSkillCatalogOmittedLine,
 } from "../skills/skill-catalog.js";
 import { partitionByRole, type ToolRole } from "../tools/tool-roles.js";
+import { applyCompactToolForms } from "./compact-prompt.js";
+import type { CompactToolForm } from "./compact-tool-forms.js";
 
 /**
  * `frequent` — full `args` + optional `examples` in the stable prefix.
@@ -51,6 +58,12 @@ export interface ToolDescriptor {
    * `inputSchema` verbatim (see `mcp-descriptor-builder.ts`).
    */
   argsJsonSchema?: Record<string, unknown>;
+  /**
+   * Authored short form rendered by the compact prompt
+   * (`compact-prompt.ts`) in place of `summary` / `tier` / `examples`.
+   * Never read by the full scaffold. See `compact-tool-forms.ts`.
+   */
+  compact?: CompactToolForm;
 }
 
 export interface CapabilitiesSummary {
@@ -127,6 +140,21 @@ export interface StablePrefixInput {
    * byte-identical to before roles existed.
    */
   toolRole?: ToolRole;
+  /**
+   * How the final `reply` should read on the surface that shows it
+   * (ATO-966, `answer-style.ts`): rendered as `### answer-style` right
+   * after `### rules`. Deterministic per (channel, compact), so stable
+   * within a session. Omitted, no block and the prefix is byte-identical
+   * to before the block existed.
+   */
+  answerStyle?: AnswerStyleInput;
+  /**
+   * Render the compact scaffold (`compact-prompt.ts`): authored short
+   * tool forms, compact tiers, shorter persona / rules / instructions.
+   * Decided once per session by the caller so the prefix stays
+   * byte-stable. Omitted or `false` keeps the full prefix byte-identical.
+   */
+  compact?: boolean;
 }
 
 /** Header of the out-of-role names line — pinned by tests, read by the model. */
@@ -211,6 +239,49 @@ export const NATIVE_TOOLS_SYSTEM_PERSONA = [
 ].join("\n");
 
 /**
+ * Compact-scaffold persona lines shared by both transports
+ * (`compact-prompt.ts`). The full persona's rules, each cut to the
+ * sentence a small model acts on; the inputs line, the terminals line
+ * and the reply-discipline line are kept verbatim.
+ */
+const COMPACT_PERSONA_SHARED_LINES = [
+  "Do the work with tools until you have a real result, then `reply` with it. If something blocks you, say so in `reply`. Never invent output, file contents or facts. If the request fixes an answer format, the `reply` text is exactly that and nothing else.",
+  "Skills: if a `### skills` line fits the request, call `skill.view` first. Tools under `# extras` need `tool.view` before their first use.",
+  "Web: `os.web.search` to search, `os.web.fetch` to read a page. `browser.*` only when the user asks for the browser or the page needs JS or a login.",
+  "Run commands yourself with `os.shell.run`. Delete with `os.fs.trash`, move or rename with `os.fs.move`, not the shell.",
+  "Memory: `memory.notes.*` and `memory.profile.set` keep durable facts. `### notice` in the tail means change strategy.",
+];
+
+/** {@link DEFAULT_SYSTEM_PERSONA} for the compact scaffold. */
+export const COMPACT_SYSTEM_PERSONA = [
+  "You are atomic-agent, a local operator. Each step emits exactly one JSON array of tool calls matching the tool grammar, no other prose. Keep any thinking to a few words.",
+  SYSTEM_PERSONA_INPUTS_LINE,
+  SYSTEM_PERSONA_TERMINALS_LINE,
+  REPLY_DISCIPLINE_LINE_GRAMMAR,
+  ...COMPACT_PERSONA_SHARED_LINES,
+].join("\n");
+
+/** {@link NATIVE_TOOLS_SYSTEM_PERSONA} for the compact scaffold. */
+export const COMPACT_NATIVE_TOOLS_SYSTEM_PERSONA = [
+  "You are atomic-agent, a local operator. Each step calls tools through the native function-calling interface; never write tool-call JSON as text. Keep any thinking to a few words.",
+  SYSTEM_PERSONA_INPUTS_LINE,
+  SYSTEM_PERSONA_TERMINALS_LINE,
+  REPLY_DISCIPLINE_LINE_NATIVE,
+  ...COMPACT_PERSONA_SHARED_LINES,
+].join("\n");
+
+const COMPACT_RULES_SHARED_TAIL =
+  "Tools that change things may need user approval. If the user declines a call, do not retry it another way; tell them it was not done and ask what they want instead.";
+
+const COMPACT_GRAMMAR_RULES_LINE = `One tool-call array per step; a solo action is a length-1 array. ${COMPACT_RULES_SHARED_TAIL}`;
+
+const COMPACT_NATIVE_TOOLS_RULES_LINE = `One batch of native tool calls per step; a solo action is a single call. ${COMPACT_RULES_SHARED_TAIL}`;
+
+/** Solo-call rule of `### instructions`, compact form (both transports). */
+const COMPACT_SOLO_LINE =
+  "Keep a call alone when it is `reply`/`finish`, may need approval, or needs a previous call's result.";
+
+/**
  * `### rules` body shared verbatim between the transports. Only the
  * emission-shape opener differs: grammar mandates the length-1 text
  * array, native mandates the function-calling interface — leaving the
@@ -219,6 +290,41 @@ export const NATIVE_TOOLS_SYSTEM_PERSONA = [
  */
 const RULES_SHARED_TAIL =
   "Destructive or privileged tools may require user approval. If the user declines a call, do not retry it or reach the same result another way (another tool, a shell command); tell them it was not done and ask what they want instead. If `### skills` lists a playbook that fits the user goal, call `skill.view` first unless that skill is already under `### loaded-skills`; do not act on a catalog stub — the body has the procedure. This holds for every skill (text replies included), not just browser/shell shortcuts. Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use. Large trees: narrow with `os.fs.list` filters or `os.fs.glob` before reading content; do not use `os.fs.grep` with broad binary globs (e.g. every `*.pdf`) across huge folders—use tight globs then `os.fs.read_document` on candidates.";
+
+/**
+ * Search mode (ATO-558): the catalog carries `tool.search` and every
+ * non-core tool is a one-liner under `# extras`, MCP and built-in alike.
+ * `tool.view` still loads any of them by exact name, but a model that
+ * only knows what it wants done needs `tool.search`, so the extras
+ * header, the rules sentence and the persona's extras hint name it
+ * first. Each pair is swapped whole, so a catalog without `tool.search`
+ * keeps the prefix byte-identical.
+ */
+const SEARCH_MODE_SWAPS: ReadonlyArray<readonly [string, string]> = [
+  [
+    "Summaries in `# extras` list rare tools; call `tool.view` to load the full `args` schema into `### loaded-tools` before use.",
+    "Tools in `# extras` are one-liners: find the one you need with `tool.search` { query: what it should do } (or `tool.view` { name } when you know its exact name), which loads its full `args` schema into `### loaded-tools`, before use.",
+  ],
+  ["Rare tool? `tool.view` first.", "Tool under `# extras`? `tool.search` (or `tool.view` by exact name) first."],
+  [
+    "Tools under `# extras` need `tool.view` before their first use.",
+    "Tools under `# extras` need `tool.search` (or `tool.view` by exact name) before their first use.",
+  ],
+];
+
+const EXTRAS_HEADER = `# extras (one-line; use \`tool.view\` { name: "<tool>" } for full schema)`;
+const SEARCH_EXTRAS_HEADER = `# extras (one-line; find one with \`tool.search\` { query: "<what it should do>" }, or load one by exact name with \`tool.view\` { name: "<tool>" })`;
+
+/** Search mode is on exactly when the catalog carries `tool.search` (`applyToolSearch`). */
+function isToolSearchActive(descriptors: readonly ToolDescriptor[]): boolean {
+  return descriptors.some((d) => d.name === "tool.search");
+}
+
+function withSearchModeText(text: string): string {
+  let out = text;
+  for (const [from, to] of SEARCH_MODE_SWAPS) out = out.replace(from, to);
+  return out;
+}
 
 /**
  * The grammar transport's `### rules` line: the pre-#285 line with the
@@ -260,9 +366,18 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   // describes is mounted, so a non-fusion install pays zero bytes.
   const fusionActive = isFusionActive(input.toolDescriptors);
   const nativeTools = input.toolTransport === "native_tools";
+  const compact = input.compact === true;
+  const searchMode = isToolSearchActive(input.toolDescriptors);
+  const searchText = (text: string): string => (searchMode ? withSearchModeText(text) : text);
   const persona =
     input.systemPersona ??
-    (nativeTools ? NATIVE_TOOLS_SYSTEM_PERSONA : DEFAULT_SYSTEM_PERSONA);
+    searchText(compact
+      ? nativeTools
+        ? COMPACT_NATIVE_TOOLS_SYSTEM_PERSONA
+        : COMPACT_SYSTEM_PERSONA
+      : nativeTools
+        ? NATIVE_TOOLS_SYSTEM_PERSONA
+        : DEFAULT_SYSTEM_PERSONA));
   const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
   // A role splits the catalog: its own tools render as they always
   // have, the rest collapse to one line of names. `full` (or no role)
@@ -270,7 +385,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
   // to the pre-role output — `outside` is empty and adds no line.
   const { inRole, outside } = partitionByRole(
     input.toolRole,
-    input.toolDescriptors,
+    compact ? applyCompactToolForms(input.toolDescriptors) : input.toolDescriptors,
   );
   const frequent: ToolDescriptor[] = [];
   const rare: ToolDescriptor[] = [];
@@ -321,8 +436,19 @@ export function buildStablePrefix(input: StablePrefixInput): string {
       : []),
     ``,
     `### rules`,
-    nativeTools ? NATIVE_TOOLS_RULES_LINE : GRAMMAR_RULES_LINE,
+    searchText(
+      compact
+        ? nativeTools
+          ? COMPACT_NATIVE_TOOLS_RULES_LINE
+          : COMPACT_GRAMMAR_RULES_LINE
+        : nativeTools
+          ? NATIVE_TOOLS_RULES_LINE
+          : GRAMMAR_RULES_LINE,
+    ),
     ``,
+    ...(input.answerStyle !== undefined
+      ? [ANSWER_STYLE_HEADER, buildAnswerStyleGuidance(input.answerStyle), ``]
+      : []),
     `### skills`,
     skills,
     ``,
@@ -330,7 +456,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     `# common (full)`,
     commonBlock,
     ``,
-    `# extras (one-line; use \`tool.view\` { name: "<tool>" } for full schema)`,
+    searchMode ? SEARCH_EXTRAS_HEADER : EXTRAS_HEADER,
     extrasBlock,
     ...(outsideLine !== null ? [outsideLine] : []),
     ``,
@@ -351,7 +477,21 @@ export function buildStablePrefix(input: StablePrefixInput): string {
     // mandate that drives models back to text emission (issue #285).
     // The `### tools` catalog above stays in both modes — see
     // `StablePrefixInput.toolTransport`.
-    ...(nativeTools
+    ...(compact
+      ? nativeTools
+        ? [
+            `Call tools through the native function-calling interface, never as JSON text. For the final answer call \`reply\`.`,
+            `PARALLEL: up to ${maxParallelToolCalls} INDEPENDENT calls in the same response run at once.`,
+            COMPACT_SOLO_LINE,
+          ]
+        : [
+            `Emit a JSON ARRAY of tool calls now. Always start with \`[\` and end with \`]\`, even for a single call.`,
+            `PARALLEL: up to ${maxParallelToolCalls} INDEPENDENT calls in the same array run at once. Examples:`,
+            `  - one call: [{"tool":"os.fs.read","args":{"path":"a.ts"}}]`,
+            `  - reply: [{"tool":"reply","args":{"text":"..."}}]`,
+            COMPACT_SOLO_LINE,
+          ]
+      : nativeTools
       ? [
           `Call tools now, through the native function-calling interface (the \`tools\` your API request carries) — do NOT write tool-call JSON as text. The \`### tools\` catalog above is reference documentation for those same tools (tiers, examples, \`tool.view\`). For the final user-facing answer call \`reply\`, or answer in plain text.`,
           `PARALLEL: when you need multiple INDEPENDENT actions (e.g. read 3 different files, run 2 globs, look up 4 git logs), emit up to ${maxParallelToolCalls} tool calls in the SAME response — they run in parallel and cut wall time by ~Nx.`,

@@ -8,11 +8,27 @@ import type { TurnEventHook, TurnOrigin } from "../runtime/turn-controller.js";
 
 import { nextDelayMs, type BackoffOptions } from "./task-backoff.js";
 import {
+  planTaskResume,
+  type TaskResumePlan,
+  type TaskResumePolicy,
+} from "./task-resume.js";
+import type { TurnProgress } from "../session/turn-progress.js";
+import {
   buildTaskReport,
   isReportableStatus,
+  taskReportRunFrom,
+  type TaskReportRun,
   type TaskReportSink,
 } from "./task-report.js";
+import {
+  createTaskRunSummaryCollector,
+  type TaskLiveStatus,
+  type TaskRunSummaryCollector,
+} from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
+import { remainingCostUsd } from "./task-budget.js";
+import { formatUsd } from "../llm/provider/usage-cost.js";
+import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
   TaskValidationError,
   type TaskRecord,
@@ -21,6 +37,7 @@ import {
   type TriggerSource,
 } from "./task-types.js";
 import type { TaskCreateInput, TaskStore } from "./task-store.js";
+import { TASK_OWNER_GONE_ERROR } from "./task-store.js";
 
 /**
  * Subset of `AgentRuntime` consumed by the task runner. Declared
@@ -37,6 +54,12 @@ export interface TaskRunnerRuntime {
       signal?: AbortSignal;
       origin?: TurnOrigin;
       eventHook?: TurnEventHook;
+      /** The progress marker's task id, resumes and request (ATO-1109). */
+      checkpoint?: { taskId?: string; resumes?: number; request?: string };
+      /** The task's own wall-clock ceiling (`TaskRecord.maxDurationMs`). */
+      taskMaxDurationMs?: number;
+      /** What the task may still spend, USD (`TaskRecord.maxCostUsd`). */
+      taskMaxCostUsd?: number;
     },
   ): Promise<RunTurnResult>;
 }
@@ -110,6 +133,15 @@ export interface TaskRunnerOptions {
    * is inert (tasks finish silently, same as before v3).
    */
   reportSink?: TaskReportSink;
+  /**
+   * Auto status snapshots of long reporting runs (ATO-965): every
+   * `snapshotCadence.everySteps` steps or `everyMs` of wall time, the
+   * live status goes to this sink (Telegram edits one message per task).
+   * Only tasks that report (`notify` set and a `reportSink` wired) have
+   * a live status to send. Absent sink or cadence: off.
+   */
+  snapshotSink?: TaskSnapshotSink;
+  snapshotCadence?: { everySteps: number; everyMs: number } | null;
   logger?: StructuredLogger;
   metrics?: AgentMetrics;
   /**
@@ -117,6 +149,19 @@ export interface TaskRunnerOptions {
    * `setTimeout`; tests substitute a fake to keep the suite fast.
    */
   sleep?: (ms: number) => Promise<void>;
+  /**
+   * Continue a run cut off by a crash, a kill or a restart instead of
+   * starting it over (`task-resume.ts`, ATO-1109): the policy
+   * (`agent.task.resumeInterrupted`, `agent.task.maxResumes`) and the
+   * session store's progress markers. Absent: every run starts fresh,
+   * as before.
+   */
+  resume?: TaskResumePolicy & {
+    progress: {
+      read(sessionId: string): TurnProgress | null;
+      clear(sessionId: string): void;
+    };
+  };
 }
 
 export interface DrainOptions {
@@ -180,6 +225,11 @@ export class TaskRunner {
   private readonly runs = new Map<string, InFlightRun>();
   /** Set by `stop`: nothing is claimed after it. */
   private stopping = false;
+  /** Summary collectors of the runs in progress, for `liveStatus`. */
+  private readonly live = new Map<
+    string,
+    Omit<TaskLiveStatus, "summary"> & { collector: TaskRunSummaryCollector }
+  >();
 
   constructor(private readonly options: TaskRunnerOptions) {
     this.sleep = options.sleep ?? defaultSleep;
@@ -323,44 +373,90 @@ export class TaskRunner {
       return blocked;
     }
 
+    // A budget the earlier attempts already used up (ATO-1108): running
+    // again would only spend more, so the task waits for an operator.
+    const costLeft = remainingCostUsd(claimed);
+    if (costLeft === "exhausted") {
+      const blocked = this.options.store.markBlocked(claimed.id, {
+        category: "tool",
+        message:
+          `budget_spent: ${formatUsd(claimed.spentUsd ?? 0)} of ` +
+          `${formatUsd(claimed.maxCostUsd ?? 0)} already spent by earlier attempts`,
+      });
+      this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
+      return blocked;
+    }
+
     this.stampWakeReason(session, claimed);
 
-    // Capture the final result text live so a completed report can
-    // carry it. Two shapes, matching the loop's two success terminals:
-    // `assistant_reply` for the `reply` terminal, and the `finish`
-    // tool's summary for the `finish` terminal (unattended tasks
-    // routinely end via `finish` and emit no reply at all — the same
-    // `tool_call_executed` payload the TUI renders as the final feed
-    // line; `details.summary` is the uncompressed argument, with the
-    // compressed `summary` as fallback). The hook is installed only
-    // when this task opted into reporting AND a sink is wired — every
-    // other task pays zero per-event cost (no hook is passed at all).
-    let capturedReply: string | null = null;
-    const reportHook: TurnEventHook | undefined =
+    // `task` is the row as it was before the claim, which cleared the
+    // reason it was put back for.
+    const plan = this.planResume(task, session.id);
+    if (plan.kind === "give_up") {
+      return this.giveUpResuming(claimed, plan, session.id);
+    }
+
+    // Collect what the run does from the turn's own events (ATO-964):
+    // the final reply (the `reply` terminal's `assistant_reply`, or the
+    // `finish` tool's summary — unattended tasks routinely end via
+    // `finish`), files changed, commands and their exits, errors,
+    // approvals. Installed only when this task opted into reporting AND
+    // a sink is wired — every other task pays zero per-event cost (no
+    // hook is passed at all), and only reporting tasks show in
+    // `liveStatus`.
+    const collector =
       claimed.notify !== null && this.options.reportSink
+        ? createTaskRunSummaryCollector()
+        : null;
+    const liveInfo = {
+      taskId: claimed.id,
+      userMessage: claimed.userMessage,
+      startedAt: claimed.startedAt ?? Date.now(),
+    };
+    const snapshots =
+      collector && this.options.snapshotSink
+        ? startTaskSnapshots({
+            sink: this.options.snapshotSink,
+            cadence: this.options.snapshotCadence,
+            live: liveInfo,
+            collector,
+            onError: (err) =>
+              this.options.logger?.warn("task snapshot sink failed", {
+                taskId: claimed.id,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+          })
+        : null;
+    const reportHook: TurnEventHook | undefined = collector
+      ? (event: AgentLoopEvent): void => {
+          collector.onEvent(event);
+          snapshots?.onEvent(event);
+        }
+      : undefined;
+    const runFacts = (result: RunTurnResult | null): TaskReportRun =>
+      taskReportRunFrom(result, collector?.snapshot() ?? null);
+
+    // A task with a spend ceiling has its spend written step by step
+    // (ATO-1108), not only when the turn returns: a run that throws, or
+    // a process that dies mid-run, must not hand the next attempt the
+    // whole budget again. `step_finished.spendUsd` is the turn's running
+    // total, so the latest one stands for this run.
+    const spentBefore = claimed.spentUsd ?? 0;
+    const spendHook: TurnEventHook | undefined =
+      claimed.maxCostUsd !== null
         ? (event: AgentLoopEvent): void => {
-            if (event.type !== "llm_event") return;
-            if (event.event.type === "assistant_reply") {
-              // A progress note is not the result; the reply that ends
-              // the turn follows it.
-              if (event.event.progressNote !== true) {
-                capturedReply = event.event.text;
-              }
-              return;
-            }
-            if (
-              event.event.type === "tool_call_executed" &&
-              event.event.result.tool === "finish" &&
-              event.event.result.status === "ok"
-            ) {
-              const full = event.event.result.details?.summary;
-              capturedReply =
-                typeof full === "string" && full.length > 0
-                  ? full
-                  : event.event.result.summary;
-            }
+            if (event.type !== "step_finished" || event.spendUsd === undefined) return;
+            this.options.store.recordSpend(claimed.id, spentBefore + event.spendUsd);
           }
         : undefined;
+    const eventHook: TurnEventHook | undefined =
+      reportHook && spendHook
+        ? (event: AgentLoopEvent): void => {
+            reportHook(event);
+            spendHook(event);
+          }
+        : (reportHook ?? spendHook);
 
     const maxSteps = claimed.maxSteps ?? this.options.defaultMaxSteps;
     // Every run gets a stop of its own: an operator cancelling the task
@@ -368,17 +464,39 @@ export class TaskRunner {
     // drain's signal — the scheduler aborts its own when the agent quits
     // — all end the turn through it.
     const run = this.beginRun(claimed.id, runtimeSignal);
+    // Set once the turn is about to start. A crash resume stopped before
+    // that (during its backoff) never wrote its resume count into the
+    // session's marker (`beginTurn` does), so the task goes back still
+    // marked as taken back from a dead agent and the next boot counts
+    // that crash again; otherwise quitting during the wait would reset
+    // the count `agent.task.maxResumes` is checked against.
+    let turnStarted = false;
+    if (collector) {
+      this.live.set(claimed.id, { ...liveInfo, collector });
+    }
     try {
       let result: RunTurnResult;
       try {
+        await this.backOffResume(plan, run.signal);
+        if (run.signal.aborted) throw new Error("stopped before resuming");
+        turnStarted = true;
         result = await this.options.runtime.runTurn(
           session,
-          claimed.userMessage,
+          plan.kind === "resume" ? plan.message : claimed.userMessage,
           {
             maxSteps,
             origin: "scheduler",
             signal: run.signal,
-            ...(reportHook ? { eventHook: reportHook } : {}),
+            ...(eventHook ? { eventHook } : {}),
+            ...(claimed.maxDurationMs !== null
+              ? { taskMaxDurationMs: claimed.maxDurationMs }
+              : {}),
+            ...(costLeft !== undefined ? { taskMaxCostUsd: costLeft } : {}),
+            checkpoint: {
+              taskId: claimed.id,
+              resumes: plan.kind === "resume" ? plan.resumes : 0,
+              request: claimed.userMessage,
+            },
           },
         );
       } catch (err) {
@@ -393,9 +511,17 @@ export class TaskRunner {
             claimed,
             err,
             this.interrupted(runtimeSignal),
+            !turnStarted && plan.kind === "resume" && plan.crashed
+              ? TASK_OWNER_GONE_ERROR
+              : undefined,
           );
         }
-        return this.handleFailure(claimed, category, err);
+        return this.handleFailure(claimed, category, err, runFacts(null));
+      }
+      // What this run spent joins what earlier attempts spent, whatever
+      // the outcome: the morning report and a retry's budget read it.
+      if (result.spendUsd !== undefined) {
+        this.options.store.recordSpend(claimed.id, spentBefore + result.spendUsd);
       }
       // An operator cancelled the task while its turn ran — here, or from
       // another process, which cannot reach this turn — and that stands:
@@ -435,6 +561,7 @@ export class TaskRunner {
           claimed,
           "transport",
           new Error("loop reported failed"),
+          runFacts(result),
         );
       }
       const completed = this.options.store.markCompleted(claimed.id);
@@ -442,11 +569,107 @@ export class TaskRunner {
       // Report off the completed row BEFORE the recurring requeue —
       // the requeued row is `pending` again and would fail the
       // terminal-status guard inside `maybeReport`.
-      this.maybeReport(completed, capturedReply);
+      const facts = runFacts(result);
+      this.maybeReport(completed, facts.summary?.replyText ?? null, facts);
       return this.maybeRequeueRecurring(completed);
     } finally {
+      snapshots?.stop();
+      this.live.delete(claimed.id);
       run.end();
     }
+  }
+
+  /**
+   * How to start `task`'s run (`planTaskResume`): fresh, continued from
+   * its session's checkpoint, or not at all. Reading the marker is
+   * bookkeeping; a store that cannot answer means a fresh run.
+   */
+  private planResume(task: TaskRecord, sessionId: string): TaskResumePlan {
+    const resume = this.options.resume;
+    if (resume === undefined) return { kind: "fresh" };
+    let progress: TurnProgress | null = null;
+    try {
+      progress = resume.progress.read(sessionId);
+    } catch (err) {
+      this.options.logger?.warn("could not read the task's checkpoint; running it fresh", {
+        taskId: task.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+    const plan = planTaskResume(task, progress, resume);
+    if (plan.kind === "resume") {
+      this.options.logger?.info("task run interrupted earlier; resuming from its checkpoint", {
+        taskId: task.id,
+        sessionId,
+        stepsDone: progress?.stepsDone,
+        resumes: plan.resumes,
+        crashed: plan.crashed,
+      });
+    }
+    return plan;
+  }
+
+  /**
+   * Crash resumes after the first wait before they start, on the retry
+   * curve (`nextDelayMs`): a task that takes the agent down every time
+   * is not run again the instant the agent is back. The run's own stop
+   * ends the wait.
+   */
+  private async backOffResume(
+    plan: TaskResumePlan,
+    signal: AbortSignal,
+  ): Promise<void> {
+    if (plan.kind !== "resume" || !plan.crashed || plan.resumes < 2) return;
+    const delay = nextDelayMs(plan.resumes - 1, this.options.backoff);
+    if (delay <= 0 || signal.aborted) return;
+    await new Promise<void>((resolve) => {
+      const done = (): void => {
+        signal.removeEventListener("abort", done);
+        resolve();
+      };
+      signal.addEventListener("abort", done, { once: true });
+      void this.sleep(delay).then(done, done);
+    });
+  }
+
+  /**
+   * The agent stopped under this task more times than
+   * `agent.task.maxResumes` allows: fail it with a sentence saying so,
+   * and drop the checkpoint, rather than claim it at every boot for ever.
+   */
+  private giveUpResuming(
+    task: TaskRecord,
+    plan: Extract<TaskResumePlan, { kind: "give_up" }>,
+    sessionId: string,
+  ): TaskRecord {
+    const failed = this.options.store.markFailed(task.id, {
+      category: "transport",
+      message: plan.message,
+    });
+    try {
+      this.options.resume?.progress.clear(sessionId);
+    } catch {
+      // The marker is only read for this task; a stale one is harmless.
+    }
+    this.recordTerminal(failed);
+    this.maybeReport(failed, null);
+    this.options.logger?.warn("task interrupted too many times; failed", {
+      taskId: failed.id,
+      sessionId: failed.sessionId,
+      resumes: plan.resumes,
+    });
+    return failed;
+  }
+
+  /**
+   * What each task this runner is running right now has done so far
+   * (ATO-965): the same deterministic summary the final report carries,
+   * snapshotted mid-run. Oldest run first. Read by Telegram `/status`.
+   */
+  liveStatus(): TaskLiveStatus[] {
+    return [...this.live.values()]
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .map(({ collector, ...rest }) => ({ ...rest, summary: collector.snapshot() }));
   }
 
   /**
@@ -664,6 +887,7 @@ export class TaskRunner {
     task: TaskRecord,
     category: LlmFailureCategory,
     err: unknown,
+    run?: TaskReportRun,
   ): TaskRecord {
     const message = err instanceof Error ? err.message : String(err);
     const failure = { category, message };
@@ -672,7 +896,7 @@ export class TaskRunner {
         ? this.options.store.markBlocked(task.id, failure)
         : this.options.store.markFailed(task.id, failure);
       this.recordTerminal(terminal);
-      this.maybeReport(terminal, null);
+      this.maybeReport(terminal, run?.summary?.replyText ?? null, run);
       this.options.logger?.warn("task terminal failure", {
         taskId: terminal.id,
         sessionId: terminal.sessionId,
@@ -717,6 +941,8 @@ export class TaskRunner {
     task: TaskRecord,
     err: unknown,
     interrupted: boolean,
+    /** `last_error` for a one-shot task put back (`markInterrupted`). */
+    interruptedError?: string,
   ): TaskRecord | null {
     const message = err instanceof Error ? err.message : String(err);
     if (task.recurring && task.schedule) {
@@ -741,6 +967,9 @@ export class TaskRunner {
     if (interrupted) {
       const pending = this.options.store.markInterrupted(task.id, {
         nextScheduledFor: null,
+        ...(interruptedError !== undefined
+          ? { lastError: interruptedError }
+          : {}),
       });
       if (!pending) return this.options.store.get(task.id);
       this.options.logger?.info("task run interrupted; left pending", {
@@ -785,11 +1014,15 @@ export class TaskRunner {
    * supplies one). Fire-and-forget: a rejecting or throwing sink is
    * warn-logged and never alters the task's status or the drain.
    */
-  private maybeReport(task: TaskRecord, replyText: string | null): void {
+  private maybeReport(
+    task: TaskRecord,
+    replyText: string | null,
+    run?: TaskReportRun,
+  ): void {
     const sink = this.options.reportSink;
     if (!sink || task.notify === null) return;
     if (!isReportableStatus(task.status)) return;
-    const report = buildTaskReport(task, task.status, replyText);
+    const report = buildTaskReport(task, task.status, replyText, run);
     void (async () => sink(report))().catch((err) => {
       this.options.logger?.warn("task report sink failed", {
         taskId: task.id,

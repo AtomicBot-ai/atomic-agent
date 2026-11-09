@@ -1,3 +1,4 @@
+import { estimateTokens } from "../../../prompt/token-budget.js";
 import type { PromptMessages, PromptTurn } from "../completion-types.js";
 
 /**
@@ -33,6 +34,72 @@ export type OpenAiChatMessage = Record<string, unknown>;
 export interface NativeMessageOptions {
   /** The adapter's escape for tool names (`os.fs.read` → `os__fs__read`). */
   nameEscape: (qualifiedName: string) => string;
+  /**
+   * Hand a tool call's reasoning back as the assistant message's
+   * `reasoning_content` (ATO-887). Only for a server that renders the
+   * model's chat template itself: the template then decides what to keep.
+   * The request always ends with a `user` message (the "Respond now"
+   * tail), so a plain Qwen3 template, which keeps thinking only after the
+   * last user message, still drops it; templates run with
+   * `preserve_thinking`, and Flint's, keep it. The total handed back is
+   * capped at {@link PRESERVED_REASONING_TOKEN_BUDGET}, since the
+   * conversation packer does not count reasoning. Strict APIs answer
+   * unknown fields with a 400, so it is off by default.
+   */
+  preserveReasoning?: boolean;
+}
+
+/**
+ * Most reasoning, in estimated tokens, handed back across all tool calls
+ * of one request when `preserveReasoning` is on. The packer budgets the
+ * history from calls and results only, so this is headroom the window
+ * must spare on top of it; a fixed, small amount keeps a long tool loop
+ * on a 16k/32k local window from overflowing the server's context.
+ * Newest calls get it first; older reasoning is dropped.
+ */
+export const PRESERVED_REASONING_TOKEN_BUDGET = 2048;
+
+/**
+ * The reasoning each tool call hands back, by turn index, within
+ * {@link PRESERVED_REASONING_TOKEN_BUDGET}: walking from the newest call,
+ * each one's reasoning is kept whole while it fits; the first that does
+ * not is cut from the start, keeping its tail (the part closest to the
+ * call), and every older one is dropped.
+ */
+export function capPreservedReasoning(
+  turns: readonly PromptTurn[],
+  budget: number = PRESERVED_REASONING_TOKEN_BUDGET,
+): Map<number, string> {
+  const kept = new Map<number, string>();
+  let remaining = budget;
+  for (let index = turns.length - 1; index >= 0 && remaining > 0; index--) {
+    const turn = turns[index]!;
+    if (turn.kind !== "assistant_tool_call") continue;
+    const reasoning = turn.reasoning;
+    if (reasoning === undefined || reasoning.length === 0) continue;
+    const cost = estimateTokens(reasoning);
+    if (cost <= remaining) {
+      kept.set(index, reasoning);
+      remaining -= cost;
+      continue;
+    }
+    const tail = keepTailWithin(reasoning, remaining);
+    if (tail.length > 0) kept.set(index, tail);
+    break;
+  }
+  return kept;
+}
+
+/** The longest suffix of `text` whose estimate fits in `tokens`. */
+function keepTailWithin(text: string, tokens: number): string {
+  // estimateTokens is at least chars / 3.6, so this length is an upper bound.
+  let length = Math.min(text.length, Math.floor(tokens * 3.6));
+  while (length > 0) {
+    const tail = text.slice(text.length - length).trimStart();
+    if (estimateTokens(tail) <= tokens) return tail;
+    length = Math.floor(length * 0.9);
+  }
+  return "";
 }
 
 export const NO_RESULT_RECORDED = "(no result recorded)";
@@ -52,6 +119,8 @@ export function buildNativeMessages(
   let pending: string[] = [];
   // Consecutive orphan result lines, folded into one user message.
   let orphanLines: string[] = [];
+  const reasoningByTurn =
+    options.preserveReasoning === true ? capPreservedReasoning(prompt.turns) : new Map<number, string>();
 
   const flushOrphans = (): void => {
     if (orphanLines.length === 0) return;
@@ -91,6 +160,9 @@ export function buildNativeMessages(
         out.push({
           role: "assistant",
           content: null,
+          ...(reasoningByTurn.has(index)
+            ? { reasoning_content: reasoningByTurn.get(index) }
+            : {}),
           tool_calls: [
             {
               id,

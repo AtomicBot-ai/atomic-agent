@@ -73,6 +73,17 @@ describe("llm-link-attempt — the structured prompt", () => {
       expect(requests[1]).not.toHaveProperty("requestTimeoutMs");
     }
   });
+
+  it("forwards a side call's temperature on both transports, and none when unset", async () => {
+    for (const transport of ["grammar", "native_tools"] as const) {
+      const { requests, provider } = recording(transport);
+      const deps = { resolveSlice: () => ({ provider, transport }) };
+      await completeOnLink(deps, { ...params, temperature: 0 }, transport);
+      await completeOnLink(deps, params, transport);
+      expect(requests[0]?.temperature).toBe(0);
+      expect(requests[1]).not.toHaveProperty("temperature");
+    }
+  });
 });
 
 function answer(request: CompletionRequest) {

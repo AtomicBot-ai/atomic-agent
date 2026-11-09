@@ -37,8 +37,10 @@ export type ConversationTurn =
       truncated?: boolean;
       /**
        * Approvals the operator was asked for while this call ran, in the
-       * order they were answered. Transcript-only: never rendered into the
-       * prompt. A host replaying the session puts the approval back under
+       * order they were answered, and the ones a session grant, an allow
+       * rule or the risk review settled without asking
+       * (`verdict: "auto-approved"`, ATO-1145). Transcript-only: never
+       * rendered into the prompt. A host replaying the session puts the approval back under
        * the call that raised it instead of dropping it.
        */
       approvals?: readonly ToolApprovalRecord[];

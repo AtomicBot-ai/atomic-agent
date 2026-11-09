@@ -1,4 +1,5 @@
 import type { CompletionResult } from "../completion-types.js";
+import { parseClaudeRateLimitInfo } from "../rate-limits.js";
 import type {
   CliAdapterDescriptor,
   CliArgsInput,
@@ -193,7 +194,12 @@ interface ClaudeStreamLine {
     type?: string;
     delta?: { type?: string; text?: string };
   };
-  rate_limit_info?: { status?: string; rateLimitType?: string };
+  rate_limit_info?: {
+    status?: string;
+    rateLimitType?: string;
+    resetsAt?: number;
+    utilization?: number;
+  };
 }
 
 function parseStreamEvent(line: string): CliStreamEvent {
@@ -210,14 +216,19 @@ function parseStreamEvent(line: string): CliStreamEvent {
   if (parsed.type === "result") return { kind: "final", raw: trimmed };
   if (parsed.type === "rate_limit_event") {
     const info = parsed.rate_limit_info ?? {};
-    return info.status && info.status !== "allowed"
-      ? {
-          kind: "notice",
-          message: `claude rate limit ${info.status}${
+    const notice =
+      info.status && info.status !== "allowed"
+        ? `claude rate limit ${info.status}${
             info.rateLimitType ? ` (${info.rateLimitType})` : ""
-          }`,
-        }
-      : { kind: "ignore" };
+          }`
+        : undefined;
+    // The subscription's window state rides to the usage meter
+    // (ATO-569): reset time always, used share when the CLI sends one.
+    const windows = parseClaudeRateLimitInfo(info);
+    if (windows.length > 0) {
+      return { kind: "rate_limit", windows, ...(notice ? { notice } : {}) };
+    }
+    return notice ? { kind: "notice", message: notice } : { kind: "ignore" };
   }
   if (parsed.type === "stream_event") {
     const event = parsed.event ?? {};

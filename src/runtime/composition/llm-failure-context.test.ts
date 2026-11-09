@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { attachFailingLink } from "../../llm/fallback/index.js";
+import { LocalEngineDownError, TransportError } from "../../llm/index.js";
 import { describeLlmFailure, type LlmFailureContextDeps } from "./llm-failure-context.js";
 
 /** Only the fields the description reads: the provider list and local-model mode. */
@@ -97,6 +98,55 @@ describe("describeLlmFailure", () => {
   it("a probe that throws reports unknown instead of losing the event", () => {
     const d = { readConfig: () => config({}), readDaemonPidState: () => { throw new Error("EACCES"); } };
     expect(describeLlmFailure({ error: new Error("x") }, d).daemonState).toBe("unknown");
+  });
+
+  describe("refused connections (ATO-421)", () => {
+    /** A refused request the way undici reports it: the errno one level down. */
+    function refusedError(): Error {
+      const errno = Object.assign(new Error("connect ECONNREFUSED 127.0.0.1:19091"), { code: "ECONNREFUSED" });
+      return new TransportError("fetch failed", null, "http://127.0.0.1:19091/v1/chat/completions", { cause: errno });
+    }
+
+    it("marks the refusal and probes the managed engine's liveness", () => {
+      const readEngineLiveness = vi.fn(() => "no_pid" as const);
+      const d = { ...deps(config({}), "no_pid"), readEngineLiveness };
+      expect(describeLlmFailure({ error: refusedError(), outage: { waitedMs: 8_000, attempts: 3 } }, d)).toMatchObject({
+        localEngine: "atomic-core",
+        connectionRefused: true,
+        engineLiveness: "no_pid",
+        outageWaitedMs: 8_000,
+      });
+      expect(readEngineLiveness).toHaveBeenCalledWith("/state/models");
+    });
+
+    it("sees the refusal under the turn's local_engine_down ending", () => {
+      const d = { ...deps(config({}), "dead"), readEngineLiveness: vi.fn(() => "dead" as const) };
+      const ended = new LocalEngineDownError("local-llama", refusedError());
+      expect(describeLlmFailure({ error: ended }, d)).toMatchObject({ connectionRefused: true, engineLiveness: "dead" });
+    });
+
+    it("never probes an external server's process", () => {
+      const readEngineLiveness = vi.fn(() => "alive" as const);
+      const d = { ...deps(config({ mode: "external" })), readEngineLiveness };
+      const context = describeLlmFailure({ error: refusedError() }, d);
+      expect(context).toMatchObject({ localEngine: "external", connectionRefused: true });
+      expect(context.engineLiveness).toBeUndefined();
+      expect(readEngineLiveness).not.toHaveBeenCalled();
+    });
+
+    it("does not probe liveness when the connection was not refused", () => {
+      const readEngineLiveness = vi.fn(() => "dead" as const);
+      const d = { ...deps(config({})), readEngineLiveness };
+      const context = describeLlmFailure({ error: new Error("fetch failed") }, d);
+      expect(context.connectionRefused).toBeUndefined();
+      expect(context.engineLiveness).toBeUndefined();
+      expect(readEngineLiveness).not.toHaveBeenCalled();
+    });
+
+    it("a liveness probe that throws reports unknown", () => {
+      const d = { ...deps(config({})), readEngineLiveness: () => { throw new Error("EACCES"); } };
+      expect(describeLlmFailure({ error: refusedError() }, d).engineLiveness).toBe("unknown");
+    });
   });
 
   it("a config read that throws still returns the outage numbers", () => {

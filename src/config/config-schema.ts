@@ -331,7 +331,28 @@ export interface AtomicAgentConfig {
      * this knob lets operators enforce a larger floor.
      */
     minIntervalMs: number;
+    /**
+     * Task report delivery. `quietHours` is the raw
+     * `ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS` value (`"23:00-08:00"`,
+     * local time) or `null` (default: off). Reports of tasks that finish
+     * inside the window are held and sent as one digest when it ends;
+     * the runtime parses it and turns the feature off, with a warning,
+     * on a malformed value. Optional so hand-built configs stay valid.
+     */
+    report?: { quietHours: string | null };
   };
+  /**
+   * Auto status snapshots on long turns and running tasks (ATO-965).
+   * Env-only: `ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_STEPS` (default 10)
+   * and `ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_MS` (default 5 min). A
+   * snapshot goes out once either many more steps or that much more
+   * time has passed since the last one, so a turn shorter than both
+   * never gets one; `0` turns a trigger off, both `0` turn the feature
+   * off. Today the snapshot is the edited status bubble in Telegram (a
+   * chat's own long turn, and tasks that report to Telegram). Optional
+   * so hand-built configs stay valid; absent means off.
+   */
+  statusSnapshot?: { everySteps: number; everyMs: number };
   /**
    * Self-update controls. Env-only operational tuning (not user-config
    * file material). The TUI checks GitHub Releases on startup and, when
@@ -541,8 +562,9 @@ export interface AtomicAgentConfig {
     /**
      * Cross-provider fallover. `chain` is an ordered list of provider ids
      * (primary first) tried in turn when the active provider is
-     * unavailable; the local llama-server provider is auto-appended
-     * unless `appendLocal` is false. Timing knobs default to the
+     * unavailable. The local llama-server provider is appended only when
+     * `appendLocal` is true (default false: no switch to a local model
+     * the person did not pick). Timing knobs default to the
      * circuit-breaker numbers in ../llm/docs/fallback.md.
      */
     fallback?: {
@@ -1051,12 +1073,37 @@ export interface UserConfigFile {
 // Unversioned, additive: `tools.screen.enabled` (default `false`,
 // ATO-525). Turns on the macOS `os.screen.*` tools; an older file has no
 // field and keeps them off.
+// Unversioned, additive: `tools.screen.point` (default `true`, ATO-1018).
+// Registers `os.screen.point` (draws marks, never clicks or types) and
+// `os.screen.capture` on macOS; an older file has no field and gets them.
 // Unversioned, additive: `localModels.managed.coreBackendVariant`
 // (`auto` | `cpu`, default `auto`, ATO-372/373) — the build Atomic Core
 // installs on Windows x64. Its own key, not `backendVariant`: the
 // llama-server engine's older rescue wrote `"cpu"` there on any health
 // timeout, and such a file must keep Core's GPU build. An older file has
 // no field and takes `auto`, Core's recommendation, as before.
+// Unversioned, additive: `llm.runMode.fusion.turnBudgetUsd` and
+// `turnTimeBudgetMs` (ATO-947), unset by default. A fusion turn that
+// reaches either starts no new delegation or worker. An older file has
+// neither field and runs uncapped, as before.
+// Unversioned, additive: `llm.runMode.fusion.escalation` (`off|advisor`,
+// default `off`), `escalationReplace` (default false),
+// `escalationProvider` (default the orchestrator leg) and
+// `escalationMaxUsd` (default 0.25), ATO-942. An older file has none and
+// never escalates automatically.
+// Unversioned, additive: `llm.runMode.fusion.judge` (`off|on`, default
+// `off`) and `judgeProvider` (default the orchestrator leg), ATO-944.
+// Unversioned, additive: `llm.runMode.fusion.autoReplan` (0..5, default
+// 0 = off), ATO-941.
+// Unversioned, additive: `llm.runMode.fusion.roles` (`plan|build|review|
+// explore|utility` → provider id) and `mixLocalModels` (default false),
+// ATO-943. An older file has neither and runs every task on the worker leg.
+// Unversioned, additive: `llm.runMode.fusion.isolation` (`off|worktree`,
+// default `off`), ATO-946. An older file has none and workers write in
+// place, as before.
+// Unversioned, additive: `llm.runMode.fusion.taskTree` (`enabled` default
+// false, `maxDepth` 1..3 default 2, `maxNodes` 1..64 default 24),
+// ATO-940. An older file has no field and keeps the flat fan-out.
 export const USER_CONFIG_VERSION = 79;
 
 /**
@@ -1311,6 +1358,10 @@ export const ENV_DEFAULTS = {
   TASKS_SCHEDULER_BATCH: 10,
   TASKS_AGENT_TOOLS_ENABLED: true,
   TASKS_MIN_INTERVAL_MS: 1_000,
+  /** Auto status snapshot after this many more steps (ATO-965); 0 = off. */
+  STATUS_SNAPSHOT_EVERY_STEPS: 10,
+  /** Auto status snapshot after this much more time (ATO-965); 0 = off. */
+  STATUS_SNAPSHOT_EVERY_MS: 5 * 60 * 1_000,
   /** Fire the TUI startup version check against GitHub Releases. */
   UPDATE_CHECK_ON_STARTUP: true,
   /** GitHub `owner/repo` for self-update release lookups + install.sh. */

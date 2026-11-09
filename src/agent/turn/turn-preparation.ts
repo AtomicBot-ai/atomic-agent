@@ -6,11 +6,13 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import { emptyFusionOrchestratorState } from "../policies/fusion-orchestrator-mode.js";
 import { createReviewStallState, type ReviewStallState } from "../review-stall.js";
+import { createReplanState, type ReplanState } from "../fusion-replan.js";
 import { DEFAULT_FUSION_REVIEW_STALL_STEPS } from "../../config/llm-run-mode-config.js";
 import { createProgressNoteNoticeState } from "../progress-note-reply.js";
 import { createUnknownToolStreak } from "../policies/unknown-tool.js";
 import { ToolLoopTracker } from "../loop-detector.js";
 import { getConfig } from "../../config/index.js";
+import { resolveCostCeilingUsd } from "./turn-spend.js";
 
 export type TurnPreparationDependencies = Pick<
   AgentLoopDependencies,
@@ -93,7 +95,7 @@ export function prepareAgentTurn(
   // with, and the probe would fail against a backend nobody is using.
   //
   // ...unless the previous turn was actually SERVED by a local link
-  // through the fallback chain. `appendLocal` defaults to `true`, so a
+  // through the fallback chain. With `appendLocal` on (off by default since ATO-349), a
   // rate-limited cloud primary falls over to llama-server on every
   // turn while the active provider stays cloud; without this second
   // arm the profile and grammar would stay pinned to whatever the
@@ -162,6 +164,13 @@ export function prepareTurnPolicies(
         options.userMessage,
       )
     : null;
+  // Automatic replanning (ATO-941): a fan-out with tasks that did not
+  // close holds the next step to `fusion.delegate`. `null` when off.
+  const replan: ReplanState | null =
+    fusionOrchestratorTurn &&
+    (getConfig().llm?.runMode?.fusion?.autoReplan ?? 0) > 0
+      ? createReplanState()
+      : null;
   // A fan-out approval stands for the turn that asked for it and no
   // longer. Cleared here rather than when the turn ends so an aborted
   // or crashed turn cannot leave authority behind for the next one.
@@ -202,7 +211,7 @@ export function prepareTurnPolicies(
   // on; this many unknown-only steps in a row still end it.
   const unknownTools = createUnknownToolStreak();
   return {
-    fusionOrchestratorTurn, fusionState, reviewStall, toolRole,
+    fusionOrchestratorTurn, fusionState, reviewStall, replan, toolRole,
     claimEvidence, linkEvidence, progressNotes, unknownTools,
   };
 }
@@ -224,8 +233,15 @@ export function prepareTurnBudgets(options: RunTurnOptions) {
     : legSteps;
   const durationCeilingMs =
     options.taskMaxDurationMs ?? taskCfg.maxDurationMs;
+  // Money (ATO-1108): `0` is no cap, the default.
+  const costCeilingUsd = resolveCostCeilingUsd(
+    options.taskMaxCostUsd,
+    taskCfg.maxCostUsd,
+  );
   const taskStartedAt = Date.now();
-  return { legSteps, autoContinue, stepCeiling, durationCeilingMs, taskStartedAt };
+  return {
+    legSteps, autoContinue, stepCeiling, durationCeilingMs, costCeilingUsd, taskStartedAt,
+  };
 }
 
 export function createTurnLoopTracker(): ToolLoopTracker {
