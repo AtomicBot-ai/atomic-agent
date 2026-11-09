@@ -26,10 +26,32 @@ const STEPS = {always: (() => {
 })()};
 /* The replies (by id) whose folded turn was opened by a click. */
 const TURN_OPEN = new Set();
+/* ATO-1145: the replies whose "Auto-approved N actions" list is open. */
+const TURN_AUTO_OPEN = new Set();
 
 function stepsAlwaysSet(on) {
   STEPS.always = !!on;
   try { if (typeof localStorage !== 'undefined') localStorage.setItem(STEPS_KEY, on ? '1' : '0'); } catch (e) { /* no storage: the choice lasts this launch */ }
+}
+
+/** ATO-1145: the approvals of one call that the agent let through by
+    itself: a saved rule, a grant from earlier in the chat, or the risk
+    check. Read from the stored call's approval records (`verdict:
+    "auto-approved"`, `via`, `reason`). Approvals by level are not recorded,
+    so they are not here either. */
+function autoApprovedOf(approvals) {
+  if (!Array.isArray(approvals)) return [];
+  return approvals.filter((a) => a && a.verdict === 'auto-approved').map((a) => ({
+    via: a.via === 'rule' || a.via === 'grant' || a.via === 'risk-review' ? a.via : null,
+    reason: typeof a.reason === 'string' ? a.reason : '',
+    category: typeof a.category === 'string' ? a.category : '',
+    at: Number.isFinite(a.at) ? a.at : null,
+  }));
+}
+
+/** How it got through, in words. */
+function autoViaText(via) {
+  return via === 'rule' ? 'your rule' : via === 'grant' ? 'allowed earlier in this chat' : via === 'risk-review' ? 'risk check' : 'automatic';
 }
 
 /** A row the summary line may hold. */
@@ -72,6 +94,8 @@ function turnFoldsOf(log, opts) {
         reasons: rows.filter((x) => log[x].k === 'reason').length,
         approvals: rows.filter((x) => log[x].k === 'approval').length,
         failed: tools.filter((x) => failedOf(log[x])).length,
+        // ATO-1145: each call the agent allowed by itself, with the row it belongs to.
+        auto: tools.flatMap((x) => (Array.isArray(log[x].autoApproved) ? log[x].autoApproved : []).map((a) => Object.assign({row: log[x]}, a))),
       });
     }
     i = j - 1;
@@ -85,9 +109,30 @@ function turnSumLabel(f) {
   return 'Reasoned in ' + f.reasons + ' step' + (f.reasons === 1 ? '' : 's');
 }
 
+/** ATO-1145: "Auto-approved N actions" under the summary line, and when
+    opened the list: what ran, how it got through, the agent's reason.
+    Nothing at all when the turn had none. deps.autoWhat(row): what the
+    call did (html); without it, the tool's name. */
+function turnAutoHTML(f, deps) {
+  const {esc, ic} = deps;
+  const list = Array.isArray(f.auto) ? f.auto : [];
+  if (!list.length) return '';
+  const open = TURN_AUTO_OPEN.has(f.replyId);
+  const what = (a) => deps.autoWhat && a.row ? deps.autoWhat(a.row) : esc((a.row && a.row.name) || 'a tool call');
+  return '<div class="ts-auto">'
+    + '<button class="turnsum" data-tsauto="' + esc(f.replyId) + '" aria-expanded="' + open + '"'
+      + ' title="' + (open ? 'Hide what was auto-approved' : 'Show what was auto-approved') + '">'
+      + ic(open ? 'chevD' : 'chevR')
+      + '<span class="ts-l">Auto-approved ' + list.length + ' action' + (list.length === 1 ? '' : 's') + '</span>'
+    + '</button>'
+    + (open ? '<div class="discbody ts-autolist">' + list.map((a) => '<div class="ts-autorow">' + what(a)
+        + ' \u00b7 ' + esc(autoViaText(a.via)) + (a.reason ? ' \u00b7 <span class="ts-autowhy">' + esc(a.reason) + '</span>' : '') + '</div>').join('') + '</div>' : '')
+    + '</div>';
+}
+
 /** The summary row. `open`: its steps are drawn under it. `ms`: how long the
     turn worked, or null to print nothing (never a made-up zero).
-    deps: {esc, ic, dur}. */
+    deps: {esc, ic, dur, autoWhat?}. */
 function turnSumHTML(f, open, ms, deps) {
   const {esc, ic, dur} = deps;
   const label = turnSumLabel(f);
@@ -99,7 +144,7 @@ function turnSumHTML(f, open, ms, deps) {
       + '<span class="ts-l">' + esc(label) + '</span>'
       + (f.failed ? '<span class="ts-sep" aria-hidden="true">·</span><span class="ts-bad">' + f.failed + ' failed</span>' : '')
       + (time ? '<span class="ts-sep" aria-hidden="true">·</span><span class="ts-du tnum">' + esc(time) + '</span>' : '')
-    + '</button></div></div>';
+    + '</button>' + turnAutoHTML(f, deps) + '</div></div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {STEPS_KEY, STEPS, TURN_OPEN, stepsAlwaysSet, turnFoldable, turnFoldsOf, turnSumLabel, turnSumHTML};
+if (typeof module !== 'undefined') module.exports = {STEPS_KEY, STEPS, TURN_OPEN, TURN_AUTO_OPEN, stepsAlwaysSet, autoApprovedOf, autoViaText, turnFoldable, turnFoldsOf, turnSumLabel, turnAutoHTML, turnSumHTML};
