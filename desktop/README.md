@@ -105,6 +105,16 @@ draw its trimming verdict over the numbers of the session they are on. A
 prompt-derived window is released when the active `<providerId> <chatModel>`
 changes, so the gauge never draws a new model against the old model's scale.
 
+**Cost and plan limit (ATO-569).** Beside the ring, a plain-text chip says
+what the chat has spent and how much of the account's limit is left
+(`$0.31 · 17% left`), with the breakdown and the reset time in its tooltip.
+The agent counts both ([usage-meter.js](renderer/usage-meter.js) only reads
+them): `GET /api/sessions/{id}` carries `sessionUsage`, read in the same
+refresh as `contextUsage`, and the stream's `usage_updated` frame updates it
+live while a turn runs. An unknown price is shown as `cost n/a`, never `$0`;
+local models say `local`, subscriptions say `plan`. An agent older than the
+field sends neither, and no chip is drawn.
+
 **Context compaction (ATO-259, ATO-295).** When the agent summarizes older
 history inside a turn, the stream carries `compaction_started`,
 `compaction_progress` and `compaction_completed` / `compaction_failed`; the

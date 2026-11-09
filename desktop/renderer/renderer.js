@@ -1582,6 +1582,10 @@ const OLLAMA_SIGNPOST = 'Ollama runs its own models: this adds it as a provider 
    new model against the old model's scale. `stamp` is metadata.llm — the
    provider/model the open session last ran on. */
 const CTX055 = {stored:null, route:null, stamp:null};
+/* ATO-569: the open chat's spend and the account's limits, as the agent
+   counts them (usage-meter.js). `sid` is the chat they belong to, so a
+   frame or a refresh for another chat never paints over this one. */
+const USAGE = {state:null, sid:null};
 /* Mid-turn steering. `ahead` is ChatOrchestrator.steeredAhead: a refused
    steer is parked AHEAD of ordinary backlog and behind steers already
    re-routed for the same turn, so typing order survives. `chain`
@@ -10386,6 +10390,8 @@ function onChatEvent(ev) {
     if (!held || held.after || (engineDownReasonIn(ev) && !engineDownReasonIn(held.ev))) STREAM_ERR.set(ev.turnId, {ev, after:false});
     return;
   }
+  // ATO-569: the chat's spend and limits; bookkeeping only, never a row.
+  if (ev && ev.kind === 'usage_updated') { usageFrame(ev.payload); return; }
   // Backlog 24: whose turn this frame is, read before the bookkeeping below forgets it.
   const turnSid = ev && RUNNING.has(ev.turnId) ? RUNNING.get(ev.turnId) : null;
   /* item 6 — the running dot, bookkept BEFORE the turnId guard below.
@@ -18538,6 +18544,7 @@ async function refreshContext(stateDirOverride) {
      session B's numbers, and a stale `= null` would blank a binding line
      the current session legitimately has. */
   let stored055 = null;
+  let usage569 = null;   // ATO-569: staged like stored055, committed past the same guard
   // `stateDirOverride` means "run the ladder as if this agent held no
   // record of this session", so the session row is skipped with the trace
   // file — reading it back off the live agent would contradict the very
@@ -18545,6 +18552,7 @@ async function refreshContext(stateDirOverride) {
   if (!stateDirOverride && S.agentSession && BR.session) {
     const r = await BR.session(S.agentSession);
     const u = r && r.ok && r.data ? r.data.contextUsage : null;
+    usage569 = r && r.ok && r.data ? usageFromAgent(r.data.sessionUsage, Date.now()) : null;
     if (u && u.tokens > 0) {
       stored055 = u;
       const sec = (label) => { const x = (u.sections || []).find((y) => y.label === label); return x ? x.tokens : 0; };
@@ -18589,6 +18597,10 @@ async function refreshContext(stateDirOverride) {
   }
   if (seq !== CTX.seq) return; // a newer refresh is on its way
   CTX055.stored = stored055; // committed only for the session this refresh still owns
+  // ATO-569: a chat with no row yet (or an agent older than the field) has
+  // no spend to show; a live frame for this chat may already have painted
+  // newer figures, which the row then replaces with the saved ones.
+  if (!stateDirOverride) { USAGE.state = usage569; USAGE.sid = S.agentSession || null; }
   if (!usage) {
     // Nothing measured and no trace to project from: the TUI's own
     // "not measured yet" state — chip hidden, never a zero.
@@ -18648,6 +18660,8 @@ function scheduleChipRepaint() {
   CTX.chipTimer = setTimeout(repaintContextChip, 150);
 }
 function repaintContextChip() {
+  // ATO-569: the usage chip rides with the ring, so it is redrawn with it.
+  document.querySelectorAll('.cfoot .usagechip').forEach((n) => n.remove());
   const el = document.querySelector('.cfoot .ctxbtn');
   const html = contextChip();
   if (el) { if (html) el.outerHTML = html; else el.remove(); return; }
@@ -18656,7 +18670,31 @@ function repaintContextChip() {
   if (next) next.insertAdjacentHTML('beforebegin', html);
 }
 
+/** ATO-569: the cost and plan-limit chip after the ring; '' when the chat has no figures. */
+function usageChip() {
+  const u = USAGE.sid && USAGE.sid === S.agentSession ? USAGE.state : null;
+  const now = Date.now();
+  const text = usageChipText(u, now);
+  if (!text) return '';
+  const tip = usageTooltip(u, now);
+  return '<span class="usagechip' + (usageUrgent(u, now) ? ' warn' : '') + '" title="' + esc(tip) + '" aria-label="' + esc(tip.replace(/\n/g, '. ')) + '">'
+    + esc(text) + '</span>';
+}
+
+/** A usage_updated frame of the chat on screen: replace its figures and repaint the chip. */
+function usageFrame(payload) {
+  const sid = payload && (payload.session_id || payload.sessionId);
+  if (!sid || sid !== S.agentSession) return;
+  USAGE.state = usageFromAgent(payload, Date.now());
+  USAGE.sid = sid;
+  repaintContextChip();
+}
+
 function contextChip() {
+  return ringChip() + usageChip();
+}
+
+function ringChip() {
   if (!CTX.tokens) return '';
   const proj = CTX.source === 'projected';
   const pct = CTX.window ? Math.min(100, (CTX.tokens / CTX.window) * 100) : 0;
