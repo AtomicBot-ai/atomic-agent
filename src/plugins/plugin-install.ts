@@ -21,8 +21,8 @@ export class PluginInstallError extends Error {
 }
 
 /** Never copied: VCS data, dependency trees and OS junk. */
-const SKIP_NAMES = new Set([".git", "node_modules", ".DS_Store", "__pycache__", ".venv"]);
-const MAX_FILES = 5000;
+export const SKIP_NAMES: ReadonlySet<string> = new Set([".git", "node_modules", ".DS_Store", "__pycache__", ".venv"]);
+export const MAX_FILES = 5000;
 
 /** A copied, parsed plugin waiting for the caller to scan it and confirm. */
 export interface StagedPlugin {
