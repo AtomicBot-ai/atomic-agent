@@ -483,6 +483,8 @@ function mdrBlocks(tokens, ctx, depth) {
 }
 
 /** renderMarkdown's body: the model's raw text in, {html, held} out (see the header). */
+const MDR_FENCE_AT_END = /(?:^|\n) {0,3}(?:`{3,}[^`\n]*|~{3,}[^\n]*)$/;
+
 function mdRender(text) {
   const held = [];
   // A CRLF reply reads as LF.
@@ -490,7 +492,9 @@ function mdRender(text) {
   const md = mdrMarked();
   try {
     if (!md) throw new Error('marked is not loaded');
-    const tokens = md.lexer(src);
+    // marked lets a fence end a paragraph only when a newline follows the fence's first line, so a fence
+    // that has just opened at the end of a streaming reply would show as backticks until the next chunk.
+    const tokens = md.lexer(MDR_FENCE_AT_END.test(src) ? src + '\n' : src);
     const ctx = {held, notes: mdrFootnotes(tokens)};
     let html = mdrBlocks(tokens, ctx, 0);
     if (ctx.notes.list.length) html += (html ? '\n' : '') + mdrFootnotesHtml(ctx);
