@@ -1248,10 +1248,16 @@ export function buildFusionDelegateTool(
       // facts above, with the attempts it has left. The planner's next
       // step is held to `fusion.delegate` by the loop while any task is
       // pending (`fusion-replan.ts`); exhausted tasks are to be reported.
+      // A task waiting for the person's yes after a restart is theirs to
+      // decide: held to `fusion.delegate`, the planner could only repeat
+      // the commands the question exists to guard.
+      const awaitingYes = new Set(
+        resume?.needsConfirmation.map((r) => r.id) ?? [],
+      );
       const replan =
         autoReplan > 0 && stoppedBy === undefined && !ctx.signal.aborted
           ? describeReplan(
-              results,
+              results.filter((r) => !awaitingYes.has(r.id)),
               (id) => turnBudget.attempts(ctx.sessionId, id),
               autoReplan,
             )

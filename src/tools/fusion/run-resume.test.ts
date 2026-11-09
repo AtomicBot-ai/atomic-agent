@@ -296,6 +296,23 @@ describe("resuming a fusion run (ATO-617)", () => {
       expect(store.listResumable()).toEqual([]);
     });
 
+    it("leaves a task awaiting confirmation out of the automatic replan", async () => {
+      const checkpoint = cutOff(["t1"], ["t2"]);
+      const d = deps({
+        runCheckpoints: store,
+        resolveRunMode: () => mode({ autoReplan: 2 }),
+      });
+      const result = await buildFusionDelegateTool(d).run({ resume: checkpoint.runId }, ctx());
+      const details = result.details as {
+        tasks: WorkerTaskResult[];
+        replan?: { pending: { id: string }[] };
+      };
+      expect(details.tasks.find((t) => t.id === "t2")!.status).toBe("needs_orchestrator");
+      expect((details.replan?.pending ?? []).map((t) => t.id)).not.toContain("t2");
+      expect(result.summary).not.toContain("- t2 (needs_orchestrator)");
+      expect(d.ran).toEqual(["t3"]);
+    });
+
     it("counts the spend before the restart toward the turn's cap", async () => {
       const checkpoint = cutOff(["t1"], [], 5);
       const turnBudget = new FusionTurnBudget();
