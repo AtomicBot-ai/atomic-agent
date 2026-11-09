@@ -11,6 +11,7 @@ import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.j
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
+import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
 import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
@@ -669,11 +670,18 @@ function engineInstallStream(
         console.error(`[desktop] local-llm: Download again: Atomic Core ${reset.version}${reset.removedRecord ? ", its install record removed" : ""}${reset.removedBinary ? ", its binary (it did not run) removed" : ""}`);
       }
       if (own.signal.aborted) return stopped(UPDATE_STOPPED);
-      const started = modelsUpdateStream((line) =>
-        pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
-      );
-      own.signal.addEventListener("abort", () => started.cancel(), { once: true });
-      return started.done.then(updateSwept);
+      const attempt = (): Promise<InstallEnded> => {
+        const started = modelsUpdateStream((line) =>
+          pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
+        );
+        const cancel = () => started.cancel();
+        own.signal.addEventListener("abort", cancel, { once: true });
+        return started.done.finally(() => own.signal.removeEventListener("abort", cancel));
+      };
+      // Settings' install hears at once that the engine is taken. The launch's and the setup's belong to a queue that was going to run anyway, so they wait.
+      const ended = await (via === "settings" ? attempt() : retryWhileEngineBusy(attempt, { signal: own.signal }));
+      if (own.signal.aborted && engineBusy(ended)) return stopped(UPDATE_STOPPED);
+      return updateSwept(ended);
     },
   );
   pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
