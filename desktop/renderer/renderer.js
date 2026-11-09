@@ -4652,7 +4652,8 @@ function renderInspector() {
   let body = '';
   if (S.inspTab === 'steps') {
     const tools = S.log.filter((m) => m.k === 'tool');
-    body = tools.length ? tools.map((m, i) => '<button class="step" data-goto="' + m.id + '">'
+    // ATO-1249: newest on top unless the viewer chose otherwise (insp-order.js); a step keeps its number.
+    body = tools.length ? inspOrderHTML(tools.length, {esc}) + inspOrdered(tools.map((m, i) => [m, i])).map(([m, i]) => '<button class="step" data-goto="' + m.id + '">'
         + '<span class="ix">' + String(i + 1).padStart(2, '0') + '</span>'
         + '<span class="nm">' + esc(m.name) + '</span>'
         + '<span class="hstack">'
@@ -4669,7 +4670,7 @@ function renderInspector() {
     const r = S.log.filter((m) => m.k === 'reason');
     // Soft Tactile (SH-06): a sentence-case label over a mono well per step.
     // 14: `data-rs` is how a stream frame finds the running block's well.
-    body = r.length ? r.map((m) => '<div class="insp-rs" data-rs="' + esc(m.id) + '"><div class="insp-lbl">Step ' + m.steps + '</div>'
+    body = r.length ? inspOrderHTML(r.length, {esc}) + inspOrdered(r).map((m) => '<div class="insp-rs" data-rs="' + esc(m.id) + '"><div class="insp-lbl">Step ' + m.steps + '</div>'
         + '<pre class="tk-out">' + esc(m.text) + '</pre></div>').join('')
       : '<p class="cap">Reasoning appears here as the turn runs.</p>';
   } else if (S.inspTab === 'world') {
@@ -4688,15 +4689,23 @@ function renderInspector() {
      like the chat. Only for the same tab of the same transcript, rebuilt
      while on screen: a tab switch, another chat, or a panel just shown starts
      at the top as it always has. */
+  /* ATO-1249: with the newest on top, the top is the place that follows new
+     rows, and a reader scrolled down keeps the rows they see (insp-order.js). */
   const prev = el.querySelector('.inspbody');
-  const keep = prev && INSP_VIEW.tab === S.inspTab && INSP_VIEW.log === S.log ? (inspAtEnd(prev) ? 'end' : prev.scrollTop) : null;
+  const keep = prev && INSP_VIEW.tab === S.inspTab && INSP_VIEW.log === S.log
+    ? inspScrollKeep({scrollTop:prev.scrollTop, scrollHeight:prev.scrollHeight, clientHeight:prev.clientHeight}, inspNewestOnTop()) : null;
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
     // Calm (S1): no session-id footer. The id is one palette row away
     // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
     + '<div class="inspbody">' + body + '</div>';
   INSP_VIEW.tab = S.inspTab; INSP_VIEW.log = S.log;
   const now = keep === null ? null : el.querySelector('.inspbody');
-  if (now) now.scrollTop = keep === 'end' ? now.scrollHeight : keep;
+  if (now) now.scrollTop = inspScrollTo(keep, now);
+}
+
+/** ATO-1249: the tab on screen lists newest first (World is not a list). */
+function inspNewestOnTop() {
+  return INSP_ORDER.newestFirst && (S.inspTab === 'steps' || S.inspTab === 'reasoning');
 }
 
 /** 14: the running reasoning block's text, grown in its inspector well in
@@ -4707,9 +4716,13 @@ function growInspectorReasoning(block) {
   const pre = document.querySelector('#inspector .insp-rs[data-rs="' + block.id + '"] > .tk-out');
   if (!pre) { renderInspector(); return; }   // a new block: its well is drawn by a rebuild
   const body = pre.closest('.inspbody');
-  const end = !!body && inspAtEnd(body);
+  // ATO-1249: newest first, the running block is on top: a reader scrolled down keeps what they see.
+  const top = inspNewestOnTop();
+  const end = !!body && !top && inspAtEnd(body);
+  const h0 = body ? body.scrollHeight : 0;
   growText(pre, block.text);
   if (end) body.scrollTop = body.scrollHeight;
+  else if (top && body && body.scrollTop >= 4) body.scrollTop += body.scrollHeight - h0;
 }
 
 /* ---------------- console ---------------- */
@@ -6959,6 +6972,8 @@ function act(a) {
     S.room = v; render(); return;
   }
   if (k === 'insp')      { close(); S.inspector = true; S.inspTab = v; render(); return; }
+  // ATO-1249: the side panel's order switch; the list starts again at its top.
+  if (k === 'inspord')   { inspOrderSet(!INSP_ORDER.newestFirst); INSP_VIEW.tab = null; renderInspector(); return; }
   if (k === 'console')   { close(); S.consoleOpen = true; S.consoleTab = v; render(); return; }
   // r5 item 2: the collapse is state now, not a class poked in place — renderSidebar
   // derives the class from it, so the toolbar button can read it and glow.
