@@ -244,7 +244,7 @@ describe("capPreservedReasoning: reasoning handed back stays within a fixed budg
   });
 
   it("keeps the total of a long tool loop within the budget", () => {
-    const turns: PromptMessages["turns"] = [{ kind: "user", text: "go" }];
+    const turns: Array<PromptMessages["turns"][number]> = [{ kind: "user", text: "go" }];
     for (let i = 0; i < 40; i++) turns.push(call(words(300, `s${i}_`)), result);
     const kept = capPreservedReasoning(turns);
     const total = [...kept.values()].reduce((sum, text) => sum + estimateTokens(text), 0);
