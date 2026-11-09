@@ -236,7 +236,7 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
-import { curatedMetaIds } from "./model-catalog.js";
+import { curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -1693,12 +1693,13 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    return startModelPull(id, (opts as { trigger?: unknown } | undefined)?.trigger);
+    const o = opts as { trigger?: unknown; mmproj?: unknown } | undefined;
+    return startModelPull(id, o?.trigger, undefined, o?.mmproj === true);
   });
   /* The weights download, for the window's pull and for the launch's starter
      model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
      download card follows either (dlAdopt). `onDone` hears how it ended. */
-  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void) {
+  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void, mmproj = false) {
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
     const running = downloadRunning();
     // A refusal for the download already running is the window following it (dlAdopt), not a failure.
@@ -1710,12 +1711,15 @@ function wireIpc(client: AgentClient): void {
       const progress = parsePullProgress(line, "weights");
       A.downloadProgress(id, progress);
       pullFrame(slot, { id, line, ...progress });
-    });
+    }, mmproj);
     pull = slot = { ...started, kind: "weights", id, last: null };
     void started.done.then((res) => {
       pull = null;
       A.downloadFinished(id, res);
-      send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+      /* `models pull --mmproj` exits 0 when only the projector failed, and says
+         so on stderr (src/cli/models-downloads.ts describeProjectorSkipped). */
+      const projectorSkipped = mmproj && res.ok && /^note: projector download failed/m.test(res.stderr);
+      send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null, ...(projectorSkipped ? { projectorSkipped: true } : {}) });
       onDone?.(res);
     });
     return { ok: true, started: true };
@@ -2146,6 +2150,8 @@ function wireIpc(client: AgentClient): void {
   // `--fake-ram=N` (test only, see FAKE_RAM_GB) is the one thing that can
   // stand between this window and os.totalmem().
   ipcMain.handle("app:hostRam", () => FAKE_RAM_GB ?? hostRamGb());
+  // None on another computer's agent: its models are managed there, and a pull is refused (REMOTE_MODELS_HERE).
+  ipcMain.handle("app:modelSpotlightIds", () => (client.isRemote ? [] : spotlightIds()));
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
   // ATO-507: free space on the disk models download to ({freeBytes, totalBytes, path} | null).
   // Null when it cannot be read; the window then blocks nothing.
