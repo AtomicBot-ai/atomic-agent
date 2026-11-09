@@ -586,6 +586,8 @@ export class StudioMedia {
    */
   async retireCoreOnQuit(): Promise<boolean> {
     if (!this.client) return false;
+    // A generation or engine install still running keeps Core: it may be paid for, and its file still lands in the gallery.
+    if (this.localBusy > 0 || this.localActive || this.jobs.list().some((j) => !TERMINAL_STATES.has(j.state))) return false;
     if (this.leaseTimer) { clearTimeout(this.leaseTimer); this.leaseTimer = null; }
     await this.lease?.release().catch(() => undefined);
     this.lease = null;
