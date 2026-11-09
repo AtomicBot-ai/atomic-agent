@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { bundleRunsCode, readPluginBundle } from "./plugin-bundle.js";
 import { installedPluginDir, isPartDisabled, readPluginState, type InstalledPluginRecord, type PluginSourceRecord } from "./plugin-store.js";
 import type { PluginBundle, PluginFormat } from "./plugin-types.js";
-import { userKeyRefs } from "./plugin-mcp.js";
+import { userKeyRefs } from "./plugin-keys.js";
 
 /**
  * One view model of an installed plugin, shared by the terminal `/plugins`
@@ -150,7 +150,7 @@ export function buildPluginOverview(
     parts.push({ id, kind: "agent", active: false, name: agent.name, enabled: on(id), runsCode: false, missingKeys: [] });
   }
 
-  const runsCode = bundleRunsCode(bundle) || hookEvents.length > 0 || parts.some(p => p.runsCode);
+  const runsCode = bundleRunsCode(bundle) || hookEvents.length > 0;
   const codeAllowed = record.runsCodeAccepted === true;
   for (const part of parts) part.active = record.enabled && part.enabled && (!part.runsCode || codeAllowed);
   const missingKeys = [...new Set(parts.filter(p => p.enabled).flatMap(p => p.missingKeys))].sort();

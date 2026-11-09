@@ -35,7 +35,7 @@ describe("PluginsPanel", () => {
 
   it("asks on the row before removing or allowing code", () => {
     expect(frame({ mode: "remove" })).toContain("remove this plugin and its files? y / esc");
-    expect(frame({ mode: "allow-code" })).toContain("allow it to run local MCP servers: gh? y / esc");
+    expect(frame({ mode: "allow-code" })).toContain("allow local MCP servers: gh? y / esc");
   });
 
   it("points to the CLI when nothing is installed", () => {
