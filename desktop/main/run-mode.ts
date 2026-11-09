@@ -89,6 +89,18 @@ export interface ResolvedRunMode {
 
 const isLocalKind = (p: RunModeProvider | undefined): boolean => p?.kind === LOCAL_PROVIDER_KIND;
 
+/**
+ * ATO-880: the agent's entryHasNoChatModel (src/llm/provider/registry/
+ * chat-model-guard.ts). An `openai-compatible` / `qwen-openai-compatible`
+ * entry with no `defaultChatModel` is embedding-only: every chat call on it
+ * throws, so it is never picked for a Fusion seat. A `llama-server` entry
+ * has no chat model on purpose (it serves what its daemon loaded).
+ */
+export function entryHasNoChatModel(p: RunModeProvider | undefined): boolean {
+  return !!p && (p.kind === "openai-compatible" || p.kind === "qwen-openai-compatible")
+    && !(typeof p.defaultChatModel === "string" && p.defaultChatModel.trim().length > 0);
+}
+
 function providersOf(cfg: RunModeConfig | null | undefined): RunModeProvider[] {
   const list = cfg?.llm?.providers;
   // resolveLlmConfig: a file with no llm block runs on the synthesized local entry.
@@ -319,20 +331,29 @@ export function planEnterFusion(
   const providers = providersOf(cfg);
   const active = llm.activeTextProvider ?? LOCAL_PROVIDER_ID;
   const activeIsCloud = providers.some((p) => p.id === active && !isLocalKind(p));
-  const cloud = providers.filter((p) => !isLocalKind(p));
+  // ATO-880, as the agent since #820: an embedding-only entry is not a candidate, it cannot answer chat.
+  const cloud = providers.filter((p) => !isLocalKind(p) && !entryHasNoChatModel(p));
   const firstUsableCloud = (cloud.find(isKeyed) ?? cloud[0])?.id ?? null;
   // Cloud orchestrator is the default, not the rule: an explicit pin wins whatever its kind.
   const leg = pins.orchestratorProvider ?? (before.effective === "fusion" ? before.orchestratorProviderId : null) ?? (activeIsCloud ? active : null) ?? firstUsableCloud
     ?? before.orchestratorProviderId ?? active;
   const workerLeg = pins.workerProvider
-    ?? (before.workerProviderId !== leg ? before.workerProviderId : null)
-    ?? providers.find((p) => p.id !== leg)?.id
+    // The resolver's guess (not a pin) may be the embedding-only entry: not carried over.
+    ?? (before.workerProviderId !== leg && !entryHasNoChatModel(providers.find((p) => p.id === before.workerProviderId)) ? before.workerProviderId : null)
+    ?? providers.find((p) => p.id !== leg && !entryHasNoChatModel(p))?.id
     ?? null;
   if (workerLeg === null) {
     return { write: false, before, refusal: describeRunModeDegradation({ reason: "no-second-provider", requested: "fusion" }) };
   }
   if (!Array.isArray(llm.providers) || !llm.providers.some((p) => p.id === leg)) {
     return { write: false, before, refusal: `provider "${leg}" is not configured` };
+  }
+  /* ATO-880: a seat named by a pin, or carried over from the stored Fusion,
+     is refused rather than written: as the active provider it would fail on
+     the first message (the agent's setMode refuses the same, #820). */
+  const chatless = [leg, workerLeg].find((id) => entryHasNoChatModel(providers.find((p) => p.id === id)));
+  if (chatless !== undefined) {
+    return { write: false, before, refusal: `"${chatless}" has no chat model, so it cannot run Fusion. Choose a chat model for it first.` };
   }
   // One managed local slot: it serves one seat at a time. Two cloud seats may share a provider.
   if (leg === workerLeg && leg === LOCAL_PROVIDER_ID) return { write: false, before, refusal: "The local engine can serve one Fusion role at a time. Choose a cloud provider for the other role." };
