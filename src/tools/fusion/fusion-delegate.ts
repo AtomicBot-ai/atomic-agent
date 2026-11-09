@@ -712,8 +712,8 @@ export function buildFusionDelegateTool(
               },
             };
       const checkpointOptions = checkpointOptionsFor(workerPricing);
-      // The task tree (ATO-940): off unless configured, and then only
-      // the wave runs below read proposals — a judge's retry does not.
+      // The task tree (ATO-940): off unless configured, and then the wave
+      // runs and a judge's retry read proposals.
       const tree =
         mode.taskTree === undefined
           ? undefined
@@ -1240,13 +1240,20 @@ export function buildFusionDelegateTool(
               renderRetryFindings(acceptance.get(id) ?? [], verdict),
             ]),
           );
-          const retried = await runTasks(
-            parsed.tasks.filter((t) => retryIds.has(t.id)),
-            contractForWave(parsed.contract, [...waveWarnings]),
-            (taskId) =>
-              [acceptanceSuffix?.(taskId), findings.get(taskId)]
-                .filter((part): part is string => part !== undefined)
-                .join("\n\n"),
+          // The retry keeps the right to split: a task judged red for being
+          // too big would only fail again in one piece.
+          const retryTasks = parsed.tasks.filter((t) => retryIds.has(t.id));
+          const retried = await expandWave(
+            retryTasks,
+            await runTasks(
+              retryTasks,
+              contractForWave(parsed.contract, [...waveWarnings]),
+              (taskId) =>
+                [waveSuffix?.(taskId), findings.get(taskId)]
+                  .filter((part): part is string => part !== undefined)
+                  .join("\n\n"),
+              true,
+            ),
           );
           const merged = results.map(
             (r) => retried.find((x) => x.id === r.id) ?? r,
