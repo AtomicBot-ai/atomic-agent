@@ -32,6 +32,7 @@ function makeConfig(
         maxResults: 8,
         timeoutMs: 15_000,
         cacheTtlMinutes: 15,
+        persistCache: false,
         fallback: [],
         searxng: { instanceUrl: null },
         exa: {
@@ -40,7 +41,15 @@ function makeConfig(
           apiKeyEnv: "EXA_API_KEY",
         },
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+        keenable: { apiKeyEnv: "KEENABLE_API_KEY" },
         ...overrides,
+      },
+      fetch: {
+        timeoutMs: 30_000,
+        connectTimeoutMs: 10_000,
+        maxRetries: 2,
+        retryBaseDelayMs: 500,
+        retryMaxDelayMs: 5_000,
       },
     },
   };
@@ -113,6 +122,26 @@ describe("runWebSearchWithFallback", () => {
 
     expect(out.provider).toBe("exa");
     expect(exa.search).toHaveBeenCalledOnce();
+  });
+
+  it("asks keenable without a key when it is named in the fallback", async () => {
+    const ddg = stubProvider("duckduckgo", async () => []);
+    const keenable = stubProvider("keenable", async () => [RESULT]);
+    vi.mocked(resolveProviderByName).mockImplementation((name) => {
+      if (name === "duckduckgo") return ddg;
+      if (name === "keenable") return keenable;
+      throw new Error(`unexpected provider ${name}`);
+    });
+
+    const out = await runWebSearchWithFallback({
+      config: makeConfig({ fallback: ["keenable"] }),
+      deps: {},
+      options: makeOptions(),
+      env: {},
+    });
+
+    expect(out.provider).toBe("keenable");
+    expect(keenable.search).toHaveBeenCalledOnce();
   });
 
   it("advances on WebSearchBlockedError then succeeds on the fallback", async () => {

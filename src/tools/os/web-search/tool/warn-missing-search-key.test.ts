@@ -22,6 +22,7 @@ function makeConfig(
           apiKeyEnv: "EXA_API_KEY",
         },
         brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+        keenable: { apiKeyEnv: "KEENABLE_API_KEY" },
         ...overrides,
       },
     },

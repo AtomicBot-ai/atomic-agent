@@ -48,6 +48,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "web.search.searxng",
   "web.search.exa",
   "web.search.brave",
+  "web.search.keenable",
   "web.fetch",
   "projects",
   "tools",

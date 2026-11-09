@@ -408,6 +408,7 @@ describe("replace guard (F36)", () => {
                 apiKeyEnv: "EXA_API_KEY",
               },
               brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+              keenable: { apiKeyEnv: "KEENABLE_API_KEY" },
             },
             fetch: {
               timeoutMs: 30_000,

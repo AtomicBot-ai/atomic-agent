@@ -2,6 +2,7 @@ import type { AtomicAgentConfig } from "../../../../config/index.js";
 import { createBraveProvider } from "./brave-provider.js";
 import { createDuckDuckGoProvider } from "./duckduckgo-provider.js";
 import { createExaProvider } from "./exa-provider.js";
+import { createKeenableProvider } from "./keenable-provider.js";
 import { createSearxngProvider } from "./searxng-provider.js";
 import type {
   WebSearchHttpDeps,
@@ -35,5 +36,7 @@ export function resolveProviderByName(
       return createExaProvider(search.exa, deps);
     case "brave":
       return createBraveProvider(search.brave, deps);
+    case "keenable":
+      return createKeenableProvider(search.keenable, deps);
   }
 }

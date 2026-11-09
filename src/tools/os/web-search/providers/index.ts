@@ -13,6 +13,11 @@ export {
 } from "./exa-provider.js";
 export type { ExaProviderConfig } from "./exa-provider.js";
 export {
+  createKeenableProvider,
+  parseKeenableJson,
+} from "./keenable-provider.js";
+export type { KeenableProviderConfig } from "./keenable-provider.js";
+export {
   resolveProviderByName,
   resolveWebSearchProvider,
 } from "./provider-registry.js";

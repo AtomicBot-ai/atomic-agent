@@ -41,11 +41,11 @@ describe("web configuration ownership and compatibility", () => {
     expect(parseComposedProvider).toBe(parseWebSearchProviderName);
     expect(parseComposedFallback).toBe(parseWebSearchFallback);
     expect(ConfigValidationError).toBe(OwnedValidationError);
-    for (const provider of ["duckduckgo", "searxng", "exa", "brave"]) {
+    for (const provider of ["duckduckgo", "searxng", "exa", "brave", "keenable"]) {
       expect(parseWebSearchProviderName(provider, "synthetic.provider")).toBe(provider);
     }
     expect(thrownError(() => parseWebSearchProviderName("EXA", "synthetic.provider")))
-      .toMatchObject({ field: "synthetic.provider", reason: 'expected one of duckduckgo|searxng|exa|brave, got "EXA"' });
+      .toMatchObject({ field: "synthetic.provider", reason: 'expected one of duckduckgo|searxng|exa|brave|keenable, got "EXA"' });
   });
 
   it("creates fresh mutable nested defaults and retains property order", () => {
@@ -59,15 +59,17 @@ describe("web configuration ownership and compatibility", () => {
       searxng: { instanceUrl: null },
       exa: { endpoint: "https://mcp.exa.ai/mcp", apiEndpoint: "https://api.exa.ai/search", apiKeyEnv: "EXA_API_KEY" },
       brave: { apiKeyEnv: "BRAVE_SEARCH_API_KEY" },
+      keenable: { apiKeyEnv: "KEENABLE_API_KEY" },
     });
     expect(fetch).toStrictEqual({ timeoutMs: 30_000, connectTimeoutMs: 10_000, maxRetries: 2, retryBaseDelayMs: 500, retryMaxDelayMs: 5_000 });
-    expect(Object.keys(search)).toEqual(["enabled", "provider", "maxResults", "timeoutMs", "cacheTtlMinutes", "persistCache", "fallback", "searxng", "exa", "brave"]);
+    expect(Object.keys(search)).toEqual(["enabled", "provider", "maxResults", "timeoutMs", "cacheTtlMinutes", "persistCache", "fallback", "searxng", "exa", "brave", "keenable"]);
     expect(Object.keys(fetch)).toEqual(["timeoutMs", "connectTimeoutMs", "maxRetries", "retryBaseDelayMs", "retryMaxDelayMs"]);
     expect(search).not.toBe(otherSearch);
     expect(search.fallback).not.toBe(otherSearch.fallback);
     expect(search.searxng).not.toBe(otherSearch.searxng);
     expect(search.exa).not.toBe(otherSearch.exa);
     expect(search.brave).not.toBe(otherSearch.brave);
+    expect(search.keenable).not.toBe(otherSearch.keenable);
     expect(fetch).not.toBe(otherFetch);
     search.fallback.push("brave");
     search.exa.endpoint = "synthetic endpoint";
@@ -90,6 +92,7 @@ describe("web configuration ownership and compatibility", () => {
     expect(first.search.searxng).not.toBe(second.search.searxng);
     expect(first.search.exa).not.toBe(second.search.exa);
     expect(first.search.brave).not.toBe(second.search.brave);
+    expect(first.search.keenable).not.toBe(second.search.keenable);
     expect(first.fetch).not.toBe(second.fetch);
     expect(first.fetch).not.toBe(USER_CONFIG_DEFAULTS.web.fetch);
   });
@@ -115,6 +118,7 @@ describe("web configuration ownership and compatibility", () => {
       searxng: { instanceUrl: " " },
       exa: { endpoint: "not a URL", apiEndpoint: " ", apiKeyEnv: "a key with spaces" },
       brave: { apiKeyEnv: " " },
+      keenable: { apiKeyEnv: "a key with spaces" },
     };
     const expected = {
       ...raw, enabled: false, maxResults: 2, timeoutMs: 1000,
@@ -178,12 +182,13 @@ describe("web configuration ownership and compatibility", () => {
       get searxng() { events.push("searxng"); return {}; },
       get exa() { events.push("exa"); return {}; },
       get brave() { events.push("brave"); return {}; },
+      get keenable() { events.push("keenable"); return {}; },
       get enabled() { events.push("enabled"); return "bad"; },
     };
     const prepared = prepareWebSearchInputs(raw, createWebSearchDefaults);
-    expect(events).toEqual(["provider", "searxng", "exa", "brave"]);
+    expect(events).toEqual(["provider", "searxng", "exa", "brave", "keenable"]);
     expect(thrownError(() => parseWebSearchConfig(prepared, createWebSearchDefaults))).toMatchObject({ field: "web.search.enabled" });
-    expect(events).toEqual(["provider", "searxng", "exa", "brave", "enabled"]);
+    expect(events).toEqual(["provider", "searxng", "exa", "brave", "keenable", "enabled"]);
   });
 
   it("short-circuits default lookups for every explicitly supplied field", () => {
@@ -216,7 +221,7 @@ describe("web configuration ownership and compatibility", () => {
         get fetch() { events.push("fetch"); return fetch; },
       };
       parseUserConfigFile({});
-      expect(events).toEqual([...Array<string>(11).fill("search"), ...Array<string>(5).fill("fetch")]);
+      expect(events).toEqual([...Array<string>(12).fill("search"), ...Array<string>(5).fill("fetch")]);
     } finally {
       USER_CONFIG_DEFAULTS.web = originalWeb;
     }
