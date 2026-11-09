@@ -74,16 +74,18 @@ test('tokens and $ are shown when the agent sent them, as the TUI row shows them
 
 test('stuck follows the TUI rule: twice the expected time and at least three minutes', () => {
   const min = 60_000;
-  const w = row({startedAt: 0, etaSeconds: 60});
-  assert.equal(fzpIsStuck(w, [w], 2 * min), false, 'twice a 1 min estimate, but under three minutes');
-  assert.equal(fzpIsStuck(w, [w], 3 * min), true);
+  // A real start time: 0 means none was recorded, and such a row is never stuck.
+  const t0 = 1_000;
+  const w = row({startedAt: t0, etaSeconds: 60});
+  assert.equal(fzpIsStuck(w, [w], t0 + 2 * min), false, 'twice a 1 min estimate, but under three minutes');
+  assert.equal(fzpIsStuck(w, [w], t0 + 3 * min), true);
   // No estimate: the median of at least two finished siblings.
-  const a = row({taskId: 'a', done: true, startedAt: 0, finishedAt: 2 * min});
-  const b = row({taskId: 'b', done: true, startedAt: 0, finishedAt: 2 * min});
-  const c = row({taskId: 'c', startedAt: 0});
-  assert.equal(fzpIsStuck(c, [a, c], 10 * min), false, 'one sibling is not a measurement');
-  assert.equal(fzpIsStuck(c, [a, b, c], 3.9 * min), false);
-  assert.equal(fzpIsStuck(c, [a, b, c], 4 * min), true);
+  const a = row({taskId: 'a', done: true, startedAt: t0, finishedAt: t0 + 2 * min});
+  const b = row({taskId: 'b', done: true, startedAt: t0, finishedAt: t0 + 2 * min});
+  const c = row({taskId: 'c', startedAt: t0});
+  assert.equal(fzpIsStuck(c, [a, c], t0 + 10 * min), false, 'one sibling is not a measurement');
+  assert.equal(fzpIsStuck(c, [a, b, c], t0 + 3.9 * min), false);
+  assert.equal(fzpIsStuck(c, [a, b, c], t0 + 4 * min), true);
   // The agent escalated it for a stall: stuck by its own measure; a done row never is.
   assert.equal(fzpIsStuck(row({stalled: true}), [], 0), true);
   assert.equal(fzpIsStuck(row({stalled: true, done: true}), [], 0), false);

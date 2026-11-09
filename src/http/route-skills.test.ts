@@ -231,6 +231,8 @@ describe("/api/skills", () => {
     expect(harness.runtime.capabilities.workingDir).toBe(harness.workingDir);
   });
   it("previews a new cloud chat without saving it, and rechecks live files and policy", async () => {
+    // Project skills stay disabled until the folder is trusted (ATO-298).
+    recordProjectTrust(harness.workingDir, "trusted", { skills: ["before-chat"], instructions: [] });
     const config = getConfig();
     const dir = join(harness.workingDir, ".agents/skills/before-chat");
     mkdirSync(dir, { recursive: true });
