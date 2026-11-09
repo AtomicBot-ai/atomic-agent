@@ -102,6 +102,11 @@ export interface LocalModelDef {
    */
   uncensored?: boolean;
   /**
+   * Puts the model on the "new model" hint (`spotlightModelFor`). Set on
+   * launch day, removed when the launch is over.
+   */
+  spotlight?: boolean;
+  /**
    * One plain sentence saying what the model is, shown in the first-run
    * picker in place of the description. Set on reduced-refusal entries
    * so a newcomer reads what "uncensored" means instead of only a
