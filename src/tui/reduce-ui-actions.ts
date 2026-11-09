@@ -506,6 +506,7 @@ export function reduceUiAction(
         contextUsage: action.contextUsage ?? EMPTY_CONTEXT_USAGE,
         // The checklist belongs to the thread on screen too (ATO-486).
         plan: action.plan ?? null,
+        sessionUsage: action.sessionUsage ?? null,
         messages: [...action.messages],
         reasoning: [],
         feed: [],

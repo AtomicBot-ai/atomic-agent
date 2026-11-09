@@ -47,6 +47,7 @@ import {
 } from "./openai-http.js";
 import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
+import { parseRateLimitHeaders, type RateLimitWindow } from "../rate-limits.js";
 import { normalizeOpenAiBaseUrl } from "./normalize-openai-base-url.js";
 import { openAiChatPathPrefix } from "./openai-chat-path.js";
 import { describeImageViaOpenAi } from "./openai-describe-image.js";
@@ -253,7 +254,25 @@ export class OpenAiProvider implements LlmProvider {
       fetchImpl: options.fetchImpl ?? fetch,
       label: options.id,
       ...(options.logger ? { logger: options.logger } : {}),
+      onResponseHeaders: (headers) => {
+        const windows = parseRateLimitHeaders(headers);
+        if (windows.length > 0) this.lastRateLimits = windows;
+      },
     };
+  }
+
+  /**
+   * The newest rate-limit reading any response from this provider
+   * carried (ATO-569). Limits belong to the account, not the request, so
+   * the latest reading is the right one to stamp on every completion,
+   * whichever request produced it.
+   */
+  private lastRateLimits: readonly RateLimitWindow[] | undefined;
+
+  private withRateLimits(result: CompletionResult): CompletionResult {
+    return this.lastRateLimits === undefined
+      ? result
+      : { ...result, rateLimits: this.lastRateLimits };
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
@@ -317,14 +336,14 @@ export class OpenAiProvider implements LlmProvider {
       request,
       this.taggedToolOptions(),
     );
-    return withSentMaxTokens(
+    return this.withRateLimits(withSentMaxTokens(
       normaliseOpenAiChatResponse(
         adapted,
         model,
         this.reasoningFormat,
       ),
       sentBody,
-    );
+    ));
   }
 
   /**
@@ -668,7 +687,7 @@ export class OpenAiProvider implements LlmProvider {
       request,
       this.taggedToolOptions(),
     );
-    return withSentMaxTokens(
+    return this.withRateLimits(withSentMaxTokens(
       applyToolCallTerminationSafety(
         adaptedFinal,
         // A stream the consumer ended itself has no provider terminal
@@ -679,7 +698,7 @@ export class OpenAiProvider implements LlmProvider {
           streamFinal?.earlyStop !== undefined,
       ),
       sentBody,
-    );
+    ));
   }
 
   /**

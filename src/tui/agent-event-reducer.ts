@@ -1,5 +1,6 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
+import { formatUsageReport } from "../session/usage-meter.js";
 import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.js";
 import {
   LOCAL_SERVER_NOT_FOUND_CODE,
@@ -162,6 +163,13 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         line: action.line,
         color: "blue",
       });
+    case "usage_report_requested":
+      // `/usage` (ATO-569): the breakdown behind the composer's cost and
+      // limit readout, as a system line in the transcript.
+      return appendChatMessage(state, {
+        role: "system",
+        text: formatUsageReport(state.sessionUsage ?? undefined, action.now),
+      });
     case "system_message":
       return appendChatMessage(state, {
         role: "system",
@@ -181,6 +189,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         contextUsage: EMPTY_CONTEXT_USAGE,
         // A fresh thread has no plan yet (ATO-486).
         plan: null,
+        // Same for spend: a fresh thread has spent nothing.
+        sessionUsage: null,
       };
     case "skill_count_changed":
       return {
@@ -1072,6 +1082,13 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "yellow",
       });
     }
+    case "usage_updated":
+      // ATO-569: spend and limits for the composer readout. Session
+      // scoped: a background thread's spend must not land on the chat on
+      // screen.
+      return event.sessionId === state.session.sessionId
+        ? { ...state, sessionUsage: event.usage }
+        : state;
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect

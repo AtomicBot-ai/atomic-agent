@@ -26,6 +26,13 @@ export interface CompletionUsage {
    * when the service did not report it.
    */
   cachedTokens?: number;
+  /**
+   * What the service itself says the call cost, in USD (OpenRouter's
+   * `usage.cost`). Preferred over any price-table estimate because it
+   * is the bill, not a guess at it. Absent when the service said
+   * nothing (ATO-569).
+   */
+  costUsd?: number;
 }
 
 /**
@@ -299,6 +306,14 @@ export interface CompletionResult {
    * authoritative.
    */
   servedTransport?: ToolCallTransport;
+  /**
+   * Rate-limit windows the provider reported with this completion: the
+   * response headers on HTTP providers, the CLI's rate-limit events on
+   * subscription CLIs. The latest reading the provider holds for the
+   * account, so it describes the account, not just this one call.
+   * Absent when the provider reported none (ATO-569).
+   */
+  rateLimits?: readonly import("./rate-limits.js").RateLimitWindow[];
   /**
    * The provider's generation id (`id` on the response / SSE chunks),
    * when it sends one. Recorded in the trace so a billed completion

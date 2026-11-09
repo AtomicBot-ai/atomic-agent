@@ -61,6 +61,7 @@ import {
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
+import { SessionUsageLedger } from "../session/usage-meter.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
@@ -394,6 +395,14 @@ export async function createAgentRuntime(
     dir: join(config.paths.stateDir, FUSION_RUNS_DIR_NAME),
   });
 
+  // ATO-569: what each session has spent and the account limits last
+  // seen, for the composer readout. Every change goes out as a
+  // session-scoped `usage_updated` event (TUI, HTTP stream frame).
+  const sessionUsage = new SessionUsageLedger({
+    onChange: (sessionId, usage) =>
+      emitAgentLoopEventFor(sessionId, { type: "usage_updated", sessionId, usage }),
+  });
+
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
   registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
@@ -418,7 +427,7 @@ export async function createAgentRuntime(
 
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
-    costAccumulator, turnUsageMeter, resolveModelPricing, resolveCatalogContextWindow,
+    costAccumulator, turnUsageMeter, sessionUsage, resolveModelPricing, resolveCatalogContextWindow,
   });
   // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
   installRiskReviewer({
@@ -743,7 +752,7 @@ export async function createAgentRuntime(
     sessions: { sessionStore, turnContext, turnRequests, turnPreviousReplies },
     execution: { loop, turnController, steeringInbox, shellJobs, slotManager, llmComplete },
     inference: { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain },
-    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter },
+    traces, telemetry: { observability, analyticsStateStore, turnUsageMeter, sessionUsage },
     state: turnState, lifecycle, logger,
   });
 

@@ -43,6 +43,12 @@ export type OpenAiHttpDeps = {
    * never be silent, even for a provider constructed without a logger.
    */
   logger?: CreditLimitLogger;
+  /**
+   * Told the headers of every response that arrived, success or not, so
+   * the provider can keep the account's latest rate-limit reading
+   * (ATO-569). Must not throw; a throw is swallowed.
+   */
+  onResponseHeaders?: (headers: Headers) => void;
 };
 
 /**
@@ -829,12 +835,20 @@ export async function openAiFetch(
     }
   }
   try {
-    return await deps.fetchImpl(`${deps.baseUrl}${path}`, {
+    const res = await deps.fetchImpl(`${deps.baseUrl}${path}`, {
       method,
       headers,
       ...(body && method === "POST" ? { body: JSON.stringify(body) } : {}),
       signal: controller.signal,
     });
+    if (deps.onResponseHeaders && res.headers) {
+      try {
+        deps.onResponseHeaders(res.headers);
+      } catch {
+        // A reading of the limits must never cost the completion.
+      }
+    }
+    return res;
   } catch (err) {
     // Caller cancellation must stay a cancellation — rethrow untouched
     // so the classifier keeps reporting it as `cancelled`, not as a

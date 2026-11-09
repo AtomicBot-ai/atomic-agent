@@ -8,6 +8,7 @@ import {
   type ConversationTurn,
 } from "./conversation-turn.js";
 import type { ContextUsageState } from "./context-usage.js";
+import type { SessionUsageState } from "./usage-meter.js";
 import { appendMacroTurnStart } from "./macro-turn-starts.js";
 import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 
@@ -169,6 +170,14 @@ export interface SessionState {
    * `plan.update` clears it.
    */
   plan?: PlanSnapshot;
+  /**
+   * What the session has spent and the account limits last seen
+   * (ATO-569). Stamped by `executeTurn` beside `contextUsage`, for the
+   * same reason: a reopened session shows its spend at once, and its
+   * total keeps growing from where it stopped. Absent on sessions that
+   * predate the field or never made a call.
+   */
+  sessionUsage?: SessionUsageState;
   /**
    * Free-form session metadata. Reserved keys (set by the runtime, not
    * the agent — agents may read but must not overwrite them):

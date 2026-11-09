@@ -91,6 +91,13 @@ export type {
   ContextUsageSection,
 } from "./context-usage.js";
 export {
+  EMPTY_SESSION_USAGE,
+  SessionUsageLedger,
+  formatUsageReport,
+  usageStatusParts,
+} from "./usage-meter.js";
+export type { SessionUsageState, LimitReading } from "./usage-meter.js";
+export {
   SESSION_LLM_METADATA_KEY,
   readSessionLlmStamp,
 } from "./session-llm.js";

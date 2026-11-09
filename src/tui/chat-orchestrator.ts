@@ -1015,6 +1015,7 @@ export class ChatOrchestrator {
       ...(loaded.contextUsage ? { contextUsage: loaded.contextUsage } : {}),
       // The live checklist this thread persisted (ATO-486).
       ...(loaded.plan ? { plan: loaded.plan } : {}),
+      ...(loaded.sessionUsage ? { sessionUsage: loaded.sessionUsage } : {}),
     });
     // The stored snapshot above misses everything the still-running
     // turn has said (a turn saves only when it finishes — for a thread
@@ -1791,6 +1792,9 @@ export class ChatOrchestrator {
           ? { contextUsage: this.session.contextUsage }
           : {}),
         ...(this.session.plan ? { plan: this.session.plan } : {}),
+        ...(this.session.sessionUsage
+          ? { sessionUsage: this.session.sessionUsage }
+          : {}),
       });
     }
     const next = this.queue.shift();

@@ -8,6 +8,7 @@ import type { ProviderWaitCause } from "../llm/reliability/provider-wait-cause.j
 import { EMPTY_CONTEXT_USAGE } from "./context-usage-from-prompt.js";
 import type { ContextUsageState } from "../session/context-usage.js";
 import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
+import type { SessionUsageState } from "../session/usage-meter.js";
 import type { ComposerSwitchState } from "./composer-switch/composer-switch-state.js";
 import type { ContextMenuState } from "./context-menu/context-menu-state.js";
 import type { ApprovalRequest } from "../approval/approval-gate.js";
@@ -495,6 +496,12 @@ export interface TuiState {
    * restored from the stored session on a switch.
    */
   plan: PlanSnapshot | null;
+  /**
+   * Spend and account limits of the session on screen (ATO-569), from the
+   * `usage_updated` event or the session's persisted snapshot. `null`
+   * until the session has made a call.
+   */
+  sessionUsage: SessionUsageState | null;
   /** Transient maintenance activity, retained per chat across session switches. */
   contextCompactions: Readonly<Record<string, {
     phase: "queued" | "running";
@@ -941,6 +948,7 @@ export function createInitialTuiState(
     },
     contextUsage: EMPTY_CONTEXT_USAGE,
     plan: null,
+    sessionUsage: null,
     contextCompactions: {},
     logs: [],
     uiMode: layout?.uiMode ?? "chat",

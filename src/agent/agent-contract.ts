@@ -1,4 +1,5 @@
 import type { ContextCompactionControl, CompactionEvent } from "./compaction-control.js";
+import type { SessionUsageState } from "../session/usage-meter.js";
 import type { ToolRole } from "../tools/tool-roles.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
 import type { SlotManager } from "../llm/slot-manager.js";
@@ -640,6 +641,15 @@ export type AgentLoopReason =
 
 export type AgentLoopEvent =
   | CompactionEvent
+  /**
+   * The session's spend or the account's rate-limit reading changed
+   * (ATO-569). Emitted by the runtime after each completion that reported
+   * usage or limits; carries the whole snapshot, so a consumer only ever
+   * replaces what it holds. Scoped by `sessionId` like the compaction
+   * events: the runtime may emit it for a session other than the one a
+   * surface is showing.
+   */
+  | { type: "usage_updated"; sessionId: string; usage: SessionUsageState }
   | { type: "user_message"; text: string }
   /**
    * A message the user sent mid-turn was folded into the prompt for
