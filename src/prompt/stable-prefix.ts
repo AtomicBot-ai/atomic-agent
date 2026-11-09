@@ -377,7 +377,7 @@ export function buildStablePrefix(input: StablePrefixInput): string {
         : COMPACT_SYSTEM_PERSONA
       : nativeTools
         ? NATIVE_TOOLS_SYSTEM_PERSONA
-        : DEFAULT_SYSTEM_PERSONA));
+        : DEFAULT_SYSTEM_PERSONA);
   const maxParallelToolCalls = input.maxParallelToolCalls ?? 8;
   // A role splits the catalog: its own tools render as they always
   // have, the rest collapse to one line of names. `full` (or no role)
