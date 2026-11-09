@@ -22,7 +22,7 @@ describe("PluginsPanel", () => {
     expect(text).toContain("[runs code · code off]");
     expect(text).toContain("[needs a key]");
     expect(text).toContain("[no code]");
-    expect(text).toContain("set GITHUB_TOKEN in ~/.atomic-agent/.env");
+    expect(text).toContain("set GITHUB_TOKEN in .env in the agent data folder");
   });
 
   it("lists an opened plugin's parts with their own switches", () => {

@@ -83,9 +83,10 @@ describe("ApprovalModal", () => {
     // The footer hint is the discoverability answer to issue #79:
     // approving covers one call, the standing stance lives in the
     // composer's coding-mode control.
-    const frame = frameOf(request());
-    expect(frame).toContain("approve covers this call once");
-    expect(frame).toContain("coding-mode control");
+    // The hint wraps inside the modal's border, so read it as one line.
+    const hint = frameOf(request()).replace(/[\s║]+/g, " ");
+    expect(hint).toContain("approve covers this call once");
+    expect(hint).toContain("coding-mode control");
   });
 
   it("offers both session grants for a shell request with a shape", () => {

@@ -44,7 +44,7 @@ describe("PluginsOrchestrator", () => {
   it("syncs overviews with the needs-a-key mark from the given env", () => {
     const { actions, orch } = make();
     orch.refresh();
-    const synced = actions.find((a) => a.type === "plugins_synced") as { rows: Array<{ name: string; needsKey: boolean }> };
+    const synced = actions.find((a) => a.type === "plugins_synced") as Emitted & { rows: Array<{ name: string; needsKey: boolean }> };
     expect(synced.rows.map((r) => [r.name, r.needsKey])).toEqual([["demo", true]]);
   });
 
