@@ -61,6 +61,20 @@ function inspScrollTo(keep, now) {
   return Math.max(0, keep.top || 0);
 }
 
+/**
+ * Newest first, where the panel goes when the running block's text grew by
+ * `grown` px; null leaves it alone. `prev` is the panel before the growth, and
+ * `wellAbove` says the end of that block was above the panel's top edge. New
+ * text lands at the end of the block, not above it: what a reader sees inside
+ * the block does not move, so only rows below the new text, or a reader at the
+ * very end, need the scroll to move with it. The top stays the top.
+ */
+function inspGrowScroll(prev, grown, wellAbove) {
+  if (!prev || prev.scrollTop < 4) return null;
+  const atEnd = prev.scrollHeight - prev.scrollTop - prev.clientHeight < 4;
+  return atEnd || wellAbove ? prev.scrollTop + grown : null;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {INSP_ORDER_KEY, INSP_ORDER, inspOrderSet, inspOrdered, inspOrderHTML, inspScrollKeep, inspScrollTo};
+  module.exports = {INSP_ORDER_KEY, INSP_ORDER, inspOrderSet, inspOrdered, inspOrderHTML, inspScrollKeep, inspScrollTo, inspGrowScroll};
 }
