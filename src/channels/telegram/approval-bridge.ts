@@ -73,6 +73,9 @@ interface PendingState {
   cancelTimer: () => void;
   /** The "Allow always" label, when that button was sent; else absent. */
   alwaysLabel?: string;
+  /** Read by `/status` and status snapshots (ATO-965). */
+  sessionId: string;
+  tool: string;
 }
 
 /**
@@ -236,6 +239,8 @@ export class ApprovalBridge {
       messageId,
       cancelTimer,
       ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
+      sessionId: request.sessionId,
+      tool: request.tool,
     });
   }
 
@@ -340,6 +345,19 @@ export class ApprovalBridge {
     for (const approvalId of ids) {
       this.deps.approvals.resolve({ approvalId, approved: false, reason });
     }
+  }
+
+  /**
+   * The tool whose approval prompt is waiting in a chat for `sessionId`,
+   * or `null`. What `/status` and the status snapshot (ATO-965) call
+   * "Blocked": the loop emits no event while a call waits, so the
+   * bridge that posted the prompt is the one that knows.
+   */
+  pendingToolForSession(sessionId: string): string | null {
+    for (const state of this.pending.values()) {
+      if (state.sessionId === sessionId) return state.tool;
+    }
+    return null;
   }
 
   pendingCount(): number {

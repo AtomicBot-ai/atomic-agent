@@ -581,6 +581,20 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.status",
+    label: "Status of the running turn",
+    group: "run",
+    slash: {
+      name: "status",
+      description:
+        "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
+      // Next to /steer and /queue, its run-time siblings; a fraction so
+      // it never collides with the integer ranks other commands append.
+      rank: 35.5,
+    },
+  },
+  {
+    kind: "action",
     id: "run.queue",
     label: "Queued messages",
     group: "run",

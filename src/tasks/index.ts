@@ -29,6 +29,8 @@ export type {
 export { buildTaskReportCard, stopCauseLine } from "./task-report-card.js";
 export type { TaskReportCard, TaskReportCardInput } from "./task-report-card.js";
 export { createTaskRunSummaryCollector } from "./task-run-summary.js";
+export { startTaskSnapshots } from "./task-snapshot.js";
+export type { TaskSnapshotLoop, TaskSnapshotSink } from "./task-snapshot.js";
 export type {
   CommandRun,
   FileChange,

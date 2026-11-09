@@ -71,13 +71,27 @@ function toolCallLabel(tool: string, args: unknown): string {
  * the error is anything else. Structural, so it works for grammy's
  * `GrammyError` and for hand-rolled fakes alike.
  */
-function retryAfterSeconds(err: unknown): number | null {
+export function retryAfterSeconds(err: unknown): number | null {
   if (typeof err !== "object" || err === null) return null;
   const code = (err as { error_code?: unknown }).error_code;
   if (code !== 429) return null;
   const params = (err as { parameters?: { retry_after?: unknown } }).parameters;
   const after = params?.retry_after;
   return typeof after === "number" && after > 0 ? after : 1;
+}
+
+/**
+ * Telegram's answer to an edit whose text did not change. Not a failure:
+ * the bubble already shows what we wanted.
+ */
+export function isNotModified(err: unknown): boolean {
+  const text =
+    err instanceof Error
+      ? err.message
+      : typeof err === "object" && err !== null
+        ? String((err as { description?: unknown }).description ?? "")
+        : String(err);
+  return /message is not modified/i.test(text);
 }
 
 /**
@@ -108,6 +122,8 @@ export class TelegramProgressIndicator {
   private lastText = "";
   private lastEditAt = 0;
   private mutedUntil = 0;
+  /** Set by `showSnapshot`: the bubble now holds a status snapshot. */
+  private snapshotMode = false;
   private chain: Promise<unknown> = Promise.resolve();
 
   constructor(
@@ -157,6 +173,9 @@ export class TelegramProgressIndicator {
 
   /** Throttled, deduped live update. Fire-and-forget. */
   update(text: string): void {
+    // A status snapshot (ATO-965) holds the bubble until the next one;
+    // a one-word step label must not overwrite it a second later.
+    if (this.snapshotMode) return;
     if (this.removed || text === this.lastText) return;
     const now = Date.now();
     if (now < this.mutedUntil) return;
@@ -178,6 +197,93 @@ export class TelegramProgressIndicator {
         }
       }
     });
+  }
+
+  /**
+   * Put a status snapshot (ATO-965) in the bubble: edit it in place, so a
+   * long turn or task keeps ONE updating message instead of a new one
+   * per snapshot. Not throttled (the caller's cadence already is, every
+   * N steps or M minutes) but a 429 mute still holds. When the edit
+   * fails for any other reason than "not modified" (the bubble was
+   * deleted, or is too old to edit), a new bubble is posted and edited
+   * from then on; the old one is deleted best-effort. Posts the bubble
+   * when there is none yet. Fire-and-forget; resolves when settled.
+   */
+  showSnapshot(text: string): Promise<void> {
+    if (this.removed) return Promise.resolve();
+    this.snapshotMode = true;
+    if (text === this.lastText && this.messageId !== null) {
+      return this.chain.then(() => undefined);
+    }
+    this.lastText = text;
+    this.chain = this.chain.then(async () => {
+      if (this.removed) return;
+      if (Date.now() < this.mutedUntil) return;
+      if (this.messageId !== null) {
+        try {
+          await this.requireEdit(this.messageId, text);
+          this.lastEditAt = Date.now();
+          return;
+        } catch (err) {
+          const after = retryAfterSeconds(err);
+          if (after !== null) {
+            this.mutedUntil = Date.now() + after * 1000;
+            return;
+          }
+          if (isNotModified(err)) return;
+          const stale = this.messageId;
+          this.messageId = null;
+          void Promise.resolve(this.api.deleteMessage?.(this.chatId, stale)).catch(
+            () => undefined,
+          );
+        }
+      }
+      await this.repost(text);
+    });
+    return this.chain.then(() => undefined);
+  }
+
+  /** The bubble's message id, once posted. Test and logging aid. */
+  currentMessageId(): number | null {
+    return this.messageId;
+  }
+
+  private async requireEdit(messageId: number, text: string): Promise<void> {
+    if (!this.api.editMessageText) {
+      throw new Error("editMessageText unavailable");
+    }
+    await this.api.editMessageText(this.chatId, messageId, text);
+  }
+
+  private async repost(text: string): Promise<void> {
+    try {
+      const sent = await this.api.sendMessage(
+        this.chatId,
+        text,
+        withThread({ disable_notification: true }, this.threadId),
+      );
+      const messageId =
+        typeof sent === "object" && sent !== null && "message_id" in sent
+          ? (sent as { message_id?: number }).message_id
+          : undefined;
+      if (this.removed) {
+        if (typeof messageId === "number") {
+          await Promise.resolve(
+            this.api.deleteMessage?.(this.chatId, messageId),
+          ).catch(() => undefined);
+        }
+        return;
+      }
+      this.messageId = typeof messageId === "number" ? messageId : null;
+      this.lastEditAt = Date.now();
+    } catch (err) {
+      const after = retryAfterSeconds(err);
+      if (after !== null) this.mutedUntil = Date.now() + after * 1000;
+      this.logger?.warn("telegram: status snapshot post failed (non-fatal)", {
+        chatId: this.chatId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   /** Delete the indicator. Idempotent; resolves once the delete settles. */

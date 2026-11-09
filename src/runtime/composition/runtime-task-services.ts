@@ -54,7 +54,7 @@ export function createRuntimeTaskStores(args: {
 }
 
 export function createRuntimeTaskRunner(args: {
-  config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths">;
+  config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths" | "statusSnapshot">;
   taskStore: TaskStore;
   runTurn: TaskRunnerRuntime["runTurn"];
   sessionStore: Pick<SessionStore, "load" | "save" | "readTurnProgress" | "clearTurnProgress">;
@@ -94,6 +94,14 @@ export function createRuntimeTaskRunner(args: {
     // rejections. Skip-path logging is pinned by the sink's own unit
     // tests in telegram-channel.test.ts.
     reportSink: createTaskReportSink({ config, resolveTelegram, logger }),
+    // Auto status snapshots of long reporting runs (ATO-965): one edited
+    // Telegram message per task, silent inside quiet hours. Same late
+    // channel resolution as the report sink.
+    snapshotSink: TelegramChannel.buildTaskSnapshotSink({
+      resolveChannel: resolveTelegram,
+      quietHours: parseQuietHours(config.tasks.report?.quietHours ?? undefined),
+    }),
+    snapshotCadence: config.statusSnapshot ?? null,
     logger,
     metrics,
     // Continue a run a crash, a kill or a restart cut off from its

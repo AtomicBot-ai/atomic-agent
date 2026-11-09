@@ -461,6 +461,22 @@ export function loadConfig(): AtomicAgentConfig {
         quietHours: readEnv("ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS") ?? null,
       },
     },
+    statusSnapshot: {
+      everySteps: Math.max(
+        0,
+        readInt(
+          "ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_STEPS",
+          ENV_DEFAULTS.STATUS_SNAPSHOT_EVERY_STEPS,
+        ),
+      ),
+      everyMs: Math.max(
+        0,
+        readInt(
+          "ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_MS",
+          ENV_DEFAULTS.STATUS_SNAPSHOT_EVERY_MS,
+        ),
+      ),
+    },
     update: {
       checkOnStartup: readBool(
         "ATOMIC_AGENT_UPDATE_CHECK_ON_STARTUP",
