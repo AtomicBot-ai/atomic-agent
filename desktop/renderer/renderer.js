@@ -20649,6 +20649,25 @@ function wizSaidNoModels(said) {
   return !said || /\bno (?:searchable cloud )?models\b/.test(said);
 }
 
+/* ATO-306: provider_setup_failed's reason, read off the model list's answer.
+   `catalog_empty` used to be every failure that was not a dead server, a
+   certificate or our deadline: a refused key (401/403), a provider's 429/5xx
+   and a list the agent printed and then died at exit (#902) all landed there,
+   so the funnel showed "empty catalogue" for 53 people and "wrong key" for
+   none. Now catalog_empty is only a list that came back empty, or the agent
+   saying the server has no models; anything else unexplained is list_failed. */
+function wizSetupFailReason(listed) {
+  if (listed && listed.certificate) return 'certificate';
+  if (listed && listed.timedOut) return 'timed_out';
+  if (listed && listed.unreachable) return 'server_unreachable';
+  const status = listed && typeof listed.status === 'number' ? listed.status : 0;
+  if (status === 401 || status === 403) return 'key_rejected';
+  if (status === 429 || status >= 500) return 'provider_error';
+  const said = String((listed && listed.error) || '');
+  if ((listed && listed.ok) || (said && wizSaidNoModels(said))) return 'catalog_empty';
+  return 'list_failed';
+}
+
 async function wizNextStep() {
   const k = WIZ.row; if (!k) return;
   if (k.subscriptionCli) return wizSubscriptionStep(k);
@@ -20756,8 +20775,8 @@ async function wizNextStep() {
     : await BR.providerModels(id, k.kind);
   if (!listed || !listed.ok || !(listed.models || []).length) {
     // ATO-202: a server that did not answer (or answered with a certificate not trusted) is not an empty catalogue.
-    ANX.providerFailed(listed && listed.certificate ? 'certificate' : listed && listed.timedOut ? 'timed_out'
-      : listed && listed.unreachable ? 'server_unreachable' : 'catalog_empty', OB.open);
+    // ATO-306: nor is a refused key, a provider error or a list that failed some other way (wizSetupFailReason).
+    ANX.providerFailed(wizSetupFailReason(listed), OB.open, k);
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
