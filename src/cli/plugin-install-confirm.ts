@@ -22,7 +22,7 @@ export function createCodeConsentPrompt(deps: CodeConsentDeps = {}): ((report: P
   const writeErr = deps.writeErr ?? ((t: string) => process.stderr.write(t));
   return async (report) => {
     writeErr(formatCodeQuestion(report));
-    const answer = await ask(`Let ${report.name} run these on this computer? [y/N] `);
+    const answer = await ask(`Allow all of this for ${report.name} on this computer? [y/N] `);
     return /^y(es)?$/i.test(answer.trim());
   };
 }
@@ -31,10 +31,10 @@ export function createCodeConsentPrompt(deps: CodeConsentDeps = {}): ((report: P
 export function formatCodeQuestion(report: PluginInstallReport): string {
   const lines = [
     report.diff.codeChanged && !report.diff.fresh
-      ? `${report.name}@${report.version} changed what it runs, so it needs your OK again.`
-      : `${report.name}@${report.version} can run programs on this computer:`,
+      ? `${report.name}@${report.version} changed what it runs or which keys it gets, so it needs your OK again.`
+      : `${report.name}@${report.version} can run programs on this computer or receive your keys:`,
     ...report.code.map(l => `  - ${l}`),
-    "Say no to install it with these parts off; skills and remote servers still work.",
+    "Say no to install it with these parts off; skills and remote servers without keys still work.",
     "You can allow them later with: atomic-agent plugin allow-code " + report.name,
   ];
   return `${lines.join("\n")}\n`;

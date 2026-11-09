@@ -36,6 +36,7 @@ import {
   type PluginBundle,
   type PluginReview,
 } from "../plugins/index.js";
+import { userKeyRefs } from "../plugins/plugin-keys.js";
 
 const HELP = [
   "atomic-agent plugin — manage plugins (Claude / Codex / Cursor plugin packages)",
@@ -45,7 +46,8 @@ const HELP = [
   "  show <name> [--json]       Print a plugin's skills, commands, MCP servers, hooks and notes",
   "  install <path> [--force] [--yes] [--acknowledge-risk] [--accept-code]",
   "                             Install a plugin from a local folder (copied into the data folder).",
-  "                             Parts that run programs (local MCP servers, hooks, scripts) stay off",
+  "                             Parts that run programs or receive your keys (local MCP servers, hooks,",
+  "                             scripts, servers that read a key) stay off",
   "                             until you allow them: --accept-code here, or allow-code later",
   "  install <name>[@market] [same flags]",
   "                             Install a plugin listed in an added marketplace",
@@ -55,7 +57,7 @@ const HELP = [
   "",
   "  Every install is security-scanned: a caution finding asks (or needs --yes without a",
   "  terminal), a dangerous one needs --acknowledge-risk.",
-  "  allow-code <name>          Let a plugin's local MCP servers, hooks and scripts run",
+  "  allow-code <name>          Let a plugin run its local MCP servers, hooks and scripts and receive your keys",
   "  deny-code <name>           Switch those parts off again (skills and remote servers keep working)",
   "  enable <name> [--part <id>]",
   "                             Switch an installed plugin on, or one of its parts",
@@ -319,8 +321,8 @@ function code(stateDir: string, name: string | undefined, allow: boolean): numbe
   if (!name) { console.error(`usage: atomic-agent plugin ${allow ? "allow-code" : "deny-code"} <name>`); return 2; }
   if (!setPluginCodeAllowed(stateDir, name, allow)) { console.error(`plugin not installed: ${name}`); return 1; }
   console.log(allow
-    ? `${name} may now run its local MCP servers, hooks and scripts. Restart running agents to start its servers.`
-    : `${name}'s local MCP servers, hooks and scripts are off.`);
+    ? `${name} may now run its local MCP servers, hooks and scripts and receive your keys. Restart running agents to start its servers.`
+    : `${name}'s local MCP servers, hooks, scripts and servers that read your keys are off.`);
   return 0;
 }
 
@@ -343,7 +345,7 @@ function buildReview(args: string[]): PluginReview {
 
 function printCodeHint(rec: InstalledPluginRecord, bundle: PluginBundle | null): void {
   if (!bundle || !bundleRunsCode(bundle) || rec.runsCodeAccepted) return;
-  console.log(`  This plugin can run programs on this computer (${codeParts(bundle).join(", ")}).`);
+  console.log(`  This plugin can run programs on this computer or receive your keys (${codeParts(bundle).join(", ")}).`);
   console.log(`  Those parts are off. Read them first, then: atomic-agent plugin allow-code ${rec.name}`);
 }
 
