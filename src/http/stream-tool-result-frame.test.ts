@@ -82,8 +82,31 @@ describe("tool_result over SSE", () => {
         status: "ok",
         duration_ms: 42,
         summary: "wrote test2.txt (12 bytes)",
+        line: "Wrote test2.txt",
       },
     ]);
+    // ATO-962: the start frame says the call in words too.
+    expect(progress[0]!.line).toBe("Writing test2.txt");
+    expect(progress[0]!.done_line).toBe("Wrote test2.txt");
+  });
+
+  it("words a failed command's result in the past tense (ATO-962)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    hook({ type: "step_started", stepIndex: 1 });
+    hook({
+      type: "llm_event",
+      event: {
+        type: "tool_call_parsed",
+        call: { tool: "os.shell.run", args: { cmd: "npm", args: ["test"] } },
+        batchIndex: 0,
+        batchSize: 1,
+      },
+    } as AgentLoopEvent);
+    hook(executed(result({ tool: "os.shell.run", status: "error", summary: "exit: 1" }), 0));
+
+    expect(frames(sse, "tool_result")[0]!.line).toBe("Ran npm test \u00b7 failed");
   });
 
   it("keys each call of a batch by its place in it, whatever order the results land in", () => {

@@ -2,10 +2,8 @@ import { Box, Text } from "ink";
 import type { ReactElement, ReactNode } from "react";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
-import {
-  formatToolArgsBlock,
-  previewToolArgs,
-} from "../render/tool-args-preview.js";
+import { describeToolCall } from "../../tools/describe-tool-call.js";
+import { formatToolArgsBlock } from "../render/tool-args-preview.js";
 import { theme } from "../theme/theme.js";
 import type { StreamingToolCall, ToolCardEntry } from "../tui-state.js";
 import { ToolCardPathChip, toolCardFilePath } from "./tool-card-path-chip.js";
@@ -29,8 +27,12 @@ interface ToolCardProps {
 
 /**
  * Collapsible tool execution card. Collapsed view is one highlighted
- * header line: name, status glyph, duration, args preview. Expanded view
- * reveals the full args block and the full summary/details text. Pending
+ * header line: status glyph, the call in words ("Read config.ts",
+ * "Ran npm test · failed", ATO-962), duration. The header is exactly one
+ * row: the words are cut at the right edge, the duration never is
+ * (ATO-914: an os.fs.edit header used to run off the right edge). The
+ * raw tool name and args live in the expanded view, which also reveals
+ * the full summary/details text. Pending
  * (in-flight) calls render with a spinner-less hourglass glyph and no
  * duration yet.
  *
@@ -48,7 +50,11 @@ export function ToolCard({
   const status = isFinalised ? card.status : "pending";
   const color = toColor(status);
   const glyph = toGlyph(status);
-  const argsPreview = previewToolArgs(card.args);
+  const described = describeToolCall({
+    name: card.tool,
+    args: card.args,
+    ...(status === "pending" ? {} : { ok: status === "ok" }),
+  });
   const duration =
     isFinalised && card.finishedAt
       ? `${card.finishedAt - card.startedAt}ms`
@@ -56,28 +62,26 @@ export function ToolCard({
   const filePath = isFinalised ? toolCardFilePath(card) : null;
   const toggle = (
     <ExpandToggle cardId={card.id}>
-      <Text>
-        <Text color={color}>
-          {theme.glyphs.toolBoxTopLeft}
-          {theme.glyphs.toolBoxHorizontal} {glyph} {card.tool}
-        </Text>
-        <Text color={theme.colors.muted}>
-          {" "}
-          {theme.glyphs.dotSeparator} {duration}
-        </Text>
-        {isFinalised && card.truncated ? (
-          <Text color={theme.colors.warn}>
-            {" "}
-            {theme.glyphs.dotSeparator} truncated
+      <Box flexDirection="row">
+        <Box flexShrink={1} minWidth={0}>
+          <Text color={color} wrap="truncate-end">
+            {theme.glyphs.toolBoxTopLeft}
+            {theme.glyphs.toolBoxHorizontal} {glyph} {described.line}
           </Text>
-        ) : null}
-        {argsPreview ? (
+        </Box>
+        <Box flexShrink={0}>
           <Text color={theme.colors.muted}>
-            {"  "}
-            {argsPreview}
+            {" "}
+            {theme.glyphs.dotSeparator} {duration}
           </Text>
-        ) : null}
-      </Text>
+          {isFinalised && card.truncated ? (
+            <Text color={theme.colors.warn}>
+              {" "}
+              {theme.glyphs.dotSeparator} truncated
+            </Text>
+          ) : null}
+        </Box>
+      </Box>
     </ExpandToggle>
   );
   // A finished read / write / edit card carries `[copy path]` on the
@@ -112,6 +116,9 @@ export function ToolCard({
     <Box flexDirection="column" marginBottom={1}>
       {header}
       <Box flexDirection="column" marginLeft={2}>
+        <Text color={theme.colors.muted}>
+          tool <Text color={theme.colors.tool}>{card.tool}</Text>
+        </Text>
         <Text color={theme.colors.muted}>args</Text>
         {splitLines(formatToolArgsBlock(card.args)).map((line, idx) => (
           <Text key={`a-${idx}`}> {line}</Text>
@@ -274,6 +281,7 @@ function ExpandToggle({
   if (!mouse) return <>{children}</>;
   return (
     <MouseTarget
+      flexShrink={1}
       onMouse={(hit) => {
         if (!isPrimaryPress(hit.event)) return false;
         mouse.dispatch({ type: "tool_expand_toggled", toolCardId: cardId });

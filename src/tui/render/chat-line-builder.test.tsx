@@ -110,7 +110,8 @@ describe("buildChatLines", () => {
       ],
     };
     const txt = renderLines(state);
-    expect(txt).toContain("os.fs.read");
+    // ATO-962: the header says the call in words.
+    expect(txt).toContain("Read index.ts");
     expect(txt).not.toContain('text="Done"');
   });
 
