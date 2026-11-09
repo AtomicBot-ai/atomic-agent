@@ -43,6 +43,19 @@ test('newest first: the top follows new rows, a reader scrolled down keeps the r
   assert.equal(O.inspScrollTo(reading, {scrollHeight: 100}), 0);
 });
 
+test('newest first, text growing in the running block: only what sits below it moves', () => {
+  const view = {scrollHeight: 2000, clientHeight: 300};
+  // At the top, and inside the running block, the panel is left alone.
+  assert.equal(O.inspGrowScroll({...view, scrollTop: 0}, 500, false), null);
+  assert.equal(O.inspGrowScroll({...view, scrollTop: 240}, 500, false), null);
+  // Reading older rows below the block: they keep their place.
+  assert.equal(O.inspGrowScroll({...view, scrollTop: 900}, 500, true), 1400);
+  // At the very end, it stays at the end.
+  assert.equal(O.inspGrowScroll({...view, scrollTop: 1700}, 500, false), 2200);
+  // Too short to scroll is the top, not the end.
+  assert.equal(O.inspGrowScroll({scrollHeight: 200, clientHeight: 300, scrollTop: 0}, 50, false), null);
+});
+
 test('oldest first: the end follows new text, as before', () => {
   const atEnd = O.inspScrollKeep({scrollTop: 700, scrollHeight: 1000, clientHeight: 300}, false);
   assert.deepEqual(atEnd, {at: 'end'});

@@ -4734,13 +4734,19 @@ function growInspectorReasoning(block) {
   const pre = document.querySelector('#inspector .insp-rs[data-rs="' + block.id + '"] > .tk-out');
   if (!pre) { renderInspector(); return; }   // a new block: its well is drawn by a rebuild
   const body = pre.closest('.inspbody');
-  // ATO-1249: newest first, the running block is on top: a reader scrolled down keeps what they see.
+  // ATO-1249: newest first, the running block is on top and grows at its own end: a reader
+  // inside it stays put, one in the older rows below keeps those rows (insp-order.js).
   const top = inspNewestOnTop();
   const end = !!body && !top && inspAtEnd(body);
-  const h0 = body ? body.scrollHeight : 0;
+  const was = body && top ? {scrollTop:body.scrollTop, scrollHeight:body.scrollHeight, clientHeight:body.clientHeight} : null;
+  const wellAbove = !!was && pre.getBoundingClientRect().bottom <= body.getBoundingClientRect().top;
   growText(pre, block.text);
   if (end) body.scrollTop = body.scrollHeight;
-  else if (top && body && body.scrollTop >= 4) body.scrollTop += body.scrollHeight - h0;
+  else if (was) {
+    // Set, not added to: Chromium's scroll anchoring may already have moved this panel for the same growth.
+    const to = inspGrowScroll(was, body.scrollHeight - was.scrollHeight, wellAbove);
+    if (to !== null) body.scrollTop = to;
+  }
 }
 
 /* ---------------- console ---------------- */
