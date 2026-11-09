@@ -119,21 +119,33 @@ async function goToPath(pid, path) {
   await sleep(1500);
 }
 
+/**
+ * Press the sheet's main button. Where it sits in the accessibility tree moves
+ * between macOS versions, so Return stands in when it is not a direct child;
+ * the callers check the file or the confirmation that should follow.
+ */
+async function pressMain(pid, title, what) {
+  const button = `button "${title}" of ${SHEET}`;
+  await untilTrue(pid, `(not (exists ${button})) or enabled of ${button}`, what);
+  const direct = osa(inApp(pid, `return exists ${button}`)) === 'true';
+  osa(inApp(pid, direct ? `click ${button}` : 'key code 36'));
+}
+
 async function saveAs(pid, dir, name) {
   await untilTrue(pid, `exists ${SHEET}`, 'the save dialog');
-  await goToPath(pid, dir);
-  osa(inApp(pid, `set value of text field 1 of ${SHEET} to ${appleString(name)}`));
+  await sleep(500);
+  // The name box holds the focus as the sheet opens, whatever the tree around it.
+  osa(inApp(pid, `set field to value of attribute "AXFocusedUIElement" of it\nset value of field to ${appleString(name)}`));
   await sleep(400);
-  await untilTrue(pid, `enabled of button "Save" of ${SHEET}`, 'the Save button');
-  osa(inApp(pid, `click button "Save" of ${SHEET}`));
+  await goToPath(pid, dir);
+  await pressMain(pid, 'Save', 'the Save button');
 }
 
 /** Pick the backup in the open sheet and return the words of the confirmation that follows. */
 async function openAndReachConfirm(pid, file) {
   await untilTrue(pid, `exists ${SHEET}`, 'the open dialog');
   await goToPath(pid, file);
-  await untilTrue(pid, `enabled of button "Open" of ${SHEET}`, 'the backup picked in the open dialog');
-  osa(inApp(pid, `click button "Open" of ${SHEET}`));
+  await pressMain(pid, 'Open', 'the backup picked in the open dialog');
   await untilTrue(pid, `exists button "Restore" of ${SHEET}`, 'the confirmation');
   return osa(inApp(pid, `return value of static texts of ${SHEET}`));
 }
