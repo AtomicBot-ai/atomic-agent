@@ -3884,6 +3884,9 @@ function composer() {
     // ATO-244: the model runs on the processor; last, under every strip that carries a decision or a failure.
     : cpuNoticeShown()
     ? cpuNoticeHTML()
+    // ATO-1044: the best model downloading behind the starter, then Switch now / Later (upgrade-chat.js). Last: it carries no failure.
+    : (typeof upgradeShown === 'function' && upgradeShown())
+    ? upgradeNoticeHTML()
     /* r2 (DMG feedback): the "Ready · <last thing that changed>" strip is
        no longer drawn under the transcript — it read as noise. APPSTATUS is
        still kept (and logged) for diagnostics; only the strip is gone. The
@@ -6861,6 +6864,8 @@ function act(a) {
   if (a === 'swx:holdnow') { if (SWX.hold) SWX.hold.end('now'); return; }
   if (a === 'swx:holdcancel') { if (SWX.hold) SWX.hold.end('cancel'); return; }
   // ATO-244: the CPU strip's two ways out; either holds until the next model start.
+  // ATO-1044: the upgrade strip's Switch now / Later / dismiss (upgrade-chat.js).
+  if (/^upg:/.test(a || '') && typeof upgradeAct === 'function' && upgradeAct(a)) return;
   if (a === 'cpu:dismiss') { CPUW.dismissed = CPUW.seq; render(); return; }
   if (a === 'cpu:cloud') { CPUW.dismissed = CPUW.seq; render(); selChooseBackend('cloud'); return; }
   if (k === 'engf') { engfAct(v || ''); return; }
@@ -16570,6 +16575,10 @@ if (BR) {
   if (BR.onStarterModel) BR.onStarterModel((ev) => starterOnEvent(ev));
   if (typeof starterCatchUp === 'function') starterCatchUp();
   BR.onPull((ev) => { if (typeof starterOnPull === 'function') starterOnPull(ev); });
+  // ATO-1044: the best model for this computer, after the starter (upgrade-chat.js).
+  if (BR.onUpgradeModel) BR.onUpgradeModel((ev) => upgradeOnEvent(ev));
+  if (typeof upgradeCatchUp === 'function') upgradeCatchUp();
+  BR.onPull((ev) => { if (typeof upgradeOnPull === 'function') upgradeOnPull(ev); });
 
   /* First run: the wizard opens itself, exactly as the TUI does.
      r5 item 9 — `fresh` is latched in the main process BEFORE anything can

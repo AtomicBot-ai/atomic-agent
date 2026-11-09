@@ -549,6 +549,17 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
   return models.length ? { ok: true, models } : { ok: false, error: "could not parse the model catalog" };
 }
 
+/**
+ * ATO-1044: `atag models recommend --json` (ATO-1043) — the best model for
+ * this computer and whether it beats the active one. `null` from an agent
+ * without the subcommand, or under a remote agent (its models are not here).
+ */
+export async function modelsRecommend(): Promise<string | null> {
+  if (remoteModels) return null;
+  const res = await cli(["models", "recommend", "--json"], 30_000);
+  return res.ok ? res.stdout : null;
+}
+
 export function modelsUse(id: string): Promise<CliResult> {
   return withConfigLock(() => modelsUseNow(id));
 }

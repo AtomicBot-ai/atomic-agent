@@ -106,6 +106,7 @@ import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
 import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-model.js";
+import { localPickTakenLive, parseRecommendJson, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
 import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
 import {
@@ -219,6 +220,7 @@ import {
   useConfigRoute,
   useRemoteModels,
   atagRun,
+  modelsRecommend,
   type ImportSourceId,
 } from "./agent-cli.js";
 import { validateCreateForm, type TaskCreateFormInput } from "./task-schedule.js";
@@ -1687,6 +1689,8 @@ function wireIpc(client: AgentClient): void {
         return switched(() => selectLocalModel(id)).then((sw) => {
           const ok = !!(sw && (sw as { ok?: boolean }).ok);
           starterSay({ id, phase: ok ? "ready" : "failed", error: ok ? null : ((sw as { error?: string }).error ?? null) });
+          // ATO-1044: the starter answers now; the best model for this computer follows in the background.
+          if (ok) void fetchUpgradeModel?.();
         });
       }).catch(() => undefined);
     });
@@ -1696,6 +1700,80 @@ function wireIpc(client: AgentClient): void {
       starterSay({ id, phase: "downloading" });
     }
   };
+  /* ATO-1044: after the starter, the best model for this computer
+     (upgrade-model.ts). The agent names it (`models recommend --json`,
+     ATO-1043); it downloads in the one pull slot, so the window's card and
+     the chat line follow it through `cli:pull`. On disk, the chat asks:
+     Switch now / Later (`app:upgradeModel`, phases downloading | ready |
+     switching | switched | failed). Never switched without the click. */
+  let upgradeLast: Record<string, unknown> | null = null;
+  let upgradeLaterId: string | null = null;   // Later: not asked again in this run of the app
+  let upgradeModel: UpgradeModel | null = null;
+  const upgradeSay = (ev: Record<string, unknown>) => { upgradeLast = ev; send("app:upgradeModel", ev); };
+  ipcMain.handle("app:upgradeGet", () => upgradeLast);
+  const upgradeState = async () => {
+    const read = await readWholeConfig();
+    const names = keyNamesAvailable();
+    const lm = read.config?.localModels as { mode?: string; managed?: { modelId?: string | null } } | undefined;
+    return {
+      cloudReady: (read.config?.llm?.providers ?? []).some((p) => p.kind !== "llama-server" && providerIsUsable(p, names)),
+      localMode: lm?.mode ?? null,
+      activeProvider: read.config?.llm?.activeTextProvider ?? null,
+      activeModelId: lm?.managed?.modelId ?? null,
+    };
+  };
+  const offerUpgrade = (model: UpgradeModel) => {
+    upgradeModel = model;
+    upgradeSay({ id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "ready" });
+  };
+  fetchUpgradeModel = async () => {
+    if (SMOKE || FIRST_RUN_PROBE || quitting) return;
+    const now = await upgradeState();
+    // Not on the starter: nothing to ask the agent (each ask is a CLI run, and on Linux / Windows a device probe).
+    if (now.activeModelId !== STARTER_MODEL_ID) return;
+    const stdout = await modelsRecommend();
+    const verdict = upgradeVerdict({
+      recommend: stdout ? parseRecommendJson(stdout) : null,
+      ...now,
+      downloadBusy: !!downloadRunning(),
+      laterId: upgradeLaterId,
+      starterId: STARTER_MODEL_ID,
+    });
+    if (verdict.act === "none") return;
+    const model = verdict.model;
+    if (verdict.act === "offer") { offerUpgrade(model); return; }
+    upgradeModel = model;
+    const r = startModelPull(model.id, "upgrade", (res) => {
+      if (quitting) return;
+      if (!res.ok) { upgradeSay({ id: model.id, name: model.name, phase: "failed", error: res.error ?? null }); return; }
+      // Chosen something else meanwhile (a cloud key, their own server, this very model): nothing to ask.
+      void upgradeState().then((after) => {
+        if (!upgradeStillWanted({ id: model.id, ...after })) { upgradeLast = null; send("app:upgradeModel", { id: model.id, phase: "done" }); return; }
+        offerUpgrade(model);
+      }).catch(() => undefined);
+    });
+    if (r.ok) upgradeSay({ id: model.id, name: model.name, sizeLabel: model.sizeLabel, phase: "downloading" });
+  };
+  ipcMain.handle("app:upgradeLater", () => {
+    if (upgradeModel) upgradeLaterId = upgradeModel.id;
+    upgradeLast = null;
+    return true;
+  });
+  /* The click. The usual local pick (models use, the daemon on the new
+     weights), taken live by the running agent (applySwitch, localLive) so
+     the chat is not cut; a turn in flight holds the move until it ends. */
+  ipcMain.handle("app:upgradeSwitch", async () => {
+    const model = upgradeModel;
+    if (!model) return { ok: false, error: "nothing to switch to" };
+    upgradeSay({ id: model.id, name: model.name, phase: "switching" });
+    const sw = await switched(async () => Object.assign(await selectLocalModel(model.id), { localLive: true as const }));
+    const ok = !!(sw && (sw as { ok?: boolean }).ok);
+    upgradeSay(ok
+      ? { id: model.id, name: model.name, phase: "switched", held: !!(sw as { restartHeld?: boolean }).restartHeld }
+      : { id: model.id, name: model.name, phase: "failed", error: (sw as { error?: string }).error ?? null, switching: true });
+    if (ok) upgradeModel = null;
+    return sw;
+  });
   /* r5 item 7 (setup wizard) — the llama.cpp runtime phase, streamed.
      `atag models pull` never fetches the backend, so the TUI's first
      phase row can only be driven by `models update`. It rides the same
@@ -2125,7 +2203,8 @@ function wireIpc(client: AgentClient): void {
       const next = routeOf(cfg);
       // Any llama-server entry, not only local-llama: a local route has a model profile serve sets up at boot.
       const kind = (cfg?.llm?.providers ?? []).find((p) => p.id === next.provider)?.kind;
-      if (next.provider !== res.providerId || kind === "llama-server" || next.mode === "fusion") return false;
+      const localUpgrade = (res as { localLive?: boolean }).localLive === true && kind === "llama-server";
+      if (next.provider !== res.providerId || (kind === "llama-server" && !localUpgrade) || next.mode === "fusion") return false;
       // No model: the file already names it, and a pin would rewrite the file under the window's next write.
       const swap = await client.setActiveLlm(next.provider, null);
       if (swap.busy) return "busy";
@@ -2181,7 +2260,11 @@ function wireIpc(client: AgentClient): void {
        cloud → local, still restarts: a local route has a model profile serve
        sets up at boot. */
     const live = !!boot && !drifted && res.transport === "native_tools" && boot.mode !== "fusion"
-      && ((res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" || res.daemon === "stopping");
+      && ((res.daemon ?? "untouched") === "untouched" && boot.provider !== "local-llama" || res.daemon === "stopping")
+      /* ATO-1044: the upgrade's switch (starter → the best model) keeps the
+         same local provider; only the weights behind it move, and the agent
+         re-reads the model's profile at its next turn. Taken live. */
+      || (!drifted && (res as { localLive?: boolean }).localLive === true && localPickTakenLive(boot, res));
     const { restart, restartHeld, liveSwapped } = await restartAfterSwitch(res, wanted || drifted, drifted, live);
     return { ...res, restart, ...(restartHeld ? { restartHeld } : {}), ...(liveSwapped ? { liveSwapped } : {}), status: client.status };
   };
@@ -9885,6 +9968,8 @@ async function installEngineAtLaunch(): Promise<boolean> {
  */
 /** ATO-1041: set by wireIpc (it needs the pull slot and the switch path); run once the launch start settled. */
 let fetchStarterModel: (() => Promise<void>) | null = null;
+/** ATO-1044: set by wireIpc; after the starter is ready, and at launch for an install still on it. */
+let fetchUpgradeModel: (() => Promise<void>) | null = null;
 
 async function startLocalDaemonAtBoot(): Promise<void> {
   let backendUp = true;   // analytics (app_ready.backend_up_at_launch): true unless a local route found no server
@@ -10320,7 +10405,7 @@ void app.whenReady().then(async () => {
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
       if (SMOKE) void smokeTest();
-      else if (!remote) void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).catch(() => undefined);
+      else if (!remote) void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).then(() => fetchUpgradeModel?.()).catch(() => undefined);
       else A.launchBackendSettled(true);
     });
   });
