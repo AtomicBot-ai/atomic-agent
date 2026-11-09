@@ -1,7 +1,8 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 
-import { getConfig } from "../config/index.js";
+import { getConfig, LOCAL_PROVIDER_KIND, type AtomicAgentConfig } from "../config/index.js";
+import { isLocalProviderUrl } from "../llm/provider/presets/is-local-provider-url.js";
 import {
   HANDOFF_AGENT_LABEL,
   HandoffNotFoundError,
@@ -37,7 +38,8 @@ export const HANDOFF_HELP =
     "  --cwd <dir>           Folder to continue in (default: the session's own folder)",
     "  --note <text>         Extra instructions added to the continuation message",
     "  --context <tokens>    Window to fit the carried history into (default: the local",
-    "                        model's pinned context, else 32768); 0 keeps it all as is",
+    "                        model's pinned context, else 32768; for a cloud model its",
+    "                        configured window, else no fitting); 0 keeps it all as is",
     "  --list                List their fresh sessions instead (newest first)",
     "  --limit N             How many sessions --list shows (default 10)",
     "  --json                Machine output; saves the chat but does not open it",
@@ -48,6 +50,29 @@ export const HANDOFF_HELP =
     "  atag handoff --from codex --session 0199a1",
     "  atag handoff --from claude-code --list",
   ].join("\n") + "\n";
+
+/**
+ * The window to fit a handoff into when `--context` is not given. The
+ * managed local size only describes a local model: a cloud model gets
+ * its own configured window, and when that is unknown the history is
+ * left whole for the runtime's compaction (`0`).
+ */
+export function handoffWindowFor(
+  config: Pick<AtomicAgentConfig, "llm" | "localModels">,
+): number {
+  const active = config.llm?.providers.find(
+    (provider) => provider.id === config.llm?.activeTextProvider,
+  );
+  if (
+    active === undefined ||
+    active.kind === LOCAL_PROVIDER_KIND ||
+    isLocalProviderUrl(active.baseUrl ?? active.url)
+  ) {
+    return defaultHandoffWindow(config.localModels.managed?.contextSize ?? 0);
+  }
+  const model = active.defaultChatModel ?? active.model;
+  return active.userModels?.find((entry) => entry.id === model)?.contextWindow ?? 0;
+}
 
 interface HandoffArgs {
   agent: HandoffAgent;
@@ -220,7 +245,7 @@ export async function handoffCommand(
   });
 
   const config = getConfig();
-  const windowTokens = parsed.context ?? defaultHandoffWindow(config.localModels.managed?.contextSize ?? 0);
+  const windowTokens = parsed.context ?? handoffWindowFor(config);
   const fitted =
     windowTokens > 0
       ? fitHandoffContext(built.session, { windowTokens })
