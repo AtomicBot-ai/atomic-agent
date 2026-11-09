@@ -24,9 +24,8 @@ import { ARCHIVE_SUMMARY_MAX_CHARS } from "./list-tool.js";
 const REPORT_MAX_LINES = 44;
 
 /**
- * Extraction ignores `trustConfigPaths` (it targets a directory, so the
- * config-file guard never fires) but accepts the shared fs-tool option
- * shape so the bootstrap can pass one object to every fs factory.
+ * The shared fs-tool option shape: `trustConfigPaths` keeps an archive
+ * from landing on the agent's own trust surface (`categorizeFsMutation`).
  */
 export interface ExtractArchiveToolOptions extends FsDangerousToolOptions {
   backends?: ArchiveBackendFactories;
@@ -90,6 +89,7 @@ export function buildOsFsArchiveExtractTool(
           tool: "os.fs.archive.extract",
           reason: `extract ${resolved.format} ${resolved.absolute} → ${destDir}`,
           workingDir: ctx.workingDir,
+          trustConfigPaths: options.trustConfigPaths,
           preview: buildApprovalPreview({
             source: resolved.absolute,
             dest: destDir,

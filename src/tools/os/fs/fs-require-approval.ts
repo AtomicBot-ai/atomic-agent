@@ -15,8 +15,7 @@ import type { FileRestoreStore } from "./fs-restore-store.js";
  * filesystem-mutating tool needs. The bootstrap resolves the paths once
  * (`getTrustConfigPaths` in `src/config/config-file.ts`) and passes them
  * through `registerOsTools` into each fs tool factory; the tools never
- * read `getConfig()` themselves. Extraction ignores `trustConfigPaths`
- * but accepts the shape for a uniform factory signature.
+ * read `getConfig()` themselves.
  */
 export interface FsDangerousToolOptions extends DangerousToolOptions {
   /**
@@ -72,9 +71,8 @@ export interface FsApprovalRequest {
    *    `trust_config` on a config / `.env` target, else `other`.
    *  - `extract` (os.fs.archive.extract) → `fs_write_home` inside
    *    workspace or home (extraction lands at level 3, not 2), else
-   *    `other`. The trust-config guard does not apply — extraction
-   *    targets a directory, so `destDir` is passed as the sole path and
-   *    `trustConfigPaths` is irrelevant to the outcome.
+   *    `other`; `trust_config` when `destDir` is inside a trusted
+   *    directory or holds a trust path.
    */
   kind: FsMutationKind;
   /**
@@ -93,8 +91,8 @@ export interface FsApprovalRequest {
   workingDir: string;
   /**
    * Absolute paths of the agent's trust surface (`config.json`, `.env`),
-   * injected from the bootstrap. Omitted / empty disables the guard;
-   * `extract` ignores it. Never re-derived inside the tools layer.
+   * injected from the bootstrap. Omitted / empty disables the guard.
+   * Never re-derived inside the tools layer.
    */
   trustConfigPaths?: readonly string[];
   /**

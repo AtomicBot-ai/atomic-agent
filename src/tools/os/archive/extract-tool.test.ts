@@ -72,6 +72,27 @@ describe("os.fs.archive.extract", () => {
     );
   });
 
+  it("asks as trust_config when the destination holds a trust path", async () => {
+    const categories: string[] = [];
+    const gate = new ApprovalGate({
+      level: 4,
+      emit: (req) => {
+        categories.push(req.category);
+        gate.resolve({ approvalId: req.approvalId, approved: true });
+      },
+    });
+    const tool = buildOsFsArchiveExtractTool({
+      approvals: gate,
+      approvalRequired: true,
+      trustConfigPaths: [join(dir, "hooks.json")],
+    });
+    await tool.run(
+      { path: join(FIXTURES, "sample.zip"), destDir: dir },
+      makeCtx(FIXTURES),
+    );
+    expect(categories).toEqual(["trust_config"]);
+  });
+
   it("refuses when approval is denied", async () => {
     const tool = buildOsFsArchiveExtractTool({
       approvals: denyAll(),

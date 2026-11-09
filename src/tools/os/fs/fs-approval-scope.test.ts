@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { categorizeFsMutation, resolveFsScope } from "./fs-approval-scope.js";
@@ -261,12 +261,65 @@ describe("fs approval scope", () => {
       ).toBe("fs_write_home");
     });
 
-    it("extraction never inherits the trust-config guard (targets a dir)", async () => {
-      // Even if destDir is the state dir, extract stays on the scope
-      // ladder; the guard only fires for write/trash of the exact file.
+    it("extraction into a directory that holds a trust file is trust_config", async () => {
       expect(
         await categorizeFsMutation("extract", [stateDir], trustOpts()),
+      ).toBe("trust_config");
+    });
+
+    it("extraction elsewhere stays on the scope ladder", async () => {
+      expect(
+        await categorizeFsMutation("extract", [join(home, "unpacked")], trustOpts()),
       ).toBe("fs_write_home");
+    });
+
+    describe("directory entries (trailing separator)", () => {
+      const withInstalled = () => ({
+        ...trustOpts(),
+        trustConfigPaths: [
+          configFile,
+          join(stateDir, "plugins", "installed") + sep,
+        ],
+      });
+
+      it("a write anywhere under the directory is trust_config, new files included", async () => {
+        expect(
+          await categorizeFsMutation(
+            "write",
+            [join(stateDir, "plugins", "installed", "x", "hooks", "run.sh")],
+            withInstalled(),
+          ),
+        ).toBe("trust_config");
+      });
+
+      it("a sibling with the same name prefix does not match", async () => {
+        expect(
+          await categorizeFsMutation(
+            "write",
+            [join(stateDir, "plugins", "installed-notes.txt")],
+            withInstalled(),
+          ),
+        ).toBe("fs_write_home");
+      });
+
+      it("catches a symlink into the directory", async () => {
+        const inside = join(stateDir, "plugins", "installed", "x");
+        await mkdir(inside, { recursive: true });
+        await symlink(inside, join(workspace, "linked"));
+        expect(
+          await categorizeFsMutation("write", [join(workspace, "linked", "a.sh")], withInstalled()),
+        ).toBe("trust_config");
+      });
+
+      it("extraction under the directory is trust_config", async () => {
+        expect(
+          await categorizeFsMutation(
+            "extract",
+            [join(stateDir, "plugins", "installed", "x")],
+            withInstalled(),
+          ),
+        ).toBe("trust_config");
+      });
     });
   });
 });

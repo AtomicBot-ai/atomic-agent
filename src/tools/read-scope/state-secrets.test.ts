@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import {
   ApprovalDeniedError,
@@ -159,6 +159,39 @@ posix("which calls touch the agent's secret files", () => {
   it("sees the state directory or a secret-holding folder of it named whole", () => {
     expect(shell({ cmd: "grep -r sk- ~/.atomic-agent" })).toEqual([s.stateDir]);
     expect(shell({ cmd: "tar czf /tmp/x.tgz ~/.atomic-agent/models" })).toEqual([join(s.stateDir, "models")]);
+  });
+
+  describe("a directory entry (plugins/installed/)", () => {
+    const withInstalled = (): StateSecrets => ({
+      stateDir: s.stateDir,
+      files: [s.config, join(s.stateDir, "plugins", "installed") + sep],
+    });
+
+    it("a shell command naming anything under it is a hit", () => {
+      for (const cmd of [
+        "echo x >> ~/.atomic-agent/plugins/installed/p/hooks/run.sh",
+        "sed -i s/a/b/ $HOME/.atomic-agent/plugins/installed/p/server.js",
+        `cp evil ${s.stateDir}/plugins/installed/p/server.js`,
+      ]) {
+        expect(findShellStateSecrets({ cmd }, ctx(), withInstalled(), env)).toHaveLength(1);
+      }
+    });
+
+    it("a read tool may read a plugin's own files", () => {
+      const path = join(s.stateDir, "plugins", "installed", "p", "skills", "a", "SKILL.md");
+      expect(findStateSecretReads("os.fs.read", { path }, ctx(), withInstalled())).toEqual([]);
+    });
+
+    it("a sibling folder with the same name prefix is not a hit", () => {
+      expect(
+        findShellStateSecrets(
+          { cmd: "ls ~/.atomic-agent/plugins/installed-old/x" },
+          ctx(),
+          withInstalled(),
+          env,
+        ),
+      ).toEqual([]);
+    });
   });
 
   it("leaves ordinary commands alone", () => {
