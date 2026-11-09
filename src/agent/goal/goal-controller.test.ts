@@ -220,12 +220,16 @@ describe("runGoal", () => {
   });
 
   it("stops when the agent closed the session before the goal was met", async () => {
+    const rounds: string[] = [];
     const h = harness({
-      runRound: async (s) => ({ ...replied(s, "bye"), reason: "finish" }),
+      runRound: async (s, message) => {
+        rounds.push(message);
+        return { ...replied(s, "bye"), reason: "finish" };
+      },
       judgeAnswers: [verdict("not_met")],
     });
     const out = await runGoal(h.deps, { session, message: "start", goal: goal(["a"]), signal });
-    expect(h.messages).toHaveLength(1);
+    expect(rounds).toHaveLength(1);
     expect(out.goal?.status).toBe("paused");
   });
 });
