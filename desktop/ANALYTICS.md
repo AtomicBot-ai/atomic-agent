@@ -12,6 +12,9 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
   `~/.atomic-agent/config.json` says `analytics.enabled: false`, the desktop
   treats analytics as off and tells the agent it spawns the same.
 - A config file that exists but cannot be parsed counts as off.
+- `DO_NOT_TRACK=1` (also `true` / `yes` / `on`) in the environment turns
+  analytics and crash reports off whatever the config says, and the agent
+  the desktop spawns gets `ATOMIC_AGENT_ANALYTICS=off`.
 - Settings › Privacy applies live, no restart. Turning it off: the config
   write happens first; only if it succeeded is `analytics_disabled` sent and
   flushed (2 s at most), and then sending stops and the queue is dropped. A
@@ -49,7 +52,7 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 | `ATOMIC_AGENT_SURFACE` | `desktop` |
 | `ATOMIC_AGENT_INSTALL_CHANNEL` | `dmg` / `exe` / `appimage` / `deb` |
 | `ATOMIC_AGENT_DESKTOP_VERSION` | the app version, when known |
-| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, or when the terminal opt-out is inherited |
+| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, when the terminal opt-out is inherited, or under `DO_NOT_TRACK=1` |
 | `ATOMIC_AGENT_INSTALL_ID_FILE` | `<desktop state dir>/install-id` on a test or dev run; otherwise inherited unchanged |
 
 ## Global properties (every event)
