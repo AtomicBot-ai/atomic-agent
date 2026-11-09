@@ -93,6 +93,16 @@ test("the dialog: budget hidden for local models, Telegram switch only when pair
   assert.match(local, /Pair Telegram/);
 });
 
+test("the dialog offers no folder picker for a remote agent", () => {
+  const st = { local: false, tgPaired: false, busy: false, error: null, remote: false,
+    form: { message: "", folder: "/Users/me/app", budget: "", hours: "8", notify: false } };
+  assert.match(O.ovnDialogHTML(st, h), /data-ovn="pick"/);
+  const remote = O.ovnDialogHTML({ ...st, remote: true }, h);
+  assert.doesNotMatch(remote, /data-ovn="pick"/);
+  assert.doesNotMatch(remote, /\/Users\/me\/app/);
+  assert.match(remote, /own folder on the other computer/);
+});
+
 test("the runs card: Stop while running, Dismiss when finished, nothing when empty", () => {
   assert.equal(O.ovnRunsHTML([], 0, h), "");
   const live = O.ovnRunsHTML([{ id: "t1", title: "fix <tests>", sessionId: "s1", startedAt: 0, limitMs: H, task: { status: "running" } }], 0, h);

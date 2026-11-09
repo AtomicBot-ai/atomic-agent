@@ -10,6 +10,9 @@
  * (`TaskRecord.maxCostUsd`, `TaskRecord.maxDurationMs`). An agent that does
  * not know the limits yet ignores them; the window then stops the run itself
  * when the time is up (renderer/overnight.js).
+ *
+ * On a remote agent the folder is the agent's own (`GET /health`): a folder
+ * from this computer's picker does not exist there, and the agent refuses it.
  */
 
 import { isAbsolute } from "node:path";
@@ -50,14 +53,34 @@ export type OvernightCheck =
   | { ok: true; request: OvernightRequest; body: OvernightTaskBody }
   | { ok: false; error: string };
 
-/** The dialog's input, checked. Every refusal is a sentence the dialog shows as is. */
-export function overnightTaskBody(input: unknown): OvernightCheck {
+/** The folder a remote agent reports in `GET /health`, or null when it does not say. */
+export function remoteAgentFolder(health: unknown): string | null {
+  const dir = (health as { workingDir?: unknown } | null | undefined)?.workingDir;
+  return typeof dir === "string" && dir.trim() ? dir.trim() : null;
+}
+
+/** An agent whose `POST /api/tasks` still needs a `sessionId` answers with this 400. */
+const NO_WORKING_DIR_ROUTE = /sessionId and userMessage are required/;
+
+/** The agent's refusal as the dialog says it. */
+export function overnightErrorText(message: string, remote: boolean): string {
+  return remote && NO_WORKING_DIR_ROUTE.test(message)
+    ? "This agent build cannot take Run overnight from another computer."
+    : message;
+}
+
+/**
+ * The dialog's input, checked. Every refusal is a sentence the dialog shows as is.
+ * With `remoteFolder` (a remote agent's own folder) the dialog's folder is ignored,
+ * and the path is not judged by this computer's rules: it belongs to the other one.
+ */
+export function overnightTaskBody(input: unknown, remoteFolder?: string): OvernightCheck {
   const raw = (input ?? {}) as Record<string, unknown>;
   const message = typeof raw.message === "string" ? raw.message.trim() : "";
   if (!message) return { ok: false, error: "Write what the agent should do." };
   if (message.length > OVERNIGHT_MESSAGE_MAX) return { ok: false, error: "The task is too long. Keep it under 16,000 characters." };
-  const folder = typeof raw.folder === "string" ? raw.folder.trim() : "";
-  if (!folder || !isAbsolute(folder)) return { ok: false, error: "Choose a folder for the agent to work in." };
+  const folder = remoteFolder ?? (typeof raw.folder === "string" ? raw.folder.trim() : "");
+  if (remoteFolder === undefined && (!folder || !isAbsolute(folder))) return { ok: false, error: "Choose a folder for the agent to work in." };
   const hours = typeof raw.hours === "number" ? raw.hours : Number(raw.hours);
   if (!Number.isFinite(hours) || hours < OVERNIGHT_HOURS_MIN || hours > OVERNIGHT_HOURS_MAX) {
     return { ok: false, error: `Set a time limit from ${OVERNIGHT_HOURS_MIN} to ${OVERNIGHT_HOURS_MAX} hours.` };

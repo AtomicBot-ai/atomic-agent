@@ -12,6 +12,9 @@
    Start sends it to main (`overnight:start`), which creates a durable task
    on the agent in that folder (overnight-ipc.ts → POST /api/tasks).
 
+   With a remote agent the folder row has no picker: the run works in that
+   agent's own folder, which main reads from the agent.
+
    The run then shows as a small card in the corner: elapsed time, spend so
    far when the agent reports it (`spentUsd`), and Stop (the Tasks tab's own
    cancel route). The card keeps the runs this window started in
@@ -28,7 +31,7 @@ const OVN_STORE_KEY = 'atag.overnightRuns';
 const OVN_TERMINAL = ['completed', 'failed', 'blocked', 'cancelled'];
 
 const OVN = {
-  open: false, busy: false, error: null, local: false, tgPaired: false,
+  open: false, busy: false, error: null, local: false, tgPaired: false, remote: false,
   form: {message: '', folder: '', budget: '', hours: String(OVN_DEFAULT_HOURS), notify: false},
   runs: [],   // {id, title, sessionId, startedAt, limitMs, budget, task, stopping}
   timer: null,
@@ -125,8 +128,10 @@ function ovnDialogHTML(st, h) {
       + '<label class="tk-field"><span class="tk-lbl">Task</span>'
         + '<textarea class="tk-inp" data-ovn-field="message" rows="4" placeholder="Fix the failing tests and write down what you changed">' + esc(f.message) + '</textarea></label>'
       + '<div class="tk-field"><span class="tk-lbl">Folder</span>'
-        + '<div class="ovn-folder"><span class="ovn-path" title="' + esc(f.folder) + '">' + esc(f.folder || 'No folder chosen') + '</span>'
-        + '<button class="btn sm" type="button" data-ovn="pick">Change</button></div></div>'
+        + (st.remote
+          ? '<div class="ovn-folder"><span class="ovn-path">The agent\'s own folder on the other computer</span></div></div>'
+          : '<div class="ovn-folder"><span class="ovn-path" title="' + esc(f.folder) + '">' + esc(f.folder || 'No folder chosen') + '</span>'
+            + '<button class="btn sm" type="button" data-ovn="pick">Change</button></div></div>')
       + budget
       + '<label class="tk-field"><span class="tk-lbl">Time limit, hours</span>'
         + '<input class="tk-inp ovn-hours" data-ovn-field="hours" type="number" min="0.5" max="24" step="0.5" value="' + esc(f.hours) + '"></label>'
@@ -204,14 +209,17 @@ async function ovnOpen() {
   OVN.form = {message: '', folder: typeof WORKSPACE === 'string' ? WORKSPACE : '', budget: '', hours: String(OVN_DEFAULT_HOURS), notify: false};
   OVN.local = ovnIsLocal(typeof selBackend === 'function' ? selBackend() : null);
   OVN.tgPaired = false;
+  OVN.remote = false;
   ovnPaint();
   ovnFocus();
   // The defaults the agent knows: the budget from config, whether Telegram is paired.
-  const [budget, tg] = await Promise.all([
+  const [budget, tg, remote] = await Promise.all([
     br.configGetKey ? br.configGetKey('agent.task.maxCostUsd').catch(() => null) : null,
     br.configGetKey ? br.configGetKey('telegram').catch(() => null) : null,
+    br.remoteGet ? br.remoteGet().catch(() => null) : null,
   ]);
   if (!OVN.open) return;
+  OVN.remote = !!(remote && remote.connected);
   if (budget && budget.ok && typeof budget.value === 'number' && budget.value > 0 && !OVN.form.budget) OVN.form.budget = String(budget.value);
   OVN.tgPaired = !!(tg && tg.ok && ovnTelegramPaired(tg.value));
   OVN.form.notify = OVN.tgPaired;
@@ -237,7 +245,7 @@ function ovnPaintKeepFocus() {
 
 async function ovnPick() {
   const br = ovnBridge();
-  if (!br) return;
+  if (!br || OVN.remote) return;
   const dir = await br.overnightPickFolder(OVN.form.folder || undefined);
   if (dir) { OVN.form.folder = dir; ovnPaintKeepFocus(); }
 }
