@@ -49,6 +49,7 @@ const HELP = [
   "  --budget <usd>    Stop once the estimated spend reaches this many dollars, with a",
   "                    closing summary. Default: agent.task.maxCostUsd (0 = no cap).",
   "                    Local models count as $0.",
+  "                    Fusion cloud-worker spend does not count against this cap.",
   `  --hours <h>       Wall-clock cap, e.g. 8 or 1.5. Default: ${OVERNIGHT_DEFAULT_HOURS}.`,
   "  --dir <path>      Folder the agent works in. Default: the current folder.",
   "  --notify telegram Send the final result to the paired Telegram chat.",
