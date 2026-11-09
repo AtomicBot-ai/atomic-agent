@@ -21,6 +21,7 @@ import {
   describeRule,
   matchRules,
   type ApprovalRule,
+  type ApprovalRuleDecision,
   type RuleMatch,
 } from "./approval-rules.js";
 import type { ApprovalRulesSource } from "./approval-rules-store.js";
@@ -170,6 +171,19 @@ export type ApprovalEmitter = (request: ApprovalRequest) => void;
  * process exits. Auto-approval still wins first: a level or a grant that
  * would run the call without asking still runs it.
  */
+/** The fields of a request a saved rule can read. */
+export type RuleCheck = Pick<
+  ApprovalRequest,
+  | "sessionId"
+  | "tool"
+  | "category"
+  | "commandArgv"
+  | "commandSegments"
+  | "targetPaths"
+  | "affectedResources"
+  | "workdir"
+>;
+
 export interface SessionApprovalPolicy {
   onPrompt: "refuse";
   reason: string;
@@ -180,6 +194,12 @@ export interface SessionApprovalPolicy {
    * own `.env`) loops. `undefined` falls back to `reason`.
    */
   reasonFor?: (request: ApprovalRequest) => string | undefined;
+  /**
+   * The folder saved rules are matched against for this session, when it
+   * is not the session's own: a fusion worker in a throwaway worktree is
+   * still working on its parent's project.
+   */
+  ruleWorkdir?: string;
 }
 
 /** A live, in-memory view of a session's point grants. Diagnostic only. */
@@ -627,14 +647,16 @@ export class ApprovalGate {
    * the ask / deny rules of the session's project file. A store that
    * cannot be read never blocks a request; it is as if it had no rules.
    */
-  private matchRule(request: ApprovalRequest): RuleMatch | null {
+  private matchRule(request: RuleCheck): RuleMatch | null {
     const store = this.rules;
     if (store === undefined) return null;
     try {
+      const folder =
+        this.policiesBySession.get(request.sessionId)?.ruleWorkdir ?? request.workdir;
       const workdir =
-        request.workdir === undefined
+        folder === undefined
           ? undefined
-          : (store.canonicalDir?.(request.workdir) ?? resolvePath(request.workdir));
+          : (store.canonicalDir?.(folder) ?? resolvePath(folder));
       const rules = [
         ...store.list(),
         ...(workdir !== undefined ? (store.projectRules?.(workdir) ?? []) : []),
@@ -644,6 +666,19 @@ export class ApprovalGate {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * What a saved rule says about a call that may never reach `request`:
+   * a fan-out scope returns before the gate, and a deny or ask rule has
+   * to stop that shortcut. Asks nothing and records nothing.
+   */
+  ruleDecisionFor(check: RuleCheck): ApprovalRuleDecision | null {
+    const workdir = check.workdir ?? currentApprovalWorkdir();
+    return (
+      this.matchRule({ ...check, ...(workdir !== undefined ? { workdir } : {}) })
+        ?.decision ?? null
+    );
   }
 
   /**

@@ -49,6 +49,43 @@ describe("ApprovalGate with saved rules (ATO-1141)", () => {
     rmSync(project, { recursive: true, force: true });
   });
 
+  describe("ruleDecisionFor", () => {
+    it("reports a deny or ask rule without asking anyone", () => {
+      store.add({ decision: "deny", commandPrefix: ["npm", "publish"], source: "user" });
+      const g = gate();
+      expect(
+        g.ruleDecisionFor({
+          sessionId: "s",
+          tool: "os.shell.run",
+          category: "shell",
+          commandSegments: [["npm", "publish"]],
+          workdir: project,
+        }),
+      ).toBe("deny");
+      expect(emitted).toEqual([]);
+    });
+
+    it("a worker in a worktree is matched against its parent's project", () => {
+      store.add({
+        decision: "deny",
+        commandPrefix: ["npm", "publish"],
+        project,
+        source: "user",
+      });
+      const g = gate();
+      const check = {
+        sessionId: "worker",
+        tool: "os.shell.run",
+        category: "shell" as const,
+        commandSegments: [["npm", "publish"]],
+        workdir: join(tmpdir(), "atag-fusion-x", "task"),
+      };
+      expect(g.ruleDecisionFor(check)).toBeNull();
+      g.setSessionPolicy("worker", { onPrompt: "refuse", reason: "r", ruleWorkdir: project });
+      expect(g.ruleDecisionFor(check)).toBe("deny");
+    });
+  });
+
   it("a deny rule refuses even at level 5, without a prompt", async () => {
     const rule = store.add({ decision: "deny", commandPrefix: ["git", "push"], source: "user" });
     const decision = await gate(5).request(git("push"));

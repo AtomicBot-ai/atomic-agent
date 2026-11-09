@@ -1,4 +1,4 @@
-import type { ApprovalGate } from "./approval-gate.js";
+import type { ApprovalGate, RuleCheck } from "./approval-gate.js";
 import type { ApprovalCategory } from "./approval-level.js";
 
 export interface DangerousToolOptions {
@@ -135,6 +135,19 @@ export function describeApprovalDenial(
     "Do not retry it or try another way to do the same thing; " +
     "tell the user it was not done and ask what they would like instead."
   );
+}
+
+/**
+ * True when a saved deny or ask rule covers this call, so a fan-out
+ * scope must not settle it: the call goes to the gate, which refuses it
+ * or asks (for a worker, its refuse policy hands the step back).
+ */
+export function savedRuleOverridesScope(
+  approvals: ApprovalGate,
+  check: RuleCheck,
+): boolean {
+  const decision = approvals.ruleDecisionFor?.(check) ?? null;
+  return decision === "deny" || decision === "ask";
 }
 
 /**

@@ -1,5 +1,6 @@
 import {
   requireApproval,
+  savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import type { ApprovalCategory } from "../../../approval/approval-level.js";
@@ -164,6 +165,9 @@ export async function requireFsApproval(
   // Nor a file the user declined this turn: a worker writing it under
   // the fan-out's yes would be the way round their no, so that call goes
   // to the gate, which refuses it (`ApprovalGate.hasDeclinedTarget`).
+  //
+  // Nor a call a saved deny or ask rule covers: the scope speaks for a
+  // directory, the rule for this action.
   const targetPaths = request.targetPaths ?? [];
   if (
     category !== "trust_config" &&
@@ -175,7 +179,17 @@ export async function requireFsApproval(
         category,
         targetPaths: [...targetPaths],
       }) ?? false
-    )
+    ) &&
+    !savedRuleOverridesScope(options.approvals, {
+      sessionId: request.sessionId,
+      tool: request.tool,
+      category,
+      targetPaths: [...targetPaths],
+      ...(request.affectedResources !== undefined
+        ? { affectedResources: request.affectedResources }
+        : {}),
+      workdir: request.workingDir,
+    })
   ) {
     return { category };
   }

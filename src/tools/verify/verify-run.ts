@@ -14,7 +14,11 @@
  * before anything runs, at every level; a `dangerous.*` match asks as
  * `shell_dangerous`, which no fan-out scope and no `shell` grant covers.
  */
-import { requireApproval, type DangerousToolOptions } from "../../approval/dangerous-tool.js";
+import {
+  requireApproval,
+  savedRuleOverridesScope,
+  type DangerousToolOptions,
+} from "../../approval/dangerous-tool.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import type { ShellGuardPolicy } from "../os/shell-command-guard/index.js";
@@ -90,9 +94,24 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
       const dangerous = guard.dangerous.length > 0;
       // A fan-out's directory covers ordinary checks, never a dangerous
       // command: the operator approved a directory of work, not those.
+      const commandSegments = verifyRunCommands(args).flatMap((command) =>
+        shellRuleSegments(
+          command.cmd,
+          command.args,
+          needsShellInterpretation(command.cmd, command.args),
+        ),
+      );
       const scopedByFanout =
         !dangerous &&
-        (options.approvals.fanoutScopes?.allows(ctx.sessionId, [ctx.workingDir]) ?? false);
+        (options.approvals.fanoutScopes?.allows(ctx.sessionId, [ctx.workingDir]) ?? false) &&
+        !savedRuleOverridesScope(options.approvals, {
+          sessionId: ctx.sessionId,
+          tool: VERIFY_RUN_TOOL,
+          category: "shell",
+          commandSegments,
+          affectedResources: [ctx.workingDir],
+          workdir: ctx.workingDir,
+        });
       if (!scopedByFanout) {
         const reason = dangerous
           ? `${guard.dangerous.map((c) => c.verdict.reason).join("; ")} — verify (${args.kind}) in a throwaway copy of ${ctx.workingDir}; the copy is not a sandbox`
@@ -106,13 +125,7 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
             reason,
             preview: description,
             affectedResources: [ctx.workingDir],
-            commandSegments: verifyRunCommands(args).flatMap((command) =>
-              shellRuleSegments(
-                command.cmd,
-                command.args,
-                needsShellInterpretation(command.cmd, command.args),
-              ),
-            ),
+            commandSegments,
           },
           ctx.signal,
         );

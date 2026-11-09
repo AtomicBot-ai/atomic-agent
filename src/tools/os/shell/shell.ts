@@ -12,6 +12,7 @@ import { withToolchainEnv } from "../../../sandbox/command-toolchain-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
+  savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import { resolveUserPath } from "../expand-home.js";
@@ -244,11 +245,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // in" rather than something broader. One exception: a command
     // that would change a file the user declined this turn goes to the
     // gate, which refuses it, rather than running on the fan-out's yes.
+    // Same for a call a saved deny or ask rule covers.
     // Nor does the directory cover a dangerous command (`rm -rf`, `git
     // reset --hard`, `sudo`): the operator approved a directory of work,
     // not those, so it goes to the gate too, where a worker's refuse
     // policy hands it back as a step for the operator (ATO-1223).
     const dangerous = isDangerousGuardRule(guardVerdict.rule);
+    const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
     const scopedByFanout =
       !dangerous &&
       (options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ??
@@ -260,7 +263,16 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           category: "shell",
           targetPaths,
         }) ?? false
-      );
+      ) &&
+      !savedRuleOverridesScope(options.approvals, {
+        sessionId: ctx.sessionId,
+        tool: "os.shell.run",
+        category: "shell",
+        commandSegments,
+        affectedResources: [cwd],
+        targetPaths,
+        workdir: ctx.workingDir,
+      });
     if (guardVerdict.action === "approval_required" && !scopedByFanout) {
       // Shape grant unit: the bare binary name (lowercased), so `[a]`
       // and "Allow in this chat" cover exactly the argv[0] that would
@@ -278,7 +290,6 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         : shellGrantShape(guardInput.cmd, commandLine, useShell);
       // Saved approval rules match on argv and on the session's folder.
       const commandArgv = shellCommandArgv(cmd, execArgs, useShell, commandShape);
-      const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
       await requireApproval(
         options,
         {

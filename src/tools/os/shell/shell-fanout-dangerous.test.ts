@@ -52,6 +52,27 @@ describe.skipIf(process.platform === "win32")(
       await rm(dir, { recursive: true, force: true });
     });
 
+    it("a saved deny rule still applies inside the fan-out's directory", async () => {
+      gate.setRules({
+        list: () => [
+          {
+            id: "r1",
+            decision: "deny",
+            commandPrefix: ["npm", "publish"],
+            createdAt: "",
+            source: "user",
+          },
+        ],
+        add: () => {
+          throw new Error("unused");
+        },
+        remove: () => false,
+      });
+      await expect(
+        tool().run({ cmd: "npm", args: ["publish"] }, ctx()),
+      ).rejects.toBeInstanceOf(ApprovalDeniedError);
+    });
+
     function ctx(cwd = dir): ToolContext {
       return {
         workingDir: cwd,
