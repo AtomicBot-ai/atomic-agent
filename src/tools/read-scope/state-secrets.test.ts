@@ -302,6 +302,25 @@ posix("a secret-file call asks as state_secret, whatever the level grants", () =
     expect(innerShells).toBe(0);
   });
 
+  it("verify.run gets the shell's checks: a secret file asks at level 4", async () => {
+    let verifyRuns = 0;
+    registry = new ToolRegistry();
+    registry.register(stub("verify.run", () => (verifyRuns += 1)));
+    confineReads(registry, {
+      grantedDirs: () => [],
+      readScope: () => readScope,
+      approvals: { approvals: gate, approvalRequired: true },
+      shellEnv: { home: s.home, platform: "linux" },
+      stateSecrets: s.secrets,
+    });
+    answer = { approved: false };
+    await expect(
+      registry.invoke("verify.run", { kind: "command", cmd: "cat", args: [s.dotenv] }, ctx()),
+    ).rejects.toBeInstanceOf(ApprovalDeniedError);
+    expect(prompts.at(-1)?.category).toBe("state_secret");
+    expect(verifyRuns).toBe(0);
+  });
+
   it("`sed -i` on config.json asks at level 4 (ATO-760)", async () => {
     await shell({ cmd: "sed -i s/4/5/ ~/.atomic-agent/config.json" });
     expect(prompts.map((p) => p.category)).toEqual(["state_secret"]);
