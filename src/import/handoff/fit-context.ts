@@ -113,17 +113,19 @@ export function fitHandoffContext(
   const tailBudget = Math.floor(historyBudget * HANDOFF_TAIL_SHARE);
   const summaryBudget = Math.max(MIN_USEFUL_SUMMARY_TOKENS, historyBudget - tailBudget);
 
-  const cut = chooseCut(turns, costs, tailBudget);
+  // A long output is clipped once kept, so it is priced as clipped: at
+  // full size it would push the newest request out of the tail.
+  const cut = chooseCut(turns, turns.map((turn) => turnTokens(clippedForTail(turn))), tailBudget);
   if (cut === null) return unchanged("no_safe_cut");
 
   // Clip only the kept tail; covered records live on in the summary and
   // the boundary hash is taken from the record before the cut.
   let clippedResults = 0;
   const nextTurns = turns.map((turn, index) => {
-    if (index < cut || turn.kind !== "tool_result") return turn;
-    if (turn.summary.length <= HANDOFF_TAIL_RESULT_MAX_CHARS) return turn;
-    clippedResults += 1;
-    return { ...turn, summary: clipMiddle(turn.summary, HANDOFF_TAIL_RESULT_MAX_CHARS), truncated: true as const };
+    if (index < cut) return turn;
+    const kept = clippedForTail(turn);
+    if (kept !== turn) clippedResults += 1;
+    return kept;
   });
 
   const summary = buildExtractiveSummary(nextTurns, 0, cut, { maxTokens: summaryBudget });
@@ -158,6 +160,12 @@ export function fitHandoffContext(
     summarizedTurns: cut,
     clippedResults,
   };
+}
+
+/** A record as the kept tail carries it: a very long tool output clipped in the middle. */
+function clippedForTail(turn: ConversationTurn): ConversationTurn {
+  if (turn.kind !== "tool_result" || turn.summary.length <= HANDOFF_TAIL_RESULT_MAX_CHARS) return turn;
+  return { ...turn, summary: clipMiddle(turn.summary, HANDOFF_TAIL_RESULT_MAX_CHARS), truncated: true as const };
 }
 
 /**

@@ -364,6 +364,14 @@ describe("resuming a fusion run (ATO-617)", () => {
       async (session, _message, options) => {
         const id = taskIdOf(session);
         onTurn(id);
+        // A stopped turn ends cancelled without an answer, as the agent loop's does.
+        if (options.signal?.aborted === true) {
+          return {
+            session: createEmptySessionState({ id: "s-w", workingDir: "/repo" }),
+            reason: "cancelled",
+            stepCount: 0,
+          } as RunTurnResult;
+        }
         options.eventHook?.({
           type: "llm_event",
           event: { type: "assistant_reply", text: id === "t1" ? PROPOSAL : "done" },

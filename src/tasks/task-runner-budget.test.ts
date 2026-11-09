@@ -140,7 +140,7 @@ describe("TaskRunner budgets", () => {
     await runner.runOne(store.create({ ...base, maxCostUsd: 5 }).id);
     await runner.runOne(store.create({ ...base, maxDurationMs: 60_000 }).id);
     await runner.runOne(store.create({ ...base, maxCostUsd: 5, maxSteps: 7 }).id);
-    expect(seen.map((options) => options.maxSteps)).toEqual([1000, 1000, 7]);
+    expect(seen.map((options) => options?.maxSteps)).toEqual([1000, 1000, 7]);
   });
 
   it("keeps the per-leg default for a task without a budget", async () => {

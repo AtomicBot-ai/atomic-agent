@@ -249,10 +249,10 @@ async function addWorktree(
     ["worktree", "add", "--detach", "--quiet", root, snapshot.commit],
     snapshot.top,
   );
+  // Read before `ok` narrows: its false branch types a failed run as null.
+  const failure = added?.stderr ?? "git not found";
   if (!ok(added)) {
-    throw new Error(
-      `git worktree add failed: ${(added?.stderr ?? "git not found").trim()}`,
-    );
+    throw new Error(`git worktree add failed: ${failure.trim()}`);
   }
   const dir = snapshot.rel.length === 0 ? root : join(root, snapshot.rel);
   await mkdir(dir, { recursive: true });

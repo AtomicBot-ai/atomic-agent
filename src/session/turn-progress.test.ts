@@ -151,7 +151,7 @@ describe("SessionStore turn checkpoints", () => {
     store.finishTurn({ ...afterSteps(stopped, 1), status: "cancelled" });
     expect(store.readTurnProgress("stopped")).not.toBeNull();
 
-    const failed = seed("failed");
+    seed("failed");
     store.beginTurn("failed", 1_000, progress());
     store.releaseTurn("failed", { status: "failed", lastError: "boom" });
     expect(store.readTurnProgress("failed")).toBeNull();

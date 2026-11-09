@@ -57,9 +57,11 @@ describe("AnalyticsStateStore", () => {
       "appInstalledSent",
       "appInstalledSentDesktop",
       "firstMessageSent",
+      "firstMessageSentDesktop",
       "installId",
       "installedAt",
       "modelConfiguredSent",
+      "modelConfiguredSentDesktop",
     ]);
   });
 
