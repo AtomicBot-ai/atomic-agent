@@ -69,19 +69,19 @@ describe("spotlightModelFor", () => {
 
   it("returns null once any spotlight entry is downloaded, even one that would not be picked", () => {
     const models = [def("small", 8), def("large", 32), def("too-big", 64)];
-    expect(spotlightModelFor(models, 32, (m) => m.id === "small")).toBeNull();
-    expect(spotlightModelFor(models, 32, (m) => m.id === "too-big")).toBeNull();
+    expect(spotlightModelFor(models, 32, (m) => String(m.id) === "small")).toBeNull();
+    expect(spotlightModelFor(models, 32, (m) => String(m.id) === "too-big")).toBeNull();
     expect(
       spotlightModelFor(
         [def("clean", 8), def("spicy", 16, { uncensored: true })],
         32,
-        (m) => m.id === "spicy",
+        (m) => String(m.id) === "spicy",
       ),
     ).toBeNull();
   });
 
   it("does not count a downloaded model outside the spotlight", () => {
     const models = [def("new", 8), def("old", 8, { spotlight: undefined })];
-    expect(spotlightModelFor(models, 32, (m) => m.id === "old")?.id).toBe("new");
+    expect(spotlightModelFor(models, 32, (m) => String(m.id) === "old")?.id).toBe("new");
   });
 });
