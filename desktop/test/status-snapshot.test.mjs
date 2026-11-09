@@ -26,7 +26,7 @@ test('the card from the issue: plan, now, last result, blocked, time, calls', ()
 test('only the turn in flight counts; a steer does not start a new one', () => {
   const log = [user(), tool(), tool(), row('assistant', {text: 'done'}), user(), tool(), user({steered: true}), tool({ok: null, name: 'os.shell.run'})];
   assert.equal(statusTurnRows(log).length, 3);
-  const snap = statusSnapshotOf(log, {running: true, startedAt: 1, now: 41_001});
+  const snap = statusSnapshotOf(log, {running: true, startedAt: 1, now: 40_001});
   assert.deepEqual(statusSnapshotLines(snap), [
     'Now: Running os.shell.run',
     'Last result: os.fs.read · ok',
