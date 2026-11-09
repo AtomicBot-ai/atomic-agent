@@ -19,6 +19,8 @@ A plugin is a folder that bundles skills, slash commands, subagent profiles, hoo
 - [marketplace-fetch.ts](marketplace-fetch.ts): `PluginFetcher`, the only network code: shallow `git` checkout with hooks off, and https download of a bare marketplace.json.
 - [marketplace-store.ts](marketplace-store.ts): lock file `<stateDir>/plugins/marketplaces.json` (source, ref, pinned commit, fetch time) and checkouts in `plugins/marketplaces/<name>/`.
 - [marketplace.ts](marketplace.ts): marketplace add / list / update / remove, `plugin install name@marketplace`, `plugin update`. Installs go fetch, stage, `review`, commit (`reviewAndCommit` in plugin-install.ts).
+- [plugin-permissions.ts](plugin-permissions.ts): what a plugin would run (hooks, local MCP commands, scripts), `diffPluginPermissions` between two versions, consent id.
+- [plugin-install-review.ts](plugin-install-review.ts): the review every install and update runs: security scan, permission diff, runs-code consent. See [docs/install-safety.md](docs/install-safety.md).
 - CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts). Marketplaces: [docs/marketplaces.md](docs/marketplaces.md).
 
 ## Ownership and dependencies

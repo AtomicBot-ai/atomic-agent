@@ -104,3 +104,20 @@ export type {
   ResolvedMarketplacePlugin,
   UpdateMarketplaceResult,
 } from "./marketplace.js";
+export {
+  codeConsentIdOf,
+  describePermissionDiff,
+  describePluginCode,
+  diffPermissionSnapshots,
+  diffPluginPermissions,
+  pluginPermissionSnapshot,
+} from "./plugin-permissions.js";
+export type {
+  PluginHookCommand,
+  PluginMcpPermission,
+  PluginPermissionDiff,
+  PluginPermissionSnapshot,
+  PluginScriptFile,
+} from "./plugin-permissions.js";
+export { createPluginInstallReview, decideCodeConsent, inspectStagedPlugin } from "./plugin-install-review.js";
+export type { PluginInstallReport, PluginReviewOptions } from "./plugin-install-review.js";
