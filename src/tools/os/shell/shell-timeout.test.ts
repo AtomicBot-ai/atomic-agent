@@ -17,14 +17,27 @@ describe("resolveShellTimeout", () => {
     });
   });
 
-  it("lets an explicit timeoutMs win over the default, 0 included", () => {
+  it("lets an explicit timeoutMs win over the default", () => {
     expect(resolveShellTimeout(5_000, 600_000)).toEqual({
       timeoutMs: 5_000,
       source: "explicit",
     });
+  });
+
+  // ATO-1175: zero-filling models send `timeoutMs: 0` on every call; it
+  // must not switch off the default detach.
+  it("reads timeoutMs: 0 as omitted and keeps the default", () => {
     expect(resolveShellTimeout(0, 600_000)).toEqual({
+      timeoutMs: 600_000,
+      source: "default",
+    });
+    expect(resolveShellTimeout(-0, 600_000)).toEqual({
+      timeoutMs: 600_000,
+      source: "default",
+    });
+    expect(resolveShellTimeout(0, 0)).toEqual({
       timeoutMs: 0,
-      source: "explicit",
+      source: "default",
     });
   });
 
@@ -77,7 +90,7 @@ describe("formatShellTimeoutNotice", () => {
     expect(
       formatShellTimeoutNotice({ timeoutMs: 5_000, source: "explicit" }),
     ).toBe(
-      "stopped after 5 s (timeoutMs) — output so far below; pass a larger timeoutMs for a longer run, or 0 for no limit",
+      "stopped after 5 s (timeoutMs) — output so far below; pass a larger timeoutMs for a longer run, or -1 for no limit",
     );
   });
 });
@@ -118,7 +131,7 @@ describe("describeShellTimeoutDefault", () => {
     for (const form of ['{"wait": id}', '{"kill": id}', '{"jobs": true}', "keep: true"]) {
       expect(text).toContain(form);
     }
-    expect(text).toContain("Pass `timeoutMs` to stop the command at an explicit limit instead, `0` for none.");
+    expect(text).toContain("Pass `timeoutMs` to stop the command at an explicit limit instead, `-1` for none (`0` keeps this default).");
   });
 
   it("says there is no timeout when the default is 0", () => {

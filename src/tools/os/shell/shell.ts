@@ -162,12 +162,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
         ? resolveUserPath(rawArgs.cwd, ctx.workingDir)
         : ctx.workingDir;
-    // An explicit `timeoutMs` wins (`0` = none — long installs like
+    // An explicit `timeoutMs` wins (`-1` = none — long installs like
     // `brew install` need it) and kills at its limit: the model asked
     // for a bound. The operator's default (F47: a scan of a home
     // directory used to run until someone killed it) detaches
     // instead — a build the default interrupted is not one the model
     // wanted stopped. The turn's abort signal stays the safety valve.
+    // A zero `timeoutMs` reads as omitted (zero-filling models, ATO-1175).
     const timeout = resolveShellTimeout(rawArgs.timeoutMs, defaultTimeoutMs);
 
     // Two execution modes. Direct-exec (`spawn(cmd, args)`) keeps argv
