@@ -65,7 +65,7 @@ body.electron #settings{-webkit-app-region:no-drag}
   background:var(--well);border-radius:var(--r-comp);box-shadow:var(--sh-pop);overflow:hidden}
 
 /* ---------------- Nav ---------------- */
-/* Calm (S5): nine sections, icon and name, nothing else — no keycaps, no
+/* Calm (S5): ten sections (Plugins since ATO-954), icon and name, nothing else — no keycaps, no
    counts, no command list. */
 .setnav{min-width:0;min-height:0;display:flex;flex-direction:column;padding:16px 10px 12px}
 .setnav-title{margin:2px 10px 12px;font:600 var(--fs-lead)/20px var(--font-ui);letter-spacing:-.02em;color:var(--ink)}
@@ -409,3 +409,22 @@ button.set-search:hover{border-color:var(--bd)}
 .set-docmark--warn{color:var(--warn, #b7791f)}
 .set-docmark--err{color:var(--critical)}
 .set-diag .set-err{color:var(--critical)}
+
+/* ---------------- Plugins (ATO-954, renderer/plugins-pane.js) ----------------
+   A row: switch · name, version, description and chips (the whole middle
+   opens the plugin's parts) · remove. Parts sit under it, indented. */
+.set-plglist-rows{padding:6px}
+.set-plgrow{align-items:flex-start}
+.set-plgrow > .tk-switch,.set-plgrow > .tk-spin{margin-top:3px;flex:none}
+.set-plgbody{border:0;background:transparent;padding:0;text-align:left;color:inherit;cursor:pointer;font:inherit}
+.set-plgbody .t .m{margin-left:4px}
+.set-plgbody .d{white-space:nowrap}
+.set-plgmeta{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:4px;font-size:var(--fs-cap)}
+.set-plgmeta .sec{color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+.set-plgrow.dim .set-plgbody .t,.set-plgrow.dim .set-plgbody .d{color:var(--ink-3)}
+.set-plgparts{margin:2px 0 8px 52px;display:flex;flex-direction:column;gap:2px}
+.set-plgpart{min-height:36px;padding:4px 10px;gap:10px}
+.set-plgpart .t{font:500 var(--fs-cap)/1.3 var(--font-mono);letter-spacing:0;color:var(--ink);font-weight:500}
+.set-plgpart.dim .t{color:var(--ink-3)}
+.set-plgcode{margin:4px 0 6px}
+.set-plglist{margin:6px 0 10px 18px;padding:0;font:500 var(--fs-cap)/1.5 var(--font-mono)}
