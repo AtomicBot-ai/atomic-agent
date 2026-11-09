@@ -247,8 +247,8 @@ describe("TaskRunner budgets", () => {
   it("keeps the spend of a run that threw, step by step, for the next attempt", async () => {
     const runtime: TaskRunnerRuntime = {
       runTurn: async (_s, _message, options) => {
-        options.eventHook?.({ type: "step_finished", stepIndex: 0, summary: "read", durationMs: 1, spendUsd: 0.7 });
-        options.eventHook?.({ type: "step_finished", stepIndex: 1, summary: "read", durationMs: 1, spendUsd: 1.2 });
+        options?.eventHook?.({ type: "step_finished", stepIndex: 0, summary: "read", durationMs: 1, spendUsd: 0.7 });
+        options?.eventHook?.({ type: "step_finished", stepIndex: 1, summary: "read", durationMs: 1, spendUsd: 1.2 });
         throw new Error("runtime fell over mid-turn");
       },
     };
