@@ -111,7 +111,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       config.git.remoteSync = false; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(false);
       config.git.remoteSync = true; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(true);
       expect(registry.list().slice(0, 2).map(tool => tool.name)).toEqual(["finish", "reply"]);
-      expect(registry.has("tool.view")).toBe(true);
+      // Registered once, beside `tool.search`, when the MCP catalog connects.
+      expect(registry.has("tool.view")).toBe(false);
       // Computer use is opt-in (`tools.screen.enabled`, default off): nothing registered.
       expect(config.tools.screen.enabled).toBe(false);
       expect(registry.has("os.screen.capture")).toBe(false); expect(registry.has("os.screen.click")).toBe(false);
@@ -154,8 +155,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
     expect(phases.slice(0, 3)).toEqual(["start", "started", "catalog"]);
     expect(sampling).toHaveBeenCalledWith({ llamaServerClient: input.llama, server: "*" });
     const names = registration.mock.calls.map(([tool]) => tool.name);
-    // `tool.search` (ATO-558) is registered once the descriptor list
-    // exists, and `tool.view` again beside it, search-aware.
+    // `tool.search` (ATO-558) and the search-aware `tool.view` are
+    // registered once the descriptor list exists.
     expect(names).toEqual(["mcp.resource.list", "mcp.resource.read", "mcp.prompt.list", "mcp.prompt.get", "tool.search", "tool.view"]);
     const refresh = owner.createRefreshMcp(); await refresh(); await refresh();
     expect(registration).toHaveBeenCalledTimes(6);
