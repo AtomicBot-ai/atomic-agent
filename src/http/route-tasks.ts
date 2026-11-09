@@ -31,8 +31,7 @@ import {
  * (ATO-731). This is how the desktop's "Run overnight" (ATO-1113) runs a
  * task in the folder the person picked. `notify: "telegram"` reports the
  * terminal outcome to the paired owner, as `task create --notify telegram`
- * does. Fields this route does not know (the desktop also sends
- * `maxCostUsd` and `maxDurationMs`) are ignored.
+ * does. Fields this route does not know are ignored.
  *
  * `maxAttempts` defaults to `config.tasks.maxAttempts` when omitted.
  * `maxCostUsd` / `maxDurationMs` are the task's own budget (the desktop
