@@ -2690,3 +2690,36 @@ describe("reduceTuiState: local model out of memory (ATO-334)", () => {
     expect(next.messages.at(-1)?.text).toContain(sentence);
   });
 });
+
+describe("reduceTuiState session usage (ATO-569)", () => {
+  const spend = (costUsd: number) => ({
+    costUsd, pricedCalls: 1, unpricedCalls: 0, localCalls: 0, planCalls: 0,
+    costSources: ["catalog" as const], unpricedModels: [], limits: [], updatedAt: 1,
+  });
+
+  it("takes the spend of the session on screen and ignores another session's", () => {
+    const state = apply(createInitialTuiState(fakeSession({ sessionId: "s1" })), [
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "other", usage: spend(9) } },
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: spend(0.31) } },
+    ]);
+    expect(state.sessionUsage?.costUsd).toBe(0.31);
+  });
+
+  it("starts a new session at no spend", () => {
+    const state = apply(createInitialTuiState(fakeSession({ sessionId: "s1" })), [
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: spend(0.31) } },
+      { type: "session_created", sessionId: "s2" },
+    ]);
+    expect(state.sessionUsage).toBeNull();
+  });
+
+  it("prints the breakdown for /usage", () => {
+    const state = apply(createInitialTuiState(fakeSession({ sessionId: "s1" })), [
+      { type: "agent_event", event: { type: "usage_updated", sessionId: "s1", usage: spend(0.31) } },
+      { type: "usage_report_requested", now: 0 },
+    ]);
+    const last = state.messages[state.messages.length - 1];
+    expect(last?.role).toBe("system");
+    expect(last?.text).toContain("$0.31 over 1 priced call");
+  });
+});

@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureUserConfigFileSync,
   getConfig,
+  getUserConfigPath,
   resetConfigCache,
   writeUserConfigFileSync,
 } from "../../config/index.js";
@@ -198,8 +199,10 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
   let worker: ReturnType<typeof inProcessWorker>;
   let orchestrator: LocalModelsOrchestrator;
   let startDaemon: ReturnType<typeof vi.fn>;
+  let turnRunning: boolean;
 
   beforeEach(() => {
+    turnRunning = false;
     stateDir = mkdtempSync(join(tmpdir(), "local-models-orch-dl-"));
     process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
     resetConfigCache();
@@ -218,6 +221,8 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
         stopDownload: worker.stopDownload,
         downloadPollMs: 5,
         staleGraceMs: 10,
+        isTurnRunning: () => turnRunning,
+        heldLandingPollMs: 5,
       },
     );
     vi.spyOn(orchestrator, "refresh").mockResolvedValue();
@@ -717,6 +722,182 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
       );
       expect(first?.pull.percent).toBe(50);
       expect(existsSync(dest)).toBe(true);
+    });
+
+    describe("a download that lands on a cloud route", () => {
+      function activateCloud(): void {
+        const path = getUserConfigPath(stateDir);
+        const prev = ensureUserConfigFileSync(path);
+        writeUserConfigFileSync(path, {
+          ...prev,
+          llm: {
+            activeTextProvider: "cloud",
+            activeEmbeddingProvider: "local-llama",
+            toolTransport: "auto",
+            providers: [
+              { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:9931" },
+              { id: "cloud", kind: "openai-compatible", baseUrl: "https://api.example.com/v1" },
+            ],
+          },
+        } as never);
+        resetConfigCache();
+      }
+
+      it("records the model and starts no daemon", async () => {
+        const dataDir = getConfig().paths.localModelsDataDir;
+        const def = getLocalModelDef("qwen-3.5-4b");
+        const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+        mkdirSync(join(dest, ".."), { recursive: true });
+        writeFileSync(dest, "gguf");
+        writeDownloadJob(dataDir, {
+          ...initialDownloadJob({
+            dataDir,
+            kind: "chat",
+            modelId: def.id,
+            mode: "gguf-only",
+            pid: 1,
+          }),
+          status: "done",
+          percent: 100,
+          finishedAt: "2026-09-07T12:00:00.000Z",
+        });
+        activateCloud();
+
+        orchestrator.adoptBackgroundDownloads();
+        await waitFor(
+          () => readDownloadJob(dataDir, "chat-qwen-3.5-4b") === null,
+        );
+
+        expect(startDaemon).not.toHaveBeenCalled();
+        expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-4b");
+        expect(getConfig().llm?.activeTextProvider).toBe("cloud");
+        expect(
+          infoLines(actions).some((l) => /Chats stay on your cloud provider/.test(l)),
+        ).toBe(true);
+      });
+
+      it("still starts the daemon for a pull asked for on the cloud route", async () => {
+        activateCloud();
+        globalThis.fetch = vi.fn(
+          async () =>
+            new Response(bodyOf(["gg", "uf"]), {
+              status: 200,
+              headers: { "content-length": "4" },
+            }),
+        ) as typeof fetch;
+
+        await orchestrator.pullModel("qwen-3.5-4b", "gguf-only");
+
+        expect(startDaemon).toHaveBeenCalledOnce();
+      });
+    });
+
+    describe("a download that lands during a turn", () => {
+      const held = () =>
+        infoLines(actions).some((l) => /when the current answer finishes/.test(l));
+
+      function finishedOnDisk(): { dataDir: string; dest: string } {
+        const dataDir = getConfig().paths.localModelsDataDir;
+        const def = getLocalModelDef("qwen-3.5-4b");
+        const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+        mkdirSync(join(dest, ".."), { recursive: true });
+        writeFileSync(dest, "gguf");
+        writeDownloadJob(dataDir, {
+          ...initialDownloadJob({
+            dataDir,
+            kind: "chat",
+            modelId: def.id,
+            mode: "gguf-only",
+            pid: 1,
+          }),
+          status: "done",
+          percent: 100,
+          finishedAt: "2026-09-07T12:00:00.000Z",
+        });
+        return { dataDir, dest };
+      }
+
+      it("waits for the turn, keeps its record, then lands", async () => {
+        const { dataDir } = finishedOnDisk();
+        turnRunning = true;
+
+        orchestrator.adoptBackgroundDownloads();
+        await waitFor(held);
+        await new Promise((r) => setTimeout(r, 30));
+
+        expect(startDaemon).not.toHaveBeenCalled();
+        expect(getConfig().localModels.managed.modelId).toBeNull();
+        expect(readDownloadJob(dataDir, "chat-qwen-3.5-4b")).not.toBeNull();
+
+        turnRunning = false;
+        await waitFor(() => startDaemon.mock.calls.length === 1);
+        expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-4b");
+        await waitFor(
+          () => readDownloadJob(dataDir, "chat-qwen-3.5-4b") === null,
+        );
+      });
+
+      it("holds a watched background job too", async () => {
+        const dataDir = getConfig().paths.localModelsDataDir;
+        const def = getLocalModelDef("qwen-3.5-4b");
+        const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+        const record = initialDownloadJob({
+          dataDir,
+          kind: "chat",
+          modelId: def.id,
+          mode: "gguf-only",
+          pid: process.pid,
+        });
+        writeDownloadJob(dataDir, record);
+        turnRunning = true;
+
+        orchestrator.adoptBackgroundDownloads();
+        await waitFor(() => startedPulls(actions).length === 1);
+        mkdirSync(join(dest, ".."), { recursive: true });
+        writeFileSync(dest, "gguf");
+        writeDownloadJob(dataDir, {
+          ...record,
+          status: "done",
+          percent: 100,
+          finishedAt: "2026-09-07T12:00:00.000Z",
+        });
+        await waitFor(held);
+        expect(startDaemon).not.toHaveBeenCalled();
+
+        turnRunning = false;
+        await waitFor(() => startDaemon.mock.calls.length === 1);
+      });
+
+      it("lands nothing when the model was removed while it was held", async () => {
+        const { dataDir, dest } = finishedOnDisk();
+        turnRunning = true;
+        orchestrator.adoptBackgroundDownloads();
+        await waitFor(held);
+
+        rmSync(dest);
+        turnRunning = false;
+        await waitFor(
+          () => readDownloadJob(dataDir, "chat-qwen-3.5-4b") === null,
+        );
+        expect(startDaemon).not.toHaveBeenCalled();
+        expect(getConfig().localModels.managed.modelId).toBeNull();
+      });
+
+      it("does not hold a pull the operator started here", async () => {
+        globalThis.fetch = vi.fn(
+          async () =>
+            new Response(bodyOf(["gg", "uf"]), {
+              status: 200,
+              headers: { "content-length": "4" },
+            }),
+        ) as typeof fetch;
+        turnRunning = true;
+
+        await orchestrator.pullModel("qwen-3.5-4b", "gguf-only");
+
+        expect(held()).toBe(false);
+        expect(startDaemon).toHaveBeenCalledOnce();
+      });
     });
 
     it("watches a worker another process is running and lands it when it ends", async () => {

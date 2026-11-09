@@ -144,6 +144,33 @@ export function buildSkillCatalogSection(
 }
 
 /**
+ * Re-pack an already built catalog against a smaller `tokenBudget` (the
+ * compact prompt's window-scaled budget, `compactSkillCatalogBudget`).
+ * `dropped` is what the first build already left out; the result counts
+ * both, so the truncation marker names every hidden skill. A catalog
+ * that still fits comes back unchanged.
+ */
+export function reclipSkillCatalog(
+  entries: ReadonlyArray<SkillCatalogEntry>,
+  dropped: number,
+  tokenBudget: number,
+): SkillCatalogSection {
+  const maxChars = tokenBudget * SKILL_CATALOG_CHARS_PER_TOKEN;
+  const rows = entries.map((entry) => ({
+    entry,
+    line: formatSkillCatalogLine(entry),
+  }));
+  const whole = packCatalog(rows, maxChars, dropped > 0
+    ? formatSkillCatalogOmittedLine(rows.length + dropped).length + 1
+    : 0);
+  if (whole.dropped === 0) return { entries: whole.entries, dropped };
+  const reserve =
+    formatSkillCatalogOmittedLine(rows.length + dropped).length + 1;
+  const packed = packCatalog(rows, maxChars, reserve);
+  return { entries: packed.entries, dropped: packed.dropped + dropped };
+}
+
+/**
  * Fill the budget in record order, stopping at the first line that does
  * not fit — the same first-overflow cut the catalog has always made.
  * One entry is always kept, so a single oversized line still overflows

@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "./config-validation-error.js";
-import { parseBool, parsePositiveInt } from "./config-primitives.js";
+import { coerceFloatLike, parseBool, parseNonNegativeInt, parsePositiveInt } from "./config-primitives.js";
 
 /**
  * What to do when the model provider stops answering.
@@ -35,6 +35,28 @@ export interface AgentTaskConfig {
    * Off means the historical behaviour: stop at `agent.maxSteps`.
    */
   autoContinue: boolean;
+  /**
+   * Continue a durable task whose run a crash, a kill or a restart cut
+   * off, from its session's per-step checkpoint, with a note telling the
+   * model how far it got (ATO-1109). Off: the run starts over from the
+   * task's message, as before. A run a person stopped is never resumed.
+   */
+  resumeInterrupted: boolean;
+  /**
+   * Resumes after the agent died under a task (crash or kill) before the
+   * task is failed instead: the guard against a task that takes the
+   * agent down every time. `0` fails it at the first such interruption.
+   */
+  maxResumes: number;
+  /**
+   * Spend ceiling for one task, in USD, estimated from each completion's
+   * usage and the model's prices (prompt-cache aware). Reached, the task
+   * ends the same graceful way as the time ceiling. `0` means no cap.
+   * Unpriced models (a local model) count as $0, so this never stops
+   * local work. Default `0`. Additive and unversioned: an older file has
+   * no field and runs uncapped, as before.
+   */
+  maxCostUsd: number;
 }
 
 export function createProviderWaitDefaults(): ProviderWaitConfig {
@@ -57,6 +79,9 @@ export function createAgentTaskDefaults(): AgentTaskConfig {
     maxSteps: 1000,
     maxDurationMs: 7_200_000,
     autoContinue: true,
+    resumeInterrupted: true,
+    maxResumes: 3,
+    maxCostUsd: 0,
   };
 }
 
@@ -114,5 +139,29 @@ export function parseAgentTask(
       task.autoContinue ?? defaults.autoContinue,
       "agent.task.autoContinue",
     ),
+    resumeInterrupted: parseBool(
+      task.resumeInterrupted ?? defaults.resumeInterrupted,
+      "agent.task.resumeInterrupted",
+    ),
+    maxResumes: parseNonNegativeInt(
+      task.maxResumes ?? defaults.maxResumes,
+      "agent.task.maxResumes",
+    ),
+    maxCostUsd: parseNonNegativeUsd(
+      task.maxCostUsd ?? defaults.maxCostUsd,
+      "agent.task.maxCostUsd",
+    ),
   };
+}
+
+/** A dollar amount: any finite number `>= 0`, fractions allowed. */
+function parseNonNegativeUsd(raw: unknown, field: string): number {
+  const value = coerceFloatLike(raw);
+  if (!Number.isFinite(value) || value < 0) {
+    throw new ConfigValidationError(
+      field,
+      `expected non-negative number, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return value;
 }

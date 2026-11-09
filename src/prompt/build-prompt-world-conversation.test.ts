@@ -127,6 +127,43 @@ describe("packedConversationTurns", () => {
   });
 });
 
+describe("packedConversationTurns: reasoning of tool calls (ATO-887)", () => {
+  it("carries the reasoning of the current turn's calls only", () => {
+    const turns = packedConversationTurns({
+      visibleTurns: [
+        userTurn("first task", 1),
+        assistantToolCallTurn({ tool: "os.fs.list", args: {}, reasoning: "old thinking", at: 2 }),
+        toolResultTurn({ tool: "os.fs.list", status: "ok", summary: "a.txt", at: 3 }),
+        assistantReplyTurn("done", 4),
+        userTurn("second task", 5),
+        assistantToolCallTurn({ tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "read it", at: 6 }),
+        toolResultTurn({ tool: "os.fs.read", status: "ok", summary: "hello", at: 7 }),
+      ],
+      droppedSummary: null,
+    });
+    const calls = turns.filter((t) => t.kind === "assistant_tool_call");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]).not.toHaveProperty("reasoning");
+    expect(calls[1]).toEqual({
+      kind: "assistant_tool_call",
+      tool: "os.fs.read",
+      args: { path: "a.txt" },
+      reasoning: "read it",
+    });
+  });
+
+  it("leaves the field out when the call had no reasoning", () => {
+    const turns = packedConversationTurns({
+      visibleTurns: [
+        userTurn("task", 1),
+        assistantToolCallTurn({ tool: "os.fs.list", args: {}, at: 2 }),
+      ],
+      droppedSummary: null,
+    });
+    expect(turns[1]).toEqual({ kind: "assistant_tool_call", tool: "os.fs.list", args: {} });
+  });
+});
+
 describe("a repeated os.fs.read in the packed conversation", () => {
   const read = {
     path: "/repo/js/main.js",

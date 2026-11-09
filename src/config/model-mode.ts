@@ -1,3 +1,4 @@
+import { isSetAsideString } from "./config-primitives.js";
 import { ConfigValidationError } from "./config-validation-error.js";
 import type { UserLlmProviderEntry } from "./llm-config.js";
 import { usesExternalCliAuth } from "./provider-auth-mode.js";
@@ -5,6 +6,7 @@ import { PROVIDER_PRESETS } from "../llm/provider/presets/provider-presets.js";
 
 /** Runtime policy, independent of provider location and tool transport. */
 export type ModelMode = "local" | "cloud";
+const MODEL_MODES: readonly ModelMode[] = ["local", "cloud"];
 
 /** Shared by new connections and the v75 migration; never a runtime override. */
 export function defaultProviderModelMode(
@@ -36,15 +38,29 @@ export function parseModelMode(raw: unknown, field: string): ModelMode | undefin
   throw new ConfigValidationError(field, "expected local|cloud");
 }
 
-export function parseModelModes(raw: unknown, field: string): Record<string, ModelMode> | undefined {
+/**
+ * ATO-1241: reading the file, a mode a newer build added is left unset
+ * (the provider's own policy applies) with one notice. Typed input goes
+ * through the strict `parseModelMode`.
+ */
+export function readModelMode(raw: unknown, field: string): ModelMode | undefined {
+  if (isSetAsideString(raw, MODEL_MODES, field, undefined)) return undefined;
+  return parseModelMode(raw, field);
+}
+
+/** `fromFile`: a per-model mode a newer build added is dropped from the map (see `readModelMode`). */
+export function parseModelModes(raw: unknown, field: string, fromFile = false): Record<string, ModelMode> | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw !== "object" || Array.isArray(raw)) {
     throw new ConfigValidationError(field, "expected object mapping model ids to local|cloud");
   }
-  return Object.fromEntries(Object.entries(raw).map(([id, value]) => {
+  const out: Array<[string, ModelMode]> = [];
+  for (const [id, value] of Object.entries(raw)) {
     if (!id.trim()) throw new ConfigValidationError(field, "model id must not be empty");
+    if (fromFile && isSetAsideString(value, MODEL_MODES, `${field}.${id}`, undefined)) continue;
     const mode = parseModelMode(value, `${field}.${id}`);
     if (mode === undefined) throw new ConfigValidationError(`${field}.${id}`, "expected local|cloud");
-    return [id, mode];
-  }));
+    out.push([id, mode]);
+  }
+  return Object.fromEntries(out);
 }

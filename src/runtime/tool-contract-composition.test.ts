@@ -74,7 +74,7 @@ describe("runtime tool contract composition", () => {
       const native = registrations.slice(0, protectionStart);
       const replacements = registrations.slice(protectionStart);
       expect(new Set(native.map((definition) => definition.name)).size).toBe(native.length);
-      const expectedReplacements = [...READ_TOOL_TARGETS.keys(), "os.shell.run"].filter((name) => runtime?.toolRegistry.has(name));
+      const expectedReplacements = [...READ_TOOL_TARGETS.keys(), "os.shell.run", "verify.run"].filter((name) => runtime?.toolRegistry.has(name));
       expect(replacements.map((definition) => definition.name)).toEqual(expectedReplacements);
       for (const definition of replacements) {
         const original = native.find((candidate) => candidate.name === definition.name);

@@ -7,6 +7,7 @@ import {
   effectiveReplyReserve,
   estimateTokens,
   minUsableContextWindow,
+  AGENT_FIXED_PROMPT_TOKENS_COMPACT,
   SESSION_SECTIONS_BUDGET_SHARE,
   SESSION_SECTIONS_CAP_AUTO,
   truncateToTokens,
@@ -313,6 +314,16 @@ describe("minUsableContextWindow", () => {
   it("counts a 16k window as usable with its smaller reserve", () => {
     expect(minUsableContextWindow(16_384, 16_384)).toBe(8000 + 4096 + 512);
     expect(16_384).toBeGreaterThanOrEqual(minUsableContextWindow(16_384, 16_384));
+  });
+
+  it("counts the compact scaffold's smaller fixed part when the window gets it", () => {
+    // ATO-1116: an 8k window under the compact prompt (~3.7k prefix) is
+    // usable; judged against the full 8000 it would warn "too small".
+    expect(AGENT_FIXED_PROMPT_TOKENS_COMPACT).toBe(4000);
+    expect(minUsableContextWindow(16_384, 8_192, { compact: true })).toBe(4000 + 2048 + 512);
+    expect(8_192).toBeGreaterThanOrEqual(minUsableContextWindow(16_384, 8_192, { compact: true }));
+    expect(8_192).toBeLessThan(minUsableContextWindow(16_384, 8_192));
+    expect(minUsableContextWindow(16_384, 16_384, { compact: false })).toBe(8000 + 4096 + 512);
   });
 });
 

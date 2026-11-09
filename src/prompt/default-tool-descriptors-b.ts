@@ -1,5 +1,6 @@
 import type { ToolDescriptor } from "./stable-prefix.js";
 import { SCREEN_TOOL_DESCRIPTORS } from "./screen-tool-descriptors.js";
+import { OS_FS_CODE_MAP_CONTRACT } from "../tools/os/code-map/code-map-contract.js";
 
 /** Second half of `DEFAULT_TOOL_DESCRIPTORS` (order is load-bearing). */
 export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
@@ -48,6 +49,9 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     tier: "rare",
   },
   ...SCREEN_TOOL_DESCRIPTORS,
+  // Appended in list B so the positions pinned for list A's duplicates
+  // (tool-contract-conformance) do not move (ATO-652).
+  OS_FS_CODE_MAP_CONTRACT.descriptor,
   {
     name: "skill.view",
     summary: "Load an installed skill body (SKILL.md) into the session tail.",
@@ -58,6 +62,16 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Load full args schema for a tool listed in `# extras` into `### loaded-tools`.",
     argsSchema: '{ name: string } /* e.g. "os.git.show" */',
+  },
+  {
+    // ATO-558: only in the catalog while search mode is on
+    // (`applyToolSearch`); it then stands in for the deferred tools.
+    name: "tool.search",
+    summary:
+      "Find a tool listed under `# extras` (built-in or MCP) by what it should do. Returns the best matches with their args and a ready call, and loads their schemas: call the right one on the next step.",
+    argsSchema:
+      '{ query: string /* what the tool should do, e.g. "send a slack message" */, limit?: number /* 1..8, default 3 */ }',
+    examples: ['{"query":"create a github issue"}'],
   },
   {
     name: "skill.run_script",
@@ -303,9 +317,23 @@ export const DEFAULT_TOOL_DESCRIPTORS_B: readonly ToolDescriptor[] = [
     summary:
       "Delegate independent parts of the work to local worker agents that run concurrently and report back. Each task becomes one throwaway worker turn that sees the operator's original request and your `instructions`, but nothing else from this conversation, so `instructions` must carry what the request does not (exact paths, the contract between parts, acceptance criteria, the answer format you want). Returns every worker's reply plus a per-task status. You choose `maxWorkers`; it is bounded only by the task count and the machine. Call it on its own, never alongside other tool calls.",
     argsSchema:
-      '{ tasks: [{ id: string, instructions: string, title?: string /* defaults to the id */, deliverable?: string, files?: string[], etaSeconds?: number /* your estimate of how long this part takes; shown to the operator beside the running clock so they can tell thinking from stuck */ }] /* 1..8 */, maxWorkers?: number /* how many run at once; you decide */, contract?: { inputs?: string[] /* the files the request provides: workers edit them in place, never replace */, owners?: { [path]: taskId }, provides?: [{ task, kind: "symbol"|"file"|"id"|"endpoint"|"env"|"flag"|"other", name, in?: path }], requires?: [{ task, name /* a provides name */ }], checks?: [{ task?, ...verify.run args }] } /* the interface between the parts: shown to every worker, checked after the fan-out */ }',
+      '{ tasks: [{ id: string, instructions: string, title?: string /* defaults to the id */, deliverable?: string, files?: string[], etaSeconds?: number /* your estimate of how long this part takes; shown to the operator beside the running clock so they can tell thinking from stuck */ }] /* 1..8 */, maxWorkers?: number /* how many run at once; you decide */, contract?: { inputs?: string[] /* the files the request provides: workers edit them in place, never replace */, owners?: { [path]: taskId }, provides?: [{ task, kind: "symbol"|"file"|"id"|"endpoint"|"env"|"flag"|"other", name, in?: path }], requires?: [{ task, name /* a provides name */ }], checks?: [{ task?, ...verify.run args }] } /* the interface between the parts: shown to every worker, checked after the fan-out */, resume?: string /* ONLY to continue a run cut off by a restart: the run id, sent alone */, confirm?: string[] /* with resume: task ids the person agreed to run again */ }',
     examples: [
       '{"tasks":[{"id":"t1","title":"Map the auth routes","instructions":"List every route under src/http/ that touches auth. For each: path, method, and the middleware it runs.","deliverable":"one bullet per route","etaSeconds":120},{"id":"t2","title":"Summarise the session store","instructions":"Read src/session/session-store.ts and describe its public API and persistence model.","files":["src/session/session-store.ts"]}]}',
+    ],
+  },
+  {
+    // Frequent tier: a checklist only helps when the model keeps it from
+    // the first step, and a model that must `tool.view` first never
+    // starts one (ATO-486). Placed after the git duplicates so their
+    // pinned catalog positions do not move.
+    name: "plan.update",
+    summary:
+      "Show the user a live checklist for multi-step work. Send the WHOLE plan every call (it replaces the previous one): each step with status pending, in_progress or done, at most one in_progress. Call it when you start work of 3+ steps and whenever a step finishes or the plan changes; items: [] clears it. Skip it for one-step answers.",
+    argsSchema:
+      "{ items: [{ step: string, status: 'pending' | 'in_progress' | 'done' }] }",
+    examples: [
+      '{"items":[{"step":"Read the failing test","status":"done"},{"step":"Fix the date parser","status":"in_progress"},{"step":"Run the test suite","status":"pending"}]}',
     ],
   },
   {

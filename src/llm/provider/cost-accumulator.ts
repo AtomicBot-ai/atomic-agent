@@ -10,8 +10,9 @@ export type CostAccumulatorSnapshot = {
 };
 
 /**
- * Rolls up estimated spend from completion usage + per-model pricing.
- * Pricing comes from userModels / catalog via `ResolvedModel`.
+ * Rolls up spend from completion usage: the provider-billed cost
+ * (`usage.costUsd`) when the service reports one, otherwise an estimate
+ * from per-model pricing (userModels / catalog via `ResolvedModel`).
  */
 export class CostAccumulator {
   private sessionUsd = 0;
@@ -66,7 +67,13 @@ function estimateCost(
   usage: CompletionUsage | undefined,
   model: ResolvedModel | undefined,
 ): number {
-  if (!usage || !model?.pricing) return 0;
+  if (!usage) return 0;
+  // The service's own bill (OpenRouter `usage.cost`) beats a price-table
+  // guess, and counts even for a model the table does not price (ATO-1289).
+  if (typeof usage.costUsd === "number" && Number.isFinite(usage.costUsd) && usage.costUsd >= 0) {
+    return usage.costUsd;
+  }
+  if (!model?.pricing) return 0;
   return estimateUsageCostUsd(usage, model.pricing);
 }
 

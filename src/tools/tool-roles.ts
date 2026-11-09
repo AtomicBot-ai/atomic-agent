@@ -51,6 +51,7 @@ const FS_READ_TOOLS: readonly string[] = [
   "os.fs.diff",
   "os.fs.watch",
   "os.fs.locate_project",
+  "os.fs.code_map",
   "os.fs.archive.list",
   "os.fs.archive.read_entry",
 ];
@@ -96,6 +97,7 @@ const BUILDER: RoleSpec = {
     ...FS_WRITE_TOOLS,
     "os.shell.run",
     "tool.view",
+    "tool.search",
     "skill.view",
     REPLY,
   ]),
@@ -124,6 +126,7 @@ const ORCHESTRATOR: RoleSpec = {
     "os.web.search",
     "fusion.delegate",
     "tool.view",
+    "tool.search",
     REPLY,
     FINISH,
   ]),

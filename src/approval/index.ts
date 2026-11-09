@@ -35,6 +35,25 @@ export type {
   PreviewExcerpt,
   PreviewExcerptLimits,
 } from "./approval-preview.js";
+export {
+  buildAlwaysRule,
+  canGrantAlways,
+  describeAlwaysRule,
+  describeRule,
+  matchRules,
+  parseApprovalRulesFile,
+} from "./approval-rules.js";
+export type {
+  ApprovalRule,
+  ApprovalRuleDecision,
+  NewApprovalRule,
+} from "./approval-rules.js";
+export {
+  ApprovalRulesStore,
+  getApprovalRulesPath,
+  getProjectApprovalRulesPath,
+} from "./approval-rules-store.js";
+export type { ApprovalRulesSource } from "./approval-rules-store.js";
 export { ReadScopeGrants } from "./read-scope-grants.js";
 export { ApprovalRouter } from "./approval-router.js";
 export type { ApprovalHandler } from "./approval-router.js";

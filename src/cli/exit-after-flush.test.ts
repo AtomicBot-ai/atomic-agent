@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { exitAfterFlush, type Flushable } from "./exit-after-flush.js";
 
+const POSIX = { platform: "darwin" as const };
+
 function stream(flush: (cb: () => void) => void): Flushable & { write: ReturnType<typeof vi.fn> } {
   return { write: vi.fn((_chunk: string, cb: () => void) => { flush(cb); return true; }) };
 }
@@ -16,7 +18,7 @@ describe("exitAfterFlush", () => {
     const out = stream((cb) => callbacks.push(cb));
     const err = stream((cb) => callbacks.push(cb));
     const exit = vi.fn();
-    exitAfterFlush(3, [out, err], exit, 60_000);
+    exitAfterFlush(3, [out, err], exit, 60_000, POSIX);
     expect(exit).not.toHaveBeenCalled();
     callbacks[0]!();
     expect(exit).not.toHaveBeenCalled();
@@ -29,7 +31,7 @@ describe("exitAfterFlush", () => {
     vi.useFakeTimers();
     try {
       const exit = vi.fn();
-      exitAfterFlush(0, [stream(() => {})], exit, 100);
+      exitAfterFlush(0, [stream(() => {})], exit, 100, POSIX);
       vi.advanceTimersByTime(99);
       expect(exit).not.toHaveBeenCalled();
       vi.advanceTimersByTime(1);
@@ -43,7 +45,7 @@ describe("exitAfterFlush", () => {
   it("does not wait on a stream whose write throws, and exits once", () => {
     const exit = vi.fn();
     const broken: Flushable = { write: () => { throw new Error("EPIPE"); } };
-    exitAfterFlush(1, [broken, stream((cb) => cb())], exit, 60_000);
+    exitAfterFlush(1, [broken, stream((cb) => cb())], exit, 60_000, POSIX);
     expect(exit).toHaveBeenCalledTimes(1);
     expect(exit).toHaveBeenCalledWith(1);
   });
@@ -64,4 +66,54 @@ describe("exitAfterFlush", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 40_000);
+
+  describe("on Windows (ATO-1198)", () => {
+    it("hands the code to process.exitCode and lets the process end on its own", () => {
+      vi.useFakeTimers();
+      try {
+        const exit = vi.fn();
+        const setExitCode = vi.fn();
+        exitAfterFlush(4, [stream((cb) => cb())], exit, 60_000, { platform: "win32", setExitCode, settleMs: 300 });
+        expect(setExitCode).toHaveBeenCalledWith(4);
+        expect(exit).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(299);
+        expect(exit).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("exits the hard way only when something still holds the process after the settle time", () => {
+      vi.useFakeTimers();
+      try {
+        const exit = vi.fn();
+        const setExitCode = vi.fn();
+        exitAfterFlush(2, [stream((cb) => cb())], exit, 60_000, { platform: "win32", setExitCode, settleMs: 300 });
+        vi.advanceTimersByTime(300);
+        expect(exit).toHaveBeenCalledTimes(1);
+        expect(exit).toHaveBeenCalledWith(2);
+        expect(setExitCode).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("still waits for the flush first, and settles once when the grace period also fires", () => {
+      vi.useFakeTimers();
+      try {
+        const callbacks: Array<() => void> = [];
+        const exit = vi.fn();
+        const setExitCode = vi.fn();
+        exitAfterFlush(0, [stream((cb) => callbacks.push(cb))], exit, 100, { platform: "win32", setExitCode, settleMs: 300 });
+        expect(setExitCode).not.toHaveBeenCalled();
+        vi.advanceTimersByTime(100);
+        callbacks[0]!();
+        vi.advanceTimersByTime(300);
+        expect(setExitCode).toHaveBeenCalledTimes(1);
+        expect(exit).toHaveBeenCalledTimes(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

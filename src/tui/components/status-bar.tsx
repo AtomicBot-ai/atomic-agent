@@ -13,6 +13,7 @@ import type { TuiState } from "../tui-state.js";
 import { getAppVersion } from "../../version.js";
 import { Chip, tracked } from "./chip.js";
 import { sessionTitleLine } from "./session-title.js";
+import { planStatusTag } from "./plan-strip.js";
 import {
   planUpdateBanner,
   UpdateBanner,
@@ -71,6 +72,10 @@ export function StatusBar({
 }: StatusBarProps): ReactElement {
   const section = getCurrentSection(state);
   const title = currentSessionTitle(state);
+  // `plan 3/7` beside the title (ATO-486); its cells come out of the
+  // budget the chip and the banner share.
+  const planTag = planStatusTag(state.plan);
+  const planCells = planTag === null ? 0 : planTag.length + 4;
   const { columns } = useTerminalSize();
   // The banner outlives the modal (`updateBanner` survives
   // `update_dismissed`) and then narrates the whole lifecycle: the
@@ -90,7 +95,8 @@ export function StatusBar({
   // Reclaim the reservation when no tag renders.
   const bannerBudget = Math.max(
     0,
-    rawBudget(columns, brand, title) +
+    rawBudget(columns, brand, title, state.goalLine) -
+      planCells +
       (state.session.sessionId ? 0 : SESSION_TAG),
   );
   const bannerPlan = banner
@@ -140,7 +146,8 @@ export function StatusBar({
             // The banner has already taken its cells from the same
             // leftover; hand the chip what genuinely remains or the two
             // meet in the middle and wrap the row.
-            chipBudget(columns, brand, title) -
+            chipBudget(columns, brand, title, state.goalLine) -
+            planCells -
             (bannerPlan ? bannerPlan.width + 2 : 0)
           }
         />
@@ -152,6 +159,20 @@ export function StatusBar({
           <Text color={theme.colors.assistant} bold>
             {title}
           </Text>
+        </Text>
+      ) : null}
+      {/* Goal mode (ATO-451): where the chat's goal stands, one line. */}
+      {state.goalLine ? (
+        <Text color={theme.colors.muted}>
+          {"  "}
+          {theme.glyphs.dotSeparator} {state.goalLine}
+        </Text>
+      ) : null}
+      {planTag !== null ? (
+        <Text color={theme.colors.muted}>
+          {"  "}
+          {theme.glyphs.dotSeparator}{" "}
+          <Text color={theme.colors.accent}>{planTag}</Text>
         </Text>
       ) : null}
       {banner && bannerPlan ? (
@@ -187,8 +208,9 @@ function chipBudget(
   columns: number,
   brand: boolean,
   title: string | null,
+  goalLine: string | null = null,
 ): number {
-  return Math.max(0, rawBudget(columns, brand, title));
+  return Math.max(0, rawBudget(columns, brand, title, goalLine));
 }
 
 /**
@@ -200,6 +222,7 @@ function rawBudget(
   columns: number,
   brand: boolean,
   title: string | null,
+  goalLine: string | null = null,
 ): number {
   const BRAND = 22;
   const BREADCRUMB = 14;
@@ -207,7 +230,8 @@ function rawBudget(
     (brand ? BRAND : 0) +
     BREADCRUMB +
     SESSION_TAG +
-    (title ? title.length + 4 : 0);
+    (title ? title.length + 4 : 0) +
+    (goalLine ? goalLine.length + 4 : 0);
   return columns - used - 2;
 }
 

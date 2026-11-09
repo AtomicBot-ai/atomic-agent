@@ -29,6 +29,11 @@ const BASE: TaskRecord = {
   lastScheduledAt: null,
   triggerSource: null,
   notify: null,
+  maxCostUsd: null,
+  maxDurationMs: null,
+  spentUsd: null,
+  elapsedMs: null,
+  stopCause: null,
 };
 
 describe("formatScheduleLabel", () => {

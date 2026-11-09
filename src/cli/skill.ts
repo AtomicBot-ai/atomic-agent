@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setSkillDisabled, setProjectSkillsEnabled } from "../config/skill-policy-commands.js";
+import { pluginSkillPart } from "../plugins/plugin-install.js";
 import { loadWorkspaceSkills } from "../skills/workspace-skills.js";
 import { projectTrustHint, readProjectTrust, skillTrust } from "../skills/project-trust.js";
 import { inspectProjectTrust, setProjectTrust, type ProjectTrustStatus } from "../runtime/project-trust.js";
@@ -389,6 +390,11 @@ async function handleEnable(args: string[]): Promise<number> {
     process.stderr.write("usage: atomic-agent skill enable <name>\n");
     return 2;
   }
+  if (pluginSkillPart(name)) {
+    setSkillDisabled(name, false);
+    process.stdout.write(`enabled: ${name}\n`);
+    return 0;
+  }
   const result = mutateDisabledList((current) => {
     if (!current.includes(name)) return null;
     return current.filter((n) => n !== name);
@@ -406,6 +412,11 @@ async function handleDisable(args: string[]): Promise<number> {
   if (!name) {
     process.stderr.write("usage: atomic-agent skill disable <name>\n");
     return 2;
+  }
+  if (pluginSkillPart(name)) {
+    setSkillDisabled(name, true);
+    process.stdout.write(`disabled: ${name}\n`);
+    return 0;
   }
   const result = mutateDisabledList((current) => {
     if (current.includes(name)) return null;

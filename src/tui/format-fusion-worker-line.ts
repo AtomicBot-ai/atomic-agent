@@ -46,6 +46,9 @@ export function formatFusionWorkerLine(event: FusionWorkerEvent): string {
       return event.contextTokens !== undefined && event.contextTokens > 0
         ? `» ${who}: ${formatTokens(event.contextTokens)} ctx`
         : `» ${who}`;
+    case "escalated":
+      // The model named is the escalation model, not the worker's own.
+      return `» ${who}: ${event.summary ?? "escalated"}`;
     case "cancelled":
       return `» ${who}: cancelled`;
     case "failed":
@@ -79,5 +82,6 @@ export function fusionWorkerLineColor(
   if (event.phase === "failed") return "red";
   if (event.phase === "cancelled") return "yellow";
   if (event.phase === "finished") return "green";
+  if (event.phase === "escalated") return "magenta";
   return "gray";
 }

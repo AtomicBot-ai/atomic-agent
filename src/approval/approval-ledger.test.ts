@@ -10,6 +10,7 @@ import { ToolRegistry } from "../tools/tool-registry.js";
 import { ApprovalGate, type ApprovalRequest } from "./approval-gate.js";
 import {
   currentApprovalLedger,
+  recordAutoApproval,
   runWithApprovalLedger,
   type ToolApprovalRecord,
 } from "./approval-ledger.js";
@@ -100,6 +101,71 @@ describe("approval ledger", () => {
     const result = outcome.results[0]!.compressed!;
     expect(result.status).toBe("ok");
     expect(result).not.toHaveProperty("approvals");
+  });
+
+  it("records a session-grant auto-approval with via and reason (ATO-1145)", async () => {
+    let asked = 0;
+    const gate: ApprovalGate = new ApprovalGate({
+      emit: (req: ApprovalRequest) => {
+        asked += 1;
+        setTimeout(() => gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" }), 1);
+      },
+    });
+    const first = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "A" } }]),
+      gatedRegistry(gate),
+      batchCtx(),
+    );
+    expect(first.results[0]!.compressed!.approvals?.map((r) => r.verdict)).toEqual(["approved"]);
+    const second = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "B" } }]),
+      gatedRegistry(gate),
+      batchCtx(),
+    );
+    expect(asked).toBe(1);
+    expect(second.results[0]!.compressed!.approvals).toEqual([
+      expect.objectContaining({ verdict: "auto-approved", category: "shell", via: "grant", reason: "session grant" }),
+    ]);
+  });
+
+  it("records a low risk review as an auto-approval (ATO-1145)", async () => {
+    const gate = new ApprovalGate({ emit: () => { throw new Error("must not prompt"); } });
+    gate.setRiskReviewer({ review: async () => ({ risk: "low", reason: "reads a file" }) });
+    const outcome = await executeBatch(
+      toBatchInputs([{ tool: "os.fs.read", args: { path: "A" } }]),
+      gatedRegistry(gate),
+      batchCtx(),
+    );
+    const result = outcome.results[0]!.compressed!;
+    expect(result.status).toBe("ok");
+    expect(result.approvals).toEqual([
+      expect.objectContaining({
+        verdict: "auto-approved",
+        category: "shell",
+        via: "risk-review",
+        reason: "risk review: low (reads a file)",
+      }),
+    ]);
+  });
+
+  it("records nothing for a probe, and nothing outside a tool call", async () => {
+    const gate = new ApprovalGate({ emit: () => undefined });
+    const ledger: ToolApprovalRecord[] = [];
+    await runWithApprovalLedger(ledger, async () => {
+      gate.wouldPrompt("s1", "shell");
+    });
+    expect(ledger).toEqual([]);
+    expect(() => recordAutoApproval("rule", "shell", "rule r_1")).not.toThrow();
+  });
+
+  it("gives the rules file a one-line way to log an allow rule", async () => {
+    const ledger: ToolApprovalRecord[] = [];
+    await runWithApprovalLedger(ledger, async () => {
+      recordAutoApproval("rule", "shell", "rule r_8f3a2c1d");
+    });
+    expect(ledger).toEqual([
+      expect.objectContaining({ verdict: "auto-approved", via: "rule", reason: "rule r_8f3a2c1d" }),
+    ]);
   });
 
   it("carries the verdicts onto the transcript's tool_result row", () => {

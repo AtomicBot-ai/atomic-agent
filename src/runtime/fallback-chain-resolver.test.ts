@@ -9,7 +9,7 @@ function llm(providers: ResolvedLlmConfig["providers"]): ResolvedLlmConfig {
     activeEmbeddingProvider: providers[0]!.id,
     providers,
     toolTransport: "auto",
-    fallback: { chain: providers.map((p) => p.id) },
+    fallback: { chain: providers.map((p) => p.id), appendLocal: true },
   };
 }
 
@@ -59,7 +59,7 @@ describe("createFallbackChainResolver", () => {
         },
         { id: "local-llama", kind: "llama-server" },
       ],
-      fallback: { chain: ["dashscope"] },
+      fallback: { chain: ["dashscope"], appendLocal: true },
     });
 
     it("is skipped and logged as skipped, once", () => {
@@ -113,6 +113,7 @@ describe("createFallbackChainResolver", () => {
         { id: "claude-cli", kind: "subscription-cli" },
         { id: "local-llama", kind: "llama-server" },
       ],
+      fallback: { appendLocal: true },
     };
 
     it("is skipped, logged once, and back the moment the model is pulled", () => {

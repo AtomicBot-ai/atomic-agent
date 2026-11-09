@@ -75,6 +75,11 @@ export function normaliseOpenAiUsage(
     ...(typeof cached === "number" && Number.isFinite(cached) && cached >= 0
       ? { cachedTokens: cached }
       : {}),
+    // OpenRouter reports the call's own charge in credits (USD) as
+    // `usage.cost`; it beats a price-table estimate (ATO-569).
+    ...(typeof usage.cost === "number" && Number.isFinite(usage.cost) && usage.cost >= 0
+      ? { costUsd: usage.cost }
+      : {}),
   };
 }
 

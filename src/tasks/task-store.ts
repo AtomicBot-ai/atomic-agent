@@ -16,6 +16,11 @@ import {
 } from "../session/turn-owner.js";
 
 import { applyMigrations } from "./task-schema.js";
+import {
+  ensureBudgetColumns,
+  validateMaxCostUsd,
+  validateMaxDurationMs,
+} from "./task-budget.js";
 import { parseScheduleRow, serializeScheduleValue } from "./task-schedule.js";
 import {
   TASK_LAST_ERROR_MAX_LENGTH,
@@ -80,6 +85,12 @@ export interface TaskCreateInput {
    */
   notify?: TaskNotifyTarget | null;
   /**
+   * Per-task budgets (ATO-1108). Omit / `null` to leave each to
+   * `agent.task.*` at run time.
+   */
+  maxCostUsd?: number | null;
+  maxDurationMs?: number | null;
+  /**
    * Optional explicit id. Used by tests to make assertions; production
    * callers always let the store generate one.
    */
@@ -119,6 +130,12 @@ interface TaskRow {
   last_scheduled_at: number | null;
   trigger_source: string | null;
   notify: string | null;
+  /** Budget columns (`task-budget.ts`); absent on a database without them. */
+  max_cost_usd?: number | null;
+  max_duration_ms?: number | null;
+  spent_usd?: number | null;
+  elapsed_ms?: number | null;
+  stop_cause?: string | null;
 }
 
 interface RunningRow {
@@ -165,6 +182,15 @@ export class TaskStore {
   private readonly markInterruptedStmt: Database.Statement;
   private readonly requeueRecurringStmt: Database.Statement;
   private readonly assignSessionStmt: Database.Statement;
+  private readonly recordSpendStmt: Database.Statement | null;
+  private readonly recordElapsedStmt: Database.Statement | null;
+  private readonly recordStopCauseStmt: Database.Statement | null;
+  private readonly resetSpendStmt: Database.Statement | null;
+  /**
+   * Why this database has no budget columns (see `ensureBudgetColumns`),
+   * or `null`. Without them a task asking for a budget is refused.
+   */
+  readonly budgetsUnavailable: string | null;
   /**
    * Why this database has no `run_owner` column — the open that should
    * have added it could not (see `ensureRunOwnerColumn`) — or `null`.
@@ -182,6 +208,14 @@ export class TaskStore {
     applyMigrations(this.db);
     this.runOwnersUnavailable = ensureRunOwnerColumn(this.db);
     const withOwners = this.runOwnersUnavailable === null;
+    this.budgetsUnavailable = ensureBudgetColumns(this.db);
+    const withBudgets = this.budgetsUnavailable === null;
+    const budgetColumns = withBudgets
+      ? ",\n         max_cost_usd, max_duration_ms, spent_usd, elapsed_ms, stop_cause"
+      : "";
+    const budgetValues = withBudgets
+      ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd, @elapsed_ms, @stop_cause"
+      : "";
     this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(options.dbFile);
 
@@ -191,13 +225,13 @@ export class TaskStore {
          attempts, max_attempts, last_error, last_error_cat,
          created_at, updated_at, started_at, completed_at,
          schedule_kind, schedule_value, scheduled_for, recurring,
-         last_scheduled_at, trigger_source, notify
+         last_scheduled_at, trigger_source, notify${budgetColumns}
        ) VALUES (
          @id, @session_id, @user_message, @max_steps, @status, @origin,
          @attempts, @max_attempts, @last_error, @last_error_cat,
          @created_at, @updated_at, @started_at, @completed_at,
          @schedule_kind, @schedule_value, @scheduled_for, @recurring,
-         @last_scheduled_at, @trigger_source, @notify
+         @last_scheduled_at, @trigger_source, @notify${budgetValues}
        )`,
     );
     // Names no `run_owner`: a copied row never carries a claim.
@@ -207,13 +241,13 @@ export class TaskStore {
          attempts, max_attempts, last_error, last_error_cat,
          created_at, updated_at, started_at, completed_at,
          schedule_kind, schedule_value, scheduled_for, recurring,
-         last_scheduled_at, trigger_source, notify
+         last_scheduled_at, trigger_source, notify${budgetColumns}
        ) VALUES (
          @id, @session_id, @user_message, @max_steps, @status, @origin,
          @attempts, @max_attempts, @last_error, @last_error_cat,
          @created_at, @updated_at, @started_at, @completed_at,
          @schedule_kind, @schedule_value, @scheduled_for, @recurring,
-         @last_scheduled_at, @trigger_source, @notify
+         @last_scheduled_at, @trigger_source, @notify${budgetValues}
        )`,
     );
     this.selectStmt = this.db.prepare(`SELECT * FROM tasks WHERE id = ?`);
@@ -346,6 +380,30 @@ export class TaskStore {
               updated_at = @now
         WHERE id = @id`,
     );
+    this.recordSpendStmt = withBudgets
+      ? this.db.prepare(
+          `UPDATE tasks
+              SET spent_usd = @spent_usd,
+                  updated_at = @now
+            WHERE id = @id`,
+        )
+      : null;
+    this.recordElapsedStmt = withBudgets
+      ? this.db.prepare(
+          `UPDATE tasks
+              SET elapsed_ms = @elapsed_ms,
+                  updated_at = @now
+            WHERE id = @id`,
+        )
+      : null;
+    this.recordStopCauseStmt = withBudgets
+      ? this.db.prepare(`UPDATE tasks SET stop_cause = @stop_cause WHERE id = @id`)
+      : null;
+    this.resetSpendStmt = withBudgets
+      ? this.db.prepare(
+          `UPDATE tasks SET spent_usd = NULL, elapsed_ms = NULL, stop_cause = NULL WHERE id = @id`,
+        )
+      : null;
   }
 
   create(input: TaskCreateInput, now: number = Date.now()): TaskRecord {
@@ -354,6 +412,18 @@ export class TaskStore {
     const maxAttempts = validateMaxAttempts(input.maxAttempts);
     const maxSteps = validateMaxSteps(input.maxSteps);
     const notify = validateNotify(input.notify);
+    const maxCostUsd = validateMaxCostUsd(input.maxCostUsd);
+    const maxDurationMs = validateMaxDurationMs(input.maxDurationMs);
+    if (
+      (maxCostUsd !== null || maxDurationMs !== null) &&
+      this.budgetsUnavailable !== null
+    ) {
+      // Never drop a budget the caller asked for: an overnight run
+      // created without its cap would spend without one.
+      throw new Error(
+        `task budgets unavailable on this tasks.sqlite: ${this.budgetsUnavailable}`,
+      );
+    }
     const id = input.id ?? `t-${randomUUID()}`;
     const schedule = input.schedule ?? null;
     const recurring =
@@ -385,8 +455,13 @@ export class TaskStore {
           : null,
       trigger_source: input.triggerSource ?? null,
       notify,
+      max_cost_usd: maxCostUsd,
+      max_duration_ms: maxDurationMs,
+      spent_usd: null,
+      elapsed_ms: null,
+      stop_cause: null,
     };
-    this.insertStmt.run(row);
+    this.insertStmt.run(this.bindRow(row));
     return rowToRecord(row);
   }
 
@@ -411,7 +486,7 @@ export class TaskStore {
         const inserted: string[] = [];
         for (const record of batch) {
           const result = this.insertIfAbsentStmt.run(
-            recordToRow(unclaimed(record)),
+            this.bindRow(recordToRow(unclaimed(record))),
           ) as { changes: number };
           if (result.changes > 0) inserted.push(record.id);
         }
@@ -593,16 +668,25 @@ export class TaskStore {
    */
   markInterrupted(
     id: string,
-    options: { nextScheduledFor: number | null },
+    options: {
+      nextScheduledFor: number | null;
+      /**
+       * `last_error` to write instead of `TASK_INTERRUPTED_ERROR`: a run
+       * stopped before its crash resume started keeps the boot sweep's
+       * `TASK_OWNER_GONE_ERROR`, so that crash still counts next time.
+       */
+      lastError?: string;
+    },
     now: number = Date.now(),
   ): TaskRecord | null {
     const result = this.markInterruptedStmt.run({
       id,
       now,
       scheduled_for: options.nextScheduledFor,
-      last_error: TASK_INTERRUPTED_ERROR,
+      last_error: options.lastError ?? TASK_INTERRUPTED_ERROR,
     }) as { changes: number };
     if (result.changes === 0) return null;
+    if (options.nextScheduledFor !== null) this.resetSpendStmt?.run({ id });
     return this.get(id);
   }
 
@@ -700,6 +784,8 @@ export class TaskStore {
         `task ${id}: cannot requeueRecurring — row missing or not recurring`,
       );
     }
+    // A budget is per firing: the next one starts with nothing spent.
+    this.resetSpendStmt?.run({ id });
     return this.requireRecord(id);
   }
 
@@ -725,8 +811,70 @@ export class TaskStore {
     return this.requireRecord(id);
   }
 
+  /**
+   * Write what the task's runs have spent so far (ATO-1108): the runner
+   * adds each run's `RunTurnResult.spendUsd` to the row's previous
+   * figure. A no-op on a database without budget columns. Returns the
+   * re-read record, or `null` when the row is gone.
+   */
+  recordSpend(
+    id: string,
+    spentUsd: number,
+    now: number = Date.now(),
+  ): TaskRecord | null {
+    if (this.recordSpendStmt === null) return this.get(id);
+    if (!Number.isFinite(spentUsd) || spentUsd < 0) return this.get(id);
+    this.recordSpendStmt.run({ id, spent_usd: spentUsd, now });
+    return this.get(id);
+  }
+
+  /**
+   * Store the run time the task has used so far, in ms: the whole
+   * figure, earlier runs included. A no-op on a database without budget
+   * columns. Returns the re-read record, or `null` when the row is gone.
+   */
+  recordElapsed(
+    id: string,
+    elapsedMs: number,
+    now: number = Date.now(),
+  ): TaskRecord | null {
+    if (this.recordElapsedStmt === null) return this.get(id);
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return this.get(id);
+    this.recordElapsedStmt.run({ id, elapsed_ms: Math.round(elapsedMs), now });
+    return this.get(id);
+  }
+
+  /**
+   * Note which ceiling ended the task's run, written just before it is
+   * marked completed. A no-op on a database without budget columns.
+   */
+  recordStopCause(id: string, stopCause: string): void {
+    this.recordStopCauseStmt?.run({ id, stop_cause: stopCause });
+  }
+
   close(): void {
     this.db.close();
+  }
+
+  /** The row as bound to an INSERT: without budget keys when the columns are missing. */
+  private bindRow(row: TaskRow): TaskRow {
+    if (this.budgetsUnavailable === null) {
+      return {
+        ...row,
+        max_cost_usd: row.max_cost_usd ?? null,
+        max_duration_ms: row.max_duration_ms ?? null,
+        spent_usd: row.spent_usd ?? null,
+        elapsed_ms: row.elapsed_ms ?? null,
+        stop_cause: row.stop_cause ?? null,
+      };
+    }
+    const bare = { ...row };
+    delete bare.max_cost_usd;
+    delete bare.max_duration_ms;
+    delete bare.spent_usd;
+    delete bare.elapsed_ms;
+    delete bare.stop_cause;
+    return bare;
   }
 
   private requireRecord(id: string): TaskRecord {
@@ -793,6 +941,11 @@ function rowToRecord(row: TaskRow): TaskRecord {
     lastScheduledAt: row.last_scheduled_at,
     triggerSource: row.trigger_source as TriggerSource | null,
     notify: normalizeNotify(row.notify),
+    maxCostUsd: row.max_cost_usd ?? null,
+    maxDurationMs: row.max_duration_ms ?? null,
+    spentUsd: row.spent_usd ?? null,
+    elapsedMs: row.elapsed_ms ?? null,
+    stopCause: row.stop_cause ?? null,
   };
 }
 
@@ -821,6 +974,11 @@ function recordToRow(record: TaskRecord): TaskRow {
     last_scheduled_at: record.lastScheduledAt,
     trigger_source: record.triggerSource,
     notify: record.notify,
+    max_cost_usd: record.maxCostUsd ?? null,
+    max_duration_ms: record.maxDurationMs ?? null,
+    spent_usd: record.spentUsd ?? null,
+    elapsed_ms: record.elapsedMs ?? null,
+    stop_cause: record.stopCause ?? null,
   };
 }
 

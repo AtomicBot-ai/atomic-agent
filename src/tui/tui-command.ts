@@ -37,6 +37,7 @@ import {
 } from "./persist-user-local-models-config.js";
 import {
   persistUserTuiMouse,
+  persistUserTuiShowSteps,
   persistUserTuiTheme,
   persistUserWhileBusySubmit,
 } from "./persist-user-tui-config.js";
@@ -72,6 +73,7 @@ import {
   resolveStartupTheme,
 } from "./theme/detect-terminal-background.js";
 import { resolveThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
+import { formatStartupFusionNotice } from "./fusion-resume-notice.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
   loadUninstallPreview,
@@ -175,6 +177,9 @@ export async function tuiCommand(args: string[]): Promise<number> {
   const initialLayout: InitialTuiLayoutOptions = {
     onboarding,
     whileBusyMode: config.tui.whileBusySubmit,
+    // Finished turns fold into one line unless the operator asked to
+    // always see their steps (ATO-963).
+    showSteps: config.tui.showSteps,
     // The composer's route controls read these on the home screen, and
     // the local-models slice only refreshes while the Models tab is
     // open — unseeded, a managed install mislabels itself `custom`
@@ -507,6 +512,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSessionsEndReached: () => orchestrator.loadMoreSessions(),
         onSessionNewRequested: () => orchestrator.newSession(),
         onCompactionRequested: (verb) => { void orchestrator.compactContext(verb); },
+        onGoalCommand: (command) => orchestrator.goalCommand(command),
         onPromptEnhanceRequested: (draft) => { void orchestrator.enhancePrompt(draft); },
         onPromptEnhanceCancel: () => orchestrator.cancelPromptEnhance(),
         onSessionDeleteConfirmed: (sessionId) =>
@@ -528,6 +534,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           persistLlamaUrl(nextUrl, bus, orchestrator, runtime),
         onThemePersistRequested: (themeName) =>
           persistThemeChoice(themeName, bus),
+        onShowStepsPersistRequested: (on) => persistShowSteps(on, bus),
         onTasksAutoRefreshStart: () => orchestrator.tasks.startAutoRefresh(),
         onTasksRefreshRequested: () => orchestrator.tasks.refresh(),
         onTaskDetailRequested: (taskId) =>
@@ -560,6 +567,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onTaskCreateSubmitted: (input) => orchestrator.tasks.createTask(input),
         onSkillsAutoRefreshStart: () => orchestrator.skills.startAutoRefresh(),
         prepareSkillInvocation: (name, input) => orchestrator.skills.prepareInvocation(name, input),
+        preparePluginCommand: (name, args) => orchestrator.skills.preparePluginCommand(name, args),
         onSkillsRefreshRequested: () => orchestrator.skills.refresh(),
         onSkillDetailRequested: (name) =>
           void orchestrator.skills.openDetail(name),
@@ -623,6 +631,69 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onFusionWorkersChangeRequested: (workers) =>
           orchestrator.runMode.setWorkers(workers),
         onFusionLegsSwapRequested: () => void orchestrator.runMode.swapLegs(),
+        // `/worker stop|escalate <id>` (ATO-66) and `/worker steer <id>
+        // <note>` (ATO-568): one running fusion worker, through the
+        // runtime's live registry.
+        onFusionWorkerAction: (sessionId, taskId, action, text) => {
+          const say = (line: string): void =>
+            bus.emit({ type: "system_message", text: line });
+          if (action === "steer") {
+            say(
+              runtime.fusionWorkers.steer(sessionId, taskId, text ?? "")
+                ? `worker ${taskId}: note queued — it reads it at its next step`
+                : runtime.fusionWorkers.running(sessionId).includes(taskId)
+                  ? `worker ${taskId}: note not queued — its turn is ending or its inbox is full`
+                  : `worker ${taskId} is not running`,
+            );
+            return;
+          }
+          if (action === "stop") {
+            say(
+              runtime.fusionWorkers.stop(sessionId, taskId)
+                ? `worker ${taskId}: stopping`
+                : `worker ${taskId} is not running`,
+            );
+            return;
+          }
+          say(`worker ${taskId}: asking the escalation model…`);
+          void runtime.fusionWorkers
+            .escalate(sessionId, taskId)
+            .then((line) =>
+              say(line === null ? `worker ${taskId} is not running` : `worker ${taskId}: ${line}`),
+            )
+            .catch((err: unknown) =>
+              say(`worker ${taskId}: escalation failed — ${err instanceof Error ? err.message : String(err)}`),
+            );
+        },
+        // `/fusion` and `/fusion discard [id]` (ATO-617): the runs of this
+        // session that a restart cut off, from their checkpoints.
+        onFusionRunAction: (sessionId, action, runId) => {
+          const say = (text: string): void =>
+            bus.emit({ type: "system_message", text });
+          const runs = runtime.fusionRuns;
+          if (action === "discard") {
+            const dropped = runs?.discard(sessionId, runId) ?? null;
+            say(
+              dropped === null
+                ? runId === undefined
+                  ? "no unfinished fusion run in this session"
+                  : `no unfinished fusion run ${runId} in this session`
+                : `fusion run ${dropped} discarded`,
+            );
+            return;
+          }
+          const list = runs?.listResumable(sessionId) ?? [];
+          say(
+            list.length === 0
+              ? "no unfinished fusion run in this session"
+              : [
+                  ...list.map((run) => run.summary),
+                  "/fusion resume [id] continues one · /fusion discard [id] drops it",
+                ].join("\n"),
+          );
+        },
+        prepareFusionResume: (sessionId, runId) =>
+          runtime.fusionRuns?.resumeMessage(sessionId, runId) ?? null,
         onProvidersSelectChatModel: (providerId, modelId) =>
           void orchestrator.providers.selectChatModel(providerId, modelId),
         onProvidersChatModelPickerRequested: (providerId) =>
@@ -797,6 +868,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSwarmRemoveRequested: (unitId) => orchestrator.swarm.remove(unitId),
         onSwarmPairRequested: (unitId) => orchestrator.swarm.pair(unitId),
         onSwarmRestartRequested: (unitId) => orchestrator.swarm.restart(unitId),
+        onPluginsRefreshRequested: () => orchestrator.plugins.refresh(),
+        onPluginToggleRequested: (name, enabled) =>
+          orchestrator.plugins.setEnabled(name, enabled),
+        onPluginPartToggleRequested: (name, partId, enabled) =>
+          orchestrator.plugins.setPartEnabled(name, partId, enabled),
+        onPluginCodeTrustRequested: (name, allow) =>
+          orchestrator.plugins.setCodeAllowed(name, allow),
+        onPluginRemoveRequested: (name) => orchestrator.plugins.remove(name),
         onUpdateConfirmed: () =>
           parsed.fakeUpdateVersion
             ? // The testing ground must never reach install.sh: the
@@ -843,6 +922,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   );
 
   orchestrator.start();
+  // `--session` / `--send` (set by `atag handoff`): land on the saved
+  // chat, then send the continuation message as if it had been typed.
+  if (parsed.sessionId) orchestrator.switchSession(parsed.sessionId);
+  if (parsed.send) orchestrator.sendMessage(parsed.send);
 
   bus.emit({
     type: "runtime_info",
@@ -885,6 +968,16 @@ export async function tuiCommand(args: string[]): Promise<number> {
     firstRun: onboarding !== null || needsOnboarding(),
   });
   if (spotlightHint) bus.emit({ type: "system_message", text: spotlightHint });
+
+  // A fusion run a crash, quit or update cut off (ATO-617) is offered,
+  // never resumed on its own: a resume runs workers again.
+  const fusionStartupNotice = formatStartupFusionNotice(
+    runtime.fusionRuns?.listResumable() ?? [],
+    null,
+  );
+  if (fusionStartupNotice !== null) {
+    bus.emit({ type: "system_message", text: fusionStartupNotice });
+  }
 
   // If the user is in managed mode and the backend + model are ready
   // on disk, start the daemon immediately so there is no extra
@@ -1083,6 +1176,24 @@ function persistThemeChoice(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     bus.emit({ type: "runtime_info", line: `theme not saved: ${msg}` });
+  }
+}
+
+function persistShowSteps(
+  on: boolean,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  try {
+    persistUserTuiShowSteps(on);
+    bus.emit({
+      type: "runtime_info",
+      line: on
+        ? "finished turns now keep their steps open"
+        : "finished turns now fold into one line",
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    bus.emit({ type: "runtime_info", line: `steps setting not saved: ${msg}` });
   }
 }
 

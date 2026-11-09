@@ -15,6 +15,7 @@ This area owns tool registry and adapters. Read [AGENTS.md](AGENTS.md) before ch
 - [tool-output-spill.ts](tool-output-spill.ts)
 - [untrusted-tool-output.ts](untrusted-tool-output.ts)
 - [tool-output-secrets.ts](tool-output-secrets.ts)
+- [describe-tool-call.ts](describe-tool-call.ts): a tool call as one readable line ("Read config.ts", "Ran npm test · failed") for the TUI, Telegram and desktop frames
 
 ## Ownership and dependencies
 

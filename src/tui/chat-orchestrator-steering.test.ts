@@ -72,6 +72,9 @@ function makeHarness(): Harness {
       load: () => session,
     },
     approvals: { clearSessionGrants: () => undefined },
+    // The skills orchestrator reads plugin commands from here on every
+    // refresh. A folder that does not exist means no plugins.
+    config: { paths: { stateDir: "/nonexistent/atomic-agent-steering-test" } },
     steer: (sessionId: string, text: string) => {
       steerCalls.push({ sessionId, text });
       return steerable;

@@ -20,10 +20,12 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "fs_trash",
   "http",
   "shell",
+  "shell_dangerous",
   "script",
   "proc_kill",
   "publish",
   "git_remote",
+  "fusion_fanout",
   "browser_nonweb",
   "browser_commit",
   "browser_secret",
@@ -36,18 +38,31 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "screen_control",
   "screen_capture",
   "local_model_restart",
+  "hook_ask",
   "other",
 ];
 
 describe("session-grant eligibility", () => {
-  it("grants every category except trust_config, state_secret, email, browser_secret and local_model_restart", () => {
+  it("ALL_CATEGORIES lists every category in the union (ATO-1174)", () => {
+    // The label map is a Record over the union, so the compiler keeps
+    // its keys complete; a category missing here would silently skip the
+    // grantable check below (fusion_fanout did).
+    expect([...ALL_CATEGORIES].sort()).toEqual(
+      (Object.keys(APPROVAL_CATEGORY_LABELS) as ApprovalCategory[]).sort(),
+    );
+  });
+
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, shell_dangerous and fusion_fanout", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
-        category !== "trust_config" &&
+        category !== "shell_dangerous" &&
+          category !== "fusion_fanout" &&
+          category !== "trust_config" &&
           category !== "state_secret" &&
           category !== "email" &&
           category !== "browser_secret" &&
-          category !== "local_model_restart",
+          category !== "local_model_restart" &&
+          category !== "hook_ask",
       );
     }
   });
@@ -58,6 +73,17 @@ describe("session-grant eligibility", () => {
     expect(isAutoApprovedAt(4, "shell")).toBe(true);
     expect(isAutoApprovedAt(4, "state_secret")).toBe(false);
     expect(isAutoApprovedAt(5, "state_secret")).toBe(true);
+  });
+
+  it("shell_dangerous asks below full trust and is never granted (ATO-1220)", () => {
+    expect(isGrantableCategory("shell_dangerous")).toBe(false);
+    // Level 4 runs an ordinary shell command unasked; `rm -rf` still asks.
+    expect(isAutoApprovedAt(4, "shell")).toBe(true);
+    expect(isAutoApprovedAt(4, "shell_dangerous")).toBe(false);
+    expect(isAutoApprovedAt(5, "shell_dangerous")).toBe(true);
+    expect(formatApprovalCategory("shell_dangerous")).toBe(
+      "dangerous shell command",
+    );
   });
 
   it("trust_config is the one non-grantable category (mirrors its level-5 pin)", () => {
@@ -80,6 +106,8 @@ describe("approval ladder", () => {
       fs_trash: 3,
       http: 3,
       shell: 4,
+      // rm -rf, git reset --hard, sudo: only full trust runs them unasked.
+      shell_dangerous: 5,
       script: 4,
       proc_kill: 4,
       publish: 4,
@@ -106,6 +134,7 @@ describe("approval ladder", () => {
       // A picture of whatever is open: asks on the lowest two levels, like http.
       screen_capture: 3,
       local_model_restart: 5,
+      hook_ask: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [

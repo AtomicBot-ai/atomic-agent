@@ -45,7 +45,7 @@ function runnerFixture(runTurn: TaskRunnerRuntime["runTurn"] = async (session) =
   };
   const toolRegistry = new ToolRegistry();
   const resolveTelegram = vi.fn(() => null);
-  const runner = createRuntimeTaskRunner({ config, ...stores, runTurn, sessionStore: { load: (id) => sessions.get(id) ?? null, save: (state) => { sessions.set(state.id, state); saved.push(state); } }, createSession, toolRegistry, resolveTelegram, logger, metrics });
+  const runner = createRuntimeTaskRunner({ config, ...stores, runTurn, sessionStore: { load: (id) => sessions.get(id) ?? null, save: (state) => { sessions.set(state.id, state); saved.push(state); }, readTurnProgress: () => null, clearTurnProgress: () => {} }, createSession, toolRegistry, resolveTelegram, logger, metrics });
   return { runner, sessions, saved, toolRegistry, resolveTelegram };
 }
 

@@ -215,7 +215,7 @@ describe("ToolCard [copy path]", () => {
       attempt < 40 && app.dispatched.length === 0;
       attempt += 1
     ) {
-      app.clickAt("os.fs.read");
+      app.clickAt("Read main.ts");
       await delay(25);
     }
     expect(app.dispatched).toEqual([
@@ -234,7 +234,7 @@ describe("ToolCard [copy path]", () => {
       startedAt: 1_000,
     });
     await waitUntil(
-      () => pending.frame().includes("os.fs.read"),
+      () => pending.frame().includes("Reading main.ts"),
       "the pending header",
     );
     expect(pending.frame()).not.toContain("[copy path]");

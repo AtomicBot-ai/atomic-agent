@@ -30,7 +30,11 @@
  */
 
 import type { AtomicAgentConfig } from "../config/config-schema.js";
-import { LOCAL_PROVIDER_KIND } from "../config/llm-run-mode-config.js";
+import {
+  FUSION_ROLES,
+  LOCAL_PROVIDER_KIND,
+  type FusionRole,
+} from "../config/llm-run-mode-config.js";
 import {
   resolveWorkerSlots,
   workerSlotFootprint,
@@ -72,6 +76,13 @@ export interface FusionMachineFacts {
    * only when the daemon restarts — which drops the local cache anyway.
    */
   tokensPerSecond: number | null;
+  /**
+   * Models by role (ATO-943), from `llm.runMode.fusion.roles`, in role
+   * order; absent when no role names a configured provider, so a config
+   * without roles renders the block byte for byte as before. Config
+   * only, like every other field here: stable for the prefix.
+   */
+  roleModels?: readonly { role: FusionRole; model: string }[];
 }
 
 /** Nothing known — the block renders its behavioural lines only. */
@@ -288,12 +299,30 @@ export function resolveFusionMachineFacts(
       ? roundTokensPerSecond(live.tokensPerSecond)
       : null;
 
+  // Models by role (ATO-943): the name the planner may put in a task's
+  // `model`. The worker leg's own entry is named as the workers are.
+  const roleModels: { role: FusionRole; model: string }[] = [];
+  for (const role of FUSION_ROLES) {
+    const id = fusion?.roles?.[role];
+    const entry =
+      id === undefined ? undefined : providers.find((p) => p.id === id);
+    if (entry === undefined) continue;
+    const model =
+      (entry.id === workerEntry?.id ? workerModel : null) ??
+      (entry.kind === LOCAL_PROVIDER_KIND
+        ? (nonEmpty(entry.model) ?? nonEmpty(entry.defaultChatModel))
+        : (nonEmpty(entry.defaultChatModel) ?? nonEmpty(entry.model))) ??
+      entry.id;
+    roleModels.push({ role, model });
+  }
+
   return {
     workerLeg,
     workerSlots,
     workerTokenBudget,
     workerModel,
     tokensPerSecond,
+    ...(roleModels.length === 0 ? {} : { roleModels }),
   };
 }
 

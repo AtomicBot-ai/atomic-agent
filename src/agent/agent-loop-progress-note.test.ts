@@ -331,4 +331,20 @@ describe("AgentLoop: a reply batched with work is a progress note (F50)", () => 
       result.session.turns.filter((t) => t.kind === "assistant_reply"),
     ).toHaveLength(1);
   });
+
+  // OpenHands stuck scenario "monologue" (ATO-611): messages with no
+  // action in between. Here a reply-only step ends the turn, so a model
+  // that keeps talking cannot keep a turn alive.
+  it("a monologue of reply-only steps ends the turn on the first one", async () => {
+    const { agent, prompts, ran } = loop(() =>
+      JSON.stringify([{ tool: "reply", args: { text: "Let me think about this some more." } }]),
+    );
+    const result = await agent.runTurn(
+      createEmptySessionState({ id: "s-monologue", workingDir }),
+      { userMessage: "fix the build", maxSteps: 10, signal: new AbortController().signal },
+    );
+    expect(result.reason).toBe("reply");
+    expect(prompts).toHaveLength(1);
+    expect(ran).toEqual([]);
+  });
 });

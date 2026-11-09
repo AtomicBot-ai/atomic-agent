@@ -2,6 +2,23 @@ import type { StepContext } from "./step-contract.js";
 import { LlmFailure, classifyFailure, CancelledError, LlamaServerError, TransportError, GrammarError, OpenAiHttpError, isRequestSizeRejection, humanizeOpenAiHttpError, ToolExecutionError } from "../../llm/index.js";
 import { ToolCallParseError } from "../../llm/grammar/tool-call-grammar.js";
 import { isLlamaSizeRefusal, toRequestTooLargeError } from "../../llm/reliability/request-too-large.js";
+import { SubscriptionCliInvocationError } from "../../llm/provider/subscription-cli/subscription-cli-errors.js";
+
+
+/**
+ * `ToolExecutionError.tool` for a subscription CLI provider
+ * that ran and failed. No tool of ours failed there, and `"unknown"`
+ * sent error reports looking for one (ATO-710). A fixed word, never the
+ * binary name or path.
+ */
+export const SUBSCRIPTION_CLI_TOOL_TAG = "subscription_cli";
+
+/**
+ * `ToolExecutionError.tool` for an error the catch-all below wraps when
+ * nothing names a tool: it came from the step itself (the stream, the
+ * dispatch bookkeeping), not from a tool call.
+ */
+export const UNATTRIBUTED_TOOL_TAG = "unknown";
 
 
 /** Validation failure for a multi-call batch (forbidden tool / oversized / unknown). */
@@ -104,7 +121,15 @@ export function toLlmFailure(err: unknown, ctx: StepContext): LlmFailure {
   if (categorised === "transport") {
     return new TransportError(wrapped.message, null, "", { cause: err });
   }
-  return new ToolExecutionError("unknown", wrapped.message, { cause: err });
+  // A subscription CLI that ran and came back unhappy keeps the `tool`
+  // category on purpose (`classifyFailure`: nothing says the link is
+  // unusable, so the chain does not advance), but it is named as what it
+  // is: the provider's CLI, not one of the agent's tools (ATO-710).
+  const tool =
+    err instanceof SubscriptionCliInvocationError
+      ? SUBSCRIPTION_CLI_TOOL_TAG
+      : UNATTRIBUTED_TOOL_TAG;
+  return new ToolExecutionError(tool, wrapped.message, { cause: err });
 }
 
 

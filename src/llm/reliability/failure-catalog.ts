@@ -25,6 +25,10 @@
  *
  *  - `retry`:            send the same message again.
  *  - `switch-model`:     pick another model or provider.
+ *  - `fix-key`:          open the provider's settings to check or replace
+ *                        the API key (ATO-349: a refused key never fixes
+ *                        itself, and picking another model does not
+ *                        either).
  *  - `new-chat-summary`: start a new chat carrying a summary of this one.
  *  - `reduce-load`:      free memory (smaller context, smaller model,
  *                        close other apps) before trying again.
@@ -34,6 +38,7 @@
 export type FailureAction =
   | "retry"
   | "switch-model"
+  | "fix-key"
   | "new-chat-summary"
   | "reduce-load"
   | "add-search-key"
@@ -86,7 +91,7 @@ export const FAILURE_CATALOG = {
   },
   auth_rejected: {
     phrase: "The provider did not accept your API key.",
-    action: "switch-model",
+    action: "fix-key",
   },
   model_not_found: {
     phrase: "The provider doesn't have this model.",

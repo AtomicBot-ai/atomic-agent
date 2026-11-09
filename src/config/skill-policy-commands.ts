@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
+import { pluginSkillPart, setPluginPartEnabled } from "../plugins/plugin-install.js";
 import { getConfig, resetConfigCache } from "./config-cache.js";
 import { ensureUserConfigFileSync, writeUserConfigFileSync } from "./config-file.js";
 import { isRelativeInstructionPath, parseSkillNameArray, type ProjectTrustRecord } from "./skills-config.js";
@@ -61,6 +62,16 @@ export function recordProjectTrust(workspace: string, decision: "trusted" | "dec
 }
 
 export function setSkillDisabled(name: string, disabled: boolean, workspace?: string): void {
+  const pluginSkill = pluginSkillPart(name);
+  if (pluginSkill) {
+    if (workspace !== undefined) {
+      throw new Error(`A plugin skill cannot be switched per folder. Use: atomic-agent plugin ${disabled ? "disable" : "enable"} ${pluginSkill.plugin} --part ${pluginSkill.part}`);
+    }
+    if (!setPluginPartEnabled(getConfig().paths.stateDir, pluginSkill.plugin, pluginSkill.part, !disabled)) {
+      throw new Error(`plugin not installed: ${pluginSkill.plugin}`);
+    }
+    return;
+  }
   parseSkillNameArray([name], "skill name");
   updatePolicy(workspace, policy => {
     const names = new Set(policy.disabled);

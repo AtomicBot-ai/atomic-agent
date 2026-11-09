@@ -17,15 +17,21 @@ import { pickOriginalRequest } from "../../tools/fusion/index.js";
 import type { ToolRole } from "../../tools/tool-roles.js";
 import type { ShellJobRegistry } from "../../tools/os/shell/shell-jobs.js";
 import { captureMessageSent, type AnalyticsStateStore, type LocalEngine, type TurnUsageMeter } from "../../analytics/index.js";
+import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { providerIdIsLlamaServer } from "../../llm/provider/registry/active-text-provider.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { TurnController, TurnEventHook, TurnOrigin } from "../turn-controller.js";
 import type { SteeringInbox } from "../steering-inbox.js";
 import { TurnsInFlight } from "../turns-in-flight.js";
+import { checkpointState, turnProgressFor, type TurnCheckpointOptions } from "../turn-checkpoints.js";
+import type { TurnProgress } from "../../session/turn-progress.js";
 import type { createRuntimeTraces } from "./runtime-traces.js";
 import type { createRuntimeObservability } from "./runtime-observability.js";
 import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
+import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
+import { createRuntimeGoalRunner } from "./runtime-goal.js";
+import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -59,7 +65,7 @@ type RuntimeTraces = ReturnType<typeof createRuntimeTraces>;
 
 export interface RuntimeTurnDependencies {
   sessions: {
-    sessionStore: Pick<SessionStore, "save" | "load" | "beginTurn" | "releaseTurn" | "finishTurn">;
+    sessionStore: Pick<SessionStore, "save" | "load" | "beginTurn" | "releaseTurn" | "finishTurn" | "checkpointTurn">;
     turnContext: RuntimeTraces["turnContext"];
     turnRequests: Map<string, string>;
     /**
@@ -90,6 +96,8 @@ export interface RuntimeTurnDependencies {
     observability: Pick<ReturnType<typeof createRuntimeObservability>, "getAnalytics">;
     analyticsStateStore: AnalyticsStateStore;
     turnUsageMeter: TurnUsageMeter;
+    /** Session spend and account limits (ATO-569); absent in narrow test rigs. */
+    sessionUsage?: SessionUsageLedger;
   };
   state: RuntimeTurnState;
   lifecycle: { isShutdown(): boolean };
@@ -105,7 +113,7 @@ export function createRuntimeTurnService(
   const { providerRegistry, resolveActiveLlmSlice, resolveCurrentRunMode, resolveRouteVision, resolveActiveModelName, fallbackChain } = deps.inference;
   const { traces, lifecycle, logger } = deps;
   const { ensureRecorder } = traces;
-  const { observability, analyticsStateStore, turnUsageMeter } = deps.telemetry;
+  const { observability, analyticsStateStore, turnUsageMeter, sessionUsage } = deps.telemetry;
   const { pendingSessionNamings, turnsInFlight } = deps.state;
   // Owned by this runtime, bounded by active turns; workers share their parent's snapshot.
   const turnModelModes = new Map<string, ModelModePolicy>();
@@ -123,6 +131,7 @@ export function createRuntimeTurnService(
     signal?: AbortSignal;
     providerId?: string;
     taskMaxDurationMs?: number;
+    taskMaxCostUsd?: number;
     toolFilter?: (name: string) => boolean;
     toolRole?: ToolRole;
     reasoningEffort?: ReasoningEffort;
@@ -148,6 +157,9 @@ export function createRuntimeTurnService(
     ...(runOptions.taskMaxDurationMs === undefined
       ? {}
       : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+    ...(runOptions.taskMaxCostUsd === undefined
+      ? {}
+      : { taskMaxCostUsd: runOptions.taskMaxCostUsd }),
     ...(runOptions.providerId === undefined
       ? {}
       : { providerId: runOptions.providerId }),
@@ -267,12 +279,29 @@ export function createRuntimeTurnService(
    * (`SessionStore.beginTurn`). Bookkeeping only: a mark that cannot be
    * written must not stop the turn.
    */
-  const markTurnRunning = (sessionId: string): void => {
+  const markTurnRunning = (sessionId: string, progress: TurnProgress): void => {
     try {
-      sessionStore.beginTurn(sessionId);
+      sessionStore.beginTurn(sessionId, progress.startedAt, progress);
     } catch (err) {
       logger.warn("could not mark the session running", {
         sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  };
+
+  /**
+   * One completed step's checkpoint (ATO-1109): the transcript so far and
+   * the turn's progress, in one row write. Bookkeeping like the mark: a
+   * write that fails is logged and the turn goes on.
+   */
+  const checkpointStep = (session: SessionState, progress: TurnProgress): void => {
+    try {
+      sessionStore.checkpointTurn(checkpointState(session, progress.updatedAt), progress);
+    } catch (err) {
+      logger.warn("could not checkpoint the turn's step", {
+        sessionId: session.id,
+        stepIndex: progress.lastStepIndex,
         error: err instanceof Error ? err.message : String(err),
       });
     }
@@ -319,11 +348,21 @@ export function createRuntimeTurnService(
       signal?: AbortSignal;
       providerId?: string;
       taskMaxDurationMs?: number;
+      taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
+      /** What the turn's progress marker records beyond the message (ATO-1109). */
+      checkpoint?: TurnCheckpointOptions;
+      /** Where the turn came in; picks the reply's `### answer-style`. */
+      origin?: TurnOrigin;
+      /**
+       * The reply's surface when the origin cannot tell it: an HTTP
+       * extensions client is the desktop app. Wins over `origin`.
+       */
+      answerChannel?: AnswerChannel;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -431,7 +470,10 @@ export function createRuntimeTurnService(
       // Registered before the mark and ended after the turn's end is
       // written, so `shutdown` waiting on it waits for the row to be right.
       const inFlight = turnsInFlight.begin(runOptions.signal);
-      markTurnRunning(session.id);
+      // The turn's progress marker: written with the mark, then with the
+      // transcript after every completed step (ATO-1109).
+      const progress = turnProgressFor(userMessage, runOptions, Date.now());
+      markTurnRunning(session.id, progress.initial);
       try {
         turnModelModes.set(session.id, modelModePolicy);
         // Recorded for `fusion.delegate`, which quotes it to the workers.
@@ -448,12 +490,16 @@ export function createRuntimeTurnService(
         if (previousReply !== undefined) {
           turnPreviousReplies?.set(session.id, previousReply);
         }
+        const answerChannel = runOptions.answerChannel ?? answerChannelForOrigin(runOptions.origin);
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
         // leg length and `agent.task.*` supplies the ceiling, so an
         // ordinary turn runs the task to completion instead of stopping
         // at the first checkpoint.
+        // Carry on from what the session persisted, so a reopened thread
+        // keeps adding to its own total (ATO-569).
+        sessionUsage?.seed(session.id, session.sessionUsage);
         const result = await loop.runTurn(session, {
           userMessage,
           modelModePolicy,
@@ -463,7 +509,13 @@ export function createRuntimeTurnService(
             ? { originalRequest: turnRequest }
             : {}),
           ...(routeNote !== null ? { routeNote } : {}),
+          // Read only from the caller's origin: a fusion worker turn has
+          // `origin: "fusion"` and gets no block (its reply goes to the
+          // orchestrator, not to a person).
+          ...(answerChannel !== undefined ? { answerChannel } : {}),
           ...buildLoopTurnBudget(runOptions),
+          onStepCheckpoint: (state, step) =>
+            checkpointStep(state, progress.atStep(step)),
         });
         // Stamp the turn's window occupancy so the stored session can
         // restore the TUI's context gauge when it is reopened. A turn
@@ -472,9 +524,11 @@ export function createRuntimeTurnService(
         // stamps what this turn ran on, so switching back into the
         // session later restores its provider/model (session-llm.ts).
         const usage = traces.readContextUsage(session.id);
+        const spend = sessionUsage?.get(session.id);
         const finished: SessionState = {
           ...result.session,
           ...(usage === undefined ? {} : { contextUsage: usage }),
+          ...(spend === undefined ? {} : { sessionUsage: spend }),
           metadata: {
             ...result.session.metadata,
             [SESSION_LLM_METADATA_KEY]: llmStamp,
@@ -538,6 +592,16 @@ export function createRuntimeTurnService(
   const steer = (sessionId: string, text: string): boolean =>
     steeringInbox.push(sessionId, text);
 
+  // Goal mode (ATO-451): rounds of ordinary turns until the acceptance
+  // list is green. Owned here so every frontend gets it through runTurn.
+  const goals = createRuntimeGoalRunner({
+    sessionStore,
+    llmComplete,
+    slotManager,
+    resolveTransport: () => resolveActiveLlmSlice().transport,
+    logger,
+  });
+
   const runTurn = async (
     session: SessionState,
     userMessage: string,
@@ -548,13 +612,38 @@ export function createRuntimeTurnService(
       origin?: TurnOrigin;
       providerId?: string;
       taskMaxDurationMs?: number;
+      taskMaxCostUsd?: number;
       toolFilter?: (name: string) => boolean;
       toolRole?: ToolRole;
       reasoningEffort?: ReasoningEffort;
       maxOutputTokens?: number;
       interactive?: boolean;
+      checkpoint?: TurnCheckpointOptions;
+      goal?: GoalSpec;
+      onGoalProgress?: (goal: GoalState) => void;
+      /** See `executeTurn`'s `answerChannel`. */
+      answerChannel?: AnswerChannel;
     } = {},
   ): Promise<RunTurnResult> => {
+    if (runOptions.goal !== undefined) {
+      const { goal, onGoalProgress, ...turnOptions } = runOptions;
+      return goals.run(
+        session,
+        userMessage,
+        {
+          goal,
+          ...(runOptions.signal ? { signal: runOptions.signal } : {}),
+          ...(runOptions.taskMaxDurationMs === undefined ? {} : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+          ...(onGoalProgress ? { onGoalProgress } : {}),
+        },
+        // Each round is an ordinary turn: queued, approved and saved alike.
+        (roundSession, message, remainingMs) =>
+          runTurn(roundSession, message, {
+            ...turnOptions,
+            ...(remainingMs === undefined ? {} : { taskMaxDurationMs: remainingMs }),
+          }),
+      );
+    }
     // Before the queue, so a bad pin rejects now rather than after
     // waiting behind whatever is running on the session.
     assertKnownProvider(runOptions.providerId);
@@ -646,7 +735,7 @@ export function createRuntimeTurnService(
     }
   };
 
-  return { executeTurn, steer, runTurn };
+  return { executeTurn, steer, runTurn, controlGoal: goals.control };
 }
 
 /**

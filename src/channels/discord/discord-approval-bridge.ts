@@ -17,6 +17,7 @@ import type {
   ApprovalGate,
   ApprovalRequest,
 } from "../../approval/approval-gate.js";
+import { describeAlwaysRule } from "../../approval/approval-rules.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DiscordApi, DiscordComponentRow } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
@@ -24,6 +25,10 @@ import { scrubDiscordError } from "./discord-channel-types.js";
 /** Discord button styles. */
 const STYLE_DANGER = 4;
 const STYLE_SECONDARY = 2;
+const STYLE_PRIMARY = 1;
+
+/** Discord caps a button label at 80 characters. */
+const BUTTON_LABEL_MAX_CHARS = 80;
 
 /** Prefix on every custom_id this bridge owns. */
 const CUSTOM_ID_PREFIX = "atomic:approve:";
@@ -40,7 +45,9 @@ export interface DiscordInteractionEvent {
 
 export interface DiscordApprovalBridgeDeps {
   api: DiscordApi;
-  approvals: ApprovalGate;
+  /** Resolves decisions; `canGrantAlways` decides the third button (ATO-1142). */
+  approvals: Pick<ApprovalGate, "resolve"> &
+    Partial<Pick<ApprovalGate, "canGrantAlways">>;
   logger: StructuredLogger;
   /** Snowflakes permitted to decide. Interactions from anyone else drop. */
   ownerUserIds: () => readonly string[];
@@ -50,6 +57,8 @@ interface Pending {
   approvalId: string;
   channelId: string;
   messageId: string | null;
+  /** The "Allow always" label, when that button was posted (ATO-1142). */
+  alwaysLabel?: string;
 }
 
 export class DiscordApprovalBridge {
@@ -76,15 +85,20 @@ export class DiscordApprovalBridge {
     request: ApprovalRequest,
     channelId: string,
   ): Promise<void> {
+    const alwaysLabel =
+      this.deps.approvals.canGrantAlways?.(request) === true
+        ? describeAlwaysRule(request)
+        : undefined;
     const messageId = await this.deps.api.sendMessage(
       channelId,
       formatPrompt(request),
-      buttonsFor(request.approvalId),
+      buttonsFor(request.approvalId, alwaysLabel),
     );
     this.pending.set(request.approvalId, {
       approvalId: request.approvalId,
       channelId,
       messageId,
+      ...(alwaysLabel !== undefined ? { alwaysLabel } : {}),
     });
   }
 
@@ -116,20 +130,31 @@ export class DiscordApprovalBridge {
     }
 
     const [, , verb, approvalId] = customId.split(":");
-    const approved = verb === "yes";
+    const posted = this.pending.get(approvalId ?? "");
+    // "Allow always" counts only where this bridge posted that button: a
+    // crafted custom_id cannot save a rule the prompt never offered.
+    const always = verb === "always" && posted?.alwaysLabel !== undefined;
+    if (verb === "always" && !always) {
+      await this.ack(event, "This request already expired or was answered elsewhere.");
+      return true;
+    }
+    const approved = verb === "yes" || always;
     const settled = this.deps.approvals.resolve({
       approvalId: approvalId ?? "",
       approved,
       // A button carries no words of the user's, so a deny has no reason.
       ...(approved ? { reason: "approved from Discord" } : {}),
+      ...(always ? { grant: "always" as const } : {}),
     });
     this.pending.delete(approvalId ?? "");
     await this.ack(
       event,
       settled
-        ? approved
-          ? "✅ Approved."
-          : "🚫 Denied."
+        ? always
+          ? `✅ Approved. Saved: ${posted?.alwaysLabel}.`
+          : approved
+            ? "✅ Approved."
+            : "🚫 Denied."
         : // The gate already settled -- timeout, cancel, or a decision
           // taken on another surface. Say so rather than implying the
           // click did something.
@@ -157,27 +182,40 @@ export class DiscordApprovalBridge {
   }
 }
 
-/** Two buttons, ids namespaced so foreign components never match. */
-export function buttonsFor(approvalId: string): DiscordComponentRow[] {
-  return [
+/**
+ * Two buttons, plus "Allow always" when `alwaysLabel` is given; ids
+ * namespaced so foreign components never match.
+ */
+export function buttonsFor(
+  approvalId: string,
+  alwaysLabel?: string,
+): DiscordComponentRow[] {
+  const components: Array<DiscordComponentRow["components"][number]> = [
     {
-      type: 1,
-      components: [
-        {
-          type: 2,
-          style: STYLE_DANGER,
-          label: "Approve",
-          custom_id: `${CUSTOM_ID_PREFIX}yes:${approvalId}`,
-        },
-        {
-          type: 2,
-          style: STYLE_SECONDARY,
-          label: "Deny",
-          custom_id: `${CUSTOM_ID_PREFIX}no:${approvalId}`,
-        },
-      ],
+      type: 2,
+      style: STYLE_DANGER,
+      label: "Approve",
+      custom_id: `${CUSTOM_ID_PREFIX}yes:${approvalId}`,
+    },
+    {
+      type: 2,
+      style: STYLE_SECONDARY,
+      label: "Deny",
+      custom_id: `${CUSTOM_ID_PREFIX}no:${approvalId}`,
     },
   ];
+  if (alwaysLabel !== undefined) {
+    components.push({
+      type: 2,
+      style: STYLE_PRIMARY,
+      label:
+        alwaysLabel.length <= BUTTON_LABEL_MAX_CHARS
+          ? alwaysLabel
+          : `${alwaysLabel.slice(0, BUTTON_LABEL_MAX_CHARS - 1)}…`,
+      custom_id: `${CUSTOM_ID_PREFIX}always:${approvalId}`,
+    });
+  }
+  return [{ type: 1, components }];
 }
 
 export function formatPrompt(request: ApprovalRequest): string {

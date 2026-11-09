@@ -9,6 +9,11 @@ import type { ModelCatalogEntry } from "../../llm/provider/model-resolver.js";
 import type { ModelEntryLookup } from "../../llm/provider/model-search.js";
 import { GEMINI_DEFAULT_CHAT_MODEL } from "../../llm/provider/gemini/gemini-provider.js";
 import {
+  MODEL_TIERS,
+  MODEL_TIER_LABELS,
+  MODEL_TIER_ORDER,
+} from "../../llm/provider/presets/model-tiers.js";
+import {
   formatCapabilitySummary,
   formatContextWindow,
   formatEmbeddingTokenPrice,
@@ -30,7 +35,39 @@ export const OPENAI_COMPAT_DEFAULT_CHAT_MODEL = "gpt-5.4-mini";
 
 export { AIMLAPI_DEFAULT_CHAT_MODEL, GEMINI_DEFAULT_CHAT_MODEL };
 
+/**
+ * The picker list with the provider's Cheap / Balanced / Best picks
+ * (`MODEL_TIERS`, ATO-32) first, each label led by its tier, and the rest
+ * in catalog order. A tier whose model the list does not carry is left
+ * out rather than offered blind.
+ */
+export function withModelTiersFirst(
+  key: string,
+  options: readonly ProviderModelOption[],
+): readonly ProviderModelOption[] {
+  const tiers = MODEL_TIERS[key];
+  if (!tiers) return options;
+  const byId = new Map(options.map((o) => [o.id, o]));
+  const first: ProviderModelOption[] = [];
+  for (const tier of MODEL_TIER_ORDER) {
+    const option = byId.get(tiers[tier]);
+    if (!option) continue;
+    first.push({
+      id: option.id,
+      get label(): string {
+        return `${MODEL_TIER_LABELS[tier]} · ${option.label}`;
+      },
+    });
+  }
+  const picked = new Set(first.map((o) => o.id));
+  return [...first, ...options.filter((o) => !picked.has(o.id))];
+}
+
 export function listOpenRouterChatModels(): readonly ProviderModelOption[] {
+  return withModelTiersFirst("openrouter", listOpenRouterChatOptions());
+}
+
+function listOpenRouterChatOptions(): readonly ProviderModelOption[] {
   return listOpenRouterChatPicks().map((p) => ({
     id: p.id,
     // Lazy: only the rows a viewport actually paints pay the format cost.
@@ -81,6 +118,10 @@ export function listOpenRouterEmbeddingModels(): readonly ProviderModelOption[] 
 }
 
 export function listAimlapiChatModels(): readonly ProviderModelOption[] {
+  return withModelTiersFirst("aimlapi", listAimlapiChatOptions());
+}
+
+function listAimlapiChatOptions(): readonly ProviderModelOption[] {
   return listAimlapiChatPicks().map((p) => ({
     id: p.id,
     // Lazy for the same reason as the OpenRouter list above.

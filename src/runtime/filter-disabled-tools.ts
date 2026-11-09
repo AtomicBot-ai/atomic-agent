@@ -88,8 +88,10 @@ export interface ToolGateConfig {
    * `tools.screen.enabled`, or any host that is not macOS — drops the
    * four `os.screen.*` descriptors. Unlike the availability gates above,
    * the tools are then not registered either (`registerOsScreenTools`).
+   * `point` (`tools.screen.point`, ATO-1018) keeps `os.screen.point` and
+   * `os.screen.capture` without `enabled`: drawing marks is not control.
    */
-  screen: { enabled: boolean };
+  screen: { enabled: boolean; point?: boolean };
 }
 
 /**
@@ -155,8 +157,16 @@ const GATED_TOOLS = {
     "os.screen.click",
     "os.screen.type",
     "os.screen.key",
+    "os.screen.point",
   ],
 } as const;
+
+/** `os.screen.*` that drive the mouse and keyboard: `screen.enabled` only. */
+const SCREEN_CONTROL_TOOLS: ReadonlySet<string> = new Set([
+  "os.screen.click",
+  "os.screen.type",
+  "os.screen.key",
+]);
 
 /**
  * Drop descriptors whose backing tool will not be registered at
@@ -210,8 +220,15 @@ export function filterToolDescriptorsByConfig(
   if (!gates.video.available) {
     for (const name of GATED_TOOLS.video) disabled.add(name);
   }
-  if (!gates.screen.enabled) {
-    for (const name of GATED_TOOLS.screen) disabled.add(name);
+  const screenPoint = gates.screen.point === true;
+  for (const name of GATED_TOOLS.screen) {
+    const kept =
+      name === "os.screen.point"
+        ? screenPoint
+        : SCREEN_CONTROL_TOOLS.has(name)
+          ? gates.screen.enabled
+          : gates.screen.enabled || screenPoint;
+    if (!kept) disabled.add(name);
   }
 
   if (disabled.size === 0) return descriptors;

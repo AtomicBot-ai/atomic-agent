@@ -32,6 +32,8 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
   ["os.fs.archive.list", pathArg],
   ["os.fs.archive.read_entry", pathArg],
   ["os.fs.grep", pathArg],
+  // A folder to map or one file to outline; omitted = the working dir.
+  ["os.fs.code_map", pathArg],
   [
     "os.fs.glob",
     // `cwd` wins over `path` inside the tool; either names the root.
@@ -91,6 +93,27 @@ export const READ_TOOL_TARGETS: ReadonlyMap<string, ReadTargetsOf> = new Map<
 
 /** The shell tool, checked by token rather than by a named argument. */
 export const SHELL_TOOL = "os.shell.run";
+
+/** Runs a command like the shell does, so its commands get the shell's checks. */
+export const VERIFY_TOOL = "verify.run";
+
+/**
+ * The commands a `verify.run` call would start, in the shape the shell
+ * checks read (`{cmd, args}`). Taken from the raw arguments, whatever
+ * the `kind`, because this runs before the tool validates them.
+ */
+export function verifyRunShellCalls(
+  args: Record<string, unknown>,
+): Record<string, unknown>[] {
+  const calls: Record<string, unknown>[] = [];
+  if (typeof args.cmd === "string") calls.push({ cmd: args.cmd, args: args.args });
+  const start = args.start;
+  if (typeof start === "object" && start !== null) {
+    const { cmd, args: startArgs } = start as Record<string, unknown>;
+    if (typeof cmd === "string") calls.push({ cmd, args: startArgs });
+  }
+  return calls;
+}
 
 /** `https://…`, `data:…` — not a filesystem path, not this module's business. */
 export const URL_LIKE = /^[a-z][a-z0-9+.-]*:(?:\/\/|[^\\/])/i;

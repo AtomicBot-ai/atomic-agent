@@ -1,0 +1,18 @@
+{
+  "$comment": "Pre-release gate (ATO-1118). summary.mjs --gate checks every (model, window, thinking) cell found in the results for a model size listed here. A cell fails when its pass rate on the gated set is below the minimum, or when it has fewer runs than minRepeats per task. Stress tasks are reported, not gated, until we have a baseline.",
+  "gatedSet": "core",
+  "minRepeats": 3,
+  "minPassRate": {
+    "4b": 0.8,
+    "9b": 0.9,
+    "27b": 0.95
+  },
+  "requireCells": [
+    { "size": "4b", "window": 32768, "thinking": "off" },
+    { "size": "4b", "window": 65536, "thinking": "off" },
+    { "size": "9b", "window": 32768, "thinking": "off" },
+    { "size": "9b", "window": 65536, "thinking": "off" },
+    { "size": "27b", "window": 32768, "thinking": "off" },
+    { "size": "27b", "window": 65536, "thinking": "off" }
+  ]
+}

@@ -45,8 +45,16 @@ export interface CoreSessionRecord extends CoreSession {
   instanceId: string;
 }
 export function coreRoot(dataDir: string): string { return resolve(dataDir, "core"); }
+/**
+ * Whether this build can drive a Core of `version`. A record written by a
+ * newer Agent (the desktop and the terminal share one folder) can name a
+ * Core this build does not know.
+ */
+export function isSupportedCoreVersion(version: unknown): boolean {
+  return typeof version === "string" && CORE_VERSIONS.includes(version as typeof CORE_VERSIONS[number]);
+}
 export function coreVersionDir(dataDir: string, version: string): string {
-  if (!CORE_VERSIONS.includes(version as typeof CORE_VERSIONS[number])) {
+  if (!isSupportedCoreVersion(version)) {
     throw new Error(`Atomic Core ${version} is not supported by this Agent build. Update Agent first.`);
   }
   return join(coreRoot(dataDir), "versions", version);

@@ -1,6 +1,7 @@
 import { platform as osPlatform } from "node:os";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
+import type { PluginSkillDir } from "../plugins/plugin-runtime.js";
 import {
   parseSkillFile,
   SkillManifestError,
@@ -17,6 +18,8 @@ export interface SkillRecord {
   /** Absolute path to the SKILL.md file. */
   manifestPath: string;
   source: SkillSource;
+  /** Set for a skill an installed plugin contributes; its name is `plugin:skill`. */
+  plugin?: string;
 }
 
 export interface LoadSkillsOptions {
@@ -28,6 +31,13 @@ export interface LoadSkillsOptions {
    * injectable so tests can exercise the filter deterministically.
    */
   platform?: NodeJS.Platform;
+  /**
+   * Skill folders contributed by enabled plugins (src/plugins). Read on
+   * every load so installing or switching a plugin shows up on refresh.
+   * Plugin skills load as user-installed (`global`) skills named
+   * `plugin:skill`; a skill the user installed directly keeps its name.
+   */
+  pluginSkills?: () => readonly PluginSkillDir[];
 }
 
 /**
@@ -81,6 +91,16 @@ export async function loadSkills(
   const merged = new Map<string, SkillRecord>();
   for (const s of globalSkills) {
     if (isSkillEligibleForPlatform(s.manifest, platform)) {
+      merged.set(s.manifest.name, s);
+    }
+  }
+  if (options.pluginSkills) {
+    for (const s of await loadPluginSkills(options.pluginSkills, errors)) {
+      if (!isSkillEligibleForPlatform(s.manifest, platform)) continue;
+      if (merged.has(s.manifest.name)) {
+        errors.push({ path: s.rootDir, error: `skill ${s.manifest.name}: an installed skill already has this name; the plugin copy is ignored` });
+        continue;
+      }
       merged.set(s.manifest.name, s);
     }
   }
@@ -151,6 +171,30 @@ async function loadFromDir(
             ? err.message
             : String(err);
       errors.push({ path: rootDir, error: message });
+    }
+  }
+  return records;
+}
+
+async function loadPluginSkills(
+  list: () => readonly PluginSkillDir[],
+  errors: Array<{ path: string; error: string }>,
+): Promise<SkillRecord[]> {
+  let dirs: readonly PluginSkillDir[];
+  try { dirs = list(); }
+  catch (err) {
+    errors.push({ path: "plugins", error: err instanceof Error ? err.message : String(err) });
+    return [];
+  }
+  const records: SkillRecord[] = [];
+  for (const entry of dirs) {
+    const manifestPath = join(entry.dir, "SKILL.md");
+    try {
+      const parsed = parseSkillFile(await readFile(manifestPath, "utf8"), { fallbackName: basename(entry.dir) });
+      const name = entry.rootSkill ? entry.plugin : `${entry.plugin}:${parsed.manifest.name}`;
+      records.push({ manifest: { ...parsed.manifest, name }, rootDir: entry.dir, manifestPath, source: "global", plugin: entry.plugin });
+    } catch (err) {
+      errors.push({ path: entry.dir, error: err instanceof Error ? err.message : String(err) });
     }
   }
   return records;

@@ -51,6 +51,9 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.task.maxSteps` (default `1000`).
 - `agent.task.maxDurationMs` (default `7200000`).
 - `agent.task.autoContinue` (default `true`).
+- `agent.task.resumeInterrupted` (default `true`): continue a task run cut off by a crash, a kill or a restart from its checkpoint.
+- `agent.task.maxResumes` (default `3`): crash/kill resumes before the task is failed.
+- `agent.task.maxCostUsd` (default `0`): spend ceiling per task in USD, `0` = no cap; unpriced (local) models count as $0.
 - `agent.toolTimeoutMs` (default `60000`).
 - `agent.readScope` (default `"working-dir"`).
 - `agent.approvalLevel` (default `1`).
@@ -60,6 +63,10 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.conversationLowWater` (default `0.65`).
 - `agent.sessionSectionsMaxTokens` (default `0`).
 - `agent.worldSnapshotMaxTokens` (default `8000`).
+- `agent.smartApproval` (default `false`).
+- `agent.smartApprovalModel` (default `null`).
+- `agent.prompt.compact` (default `"auto"`): `auto` uses the compact prompt scaffold when the model's known context window is at most 64K tokens, `on` always, `off` never.
+- `agent.tools.search` (default `"auto"`): `"auto"` describes only the core tools in full on a window of 32K or less, or when the catalog holds more than 100 tools, and lists the rest behind `tool.search`; `"on"` always, `"off"` never.
 
 ## http
 
@@ -95,6 +102,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tools.shell.maxJobs` (default `3`).
 - `tools.shell.envPassthrough` (default `["GITHUB_TOKEN", "NOTION_API_KEY"]`).
 - `tools.screen.enabled` (default `false`): the macOS `os.screen.*` computer-use tools ([OS tools](../../tools/os/README.md)); read at start.
+- `tools.screen.point` (default `true`): `os.screen.point`, which only draws marks through the desktop app, plus `os.screen.capture`, on macOS, independent of `tools.screen.enabled`; read at start.
 
 ## browser
 
@@ -225,7 +233,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 
 ## analytics
 
-- `analytics.enabled` (default `true`).
+- `analytics.enabled` (default `true`). `ATOMIC_AGENT_ANALYTICS=off` or `DO_NOT_TRACK=1` in the environment turns analytics and crash reports off for that process whatever this says.
 
 ## telegram
 

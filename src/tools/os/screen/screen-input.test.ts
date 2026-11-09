@@ -342,7 +342,7 @@ describe("platform and registration", () => {
     registerOsScreenTools(linux, { approvals, approvalRequired: true, enabled: true, platform: "linux" });
     expect(linux.list()).toEqual([]);
     const mac = new ToolRegistry();
-    registerOsScreenTools(mac, { approvals, approvalRequired: true, enabled: true, platform: "darwin" });
+    registerOsScreenTools(mac, { approvals, approvalRequired: true, enabled: true, point: true, platform: "darwin" });
     expect(mac.list().map((tool) => tool.name)).toEqual([...OS_SCREEN_TOOL_NAMES]);
   });
 });

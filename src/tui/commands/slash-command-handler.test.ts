@@ -571,4 +571,34 @@ describe("/enhance", () => {
     expect(result.enhanceCurrentDraft).toBe(true);
     expect(result.clearBuffer).toBe(false);
   });
+
+  it("/expand opens the last finished turn, /expand all opens everything (ATO-963)", () => {
+    expect(dispatchSlashCommand("/expand").actions).toEqual([
+      { type: "turn_expand_set", scope: "last", expanded: true },
+    ]);
+    expect(dispatchSlashCommand("/expand all").actions).toEqual([
+      { type: "turn_expand_set", scope: "all", expanded: true },
+      { type: "tool_expand_all_set", expanded: true },
+    ]);
+    const bad = dispatchSlashCommand("/expand everything");
+    expect(bad.actions).toEqual([]);
+    expect(bad.systemMessage).toMatch(/usage: \/expand \[all\]/);
+  });
+
+  it("/collapse folds every turn and closes every tool card", () => {
+    expect(dispatchSlashCommand("/collapse").actions).toEqual([
+      { type: "turn_expand_set", scope: "all", expanded: false },
+      { type: "tool_expand_all_set", expanded: false },
+    ]);
+  });
+
+  it("/steps toggles always-show-steps, on and off set it", () => {
+    expect(dispatchSlashCommand("/steps").showStepsVerb).toBe("toggle");
+    expect(dispatchSlashCommand("/steps on").showStepsVerb).toBe("on");
+    expect(dispatchSlashCommand("/steps off").showStepsVerb).toBe("off");
+    const bad = dispatchSlashCommand("/steps maybe");
+    expect(bad.showStepsVerb).toBeUndefined();
+    expect(bad.systemMessage).toMatch(/usage: \/steps/);
+    expect(dispatchSlashCommand("/steps").forwardAsMessage).toBe(false);
+  });
 });

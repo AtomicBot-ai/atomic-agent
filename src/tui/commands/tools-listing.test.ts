@@ -28,7 +28,7 @@ const ALL_ENABLED: ToolGateSourceConfig = {
   tasks: { enabled: true, agentToolsEnabled: true },
   mcp: { servers: [{}] },
   llm: { runMode: { mode: "fusion" } },
-  tools: { screen: { enabled: true } },
+  tools: { screen: { enabled: true, point: true } },
 };
 
 /** The env the GitHub gate reads; a token means `github.*` is listed. */

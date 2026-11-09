@@ -7,6 +7,7 @@ import {
   SLOTS_UNREACHABLE_MIN_POLLS,
   extractLlamaErrorDetail,
   judgeSlotProgress,
+  keyRefusedError,
   slotsPollFailure,
 } from "./llama-server-client.js";
 import type { CompletionResult } from "./llama-server-client.js";
@@ -2646,5 +2647,35 @@ describe("LlamaServerClient on a 401 re-reads the key once (ATO-837)", () => {
       expect((err as LlamaServerError).status).toBe(401);
       expect(auth).toEqual(["Bearer stale-key"]);
     }
+  });
+});
+
+describe("keyRefusedError words a 401 by whether the agent sent a key (ATO-313)", () => {
+  const refused = new LlamaServerError(
+    "llama-server returned http 401: Invalid API Key",
+    401,
+    "http://127.0.0.1:8080/completion",
+  );
+
+  it("names the key to set when the agent sent none", () => {
+    const err = keyRefusedError(refused, false);
+    expect(err.status).toBe(401);
+    expect(err.message).toContain("needs an API key and the agent has none");
+    expect(err.message).toContain("ATOMIC_AGENT_LLAMA_API_KEY");
+    expect(err.message).not.toContain("refused the agent's key");
+    expect(err.message).not.toContain("atomic-agent models start");
+  });
+
+  it("keeps the restart advice when a key was sent and refused", () => {
+    const err = keyRefusedError(refused);
+    expect(err.status).toBe(401);
+    expect(err.message).toContain("refused the agent's key");
+    expect(err.message).toContain("atomic-agent models start");
+  });
+
+  it("keeps the server's own words and its error as the cause", () => {
+    const err = keyRefusedError(refused, false);
+    expect(err.message.startsWith("llama-server returned http 401: Invalid API Key.")).toBe(true);
+    expect((err as Error & { cause?: unknown }).cause).toBe(refused);
   });
 });
