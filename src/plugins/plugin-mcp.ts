@@ -18,10 +18,19 @@ export interface PluginMcpServers {
  *
  * `${CLAUDE_PLUGIN_ROOT}` / `${CLAUDE_PLUGIN_DATA}` (and the neutral
  * `${PLUGIN_ROOT}` / `${PLUGIN_DATA}`) are expanded in command, args, env,
- * url and headers. Server names become `<plugin>-<server>`, cut to the
+ * url and headers. Any other `${NAME}` / `${NAME:-default}` is one of the
+ * user's keys (from `<data folder>/.env` or the shell): handing it to a
+ * plugin's server needs the same consent as running its code, so such a
+ * server is skipped until code is allowed, then filled from `env`. A key
+ * that is unset with no default skips the server rather than sending the
+ * literal text. Server names become `<plugin>-<server>`, cut to the
  * 32-character MCP name limit, so they cannot collide with the user's own.
  */
-export function loadPluginMcpServers(stateDir: string, takenNames: ReadonlySet<string> = new Set()): PluginMcpServers {
+export function loadPluginMcpServers(
+  stateDir: string,
+  takenNames: ReadonlySet<string> = new Set(),
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): PluginMcpServers {
   const servers: McpServerConfig[] = [];
   const skipped: PluginMcpServers["skipped"] = [];
   const used = new Set(takenNames);
@@ -31,7 +40,18 @@ export function loadPluginMcpServers(stateDir: string, takenNames: ReadonlySet<s
       const name = uniqueName(`${bundle.name}-${serverName}`, used);
       if (!name) { skipped.push({ plugin: bundle.name, server: serverName, reason: "no valid server name" }); continue; }
       const dataDir = pluginDataDir(stateDir, bundle.name);
-      const expanded = expandVars(raw, { root: bundle.root, data: dataDir }) as Record<string, unknown>;
+      const keys = userKeyRefs(raw);
+      if (keys.length > 0 && record.runsCodeAccepted !== true) {
+        skipped.push({ plugin: bundle.name, server: serverName, reason: `reads your keys (${keys.join(", ")}); allow code for this plugin first (atomic-agent plugin allow-code ${bundle.name})` });
+        continue;
+      }
+      const unset: string[] = [];
+      const withKeys = keys.length > 0 ? expandUserKeys(raw, env, unset) : raw;
+      if (unset.length > 0) {
+        skipped.push({ plugin: bundle.name, server: serverName, reason: `needs ${[...new Set(unset)].sort().join(", ")}; set it in ${stateDir}/.env` });
+        continue;
+      }
+      const expanded = expandVars(withKeys, { root: bundle.root, data: dataDir }) as Record<string, unknown>;
       const mapped = mapClaudeCodeMcpServer({ name, raw: expanded });
       if (mapped.kind === "skip") { skipped.push({ plugin: bundle.name, server: serverName, reason: mapped.reason }); continue; }
       // A stdio server is a program started on this computer: only with the user's consent.
@@ -61,6 +81,41 @@ export function uniqueName(candidate: string, used: ReadonlySet<string>): string
     if (!used.has(name)) return name;
   }
   return null;
+}
+
+const PLUGIN_VAR_NAMES = new Set(["CLAUDE_PLUGIN_ROOT", "CLAUDE_PLUGIN_DATA", "PLUGIN_ROOT", "PLUGIN_DATA"]);
+const USER_VAR_RE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
+
+/** The user's keys a server entry refers to (`${NAME}`, plugin path variables excluded), sorted. */
+export function userKeyRefs(value: unknown): string[] {
+  const names = new Set<string>();
+  const walk = (v: unknown): void => {
+    if (typeof v === "string") {
+      for (const m of v.matchAll(USER_VAR_RE)) if (!PLUGIN_VAR_NAMES.has(m[1]!)) names.add(m[1]!);
+    } else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === "object") Object.values(v as Record<string, unknown>).forEach(walk);
+  };
+  walk(value);
+  return [...names].sort();
+}
+
+/** Fill `${NAME}` / `${NAME:-default}` from `env`; names unset with no default go to `unset`. */
+export function expandUserKeys(value: unknown, env: Readonly<Record<string, string | undefined>>, unset: string[]): unknown {
+  if (typeof value === "string") {
+    return value.replace(USER_VAR_RE, (whole, name: string, fallback: string | undefined) => {
+      if (PLUGIN_VAR_NAMES.has(name)) return whole;
+      const v = env[name];
+      if (v) return v;
+      if (fallback !== undefined) return fallback;
+      unset.push(name);
+      return whole;
+    });
+  }
+  if (Array.isArray(value)) return value.map(v => expandUserKeys(v, env, unset));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value as Record<string, unknown>).map(([k, v]) => [k, expandUserKeys(v, env, unset)]));
+  }
+  return value;
 }
 
 const VAR_RE = /\$\{(CLAUDE_PLUGIN_ROOT|CLAUDE_PLUGIN_DATA|PLUGIN_ROOT|PLUGIN_DATA)\}/g;

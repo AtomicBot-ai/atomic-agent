@@ -26,8 +26,10 @@ export {
   discardStagedPlugin,
   installPluginFromDir,
   PluginInstallError,
+  pluginCodeAllowed,
   removePlugin,
   reviewAndCommit,
+  setPluginCodeAllowed,
   setPluginEnabled,
   setPluginPartEnabled,
   stagePluginCopy,
@@ -42,7 +44,7 @@ export type {
 } from "./plugin-install.js";
 export { listEnabledPluginSkills, loadEnabledPlugins, resetPluginCache } from "./plugin-runtime.js";
 export type { LoadedPlugin, LoadedPlugins, PluginSkillDir } from "./plugin-runtime.js";
-export { loadPluginMcpServers, expandVars, uniqueName } from "./plugin-mcp.js";
+export { loadPluginMcpServers, expandVars, expandUserKeys, uniqueName, userKeyRefs } from "./plugin-mcp.js";
 export type { PluginMcpServers } from "./plugin-mcp.js";
 export { listPluginSubagents, parseSubagentFile } from "./plugin-subagents.js";
 export type { PluginSubagentProfile } from "./plugin-subagents.js";
@@ -121,3 +123,23 @@ export type {
 } from "./plugin-permissions.js";
 export { createPluginInstallReview, decideCodeConsent, inspectStagedPlugin } from "./plugin-install-review.js";
 export type { PluginInstallReport, PluginReviewOptions } from "./plugin-install-review.js";
+export {
+  buildPluginOverview,
+  describePluginSource,
+  formatPluginCounts,
+  hookEventNames,
+  loadPluginOverview,
+  loadPluginOverviews,
+  missingMcpKeys,
+  pluginCodeParts,
+  pluginTrust,
+  readPluginHookEvents,
+} from "./plugin-overview.js";
+export type {
+  BuildPluginOverviewOptions,
+  PluginCounts,
+  PluginOverview,
+  PluginPartKind,
+  PluginPartOverview,
+  PluginTrust,
+} from "./plugin-overview.js";

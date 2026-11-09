@@ -242,6 +242,12 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "enhance",
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
   },
+  // Added with the plugin loader (ATO-954).
+  {
+    name: "plugins",
+    description:
+      "open the Plugins tab: installed plugins, what each brings, on/off switches for a plugin and its parts, code permission and missing keys",
+  },
   {
     name: "goal",
     description:
@@ -363,6 +369,7 @@ describe("menu registry", () => {
     expect(menuChildren("go.manage").map((n) => n.label)).toEqual([
       "Tasks",
       "Skills",
+      "Plugins",
       "Memory",
       "MCP",
       "Integrations",

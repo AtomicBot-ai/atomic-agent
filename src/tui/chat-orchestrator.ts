@@ -63,6 +63,7 @@ import { TuiTelegramOrchestrator } from "./telegram/tui-telegram-orchestrator.js
 import { PrivacyOrchestrator } from "./privacy/privacy-orchestrator.js";
 import { IntegrationsOrchestrator } from "./integrations/integrations-orchestrator.js";
 import { SwarmOrchestrator } from "./swarm/swarm-orchestrator.js";
+import { PluginsOrchestrator } from "./plugins/plugins-orchestrator.js";
 import { IssueReportOrchestrator } from "./issue-report/index.js";
 import {
   RAIL_PAGE_SIZE,
@@ -293,6 +294,7 @@ export class ChatOrchestrator {
   public readonly privacy: PrivacyOrchestrator;
   public readonly integrations: IntegrationsOrchestrator;
   public readonly swarm: SwarmOrchestrator;
+  public readonly plugins: PluginsOrchestrator;
   public readonly issueReport: IssueReportOrchestrator;
   private readonly sessionRail: SessionRailOrchestrator;
   private readonly stopWatchingRoute: (() => void) | null;
@@ -405,6 +407,7 @@ export class ChatOrchestrator {
       this.telegram,
     );
     this.swarm = new SwarmOrchestrator(runtime, bus);
+    this.plugins = new PluginsOrchestrator(bus);
     this.issueReport = new IssueReportOrchestrator(runtime, bus, {
       currentSessionId: () => this.session?.id ?? null,
     });

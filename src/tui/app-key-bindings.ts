@@ -266,8 +266,15 @@ export function isPanelModalOpen(state: TuiState): boolean {
       // must not cycle the nav away mid-typing.
       (state.llmPanel.mode === "cloud" &&
         state.llmPanel.cloudModelFilterFocused));
+  // The remove / allow-code question claims y / Esc: Tab must not leave
+  // it armed behind the user, and Esc must cancel it, not the turn.
+  const pluginsTabBusy =
+    state.uiMode === "debug" &&
+    state.activeTab === "plugins" &&
+    state.pluginsPanel.mode !== "list";
   return (
     tasksTabBusy ||
+    pluginsTabBusy ||
     skillsTabBusy ||
     memoryTabBusy ||
     localModelsTabBusy ||

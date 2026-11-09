@@ -202,6 +202,7 @@ export function registerRuntimeCoreTools(input: {
     skillRegistry,
     dangerous,
     config.tools.shell.envPassthrough,
+    config.paths.stateDir,
   );
   toolRegistry.register(buildToolViewTool());
   // Older stored names stay out of the prompt until checked against actual

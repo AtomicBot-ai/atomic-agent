@@ -29,7 +29,13 @@ Owner: src/plugins/
 
 ## Code consent
 
-Skills (as text), commands, subagent profiles and remote MCP servers work right after install. Parts that start programs on the computer (local stdio MCP servers, hooks, skill scripts) stay off until the user runs `atomic-agent plugin allow-code <name>` or installs with `--accept-code`. The consent is stored as `runsCodeAccepted` and dropped on every update.
+Skills (as text), commands, subagent profiles and remote MCP servers without keys work right after install. Parts that start programs on the computer (local stdio MCP servers, hooks, skill scripts) and MCP servers that read the user's keys stay off until the user runs `atomic-agent plugin allow-code <name>` or installs with `--accept-code`. The consent is stored as `runsCodeAccepted` and dropped on every update.
+
+`skill.run_script` refuses scripts from a plugin skill until that consent is given (the per-call approval still applies after it).
+
+### Keys in MCP entries
+
+`${NAME}` and `${NAME:-default}` anywhere in a server entry (command, args, env, url, headers) are filled from the agent's environment, which includes `<data folder>/.env`. Handing a key to a plugin's server is trusted like running its code, so such a server is skipped until code is allowed. A key that is unset with no default skips the server instead of sending the literal `${NAME}`; the Plugins screen shows it as "needs a key".
 
 ## Slash commands
 

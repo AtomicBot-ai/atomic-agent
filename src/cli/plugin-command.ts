@@ -19,15 +19,20 @@ import {
   updateMarketplaces,
   updatePlugin,
   installedPluginDir,
+  loadPluginOverview,
+  loadPluginOverviews,
+  pluginCodeParts,
   PluginInstallError,
   PluginManifestError,
   readPluginBundle,
   readPluginState,
   removePlugin,
   resetPluginCache,
+  setPluginCodeAllowed,
   setPluginEnabled,
   updatePluginRecord,
   type InstalledPluginRecord,
+  setPluginPartEnabled,
   type PluginBundle,
   type PluginReview,
 } from "../plugins/index.js";
@@ -36,8 +41,8 @@ const HELP = [
   "atomic-agent plugin — manage plugins (Claude / Codex / Cursor plugin packages)",
   "",
   "Subcommands:",
-  "  list                       List installed plugins with what each one brings",
-  "  show <name>                Print a plugin's skills, commands, MCP servers, hooks and notes",
+  "  list [--json]              List installed plugins with what each one brings",
+  "  show <name> [--json]       Print a plugin's skills, commands, MCP servers, hooks and notes",
   "  install <path> [--force] [--yes] [--acknowledge-risk] [--accept-code]",
   "                             Install a plugin from a local folder (copied into the data folder).",
   "                             Parts that run programs (local MCP servers, hooks, scripts) stay off",
@@ -52,8 +57,11 @@ const HELP = [
   "  terminal), a dangerous one needs --acknowledge-risk.",
   "  allow-code <name>          Let a plugin's local MCP servers, hooks and scripts run",
   "  deny-code <name>           Switch those parts off again (skills and remote servers keep working)",
-  "  enable <name>              Switch an installed plugin on",
-  "  disable <name>             Switch a plugin off without removing it",
+  "  enable <name> [--part <id>]",
+  "                             Switch an installed plugin on, or one of its parts",
+  "  disable <name> [--part <id>]",
+  "                             Switch a plugin (or one part) off without removing it.",
+  "                             Part ids: skill:<name>, mcp:<name>, hook:<Event>, command:<name>, agent:<name>",
   "  remove <name>              Uninstall a plugin and delete its files",
   "",
   "  marketplace add <owner/repo | git URL | folder | URL to marketplace.json> [--ref <branch|tag>]",
@@ -65,6 +73,7 @@ const HELP = [
   "Installing never runs plugin code; git hooks are off while fetching.",
   "Plugins live in <data folder>/plugins and are shared with the desktop app.",
   "Skills appear as plugin:skill. MCP servers start on the next agent start.",
+  "--json prints the same overview the /plugins panel and the desktop Plugins screen show.",
 ].join("\n");
 
 export async function pluginCommand(args: string[]): Promise<number> {
@@ -76,15 +85,18 @@ export async function pluginCommand(args: string[]): Promise<number> {
   const stateDir = getConfig().paths.stateDir;
   try {
     switch (sub) {
-      case "list": return list(stateDir);
-      case "show": return show(stateDir, rest[0]);
+      case "list": return rest.includes("--json") ? listJson(stateDir) : list(stateDir);
+      case "show": {
+        const name = rest.find(a => !a.startsWith("--"));
+        return rest.includes("--json") ? showJson(stateDir, name) : show(stateDir, name);
+      }
       case "install": return await install(stateDir, rest);
       case "update":
       case "upgrade": return await update(stateDir, rest);
       case "marketplace":
       case "marketplaces": return await marketplace(stateDir, rest);
       case "enable":
-      case "disable": return toggle(stateDir, rest[0], sub === "enable");
+      case "disable": return toggle(stateDir, rest, sub === "enable");
       case "allow-code":
       case "deny-code": return code(stateDir, rest[0], sub === "allow-code");
       case "remove":
@@ -121,7 +133,7 @@ function show(stateDir: string, name: string | undefined): number {
   if (!bundle) { console.log("Plugin files are missing or unreadable; reinstall it."); return 1; }
   if (bundle.manifest.description) console.log(bundle.manifest.description);
   console.log(`format: ${bundle.format}`);
-  if (bundleRunsCode(bundle)) console.log(`runs code: ${codeParts(bundle).join("; ")} — ${rec.runsCodeAccepted ? "allowed" : "off until you run: atomic-agent plugin allow-code " + name}`);
+  if (bundleRunsCode(bundle)) console.log(`runs code: ${pluginCodeParts(bundle).join("; ")} — ${rec.runsCodeAccepted ? "allowed" : "off until you run: atomic-agent plugin allow-code " + name}`);
   const section = (title: string, items: string[]) => { if (items.length) console.log(`\n${title}:\n${items.map(i => `  ${i}`).join("\n")}`); };
   section("Skills", bundle.skills.map(s => (s.name ? `${name}:${s.name}` : name) + (s.hasScripts ? " (has scripts)" : "")));
   section("Commands", bundle.commands.map(c => `/${name}:${c.name}`));
@@ -267,8 +279,37 @@ function reportError(err: unknown): number {
   throw err;
 }
 
-function toggle(stateDir: string, name: string | undefined, enabled: boolean): number {
-  if (!name) { console.error(`usage: atomic-agent plugin ${enabled ? "enable" : "disable"} <name>`); return 2; }
+/** `skill:<name>`, `mcp:<name>`, `hook:<Event>`, `command:<name>`, `agent:<name>`. */
+const PART_ID_RE = /^(skill|mcp|hook|command|agent):\S+$/;
+
+function toggle(stateDir: string, args: string[], enabled: boolean): number {
+  const verb = enabled ? "enable" : "disable";
+  const usage = `usage: atomic-agent plugin ${verb} <name> [--part skill:<name>|mcp:<name>|hook:<Event>|command:<name>|agent:<name>]`;
+  let name: string | undefined;
+  let part: string | undefined;
+  let partFlag = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === "--part") { partFlag = true; part = args[++i]; continue; }
+    if (a.startsWith("--part=")) { partFlag = true; part = a.slice("--part=".length); continue; }
+    // Any other flag is a typo: never fall back to switching the whole plugin.
+    if (a.startsWith("-")) { console.error(`unknown option: ${a}\n${usage}`); return 2; }
+    if (name !== undefined) { console.error(usage); return 2; }
+    name = a;
+  }
+  if (!name || (partFlag && !PART_ID_RE.test(part ?? ""))) { console.error(usage); return 2; }
+  if (part) {
+    const rec = readPluginState(stateDir).plugins[name];
+    if (!rec) { console.error(`plugin not installed: ${name}`); return 1; }
+    const known = loadPluginOverview(stateDir, rec, process.env).parts.map(p => p.id);
+    if (!known.includes(part)) {
+      console.error(`${name} has no part ${part}. Parts: ${known.length ? known.join(", ") : "none"}`);
+      return 1;
+    }
+    if (!setPluginPartEnabled(stateDir, name, part, enabled)) { console.error(`plugin not installed: ${name}`); return 1; }
+    console.log(`${name} ${part} ${enabled ? "on" : "off"}. Restart running agents to pick up MCP server changes.`);
+    return 0;
+  }
   if (!setPluginEnabled(stateDir, name, enabled)) { console.error(`plugin not installed: ${name}`); return 1; }
   console.log(`${name} ${enabled ? "enabled" : "disabled"}. Restart running agents to pick up its MCP servers.`);
   return 0;
@@ -276,8 +317,7 @@ function toggle(stateDir: string, name: string | undefined, enabled: boolean): n
 
 function code(stateDir: string, name: string | undefined, allow: boolean): number {
   if (!name) { console.error(`usage: atomic-agent plugin ${allow ? "allow-code" : "deny-code"} <name>`); return 2; }
-  const rec = updatePluginRecord(stateDir, name, r => ({ ...r, runsCodeAccepted: allow }));
-  if (!rec) { console.error(`plugin not installed: ${name}`); return 1; }
+  if (!setPluginCodeAllowed(stateDir, name, allow)) { console.error(`plugin not installed: ${name}`); return 1; }
   console.log(allow
     ? `${name} may now run its local MCP servers, hooks and scripts. Restart running agents to start its servers.`
     : `${name}'s local MCP servers, hooks and scripts are off.`);
@@ -307,15 +347,22 @@ function printCodeHint(rec: InstalledPluginRecord, bundle: PluginBundle | null):
   console.log(`  Those parts are off. Read them first, then: atomic-agent plugin allow-code ${rec.name}`);
 }
 
-/** Plain list of what would run, for the consent line. */
-export function codeParts(b: PluginBundle): string[] {
-  const out: string[] = [];
-  const stdio = Object.entries(b.mcpServers).filter(([, s]) => typeof s.command === "string").map(([n]) => n);
-  if (stdio.length) out.push(`local MCP servers: ${stdio.join(", ")}`);
-  if (b.hooksFile || b.manifest.hooksInline) out.push("hooks");
-  const scripted = b.skills.filter(s => s.hasScripts).map(s => s.name || b.name);
-  if (scripted.length) out.push(`skill scripts: ${scripted.join(", ")}`);
-  return out;
+/** Plain list of what would run, for the consent line. Lives in plugin-overview.ts so both UIs share it. */
+export const codeParts: (b: PluginBundle) => string[] = pluginCodeParts;
+
+/** `plugin list --json`: `{ "plugins": PluginOverview[] }`, for the desktop app and scripts. */
+function listJson(stateDir: string): number {
+  console.log(JSON.stringify({ plugins: loadPluginOverviews(stateDir, process.env) }));
+  return 0;
+}
+
+/** `plugin show <name> --json`: one PluginOverview, or a JSON error with exit 1. */
+function showJson(stateDir: string, name: string | undefined): number {
+  if (!name) { console.error("usage: atomic-agent plugin show <name> --json"); return 2; }
+  const rec = readPluginState(stateDir).plugins[name];
+  if (!rec) { console.log(JSON.stringify({ error: `plugin not installed: ${name}` })); return 1; }
+  console.log(JSON.stringify({ plugin: loadPluginOverview(stateDir, rec, process.env) }));
+  return 0;
 }
 
 function remove(stateDir: string, name: string | undefined): number {

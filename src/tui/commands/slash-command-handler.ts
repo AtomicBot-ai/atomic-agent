@@ -426,6 +426,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         { type: "tab_changed", tab: "swarm" },
         { type: "swarm_message_cleared" },
       ]);
+    case "plugins":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "plugins" },
+        { type: "plugins_message_cleared" },
+      ]);
     case "llm":
       return dispatchLlmSub(parsed.args);
     case "model":

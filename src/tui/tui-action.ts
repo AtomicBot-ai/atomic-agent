@@ -17,6 +17,7 @@ import type { TelegramAction } from "./telegram/telegram-actions.js";
 import type { PrivacyAction } from "./privacy/privacy-actions.js";
 import type { IntegrationsAction } from "./integrations/integrations-actions.js";
 import type { SwarmAction } from "./swarm/swarm-actions.js";
+import type { PluginsAction } from "./plugins/plugins-actions.js";
 import type { IssueReportAction } from "./issue-report/issue-report-state.js";
 import type { GoalState } from "../agent/goal/goal-types.js";
 import type { ProvidersAction } from "./providers/providers-actions.js";
@@ -374,6 +375,7 @@ export type TuiAction =
   | PrivacyAction
   | IntegrationsAction
   | SwarmAction
+  | PluginsAction
   | IssueReportAction
   | ProvidersAction
   | OnboardingAction

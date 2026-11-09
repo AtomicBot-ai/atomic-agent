@@ -21,7 +21,9 @@ A plugin is a folder that bundles skills, slash commands, subagent profiles, hoo
 - [marketplace.ts](marketplace.ts): marketplace add / list / update / remove, `plugin install name@marketplace`, `plugin update`. Installs go fetch, stage, `review`, commit (`reviewAndCommit` in plugin-install.ts).
 - [plugin-permissions.ts](plugin-permissions.ts): what a plugin would run (hooks, local MCP commands, scripts), `diffPluginPermissions` between two versions, consent id.
 - [plugin-install-review.ts](plugin-install-review.ts): the review every install and update runs: security scan, permission diff, runs-code consent. See [docs/install-safety.md](docs/install-safety.md).
-- CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts). Marketplaces: [docs/marketplaces.md](docs/marketplaces.md).
+- [plugin-overview.ts](plugin-overview.ts): one view model per installed plugin (counts, parts with their switches, runs code, code consent, missing MCP keys), shared by the `/plugins` panel, `plugin list --json` and the desktop Plugins screen.
+- CLI: `atomic-agent plugin` in [../cli/plugin-command.ts](../cli/plugin-command.ts); `list --json` / `show <name> --json` print overviews, `enable|disable <name> --part <id>` switches one part. Marketplaces: [docs/marketplaces.md](docs/marketplaces.md).
+- TUI: [../tui/plugins/README.md](../tui/plugins/README.md).
 
 ## Ownership and dependencies
 

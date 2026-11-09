@@ -73,6 +73,7 @@ import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
 import { reduceIntegrationsAction } from "./integrations/integrations-panel-reducer.js";
 import { reduceSwarmAction } from "./swarm/swarm-panel-reducer.js";
+import { reducePluginsAction } from "./plugins/plugins-panel-reducer.js";
 import {
   ISSUE_REPORT_LEVELS,
   isIssueReportAction,
@@ -130,6 +131,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (integrationsHandled !== null) return integrationsHandled;
   const swarmHandled = reduceSwarmAction(state, action);
   if (swarmHandled !== null) return swarmHandled;
+  const pluginsHandled = reducePluginsAction(state, action);
+  if (pluginsHandled !== null) return pluginsHandled;
   if (isIssueReportAction(action)) {
     const next = reduceIssueReport(
       state.issueReport,

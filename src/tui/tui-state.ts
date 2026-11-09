@@ -67,6 +67,10 @@ import {
 } from "./integrations/integrations-panel-state.js";
 import type { IssueReportState } from "./issue-report/issue-report-state.js";
 import {
+  createInitialPluginsPanelState,
+  type PluginsPanelState,
+} from "./plugins/plugins-panel-state.js";
+import {
   createInitialSwarmPanelState,
   type SwarmPanelState,
 } from "./swarm/swarm-panel-state.js";
@@ -127,7 +131,8 @@ export type TuiTab =
   | "import"
   | "privacy"
   | "integrations"
-  | "swarm";
+  | "swarm"
+  | "plugins";
 
 /**
  * Top-level UI mode: `chat` is the default single-scroll openclaw-style
@@ -644,6 +649,8 @@ export interface TuiState {
   /** State slice driving the Integrations tab (third-party credentials). */
   integrationsPanel: IntegrationsPanelState;
   swarmPanel: SwarmPanelState;
+  /** State slice driving the Plugins tab (installed plugins, their parts and code consent). */
+  pluginsPanel: PluginsPanelState;
   /** The "Report an issue on GitHub" popup, or `null` when closed. */
   issueReport: IssueReportState | null;
   /** Cloud / local LLM provider registry (hot-swap active text provider). */
@@ -956,6 +963,7 @@ export function createInitialTuiState(
     privacyPanel: createInitialPrivacyPanelState(),
     integrationsPanel: createInitialIntegrationsPanelState(),
     swarmPanel: createInitialSwarmPanelState(),
+    pluginsPanel: createInitialPluginsPanelState(),
     issueReport: null,
     providersPanel: createInitialProvidersPanelState(),
     llmPanel,

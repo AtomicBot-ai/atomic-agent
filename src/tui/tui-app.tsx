@@ -160,6 +160,7 @@ import { handleProvidersTabKey } from "./providers/providers-key-bindings.js";
 import { handlePrivacyTabKey } from "./privacy/privacy-key-bindings.js";
 import { handleIntegrationsTabKey } from "./integrations/integrations-key-bindings.js";
 import { handleSwarmTabKey } from "./swarm/swarm-key-bindings.js";
+import { handlePluginsTabKey } from "./plugins/plugins-key-bindings.js";
 import { ContextMenuPopup, ContextMenuProvider } from "./context-menu/index.js";
 import { createDragIntentTracker } from "./mouse/drag-intent.js";
 import { MouseProvider } from "./mouse/mouse-context.js";
@@ -786,6 +787,16 @@ export interface TuiAppCallbacks {
   onSwarmPairRequested?(unitId: string): void | Promise<void>;
   /** Swarm tab: restart a unit's channel. */
   onSwarmRestartRequested?(unitId: string): void | Promise<void>;
+  /** Plugins tab: re-read installed plugins and their parts. */
+  onPluginsRefreshRequested?(): void;
+  /** Plugins tab: switch a whole plugin on or off. */
+  onPluginToggleRequested?(name: string, enabled: boolean): void | Promise<void>;
+  /** Plugins tab: switch one part (`skill:x`, `mcp:x`, `hook:Event`, `command:x`, `agent:x`). */
+  onPluginPartToggleRequested?(name: string, partId: string, enabled: boolean): void | Promise<void>;
+  /** Plugins tab: allow or stop the plugin's code (same as `plugin allow-code` / `deny-code`). */
+  onPluginCodeTrustRequested?(name: string, allow: boolean): void | Promise<void>;
+  /** Plugins tab: uninstall a plugin and delete its files (asked first). */
+  onPluginRemoveRequested?(name: string): void | Promise<void>;
   /** Import tab: run a dry-run preview of the Hermes import. */
   onImportPreview?(form: ImportFormState): void;
   /** Import tab: execute the import (write sessions / tasks / secrets). */
@@ -1071,6 +1082,12 @@ export function TuiApp({
   }, [state.uiMode, state.activeTab, callbacks]);
 
   useEffect(() => {
+    if (state.uiMode === "debug" && state.activeTab === "plugins") {
+      callbacks.onPluginsRefreshRequested?.();
+    }
+  }, [state.uiMode, state.activeTab, callbacks]);
+
+  useEffect(() => {
     if (
       state.uiMode === "debug" &&
       (state.activeTab === "providers" || state.activeTab === "llm")
@@ -1177,6 +1194,8 @@ export function TuiApp({
     state.uiMode === "debug" && state.activeTab === "integrations";
   const swarmTabActive =
     state.uiMode === "debug" && state.activeTab === "swarm";
+  const pluginsTabActive =
+    state.uiMode === "debug" && state.activeTab === "plugins";
   const terminalSize = useTerminalSize();
   const sidebarVisible = selectRailVisible(state, terminalSize);
   // The `»` restore control is offered only while the fold is the
@@ -1300,6 +1319,7 @@ export function TuiApp({
         !privacyTabActive &&
         !integrationsTabActive &&
         !swarmTabActive &&
+        !pluginsTabActive &&
         !sidebarFocused &&
         !(
           localModelsTabActive &&
@@ -1375,6 +1395,7 @@ export function TuiApp({
       return handleIntegrationsTabKey(input, key, ctx);
     }
     if (swarmTabActive) return handleSwarmTabKey(input, key, ctx);
+    if (pluginsTabActive) return handlePluginsTabKey(input, key, ctx);
     return null;
   };
 

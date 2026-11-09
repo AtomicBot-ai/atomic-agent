@@ -862,6 +862,14 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onSwarmRemoveRequested: (unitId) => orchestrator.swarm.remove(unitId),
         onSwarmPairRequested: (unitId) => orchestrator.swarm.pair(unitId),
         onSwarmRestartRequested: (unitId) => orchestrator.swarm.restart(unitId),
+        onPluginsRefreshRequested: () => orchestrator.plugins.refresh(),
+        onPluginToggleRequested: (name, enabled) =>
+          orchestrator.plugins.setEnabled(name, enabled),
+        onPluginPartToggleRequested: (name, partId, enabled) =>
+          orchestrator.plugins.setPartEnabled(name, partId, enabled),
+        onPluginCodeTrustRequested: (name, allow) =>
+          orchestrator.plugins.setCodeAllowed(name, allow),
+        onPluginRemoveRequested: (name) => orchestrator.plugins.remove(name),
         onUpdateConfirmed: () =>
           parsed.fakeUpdateVersion
             ? // The testing ground must never reach install.sh: the
