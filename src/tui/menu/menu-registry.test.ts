@@ -276,7 +276,7 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "worker",
     description:
-      "act on one running fusion worker: `/worker stop <id>` · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
+      "act on one running fusion worker: `/worker stop <id>` · `/worker steer <id> <note>` (it reads the note at its next step) · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
   },
   {
     name: "fusion",
