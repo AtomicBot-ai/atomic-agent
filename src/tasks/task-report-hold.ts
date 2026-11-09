@@ -14,6 +14,10 @@ import { isQuietAt, nextQuietEnd, type QuietHours } from "./task-report-quiet-ho
  * cannot be delivered (channel down, not paired) stays held and is
  * retried every `retryMs`; it is removed only after a confirmed send.
  *
+ * The table is shared. A short-lived process (`overnight`) can hold a
+ * report and exit before the window ends, so a running agent looks for
+ * such rows every `pollMs` and arms the release itself.
+ *
  * Timers are `unref`ed: a pending release never keeps the process
  * alive, and the next start picks the held rows up again.
  */
@@ -32,15 +36,20 @@ export interface TaskReportHoldOptions {
   now?: () => Date;
   setTimer?: (fn: () => void, ms: number) => { cancel(): void };
   retryMs?: number;
+  pollMs?: number;
 }
 
 /** How long an undelivered digest waits before the next try. */
 export const HELD_REPORT_RETRY_MS = 5 * 60_000;
 
+/** How often a running agent looks for reports another process held. */
+export const HELD_REPORT_POLL_MS = 5 * 60_000;
+
 export class TaskReportHold {
   private readonly now: () => Date;
   private readonly setTimer: (fn: () => void, ms: number) => { cancel(): void };
   private timer: { cancel(): void } | null = null;
+  private pollTimer: { cancel(): void } | null = null;
   private releasing: Promise<void> | null = null;
   private stopped = false;
 
@@ -69,6 +78,7 @@ export class TaskReportHold {
 
   /** Schedule the release of reports held before this process started. */
   start(): void {
+    this.schedulePoll();
     if (this.options.store.list().length === 0) return;
     this.schedule(this.msUntilRelease(this.now()));
   }
@@ -77,6 +87,8 @@ export class TaskReportHold {
     this.stopped = true;
     this.timer?.cancel();
     this.timer = null;
+    this.pollTimer?.cancel();
+    this.pollTimer = null;
   }
 
   /**
@@ -139,6 +151,23 @@ export class TaskReportHold {
   private msUntilRelease(now: Date): number {
     if (!isQuietAt(this.options.quietHours, now)) return 0;
     return nextQuietEnd(this.options.quietHours, now).getTime() - now.getTime();
+  }
+
+  /** Arm the release for rows another process left, when none is armed. */
+  private schedulePoll(): void {
+    if (this.stopped) return;
+    this.pollTimer = this.setTimer(() => {
+      try {
+        if (this.timer === null && this.options.store.list().length > 0) {
+          this.schedule(this.msUntilRelease(this.now()));
+        }
+      } catch (err) {
+        this.options.logger?.warn("held task report check failed", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+      this.schedulePoll();
+    }, this.options.pollMs ?? HELD_REPORT_POLL_MS);
   }
 
   private schedule(ms: number): void {
