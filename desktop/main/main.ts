@@ -5556,7 +5556,7 @@ async function sidebarTest(
         `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}`,
       );
     } else {
-      check("a pinned chat sorts first and is stored", true, "skipped — fewer than two chats in this workspace");
+      process.stdout.write("SKIP a pinned chat sorts first and is stored — fewer than two chats in this workspace\n");
     }
 
     // "Load more" appears only when the page actually hides rows.
@@ -5675,7 +5675,7 @@ async function sidebarTest(
       await js<void>(`window.__openSession(${JSON.stringify(id)})`);
       await wait(1500);
     } else {
-      check("a turn left behind stays out of the open chat and fills its own row", true, "skipped — no second idle chat in this workspace");
+      process.stdout.write("SKIP a turn left behind stays out of the open chat and fills its own row — no second idle chat in this workspace\n");
     }
 
     // The Tasks list is every task, not the TUI rail's running/queued
