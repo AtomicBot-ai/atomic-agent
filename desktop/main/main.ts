@@ -237,7 +237,7 @@ import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
 import { curatedMetaIds, spotlightIds } from "./model-catalog.js";
-import { catalogPullWantsProjector, wholePullProgress } from "./pull-projector.js";
+import { catalogPullWantsProjector, wholePullProgress, withoutLivePullGap } from "./pull-projector.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -1685,10 +1685,12 @@ function wireIpc(client: AgentClient): void {
     A.composioConfigWrite(key, value, res);
     return res;
   });
-  ipcMain.handle("cli:modelsList", () => modelsList());
+  // The window's lists only: while a pull runs the weights are on disk before the projector is (ATO-1331).
+  const listedNow = <R extends Parameters<typeof withoutLivePullGap>[0]>(list: R): R => withoutLivePullGap(list, downloadRunning()?.id ?? null);
+  ipcMain.handle("cli:modelsList", () => modelsList().then(listedNow));
   // Review fix (item 5): the chat route's half of the catalogue, subtracted
   // by the CLI's own embedding catalogue instead of by a guess at names.
-  ipcMain.handle("cli:chatModelsList", () => chatModelsList());
+  ipcMain.handle("cli:chatModelsList", () => chatModelsList().then(listedNow));
   ipcMain.handle("cli:modelsUse", (_event, id: unknown) =>
     typeof id === "string" ? modelsUse(id) : { ok: false, error: "model id required" },
   );
@@ -1711,17 +1713,18 @@ function wireIpc(client: AgentClient): void {
     const withProjector = mmproj || catalogPullWantsProjector(id);   // ATO-1331: every catalogue pull, whoever asked
     const whole = withProjector ? wholePullProgress(id) : null;
     const started = modelsPull(id, (line) => {
-      const progress = parsePullProgress(line, "weights");
+      const parsed = parsePullProgress(line, "weights");
+      const progress = whole ? whole(line, parsed) : parsed;
       A.downloadProgress(id, progress);
-      pullFrame(slot, { id, line, ...(whole ? whole(line, progress) : progress) });
+      pullFrame(slot, { id, line, ...progress });
     }, withProjector);
     pull = slot = { ...started, kind: "weights", id, last: null };
     void started.done.then((res) => {
       pull = null;
-      A.downloadFinished(id, res);
       /* `models pull --mmproj` exits 0 when only the projector failed, and says
          so on stderr (src/cli/models-downloads.ts describeProjectorSkipped). */
       const projectorSkipped = withProjector && res.ok && /^note: projector download failed/m.test(res.stderr);
+      A.downloadFinished(id, res, projectorSkipped);
       send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null, ...(projectorSkipped ? { projectorSkipped: true } : {}) });
       onDone?.(res, projectorSkipped);
     });

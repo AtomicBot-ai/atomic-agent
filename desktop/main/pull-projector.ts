@@ -61,3 +61,19 @@ export function projectorOnDisk(modelDir: string): boolean {
     return false;
   }
 }
+
+/**
+ * A pull in flight has its weights on disk while its projector is still a
+ * `.part`: that is a download under way, not a projector missing.
+ */
+export function withoutLivePullGap<R extends { models?: Array<{ id: string; projectorMissing?: boolean }> }>(list: R, pullingId: string | null): R {
+  if (!pullingId || !list.models) return list;
+  return {
+    ...list,
+    models: list.models.map((m) => {
+      if (m.id !== pullingId || !m.projectorMissing) return m;
+      const { projectorMissing: _inFlight, ...settled } = m;
+      return settled;
+    }),
+  } as R;
+}

@@ -1372,7 +1372,7 @@ const LLMP = {
   externalDraft:null, externalInvalid:false, steerUrl:null,
   fallbackPicker:null, // {cursor}
   daemonPhase:null, // 'starting' | 'stopping' while a `models start|stop` runs (the TUI's daemonPhase)
-  pulling:null, pullLog:[], // {kind:'chat'|'embedding', id} while a `models pull[-embedding]` streams
+  pulling:null, pullLog:[], pullFrame:null, // {kind:'chat'|'embedding', id} while a `models pull[-embedding]` streams
   tune:{busy:null, msg:null, err:null}, // the Thinking knobs and the chat template: busy = the config path being written; where = 'tune' | 'adv', the card the last write's line goes under
   timer:null, seq:0, inflight:null,
 };
@@ -18368,16 +18368,17 @@ async function selActivate(row) {
 
 /** How the composer's pull ended. No Switch for a model that lost its projector: it stays a choice in the list. */
 function selPullFinished(id, ev) {
-  if (ev.ok && ev.projectorSkipped === true) toast('Downloaded without vision', projectorSkippedText(), 'bad');
+  if (ev.ok && ev.projectorSkipped === true) { bswSnapshot(); toast('Downloaded without vision', projectorSkippedText(), 'bad'); }
   else if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
   else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
 }
 
 function selPull(id) {
-  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
+  // false: refused. A Retry keeps its row on that (dlRetry); the other callers do not read it.
+  if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return false; }
   // ATO-507: no room on the models disk for it: say so instead of a pull that fails an hour in.
   const disk = modelDiskFit((SEL.local || []).find((m) => m && m.id === id));
-  if (!disk.ok) { toast('Not enough disk space', disk.text, 'info'); return; }
+  if (!disk.ok) { toast('Not enough disk space', disk.text, 'info'); return false; }
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
   closeSelector(); render();
   toast('Downloading in the background', 'You can keep chatting and choose another model', 'info');
@@ -27178,19 +27179,31 @@ function llmHfRamWarning(fileSizeGb, hostRamGb) {
 }
 /* llm-panel.tsx DownloadBanner: the CLI streams text lines ("[===   ] 48%  6.40 GB / 13.27 GB  file.gguf (14.2 GB)").
    The banner reads the percent and sizes out of the last line and draws a real bar; a line without them stays as text. */
-function llmPullView(line) {
+function llmPullView(line, frame) {
   const text = String(line || 'starting…');
   const pctM = text.match(/(\d{1,3})%/);
   const gbM = text.match(/([\d.]+)\s*GB\s*\/\s*([\d.]+)\s*GB\s*(.*)$/);
   const pct = pctM ? Math.max(0, Math.min(100, Number(pctM[1]))) : null;
-  if (!gbM) return {pct, meta: text.replace(/^\[[=\s>-]*\]\s*/, ''), file: ''};
-  const file = gbM[3].replace(/\s*\([\d.]+\s*GB\)\s*$/, '').trim();
   const size = (gb) => gb < 1 ? Math.round(gb * 1024) + ' MB' : gb.toFixed(1) + ' GB';
-  const meta = size(Number(gbM[1])) + ' of ' + size(Number(gbM[2])) + (pct === null ? '' : ' · ' + pct + '%');
-  return {pct, meta, file};
+  const said = gbM
+    ? {pct, meta: size(Number(gbM[1])) + ' of ' + size(Number(gbM[2])) + (pct === null ? '' : ' · ' + pct + '%'),
+       file: gbM[3].replace(/\s*\([\d.]+\s*GB\)\s*$/, '').trim()}
+    : {pct, meta: text.replace(/^\[[=\s>-]*\]\s*/, ''), file: ''};
+  /* ATO-1331: the line counts weights and then projector, each from 0. Main's
+     frame is the whole pull, as the download card reads it. */
+  if (!frame || frame.kind !== 'weights' || typeof frame.percent !== 'number') return said;
+  const whole = Math.max(0, Math.min(100, frame.percent));
+  const GIB = 1024 * 1024 * 1024;
+  return {pct: whole, file: said.file,
+    meta: frame.totalBytes > 0 ? size((frame.transferredBytes || 0) / GIB) + ' of ' + size(frame.totalBytes / GIB) + ' · ' + whole + '%' : said.meta};
+}
+/** The last sample with a percent, for the pull on screen; a line without one keeps the bar where it was. */
+function llmPullFrame() {
+  const p = LLMP.pulling, f = LLMP.pullFrame;
+  return p && f && f.id === p.id ? f : null;
 }
 function llmPaintPull(line) {
-  const v = llmPullView(line);
+  const v = llmPullView(line, llmPullFrame());
   const meta = document.getElementById('llm-pull-meta'); if (meta) meta.textContent = v.meta;
   const file = document.getElementById('llm-pull-file'); if (file) { file.textContent = v.file; file.title = v.file; }
   const bar = document.getElementById('llm-pull-bar');
@@ -27198,7 +27211,7 @@ function llmPaintPull(line) {
 }
 function llmDownloadBannerHTML() {
   const p = LLMP.pulling;
-  const v = llmPullView(LLMP.pullLog[LLMP.pullLog.length - 1]);
+  const v = llmPullView(LLMP.pullLog[LLMP.pullLog.length - 1], llmPullFrame());
   const w = v.pct === null ? 0 : v.pct;
   // ST-21: a blue notice; the pull subscriber repaints #llm-pull-meta and #llm-pull-bar in place.
   return '<div class="tk-notice tk-notice--blue llm-dl"><span class="tk-ico tk-ico--sm tk-ico--blue">' + ic('download') + '</span>'
@@ -27694,7 +27707,7 @@ function llmNoRoom(m) {
 function llmPull(kind, id) {
   if (!BR) return;
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
-  LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; llmRepaint();
+  LLMP.pulling = {kind, id}; LLMP.pullLog = ['starting ' + id + '…']; LLMP.pullFrame = null; llmRepaint();
   const p = kind === 'embedding' ? BR.modelsPullEmbedding(id) : BR.modelsPull(id, {trigger: 'settings'});
   p.then((res) => { if (res && res.ok === false) { LLMP.pulling = null; LLMP.statusErr = res.error || 'could not start the download'; llmRepaint(); } });
 }
@@ -28292,6 +28305,7 @@ if (BR) {
 if (BR) {
   BR.onPull((ev) => {
     if (!ev || !LLMP.pulling) return;
+    if (typeof ev.percent === 'number') LLMP.pullFrame = ev;
     if (ev.line) { LLMP.pullLog.push(ev.line); llmPaintPull(ev.line); }
     if (ev.done) {
       const p = LLMP.pulling; LLMP.pulling = null;

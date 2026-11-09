@@ -96,11 +96,12 @@ function renderer(names, extra) {
     toasts: [],
     fails: [],
     refreshed: 0,
+    snapshots: 0,
     ...extra,
   });
   vm.runInContext(`
     function toast(title, text, tone) { toasts.push({ title, text, tone }); }
-    function bswSnapshot() {}
+    function bswSnapshot() { snapshots++; }
     function llmRefresh() { refreshed++; }
     function llmRepaint() {}
     function dlFail(job, error, retry) { fails.push({ job, error, retry }); }
@@ -114,6 +115,7 @@ test("the composer's pull that lost the projector offers no Switch and says text
   const c = renderer(["selPullFinished"]);
   c.selPullFinished("gemma-4-e4b", { ok: true, projectorSkipped: true });
   assert.equal(c.DL.ready, null);
+  assert.equal(c.snapshots, 1, "the weights are on disk: the chip and the picker read the list again");
   assert.equal(c.toasts[0].tone, "bad");
   assert.match(c.toasts[0].text, /text only/);
   c.selPullFinished("gemma-4-e4b", { ok: true });
@@ -148,4 +150,48 @@ test("a model on disk without its projector does not promise images", () => {
   assert.match(c.modelFactsLine(row), /reads images/);
   assert.doesNotMatch(c.modelFactsLine({ ...row, projectorMissing: true }), /reads images/);
   assert.match(c.modelFactsLine({ ...row, projectorMissing: true }), /text only/);
+});
+
+test("a Retry the disk check refuses says so, so dlRetry keeps its row", () => {
+  const c = renderer(["selPull"], { SEL: { local: [{ id: "m" }] }, BR: {} });
+  vm.runInContext(`
+    function xpullOwner() { return null; }
+    function dlChipBusy() { return false; }
+    function modelDiskFit() { return { ok: false, text: "no room" }; }
+  `, c);
+  assert.equal(c.selPull("m"), false);
+  assert.equal(c.SEL.pulling, undefined, "nothing started");
+});
+
+const sevenGib = 7 * GIB;
+test("Settings' banner follows the whole pull, and keeps the agent's line for anything else", () => {
+  const c = vm.createContext({});
+  vm.runInContext(fn("llmPullView"), c);
+  const line = "[====                ] 20%  0.20 GB / 1.00 GB  mmproj-F16.gguf";
+  const frame = { kind: "weights", percent: 90, transferredBytes: 6 * GIB, totalBytes: sevenGib };
+  const whole = c.llmPullView(line, frame);
+  assert.equal(whole.pct, 90);
+  assert.equal(whole.meta, "6.0 GB of 7.0 GB · 90%");
+  assert.equal(whole.file, "mmproj-F16.gguf");
+  assert.equal(c.llmPullView("downloading mmproj mmproj-F16.gguf", frame).pct, 90, "a line with no percent does not empty the bar");
+  assert.equal(c.llmPullView(line).pct, 20);
+  const hf = c.llmPullView("Model (mmproj) 40% (12.0 / 30.0 MB)", { kind: "projector", percent: 40, transferredBytes: 12e6, totalBytes: 30e6 });
+  assert.match(hf.meta, /\(mmproj\)/, "a Hugging Face projector keeps its own label");
+});
+
+test("the model holding the pull slot is not called missing a projector; the others still are", () => {
+  const list = { ok: true, models: [{ id: "a", projectorMissing: true }, { id: "b", projectorMissing: true }, { id: "c" }] };
+  const during = P.withoutLivePullGap(list, "a");
+  assert.equal("projectorMissing" in during.models[0], false);
+  assert.equal(during.models[1].projectorMissing, true);
+  assert.equal(P.withoutLivePullGap(list, null), list);
+  const failed = { ok: false, error: "x" };
+  assert.equal(P.withoutLivePullGap(failed, "a"), failed);
+});
+
+test("analytics keep the skipped projector", () => {
+  const catalog = readFileSync(new URL("../main/analytics/catalog.ts", import.meta.url), "utf8");
+  assert.ok(catalog.includes("projector_skipped: bool"), "the catalogue drops a property it does not list");
+  assert.ok(main.includes("A.downloadFinished(id, res, projectorSkipped);"));
+  assert.ok(main.indexOf("const progress = whole ? whole(line, parsed) : parsed;") < main.indexOf("A.downloadProgress(id, progress);"));
 });

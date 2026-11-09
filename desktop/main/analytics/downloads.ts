@@ -103,7 +103,7 @@ export function downloadCancelRequested(): void {
 }
 
 /** The pull's `done`. */
-export function downloadFinished(id: string, res: { ok?: boolean; error?: string | null }): void {
+export function downloadFinished(id: string, res: { ok?: boolean; error?: string | null }, projectorSkipped = false): void {
   try {
     const d = current && current.id === id ? current : null;
     current = null;
@@ -121,6 +121,8 @@ export function downloadFinished(id: string, res: { ok?: boolean; error?: string
       // megabits per second, over the whole download
       avg_mbps: bytes > 0 && secs > 0 ? (bytes * 8) / 1e6 / secs : null,
       percent_reached: ok ? 100 : Math.round(d.maxPercent),
+      // `ok` means the weights landed: the agent exits 0 when only the projector failed (ATO-1331).
+      projector_skipped: projectorSkipped,
     });
   } catch {
     /* never */
@@ -138,6 +140,7 @@ export function downloadRefusedBusy(id: string, trigger?: unknown): void {
       ms: 0,
       avg_mbps: null,
       percent_reached: 0,
+      projector_skipped: false,
     });
   } catch {
     /* never */

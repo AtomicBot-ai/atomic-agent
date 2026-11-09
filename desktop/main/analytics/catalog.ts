@@ -163,6 +163,7 @@ export const EVENTS: Record<string, EventSpec> = {
       ms,
       avg_mbps: num({ decimals: 1, nullable: true }),
       percent_reached: int({ max: 100, nullable: true }),
+      projector_skipped: bool,
     },
   },
   hf_lookup: {
