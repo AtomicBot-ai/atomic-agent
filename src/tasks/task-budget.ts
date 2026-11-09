@@ -19,6 +19,7 @@ export const TASK_BUDGET_COLUMNS = [
   { name: "max_duration_ms", type: "INTEGER" },
   { name: "spent_usd", type: "REAL" },
   { name: "elapsed_ms", type: "INTEGER" },
+  { name: "stop_cause", type: "TEXT" },
 ] as const;
 
 /**

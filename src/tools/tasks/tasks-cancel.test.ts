@@ -40,6 +40,7 @@ function makeRecord(): TaskRecord {
     maxDurationMs: null,
     spentUsd: null,
     elapsedMs: null,
+    stopCause: null,
   };
 }
 

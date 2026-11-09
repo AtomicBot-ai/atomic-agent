@@ -135,6 +135,7 @@ interface TaskRow {
   max_duration_ms?: number | null;
   spent_usd?: number | null;
   elapsed_ms?: number | null;
+  stop_cause?: string | null;
 }
 
 interface RunningRow {
@@ -183,6 +184,7 @@ export class TaskStore {
   private readonly assignSessionStmt: Database.Statement;
   private readonly recordSpendStmt: Database.Statement | null;
   private readonly recordElapsedStmt: Database.Statement | null;
+  private readonly recordStopCauseStmt: Database.Statement | null;
   private readonly resetSpendStmt: Database.Statement | null;
   /**
    * Why this database has no budget columns (see `ensureBudgetColumns`),
@@ -209,10 +211,10 @@ export class TaskStore {
     this.budgetsUnavailable = ensureBudgetColumns(this.db);
     const withBudgets = this.budgetsUnavailable === null;
     const budgetColumns = withBudgets
-      ? ",\n         max_cost_usd, max_duration_ms, spent_usd, elapsed_ms"
+      ? ",\n         max_cost_usd, max_duration_ms, spent_usd, elapsed_ms, stop_cause"
       : "";
     const budgetValues = withBudgets
-      ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd, @elapsed_ms"
+      ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd, @elapsed_ms, @stop_cause"
       : "";
     this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(options.dbFile);
@@ -394,9 +396,12 @@ export class TaskStore {
             WHERE id = @id`,
         )
       : null;
+    this.recordStopCauseStmt = withBudgets
+      ? this.db.prepare(`UPDATE tasks SET stop_cause = @stop_cause WHERE id = @id`)
+      : null;
     this.resetSpendStmt = withBudgets
       ? this.db.prepare(
-          `UPDATE tasks SET spent_usd = NULL, elapsed_ms = NULL WHERE id = @id`,
+          `UPDATE tasks SET spent_usd = NULL, elapsed_ms = NULL, stop_cause = NULL WHERE id = @id`,
         )
       : null;
   }
@@ -454,6 +459,7 @@ export class TaskStore {
       max_duration_ms: maxDurationMs,
       spent_usd: null,
       elapsed_ms: null,
+      stop_cause: null,
     };
     this.insertStmt.run(this.bindRow(row));
     return rowToRecord(row);
@@ -838,6 +844,14 @@ export class TaskStore {
     return this.get(id);
   }
 
+  /**
+   * Note which ceiling ended the task's run, written just before it is
+   * marked completed. A no-op on a database without budget columns.
+   */
+  recordStopCause(id: string, stopCause: string): void {
+    this.recordStopCauseStmt?.run({ id, stop_cause: stopCause });
+  }
+
   close(): void {
     this.db.close();
   }
@@ -851,6 +865,7 @@ export class TaskStore {
         max_duration_ms: row.max_duration_ms ?? null,
         spent_usd: row.spent_usd ?? null,
         elapsed_ms: row.elapsed_ms ?? null,
+        stop_cause: row.stop_cause ?? null,
       };
     }
     const bare = { ...row };
@@ -858,6 +873,7 @@ export class TaskStore {
     delete bare.max_duration_ms;
     delete bare.spent_usd;
     delete bare.elapsed_ms;
+    delete bare.stop_cause;
     return bare;
   }
 
@@ -929,6 +945,7 @@ function rowToRecord(row: TaskRow): TaskRecord {
     maxDurationMs: row.max_duration_ms ?? null,
     spentUsd: row.spent_usd ?? null,
     elapsedMs: row.elapsed_ms ?? null,
+    stopCause: row.stop_cause ?? null,
   };
 }
 
@@ -961,6 +978,7 @@ function recordToRow(record: TaskRecord): TaskRow {
     max_duration_ms: record.maxDurationMs ?? null,
     spent_usd: record.spentUsd ?? null,
     elapsed_ms: record.elapsedMs ?? null,
+    stop_cause: record.stopCause ?? null,
   };
 }
 

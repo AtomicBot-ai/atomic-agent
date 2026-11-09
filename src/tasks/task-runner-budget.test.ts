@@ -93,6 +93,33 @@ describe("TaskRunner budgets", () => {
     expect(reports[0]).toMatchObject({ spentUsd: 2.1, maxCostUsd: 2 });
   });
 
+  it("stores which ceiling ended a completed run", async () => {
+    const { runner } = runnerWith([{ reason: "max_steps", stopCause: "time_ceiling" }]);
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "capped",
+      origin: "cli",
+      maxAttempts: 1,
+      maxDurationMs: 60_000,
+    });
+    const final = await runner.runOne(task.id);
+    expect(final?.status).toBe("completed");
+    expect(final?.stopCause).toBe("time_ceiling");
+  });
+
+  it("stores no stop cause for a run that finished on its own", async () => {
+    const { runner } = runnerWith([{}]);
+    const task = store.create({
+      sessionId: session.id,
+      userMessage: "done",
+      origin: "cli",
+      maxAttempts: 1,
+    });
+    const final = await runner.runOne(task.id);
+    expect(final?.status).toBe("completed");
+    expect(final?.stopCause).toBeNull();
+  });
+
   it("passes no ceilings for a task without its own, so config decides", async () => {
     const { runner, seen } = runnerWith([{ spendUsd: 0 }]);
     const task = store.create({

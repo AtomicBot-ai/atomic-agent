@@ -609,6 +609,11 @@ export class TaskRunner {
           runFacts(result),
         );
       }
+      // `completed` also covers a run a ceiling ended; the row says which,
+      // so a reader does not take unfinished work for finished.
+      if (result.stopCause !== undefined) {
+        this.options.store.recordStopCause(claimed.id, result.stopCause);
+      }
       const completed = this.options.store.markCompleted(claimed.id);
       this.recordTerminal(completed);
       // Report off the completed row BEFORE the recurring requeue —

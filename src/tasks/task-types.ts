@@ -153,6 +153,12 @@ export interface TaskRecord {
    * of the current firing. Kept only for a task with `maxDurationMs`.
    */
   elapsedMs: number | null;
+  /**
+   * Which ceiling ended a run the store calls `completed`
+   * (`RunTurnResult.stopCause`, e.g. `time_ceiling`, `cost_ceiling`).
+   * `null` when the agent finished on its own.
+   */
+  stopCause: string | null;
 }
 
 /**
