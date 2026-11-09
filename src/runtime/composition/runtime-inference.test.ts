@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as configuration from "../../config/index.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import { LlamaServerClient } from "../../llm/llama-server-client.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
@@ -198,7 +199,8 @@ describe("runtime provider/context/fallback/reload phases", () => {
     const wired = connectRuntimeFallback({}, fixture.deps);
     if (!wired.llmCompleteStream) throw new Error("stream fixture missing");
     const noSession = { prompt: params.prompt, grammar: params.grammar, slotId: params.slotId };
-    const stream = wired.llmCompleteStream({ ...noSession, providerId: "served" });
+    // The type asks for a session; a caller outside a turn has none at run time.
+    const stream = wired.llmCompleteStream({ ...noSession, providerId: "served" } as LlmStreamParams);
     let next = await stream.next();
     while (!next.done) next = await stream.next();
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.00002);

@@ -223,6 +223,8 @@ describe("compaction on small context windows (ATO-257)", () => {
   function windowed(window: number) {
     return (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: window, conversationMaxTokens: 0,
       completionMaxTokens: 16_384,
+      // The worst case these pin: the full scaffold, which config can still select over the auto compact one.
+      compactPrompt: false,
       toolDescriptors: padWords > 0 ? [{ name: "reference.pad", summary: "word ".repeat(padWords).trim(), argsSchema: "{}" }] : [] });
   }
   beforeEach(() => {

@@ -438,14 +438,19 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   // ── skill / tool ─────────────────────────────────────────────────────────
   ["skill.view", obj({ name: stringSchema }, ["name"])],
   ["tool.view", obj({ name: stringSchema }, ["name"])],
-  // ATO-486. No minItems/maxItems: the runtime caps the list
-  // (`PLAN_MAX_ITEMS`) and an empty list is how the plan is cleared.
+  // ATO-486. The runtime caps the list (`PLAN_MAX_ITEMS`) and an empty
+  // list is how the plan is cleared, so `minItems: 0` constrains nothing.
+  // It is there because the items nest an object: a bound keeps this one
+  // off the strict path (like `os.screen.point`), since the strict
+  // null-drop and tagged-call narrowing walk the top level only
+  // (openai-tool-call-adapter.test.ts pins it).
   [
     "plan.update",
     obj(
       {
         items: {
           type: "array",
+          minItems: 0,
           items: obj(
             {
               step: stringSchema,

@@ -31,9 +31,16 @@ const CAPS: CapabilitiesSummary = {
   hasNotifications: true,
 };
 
+/**
+ * The catalog with search mode off, as the runtime renders it:
+ * `tool.search` is only mounted while search mode is on
+ * (`applyToolSearch`), and its presence switches the prefix text.
+ */
+const CATALOG = DEFAULT_TOOL_DESCRIPTORS.filter((d) => d.name !== "tool.search");
+
 function prefix(compact: boolean, toolTransport?: "grammar" | "native_tools"): string {
   return buildStablePrefix({
-    toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+    toolDescriptors: CATALOG,
     capabilities: CAPS,
     skillCatalog: [],
     ...(toolTransport ? { toolTransport } : {}),
@@ -57,7 +64,7 @@ describe("compact scaffold size", () => {
     const omitted = prefix(false);
     expect(
       buildStablePrefix({
-        toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+        toolDescriptors: CATALOG,
         capabilities: CAPS,
         skillCatalog: [],
         compact: false,
@@ -84,7 +91,7 @@ describe("compact scaffold content", () => {
   });
 
   it("renders every frequent tool's argsSchema verbatim (no drift from the grammar)", () => {
-    for (const d of applyCompactToolForms(DEFAULT_TOOL_DESCRIPTORS)) {
+    for (const d of applyCompactToolForms(CATALOG)) {
       if (d.tier === "rare") continue;
       expect(compact).toContain(`- ${d.name} — ${d.summary}\n  args: ${d.argsSchema}`);
     }
@@ -244,7 +251,7 @@ describe("buildPrompt compact wiring", () => {
   ) =>
     buildPrompt({
       session,
-      toolDescriptors: DEFAULT_TOOL_DESCRIPTORS,
+      toolDescriptors: CATALOG,
       capabilities: CAPS,
       skillCatalog: skills,
       profile: {
