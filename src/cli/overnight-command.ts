@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { closeSync, mkdirSync, openSync, statSync } from "node:fs";
 import { join } from "node:path";
 
+import type { ApprovalDecision } from "../approval/approval-gate.js";
 import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
@@ -176,6 +177,19 @@ export interface OvernightDeps {
   cwd?: string;
 }
 
+/**
+ * The answer to a prompt nobody is there to see. `automatic`, so the
+ * model is not told a person pressed Deny and to ask what they want.
+ */
+export function unattendedDenial(approvalId: string): ApprovalDecision {
+  return {
+    approvalId,
+    approved: false,
+    automatic: true,
+    reason: "this is an unattended overnight run and nobody is there to approve it",
+  };
+}
+
 export async function overnightCommand(argv: string[], deps: OvernightDeps = {}): Promise<number> {
   if (argv.includes("-h") || argv.includes("--help")) {
     process.stdout.write(HELP);
@@ -296,8 +310,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
       },
     },
   });
-  // No reason on a deny: it would reach the model as the user's own words.
-  resolveApproval = (approvalId) => runtime.approvals.resolve({ approvalId, approved: false });
+  resolveApproval = (approvalId) => runtime.approvals.resolve(unattendedDenial(approvalId));
   // This process runs one task. Its scheduler would otherwise take
   // leadership whenever no desktop holds it and drain unrelated due
   // tasks from the shared queue for hours, under this run's approval

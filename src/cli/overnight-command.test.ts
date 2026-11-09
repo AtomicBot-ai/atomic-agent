@@ -12,6 +12,7 @@ import {
   installStopSignals,
   overnightCommand,
   overnightTaskInput,
+  unattendedDenial,
 } from "./overnight-command.js";
 
 /**
@@ -203,5 +204,16 @@ describe("installStopSignals", () => {
     expect(target.listenerCount("SIGINT")).toBe(0);
     expect(target.listenerCount("SIGTERM")).toBe(0);
     expect(target.listenerCount("SIGHUP")).toBe(0);
+  });
+});
+
+describe("unattendedDenial", () => {
+  it("is an automatic decision with a system reason, not a person's no", () => {
+    expect(unattendedDenial("a1")).toEqual({
+      approvalId: "a1",
+      approved: false,
+      automatic: true,
+      reason: expect.stringContaining("nobody is there"),
+    });
   });
 });
