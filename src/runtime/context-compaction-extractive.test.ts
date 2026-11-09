@@ -110,6 +110,35 @@ describe("auto compaction mode", () => {
     }
   });
 
+  it("asks the model on a local route without prefix reuse once the window plans a large summary (ATO-895)", async () => {
+    const wide = (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: 64000, conversationMaxTokens: 24000 });
+    const f = fixture("auto", { local: true, prefixReuse: "none" }, history(), wide);
+    f.config.summaryMaxTokens = 2048;
+    expect(await f.compactSession("chat")).toMatchObject({ status: "compacted" });
+    expect(f.complete).toHaveBeenCalled();
+    expect(f.stored().compaction).toMatchObject({ model: "test-model" });
+    expect(f.stored().compaction).not.toHaveProperty("kind");
+  });
+
+  it("keeps a 16k no-reuse window extractive even when it plans a large summary (ATO-895)", async () => {
+    const narrow = (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: 16384, conversationMaxTokens: 6000 });
+    const f = fixture("auto", { local: true, prefixReuse: "none" }, history(), narrow);
+    f.config.summaryMaxTokens = 2048;
+    expect(await f.compactSession("chat")).toMatchObject({ status: "compacted" });
+    expect(f.complete).not.toHaveBeenCalled();
+    expect(f.stored().compaction).toMatchObject({ kind: "extractive" });
+  });
+
+  it("asks the model on a 32k no-reuse window (ATO-895)", async () => {
+    const mid = (session: SessionState): BuildPromptInput => ({ ...input(session), contextWindow: 32768, conversationMaxTokens: 12000 });
+    const f = fixture("auto", { local: true, prefixReuse: "none" }, history(), mid);
+    f.config.summaryMaxTokens = 2048;
+    expect(await f.compactSession("chat")).toMatchObject({ status: "compacted" });
+    expect(f.complete).toHaveBeenCalled();
+    expect(f.stored().compaction).toMatchObject({ model: "test-model" });
+    expect(f.stored().compaction).not.toHaveProperty("kind");
+  });
+
   it("falls back to an extractive checkpoint when the model summary fails; model mode does not", async () => {
     const auto = fixture("auto");
     auto.complete.mockRejectedValue(new Error("provider down"));
