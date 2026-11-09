@@ -706,3 +706,31 @@ describe("buildOpenAiChatBody: the template's thinking switch", () => {
     expect(body.chat_template_kwargs).toEqual({ enable_thinking: true });
   });
 });
+
+describe("buildOpenAiChatBody: reasoning handed back to a local template (ATO-887)", () => {
+  const messages = {
+    system: "sys",
+    droppedSummary: null,
+    tail: "### respond\nRespond now.",
+    turns: [
+      { kind: "user" as const, text: "read a.txt" },
+      { kind: "assistant_tool_call" as const, tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "need the file" },
+      { kind: "tool_result" as const, tool: "os.fs.read", status: "ok" as const, body: "hello", truncated: false },
+    ],
+  };
+  const tools = [{ type: "function" as const, function: { name: "os__fs__read", parameters: { type: "object" } } }];
+  const ask = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
+    buildOpenAiChatBody({ prompt: "flat", messages, tools } as Parameters<typeof buildOpenAiChatBody>[0], "m", false, undefined, undefined, undefined, undefined, options);
+  const assistant = (body: Record<string, unknown>) =>
+    (body.messages as Array<Record<string, unknown>>).find((m) => m.role === "assistant");
+
+  it("sends reasoning_content to a server that renders the chat template", () => {
+    expect(assistant(ask({ providerKind: "openai-compatible", templateKwargs: true }))?.reasoning_content).toBe("need the file");
+  });
+
+  it("keeps it off the wire for a cloud API", () => {
+    for (const options of [{ providerKind: "openai-compatible" }, { providerKind: "openrouter" }, {}]) {
+      expect(assistant(ask(options))).not.toHaveProperty("reasoning_content");
+    }
+  });
+});

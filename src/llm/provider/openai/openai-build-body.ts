@@ -102,6 +102,9 @@ export function buildOpenAiChatBody(
     resolveMessageShape(filtered, options) === "native" && filtered.messages
       ? buildNativeMessages(filtered.messages, {
           nameEscape: options.nameEscape ?? nameEscape,
+          // A local server renders the template, which reads the
+          // reasoning back where the model expects it (ATO-887).
+          ...(options.templateKwargs ? { preserveReasoning: true } : {}),
         })
       : [
           {
