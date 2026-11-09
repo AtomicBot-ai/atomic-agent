@@ -204,6 +204,27 @@ describe("ApprovalModal", () => {
     expect(frame).not.toContain("keys work while the input is empty");
   });
 
+  it("offers Allow always with the rule it saves, only where it can be saved (ATO-1142)", () => {
+    const offered = frameOf(
+      request({
+        commandShape: "git",
+        commandArgv: ["git", "status"],
+        workdir: "/work/app",
+      }),
+    );
+    expect(offered).toContain('Always allow "git status" in this project');
+    expect(offered).toContain("ctrl+n");
+    // No argv (a compound line) or no project: nothing to save.
+    expect(frameOf(request({ commandShape: "git", workdir: "/work/app" }))).not.toContain("ctrl+n");
+    expect(
+      frameOf(request({ commandShape: "git", commandArgv: ["git", "status"] })),
+    ).not.toContain("ctrl+n");
+    // Never for a category that is never granted.
+    expect(
+      frameOf(request({ category: "trust_config", tool: "os.fs.write", workdir: "/work/app" })),
+    ).not.toContain("Always allow");
+  });
+
   it("withholds the shape grant for a shell request with no command shape", () => {
     // Opaque interpreters (bash -c …) reach the prompt with no
     // commandShape, so the shape grant must not be offered — only the

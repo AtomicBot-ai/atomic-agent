@@ -42,7 +42,7 @@ function transportError(message: string) {
 
 describe("isApprovalAnswer", () => {
   it("takes the offered keys, yes/no and an empty line, in any case", () => {
-    for (const line of ["y", "Y", "yes", " YES ", "n", "no", "N", "s", "a", "", "  "]) {
+    for (const line of ["y", "Y", "yes", " YES ", "n", "no", "N", "s", "a", "w", "W", "", "  "]) {
       expect(isApprovalAnswer(line), JSON.stringify(line)).toBe(true);
     }
   });
@@ -93,6 +93,26 @@ describe("formatCliApprovalPrompt", () => {
     expect(prompt).toContain(
       "(dangerous shell command is never granted for the session)",
     );
+  });
+
+  it("offers w = Always allow only where the rule can be saved (ATO-1142)", () => {
+    const shell: ApprovalRequest = {
+      approvalId: "a1",
+      sessionId: "s1",
+      tool: "os.shell.run",
+      category: "shell",
+      reason: "because",
+      commandShape: "git",
+      commandArgv: ["git", "status"],
+      workdir: "/work/app",
+    };
+    expect(formatCliApprovalPrompt(shell)).toContain(
+      'w = Always allow "git status" in this project',
+    );
+    // No project known, or no argv the rule could name: not offered.
+    expect(formatCliApprovalPrompt({ ...shell, workdir: undefined })).not.toContain("w = ");
+    expect(formatCliApprovalPrompt({ ...shell, commandArgv: undefined })).not.toContain("w = ");
+    expect(formatCliApprovalPrompt({ ...request("trust_config"), workdir: "/w" })).not.toContain("w = ");
   });
 
   it("offers the session grant and no note for a grantable category", () => {
