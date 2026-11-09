@@ -93,6 +93,16 @@ test("the dialog: budget hidden for local models, Telegram switch only when pair
   assert.match(local, /Pair Telegram/);
 });
 
+test("in Fusion the budget field says it covers the planning model only", () => {
+  const st = { local: false, fusion: false, tgPaired: false, busy: false, error: null,
+    form: { message: "", folder: "/x", budget: "", hours: "8", notify: false } };
+  assert.match(O.ovnDialogHTML(st, h), /The run stops when it has spent this much/);
+  const fusion = O.ovnDialogHTML({ ...st, fusion: true }, h);
+  assert.match(fusion, /when the planning model has spent this much/);
+  assert.match(fusion, /Spend by Fusion workers is not counted/);
+  assert.doesNotMatch(fusion, /when it has spent this much/);
+});
+
 test("the dialog offers no folder picker for a remote agent", () => {
   const st = { local: false, tgPaired: false, busy: false, error: null, remote: false,
     form: { message: "", folder: "/Users/me/app", budget: "", hours: "8", notify: false } };

@@ -31,7 +31,7 @@ const OVN_STORE_KEY = 'atag.overnightRuns';
 const OVN_TERMINAL = ['completed', 'failed', 'blocked', 'cancelled'];
 
 const OVN = {
-  open: false, busy: false, error: null, local: false, tgPaired: false, remote: false,
+  open: false, busy: false, error: null, local: false, fusion: false, tgPaired: false, remote: false,
   form: {message: '', folder: '', budget: '', hours: String(OVN_DEFAULT_HOURS), notify: false},
   runs: [],   // {id, title, sessionId, startedAt, limitMs, budget, task, stopping}
   timer: null,
@@ -107,6 +107,13 @@ function ovnStatusLine(run, now) {
   return 'Running · ' + ovnElapsed(now - start) + ' of ' + ovnElapsed(run.limitMs) + (spend ? ' · ' + spend : '');
 }
 
+/** In Fusion the ceiling counts only the planning model: its workers' spend does not reach it. */
+function ovnBudgetHelp(fusion) {
+  return fusion
+    ? 'The run stops when the planning model has spent this much, in dollars. Spend by Fusion workers is not counted. Leave empty for no cap.'
+    : 'The run stops when it has spent this much, in dollars. Leave empty for no cap.';
+}
+
 function ovnDialogHTML(st, h) {
   const esc = h.esc;
   const f = st.form;
@@ -114,7 +121,7 @@ function ovnDialogHTML(st, h) {
     ? '<p class="tk-help" data-ovn-free>Local models cost $0, so this run has no money cap.</p>'
     : '<label class="tk-field"><span class="tk-lbl">Budget</span>'
       + '<input class="tk-inp" data-ovn-field="budget" inputmode="decimal" placeholder="No cap" value="' + esc(f.budget) + '">'
-      + '<span class="tk-help">The run stops when it has spent this much, in dollars. Leave empty for no cap.</span></label>';
+      + '<span class="tk-help">' + ovnBudgetHelp(st.fusion) + '</span></label>';
   const tg = st.tgPaired
     ? '<button class="ovn-row" type="button" data-ovn="notify" role="switch" aria-checked="' + (f.notify ? 'true' : 'false') + '">'
       + '<span>Send the morning report to Telegram</span><span class="tk-switch' + (f.notify ? ' on' : '') + '" aria-hidden="true"></span></button>'
@@ -207,7 +214,9 @@ async function ovnOpen() {
   if (!br) { if (typeof toast === 'function') toast('Run overnight needs a newer app build', '', 'bad'); return; }
   OVN.open = true; OVN.busy = false; OVN.error = null;
   OVN.form = {message: '', folder: typeof WORKSPACE === 'string' ? WORKSPACE : '', budget: '', hours: String(OVN_DEFAULT_HOURS), notify: false};
-  OVN.local = ovnIsLocal(typeof selBackend === 'function' ? selBackend() : null);
+  const backend = typeof selBackend === 'function' ? selBackend() : null;
+  OVN.local = ovnIsLocal(backend);
+  OVN.fusion = backend === 'fusion';
   OVN.tgPaired = false;
   OVN.remote = false;
   ovnPaint();
