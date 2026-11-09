@@ -341,6 +341,7 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   task_created: { owner: "main", props: { kind: en(["cron", "interval", "at"]) } },
   task_action: { owner: "main", props: { action: en(["run", "cancel"]) } },
+  overnight_started: { owner: "main", props: { has_budget: bool, hours: int({ min: 1, max: 24 }), notify_telegram: bool } },
   skill_installed: { owner: "main", props: { result: en(["ok", "blocked", "error"]), risk_acknowledged: bool } },
   skill_action: { owner: "main", props: { action: en(["enable", "disable", "remove"]) } },
   mcp_server_added: { owner: "ui", props: { result: en(["ok", "error"]) } },

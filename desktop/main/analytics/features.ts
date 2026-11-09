@@ -68,6 +68,15 @@ export function taskAction(action: "run" | "cancel", res: unknown): void {
   if (ok(res)) track("task_action", { action });
 }
 
+/** ATO-1113: an overnight run the agent accepted. Limits as a yes/no and whole hours, never the task or the folder. */
+export function overnightStarted(r: { maxCostUsd: number | null; hours: number; notifyTelegram: boolean }): void {
+  track("overnight_started", {
+    has_budget: r.maxCostUsd !== null,
+    hours: Math.max(1, Math.round(r.hours)),
+    notify_telegram: r.notifyTelegram,
+  });
+}
+
 export function skillInstalled(res: unknown, riskAcknowledged: boolean): void {
   const r = (res ?? {}) as { ok?: boolean; blocked?: boolean };
   track("skill_installed", { result: r.ok ? "ok" : r.blocked === true ? "blocked" : "error", risk_acknowledged: riskAcknowledged });

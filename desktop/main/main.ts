@@ -33,6 +33,7 @@ import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAns
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
+import { wireOvernightIpc } from "./overnight-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
 import { machineProfile } from "./studio-local.js";
@@ -2666,6 +2667,8 @@ function wireIpc(client: AgentClient): void {
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).
   wireWindowSnapshotIpc();
+  // ATO-1113: "Run overnight", a durable task in a folder with a budget and a time limit.
+  wireOvernightIpc({ window: () => win, client });
   /* Studio (Images + Video): Core's media API for the Studio pages
      (renderer/studio/CONTRACT.md). Same Core as the agent's image tool; the
      OpenRouter key goes to Core over loopback only, never to the window. */

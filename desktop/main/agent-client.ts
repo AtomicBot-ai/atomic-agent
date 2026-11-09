@@ -1221,6 +1221,8 @@ export class AgentClient extends EventEmitter {
     );
 
   task = (id: string) => this.json<unknown>(`/api/tasks/${encodeURIComponent(id)}`);
+  /** ATO-1113: `POST /api/tasks`, the overnight run (overnight-ipc.ts); `workingDir` opens its session in that folder. */
+  createTask = (body: Record<string, unknown>) => this.request<unknown>("POST", "/api/tasks", body);
   cancelTask = (id: string) => this.request<unknown>("DELETE", `/api/tasks/${encodeURIComponent(id)}`);
   /** Runs one attempt synchronously — an agent turn — so it waits longer than a read. */
   runTask = (id: string) =>

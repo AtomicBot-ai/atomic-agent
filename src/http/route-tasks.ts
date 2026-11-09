@@ -5,6 +5,7 @@ import {
   sendJson,
   type HttpHandler,
 } from "./request-context.js";
+import { checkWorkingDir } from "./session-working-dir.js";
 import {
   TaskStateError,
   TaskValidationError,
@@ -23,6 +24,15 @@ import {
  *  { "sessionId": "s-…", "userMessage": "…", "maxAttempts": 3, "maxSteps": 10,
  *    "maxCostUsd": 5, "maxDurationMs": 28800000 }
  *  ```
+ *
+ * Instead of `sessionId` a client may send `workingDir` (an absolute path
+ * to an existing folder): the route then opens a new session in that
+ * folder for the task, the way `working_dir` opens a new chat there
+ * (ATO-731). This is how the desktop's "Run overnight" (ATO-1113) runs a
+ * task in the folder the person picked. `notify: "telegram"` reports the
+ * terminal outcome to the paired owner, as `task create --notify telegram`
+ * does. Fields this route does not know (the desktop also sends
+ * `maxCostUsd` and `maxDurationMs`) are ignored.
  *
  * `maxAttempts` defaults to `config.tasks.maxAttempts` when omitted.
  * `maxCostUsd` / `maxDurationMs` are the task's own budget (the desktop
@@ -57,13 +67,53 @@ export function createCreateTaskHandler(): HttpHandler {
         ? body.maxAttempts
         : ctx.runtime.config.tasks.maxAttempts;
     const maxSteps = typeof body.maxSteps === "number" ? body.maxSteps : null;
-    if (typeof sessionId !== "string" || typeof userMessage !== "string") {
+    const workingDirRaw = body.workingDir;
+    const hasWorkingDir = workingDirRaw !== undefined && workingDirRaw !== null;
+    if (
+      typeof userMessage !== "string" ||
+      (typeof sessionId !== "string" && !hasWorkingDir)
+    ) {
       sendError(
         res,
         400,
         openaiError("sessionId and userMessage are required strings"),
       );
       return;
+    }
+    if (typeof sessionId === "string" && hasWorkingDir) {
+      sendError(
+        res,
+        400,
+        openaiError("send sessionId or workingDir, not both", "invalid_request_error", "workingDir"),
+      );
+      return;
+    }
+    const notifyRaw = body.notify;
+    if (notifyRaw !== undefined && notifyRaw !== null && notifyRaw !== "telegram") {
+      sendError(
+        res,
+        400,
+        openaiError("notify only supports: telegram", "invalid_request_error", "notify"),
+      );
+      return;
+    }
+    let taskSessionId: string;
+    let openedSessionId: string | null = null;
+    if (typeof sessionId === "string") {
+      taskSessionId = sessionId;
+    } else {
+      const dir = checkWorkingDir(workingDirRaw);
+      if (!dir.ok) {
+        sendError(res, 400, openaiError(dir.error, "invalid_request_error", "workingDir"));
+        return;
+      }
+      // Saved before the task row: `runOnCreate` may drain at once and loads the session.
+      // `persist: false` so no trace recorder opens here (the first turn opens it) and a
+      // refused task leaves nothing behind once its row is deleted below.
+      const fresh = ctx.runtime.createSession({ metadata: { source: "http-task" }, persist: false });
+      ctx.runtime.sessionStore.save({ ...fresh, workingDir: dir.dir });
+      taskSessionId = fresh.id;
+      openedSessionId = fresh.id;
     }
     try {
       // Validate here as well as in the store so a string or other
@@ -75,16 +125,19 @@ export function createCreateTaskHandler(): HttpHandler {
         body.maxDurationMs as number | null | undefined,
       );
       const created = ctx.runtime.taskRunner.create({
-        sessionId,
+        sessionId: taskSessionId,
         userMessage,
         origin: "http",
         maxAttempts,
         maxSteps,
         maxCostUsd,
         maxDurationMs,
+        ...(notifyRaw === "telegram" ? { notify: "telegram" as const } : {}),
       });
       sendJson(res, 201, recordToJson(created));
     } catch (err) {
+      // The session opened for this task has nothing in it; it does not outlive a refused task.
+      if (openedSessionId) ctx.runtime.sessionStore.delete(openedSessionId);
       if (err instanceof TaskValidationError) {
         sendError(
           res,

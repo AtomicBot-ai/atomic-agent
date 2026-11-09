@@ -300,6 +300,10 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>
     ipcRenderer.invoke("app:taskPreview", { form, now }),
+  /** ATO-1113: "Run overnight": pick its folder (the chat's own does not change), then start the task. */
+  overnightPickFolder: (current?: string) => ipcRenderer.invoke("overnight:pickFolder", current),
+  overnightStart: (input: { message: string; folder: string; maxCostUsd: number | null; hours: number; notifyTelegram: boolean }) =>
+    ipcRenderer.invoke("overnight:start", input),
   quit: () => ipcRenderer.invoke("app:quit"),
   skillList: (sessionId?: string | null) => ipcRenderer.invoke("cli:skillList", sessionId),
   configGetKey: (key: string) => ipcRenderer.invoke("cli:configGetKey", key),

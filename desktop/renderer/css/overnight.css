@@ -1,0 +1,32 @@
+/* ============================================================
+   Run overnight (ATO-1113): the dialog and the runs card.
+   overnight.js draws both into #overnight; colours come from tokens only.
+   The dialog reuses the sheet (overlays.css) and the input kit (styles.css).
+   ============================================================ */
+
+/* The dialog sits over everything the window draws, as the other sheets do. */
+#overnight .ovn-wrap{z-index:27}
+.ovn-sheet{width:480px}
+.ovn-body{display:grid;gap:14px;padding:0 22px 18px;overflow-y:auto}
+.ovn-body > .tk-help:first-child{margin:0}
+.ovn-folder{display:flex;align-items:center;gap:8px;min-width:0}
+.ovn-path{flex:1;min-width:0;height:38px;display:flex;align-items:center;padding:0 15px;border-radius:var(--r-pill);
+  background:var(--well);color:var(--ink);font-size:var(--fs-cap);font-family:var(--font-mono);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;direction:rtl;text-align:left}
+.ovn-hours{width:120px}
+.ovn-row{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:36px;
+  font-size:var(--fs-ui);color:var(--ink);text-align:left}
+.ovn-row.is-off{color:var(--ink-3)}
+.ovn-row.is-off .tk-switch{opacity:.5}
+
+/* The runs card: bottom left, over the sidebar's foot, under the sheets and
+   toasts. The download card owns the bottom right (#dlcard, shell.css). */
+.ovn-card{position:absolute;left:12px;bottom:60px;z-index:15;width:min(320px,calc(100% - 24px));
+  display:flex;flex-direction:column;gap:2px;padding:6px;border-radius:var(--r-comp);
+  background:var(--lift);box-shadow:var(--sh-pop)}
+.ovn-run{display:flex;align-items:center;gap:8px;min-height:44px;padding:4px 6px;border-radius:var(--r-well)}
+.ovn-ic{flex:none;display:flex;color:var(--ink-2)}
+.ovn-ic svg{width:16px;height:16px}
+.ovn-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+.ovn-title{font-size:var(--fs-cap);font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ovn-meta{font-size:var(--fs-label);color:var(--ink-2);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
