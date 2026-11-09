@@ -5,6 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type { ToolContext } from "../../tool-registry.js";
+import type { ArchiveBackend } from "./archive-types.js";
 import { buildOsFsArchiveExtractTool } from "./extract-tool.js";
 
 const FIXTURES = resolve(
@@ -70,6 +71,51 @@ describe("os.fs.archive.extract", () => {
     expect(await readFile(join(dir, "nested/world.txt"), "utf8")).toBe(
       "Nested payload.\n",
     );
+  });
+
+  it("asks as trust_config when the destination holds a trust path", async () => {
+    const categories: string[] = [];
+    const gate = new ApprovalGate({
+      level: 4,
+      emit: (req) => {
+        categories.push(req.category);
+        gate.resolve({ approvalId: req.approvalId, approved: true });
+      },
+    });
+    const tool = buildOsFsArchiveExtractTool({
+      approvals: gate,
+      approvalRequired: true,
+      trustConfigPaths: [join(dir, "hooks.json")],
+    });
+    await tool.run(
+      { path: join(FIXTURES, "sample.zip"), destDir: dir },
+      makeCtx(FIXTURES),
+    );
+    expect(categories).toEqual(["trust_config"]);
+  });
+
+  it("asks as trust_config when the archive replaces the project's saved rules", async () => {
+    const categories: string[] = [];
+    const gate = new ApprovalGate({
+      level: 4,
+      emit: (req) => {
+        categories.push(req.category);
+        gate.resolve({ approvalId: req.approvalId, approved: true });
+      },
+    });
+    const backend: ArchiveBackend = {
+      format: "zip",
+      list: async () => [{ path: ".atomic-agent/approval-rules.json", kind: "file" }],
+      readEntry: async () => Buffer.alloc(0),
+      extract: async () => ({ extractedEntries: 0, totalBytesWritten: 0, skippedEntries: [], warnings: [] }),
+    };
+    const tool = buildOsFsArchiveExtractTool({
+      approvals: gate,
+      approvalRequired: true,
+      backends: { zip: () => backend },
+    });
+    await tool.run({ path: join(FIXTURES, "sample.zip"), destDir: dir }, makeCtx(dir));
+    expect(categories).toEqual(["trust_config"]);
   });
 
   it("refuses when approval is denied", async () => {

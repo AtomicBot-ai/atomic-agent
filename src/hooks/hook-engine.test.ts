@@ -38,7 +38,7 @@ describe("tool hook engine", () => {
     const engine = new ToolHookEngine({ stateDir: "/s", load: loaded(pre("Bash")), run: async () => runResult({ stdout }), approvals: { request } });
     const invoke = vi.fn(async () => ok);
     const result = await runWithToolHooks(engine, call(), invoke);
-    expect(request).toHaveBeenCalledWith(expect.objectContaining({ tool: "os.shell.run", category: "other", reason: expect.stringContaining("touches prod") }), expect.anything());
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({ tool: "os.shell.run", category: "hook_ask", reason: expect.stringContaining("touches prod") }), expect.anything());
     expect(invoke).not.toHaveBeenCalled();
     expect(result.details.errorName).toBe("ApprovalDeniedError");
     expect(result.summary).toContain("The user declined this os.shell.run call");

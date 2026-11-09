@@ -1,3 +1,5 @@
+import { rememberRenderedCommand } from "../../session/rendered-command-texts.js";
+import { pluginSkillPart, setPluginPartEnabled } from "../../plugins/plugin-install.js";
 import {
   ensureUserConfigFileSync,
   getConfig,
@@ -113,7 +115,9 @@ export class SkillsOrchestrator {
 
   /** Render a plugin command template; the result is sent as the user's message. */
   preparePluginCommand(name: string, args: string): string {
-    return renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
+    const text = renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
+    rememberRenderedCommand(text, args);
+    return text;
   }
 
   /**
@@ -258,6 +262,17 @@ export class SkillsOrchestrator {
    */
   async setSkillDisabled(name: string, disabled: boolean): Promise<void> {
     try {
+      const pluginSkill = pluginSkillPart(name);
+      if (pluginSkill) {
+        if (!setPluginPartEnabled(this.runtime.config.paths.stateDir, pluginSkill.plugin, pluginSkill.part, !disabled)) {
+          throw new Error(`plugin not installed: ${pluginSkill.plugin}`);
+        }
+        this.bus.emit({ type: "skills_toggle_settled", name, disabled });
+        this.bus.emit({ type: "runtime_info", line: disabled ? `skill disabled: ${name}` : `skill enabled: ${name}` });
+        await this.runtime.refreshSkills();
+        this.refresh();
+        return;
+      }
       const path = this.runtime.config.paths.userConfigFile;
       const file = ensureUserConfigFileSync(path);
       const current = new Set(file.skills.disabled);

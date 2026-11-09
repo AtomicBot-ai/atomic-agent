@@ -109,7 +109,7 @@ const NEVER_REVIEWED: ReadonlySet<ApprovalCategory> = new Set<ApprovalCategory>(
  * Whether a request of `category` may be settled by the reviewer. Only
  * categories the person could grant for the whole session qualify; the
  * non-grantable ones (`trust_config`, `state_secret`, `email`,
- * `browser_secret`, `fusion_fanout`, `local_model_restart`, and any later
+ * `browser_secret`, `fusion_fanout`, `local_model_restart`, `hook_ask`, and any later
  * addition such as `shell_dangerous`) are each their own decision and
  * always ask.
  */

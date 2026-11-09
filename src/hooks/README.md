@@ -37,7 +37,7 @@ stdin is JSON: `session_id`, `cwd`, `hook_event_name`, `tool_name` (Claude name 
 - Exit 2: PreToolUse refuses the call with stderr as the reason; PostToolUse sends stderr to the model with the result.
 - Exit 0 with JSON: `hookSpecificOutput.permissionDecision` `deny` / `ask` / `allow` (+ `permissionDecisionReason`), else `decision: "block"` / `"approve"` + `reason`; `continue: false` + `stopReason` refuses; PostToolUse `additionalContext` is added to the result.
 - Other exits, timeouts, bad JSON: logged, attached as `details.hookErrors`, never blocking.
-- `ask` opens the normal approval prompt (category `other`); a denial reads as the user's. `allow` does not skip the tool's own approval: hooks only tighten.
+- `ask` opens the normal approval prompt (category `hook_ask`, never granted for the session or sent to smart review); a denial reads as the user's. `allow` does not skip the tool's own approval: hooks only tighten.
 
 Matching hooks of one event run in parallel; deny beats ask beats allow.
 

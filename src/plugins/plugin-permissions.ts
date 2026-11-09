@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { lstatSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 import { bundleRunsCode } from "./plugin-bundle.js";
+import { MAX_FILES, SKIP_NAMES } from "./plugin-install.js";
 import { userKeyRefs } from "./plugin-keys.js";
 import type { PluginBundle } from "./plugin-types.js";
 
@@ -24,6 +25,8 @@ export interface PluginMcpPermission {
   transport: "local" | "remote";
   /** Program and arguments, joined, for a local server. */
   command?: string;
+  /** Environment set for a local server, `KEY=value` sorted by key. `NODE_OPTIONS` runs code as surely as the command does. */
+  env?: string;
   url?: string;
   /** The user's keys this server receives (`${NAME}` in its entry), names only. Needs the same consent as running code. */
   keys?: string[];
@@ -43,6 +46,14 @@ export interface PluginPermissionSnapshot {
   hooks: PluginHookCommand[];
   mcpServers: PluginMcpPermission[];
   scripts: PluginScriptFile[];
+  /**
+   * Hash of every file the plugin ships that is not compared on its own
+   * (the listed scripts, hooks.json, the MCP file, the manifest). A stdio
+   * server or a hook can run any of them, not only what looks like a script.
+   */
+  treeSha256: string;
+  /** False when the walk could not read everything, so the hash proves nothing. */
+  treeComplete: boolean;
   skills: string[];
   commands: string[];
   agents: string[];
@@ -51,9 +62,13 @@ export interface PluginPermissionSnapshot {
 const SCRIPT_EXT = new Set([".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts", ".rb", ".pl", ".ps1", ".bat", ".cmd"]);
 const MAX_SCRIPTS = 500;
 const MAX_HOOKS_BYTES = 512 * 1024;
+const MAX_TREE_DEPTH = 32;
+/** The manifest changes with every version bump; what in it can run is compared as hooks and servers. */
+const MANIFEST_FILE = /^(?:\.[^/]*-plugin\/)?plugin\.json$/;
 
 /** Read everything that can run from a parsed bundle. Never runs anything. */
 export function pluginPermissionSnapshot(bundle: PluginBundle): PluginPermissionSnapshot {
+  const scripts = readScripts(bundle);
   return {
     name: bundle.name,
     version: bundle.manifest.version,
@@ -62,7 +77,8 @@ export function pluginPermissionSnapshot(bundle: PluginBundle): PluginPermission
     mcpServers: Object.entries(bundle.mcpServers)
       .map(([name, raw]) => mcpPermission(name, raw))
       .sort((a, b) => a.name.localeCompare(b.name)),
-    scripts: readScripts(bundle),
+    scripts,
+    ...readTree(bundle, scripts),
     skills: bundle.skills.map(s => s.name || bundle.name).sort(),
     commands: bundle.commands.map(c => c.name).sort(),
     agents: bundle.agents.map(a => a.name).sort(),
@@ -74,9 +90,18 @@ function mcpPermission(name: string, raw: Record<string, unknown>): PluginMcpPer
   const keys = found.length > 0 ? { keys: found } : {};
   if (typeof raw.command === "string") {
     const args = Array.isArray(raw.args) ? raw.args.filter((a): a is string => typeof a === "string") : [];
-    return { name, transport: "local", command: [raw.command, ...args].join(" "), ...keys };
+    const env = localEnv(raw.env);
+    return { name, transport: "local", command: [raw.command, ...args].join(" "), ...(env ? { env } : {}), ...keys };
   }
   return { name, transport: "remote", ...(typeof raw.url === "string" ? { url: raw.url } : {}), ...keys };
+}
+
+function localEnv(raw: unknown): string {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return "";
+  return Object.entries(raw as Record<string, unknown>)
+    .map(([key, value]) => `${key}=${String(value)}`)
+    .sort()
+    .join(" ");
 }
 
 /** Commands from hooks.json and inline manifest hooks: `{hooks: {Event: [{matcher, hooks: [{type, command}]}]}}` or the bare event map. */
@@ -143,6 +168,36 @@ function readScripts(bundle: PluginBundle): PluginScriptFile[] {
   return out.sort((a, b) => a.path.localeCompare(b.path));
 }
 
+/** Every file staging keeps (`plugin-install`), in a stable order. Install time only: it reads the whole plugin. */
+function readTree(bundle: PluginBundle, scripts: readonly PluginScriptFile[]): Pick<PluginPermissionSnapshot, "treeSha256" | "treeComplete"> {
+  const tree = createHash("sha256");
+  const listed = new Set(scripts.map(s => s.path));
+  const parsed = new Set([bundle.hooksFile, bundle.manifest.mcpPath ?? join(bundle.root, ".mcp.json")]);
+  let files = 0;
+  let treeComplete = true;
+  const visit = (dir: string, depth: number) => {
+    if (depth > MAX_TREE_DEPTH) { treeComplete = false; return; }
+    let names: string[];
+    try { names = readdirSync(dir).sort(); } catch { treeComplete = false; return; }
+    for (const n of names) {
+      if (SKIP_NAMES.has(n)) continue;
+      const p = join(dir, n);
+      let st;
+      try { st = lstatSync(p); } catch { treeComplete = false; continue; }
+      if (st.isDirectory()) { visit(p, depth + 1); continue; }
+      if (!st.isFile()) continue;
+      const rel = relative(bundle.root, p).split(sep).join("/");
+      if (MANIFEST_FILE.test(rel) || listed.has(rel) || parsed.has(p)) continue;
+      if (++files > MAX_FILES) { treeComplete = false; return; }
+      try {
+        tree.update(`${rel}\0${createHash("sha256").update(readFileSync(p)).digest("hex")}\0`);
+      } catch { treeComplete = false; }
+    }
+  };
+  visit(bundle.root, 0);
+  return { treeSha256: tree.digest("hex"), treeComplete };
+}
+
 export interface PluginPermissionDiff {
   /** True when this is a first install (nothing to compare with). */
   fresh: boolean;
@@ -154,6 +209,8 @@ export interface PluginPermissionDiff {
   scriptsAdded: string[];
   scriptsChanged: string[];
   scriptsRemoved: string[];
+  /** A file of a plugin that runs code changed, or the walk could not read all of one version. */
+  treeChanged: boolean;
   skillsAdded: string[];
   commandsAdded: string[];
   agentsAdded: string[];
@@ -177,7 +234,7 @@ export function diffPluginPermissions(oldBundle: PluginBundle | null, newBundle:
 
 /** Pure diff of two snapshots. */
 export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null, after: PluginPermissionSnapshot): PluginPermissionDiff {
-  const old = before ?? { name: after.name, version: "", runsCode: false, hooks: [], mcpServers: [], scripts: [], skills: [], commands: [], agents: [] };
+  const old = before ?? { name: after.name, version: "", runsCode: false, hooks: [], mcpServers: [], scripts: [], treeSha256: "", treeComplete: true, skills: [], commands: [], agents: [] };
   const oldMcp = new Map(old.mcpServers.map(m => [m.name, m]));
   const newMcp = new Map(after.mcpServers.map(m => [m.name, m]));
   const mcpAdded = after.mcpServers.filter(m => !oldMcp.has(m.name));
@@ -198,13 +255,16 @@ export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null,
   const added = (a: string[], b: string[]) => { const set = new Set(a); return b.filter(x => !set.has(x)); };
   const startsRunningCode = !old.runsCode && after.runsCode;
   const codeMcp = (m: PluginMcpPermission) => m.transport === "local" || (m.keys?.length ?? 0) > 0;
+  const treeChanged = before !== null && after.runsCode &&
+    (before.treeSha256 !== after.treeSha256 || !before.treeComplete || !after.treeComplete);
   const codeChanged =
     startsRunningCode ||
     mcpAdded.some(codeMcp) ||
     mcpChanged.some(c => codeMcp(c.after) || codeMcp(c.before)) ||
     hooksAdded.length > 0 ||
     scriptsAdded.length > 0 ||
-    scriptsChanged.length > 0;
+    scriptsChanged.length > 0 ||
+    treeChanged;
   return {
     fresh: before === null,
     mcpAdded,
@@ -215,6 +275,7 @@ export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null,
     scriptsAdded,
     scriptsChanged,
     scriptsRemoved,
+    treeChanged,
     skillsAdded: added(old.skills, after.skills),
     commandsAdded: added(old.commands, after.commands),
     agentsAdded: added(old.agents, after.agents),
@@ -228,7 +289,11 @@ function sameMcp(a: PluginMcpPermission, b: PluginMcpPermission): boolean {
 }
 
 function sameTarget(a: PluginMcpPermission, b: PluginMcpPermission): boolean {
-  return a.transport === b.transport && a.command === b.command && a.url === b.url;
+  return a.transport === b.transport && a.command === b.command && a.env === b.env && a.url === b.url;
+}
+
+function envNote(m: PluginMcpPermission): string {
+  return m.env ? ` (environment: ${m.env})` : "";
 }
 
 function keysNote(m: PluginMcpPermission): string {
@@ -239,7 +304,7 @@ function keysNote(m: PluginMcpPermission): string {
 export function describePluginCode(snapshot: PluginPermissionSnapshot): string[] {
   const lines: string[] = [];
   for (const m of snapshot.mcpServers) {
-    if (m.transport === "local") lines.push(`local MCP server ${m.name}: ${m.command}${keysNote(m)}`);
+    if (m.transport === "local") lines.push(`local MCP server ${m.name}: ${m.command}${envNote(m)}${keysNote(m)}`);
     else if (m.keys?.length) lines.push(`MCP server ${m.name} at ${m.url ?? "an unknown address"}${keysNote(m)}`);
   }
   for (const h of snapshot.hooks) lines.push(`hook on ${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`);
@@ -252,14 +317,14 @@ export function describePermissionDiff(diff: PluginPermissionDiff): string[] {
   if (diff.fresh) return [];
   const lines: string[] = [];
   if (diff.startsRunningCode) lines.push("This version can run programs on your computer or receive your keys; the previous one could not.");
-  for (const m of diff.mcpAdded) lines.push((m.transport === "local" ? `New local MCP server ${m.name} runs: ${m.command}` : `New remote MCP server ${m.name}${m.url ? ` at ${m.url}` : ""}`) + keysNote(m));
+  for (const m of diff.mcpAdded) lines.push((m.transport === "local" ? `New local MCP server ${m.name} runs: ${m.command}${envNote(m)}` : `New remote MCP server ${m.name}${m.url ? ` at ${m.url}` : ""}`) + keysNote(m));
   for (const c of diff.mcpChanged) {
     if (sameTarget(c.before, c.after)) {
       lines.push(c.after.keys?.length ? `MCP server ${c.after.name} now gets your keys: ${c.after.keys.join(", ")}` : `MCP server ${c.after.name} no longer gets your keys`);
       continue;
     }
     lines.push((c.after.transport === "local"
-      ? `MCP server ${c.after.name} now runs: ${c.after.command}${c.before.command ? ` (was: ${c.before.command})` : ""}`
+      ? `MCP server ${c.after.name} now runs: ${c.after.command}${c.before.command ? ` (was: ${c.before.command})` : ""}${envNote(c.after)}`
       : `MCP server ${c.after.name} now connects to ${c.after.url ?? "another address"}${c.before.url ? ` (was ${c.before.url})` : ""}`) + keysNote(c.after));
   }
   for (const m of diff.mcpRemoved) lines.push(`MCP server ${m.name} was removed`);
@@ -268,6 +333,7 @@ export function describePermissionDiff(diff: PluginPermissionDiff): string[] {
   for (const s of diff.scriptsAdded) lines.push(`New script file ${s}`);
   for (const s of diff.scriptsChanged) lines.push(`Changed script file ${s}`);
   if (diff.scriptsRemoved.length) lines.push(`${diff.scriptsRemoved.length} script file(s) removed`);
+  if (diff.treeChanged) lines.push("Other files of this plugin changed; its servers, hooks or scripts can run them.");
   if (diff.skillsAdded.length) lines.push(`New skills: ${diff.skillsAdded.join(", ")}`);
   if (diff.commandsAdded.length) lines.push(`New commands: ${diff.commandsAdded.join(", ")}`);
   if (diff.agentsAdded.length) lines.push(`New subagents: ${diff.agentsAdded.join(", ")}`);
@@ -281,9 +347,10 @@ export function describePermissionDiff(diff: PluginPermissionDiff): string[] {
  */
 export function codeConsentIdOf(snapshot: PluginPermissionSnapshot): string {
   const canonical = JSON.stringify({
-    mcp: snapshot.mcpServers.filter(m => m.transport === "local" || m.keys?.length).map(m => [m.name, m.command ?? m.url ?? "", m.keys ?? []]),
+    mcp: snapshot.mcpServers.filter(m => m.transport === "local" || m.keys?.length).map(m => [m.name, m.command ?? m.url ?? "", m.env ?? "", m.keys ?? []]),
     hooks: snapshot.hooks.map(h => [h.event, h.matcher ?? "", h.command]),
     scripts: snapshot.scripts.map(s => [s.path, s.sha256]),
+    tree: snapshot.treeSha256,
   });
   return createHash("sha256").update(canonical).digest("hex").slice(0, 32);
 }

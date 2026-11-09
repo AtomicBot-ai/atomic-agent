@@ -122,6 +122,13 @@ export type ApprovalCategory =
    * reverse; never granted for the session, like `email`.
    */
   | "local_model_restart"
+  /**
+   * A hook's `ask`: its author wants a person to look at this call. Its
+   * own category so that a session grant on anything else cannot answer
+   * it and the smart reviewer never sees it; a saved rule's `ask` works
+   * the same way.
+   */
+  | "hook_ask"
   | "other";
 
 /**
@@ -180,6 +187,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   email: 5,
   fs_read_outside: 5,
   local_model_restart: 5,
+  hook_ask: 5,
   other: 5,
 };
 
@@ -269,6 +277,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   screen_capture: true,
   // Each out-of-memory restart is asked about when it happens.
   local_model_restart: false,
+  // A hook that asks for a person asks every time.
+  hook_ask: false,
   other: true,
 };
 
@@ -307,6 +317,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   screen_control: "screen · click / type",
   screen_capture: "screen · screenshot",
   local_model_restart: "local model · restart",
+  hook_ask: "hook · confirm",
   other: "uncategorised",
 };
 

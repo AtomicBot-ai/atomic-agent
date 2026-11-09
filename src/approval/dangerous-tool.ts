@@ -1,4 +1,4 @@
-import type { ApprovalGate } from "./approval-gate.js";
+import type { ApprovalGate, RuleCheck } from "./approval-gate.js";
 import type { ApprovalCategory } from "./approval-level.js";
 
 export interface DangerousToolOptions {
@@ -24,6 +24,8 @@ export interface ApprovalPrompt {
   commandShape?: string;
   /** Parsed argv of a simple shell command; see `ApprovalRequest.commandArgv`. */
   commandArgv?: readonly string[];
+  /** Every simple command the call would run; see `ApprovalRequest.commandSegments`. */
+  commandSegments?: readonly (readonly string[])[];
   /** Session working directory; see `ApprovalRequest.workdir`. */
   workdir?: string;
   /**
@@ -136,6 +138,19 @@ export function describeApprovalDenial(
 }
 
 /**
+ * True when a saved deny or ask rule covers this call, so a fan-out
+ * scope must not settle it: the call goes to the gate, which refuses it
+ * or asks (for a worker, its refuse policy hands the step back).
+ */
+export function savedRuleOverridesScope(
+  approvals: ApprovalGate,
+  check: RuleCheck,
+): boolean {
+  const decision = approvals.ruleDecisionFor?.(check) ?? null;
+  return decision === "deny" || decision === "ask";
+}
+
+/**
  * Shared helper used by dangerous tools (shell.run, fs.write,
  * skill.run_script, …). Centralising it ensures every tool sends the same
  * approval payload shape and honours the `approvalRequired` override in a
@@ -162,6 +177,9 @@ export async function requireApproval(
         : {}),
       ...(prompt.commandArgv !== undefined
         ? { commandArgv: [...prompt.commandArgv] }
+        : {}),
+      ...(prompt.commandSegments !== undefined
+        ? { commandSegments: prompt.commandSegments.map((words) => [...words]) }
         : {}),
       ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
       ...(prompt.redirectablePath !== undefined

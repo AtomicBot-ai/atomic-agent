@@ -501,7 +501,7 @@ describe("whole built-in tool catalog conformance", () => {
     for (const definition of registry.registrations) scoped.register(definition);
     const firstPhase = scoped.registrations.length;
     const confined = confineReads(scoped, { grantedDirs: () => [], readScope: () => "working-dir", approvals: dangerous });
-    expect(new Set(confined)).toEqual(new Set([...READ_TOOL_TARGETS.keys(), "os.shell.run"]));
+    expect(new Set(confined)).toEqual(new Set([...READ_TOOL_TARGETS.keys(), "os.shell.run", ...(registry.has("verify.run") ? ["verify.run"] : [])]));
     const replacements = scoped.registrations.slice(firstPhase);
     expect(names(replacements)).toEqual(confined);
     for (const definition of replacements) {

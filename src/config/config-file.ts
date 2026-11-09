@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 
 import { carryUnknownConfigKeys } from "./carry-unknown-config-keys.js";
 import { keepSetAsideConfigValues } from "./keep-set-aside-values.js";
@@ -27,15 +27,23 @@ export function getDotenvPath(stateDir: string): string {
 /**
  * The agent's own trust surface: `config.json` (holds
  * `agent.approvalLevel`), `.env` (API keys / bot tokens loaded at
- * boot) and `approval-rules.json` (saved "always allow" rules,
- * `src/approval/approval-rules-store.ts`; the name is spelled here
- * because config sits below approval, and `config-file.test.ts` pins it
- * against the owner's constant). A silent rewrite of any is a
+ * boot), `approval-rules.json` (saved "always allow" rules,
+ * `src/approval/approval-rules-store.ts`) and what the agent runs from
+ * its own state with no further question: `hooks.json` (commands run
+ * on every tool call, re-read on change), the plugin records
+ * (`plugins/plugins.json` holds the runs-code consent,
+ * `plugins/marketplaces.json` the pinned sources) and the installed
+ * plugin files. The names are spelled here because config sits below
+ * approval, hooks and plugins, and `config-file.test.ts` pins them
+ * against the owners' constants. A silent rewrite of any is a
  * self-escalation vector, so the
  * approval ladder categorises a write to these as `trust_config` (asks
  * until level 5). This is the single place that *knows where the trust
  * surface lives*; the bootstrap resolves it once from `config.paths` and
  * injects the list into the fs tools, which never derive it themselves.
+ *
+ * An entry ending in a path separator is a directory: everything under
+ * it counts (`isTrustDirectoryEntry`).
  */
 export function getTrustConfigPaths(paths: {
   userConfigFile: string;
@@ -45,7 +53,16 @@ export function getTrustConfigPaths(paths: {
     paths.userConfigFile,
     getDotenvPath(paths.stateDir),
     join(paths.stateDir, "approval-rules.json"),
+    join(paths.stateDir, "hooks.json"),
+    join(paths.stateDir, "plugins", "plugins.json"),
+    join(paths.stateDir, "plugins", "marketplaces.json"),
+    join(paths.stateDir, "plugins", "installed") + sep,
   ];
+}
+
+/** A trust-list entry that names a whole directory rather than one file. */
+export function isTrustDirectoryEntry(entry: string): boolean {
+  return entry.endsWith("/") || entry.endsWith("\\");
 }
 
 /**

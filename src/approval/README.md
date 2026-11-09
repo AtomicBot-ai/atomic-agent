@@ -20,7 +20,7 @@ This area owns approval policy and routing. Read [AGENTS.md](AGENTS.md) before c
 
 ## Ownership and dependencies
 
-Gate order in `ApprovalGate.request`: the same-turn refusal (`declinedInTurn`), a matching deny rule (refused, `automatic`), a matching ask rule (skips the level and grants and prompts), the level, the session grant, a matching allow rule, then the session's refuse policy or the prompt. `resolve({ grant: "always" })` saves the allow rule built from the pending request, scoped to its project; hardline shell-guard rules fire before the gate and no rule touches them.
+Gate order in `ApprovalGate.request`: the same-turn refusal (`declinedInTurn`), a matching deny rule (refused, `automatic`), a matching ask rule (skips the level and grants and prompts), the level, the session grant, a matching allow rule, then the session's refuse policy or the prompt. `resolve({ grant: "always" })` saves the allow rule built from the pending request, scoped to its project; hardline shell-guard rules fire before the gate and no rule touches them. A fan-out scope returns before the gate, so the tools ask `ruleDecisionFor` first: a deny or ask rule sends the call to the gate. A worker in a throwaway worktree matches rules against its parent's project (`SessionApprovalPolicy.ruleWorkdir`).
 
 ApprovalRouter selects the handler for the owning session; level/grant logic decides whether a dispatch can proceed unattended or needs a decision. Frontends and channel bridges provide interaction, while tools consume the decision. Approval state is separate from offered prompt schemas and from the currently selected UI chat.
 

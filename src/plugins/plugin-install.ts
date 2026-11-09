@@ -21,8 +21,8 @@ export class PluginInstallError extends Error {
 }
 
 /** Never copied: VCS data, dependency trees and OS junk. */
-const SKIP_NAMES = new Set([".git", "node_modules", ".DS_Store", "__pycache__", ".venv"]);
-const MAX_FILES = 5000;
+export const SKIP_NAMES: ReadonlySet<string> = new Set([".git", "node_modules", ".DS_Store", "__pycache__", ".venv"]);
+export const MAX_FILES = 5000;
 
 /** A copied, parsed plugin waiting for the caller to scan it and confirm. */
 export interface StagedPlugin {
@@ -218,6 +218,18 @@ export function setPluginPartEnabled(stateDir: string, name: string, part: strin
   state.plugins[name] = { ...rec, disabledParts: [...parts].sort(), updatedAt: new Date().toISOString() };
   writePluginState(stateDir, state);
   return true;
+}
+
+/**
+ * The plugin part behind a namespaced skill name (`plugin:skill`), or null
+ * for a plain skill. Such a skill is switched in the plugin's own record:
+ * `skills.disabled` in config.json only takes plain names on older builds,
+ * which refuse to start on anything else.
+ */
+export function pluginSkillPart(name: string): { plugin: string; part: string } | null {
+  const colon = name.indexOf(":");
+  if (colon <= 0 || colon === name.length - 1) return null;
+  return { plugin: name.slice(0, colon), part: `skill:${name.slice(colon + 1)}` };
 }
 
 /**

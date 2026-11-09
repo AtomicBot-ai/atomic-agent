@@ -17,7 +17,7 @@ A client that shows the findings answers with the scan id (`approvedScanId`), so
 
 ## 2. Permission diff (update and `--force`)
 
-`diffPluginPermissions(oldBundle, newBundle)` compares what each version would run and what it adds: local (stdio) MCP servers added, removed or with a changed command; remote server URLs; which of the user's keys each server receives; hooks added or removed; script files added, changed (by sha256) or removed; new skills, commands and subagents; and whether the plugin starts running code. `describePermissionDiff` turns it into plain lines, printed before any question.
+`diffPluginPermissions(oldBundle, newBundle)` compares what each version would run and what it adds: local (stdio) MCP servers added, removed or with a changed command or environment; remote server URLs; which of the user's keys each server receives; hooks added or removed; script files added, changed (by sha256) or removed; a hash of every other file a code-running plugin ships (the manifest aside, so a version bump alone does not count); new skills, commands and subagents; and whether the plugin starts running code. `describePermissionDiff` turns it into plain lines, printed before any question.
 
 `codeChanged` is true when anything that runs is new or different. URL changes of a remote server that receives no keys, and removals, are shown but do not count: they run nothing here and hand over nothing. Any change to a server that receives keys (a new address, a new key) does count.
 
