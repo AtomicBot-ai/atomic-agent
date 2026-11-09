@@ -41,6 +41,7 @@ const LAST_STEP = 'The spend budget for this task is used up';
    scenario fails on the count instead of writing files until the timeout. */
 const RUNAWAY_AFTER = 12;
 const partFile = (n) => `part-${n}.txt`;
+const WORK = 'overnight work';
 
 function setup({ model, config }) {
   model.serveChat({ promptTokens: 1000, completionTokens: 1000 });
@@ -75,8 +76,16 @@ async function startOvernight(app, message, budget) {
 }
 
 export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ app, model, workspace }) => {
+  /* The agent names a new chat after its first answer (src/session/session-title.ts).
+     That request carries a tool list too, so the scripted server files it with
+     the steps. It is no step of the task, so it gets its own route and the
+     counts below are of the task's own calls. */
   model.route([{
-    name: 'overnight work',
+    name: 'session title',
+    match: (record) => (record.body?.tools ?? []).some((t) => t.function?.name === 'emit_session_title'),
+    steps: () => call('emit_session_title', { title: 'Numbered parts' }),
+  }, {
+    name: WORK,
     match: () => true,
     steps: (record, n) => ((requestText(record).includes(LAST_STEP) || n > RUNAWAY_AFTER)
       ? reply(REPORT)
@@ -92,7 +101,8 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   app.log(`the card says: ${JSON.stringify(line)}`);
 
   // ---- it stopped where the money ran out --------------------------------------
-  const calls = model.agentRequests;
+  const workCalls = () => model.agentRequests.filter((r) => r.route === WORK);
+  const calls = workCalls();
   check(calls.length === STEPS_TO_SPEND_IT + 1,
     `the model was called ${STEPS_TO_SPEND_IT} times to work and once to sign off`, `${calls.length} calls`);
   for (let n = 1; n <= STEPS_TO_SPEND_IT; n++) {
@@ -108,8 +118,8 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
 
   // ---- it stays stopped --------------------------------------------------------
   await sleep(4000);
-  check(model.agentRequests.length === calls.length, 'the model is not called again after the stop',
-    `${model.agentRequests.length} calls now`);
+  check(workCalls().length === calls.length, 'the model is not called again after the stop',
+    `${workCalls().length} calls now`);
   for (let i = 0; i < 30 && model.inFlight > 0; i++) await sleep(100);
   check(model.inFlight === 0, 'no request to the model is still open', `${model.inFlight} open`);
 

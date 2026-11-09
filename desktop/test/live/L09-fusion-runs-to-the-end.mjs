@@ -37,6 +37,15 @@ const PARTS = [
 ];
 const workerReply = (p) => `${p.file} is written.`;
 
+/* The agent names a new chat after its first answer (src/session/session-title.ts).
+   On a cloud route that request carries a tool list, so the scripted server
+   would count it as a step of the planner. It is not one. */
+const titleRoute = {
+  name: 'session title',
+  match: (record) => (record.body?.tools ?? []).some((t) => t.function?.name === 'emit_session_title'),
+  steps: () => call('emit_session_title', { title: 'Two parts' }),
+};
+
 /* The opening line of the worker brief (src/tools/fusion/worker-prompt.ts),
    then that worker's own task heading. */
 const workerRoute = (p) => ({
@@ -66,7 +75,7 @@ function setup({ model, config }) {
 }
 
 export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ app, model, workspace }) => {
-  model.route(PARTS.map(workerRoute));
+  model.route([titleRoute, ...PARTS.map(workerRoute)]);
   model.script([
     call('fusion.delegate', {
       tasks: PARTS.map((p) => ({ id: p.id, title: p.title, instructions: `Create ${p.file} in this folder.`, files: [p.file] })),
@@ -83,9 +92,13 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   const gated = await waitTurn(app, TURN);
   check(gated.pending, 'the agent asked me before sending the workers out',
     `reply so far: ${JSON.stringify(gated.reply.slice(0, 200))}`);
+  /* The count and the task names are in the card's Details, folded at first. */
+  await app.clickSel('#apprcard .apprdet summary');
+  await app.waitFor(`!!document.querySelector('#apprcard .apprdet[open]')`, 'the card\'s Details open');
   const card = await app.eval(`document.querySelector('#apprcard').innerText.replace(/\\s+/g, ' ').trim().slice(0, 800)`);
   app.log(`the card says: ${JSON.stringify(card)}`);
-  check(/2 tasks/.test(card), 'the card says how many tasks are going out', card);
+  check(/2 tasks to 2 workers/.test(card), 'the card says how many tasks are going out', card);
+  for (const p of PARTS) check(card.includes(p.title), `the card names the task "${p.title}"`, card);
   for (const p of PARTS) {
     check(byRoute(p.id).length === 0, `worker ${p.id} has not started while the card is up`);
     check(!existsSync(join(workspace, p.file)), `${p.file} does not exist while the card is up`);

@@ -21,7 +21,7 @@
  * and Doctor parts have passed.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -159,15 +159,21 @@ function docRows(app) {
 
 /** The terminal half: doctor finds and fixes, a backup brings this moment back. */
 async function terminalPart({ env, stateDir, base, workspace, config }) {
-  const atag = (...args) => {
-    const r = spawnSync(process.execPath, [CLI, ...args], { encoding: 'utf8', env, cwd: workspace, timeout: 120000, maxBuffer: 64 * 1024 * 1024 });
-    if (r.error) throw r.error;
-    return { code: r.status, out: r.stdout, err: r.stderr };
-  };
+  /* Asynchronous on purpose: the scripted model answers from this same process,
+     so a blocking spawn would stop it replying to doctor's own engine check. */
+  const atag = (...args) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI, ...args], { env, cwd: workspace, stdio: ['ignore', 'pipe', 'pipe'], timeout: 120000 });
+    let out = '';
+    let err = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk) => { out += chunk; });
+    child.stderr.setEncoding('utf8').on('data', (chunk) => { err += chunk; });
+    child.once('error', reject);
+    child.once('close', (code) => resolve({ code, out, err }));
+  });
 
   // ---- doctor names a real problem and repairs it ---------------------------
   chmodSync(config, MODE_LOOSE);
-  const found = atag('doctor', '--json');
+  const found = await atag('doctor', '--json');
   check(found.code === 0, 'atag doctor finishes without a failing check', `exit ${found.code}: ${found.out}${found.err}`);
   const findings = JSON.parse(found.out);
   check(finding(findings, 'config')?.status === 'ok', 'doctor reads my config as valid', found.out);
@@ -176,10 +182,10 @@ async function terminalPart({ env, stateDir, base, workspace, config }) {
     'doctor says other users can read my config.json, and offers a fix', found.out);
   check(modeOf(config) === MODE_LOOSE, 'looking changed nothing', modeOf(config).toString(8));
 
-  const fixed = atag('doctor', '--fix');
+  const fixed = await atag('doctor', '--fix');
   check(fixed.code === 0 && /fixed\s+config-mode/.test(fixed.out), 'atag doctor --fix says it fixed it', fixed.out + fixed.err);
   check(modeOf(config) === MODE_PRIVATE, 'config.json really is private now', modeOf(config).toString(8));
-  const clean = JSON.parse(atag('doctor', '--json').out);
+  const clean = JSON.parse((await atag('doctor', '--json')).out);
   check(finding(clean, 'config-mode')?.status === 'ok' && !clean.some((f) => f.fix), 'a second doctor finds nothing left to fix', JSON.stringify(clean));
 
   // ---- a backup, then the folder changes -------------------------------------
@@ -187,7 +193,7 @@ async function terminalPart({ env, stateDir, base, workspace, config }) {
   const later = join(stateDir, 'made-after-backup.txt');
   const archive = join(base, 'terminal-backup.tar.gz');
   writeFileSync(kept, KEPT_BYTES);
-  const backup = atag('data', 'backup', archive);
+  const backup = await atag('data', 'backup', archive);
   check(backup.code === 0 && /backed up \d+ files/.test(backup.out), 'atag data backup says what it saved', backup.out + backup.err);
   check(existsSync(archive), 'the archive is on disk', archive);
   check(modeOf(archive) === MODE_PRIVATE, 'the archive is readable by me only: it holds my keys', modeOf(archive).toString(8));
@@ -195,12 +201,12 @@ async function terminalPart({ env, stateDir, base, workspace, config }) {
   writeFileSync(later, LATER_BYTES);
 
   // ---- no confirmation, no restore -------------------------------------------
-  const unconfirmed = atag('data', 'restore', archive);
+  const unconfirmed = await atag('data', 'restore', archive);
   check(unconfirmed.code === 2 && /--yes/.test(unconfirmed.out), 'a restore without confirmation asks for it', `exit ${unconfirmed.code}: ${unconfirmed.out}`);
   check(existsSync(later) && !existsSync(kept) && replacedFolders(base).length === 0, 'and changed nothing');
 
   // ---- confirmed --------------------------------------------------------------
-  const restored = atag('data', 'restore', archive, '--yes');
+  const restored = await atag('data', 'restore', archive, '--yes');
   check(restored.code === 0, 'atag data restore --yes finishes', `exit ${restored.code}: ${restored.out}${restored.err}`);
   check(existsSync(kept) && readFileSync(kept, 'utf8') === KEPT_BYTES, 'the file from before the backup is back, byte for byte');
   check(!existsSync(later), 'the file from after the backup is gone');

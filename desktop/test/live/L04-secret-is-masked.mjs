@@ -102,6 +102,9 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   check(!leaked(everything).length, 'no key is in any request sent to the model', leaked(everything).join(', '));
 
   // ---- what the window holds -------------------------------------------------
+  /* A finished turn folds its tool cards into one "Used 2 tools" line
+     (renderer/turn-summary.js), so a person opens that line first. */
+  await app.clickSel('.turnsum[data-turnsum]');
   for (const tool of ['os.fs.read', 'os.shell.run']) {
     await app.clickSel(`.card[data-tool="${tool}"] .cardhead[data-toggle]`);
     await app.waitFor(`!!document.querySelector('.card[data-tool="${tool}"] .cardbody')`, `the ${tool} card open`);

@@ -37,6 +37,12 @@ import { call, reply } from './scripted-model.mjs';
 const TOOL = 'fixture-tool';
 const SIGN_IN_URL = 'https://example.test/login/device';
 const SIGN_IN_CODE = 'ABCD-1234';
+/* The script prints this from a file, as a real sign-in tool prints it from
+   inside its program. Written in the script itself, the words "open https://"
+   are refused by the browser guard, which reads a script's text and cannot tell
+   an echo from a command (src/tools/os/shell-command-guard/browser-bypass.ts:150).
+   This scenario is about the sign-in, not about that guard. */
+const SIGN_IN_MESSAGE = 'sign-in-message.txt';
 /* The one phrase the full and the compact persona share (src/prompt/stable-prefix.ts). */
 const RUN_IT_YOURSELF = 'yourself with `os.shell.run`';
 const SWITCHES = { npm_config_yes: 'true', GIT_TERMINAL_PROMPT: '0', PIP_NO_INPUT: '1', DEBIAN_FRONTEND: 'noninteractive' };
@@ -52,7 +58,7 @@ echo finished > password-done.txt
 `,
   'sign-in.sh': `#!/bin/sh
 echo $$ > signin.pid
-echo 'To sign in, open ${SIGN_IN_URL} and enter the one-time code ${SIGN_IN_CODE}'
+cat ${SIGN_IN_MESSAGE}
 i=0
 while [ ! -f signed-in.flag ] && [ $i -lt 180 ]; do sleep 1; i=$((i+1)); done
 [ -f signed-in.flag ] || exit 1
@@ -184,6 +190,7 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
     mkdirSync(bin, { recursive: true });
     executable(join(bin, TOOL), toolScript);
     for (const [name, body] of Object.entries(SCRIPTS)) executable(join(workspace, name), body);
+    writeFileSync(join(workspace, SIGN_IN_MESSAGE), `To sign in, open ${SIGN_IN_URL} and enter the one-time code ${SIGN_IN_CODE}\n`);
     /* A value the operator already exported would win over the agent's own. */
     return Object.fromEntries(Object.keys(SWITCHES).map((k) => [k, undefined]));
   },

@@ -63,12 +63,13 @@ const installedDir = (stateDir) => join(stateDir, 'plugins', 'installed', NAME);
 const probeLog = (stateDir) => join(stateDir, 'plugins', 'data', NAME, 'probe.log');
 const bodyOf = (request) => JSON.stringify(request.body);
 
+/** `what` may be a function, for a message that reports the state at the end of the wait. */
 async function until(fn, what, ms = 30000) {
   const end = Date.now() + ms;
   for (;;) {
     const value = await fn();
     if (value) return value;
-    if (Date.now() > end) throw new Failure(`gave up after ${ms}ms waiting for ${what}`);
+    if (Date.now() > end) throw new Failure(`gave up after ${ms}ms waiting for ${typeof what === 'function' ? what() : what}`);
     await sleep(200);
   }
 }
@@ -125,10 +126,17 @@ const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]P^_][^\x07\x1b]*(?:\x07|\x1b\\)|\x1
  * `atag tui` in a real pseudo-terminal, through macOS script(1). The window
  * size is set before the app starts because script gives a piped session 0x0.
  * The temp path on the command line is what lets the harness sweep find it.
+ *
+ * script needs its stdin to be a real pipe. A Node 'pipe' is a Unix socket on
+ * macOS, and script quits at once on one with "tcgetattr/ioctl: Operation not
+ * supported on socket", so `cat` stands between Node and script. cat only
+ * notices the end of script on its next write, so the shell ends itself, and
+ * Node closing the child's stdin then ends cat.
  */
 function openTerminal(dirs) {
   const inner = 'stty rows 40 cols 120 2>/dev/null; exec "$0" "$@"';
-  const proc = spawn('/usr/bin/script', ['-q', '/dev/null', '/bin/sh', '-c', inner, process.execPath,
+  const keyboardPipe = 'cat 2>/dev/null | { /usr/bin/script -q /dev/null /bin/sh -c "$0" "$@"; kill $$; }';
+  const proc = spawn('/bin/sh', ['-c', keyboardPipe, inner, process.execPath,
     `--diagnostic-dir=${dirs.base}`, AGENT_ENTRY, 'tui', '--cwd', dirs.workspace, '--skip-llama-setup'],
   { cwd: dirs.workspace, detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...cliEnv(dirs), TERM: 'xterm-256color' } });
   const t = { proc, raw: '', changedAt: Date.now() };
@@ -137,6 +145,11 @@ function openTerminal(dirs) {
   proc.stderr.setEncoding('utf8').on('data', take);
   t.tail = (n = 800) => t.raw.replace(ANSI, '').slice(-n);
   t.typeSlowly = async (text) => { for (const ch of text) { proc.stdin.write(ch); await sleep(15); } };
+  proc.stdin.on('error', () => { /* the terminal went away; assertRunning reports it */ });
+  /* Say so at once rather than sit out a timeout on a terminal that is gone. */
+  t.assertRunning = () => {
+    if (proc.exitCode !== null || proc.signalCode !== null) throw new Failure(`the terminal program ended early; it showed: ${t.tail()}`);
+  };
   return t;
 }
 
@@ -194,16 +207,16 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   model.script([reply('Shout check done.')]);
   const terminal = openTerminal(dirs);
   try {
-    await until(() => terminal.raw.includes('\u001b[?1049h') && Date.now() - terminal.changedAt > 1500,
-      `the terminal app on screen; it showed: ${terminal.tail(300)}`, 60000);
+    await until(() => { terminal.assertRunning(); return terminal.raw.includes('\u001b[?1049h') && Date.now() - terminal.changedAt > 1500; },
+      () => `the terminal app on screen; it showed: ${terminal.tail(300)}`, 60000);
     await terminal.typeSlowly('/');
     /* Opening the palette is what refreshes the plugin command list. */
     await sleep(1500);
     await terminal.typeSlowly(`${NAME}:shout ${COMMAND_ARGS}`);
     await sleep(500);
     terminal.proc.stdin.write('\r');
-    await until(() => model.agentRequests.length > countBefore && model.inFlight === 0,
-      `the model to be called by the command; the terminal showed: ${terminal.tail()}`, 45000);
+    await until(() => { terminal.assertRunning(); return model.agentRequests.length > countBefore && model.inFlight === 0; },
+      () => `the model to be called by the command; the terminal showed: ${terminal.tail()}`, 45000);
   } finally {
     await closeTerminal(terminal);
   }

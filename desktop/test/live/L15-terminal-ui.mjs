@@ -17,6 +17,11 @@
  * the screen. Its stdin is not a tty here, so the terminal starts with no size
  * and the inner shell sets one before the agent starts.
  *
+ * That stdin has to be a real pipe. A Node 'pipe' is a Unix socket on macOS (a
+ * mkfifo file behaves the same), and script(1) quits at once on those with
+ * "tcgetattr/ioctl: Operation not supported on socket". So `cat` stands
+ * between Node and script(1), with a shell pipe on its far side.
+ *
  * The model is `startScriptedModel`, set up as live-harness.mjs does for the
  * desktop. That file's config and environment helpers are private to it, so
  * the few lines that build them are repeated below and must follow it.
@@ -38,6 +43,10 @@ const AGENT_SCHEMA = join(REPO_DIR, 'dist', 'config', 'config-schema.js');
 const LIVE_ROOT = process.env.ATAG_LIVE_DIR || join(tmpdir(), 'atag-live-scenarios');
 const KEEP = process.env.ATAG_LIVE_KEEP === '1';
 const SCRIPT_BIN = '/usr/bin/script';
+/* See the header for why cat is here. cat only notices the end of script(1) on
+   its next write, so the shell ends itself, and Node closing the child's stdin
+   then ends cat. */
+const KEYBOARD_PIPE = 'cat 2>/dev/null | { "$0" -q /dev/null /bin/sh "$1"; kill $$; }';
 
 const COLS = 130;
 const ROWS = 45;
@@ -291,7 +300,7 @@ function openTerminal(dirs) {
   writeFileSync(inner, `#!/bin/sh\nstty rows ${ROWS} cols ${COLS}\n`
     + `${q(process.execPath)} --enable-source-maps --diagnostic-dir=${q(dirs.base)} ${q(AGENT_ENTRY)} tui --cwd ${q(dirs.workspace)}\n`
     + `echo $? > ${q(exitFile)}\n`);
-  const child = spawn(SCRIPT_BIN, ['-q', '/dev/null', '/bin/sh', inner], {
+  const child = spawn('/bin/sh', ['-c', KEYBOARD_PIPE, SCRIPT_BIN, inner], {
     cwd: dirs.workspace, env: terminalEnv(dirs), detached: true, stdio: ['pipe', 'pipe', 'pipe'],
   });
   return { term: new Terminal(child, new Screen(COLS, ROWS)), exitFile };
