@@ -72,9 +72,10 @@ describe("### answer-style in the stable prefix (ATO-966)", () => {
 
   it("sits right after ### rules and before ### skills", () => {
     const text = prefix({ channel: "desktop", compact: false });
-    const rules = text.indexOf("### rules");
-    const style = text.indexOf(ANSWER_STYLE_HEADER);
-    const skills = text.indexOf("### skills");
+    // Whole lines: the persona names `### skills` in its own text.
+    const rules = text.indexOf("\n### rules\n");
+    const style = text.indexOf(`\n${ANSWER_STYLE_HEADER}\n`);
+    const skills = text.indexOf("\n### skills\n");
     expect(rules).toBeGreaterThan(-1);
     expect(style).toBeGreaterThan(rules);
     expect(skills).toBeGreaterThan(style);
