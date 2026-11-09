@@ -18,7 +18,10 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * and so one file. `app_installed` is counted per surface, so it has two
  * flags: `appInstalledSent` for the terminal (`tui` / `cli`, and the only
  * flag files written before ATO-1227 have) and `appInstalledSentDesktop`
- * for the desktop. The other flags are still one per file.
+ * for the desktop. `first_message_sent` and `model_configured` are split
+ * the same way (ATO-1262): `firstMessageSent` / `modelConfiguredSent`
+ * for the terminal (the only ones older files have), and
+ * `firstMessageSentDesktop` / `modelConfiguredSentDesktop` for the desktop.
  */
 export interface AnalyticsState {
   /** Anonymous, stable-per-install identifier (random UUID). */
@@ -31,10 +34,20 @@ export interface AnalyticsState {
    * desktop sharing the folder with an earlier terminal reports once.
    */
   appInstalledSentDesktop: boolean;
-  /** Whether the one-time `first_message_sent` event was already sent. */
+  /** Whether the terminal's one-time `first_message_sent` was already sent. */
   firstMessageSent: boolean;
-  /** Whether the one-time `model_configured` event was already sent. */
+  /**
+   * Whether the desktop's one-time `first_message_sent` was already sent.
+   * Absent in files written before ATO-1262: read as `false`.
+   */
+  firstMessageSentDesktop: boolean;
+  /** Whether the terminal's one-time `model_configured` was already sent. */
   modelConfiguredSent: boolean;
+  /**
+   * Whether the desktop's one-time `model_configured` was already sent.
+   * Absent in files written before ATO-1262: read as `false`.
+   */
+  modelConfiguredSentDesktop: boolean;
   /**
    * ISO timestamp of the fresh install that created this file. Absent in
    * files written before it existed — deliberately not backfilled, since
@@ -50,6 +63,20 @@ function appInstalledKey(
   return surface === "desktop" ? "appInstalledSentDesktop" : "appInstalledSent";
 }
 
+/** Which `first_message_sent` flag a surface uses (ATO-1262). */
+function firstMessageKey(
+  surface: AnalyticsSurface | undefined,
+): "firstMessageSent" | "firstMessageSentDesktop" {
+  return surface === "desktop" ? "firstMessageSentDesktop" : "firstMessageSent";
+}
+
+/** Which `model_configured` flag a surface uses (ATO-1262). */
+function modelConfiguredKey(
+  surface: AnalyticsSurface | undefined,
+): "modelConfiguredSent" | "modelConfiguredSentDesktop" {
+  return surface === "desktop" ? "modelConfiguredSentDesktop" : "modelConfiguredSent";
+}
+
 /** The flag of the *other* surface (desktop <-> terminal). */
 function otherAppInstalledKey(
   surface: AnalyticsSurface | undefined,
@@ -61,7 +88,9 @@ const FLAG_KEYS = [
   "appInstalledSent",
   "appInstalledSentDesktop",
   "firstMessageSent",
+  "firstMessageSentDesktop",
   "modelConfiguredSent",
+  "modelConfiguredSentDesktop",
 ] as const;
 
 const KNOWN_KEYS: ReadonlySet<string> = new Set<string>([
@@ -88,7 +117,16 @@ export class AnalyticsStateStore {
   private extra: Record<string, unknown> = {};
   private sharedInstallId: string | undefined;
 
-  constructor(private readonly filePath: string) {
+  /**
+   * `options.surface` is the surface this process reports as. It picks
+   * the `first_message_sent` / `model_configured` flags when a call does
+   * not name a surface itself; without it the terminal's flags are used,
+   * as before ATO-1262.
+   */
+  constructor(
+    private readonly filePath: string,
+    private readonly options: { surface?: AnalyticsSurface } = {},
+  ) {
     this.state = this.load();
   }
 
@@ -147,12 +185,20 @@ export class AnalyticsStateStore {
     return this.state[otherAppInstalledKey(surface)];
   }
 
-  isFirstMessageSent(): boolean {
-    return this.state.firstMessageSent;
+  /**
+   * Whether `first_message_sent` already went out for `surface` (by
+   * default this process's surface): the desktop and the terminal each
+   * have their own flag (ATO-1262). Re-reads the file first.
+   */
+  isFirstMessageSent(surface: AnalyticsSurface | undefined = this.options.surface): boolean {
+    this.mergeFromDisk();
+    return this.state[firstMessageKey(surface)];
   }
 
-  isModelConfiguredSent(): boolean {
-    return this.state.modelConfiguredSent;
+  /** As {@link isFirstMessageSent}, for `model_configured`. */
+  isModelConfiguredSent(surface: AnalyticsSurface | undefined = this.options.surface): boolean {
+    this.mergeFromDisk();
+    return this.state[modelConfiguredKey(surface)];
   }
 
   markAppInstalledSent(surface?: AnalyticsSurface): void {
@@ -162,15 +208,17 @@ export class AnalyticsStateStore {
     this.persist();
   }
 
-  markFirstMessageSent(): void {
-    if (this.state.firstMessageSent) return;
-    this.state.firstMessageSent = true;
+  markFirstMessageSent(surface: AnalyticsSurface | undefined = this.options.surface): void {
+    const key = firstMessageKey(surface);
+    if (this.state[key]) return;
+    this.state[key] = true;
     this.persist();
   }
 
-  markModelConfiguredSent(): void {
-    if (this.state.modelConfiguredSent) return;
-    this.state.modelConfiguredSent = true;
+  markModelConfiguredSent(surface: AnalyticsSurface | undefined = this.options.surface): void {
+    const key = modelConfiguredKey(surface);
+    if (this.state[key]) return;
+    this.state[key] = true;
     this.persist();
   }
 
@@ -220,12 +268,16 @@ export class AnalyticsStateStore {
           // surfaces): `false`, so the desktop still reports once.
           appInstalledSentDesktop: parsed.appInstalledSentDesktop === true,
           firstMessageSent: parsed.firstMessageSent === true,
+          // Absent in files written before ATO-1262 (one flag for both
+          // surfaces): `false`, so the desktop reports once.
+          firstMessageSentDesktop: parsed.firstMessageSentDesktop === true,
           // Absent in files written before `model_configured` existed.
           // Defaulting to `false` lets an install that is already set up
           // emit the event once on its next verified provider save,
           // rather than never — the flag means "already reported", and
           // an old file has genuinely never reported it.
           modelConfiguredSent: parsed.modelConfiguredSent === true,
+          modelConfiguredSentDesktop: parsed.modelConfiguredSentDesktop === true,
           ...(typeof parsed.installedAt === "string"
             ? { installedAt: parsed.installedAt }
             : {}),
@@ -239,7 +291,9 @@ export class AnalyticsStateStore {
       appInstalledSent: false,
       appInstalledSentDesktop: false,
       firstMessageSent: false,
+      firstMessageSentDesktop: false,
       modelConfiguredSent: false,
+      modelConfiguredSentDesktop: false,
       installedAt: new Date().toISOString(),
     };
     this.state = fresh;
