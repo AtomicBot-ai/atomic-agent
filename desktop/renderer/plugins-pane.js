@@ -51,7 +51,7 @@ function plgBadges(p) {
   if (p.runsCode) {
     out.push({text: 'Runs code', tone: 'line', title: (p.codeParts || []).join('; ')});
     out.push({text: plgTrustText(p), tone: p.trust === 'code-allowed' ? 'green' : 'amber',
-      title: p.trust === 'code-allowed' ? 'Its local MCP servers, hooks and scripts may run' : 'Its local MCP servers, hooks and scripts stay off until you allow them'});
+      title: p.trust === 'code-allowed' ? 'It may run its local MCP servers, hooks and scripts and receive your keys' : 'Its local MCP servers, hooks, scripts and servers that read your keys stay off until you allow them'});
   } else {
     out.push({text: plgTrustText(p), tone: 'line', title: 'Nothing in this plugin runs a program'});
   }
@@ -222,8 +222,8 @@ function plgRowHTML(p, i) {
 function plgPartsHTML(p) {
   const code = p.runsCode
     ? '<div class="tk-notice set-softnote set-plgcode"><span class="grow">' + esc(p.trust === 'code-allowed'
-        ? 'This plugin may run programs on this computer: ' + (p.codeParts || []).join('; ') + '.'
-        : 'This plugin can run programs on this computer (' + (p.codeParts || []).join('; ') + '). Those parts stay off until you allow them.') + '</span>'
+        ? 'This plugin may run programs on this computer or receive your keys: ' + (p.codeParts || []).join('; ') + '.'
+        : 'This plugin can run programs on this computer or receive your keys (' + (p.codeParts || []).join('; ') + '). Those parts stay off until you allow them.') + '</span>'
       + '<button class="btn ' + (p.trust === 'code-allowed' ? 'btn-s' : 'btn-p') + ' sm" data-act="plugins:code:' + esc(p.name) + '"' + (PLG.busy ? ' disabled' : '') + ' title="c">'
       + (p.trust === 'code-allowed' ? 'Stop its code' : 'Allow code…') + '</button></div>'
     : '';
@@ -253,8 +253,8 @@ function plgRemoveConfirmHTML() {
 function plgCodeConfirmHTML() {
   const c = PLG.codeConfirm;
   return '<div class="set-overlay"><div class="tk-modal set-modal" role="alertdialog" aria-label="Allow code">'
-    + '<div class="set-mhead"><span class="tk-ico tk-ico--amber">' + ic('shield') + '</span><h4>Allow this plugin to run code?</h4></div>'
-    + '<p><b class="mono">' + esc(c.name) + '</b> can start programs on this computer:</p>'
+    + '<div class="set-mhead"><span class="tk-ico tk-ico--amber">' + ic('shield') + '</span><h4>Allow this plugin to run code and use your keys?</h4></div>'
+    + '<p><b class="mono">' + esc(c.name) + '</b> can start programs on this computer or receive your keys:</p>'
     + '<ul class="set-plglist">' + c.parts.map((x) => '<li>' + esc(x) + '</li>').join('') + '</ul>'
     + '<p class="set-cap">Allow it only if you trust where it came from. You can stop it again here or with <span class="mono">atag plugin deny-code ' + esc(c.name) + '</span>.</p>'
     + (c.error ? '<div class="tuierr tk-help tk-help--err">' + esc(c.error) + '</div>' : '')
