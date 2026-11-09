@@ -76,6 +76,18 @@ describe("modelsCommand", () => {
     expect(stdout()).toMatch(/models list/);
   });
 
+  it("documents pull --run in the help", async () => {
+    expect(await modelsCommand(["--help"])).toBe(0);
+    expect(stdout()).toMatch(/--run then makes it active and starts it/);
+    expect(stdout()).toMatch(/models pull --run qwen-3\.5-4b/);
+  });
+
+  it("refuses pull --run with --background", async () => {
+    const code = await modelsCommand(["pull", "qwen-3.5-2b", "--run", "--background"]);
+    expect(code).toBe(2);
+    expect(stderrChunks.join("")).toMatch(/--run .*--background/);
+  });
+
   it("list prints all catalog model rows", async () => {
     const code = await modelsCommand(["list"]);
     expect(code).toBe(0);

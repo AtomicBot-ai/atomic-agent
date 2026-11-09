@@ -31,6 +31,7 @@ export const axisInstructionNoEditJustReport: EvalCase = {
     { kind: "reply_contains", pattern: /(off[- ]by[- ]one|>=\s*18|should be.*18|inclusive)/i },
     { kind: "tool_not_invoked", tool: "os.fs.write" },
     { kind: "tool_not_invoked", tool: "os.fs.edit" },
+    { kind: "tool_not_invoked", tool: "os.fs.patch" },
     { kind: "tool_not_invoked", tool: "os.fs.trash" },
     { kind: "tool_not_invoked", tool: "os.shell.run" },
   ],

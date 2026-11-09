@@ -11,6 +11,7 @@ import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.j
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
+import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
 import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
@@ -235,7 +236,7 @@ import { VoiceSession, helperPath as speechHelperPath } from "./speech.js";
 import { clawhubSkillDetail } from "./clawhub.js";
 import { hubCache, hubConfigKey } from "./skills-hub-cache.js";
 // r7 models — the vendored catalogue metadata, for the smoke's drift check.
-import { curatedMetaIds } from "./model-catalog.js";
+import { curatedMetaIds, spotlightIds } from "./model-catalog.js";
 import { memoryQuery } from "./memory-db.js";
 // r5 item 9 — the desktop's own state directory and the TUI import offer.
 import { agentEnv, claimPortsIn, DESKTOP_EMBEDDING_PORT, DESKTOP_MANAGED_PORT, DESKTOP_STATE_DIR, desktopOwnsItsPorts, LEGACY_DESKTOP_STATE_DIR, SHARES_TERMINAL_STATE, STATE_DIR_FROM_ENV, TUI_STATE_DIR, underDesktopState } from "./state-dir.js";
@@ -669,11 +670,18 @@ function engineInstallStream(
         console.error(`[desktop] local-llm: Download again: Atomic Core ${reset.version}${reset.removedRecord ? ", its install record removed" : ""}${reset.removedBinary ? ", its binary (it did not run) removed" : ""}`);
       }
       if (own.signal.aborted) return stopped(UPDATE_STOPPED);
-      const started = modelsUpdateStream((line) =>
-        pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
-      );
-      own.signal.addEventListener("abort", () => started.cancel(), { once: true });
-      return started.done.then(updateSwept);
+      const attempt = (): Promise<InstallEnded> => {
+        const started = modelsUpdateStream((line) =>
+          pullFrame(slot, { id, line, ...parsePullProgress(line, "runtime") }),
+        );
+        const cancel = () => started.cancel();
+        own.signal.addEventListener("abort", cancel, { once: true });
+        return started.done.finally(() => own.signal.removeEventListener("abort", cancel));
+      };
+      // Settings' install hears at once that the engine is taken. The launch's and the setup's belong to a queue that was going to run anyway, so they wait.
+      const ended = await (via === "settings" ? attempt() : retryWhileEngineBusy(attempt, { signal: own.signal }));
+      if (own.signal.aborted && engineBusy(ended)) return stopped(UPDATE_STOPPED);
+      return updateSwept(ended);
     },
   );
   pullUpdate = slot = { done, cancel: () => own.abort(), kind: "runtime", id, last: null };
@@ -1685,12 +1693,13 @@ function wireIpc(client: AgentClient): void {
   );
   ipcMain.handle("cli:modelsPull", (_event, id: unknown, opts: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "model id required" };
-    return startModelPull(id, (opts as { trigger?: unknown } | undefined)?.trigger);
+    const o = opts as { trigger?: unknown; mmproj?: unknown } | undefined;
+    return startModelPull(id, o?.trigger, undefined, o?.mmproj === true);
   });
   /* The weights download, for the window's pull and for the launch's starter
      model (ATO-1041): one slot, one stream (`cli:pull`), so the window's
      download card follows either (dlAdopt). `onDone` hears how it ended. */
-  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void) {
+  function startModelPull(id: string, trigger: unknown, onDone?: (res: CliResult) => void, mmproj = false) {
     if (REMOVING.has(id)) return { ok: false, error: REMOVING_BUSY };
     const running = downloadRunning();
     // A refusal for the download already running is the window following it (dlAdopt), not a failure.
@@ -1702,12 +1711,15 @@ function wireIpc(client: AgentClient): void {
       const progress = parsePullProgress(line, "weights");
       A.downloadProgress(id, progress);
       pullFrame(slot, { id, line, ...progress });
-    });
+    }, mmproj);
     pull = slot = { ...started, kind: "weights", id, last: null };
     void started.done.then((res) => {
       pull = null;
       A.downloadFinished(id, res);
-      send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null });
+      /* `models pull --mmproj` exits 0 when only the projector failed, and says
+         so on stderr (src/cli/models-downloads.ts describeProjectorSkipped). */
+      const projectorSkipped = mmproj && res.ok && /^note: projector download failed/m.test(res.stderr);
+      send("cli:pull", { id, done: true, ok: res.ok, error: res.error ?? null, ...(projectorSkipped ? { projectorSkipped: true } : {}) });
       onDone?.(res);
     });
     return { ok: true, started: true };
@@ -2138,6 +2150,8 @@ function wireIpc(client: AgentClient): void {
   // `--fake-ram=N` (test only, see FAKE_RAM_GB) is the one thing that can
   // stand between this window and os.totalmem().
   ipcMain.handle("app:hostRam", () => FAKE_RAM_GB ?? hostRamGb());
+  // None on another computer's agent: its models are managed there, and a pull is refused (REMOTE_MODELS_HERE).
+  ipcMain.handle("app:modelSpotlightIds", () => (client.isRemote ? [] : spotlightIds()));
   ipcMain.handle("app:keyEnv", () => PROVIDER_KEY_ENV);
   // ATO-507: free space on the disk models download to ({freeBytes, totalBytes, path} | null).
   // Null when it cannot be read; the window then blocks nothing.
@@ -5556,7 +5570,7 @@ async function sidebarTest(
         `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}`,
       );
     } else {
-      check("a pinned chat sorts first and is stored", true, "skipped — fewer than two chats in this workspace");
+      process.stdout.write("SKIP a pinned chat sorts first and is stored — fewer than two chats in this workspace\n");
     }
 
     // "Load more" appears only when the page actually hides rows.
@@ -5675,7 +5689,7 @@ async function sidebarTest(
       await js<void>(`window.__openSession(${JSON.stringify(id)})`);
       await wait(1500);
     } else {
-      check("a turn left behind stays out of the open chat and fills its own row", true, "skipped — no second idle chat in this workspace");
+      process.stdout.write("SKIP a turn left behind stays out of the open chat and fills its own row — no second idle chat in this workspace\n");
     }
 
     // The Tasks list is every task, not the TUI rail's running/queued

@@ -1,0 +1,40 @@
+{
+  "cases": [
+    { "id": "coding-fix-cart-total", "category": "code-fix", "why": "Plain one-file logic bug described only by intended behaviour." },
+    { "id": "coding-fix-pagination-offset", "category": "code-fix", "why": "Off-by-one, the most common small arithmetic fix." },
+    { "id": "coding-fix-missing-null-check", "category": "code-fix", "why": "Adds a guard while keeping the existing behaviour." },
+    { "id": "coding-fix-greedy-regex", "category": "code-fix", "why": "Needs a precise edit inside a pattern, where sloppy edits show." },
+    { "id": "coding-fix-swapped-date-args", "category": "code-fix", "why": "The model has to reason about direction from the stated symptom." },
+
+    { "id": "coding-wire-shared-tax-rate", "category": "multi-file", "why": "Reads one file to change another, the smallest real cross-file task." },
+    { "id": "coding-extract-shared-constant", "category": "multi-file", "why": "Creates a new module and rewires two callers." },
+    { "id": "coding-rename-function-across-files", "category": "multi-file", "why": "A rename is only right if no call site is missed." },
+    { "id": "coding-split-god-module", "category": "multi-file", "why": "Hardest refactor in the set, long enough to expose a planner that loses track." },
+
+    { "id": "fs-create-changelog", "category": "create-file", "why": "Basic new file with given content, then a clean finish." },
+    { "id": "axis-args-shaping-write-mode", "category": "create-file", "why": "Exact content in a new folder with no malformed tool call." },
+
+    { "id": "fs-read-readme", "category": "read-before-answer", "why": "The answer exists only in a file, so guessing cannot pass." },
+    { "id": "axis-context-retention-config-value", "category": "read-before-answer", "why": "Must carry an exact value from the tool result into the reply." },
+    { "id": "os-fs-tail-last-line", "category": "read-before-answer", "why": "The answer is at the end of the file, which catches partial reads." },
+    { "id": "os-grep-find-function-def", "category": "read-before-answer", "why": "Must tell a definition apart from its usages by looking at the code." },
+
+    { "id": "axis-recovery-bad-path-then-fix", "category": "recovery", "why": "The prompt names a wrong path and the agent must find the real file." },
+    { "id": "axis-recovery-failed-command", "category": "recovery", "why": "A command fails, the agent must act on its error and run it again." },
+
+    { "id": "axis-refusal-missing-file", "category": "no-inventing", "why": "The file does not exist, so any described content is made up." },
+    { "id": "axis-refusal-empty-result", "category": "no-inventing", "why": "Zero matches must be reported as zero rather than a guessed count." },
+
+    { "id": "axis-instruction-no-edit-just-report", "category": "follows-limits", "why": "Told to only read and explain, so any change to a file fails." },
+    { "id": "axis-instruction-no-shell", "category": "follows-limits", "why": "Told not to use the shell for a task the shell makes easy." },
+    { "id": "debug-fix-slugify", "category": "follows-limits", "why": "Fix the code while the test file named as off limits stays untouched." },
+
+    { "id": "axis-tool-selection-edit-not-write", "category": "tool-choice", "why": "A targeted edit instead of rewriting the whole file." },
+    { "id": "axis-tool-selection-read-not-shell", "category": "tool-choice", "why": "Uses the read tool rather than reaching for cat in the shell." },
+    { "id": "axis-args-shaping-grep-special-chars", "category": "tool-choice", "why": "Search with literal parentheses, which breaks a naive pattern." },
+
+    { "id": "axis-min-steps-single-read", "category": "no-wasted-steps", "why": "One read and one answer, with a cap of two steps." },
+    { "id": "axis-min-steps-trivial-reply", "category": "no-wasted-steps", "why": "No tool is needed, so the only correct run is a single step." },
+    { "id": "axis-self-term-after-find", "category": "no-wasted-steps", "why": "Must stop as soon as the value is found." }
+  ]
+}

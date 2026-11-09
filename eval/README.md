@@ -25,6 +25,7 @@ to run a model server before every commit.
 eval/
   .env.example            template for eval-local env vars (copy → .env)
   cases/                  one .case.ts per scenario, plus index.ts
+  exam/                   release exam: fixed case set compared between releases
   fixtures/skills/        skill bodies copied into per-case stateDir
   harness/                runner, trace parser, mock HTTP, judge client
   scripts/                standalone CLIs (judge-from-jsonl)
