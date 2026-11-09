@@ -1855,6 +1855,8 @@ const SLASH = [
   // ATO-259: POST /api/sessions/{id}/compact, as the TUI's `/compact`.
   ['compact','summarize older messages to free up context'],
   ['abort','abort the running turn'],
+  // ATO-965: the terminal's and Telegram's /status (status-snapshot.js).
+  ['status','what the running turn is doing: now, last result, waiting on you, time'],
   ['quit','exit Atomic Agent'],
   ['debug','show or hide the console'],
   ['chat','back to the chat'],
@@ -7680,6 +7682,12 @@ function runSlash(parts) {
   if (name === 'compact') {
     if (rest.length) { S.log.push({id:nid(), k:'system', text:'usage: /compact'}); render(); return; }
     compactNow(); return;
+  }
+  // ATO-965: a snapshot of the turn running in the chat on screen, as a
+  // system row. Read here, at the press: nothing keeps it up to date.
+  if (name === 'status') {
+    const snap = statusSnapshotOf(S.log, {running: !!(S.busy || S.pending), startedAt: S.turnStartedAt, pending: S.pending || null});
+    S.log.push({id:nid(), k:'system', text: statusSnapshotHTML(snap, esc)}); render(); return;
   }
   if (nav[name]) { act(nav[name]); return; }
   S.log.push({id:nid(), k:'system', text:'unknown command /' + esc(name) + ' — ⌘K lists everything'});
