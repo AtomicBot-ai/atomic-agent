@@ -1,6 +1,13 @@
 import { resolve } from "node:path";
 import type { AtomicAgentConfig } from "../../config/index.js";
-import { TaskStore, TaskRunner } from "../../tasks/index.js";
+import {
+  parseQuietHours,
+  SqliteHeldReportStore,
+  TaskReportHold,
+  TaskRunner,
+  TaskStore,
+  type TaskReportSink,
+} from "../../tasks/index.js";
 import type { TaskRunnerRuntime } from "../../tasks/task-runner.js";
 import { createSchedulerLeadership, Scheduler } from "../../scheduler/index.js";
 import { WebhookSessionStore, WEBHOOK_SESSIONS_FILENAME } from "../../http/webhook-session-store.js";
@@ -47,7 +54,7 @@ export function createRuntimeTaskStores(args: {
 }
 
 export function createRuntimeTaskRunner(args: {
-  config: Pick<AtomicAgentConfig, "agent" | "tasks">;
+  config: Pick<AtomicAgentConfig, "agent" | "tasks" | "paths">;
   taskStore: TaskStore;
   runTurn: TaskRunnerRuntime["runTurn"];
   sessionStore: Pick<SessionStore, "load" | "save" | "readTurnProgress" | "clearTurnProgress">;
@@ -86,10 +93,7 @@ export function createRuntimeTaskRunner(args: {
     // never affect the task's own status, and the runner isolates sink
     // rejections. Skip-path logging is pinned by the sink's own unit
     // tests in telegram-channel.test.ts.
-    reportSink: TelegramChannel.buildTaskReportSink({
-      resolveChannel: resolveTelegram,
-      logger,
-    }),
+    reportSink: createTaskReportSink({ config, resolveTelegram, logger }),
     logger,
     metrics,
     // Continue a run a crash, a kill or a restart cut off from its
@@ -114,6 +118,52 @@ export function createRuntimeTaskRunner(args: {
   });
 
   return taskRunner;
+}
+
+/**
+ * The Telegram report route, wrapped in morning delivery when
+ * `tasks.report.quietHours` is set: reports finishing inside the window
+ * are held in tasks.sqlite and sent as one digest when it ends (see
+ * `TaskReportHold`). Off by default; a malformed window is warned
+ * about and treated as off rather than holding reports forever.
+ */
+function createTaskReportSink(args: {
+  config: Pick<AtomicAgentConfig, "tasks" | "paths">;
+  resolveTelegram: () => TelegramChannel | null;
+  logger: StructuredLogger;
+}): TaskReportSink {
+  const { config, resolveTelegram, logger } = args;
+  const direct = TelegramChannel.buildTaskReportSink({
+    resolveChannel: resolveTelegram,
+    logger,
+  });
+  const raw = config.tasks.report?.quietHours ?? null;
+  if (raw === null) return direct;
+  const quietHours = parseQuietHours(raw);
+  if (quietHours === null) {
+    logger.warn("task report quiet hours ignored: expected HH:MM-HH:MM", {
+      value: raw,
+    });
+    return direct;
+  }
+  try {
+    const hold = new TaskReportHold({
+      quietHours,
+      store: new SqliteHeldReportStore({ dbFile: config.paths.tasksDbFile }),
+      deliverNow: direct,
+      deliverDigest: TelegramChannel.buildTaskReportDigestSender({
+        resolveChannel: resolveTelegram,
+      }),
+      logger,
+    });
+    hold.start();
+    return hold.sink;
+  } catch (err) {
+    logger.warn("task report quiet hours unavailable; reports go out at once", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return direct;
+  }
 }
 
 export function createRuntimeScheduler(args: {

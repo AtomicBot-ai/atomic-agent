@@ -331,6 +331,15 @@ export interface AtomicAgentConfig {
      * this knob lets operators enforce a larger floor.
      */
     minIntervalMs: number;
+    /**
+     * Task report delivery. `quietHours` is the raw
+     * `ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS` value (`"23:00-08:00"`,
+     * local time) or `null` (default: off). Reports of tasks that finish
+     * inside the window are held and sent as one digest when it ends;
+     * the runtime parses it and turns the feature off, with a warning,
+     * on a malformed value. Optional so hand-built configs stay valid.
+     */
+    report?: { quietHours: string | null };
   };
   /**
    * Self-update controls. Env-only operational tuning (not user-config

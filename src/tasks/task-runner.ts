@@ -16,8 +16,15 @@ import type { TurnProgress } from "../session/turn-progress.js";
 import {
   buildTaskReport,
   isReportableStatus,
+  taskReportRunFrom,
+  type TaskReportRun,
   type TaskReportSink,
 } from "./task-report.js";
+import {
+  createTaskRunSummaryCollector,
+  type TaskLiveStatus,
+  type TaskRunSummaryCollector,
+} from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
 import { remainingCostUsd } from "./task-budget.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
@@ -208,6 +215,11 @@ export class TaskRunner {
   private readonly runs = new Map<string, InFlightRun>();
   /** Set by `stop`: nothing is claimed after it. */
   private stopping = false;
+  /** Summary collectors of the runs in progress, for `liveStatus`. */
+  private readonly live = new Map<
+    string,
+    Omit<TaskLiveStatus, "summary"> & { collector: TaskRunSummaryCollector }
+  >();
 
   constructor(private readonly options: TaskRunnerOptions) {
     this.sleep = options.sleep ?? defaultSleep;
@@ -375,42 +387,23 @@ export class TaskRunner {
       return this.giveUpResuming(claimed, plan, session.id);
     }
 
-    // Capture the final result text live so a completed report can
-    // carry it. Two shapes, matching the loop's two success terminals:
-    // `assistant_reply` for the `reply` terminal, and the `finish`
-    // tool's summary for the `finish` terminal (unattended tasks
-    // routinely end via `finish` and emit no reply at all — the same
-    // `tool_call_executed` payload the TUI renders as the final feed
-    // line; `details.summary` is the uncompressed argument, with the
-    // compressed `summary` as fallback). The hook is installed only
-    // when this task opted into reporting AND a sink is wired — every
-    // other task pays zero per-event cost (no hook is passed at all).
-    let capturedReply: string | null = null;
-    const reportHook: TurnEventHook | undefined =
+    // Collect what the run does from the turn's own events (ATO-964):
+    // the final reply (the `reply` terminal's `assistant_reply`, or the
+    // `finish` tool's summary — unattended tasks routinely end via
+    // `finish`), files changed, commands and their exits, errors,
+    // approvals. Installed only when this task opted into reporting AND
+    // a sink is wired — every other task pays zero per-event cost (no
+    // hook is passed at all), and only reporting tasks show in
+    // `liveStatus`.
+    const collector =
       claimed.notify !== null && this.options.reportSink
-        ? (event: AgentLoopEvent): void => {
-            if (event.type !== "llm_event") return;
-            if (event.event.type === "assistant_reply") {
-              // A progress note is not the result; the reply that ends
-              // the turn follows it.
-              if (event.event.progressNote !== true) {
-                capturedReply = event.event.text;
-              }
-              return;
-            }
-            if (
-              event.event.type === "tool_call_executed" &&
-              event.event.result.tool === "finish" &&
-              event.event.result.status === "ok"
-            ) {
-              const full = event.event.result.details?.summary;
-              capturedReply =
-                typeof full === "string" && full.length > 0
-                  ? full
-                  : event.event.result.summary;
-            }
-          }
-        : undefined;
+        ? createTaskRunSummaryCollector()
+        : null;
+    const reportHook: TurnEventHook | undefined = collector
+      ? (event: AgentLoopEvent): void => collector.onEvent(event)
+      : undefined;
+    const runFacts = (result: RunTurnResult | null): TaskReportRun =>
+      taskReportRunFrom(result, collector?.snapshot() ?? null);
 
     // A task with a spend ceiling has its spend written step by step
     // (ATO-1108), not only when the turn returns: a run that throws, or
@@ -446,6 +439,14 @@ export class TaskRunner {
     // that crash again; otherwise quitting during the wait would reset
     // the count `agent.task.maxResumes` is checked against.
     let turnStarted = false;
+    if (collector) {
+      this.live.set(claimed.id, {
+        taskId: claimed.id,
+        userMessage: claimed.userMessage,
+        startedAt: claimed.startedAt ?? Date.now(),
+        collector,
+      });
+    }
     try {
       let result: RunTurnResult;
       try {
@@ -488,7 +489,7 @@ export class TaskRunner {
               : undefined,
           );
         }
-        return this.handleFailure(claimed, category, err);
+        return this.handleFailure(claimed, category, err, runFacts(null));
       }
       // What this run spent joins what earlier attempts spent, whatever
       // the outcome: the morning report and a retry's budget read it.
@@ -533,6 +534,7 @@ export class TaskRunner {
           claimed,
           "transport",
           new Error("loop reported failed"),
+          runFacts(result),
         );
       }
       const completed = this.options.store.markCompleted(claimed.id);
@@ -540,9 +542,11 @@ export class TaskRunner {
       // Report off the completed row BEFORE the recurring requeue —
       // the requeued row is `pending` again and would fail the
       // terminal-status guard inside `maybeReport`.
-      this.maybeReport(completed, capturedReply);
+      const facts = runFacts(result);
+      this.maybeReport(completed, facts.summary?.replyText ?? null, facts);
       return this.maybeRequeueRecurring(completed);
     } finally {
+      this.live.delete(claimed.id);
       run.end();
     }
   }
@@ -627,6 +631,17 @@ export class TaskRunner {
       resumes: plan.resumes,
     });
     return failed;
+  }
+
+  /**
+   * What each task this runner is running right now has done so far
+   * (ATO-965): the same deterministic summary the final report carries,
+   * snapshotted mid-run. Oldest run first. Read by Telegram `/status`.
+   */
+  liveStatus(): TaskLiveStatus[] {
+    return [...this.live.values()]
+      .sort((a, b) => a.startedAt - b.startedAt)
+      .map(({ collector, ...rest }) => ({ ...rest, summary: collector.snapshot() }));
   }
 
   /**
@@ -844,6 +859,7 @@ export class TaskRunner {
     task: TaskRecord,
     category: LlmFailureCategory,
     err: unknown,
+    run?: TaskReportRun,
   ): TaskRecord {
     const message = err instanceof Error ? err.message : String(err);
     const failure = { category, message };
@@ -852,7 +868,7 @@ export class TaskRunner {
         ? this.options.store.markBlocked(task.id, failure)
         : this.options.store.markFailed(task.id, failure);
       this.recordTerminal(terminal);
-      this.maybeReport(terminal, null);
+      this.maybeReport(terminal, run?.summary?.replyText ?? null, run);
       this.options.logger?.warn("task terminal failure", {
         taskId: terminal.id,
         sessionId: terminal.sessionId,
@@ -970,11 +986,15 @@ export class TaskRunner {
    * supplies one). Fire-and-forget: a rejecting or throwing sink is
    * warn-logged and never alters the task's status or the drain.
    */
-  private maybeReport(task: TaskRecord, replyText: string | null): void {
+  private maybeReport(
+    task: TaskRecord,
+    replyText: string | null,
+    run?: TaskReportRun,
+  ): void {
     const sink = this.options.reportSink;
     if (!sink || task.notify === null) return;
     if (!isReportableStatus(task.status)) return;
-    const report = buildTaskReport(task, task.status, replyText);
+    const report = buildTaskReport(task, task.status, replyText, run);
     void (async () => sink(report))().catch((err) => {
       this.options.logger?.warn("task report sink failed", {
         taskId: task.id,

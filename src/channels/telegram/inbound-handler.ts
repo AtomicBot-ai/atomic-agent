@@ -12,6 +12,7 @@ import {
   type AttachmentOutcome,
 } from "../attachments/inbox.js";
 import { runModelCommand } from "../model-command.js";
+import { formatTaskLiveStatus } from "./task-status-message.js";
 import {
   shouldAnnounceSender,
   withSenderIdentity,
@@ -200,6 +201,9 @@ export interface InboundContext {
 /** How long Telegram displays a `chatAction: "typing"` indicator. */
 const TYPING_KEEPALIVE_MS = 4_000;
 
+/** Budget for the running-tasks part of `/status`; the session lines sit above it. */
+const STATUS_TASKS_MAX_CHARS = 3_000;
+
 /**
  * Bot API ceiling for `getFile`. Checked against the reported
  * `file_size` before any request goes out, so an oversized file costs
@@ -250,7 +254,7 @@ function helpText(ctx: InboundContext): string {
     "Every chat and forum topic is its own conversation.\n\n" +
     "Commands:\n" +
     "  /start, /help — this message\n" +
-    "  /status — this chat's session id and progress counters\n" +
+    "  /status — this chat's session id and progress counters, plus running background tasks\n" +
     "  /sessions — every chat this bot has a session for\n" +
     "  /switch <session-id> — point this chat at an existing session\n" +
     "  /new — rotate this chat to a fresh session (current one is archived)\n" +
@@ -1050,13 +1054,18 @@ function startTypingKeepalive(
 }
 
 function formatStatus(ref: ChatRef, ctx: InboundContext): string {
+  const tasks = runningTasksBlock(ctx);
+  const withTasks = (text: string): string =>
+    tasks === null ? text : `${text}\n\n${tasks}`;
   const entry = ctx.sessionPointer.get(ref.key);
   if (!entry.current) {
-    return "No active session for this chat — your next message starts a fresh one.";
+    return withTasks(
+      "No active session for this chat — your next message starts a fresh one.",
+    );
   }
   const session = ctx.runtime.sessionStore.load(entry.current);
   if (!session) {
-    return `Pointer references missing session ${entry.current}.`;
+    return withTasks(`Pointer references missing session ${entry.current}.`);
   }
   const busy = ctx.runtime.turnController.isBusy(session.id);
   const lines = [
@@ -1065,7 +1074,19 @@ function formatStatus(ref: ChatRef, ctx: InboundContext): string {
     `Turns: ${session.turnCount}, steps: ${session.stepCount}`,
   ];
   if (session.lastError) lines.push(`Last error: ${session.lastError}`);
-  return lines.join("\n");
+  return withTasks(lines.join("\n"));
+}
+
+/**
+ * Background tasks that report to this channel and are running now
+ * (ATO-965), or `null` when there are none. Read defensively: a
+ * runtime without a task runner (tests, a stripped host) shows the
+ * session status alone.
+ */
+function runningTasksBlock(ctx: InboundContext): string | null {
+  const live = ctx.runtime.taskRunner?.liveStatus?.() ?? [];
+  if (live.length === 0) return null;
+  return formatTaskLiveStatus(live, Date.now(), STATUS_TASKS_MAX_CHARS);
 }
 
 function formatSessions(ref: ChatRef, ctx: InboundContext): string {
