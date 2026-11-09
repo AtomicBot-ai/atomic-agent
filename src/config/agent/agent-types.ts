@@ -190,6 +190,13 @@ export interface RuntimeAgentConfig {
   loopHistorySize: number;
   loopWanderingThreshold: number;
   loopWanderingEscalation: number;
+  /**
+   * Deterministic clean-up of the final reply before a chat surface shows
+   * it (`src/agent/reply-polish.ts`). On unless set to a false value.
+   * Optional so hand-built configs keep compiling; absent means on.
+   * Env-only: `ATOMIC_AGENT_REPLY_POLISH`.
+   */
+  replyPolish?: boolean;
 }
 
 export interface UserAgentConfig {

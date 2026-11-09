@@ -6,6 +6,7 @@ import type { LlmStreamParams } from "../agent/step/step-contract.js";
 import type { TurnController } from "./turn-controller.js";
 import type { SteeringInbox } from "./steering-inbox.js";
 import type { TurnEventHook, TurnOrigin } from "./turn-controller.js";
+import type { AnswerChannel } from "../prompt/answer-style.js";
 import type { ChannelStatus } from "./channel-status.js";
 import type { TelegramChannel } from "../channels/telegram/index.js";
 import type { DiscordChannel } from "../channels/discord/index.js";
@@ -480,6 +481,12 @@ export interface AgentRuntime {
       goal?: GoalSpec;
       /** Called after every goal state change, for a live goal line. */
       onGoalProgress?: (goal: GoalState) => void;
+      /**
+       * The surface showing the reply when `origin` cannot tell it (an
+       * HTTP extensions client is the desktop app). Picks the reply's
+       * `### answer-style` and its polish (ATO-966, ATO-967).
+       */
+      answerChannel?: AnswerChannel;
     },
   ): Promise<RunTurnResult>;
   /**
@@ -526,6 +533,8 @@ export interface AgentRuntime {
        * reply gets that surface's `### answer-style` (ATO-966).
        */
       origin?: TurnOrigin;
+      /** See `runTurn`'s `answerChannel`; wins over `origin`. */
+      answerChannel?: AnswerChannel;
     },
   ): Promise<RunTurnResult>;
   /**

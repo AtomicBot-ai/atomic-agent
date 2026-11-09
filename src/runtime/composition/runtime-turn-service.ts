@@ -30,7 +30,7 @@ import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
 import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
-import { answerChannelForOrigin } from "../../prompt/answer-style.js";
+import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 
 export function prepareRuntimeTurnState() {
   /**
@@ -355,6 +355,11 @@ export function createRuntimeTurnService(
       checkpoint?: TurnCheckpointOptions;
       /** Where the turn came in; picks the reply's `### answer-style`. */
       origin?: TurnOrigin;
+      /**
+       * The reply's surface when the origin cannot tell it: an HTTP
+       * extensions client is the desktop app. Wins over `origin`.
+       */
+      answerChannel?: AnswerChannel;
     } = {},
   ): Promise<RunTurnResult> => {
     assertKnownProvider(runOptions.providerId);
@@ -482,7 +487,7 @@ export function createRuntimeTurnService(
         if (previousReply !== undefined) {
           turnPreviousReplies?.set(session.id, previousReply);
         }
-        const answerChannel = answerChannelForOrigin(runOptions.origin);
+        const answerChannel = runOptions.answerChannel ?? answerChannelForOrigin(runOptions.origin);
         // An explicit `maxSteps` from a caller (a durable task that pins
         // its own budget, `run --max-steps`) is a *ceiling* that caller
         // chose — honour it as one. Absent that, the config value is the
@@ -608,6 +613,8 @@ export function createRuntimeTurnService(
       checkpoint?: TurnCheckpointOptions;
       goal?: GoalSpec;
       onGoalProgress?: (goal: GoalState) => void;
+      /** See `executeTurn`'s `answerChannel`. */
+      answerChannel?: AnswerChannel;
     } = {},
   ): Promise<RunTurnResult> => {
     if (runOptions.goal !== undefined) {

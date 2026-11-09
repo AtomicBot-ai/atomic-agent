@@ -338,6 +338,7 @@ export function loadConfig(): AtomicAgentConfig {
         2,
         1_000,
       ),
+      replyPolish: readBool("ATOMIC_AGENT_REPLY_POLISH", true),
     },
     browser: {
       enabled: readBool(

@@ -18,8 +18,9 @@
  * Underscore emphasis is left alone: `snake_case` words are far more
  * common in agent replies than `_italic_`, and a wrong guess shows.
  *
- * Pure, and applied to the rendered copy only: the stored text is never
- * changed, and the final reply is rendered without it.
+ * Pure. The TUI applies it to the rendered copy of a streaming reply
+ * only. It lives in `agent/` because the final-reply polish
+ * (`reply-polish.ts`) reuses it, keeping only plain closer fixes.
  */
 
 const FENCE = /^ {0,3}(```|~~~)/gm;
