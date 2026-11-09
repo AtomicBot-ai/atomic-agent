@@ -8,8 +8,8 @@ import { resolve } from "node:path";
 import { parseUsdFlag } from "./task-budget-flags.js";
 
 export const OVERNIGHT_DEFAULT_HOURS = 8;
-/** A week. Past that the run is a service, not an overnight job. */
-export const OVERNIGHT_MAX_HOURS = 168;
+/** One day, the same ceiling as the desktop dialog. */
+export const OVERNIGHT_MAX_HOURS = 24;
 /**
  * The shortest run, one minute. Anything shorter rounds to a duration
  * the task store refuses (0 ms) or spells back to the detached child in
