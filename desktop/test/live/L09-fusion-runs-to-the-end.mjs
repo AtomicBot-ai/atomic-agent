@@ -83,6 +83,10 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   const gated = await waitTurn(app, TURN);
   check(gated.pending, 'the agent asked me before sending the workers out',
     `reply so far: ${JSON.stringify(gated.reply.slice(0, 200))}`);
+  /* The count is the agent's reason for asking, which the card keeps under
+     Details; innerText leaves out a closed <details>. */
+  await app.clickSel('#apprcard summary[data-apprdet]');
+  await app.waitFor(`!!document.querySelector('#apprcard details.apprdet[open]')`, 'the Details of the request, opened by a click');
   const card = await app.eval(`document.querySelector('#apprcard').innerText.replace(/\\s+/g, ' ').trim().slice(0, 800)`);
   app.log(`the card says: ${JSON.stringify(card)}`);
   check(/2 tasks/.test(card), 'the card says how many tasks are going out', card);
