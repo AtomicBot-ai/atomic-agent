@@ -322,7 +322,7 @@ function code(stateDir: string, name: string | undefined, allow: boolean): numbe
   if (!setPluginCodeAllowed(stateDir, name, allow)) { console.error(`plugin not installed: ${name}`); return 1; }
   console.log(allow
     ? `${name} may now run its local MCP servers, hooks and scripts and receive your keys. Restart running agents to start its servers.`
-    : `${name}'s local MCP servers, hooks, scripts and servers that read your keys are off.`);
+    : `${name}'s hooks and scripts are off, and its local MCP servers and servers that read your keys won't start again. Any already running stop when the agent restarts.`);
   return 0;
 }
 

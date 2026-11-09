@@ -73,7 +73,7 @@ export class PluginsOrchestrator {
       name,
       allow
         ? `${name} may run its local MCP servers, hooks and scripts and receive your keys. Servers start with the next agent start.`
-        : `${name}'s local MCP servers, hooks, scripts and servers that read your keys are off.`,
+        : `${name}'s hooks and scripts are off, and its local MCP servers and servers that read your keys won't start again. Any already running stop when the agent restarts.`,
     );
   }
 
