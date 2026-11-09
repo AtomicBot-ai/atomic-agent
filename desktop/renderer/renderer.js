@@ -4724,6 +4724,14 @@ function appSay(text, tone) {
 }
 
 const LOGS = [];
+/* ATO-1111: S.history is a second copy of every message's text that nothing
+   in the window reads back (the drive checks read its newest entry). A chat
+   that ran for hours kept all of it; only the newest HISTORY_KEEP stay now. */
+const HISTORY_KEEP = 200;
+function pushHistory(entry) {
+  S.history.push(entry);
+  if (S.history.length > HISTORY_KEEP) S.history.splice(0, S.history.length - HISTORY_KEEP);
+}
 const LLMLOGS = [];
 function renderConsole() {
   const el = $('#console');
@@ -9390,7 +9398,7 @@ function startLiveTurn(text) {
   // against what the chip says when the turn ends, so a stance that moved
   // mid-flight cannot put a plan bar over a turn that ran unfettered.
   PLAN.startedMode = MODE.known ? currentMode() : null;
-  S.history.push({role:'user', content:text});
+  pushHistory({role:'user', content:text});
   S.reasonId = null;
   FZ.live = [];
   // Item 38: and the wait strip, which is the turn on screen's: a turn left
@@ -10665,7 +10673,7 @@ function onChatEvent(ev) {
     refreshContext();
     reconcileToolCards();
     // Cards stay pending until the session store describes them.
-    if (item && item.text) S.history.push({role:'assistant', content:item.text});
+    if (item && item.text) pushHistory({role:'assistant', content:item.text});
     /* r5 review fix (item 4) — the backfilled words are the DESKTOP's, not the
        agent's. `placeholder` marks them so copyMessage refuses rather than
        handing '(no reply)' to the clipboard as if the agent had written it —
@@ -11555,7 +11563,8 @@ if (BR) {
        other stderr line still is. */
     const lvl = ['debug', 'info', 'warn', 'error'].includes(entry.level) ? entry.level : (entry.stream === 'stderr' ? 'warn' : 'info');
     LOGS.push([new Date().toTimeString().slice(0, 8), lvl, entry.line]);
-    if (LOGS.length > 300) LOGS.shift();
+    // ATO-1111: `while`, so the pushes elsewhere that skip the trim cannot leave it over the cap.
+    while (LOGS.length > 300) LOGS.shift();
     if (S.consoleOpen) renderConsole();
   });
   /* Item 11: a ⇄ starts a daemon that is down without waiting for it. How that

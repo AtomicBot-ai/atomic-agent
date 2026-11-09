@@ -82,3 +82,46 @@ export function windowsExitStatus(code: number | null | undefined): "insufficien
     default: return null;
   }
 }
+
+/**
+ * ATO-1111: serve's exit code when its memory guard ended it cleanly
+ * (src/cli/serve-memory-guard.ts MEMORY_GUARD_EXIT_CODE; the two must agree).
+ */
+export const AGENT_MEMORY_GUARD_EXIT_CODE = 86;
+
+/**
+ * The agent's exit code as one readable word for the `exit_status` tag: a
+ * Windows NTSTATUS (windowsExitStatus) or the memory guard's own clean exit.
+ * Null for any other code.
+ */
+export function agentExitStatus(code: number | null | undefined): ReturnType<typeof windowsExitStatus> | "memory_guard" {
+  if (code === AGENT_MEMORY_GUARD_EXIT_CODE) return "memory_guard";
+  return windowsExitStatus(code);
+}
+
+/** The agent's last sampled resident memory, as a bucket (never the figure). Null when unknown. */
+export function agentRssBucket(rssMb: number | null | undefined): "lt_512m" | "lt_1g" | "lt_2g" | "lt_4g" | "lt_8g" | "gte_8g" | null {
+  if (typeof rssMb !== "number" || !Number.isFinite(rssMb) || rssMb < 0) return null;
+  if (rssMb < 512) return "lt_512m";
+  if (rssMb < 1024) return "lt_1g";
+  if (rssMb < 2048) return "lt_2g";
+  if (rssMb < 4096) return "lt_4g";
+  if (rssMb < 8192) return "lt_8g";
+  return "gte_8g";
+}
+
+/**
+ * A share (part of whole) as a bucket: the agent's heap of its V8 ceiling,
+ * or its RSS of the machine's memory. With agentRssBucket this tells a
+ * growing agent (high heap share, big RSS) from a machine that is simply
+ * small (modest RSS, high share of a small total). Null when unknown.
+ */
+export function shareBucket(part: number | null | undefined, whole: number | null | undefined): "lt_25" | "lt_50" | "lt_75" | "lt_90" | "gte_90" | null {
+  if (typeof part !== "number" || typeof whole !== "number" || !Number.isFinite(part) || !Number.isFinite(whole) || part < 0 || whole <= 0) return null;
+  const pct = (part / whole) * 100;
+  if (pct < 25) return "lt_25";
+  if (pct < 50) return "lt_50";
+  if (pct < 75) return "lt_75";
+  if (pct < 90) return "lt_90";
+  return "gte_90";
+}
