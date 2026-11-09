@@ -72,6 +72,23 @@ function ovnOverTime(run, task, now) {
   // and every requeue after a restart, which would restart the limit.
   return now - run.startedAt > run.limitMs;
 }
+/** How a run that the agent cut short reads on the card (the agent's TaskStopCause). */
+const OVN_STOP_WORDS = {
+  time_ceiling: 'Stopped at the time limit',
+  cost_ceiling: 'Stopped at the budget',
+  step_ceiling: 'Stopped at the step limit',
+  no_progress: 'Stopped, no progress',
+  credit_exhausted: 'Stopped, out of credit',
+};
+/** A capped run ends as `completed` too, so `stopCause` tells it apart. An agent that does not send it reads as Done. */
+function ovnFinishedWord(t) {
+  if (t.status === 'completed') {
+    const cause = typeof t.stopCause === 'string' ? t.stopCause : '';
+    if (!cause) return 'Done';
+    return Object.prototype.hasOwnProperty.call(OVN_STOP_WORDS, cause) ? OVN_STOP_WORDS[cause] : 'Stopped early';
+  }
+  return t.status === 'cancelled' ? 'Stopped' : t.status === 'blocked' ? 'Stopped, needs you' : 'Failed';
+}
 /** One line under a run's title. */
 function ovnStatusLine(run, now) {
   const t = run.task || {};
@@ -80,8 +97,7 @@ function ovnStatusLine(run, now) {
   const spend = ovnSpendLine(spentRaw, run.budget);
   if (ovnFinished(t)) {
     const end = typeof t.completedAt === 'number' ? t.completedAt : now;
-    const word = t.status === 'completed' ? 'Done' : t.status === 'cancelled' ? 'Stopped' : t.status === 'blocked' ? 'Stopped, needs you' : 'Failed';
-    return word + ' after ' + ovnElapsed(end - start) + (spend ? ' · ' + spend : '');
+    return ovnFinishedWord(t) + ' after ' + ovnElapsed(end - start) + (spend ? ' · ' + spend : '');
   }
   if (run.stopping) return 'Stopping…';
   if (t.status === 'pending' || !t.status) return 'Starting…';
