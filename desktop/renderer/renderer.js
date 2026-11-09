@@ -1261,7 +1261,8 @@ const FOCUS = { entry: false };
    click whose mousedown was inside .setwin and whose mouseup was on the dim
    backdrop resolves its target to #settings, so without this a text selection
    dragged out of a panel would dismiss the window. */
-const SETDOWN = { outside: false };
+const SETDOWN = { outside: false, pressAt: 0, held: false };
+const SETTINGS_PRESS_HOLD_MS = 1500;
 /* Operator catalog including disabled entries: cloud HTTP snapshot, local CLI. */
 const SK = { rows:null, busy:false, err:null, calls:0, at:null, for:null, workingDir:null, projectSkillsEnabled:true, errors:[] }; // at: when `atag skill list` last answered (Д26's status line)
 /* Tasks tab state — the TUI's TasksPanelState, minus the firings ring
@@ -5521,6 +5522,12 @@ function sheet(title, body, foot, cls) {
 const SETTINGS_SCROLL = { pane: null };
 function renderSettings() {
   const old = $('#settings');
+  /* The rebuild below replaces every control, and a press released on a new
+     node is not a click: a repaint landing mid-press swallowed it (a plugin
+     switch stayed as it was). Wait for the release. The time limit covers a
+     press whose mouseup never comes. */
+  if (S.settings && old && SETDOWN.pressAt && Date.now() - SETDOWN.pressAt < SETTINGS_PRESS_HOLD_MS) { SETDOWN.held = true; return; }
+  SETDOWN.held = false;
   // r4-ui item 5: stop re-applying the Escape focus as soon as the focus is off
   // the first nav row — otherwise the next render would steal it back out of
   // whatever the operator tabbed or clicked into. The test is deliberately NOT
@@ -7718,6 +7725,13 @@ function runSlash(parts) {
 document.addEventListener('mousedown', (e) => {
   const t = e.target;
   SETDOWN.outside = !!(t && t.closest && t.closest('[data-setclose]') && !t.closest('.setwin'));
+  SETDOWN.pressAt = e.isTrusted && e.button === 0 && t && t.closest && t.closest('#settings') ? Date.now() : 0;
+}, true);
+
+/* The timeout puts a held repaint after the click, which is dispatched right after this event. */
+document.addEventListener('mouseup', () => {
+  SETDOWN.pressAt = 0;
+  if (SETDOWN.held) setTimeout(() => { if (SETDOWN.held) renderSettings(); }, 0);
 }, true);
 
 document.addEventListener('click', (e) => {
