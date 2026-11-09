@@ -7815,6 +7815,8 @@ document.addEventListener('click', (e) => {
   if (sdet && sdet.parentElement) { SETDET[sdet.dataset.setdet] = !sdet.parentElement.open; return; }
   const adet = t.closest('[data-apprdet]');
   if (adet) { const m = S.log.find((x) => x.id === adet.dataset.apprdet); if (m && adet.parentElement) m.open = !adet.parentElement.open; return; }
+  // ATO-1272: "Show earlier" at the top of the transcript window.
+  if (t.closest('[data-chatwin]')) { chatWindowShowMore(); return; }
   // ATO-464: a finished turn's summary line opens or folds its steps in place.
   const tsum = t.closest('[data-turnsum]');
   if (tsum) { turnSumToggle(tsum.dataset.turnsum); return; }
@@ -7829,6 +7831,7 @@ document.addEventListener('click', (e) => {
   if (sd) { const m = S.log.find((x) => x.id === sd.dataset.sysdet); if (m) { m.detOpen = !m.detOpen; repaintEntry(m, '.sys-det-t'); } return; }
   const go = t.closest('[data-goto]');
   if (go) { let el = document.getElementById('card-' + go.dataset.goto);
+            if (!el && chatWindowReveal(S.log, go.dataset.goto)) { S.stick = false; render(); el = document.getElementById('card-' + go.dataset.goto); }   // ATO-1272
             if (!el && turnSumReveal(go.dataset.goto)) el = document.getElementById('card-' + go.dataset.goto);   // ATO-464
             if (!el && failRunMark(go.dataset.goto)) { render(); el = document.getElementById('card-' + go.dataset.goto); }   // ATO-1257
             if (el) { S.stick = false; el.scrollIntoView({block:'center', behavior:'smooth'}); el.classList.add('flash'); setTimeout(() => el.classList.remove('flash'), 400); } return; }
@@ -20982,6 +20985,9 @@ async function wizActivate(k, id, model, unverified) {
    that told it to step over a notice about the session (a model stamp, the
    parked-steer line, a dismissed plan) stays on those rows as what they are. */
 
+/* ATO-1273: the first row the last paint drew, so the image cache is trimmed
+   when rows leave the window. `var`: renderItems may run before this line. */
+var CHAT_WIN_DRAWN_FROM = 0;
 /** The transcript, with runs of the same tool folded into one line. */
 function renderItems() {
   const items = S.log; let html = '';
@@ -21010,7 +21016,18 @@ function renderItems() {
   const folds = turnFoldsOf(items, {runningId: S.turnId ? S.streamId : null, always: STEPS.always,
     failedOf: (t) => toolState(t) === 'err' && !TOOL_QUIET.has(t.id)});   // red only for what the card itself shows as an error
   const hidden = new Set();
-  for (let i = 0; i < items.length; i++) {
+  /* ATO-1272: only the newest part of the chat is drawn (chat-window.js); the
+     rows above it are one "Show earlier" row. The folds and failures above are
+     still worked out over the whole log, which costs no markup. */
+  let from = 0;
+  if (typeof chatWindowFor === 'function') {
+    from = chatWindowFor(items, folds, (f) => TURN_OPEN.has(f.replyId), !!S.stick);
+    if (from > 0) html += chatWindowMoreHTML(items, from, {esc, ic});
+    // ATO-1273: rows left the window, so the pictures only they showed may leave the cache.
+    if (from > CHAT_WIN_DRAWN_FROM) trimChatImages();
+    CHAT_WIN_DRAWN_FROM = from;
+  }
+  for (let i = from; i < items.length; i++) {
     const m = items[i];
     const fold = folds.get(i);
     if (fold) {
@@ -21095,6 +21112,18 @@ function turnSumToggle(replyId) {
   const h1 = head();
   const drift = h1 ? h1.getBoundingClientRect().top - before : 0;
   if (Math.abs(drift) > 0.5) sc.scrollTop += drift;
+  S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
+}
+/** ATO-1272: the transcript window reaches one step further back; what was
+    on screen stays under the pointer (the rows come in above it). */
+function chatWindowShowMore() {
+  chatWindowMore();
+  const sc = $('#scroller');
+  S.stick = false;
+  if (!sc) { render(); return; }
+  const h0 = sc.scrollHeight, top0 = sc.scrollTop;
+  if (!repaintTranscript()) { render(); return; }
+  sc.scrollTop = top0 + (sc.scrollHeight - h0);
   S.stick = sc.scrollHeight - sc.scrollTop - sc.clientHeight < 40;
 }
 /** ATO-1257: open a run of quiet failures in place. */
@@ -21866,6 +21895,9 @@ const CHAT_IMG = new Map();
 /* Display copies kept, in data-URL characters, on screen or not; the ones no
    reply on screen shows go first, least recently drawn first. */
 const CHAT_IMG_KEEP_CHARS = 96 * 1024 * 1024;
+/* ATO-1273: and at most this many that no row of the transcript window draws
+   (a reply above it is read from disk again when it comes back). */
+const CHAT_IMG_KEEP_OFF = 24;
 const CHAT_IMG_DISPLAY_EDGE = 1600;
 
 /** The reply's file paths, as the agent sent or stored them: strings, at most 10, once each. */
@@ -21876,31 +21908,21 @@ function replyFilesOf(list) {
   return out.slice(0, REPLY_FILES_MAX);
 }
 
-/** The pictures replies on screen show. */
+/** The pictures replies on screen show. ATO-1273: only the rows the
+    transcript window draws (chat-window.js); a picture of a reply above the
+    window may leave the cache, and chatImage reads it from disk again when
+    that reply is drawn. */
 function chatImagesInUse() {
-  const used = new Set();
-  for (const m of S.log) {
-    for (const p of (m.replyFiles || [])) used.add(p);
-    for (const p of (m.turnPics || [])) used.add(p);   // ATO-1258
-    if (m.shotPic) used.add(m.shotPic);
-  }
-  return used;
+  return chatImagesInUseOf(S.log, CHAT_WIN.log === S.log ? CHAT_WIN.from : 0);
 }
 
 function trimChatImages() {
-  let total = 0;
   const held = [];
-  for (const [p, st] of CHAT_IMG) if (st.state === 'ok') { total += st.url.length; held.push([p, st]); }
-  if (total <= CHAT_IMG_KEEP_CHARS) return;
-  const onScreen = chatImagesInUse();
-  // Off screen first, then the least recently drawn; what is on screen is never dropped.
-  held.sort((a, b) => (onScreen.has(a[0]) - onScreen.has(b[0])) || (a[1].used - b[1].used));
-  for (const [p, st] of held) {
-    if (total <= CHAT_IMG_KEEP_CHARS) break;
-    if (onScreen.has(p)) break;
-    total -= st.url.length;
-    CHAT_IMG.delete(p);
-  }
+  for (const [p, st] of CHAT_IMG) if (st.state === 'ok') held.push([p, st]);
+  /* Off screen first, then the least recently drawn; what is on screen is never
+     dropped. ATO-1273: beyond the size cap, at most CHAT_IMG_KEEP_OFF pictures
+     that the transcript window does not draw stay (chat-window.js chatImagesToDrop). */
+  for (const p of chatImagesToDrop(held, chatImagesInUse(), CHAT_IMG_KEEP_CHARS, CHAT_IMG_KEEP_OFF)) CHAT_IMG.delete(p);
 }
 
 /** A decoded picture as a display copy: no longer side past 1600px, a GIF untouched. */
