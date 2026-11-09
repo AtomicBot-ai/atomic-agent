@@ -64,6 +64,14 @@ export interface ApprovalRequest {
    */
   commandArgv?: string[];
   /**
+   * Every simple command the call would run, parsed
+   * (`shellRuleSegments`), set even where `commandArgv` is withheld: a
+   * dangerous command, a compound line, a binary named by path. Only a
+   * saved deny or ask rule reads it, which can only make the call
+   * stricter; an allow rule still needs `commandArgv`.
+   */
+  commandSegments?: string[][];
+  /**
    * The session's working directory, for rules scoped to a project. The
    * gate fills it from the dispatching tool call when the tool did not.
    */

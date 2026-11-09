@@ -106,6 +106,43 @@ describe("matchRules", () => {
     expect(matchRules(rules, compound)).toBeNull();
   });
 
+  describe("commandSegments", () => {
+    const line = (segments: string[][], extra: Partial<ApprovalRequest> = {}) => {
+      const request = shell(["x"], { commandSegments: segments, ...extra });
+      delete request.commandArgv;
+      return request;
+    };
+
+    it("a deny or ask matches any command of the line, by basename", () => {
+      const deny = [rule({ decision: "deny", commandPrefix: ["npm", "publish"] })];
+      const ask = [rule({ decision: "ask", commandPrefix: ["git", "push"] })];
+      expect(matchRules(deny, line([["echo", "a"], ["npm", "publish"]]))?.decision).toBe("deny");
+      expect(matchRules(ask, line([["/usr/bin/git", "push"]]))?.decision).toBe("ask");
+    });
+
+    it("an allow never matches through segments", () => {
+      const allow = [rule({ decision: "allow", commandPrefix: ["git"] })];
+      expect(matchRules(allow, line([["git", "status"]]))).toBeNull();
+    });
+
+    it("a shell-category deny reaches a dangerous command, an allow does not", () => {
+      const dangerous = line([["rm", "-rf", "x"]], { category: "shell_dangerous" });
+      expect(
+        matchRules([rule({ decision: "deny", category: "shell", commandPrefix: ["rm"] })], dangerous)?.decision,
+      ).toBe("deny");
+      expect(
+        matchRules([rule({ decision: "allow", category: "shell", commandPrefix: ["rm"] })], dangerous),
+      ).toBeNull();
+    });
+
+    it("a deny written for os.shell.run also covers verify.run", () => {
+      const rules = [rule({ decision: "deny", tool: "os.shell.run", commandPrefix: ["npm", "publish"] })];
+      expect(
+        matchRules(rules, line([["npm", "publish"]], { tool: "verify.run" }))?.decision,
+      ).toBe("deny");
+    });
+  });
+
   it("puts deny over ask over allow, whatever the order in the file", () => {
     const allow = rule({ decision: "allow", commandPrefix: ["git"] });
     const ask = rule({ decision: "ask", commandPrefix: ["git", "push"] });

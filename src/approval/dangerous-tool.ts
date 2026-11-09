@@ -24,6 +24,8 @@ export interface ApprovalPrompt {
   commandShape?: string;
   /** Parsed argv of a simple shell command; see `ApprovalRequest.commandArgv`. */
   commandArgv?: readonly string[];
+  /** Every simple command the call would run; see `ApprovalRequest.commandSegments`. */
+  commandSegments?: readonly (readonly string[])[];
   /** Session working directory; see `ApprovalRequest.workdir`. */
   workdir?: string;
   /**
@@ -162,6 +164,9 @@ export async function requireApproval(
         : {}),
       ...(prompt.commandArgv !== undefined
         ? { commandArgv: [...prompt.commandArgv] }
+        : {}),
+      ...(prompt.commandSegments !== undefined
+        ? { commandSegments: prompt.commandSegments.map((words) => [...words]) }
         : {}),
       ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
       ...(prompt.redirectablePath !== undefined

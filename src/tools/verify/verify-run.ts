@@ -22,7 +22,9 @@ import type { ToolDefinition } from "../tool-registry.js";
 import type { BrowserLauncher } from "./run-page-kind.js";
 import { runVerify } from "./run-verify.js";
 import { parseVerifyRunArgs, type VerifyRunArgs } from "./verify-run-args.js";
-import { guardVerifyRun } from "./verify-run-guard.js";
+import { needsShellInterpretation } from "../os/shell/shell-interpretation.js";
+import { shellRuleSegments } from "../os/shell/shell-command-argv.js";
+import { guardVerifyRun, verifyRunCommands } from "./verify-run-guard.js";
 
 export const VERIFY_RUN_TOOL = "verify.run";
 
@@ -104,6 +106,13 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
             reason,
             preview: description,
             affectedResources: [ctx.workingDir],
+            commandSegments: verifyRunCommands(args).flatMap((command) =>
+              shellRuleSegments(
+                command.cmd,
+                command.args,
+                needsShellInterpretation(command.cmd, command.args),
+              ),
+            ),
           },
           ctx.signal,
         );

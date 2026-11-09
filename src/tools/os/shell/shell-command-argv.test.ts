@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { shellCommandArgv } from "./shell-command-argv.js";
+import { shellCommandArgv, shellRuleSegments } from "./shell-command-argv.js";
 import { shellGrantShape } from "./shell-interpretation.js";
 
 describe("shellCommandArgv", () => {
@@ -24,5 +24,25 @@ describe("shellCommandArgv", () => {
     expect(shellCommandArgv('git commit -m "a b"', [], true, "git")).toBeUndefined();
     expect(shellCommandArgv("rm *.log", [], true, "rm")).toBeUndefined();
     expect(shellCommandArgv("cat ~/.ssh/id_rsa", [], true, "cat")).toBeUndefined();
+  });
+});
+
+describe("shellRuleSegments", () => {
+  it("keeps a direct exec's argv as one command", () => {
+    expect(shellRuleSegments("/usr/bin/git", ["push"], false)).toEqual([["/usr/bin/git", "push"]]);
+  });
+
+  it("splits a subshell line into its commands", () => {
+    expect(shellRuleSegments("echo a && npm publish", [], true)).toEqual([
+      ["echo", "a"],
+      ["npm", "publish"],
+    ]);
+  });
+
+  it("lists a wrapped command both ways", () => {
+    expect(shellRuleSegments("FOO=1 sudo -n npm publish", [], true)).toEqual([
+      ["FOO=1", "sudo", "-n", "npm", "publish"],
+      ["npm", "publish"],
+    ]);
   });
 });

@@ -17,7 +17,7 @@ import {
 import { resolveUserPath } from "../expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
-import { shellCommandArgv } from "./shell-command-argv.js";
+import { shellCommandArgv, shellRuleSegments } from "./shell-command-argv.js";
 import {
   checkBrowserBypassArgv,
   checkBrowserBypassLine,
@@ -278,6 +278,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
         : shellGrantShape(guardInput.cmd, commandLine, useShell);
       // Saved approval rules match on argv and on the session's folder.
       const commandArgv = shellCommandArgv(cmd, execArgs, useShell, commandShape);
+      const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
       await requireApproval(
         options,
         {
@@ -300,6 +301,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           affectedResources: [cwd],
           ...(commandShape !== undefined ? { commandShape } : {}),
           ...(commandArgv !== undefined ? { commandArgv } : {}),
+          commandSegments,
           workdir: ctx.workingDir,
           targetPaths,
         },

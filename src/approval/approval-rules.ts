@@ -43,8 +43,10 @@ export interface ApprovalRule {
   category?: ApprovalCategory;
   /**
    * Shell only: argv token prefix of the command. argv[0] is compared by
-   * basename (case-insensitively), the rest exactly. A rule with a prefix
-   * never matches a request that carries no `commandArgv`.
+   * basename (case-insensitively), the rest exactly. An allow rule needs
+   * the request's `commandArgv`; a deny or ask rule also matches any
+   * command in `commandSegments`, so a compound line, a binary named by
+   * path or a dangerous command cannot step round it.
    */
   commandPrefix?: string[];
   /** Every path the request names must be inside this directory. */
@@ -252,8 +254,16 @@ export interface RuleMatch {
 
 type MatchableRequest = Pick<
   ApprovalRequest,
-  "tool" | "category" | "commandArgv" | "targetPaths" | "affectedResources"
+  | "tool"
+  | "category"
+  | "commandArgv"
+  | "commandSegments"
+  | "targetPaths"
+  | "affectedResources"
 >;
+
+/** The tool a command rule is written against. */
+const SHELL_TOOL = "os.shell.run";
 
 /**
  * The rule that decides `request`, or null when none matches.
@@ -285,9 +295,25 @@ export function ruleMatches(
   request: MatchableRequest,
   ctx: RuleMatchContext = {},
 ): boolean {
-  if (rule.tool !== undefined && rule.tool !== request.tool) return false;
-  if (rule.category !== undefined && rule.category !== request.category) return false;
-  if (rule.commandPrefix !== undefined && !argvHasPrefix(request.commandArgv, rule.commandPrefix)) {
+  // A deny or ask on a command stands for that command however it is
+  // started: by another tool that runs commands (`verify.run`), or
+  // classed as dangerous rather than plain `shell`.
+  const tightens = rule.decision !== "allow" && rule.commandPrefix !== undefined;
+  if (
+    rule.tool !== undefined &&
+    rule.tool !== request.tool &&
+    !(tightens && rule.tool === SHELL_TOOL && request.commandSegments !== undefined)
+  ) {
+    return false;
+  }
+  if (
+    rule.category !== undefined &&
+    rule.category !== request.category &&
+    !(tightens && rule.category === "shell" && request.category === "shell_dangerous")
+  ) {
+    return false;
+  }
+  if (rule.commandPrefix !== undefined && !commandMatches(rule, rule.commandPrefix, request)) {
     return false;
   }
   if (rule.path !== undefined && !allPathsInside(request, rule.path)) return false;
@@ -296,6 +322,18 @@ export function ruleMatches(
     if (!isInside(rule.project, resolvePath(ctx.workdir))) return false;
   }
   return true;
+}
+
+function commandMatches(
+  rule: ApprovalRule,
+  prefix: readonly string[],
+  request: MatchableRequest,
+): boolean {
+  if (argvHasPrefix(request.commandArgv, prefix)) return true;
+  return (
+    rule.decision !== "allow" &&
+    (request.commandSegments ?? []).some((words) => argvHasPrefix(words, prefix))
+  );
 }
 
 function argvHasPrefix(

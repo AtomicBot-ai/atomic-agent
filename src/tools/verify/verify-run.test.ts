@@ -55,6 +55,15 @@ function ctx(): ToolContext {
 const RUN_NODE = { kind: "command", cmd: process.execPath, args: ["-e", "console.log('ran')"], checks: ["exit 0"] };
 
 describe("verify.run tool", () => {
+  it("sends its commands to the gate for saved deny and ask rules", async () => {
+    const { gate, request } = fakeGate();
+    const tool = buildVerifyRunTool({ approvals: gate, approvalRequired: true, config: CONFIG });
+    await tool.run(RUN_NODE, ctx());
+    expect(request.mock.calls[0]?.[0]).toMatchObject({
+      commandSegments: [[process.execPath, "-e", "console.log('ran')"]],
+    });
+  });
+
   it("is read-only, asks under the shell category, and runs once approved", async () => {
     const { gate, request } = fakeGate();
     const tool = buildVerifyRunTool({ approvals: gate, approvalRequired: true, config: CONFIG });
