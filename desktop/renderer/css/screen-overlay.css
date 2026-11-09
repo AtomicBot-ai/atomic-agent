@@ -1,0 +1,22 @@
+/* ATO-1018: the click-through overlay that shows where to click. The
+   window is transparent and ignores the mouse; this page only draws. The
+   colours are the app's own tokens (styles.css): the brand blue that
+   must be seen, white ink on it, and a dark halo so a mark reads on a
+   light window and a dark one alike. */
+html, body.screen-overlay {
+  margin: 0; padding: 0; width: 100%; height: 100%;
+  background: transparent !important; overflow: hidden;
+  pointer-events: none; user-select: none; -webkit-user-select: none;
+}
+#marks { position: fixed; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.mk-halo { stroke: var(--shade-40); fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.mk-line { stroke: var(--brand); fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.mk-head { fill: var(--brand); stroke: var(--on-brand); stroke-width: 1.5; stroke-linejoin: round; }
+.mk-box { stroke: var(--brand); fill: color-mix(in srgb, var(--brand) 10%, transparent); stroke-width: 3; }
+.mk-badge { fill: var(--brand); stroke: var(--on-brand); stroke-width: 2; }
+.mk-badge-text { fill: var(--on-brand); font-family: var(--font-ui); font-size: var(--fs-cap); font-weight: 700; }
+.mk-pill { fill: var(--indigo); stroke: var(--on-brand); stroke-width: 1; }
+.mk-text { fill: var(--on-indigo); font-family: var(--font-ui); font-size: var(--fs-ui); font-weight: 600; }
+.mk-pulse { fill: none; stroke: var(--brand); stroke-width: 2; transform-box: fill-box; transform-origin: center; animation: mk-pulse 1.4s ease-out infinite; }
+@keyframes mk-pulse { from { opacity: .9; transform: scale(.4); } to { opacity: 0; transform: scale(1.6); } }
+@media (prefers-reduced-motion: reduce) { .mk-pulse { animation: none; opacity: .6; } }
