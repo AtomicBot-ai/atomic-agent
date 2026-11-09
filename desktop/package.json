@@ -24,6 +24,7 @@
     "fetch-core": "node scripts/fetch-core.mjs",
     "scenarios": "npm run build && node test/scenarios/run-all.mjs",
     "smoke:live": "npm run build && node test/live/run-all.mjs",
+    "soak": "npm run build && node test/soak/soak.mjs",
     "drive:onboarding": "npm run build && node test/onboarding-mouse.mjs",
     "drive:selector": "npm run build && node test/drive-selector.mjs",
     "drive:models": "npm run build && node test/model-picks.drive.mjs",

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "probe": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/mcp/probe.mjs", "${CLAUDE_PLUGIN_DATA}/probe.log"]
+    }
+  }
+}
