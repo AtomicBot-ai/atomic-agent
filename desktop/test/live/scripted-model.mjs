@@ -21,9 +21,10 @@
  *   ]);
  *
  * Only the agent loop's own completions consume a step. Those are recognised
- * by the tool-call grammar they carry. Anything else that reaches
- * `/completion` (the session title, which sends an empty grammar) is recorded
- * as auxiliary and answered without touching the queue.
+ * by the tool-call grammar they carry, or on the chat route by a real tool
+ * list. Anything else (the session title, which sends an empty grammar, or on
+ * the chat route one synthetic `emit_*` function) is recorded as auxiliary and
+ * answered without touching the queue.
  *
  * A step queue that runs out does not hang and does not quietly return an
  * error the app might swallow: `whenBroken` rejects with the request shown,
@@ -61,6 +62,9 @@ export const reply = (text) => call('reply', { text });
    (grammars/tool-call.gbnf), which is backslash-quote on the wire. */
 const AGENT_GRAMMAR_MARK = '\\"tool\\"';
 const AUX_TEXT = 'Live smoke session';
+/* The one function a cloud side call answers through (buildCloudSubcallRequest,
+   src/llm/provider/cloud-subcall.ts). Not a tool the agent loop offers. */
+const SIDE_CALL_FUNCTION = /^emit_/;
 const CHUNK = 13;
 
 function normalize(step) {
@@ -197,9 +201,9 @@ export async function startScriptedModel() {
       return;
     }
     const onChat = req.url.startsWith('/v1/chat/completions');
-    /* On the chat route the agent loop is the caller that sends a tool list. */
+    /* On the chat route the agent loop is the caller that sends a real tool list. */
     const isAgentStep = onChat && chat
-      ? Array.isArray(body.tools) && body.tools.length > 0
+      ? Array.isArray(body.tools) && body.tools.some((t) => !SIDE_CALL_FUNCTION.test(t?.function?.name ?? ''))
       : typeof body.grammar === 'string' && body.grammar.includes(AGENT_GRAMMAR_MARK);
     const record = { n: requests.length + 1, kind: isAgentStep ? 'agent' : 'auxiliary', method: req.method, url: req.url,
       stream: !!body.stream, prompt: body.prompt, messages: body.messages, body, disconnected: false, at: Date.now() };

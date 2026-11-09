@@ -112,6 +112,12 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
     `${model.agentRequests.length} calls now`);
   for (let i = 0; i < 30 && model.inFlight > 0; i++) await sleep(100);
   check(model.inFlight === 0, 'no request to the model is still open', `${model.inFlight} open`);
+  /* The session is named once after its first answered turn, outside the
+     turn's budget (runtime-turn-service.ts). Anything else calling the model
+     is a call after the stop. */
+  const sideCalls = model.requests.filter((r) => r.kind === 'auxiliary');
+  check(sideCalls.length <= 1 && sideCalls.every((r) => requestText(r).includes('Name this work session')),
+    'the only other model call is the one that names the chat', `${sideCalls.length} side calls`);
 
   // ---- what the window says ----------------------------------------------------
   check(line.includes('Stopped at the budget'), 'the card says the budget is why it stopped', line);
