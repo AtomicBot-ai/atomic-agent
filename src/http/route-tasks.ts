@@ -292,5 +292,6 @@ function recordToJson(record: TaskRecord): Record<string, unknown> {
     maxCostUsd: record.maxCostUsd,
     maxDurationMs: record.maxDurationMs,
     spentUsd: record.spentUsd,
+    stopCause: record.stopCause,
   };
 }

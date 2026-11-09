@@ -74,6 +74,7 @@ export function createRuntimeTaskRunner(args: {
       save: (state) => sessionStore.save(state),
     },
     defaultMaxSteps: config.agent.maxSteps,
+    budgetedMaxSteps: config.agent.task.maxSteps,
     backoff: {
       initialMs: config.tasks.backoffInitialMs,
       maxMs: config.tasks.backoffMaxMs,

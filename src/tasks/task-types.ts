@@ -132,12 +132,14 @@ export interface TaskRecord {
   /**
    * Spend ceiling for one run of the task, in USD (ATO-1108). `null`
    * leaves it to `agent.task.maxCostUsd` at run time. A retry gets what
-   * earlier attempts left of it (`spentUsd`).
+   * earlier attempts left of it (`spentUsd`). Cloud Fusion workers are
+   * not counted against it.
    */
   maxCostUsd: number | null;
   /**
-   * Wall-clock ceiling for one run, in ms. `null` leaves it to
-   * `agent.task.maxDurationMs` at run time.
+   * Wall-clock ceiling for the task's runs together, in ms. `null`
+   * leaves it to `agent.task.maxDurationMs` at run time. A retry or a
+   * resume gets what earlier runs left of it (`elapsedMs`).
    */
   maxDurationMs: number | null;
   /**
@@ -147,6 +149,17 @@ export interface TaskRecord {
    * Unpriced (local) models add $0.
    */
   spentUsd: number | null;
+  /**
+   * Run time the task's runs have used so far, in ms, over the attempts
+   * of the current firing. Kept only for a task with `maxDurationMs`.
+   */
+  elapsedMs: number | null;
+  /**
+   * Which ceiling ended a run the store calls `completed`
+   * (`RunTurnResult.stopCause`, e.g. `time_ceiling`, `cost_ceiling`).
+   * `null` when the agent finished on its own.
+   */
+  stopCause: string | null;
 }
 
 /**

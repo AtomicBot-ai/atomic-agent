@@ -56,10 +56,14 @@ describe("TaskStore budgets", () => {
       scheduledFor: 0,
     });
     expect(store.recordSpend(every.id, 0.42)?.spentUsd).toBeCloseTo(0.42, 6);
+    expect(store.recordElapsed(every.id, 5_000)?.elapsedMs).toBe(5_000);
     store.markRunning(every.id);
-    store.markCompleted(every.id);
+    store.recordStopCause(every.id, "cost_ceiling");
+    expect(store.markCompleted(every.id).stopCause).toBe("cost_ceiling");
     const requeued = store.requeueRecurring(every.id, 120_000);
     expect(requeued.spentUsd).toBeNull();
+    expect(requeued.elapsedMs).toBeNull();
+    expect(requeued.stopCause).toBeNull();
     expect(requeued.maxCostUsd).toBe(1);
   });
 
@@ -98,11 +102,13 @@ describe("TaskStore budgets", () => {
         maxDurationMs: 60_000,
       });
       store.recordSpend(task.id, 1.25);
+      store.recordElapsed(task.id, 30_000);
       expect(into.insertMissing(store.list())).toEqual([task.id]);
       expect(into.get(task.id)).toMatchObject({
         maxCostUsd: 5,
         maxDurationMs: 60_000,
         spentUsd: 1.25,
+        elapsedMs: 30_000,
       });
     } finally {
       into.close();
@@ -116,7 +122,7 @@ describe("TaskStore budgets", () => {
     older.close();
     // Simulate a file an older binary wrote: drop the budget columns.
     const raw = new DatabaseCtor(dbFile);
-    for (const column of ["max_cost_usd", "max_duration_ms", "spent_usd"]) {
+    for (const column of ["max_cost_usd", "max_duration_ms", "spent_usd", "elapsed_ms", "stop_cause"]) {
       raw.exec(`ALTER TABLE tasks DROP COLUMN ${column}`);
     }
     raw.close();

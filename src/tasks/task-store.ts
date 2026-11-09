@@ -134,6 +134,8 @@ interface TaskRow {
   max_cost_usd?: number | null;
   max_duration_ms?: number | null;
   spent_usd?: number | null;
+  elapsed_ms?: number | null;
+  stop_cause?: string | null;
 }
 
 interface RunningRow {
@@ -181,6 +183,8 @@ export class TaskStore {
   private readonly requeueRecurringStmt: Database.Statement;
   private readonly assignSessionStmt: Database.Statement;
   private readonly recordSpendStmt: Database.Statement | null;
+  private readonly recordElapsedStmt: Database.Statement | null;
+  private readonly recordStopCauseStmt: Database.Statement | null;
   private readonly resetSpendStmt: Database.Statement | null;
   /**
    * Why this database has no budget columns (see `ensureBudgetColumns`),
@@ -207,10 +211,10 @@ export class TaskStore {
     this.budgetsUnavailable = ensureBudgetColumns(this.db);
     const withBudgets = this.budgetsUnavailable === null;
     const budgetColumns = withBudgets
-      ? ",\n         max_cost_usd, max_duration_ms, spent_usd"
+      ? ",\n         max_cost_usd, max_duration_ms, spent_usd, elapsed_ms, stop_cause"
       : "";
     const budgetValues = withBudgets
-      ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd"
+      ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd, @elapsed_ms, @stop_cause"
       : "";
     this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(options.dbFile);
@@ -384,8 +388,21 @@ export class TaskStore {
             WHERE id = @id`,
         )
       : null;
+    this.recordElapsedStmt = withBudgets
+      ? this.db.prepare(
+          `UPDATE tasks
+              SET elapsed_ms = @elapsed_ms,
+                  updated_at = @now
+            WHERE id = @id`,
+        )
+      : null;
+    this.recordStopCauseStmt = withBudgets
+      ? this.db.prepare(`UPDATE tasks SET stop_cause = @stop_cause WHERE id = @id`)
+      : null;
     this.resetSpendStmt = withBudgets
-      ? this.db.prepare(`UPDATE tasks SET spent_usd = NULL WHERE id = @id`)
+      ? this.db.prepare(
+          `UPDATE tasks SET spent_usd = NULL, elapsed_ms = NULL, stop_cause = NULL WHERE id = @id`,
+        )
       : null;
   }
 
@@ -441,6 +458,8 @@ export class TaskStore {
       max_cost_usd: maxCostUsd,
       max_duration_ms: maxDurationMs,
       spent_usd: null,
+      elapsed_ms: null,
+      stop_cause: null,
     };
     this.insertStmt.run(this.bindRow(row));
     return rowToRecord(row);
@@ -809,6 +828,30 @@ export class TaskStore {
     return this.get(id);
   }
 
+  /**
+   * Store the run time the task has used so far, in ms: the whole
+   * figure, earlier runs included. A no-op on a database without budget
+   * columns. Returns the re-read record, or `null` when the row is gone.
+   */
+  recordElapsed(
+    id: string,
+    elapsedMs: number,
+    now: number = Date.now(),
+  ): TaskRecord | null {
+    if (this.recordElapsedStmt === null) return this.get(id);
+    if (!Number.isFinite(elapsedMs) || elapsedMs < 0) return this.get(id);
+    this.recordElapsedStmt.run({ id, elapsed_ms: Math.round(elapsedMs), now });
+    return this.get(id);
+  }
+
+  /**
+   * Note which ceiling ended the task's run, written just before it is
+   * marked completed. A no-op on a database without budget columns.
+   */
+  recordStopCause(id: string, stopCause: string): void {
+    this.recordStopCauseStmt?.run({ id, stop_cause: stopCause });
+  }
+
   close(): void {
     this.db.close();
   }
@@ -821,12 +864,16 @@ export class TaskStore {
         max_cost_usd: row.max_cost_usd ?? null,
         max_duration_ms: row.max_duration_ms ?? null,
         spent_usd: row.spent_usd ?? null,
+        elapsed_ms: row.elapsed_ms ?? null,
+        stop_cause: row.stop_cause ?? null,
       };
     }
     const bare = { ...row };
     delete bare.max_cost_usd;
     delete bare.max_duration_ms;
     delete bare.spent_usd;
+    delete bare.elapsed_ms;
+    delete bare.stop_cause;
     return bare;
   }
 
@@ -897,6 +944,8 @@ function rowToRecord(row: TaskRow): TaskRecord {
     maxCostUsd: row.max_cost_usd ?? null,
     maxDurationMs: row.max_duration_ms ?? null,
     spentUsd: row.spent_usd ?? null,
+    elapsedMs: row.elapsed_ms ?? null,
+    stopCause: row.stop_cause ?? null,
   };
 }
 
@@ -928,6 +977,8 @@ function recordToRow(record: TaskRecord): TaskRow {
     max_cost_usd: record.maxCostUsd ?? null,
     max_duration_ms: record.maxDurationMs ?? null,
     spent_usd: record.spentUsd ?? null,
+    elapsed_ms: record.elapsedMs ?? null,
+    stop_cause: record.stopCause ?? null,
   };
 }
 
