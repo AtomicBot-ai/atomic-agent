@@ -46,7 +46,15 @@ describe("config shape map (ATO-764)", () => {
   });
 
   it("lists no fixed block the defaults do not have", () => {
-    const branches = new Set(["", ...listDefaultConfigBranches()]);
+    const branches = new Set([
+      "",
+      ...listDefaultConfigBranches(),
+      // Emitted only when set, so absent from the defaults.
+      "llm",
+      "llm.fallback",
+      "llm.runMode",
+      "llm.runMode.fusion",
+    ]);
     const stale = [...FIXED_CONFIG_BRANCHES].filter((path) => !branches.has(path));
     expect(stale).toEqual([]);
   });
@@ -58,5 +66,28 @@ describe("config shape map (ATO-764)", () => {
     expect(knownConfigKeys("discord").has("ownerUserId")).toBe(true);
     expect(knownConfigKeys("memory").has("profile")).toBe(true);
     expect(knownConfigKeys("memory").has("futureKey")).toBe(false);
+  });
+
+  it("descends the llm blocks and knows every pin a caller can clear", () => {
+    for (const path of ["llm", "llm.fallback", "llm.runMode", "llm.runMode.fusion"]) {
+      expect(configBranchKind(path)).toBe("fixed");
+    }
+    expect(configBranchKind("llm.providers")).toBe("dictionary");
+    expect(configBranchKind("llm.runMode.fusion.roles")).toBeUndefined();
+    const fusion = knownConfigKeys("llm.runMode.fusion");
+    for (const key of [
+      "orchestratorProvider",
+      "orchestratorModel",
+      "workerProvider",
+      "workerModel",
+      "escalationProvider",
+      "judgeProvider",
+      "roles",
+    ]) {
+      expect(fusion.has(key)).toBe(true);
+    }
+    expect(fusion.has("futureKey")).toBe(false);
+    expect(knownConfigKeys("llm").has("providers")).toBe(true);
+    expect(knownConfigKeys("llm.fallback").has("chain")).toBe(true);
   });
 });

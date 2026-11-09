@@ -276,6 +276,60 @@ describe("a provider a newer build added (ATO-1241)", () => {
   });
 });
 
+describe("keys a newer build added inside the llm block", () => {
+  function futureKeysTree(): Tree {
+    const tree = baseTree();
+    tree.llm.futureLlmKey = "a";
+    tree.llm.fallback = { chain: ["cloud"], futureFallbackKey: 1 };
+    tree.llm.runMode = {
+      mode: "fusion",
+      futureRunModeKey: true,
+      fusion: {
+        workerProvider: "local-llama",
+        escalationProvider: "cloud",
+        judgeProvider: "cloud",
+        roles: { build: "cloud" },
+        futureFusionKey: { deep: 1 },
+      },
+    };
+    return tree;
+  }
+  beforeEach(() => writeTree(futureKeysTree()));
+
+  it("a whole-file write of an unrelated change keeps them", () => {
+    writeUnrelated(readUserConfigFileSync(path)!);
+    expect(disk().llm).toEqual(futureKeysTree().llm);
+  });
+
+  it("pins a caller removed stay removed, next to the keys that are kept", () => {
+    const parsed = readUserConfigFileSync(path)!;
+    const llm = parsed.llm!;
+    writeUserConfigFileSync(path, {
+      ...parsed,
+      llm: {
+        ...llm,
+        providers: llm.providers.filter((p) => p.id !== "cloud"),
+        fallback: { ...llm.fallback!, chain: [] },
+        runMode: scrubRunModeProviderPins(llm.runMode, "cloud")!,
+      },
+    });
+    const written = disk().llm;
+    expect(written.runMode.fusion).toEqual({ workerProvider: "local-llama", futureFusionKey: { deep: 1 } });
+    expect(written.runMode.futureRunModeKey).toBe(true);
+    expect(written.fallback).toEqual({ chain: [], futureFallbackKey: 1 });
+    expect(written.futureLlmKey).toBe("a");
+  });
+
+  it("a block a caller removed is not brought back", () => {
+    const parsed = readUserConfigFileSync(path)!;
+    const { fallback: _fallback, runMode: _runMode, ...llm } = parsed.llm!;
+    writeUserConfigFileSync(path, { ...parsed, llm });
+    expect(disk().llm.fallback).toBeUndefined();
+    expect(disk().llm.runMode).toBeUndefined();
+    expect(disk().llm.futureLlmKey).toBe("a");
+  });
+});
+
 describe("model modes a newer build added (ATO-1241)", () => {
   function modesTree(): Tree {
     const tree = baseTree();
