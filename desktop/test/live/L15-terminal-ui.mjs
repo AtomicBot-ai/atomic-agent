@@ -10,19 +10,17 @@
  * to its chord, the write not landing, or the terminal left in the alternate
  * screen with mouse reporting on.
  *
- * No Electron here. `dist/cli/index.js tui` runs on a pseudo-terminal from
- * script(1), because the repo has no PTY package and a dependency is not worth
- * adding for one scenario. script(1) copies its stdin to the terminal and the
- * terminal's output to its stdout, so those two pipes are the keyboard and
- * the screen. Its stdin is not a tty here, so the terminal starts with no size
- * and the inner shell sets one before the agent starts.
+ * No Electron here. `dist/cli/index.js tui` runs on a pseudo-terminal
+ * (pseudo-terminal.mjs), whose stdin and stdout are the keyboard and the
+ * screen. The terminal starts with no size, so the inner shell sets one before
+ * the agent starts.
  *
  * The model is `startScriptedModel`, set up as live-harness.mjs does for the
  * desktop. That file's config and environment helpers are private to it, so
  * the few lines that build them are repeated below and must follow it.
  */
 
-import { spawn, execFileSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -31,13 +29,13 @@ import { pathToFileURL } from 'node:url';
 import { REPO_DIR, sleep } from '../drive.mjs';
 import { Failure, SCENARIO_NAME, check, main } from '../harness.mjs';
 import { assertThrowawayStateDir } from '../state-guard.mjs';
+import { SCRIPT_BIN, spawnOnPseudoTerminal } from './pseudo-terminal.mjs';
 import { call, reply, startScriptedModel } from './scripted-model.mjs';
 
 const AGENT_ENTRY = join(REPO_DIR, 'dist', 'cli', 'index.js');
 const AGENT_SCHEMA = join(REPO_DIR, 'dist', 'config', 'config-schema.js');
 const LIVE_ROOT = process.env.ATAG_LIVE_DIR || join(tmpdir(), 'atag-live-scenarios');
 const KEEP = process.env.ATAG_LIVE_KEEP === '1';
-const SCRIPT_BIN = '/usr/bin/script';
 
 const COLS = 130;
 const ROWS = 45;
@@ -291,9 +289,7 @@ function openTerminal(dirs) {
   writeFileSync(inner, `#!/bin/sh\nstty rows ${ROWS} cols ${COLS}\n`
     + `${q(process.execPath)} --enable-source-maps --diagnostic-dir=${q(dirs.base)} ${q(AGENT_ENTRY)} tui --cwd ${q(dirs.workspace)}\n`
     + `echo $? > ${q(exitFile)}\n`);
-  const child = spawn(SCRIPT_BIN, ['-q', '/dev/null', '/bin/sh', inner], {
-    cwd: dirs.workspace, env: terminalEnv(dirs), detached: true, stdio: ['pipe', 'pipe', 'pipe'],
-  });
+  const child = spawnOnPseudoTerminal(['/bin/sh', inner], { cwd: dirs.workspace, env: terminalEnv(dirs) });
   return { term: new Terminal(child, new Screen(COLS, ROWS)), exitFile };
 }
 

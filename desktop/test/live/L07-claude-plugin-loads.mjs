@@ -19,7 +19,7 @@
  * only place a person can run one today.
  */
 
-import { execFile, spawn } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +28,7 @@ import { promisify } from 'node:util';
 import { REPO_DIR } from '../drive.mjs';
 import { Failure, SCENARIO_NAME, ask, check, main, sleep, waitTurn } from '../harness.mjs';
 import { liveScenario } from './live-harness.mjs';
+import { spawnOnPseudoTerminal } from './pseudo-terminal.mjs';
 import { reply } from './scripted-model.mjs';
 
 const run_ = promisify(execFile);
@@ -68,7 +69,7 @@ async function until(fn, what, ms = 30000) {
   for (;;) {
     const value = await fn();
     if (value) return value;
-    if (Date.now() > end) throw new Failure(`gave up after ${ms}ms waiting for ${what}`);
+    if (Date.now() > end) throw new Failure(`gave up after ${ms}ms waiting for ${typeof what === 'function' ? what() : what}`);
     await sleep(200);
   }
 }
@@ -122,15 +123,15 @@ async function sendOnceAgentIsUp(app, text) {
 const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b[\]P^_][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[=>()][0-9A-Za-z]?/g;
 
 /**
- * `atag tui` in a real pseudo-terminal, through macOS script(1). The window
- * size is set before the app starts because script gives a piped session 0x0.
+ * `atag tui` in a real pseudo-terminal. The window size is set before the app
+ * starts because the terminal begins with none.
  * The temp path on the command line is what lets the harness sweep find it.
  */
 function openTerminal(dirs) {
   const inner = 'stty rows 40 cols 120 2>/dev/null; exec "$0" "$@"';
-  const proc = spawn('/usr/bin/script', ['-q', '/dev/null', '/bin/sh', '-c', inner, process.execPath,
+  const proc = spawnOnPseudoTerminal(['/bin/sh', '-c', inner, process.execPath,
     `--diagnostic-dir=${dirs.base}`, AGENT_ENTRY, 'tui', '--cwd', dirs.workspace, '--skip-llama-setup'],
-  { cwd: dirs.workspace, detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: { ...cliEnv(dirs), TERM: 'xterm-256color' } });
+  { cwd: dirs.workspace, env: { ...cliEnv(dirs), TERM: 'xterm-256color' } });
   const t = { proc, raw: '', changedAt: Date.now() };
   const take = (chunk) => { t.raw += chunk; t.changedAt = Date.now(); };
   proc.stdout.setEncoding('utf8').on('data', take);
@@ -195,7 +196,7 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   const terminal = openTerminal(dirs);
   try {
     await until(() => terminal.raw.includes('\u001b[?1049h') && Date.now() - terminal.changedAt > 1500,
-      `the terminal app on screen; it showed: ${terminal.tail(300)}`, 60000);
+      () => `the terminal app on screen; it showed: ${terminal.tail(300)}`, 60000);
     await terminal.typeSlowly('/');
     /* Opening the palette is what refreshes the plugin command list. */
     await sleep(1500);
@@ -203,7 +204,7 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
     await sleep(500);
     terminal.proc.stdin.write('\r');
     await until(() => model.agentRequests.length > countBefore && model.inFlight === 0,
-      `the model to be called by the command; the terminal showed: ${terminal.tail()}`, 45000);
+      () => `the model to be called by the command; the terminal showed: ${terminal.tail()}`, 45000);
   } finally {
     await closeTerminal(terminal);
   }
