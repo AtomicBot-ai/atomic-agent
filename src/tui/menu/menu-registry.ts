@@ -459,7 +459,8 @@ export const MENU: readonly MenuNode[] = [
       name: "goal",
       description:
         "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
-      rank: 46,
+      // After /plugins and before /worker, the order the registry gives them.
+      rank: 46.25,
     },
   },
   {
@@ -638,7 +639,7 @@ export const MENU: readonly MenuNode[] = [
       name: "worker",
       description:
         "act on one running fusion worker: `/worker stop <id>` · `/worker steer <id> <note>` (it reads the note at its next step) · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
-      rank: 46,
+      rank: 46.5,
     },
   },
   {
