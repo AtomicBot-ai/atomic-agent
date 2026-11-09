@@ -554,9 +554,17 @@ export class StudioMedia {
   async outputDir(kind: StudioKind): Promise<{ path: string; isDefault: boolean }> {
     const s = readStudioSettings(this.deps.stateDir);
     const chosen = kind === "video" ? s.videoOutputDir : s.imageOutputDir;
+    /* Never ready(): the window asks this at every launch (shell.js refreshDirs),
+       and starting Core for it left a detached daemon behind, or a download on
+       a computer without Core, for someone who never opened Studio. Only a Core
+       this app configured is asked: any other reports its own per-version
+       folders. Without one, the answer is what configure() would hand Core. */
     try {
-      const status = await (await this.ready()).call<{ outputDir?: string; videoOutputDir?: string }>("/diffusion/status");
-      this.lastDirs = { image: status.outputDir, video: status.videoOutputDir };
+      const client = await connectStudioCore(this.deps.dataDir(), this.deps.coreVersion);
+      if (client && client.instanceId === this.configuredFor) {
+        const status = await client.call<{ outputDir?: string; videoOutputDir?: string }>("/diffusion/status");
+        this.lastDirs = { image: status.outputDir, video: status.videoOutputDir };
+      }
     } catch { /* Core down: what Settings or the default says */ }
     const reported = kind === "video" ? this.lastDirs.video : this.lastDirs.image;
     return { path: reported ?? chosen ?? this.defaultDirs[kind], isDefault: !chosen };

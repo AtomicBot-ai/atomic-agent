@@ -245,9 +245,9 @@ export async function liveScenario(name, body, { setup, skip = null } = {}) {
   if (dirs) {
     const left = await sweep(dirs.base);
     if (left.length) {
-      const list = left.map((p) => `${p.pid} ${p.command.slice(0, 120)}`).join('\n     ');
+      const list = left.map((p) => `${p.pid} ${p.command}`).join('\n     ');
       console.log(`   still running after the app closed, now killed:\n     ${list}`);
-      error ??= new Failure(`${left.length} process(es) were still running after the app closed: ${left[0].command.slice(0, 120)}`);
+      error ??= new Failure(`${left.length} process(es) were still running after the app closed: ${left[0].command}`);
     }
     if (error) console.log(`   kept for inspection: ${dirs.base}`);
     else if (!KEEP) rmSync(dirs.base, { recursive: true, force: true });
