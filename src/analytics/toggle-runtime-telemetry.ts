@@ -35,7 +35,7 @@ const DEFAULT_FACTORIES: RuntimeTelemetryFactories = {
 
 /**
  * Build PostHog + Sentry for this process, sharing one opt-out and one
- * install id. `ATOMIC_AGENT_ANALYTICS=off` forces both off (and keeps
+ * install id. `ATOMIC_AGENT_ANALYTICS=off` or `DO_NOT_TRACK=1` forces both off (and keeps
  * the shared id file untouched) whatever `enabled` says.
  */
 export function buildRuntimeTelemetry(options: {

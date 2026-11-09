@@ -231,7 +231,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 
 ## analytics
 
-- `analytics.enabled` (default `true`).
+- `analytics.enabled` (default `true`). `ATOMIC_AGENT_ANALYTICS=off` or `DO_NOT_TRACK=1` in the environment turns analytics and crash reports off for that process whatever this says.
 
 ## telegram
 
