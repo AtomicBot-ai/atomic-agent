@@ -7,10 +7,12 @@ import {
 } from "../../session/conversation-turn.js";
 import { parseDelegateArgs } from "./delegate-args.js";
 import {
+  BROWSER_CODE_RULE,
   FOLLOW_UP_MAX_CHARS,
   ORIGINAL_REQUEST_CHAR_BUDGET,
   pickOriginalRequest,
   renderWorkerBrief,
+  siblingFilesRule,
 } from "./worker-prompt.js";
 import {
   FUSION_WORKER_APPROVAL_MARKER,
@@ -78,6 +80,39 @@ describe("renderWorkerBrief", () => {
     expect(brief).toContain("`reply`");
     expect(brief).toMatch(/ONLY thing the orchestrator receives/);
     expect(brief).toContain("4000 characters");
+  });
+});
+
+describe("renderWorkerBrief — siblings and browser code (ATO-919)", () => {
+  it("tells the worker not to re-read a sibling's file that does not exist yet", () => {
+    const brief = renderWorkerBrief(TASK, { workingDir: "/repo" });
+    expect(brief).toContain(siblingFilesRule(false));
+    expect(brief).toMatch(/do not read it again/);
+    expect(brief).toMatch(/say in your reply which file was missing/);
+    // Without a contract there is no CONTRACT to build against.
+    expect(siblingFilesRule(false)).not.toContain("CONTRACT");
+    const withContract = renderWorkerBrief(TASK, {
+      workingDir: "/repo",
+      contract: { owners: {}, provides: [], requires: [] },
+    });
+    expect(withContract).toContain(siblingFilesRule(true));
+    expect(siblingFilesRule(true)).toContain("the CONTRACT and your task");
+  });
+
+  it("points browser code at verify.syntax, not node", () => {
+    const brief = renderWorkerBrief(TASK, { workingDir: "/repo" });
+    expect(brief).toContain(BROWSER_CODE_RULE);
+    expect(BROWSER_CODE_RULE).toContain("`verify.syntax`");
+    expect(BROWSER_CODE_RULE).toContain("Cannot find module");
+  });
+
+  it("keeps both rules inside RULES, before the reply rule", () => {
+    const brief = renderWorkerBrief(TASK, { workingDir: "/repo" });
+    const rulesAt = brief.indexOf("RULES:");
+    const replyAt = brief.indexOf("- Finish with `reply`");
+    expect(brief.indexOf(BROWSER_CODE_RULE)).toBeGreaterThan(rulesAt);
+    expect(brief.indexOf(BROWSER_CODE_RULE)).toBeLessThan(replyAt);
+    expect(brief.indexOf(siblingFilesRule(false))).toBeGreaterThan(rulesAt);
   });
 });
 
