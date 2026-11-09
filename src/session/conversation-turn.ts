@@ -1,3 +1,4 @@
+import { typedArgsOfRendered } from "./rendered-command-texts.js";
 import type { ToolApprovalRecord } from "../approval/approval-ledger.js";
 import { estimateTokens } from "../prompt/token-budget.js";
 
@@ -12,6 +13,11 @@ export type ConversationTurn =
   | {
       kind: "user";
       text: string;
+      /**
+       * Set when `text` came from a plugin command template: the part the
+       * person typed. The read scope looks for named paths here instead.
+       */
+      namedPathsText?: string;
       /**
        * Sent while a turn was already running and folded into it at a
        * step boundary (mid-turn steering), rather than opening a turn of
@@ -145,7 +151,7 @@ export function isStoppedTurnMarker(
 }
 
 export function userTurn(text: string, at = Date.now()): ConversationTurn {
-  return { kind: "user", text, at };
+  return { kind: "user", text, ...namedPathsField(text), at };
 }
 
 /** A user message folded into the running turn (see `steered`). */
@@ -153,7 +159,12 @@ export function steeredUserTurn(
   text: string,
   at = Date.now(),
 ): ConversationTurn {
-  return { kind: "user", text, steered: true, at };
+  return { kind: "user", text, ...namedPathsField(text), steered: true, at };
+}
+
+function namedPathsField(text: string): { namedPathsText?: string } {
+  const typed = typedArgsOfRendered(text);
+  return typed !== undefined ? { namedPathsText: typed } : {};
 }
 
 export function assistantToolCallTurn(params: {

@@ -1,3 +1,4 @@
+import { rememberRenderedCommand } from "../../session/rendered-command-texts.js";
 import {
   ensureUserConfigFileSync,
   getConfig,
@@ -113,7 +114,9 @@ export class SkillsOrchestrator {
 
   /** Render a plugin command template; the result is sent as the user's message. */
   preparePluginCommand(name: string, args: string): string {
-    return renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
+    const text = renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
+    rememberRenderedCommand(text, args);
+    return text;
   }
 
   /**
