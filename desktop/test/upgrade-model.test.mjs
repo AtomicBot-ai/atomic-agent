@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 
 const require = createRequire(import.meta.url);
 const { parseRecommendJson, upgradeVerdict, upgradeStillWanted, localPickTakenLive } = require('../out/main/upgrade-model.js');
@@ -86,4 +87,18 @@ test('the strip: progress, then the ask, never a silent switch', () => {
   assert.equal(U.upgradeAct('cpu:dismiss'), false);
   assert.equal(U.upgradeNameForTest(), 'Gemma 4 26B A4B');
   assert.ok(renders > 0);
+});
+
+test('ATO-1331: an upgrade that lost its projector still offers the switch, and says it reads text only', () => {
+  globalThis.render = () => {};
+  globalThis.ic = () => '';
+  globalThis.esc = (s) => s;
+  const U = require('../renderer/upgrade-chat.js');
+  U.upgradeOnEvent({ id: BIG.id, name: BIG.name, phase: 'ready', textOnly: true });
+  assert.equal(U.UPGRADE.textOnly, true);
+  assert.equal(U.upgradeShown(), true);
+  U.upgradeOnEvent({ id: BIG.id, name: BIG.name, phase: 'ready' });
+  assert.equal(U.UPGRADE.textOnly, false);
+  const html = readFileSync(new URL('../renderer/upgrade-chat.js', import.meta.url), 'utf8');
+  assert.ok(html.includes('so it will read text only'));
 });

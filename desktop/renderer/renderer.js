@@ -12173,10 +12173,15 @@ function modelRamWarning(model, models, ram) {
     alt};
 }
 
+/** ATO-1331: "reads images" only while that is true of the files on disk. */
+function modelVisionFact(model) {
+  return model.projectorMissing === true ? 'text only: vision projector missing' : 'reads images';
+}
+
 /** The facts line under a model's name: size, context, vision, disk state. */
 function modelFactsLine(model) {
   const parts = [model.size, model.context + ' context'];
-  if (model.vision) parts.push('reads images');
+  if (model.vision) parts.push(modelVisionFact(model));
   if (model.downloaded) parts.push('already on disk');
   return parts.join(' · ');
 }
@@ -13838,6 +13843,18 @@ function xpullRetry(owner) {
   return () => llmPull(owner.llmKind, owner.id);
 }
 
+/** What a catalogue pull that kept its weights and lost its projector says, wherever it was started. */
+function projectorSkippedText() {
+  return 'the vision projector did not download, so this model would read text only. Retry from the download card, or pick the model to use it for text.';
+}
+
+/** The composer's and Settings' pulls: the row with Retry that a setup pull gets in obPullFinished. */
+function xpullProjectorSkipped(owner, ev) {
+  if (ev.ok !== true || ev.projectorSkipped !== true || owner.kind !== 'weights') return false;
+  dlFail({kind:'projector', id: owner.id}, projectorSkippedText(), xpullRetry(owner));
+  return true;
+}
+
 function xpullReset(owner) {
   Object.assign(XPULL, {key: owner.key, percent: 0, transferredBytes: 0, totalBytes: 0, sawProgress: false,
     rate: null, last: null, samples: 0});
@@ -13860,7 +13877,7 @@ if (BR) {
       if (owner.src === 'proj') return;
       if (ev.ok === false) {
         dlFail(owner, ev.error || 'the download failed', xpullRetry(owner));
-      }
+      } else xpullProjectorSkipped(owner, ev);
       XPULL.key = null;
       // Once the owner's own subscriber has let go of the pull.
       setTimeout(renderDlcard, 0);
@@ -17284,8 +17301,7 @@ if (BR) {
     if (ev.line) { SEL.pullLine = ev.line; const box = document.querySelector('#overlays .selpop .selpullline'); if (box) box.textContent = ev.line; }
     if (ev.done) {
       const id = SEL.pulling; SEL.pulling = null;
-      if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
-      else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
+      selPullFinished(id, ev);
       render();
     }
   });
@@ -18348,6 +18364,13 @@ async function selActivate(row) {
     if (res.daemon === 'start-failed') toast('Local daemon did not start', daemonFail(res.error).line);
     // r5 item 10: the live config is already re-read inside swxRun.
   }
+}
+
+/** How the composer's pull ended. No Switch for a model that lost its projector: it stays a choice in the list. */
+function selPullFinished(id, ev) {
+  if (ev.ok && ev.projectorSkipped === true) toast('Downloaded without vision', projectorSkippedText(), 'bad');
+  else if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
+  else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
 }
 
 function selPull(id) {
@@ -25867,7 +25890,7 @@ function llmLocalRows() {
       text:m.id + ' ' + m.size + ' [' + (m.downloaded ? 'downloaded' : 'remote') + ']'
         + (best && m.id === best.id ? '  ★ best fit for this machine' : ''),
       // The blurb line, drawn under the row. The fit verdict is a badge on the first line (Д32), its reasons the badge's tooltip.
-      sub: [m.description || null, m.vision ? 'reads images' : null, m.context + ' context'].filter(Boolean).join(' · '),
+      sub: [m.description || null, m.vision ? modelVisionFact(m) : null, m.context + ' context'].filter(Boolean).join(' · '),
       fit: llmFitBadge(m, ram),
       // ATO-491: why the best-fit chip sits on this row, in plain words, from what the row already knows.
       bestWhy: best && m.id === best.id ? llmBestFitWhy(m, ram) : ''});
@@ -28244,6 +28267,13 @@ async function llmAfterPull(p) {
   return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
 }
 
+/** Not started, as a Hugging Face model whose projector failed is not (llmAfterPull). */
+function llmProjectorSkipped() {
+  LLMP.msg = {text:'! ' + projectorSkippedText()};
+  llmRefresh();
+  llmRepaint();
+}
+
 /* Any pull that lands — the wizard's, the composer's or this tab's — leaves the
    Local list out of date: mark it so, and read it now if the tab is on screen.
    Without this a model downloaded from the wizard kept its Download button
@@ -28272,7 +28302,8 @@ if (BR) {
         render(); llmRefresh();
         return;
       }
-      if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmAfterPull(p); }
+      if (ev.ok && ev.projectorSkipped === true) llmProjectorSkipped();
+      else if (ev.ok) { LLMP.msg = {text:'local-llm: ' + p.id + ' installed'}; llmAfterPull(p); }
       else { LLMP.statusErr = ev.error || 'the download failed'; LLMHF.pendingMmproj = null; llmRepaint(); }
     }
   });

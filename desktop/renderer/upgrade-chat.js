@@ -7,7 +7,7 @@
    Later. The switch is the person's click, never silent (Nadya, ATO-1044);
    a turn in flight holds it until the turn ends. */
 
-const UPGRADE = { phase: null, id: null, name: null, sizeLabel: null, percent: null, error: null, held: false };
+const UPGRADE = { phase: null, id: null, name: null, sizeLabel: null, percent: null, error: null, held: false, textOnly: false };
 
 /** Plain name: "Gemma 4 26B" out of "Gemma 4 26B A4B GGUF". */
 function upgradeName() {
@@ -33,7 +33,8 @@ function upgradeNoticeHTML() {
     buttons = '<span class="upg-bar" aria-hidden="true"><span style="width:' + (UPGRADE.percent || 0) + '%"></span></span>';
   } else if (p === 'ready') {
     icon = 'check'; tone = ' ok';
-    text = name + ' is ready. It answers better than the small model.';
+    text = name + ' is ready. It answers better than the small model.'
+      + (UPGRADE.textOnly ? ' Its vision projector did not download, so it will read text only.' : '');
     buttons = '<button class="btn btn-p xs" data-act="upg:switch">Switch now</button>'
       + '<button class="btn btn-g xs" data-act="upg:later">Later</button>';
   } else if (p === 'switching') {
@@ -66,6 +67,7 @@ function upgradeOnEvent(ev) {
   UPGRADE.error = ev.error || null;
   UPGRADE.held = !!ev.held;
   UPGRADE.switching = !!ev.switching;
+  UPGRADE.textOnly = !!ev.textOnly;
   if (UPGRADE.phase === 'done') UPGRADE.phase = null;
   if (UPGRADE.phase === 'switched' && typeof refreshLiveConfig === 'function') refreshLiveConfig().catch(() => {});
   render();
