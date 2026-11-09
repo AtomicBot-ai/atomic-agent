@@ -203,7 +203,7 @@ interface Catalog {
  * `argsJsonSchema`: neither is part of a tool's contract or of a known
  * duplicate's fingerprint.
  */
-function withoutCompactForm(descriptor: ToolDescriptor): ToolDescriptor {
+function withoutCompactForm(descriptor: GateDescriptor): GateDescriptor {
   const core = { ...descriptor };
   delete core.compact;
   return core;
@@ -347,8 +347,8 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(98);
-    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(95);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(100);
+    expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(97);
     for (const [name, debt] of KNOWN_DESCRIPTOR_DUPLICATES) {
       expect(debt.owner).not.toBe(""); expect(debt.reason).not.toBe("");
       const copies = DEFAULT_TOOL_DESCRIPTORS.filter((descriptor) => descriptor.name === name);
