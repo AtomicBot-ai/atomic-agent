@@ -51,6 +51,9 @@ function card(
 function withCards(cards: readonly ToolCardEntry[]): TuiState {
   return {
     ...createInitialTuiState(SESSION),
+    // The line sits under the cards of an open turn; a folded turn
+    // (ATO-963, the default) hides both behind its summary line.
+    showSteps: true,
     messages: [
       {
         id: "m1",

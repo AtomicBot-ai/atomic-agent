@@ -143,6 +143,12 @@ export interface SlashDispatchResult {
    */
   readonly mouseVerb?: "on" | "off" | "status";
   /**
+   * `/steps [on|off]` — always show steps (ATO-963). Bare `/steps` is
+   * `toggle`. The caller sets `TuiState.showSteps` and writes
+   * `tui.showSteps` through `onShowStepsPersistRequested`.
+   */
+  readonly showStepsVerb?: "on" | "off" | "toggle";
+  /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
    * dialog it opens is what eventually asks for that.
@@ -386,9 +392,16 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         { type: "tab_changed", tab: "world" },
       ]);
     case "expand":
-      return pureActions([{ type: "tool_expand_all_set", expanded: true }]);
+      return dispatchExpandSub(parsed.args);
     case "collapse":
-      return pureActions([{ type: "tool_expand_all_set", expanded: false }]);
+      // Folds every finished turn back into its line and closes every
+      // tool card, so `/collapse` undoes `/expand all` in one step.
+      return pureActions([
+        { type: "turn_expand_set", scope: "all", expanded: false },
+        { type: "tool_expand_all_set", expanded: false },
+      ]);
+    case "steps":
+      return dispatchStepsSub(parsed.args);
     case "session":
       return pureActions([], {
         systemMessage: "use /sessions to switch, /new to start fresh",
@@ -629,6 +642,47 @@ function pureActions(
  * the registry and, on success, asks the caller to swap + persist + re-render.
  * Unknown names surface a usage hint instead of switching.
  */
+/**
+ * `/expand` opens the newest finished turn's folded steps (ATO-963), the
+ * keyboard's route to the click on its summary line. `/expand all` opens
+ * every finished turn and every tool card body, which is what bare
+ * `/expand` did before turns folded.
+ */
+function dispatchExpandSub(rawArgs: string): SlashDispatchResult {
+  const arg = rawArgs.trim().toLowerCase();
+  if (arg.length === 0 || arg === "last") {
+    return pureActions([
+      { type: "turn_expand_set", scope: "last", expanded: true },
+    ]);
+  }
+  if (arg === "all") {
+    return pureActions([
+      { type: "turn_expand_set", scope: "all", expanded: true },
+      { type: "tool_expand_all_set", expanded: true },
+    ]);
+  }
+  return pureActions([], {
+    systemMessage: `usage: /expand [all] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/**
+ * `/steps` flips "always show steps" (`tui.showSteps`); `on` / `off` set
+ * it. The caller applies it to the live state and persists it, because
+ * the toggle needs the current value this pure dispatcher does not have.
+ */
+function dispatchStepsSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { showStepsVerb: "toggle" });
+  if (verb === "on" || verb === "always") {
+    return pureActions([], { showStepsVerb: "on" });
+  }
+  if (verb === "off") return pureActions([], { showStepsVerb: "off" });
+  return pureActions([], {
+    systemMessage: `usage: /steps [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
 /**
  * `/mouse` with no argument reports state; `on` / `off` set it. Any
  * other word is rejected rather than guessed at — a typo'd `/mouse ff`

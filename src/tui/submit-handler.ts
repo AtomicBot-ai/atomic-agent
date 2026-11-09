@@ -396,6 +396,16 @@ export function runSlashCommand(
       result.mouseVerb === "status" ? null : result.mouseVerb === "on",
     );
   }
+  // `/steps`: the toggle needs the live value, which the pure dispatcher
+  // does not have. Applied here, then written to `tui.showSteps`.
+  if (result.showStepsVerb) {
+    const on =
+      result.showStepsVerb === "toggle"
+        ? !state.showSteps
+        : result.showStepsVerb === "on";
+    dispatch({ type: "show_steps_set", on });
+    callbacks.onShowStepsPersistRequested?.(on);
+  }
 }
 
 /**

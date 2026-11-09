@@ -589,6 +589,18 @@ export interface TuiState {
   menuCursor: number;
   /** Which tool cards are shown expanded by the user. */
   toolsExpandedById: Readonly<Record<string, boolean>>;
+  /**
+   * Finished turns the operator opened from their folded summary line
+   * (ATO-963), by assistant message id. Absent means folded. See
+   * `render/turn-collapse.ts`.
+   */
+  turnsExpandedById: Readonly<Record<string, boolean>>;
+  /**
+   * Always show steps: finished turns keep their tool cards and reasoning
+   * open instead of folding into one line. Seeded from `tui.showSteps`
+   * and flipped with `/steps on|off` (persisted).
+   */
+  showSteps: boolean;
   /** Is the session picker overlay visible? */
   sessionPickerOpen: boolean;
   /** Entries shown in the picker, newest first. */
@@ -857,6 +869,8 @@ export interface InitialTuiLayoutOptions {
   activeTab?: TuiTab;
   /** Seeds {@link TuiState.whileBusyMode} from the persisted user config. */
   whileBusyMode?: WhileBusySubmitMode;
+  /** Seeds {@link TuiState.showSteps} from `tui.showSteps`. */
+  showSteps?: boolean;
   /**
    * Seeds the local-models slice's config-derived facts (mode + chosen
    * model), so the composer's route controls are right on the home
@@ -943,6 +957,8 @@ export function createInitialTuiState(
     menuQuery: "",
     menuCursor: 0,
     toolsExpandedById: {},
+    turnsExpandedById: {},
+    showSteps: layout?.showSteps ?? false,
     sessionPickerOpen: false,
     sessionPickerList: [],
     sessionPickerCursor: 0,

@@ -13,6 +13,8 @@ import { ChatSwitchBackButton } from "./chat-switch-back-button.js";
 import { SystemBubble } from "./system-bubble.js";
 import { ToolCard, ToolCardsAnnotationLine } from "./tool-card.js";
 import { UserBubble } from "./user-bubble.js";
+import { TurnFoldLine } from "./turn-fold-line.js";
+import type { TurnFold } from "../render/turn-collapse.js";
 
 /**
  * Tools whose only "output" is the assistant reply itself. Their tool
@@ -36,6 +38,13 @@ export interface FinalisedMessageProps {
   } | null;
   /** Tint the bubbles for the Fusion run mode — see `fusion-tint.ts`. */
   fusion?: boolean;
+  /**
+   * This finished turn folds into one summary line (ATO-963); `null` or
+   * absent draws it as it always was. See `render/turn-collapse.ts`.
+   */
+  fold?: TurnFold | null;
+  /** The operator opened the folded turn: its steps show under the line. */
+  turnOpen?: boolean;
 }
 
 /** One finalised chat message with its footer row, by role. */
@@ -44,6 +53,8 @@ export function FinalisedMessage({
   toolsExpandedById,
   planHandoff,
   fusion = false,
+  fold = null,
+  turnOpen = false,
 }: FinalisedMessageProps): ReactElement {
   if (message.role === "user") {
     const steered = message.steered === true;
@@ -66,12 +77,16 @@ export function FinalisedMessage({
     );
   }
   if (message.role === "assistant") {
+    // A folded turn hides its reasoning and tool cards behind one line
+    // until the operator opens it; an unfolded one draws them as before.
+    const showSteps = fold === null || turnOpen;
     return (
       <Box flexDirection="column">
-        {message.reasoningBlocks && message.reasoningBlocks.length > 0 ? (
+        {fold ? <TurnFoldLine fold={fold} open={turnOpen} /> : null}
+        {showSteps && message.reasoningBlocks && message.reasoningBlocks.length > 0 ? (
           <ReasoningBubble blocks={message.reasoningBlocks} expanded={false} />
         ) : null}
-        {message.toolCards && message.toolCards.length > 0
+        {showSteps && message.toolCards && message.toolCards.length > 0
           ? (() => {
               const visible = message.toolCards.filter(isVisibleToolCard);
               if (visible.length === 0) return null;
@@ -82,6 +97,9 @@ export function FinalisedMessage({
                       key={card.id}
                       card={card}
                       expanded={toolsExpandedById[card.id] ?? false}
+                      // An opened fold keeps large output out of sight:
+                      // only a failure shows its result line.
+                      preview={fold ? "errors" : "always"}
                     />
                   ))}
                   <ToolCardsAnnotationLine cards={visible} />
@@ -91,7 +109,9 @@ export function FinalisedMessage({
           : null}
         <AssistantBubble
           text={message.text}
-          toolSteps={message.toolSteps ?? 0}
+          // The fold line already counts the tools; a second "N tool
+          // steps" under the reply would say it twice.
+          toolSteps={fold ? 0 : (message.toolSteps ?? 0)}
           {...(message.attachments ? { attachments: message.attachments } : {})}
           fusion={fusion}
         />
