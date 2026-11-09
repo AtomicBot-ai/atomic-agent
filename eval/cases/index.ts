@@ -55,6 +55,7 @@ import { axisMinStepsSingleRead } from "./axis-min-steps-single-read.case.js";
 import { axisMinStepsTrivialReply } from "./axis-min-steps-trivial-reply.case.js";
 import { axisBatchingFourIndependentReads } from "./axis-batching-four-independent-reads.case.js";
 import { axisRecoveryBadPathThenFix } from "./axis-recovery-bad-path-then-fix.case.js";
+import { axisRecoveryFailedCommand } from "./axis-recovery-failed-command.case.js";
 import { axisInstructionNoEditJustReport } from "./axis-instruction-no-edit-just-report.case.js";
 import { axisInstructionNoShell } from "./axis-instruction-no-shell.case.js";
 import { axisSelfTermAfterFind } from "./axis-self-term-after-find.case.js";
@@ -95,7 +96,7 @@ import { gaiaHardStaleSource } from "./gaia-hard-stale-source.case.js";
  *  - Bucket B (+6): SWE-bench-Lite-shaped single-file bug fixes.
  *  - Bucket C (+3): multi-file refactor (read-fan-out, multi-write).
  *  - Bucket D (+3): judge-based knowledge / code understanding.
- *  - Bucket E (+15): axe-focused diagnostics. Each case isolates ONE
+ *  - Bucket E (+16): axe-focused diagnostics. Each case isolates ONE
  *    capability axis (tool_selection, args_shaping, min_steps,
  *    parallel_batching, tool_error_recovery, instruction_adherence,
  *    self_termination, grammar_adherence, context_retention,
@@ -113,7 +114,7 @@ import { gaiaHardStaleSource } from "./gaia-hard-stale-source.case.js";
  *    assistant-style file fact retrieval — NOT comparable to
  *    published GAIA scores.
  *
- * Total = 67. Run `eval:summary` (after a full prog) to get a
+ * Total = 68. Run `eval:summary` (after a full prog) to get a
  * per-axis pass-rate breakdown.
  */
 export const EVAL_CASES: ReadonlyArray<EvalCase> = [
@@ -171,6 +172,7 @@ export const EVAL_CASES: ReadonlyArray<EvalCase> = [
   axisMinStepsTrivialReply,
   axisBatchingFourIndependentReads,
   axisRecoveryBadPathThenFix,
+  axisRecoveryFailedCommand,
   axisInstructionNoEditJustReport,
   axisInstructionNoShell,
   axisSelfTermAfterFind,

@@ -38,6 +38,7 @@ import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
 import { GpuShare, waitLine, type HeldTurn } from "./studio-gpu-share.js";
 import { wireStudioIpc } from "./studio-ipc.js";
+import type { StudioMedia } from "./studio-media.js";
 import { machineProfile } from "./studio-local.js";
 import { pickOpenRouterKey } from "./studio-key.js";
 import { BUNDLED_CORE_VERSION } from "./core-bundle.js";
@@ -350,6 +351,8 @@ let BUILD_STAMP: BuildStamp | null = null;
 const buildStamp = (): BuildStamp => (BUILD_STAMP ??= readBuildStamp(app.getAppPath(), app.isPackaged));
 
 let win: BrowserWindow | null = null;
+/** The quit's way to Studio's Core (stopLocalDaemonOnQuit). */
+let studioForQuit: StudioMedia | null = null;
 /** When the window last went on screen — the probe's line between a frame painted and a frame seen. */
 let windowShownAt: number | null = null;
 let agent: AgentClient | null = null;
@@ -2740,6 +2743,7 @@ function wireIpc(client: AgentClient): void {
       return pickOpenRouterKey(read.ok ? read.config?.llm?.providers ?? [] : [], (entry) => resolveKeyValue(entry as ProviderEntry));
     },
   });
+  studioForQuit = studio;
   app.once("will-quit", () => studio.dispose());
   // The menu's Quit: the app quits and `before-quit` stops the agent, as the TUI's /quit does.
   ipcMain.handle("app:quit", () => { app.quit(); });
@@ -5556,7 +5560,7 @@ async function sidebarTest(
         `pin ${JSON.stringify(clicked)} → unpin ${JSON.stringify(unclicked)}`,
       );
     } else {
-      check("a pinned chat sorts first and is stored", true, "skipped — fewer than two chats in this workspace");
+      process.stdout.write("SKIP a pinned chat sorts first and is stored — fewer than two chats in this workspace\n");
     }
 
     // "Load more" appears only when the page actually hides rows.
@@ -5675,7 +5679,7 @@ async function sidebarTest(
       await js<void>(`window.__openSession(${JSON.stringify(id)})`);
       await wait(1500);
     } else {
-      check("a turn left behind stays out of the open chat and fills its own row", true, "skipped — no second idle chat in this workspace");
+      process.stdout.write("SKIP a turn left behind stays out of the open chat and fills its own row — no second idle chat in this workspace\n");
     }
 
     // The Tasks list is every task, not the TUI rail's running/queued
@@ -10717,7 +10721,11 @@ async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>,
     const read = await (config ?? readQuitConfig());
     const lm = read?.ok ? read.config?.localModels : undefined;
     const managed = lm?.managed as { stopOnExit?: boolean; dataDirOverride?: string | null } | undefined;
-    if (read?.ok && (lm?.mode !== "managed" || managed?.stopOnExit === false)) return;
+    if (read?.ok && (lm?.mode !== "managed" || managed?.stopOnExit === false)) {
+      // ATO-857: no `models stop` on this route, so a Core Studio used is retired here when nothing needs it.
+      await studioForQuit?.retireCoreOnQuit();
+      return;
+    }
     /* Item 11: a start still on its way is killed rather than left to finish
        after the app is gone. Item 30: and a server that outlives the stop — it
        ignored SIGTERM, or the stop ran out of time — is killed by this process. */

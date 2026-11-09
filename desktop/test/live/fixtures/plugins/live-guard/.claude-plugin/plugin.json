@@ -1,0 +1,5 @@
+{
+  "name": "live-guard",
+  "version": "1.0.0",
+  "description": "Live smoke fixture: a PreToolUse guard and a PostToolUse marker."
+}
