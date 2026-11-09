@@ -203,6 +203,12 @@ test("a bare path keeps its underscores and stars: no emphasis cuts it", () => {
   assert.equal(md("see ~/a_b_/c__d__.md now"), "see ~/a_b_/c__d__.md now");
 });
 
+test("a Windows path keeps every backslash; an escape elsewhere still works", () => {
+  assert.equal(md("see C:\\Users\\me\\.atomic-agent\\config.json now"), "see C:\\Users\\me\\.atomic-agent\\config.json now");
+  assert.equal(md("at D:\\a\\_temp\\x__y__.docx."), "at D:\\a\\_temp\\x__y__.docx.");
+  assert.equal(md("a \\_b\\_ c"), "a _b_ c");
+});
+
 test("raw HTML is shown as text, never as markup", () => {
   assert.equal(md("<b>hi</b> & bye"), "&lt;b&gt;hi&lt;/b&gt; &amp; bye");
   assert.equal(md("<div>\nx\n</div>"), "&lt;div&gt;\nx\n&lt;/div&gt;");

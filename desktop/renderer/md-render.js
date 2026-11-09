@@ -52,11 +52,13 @@ function mdrTrailNl(s) { return (/\n*$/.exec(String(s || '')) || [''])[0].length
 
 /* A bare path in prose is one piece of text, so `/app/pkg/__init__.py` or
    `~/my*notes*.md` keeps its underscores and stars (emphasis would cut the
-   path in two and renderProseFresh would no longer find it for a chip). */
-const MDR_PATH_AT = /^(?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@*+-]+\.[A-Za-z0-9]{1,10}(?![\p{L}\p{N}_\/])/u;
+   path in two and renderProseFresh would no longer find it for a chip). A
+   Windows path needs it too: `\.` and `\_` are markdown escapes, so
+   `C:\Users\me\.atomic-agent\config.json` would lose a backslash. */
+const MDR_PATH_AT = /^(?:(?:~\/|\/)(?:[\p{L}\p{N}_.@+-]+\/)*[\p{L}\p{N}_.@*+-]+\.[A-Za-z0-9]{1,10}(?![\p{L}\p{N}_\/])|(?:[A-Za-z]:[\\\/]|~\\)(?:[\p{L}\p{N}_.@+-]+[\\\/])*[\p{L}\p{N}_.@*+-]+\.[A-Za-z0-9]{1,10}(?![\p{L}\p{N}_\/\\]))/u;
 const MDR_PATH_EXT = {
   name: 'mdpath', level: 'inline',
-  start(src) { const m = /(^|[\s(\[{"'])(?:~\/|\/)/.exec(src); return m ? m.index + m[1].length : undefined; },
+  start(src) { const m = /(^|[\s(\[{"'])(?:~[\/\\]|\/|[A-Za-z]:[\\\/])/.exec(src); return m ? m.index + m[1].length : undefined; },
   tokenizer(src) { const m = MDR_PATH_AT.exec(src); return m ? {type: 'text', raw: m[0], text: m[0]} : undefined; },
 };
 
