@@ -77,6 +77,14 @@ describe("shouldFallBackToCoreCpuBuild", () => {
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(500, "unknown model architecture: 'newarch'") })).toBe(false);
   });
 
+  // ATO-371: a load that was cancelled is not a crash, even when Core's
+  // code names the load (`LOAD_CANCELLED` would otherwise match /LOAD/).
+  it("never switches for a cancelled load, but still does for an aborted server", () => {
+    expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(500, "load failed", "LOAD_CANCELLED") })).toBe(false);
+    expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(500, "Model load was cancelled") })).toBe(false);
+    expect(shouldFallBackToCoreCpuBuild({ ...eligible, error: new CoreRequestError(500, "llama-server aborted during load", "MODEL_LOAD_FAILED") })).toBe(true);
+  });
+
   it("is not put off by a normal startup log", () => {
     expect(shouldFallBackToCoreCpuBuild({ ...eligible, logText: "main: binding port with default address family\nmain: HTTP server is listening\nllama_model_loader: loaded meta data" })).toBe(true);
   });
