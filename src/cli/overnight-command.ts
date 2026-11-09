@@ -149,13 +149,16 @@ export function installStopSignals(
  * The task row an overnight run creates. `maxSteps` is the task-wide
  * ceiling (`agent.task.maxSteps`): left unset, the runner would fall
  * back to the per-leg `agent.maxSteps` and end the night at step 25.
+ * The money cap the banner promises goes on the row too, a config cap
+ * included: only a cap on the row is tracked across resumes.
  */
 export function overnightTaskInput(
   args: OvernightArgs,
   taskId: string,
   sessionId: string,
-  config: { agent: { task: { maxSteps: number } } },
+  config: { agent: { task: { maxSteps: number; maxCostUsd: number } } },
 ): TaskCreateInput {
+  const capUsd = args.budgetUsd ?? config.agent.task.maxCostUsd;
   return {
     id: taskId,
     sessionId,
@@ -165,7 +168,7 @@ export function overnightTaskInput(
     maxAttempts: 1,
     maxSteps: config.agent.task.maxSteps,
     maxDurationMs: args.durationMs,
-    ...(args.budgetUsd !== null ? { maxCostUsd: args.budgetUsd } : {}),
+    ...(capUsd > 0 ? { maxCostUsd: capUsd } : {}),
     ...(args.notify ? { notify: args.notify } : {}),
   };
 }

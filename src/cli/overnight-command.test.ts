@@ -136,7 +136,7 @@ describe("overnightTaskInput", () => {
 
   it("carries the task-wide step ceiling, not the per-leg default", () => {
     const input = overnightTaskInput(args, "t-1", "s-1", {
-      agent: { task: { maxSteps: 1000 } },
+      agent: { task: { maxSteps: 1000, maxCostUsd: 0 } },
     });
     expect(input.maxSteps).toBe(1000);
     expect(input).toMatchObject({
@@ -148,6 +148,29 @@ describe("overnightTaskInput", () => {
       maxDurationMs: 8 * 3_600_000,
       maxCostUsd: 5,
     });
+  });
+
+  it("writes the config cap on the row when --budget is absent", () => {
+    const noBudget = { ...args, budgetUsd: null };
+    const input = overnightTaskInput(noBudget, "t-1", "s-1", {
+      agent: { task: { maxSteps: 1000, maxCostUsd: 3 } },
+    });
+    expect(input.maxCostUsd).toBe(3);
+  });
+
+  it("prefers --budget over the config cap", () => {
+    const input = overnightTaskInput(args, "t-1", "s-1", {
+      agent: { task: { maxSteps: 1000, maxCostUsd: 3 } },
+    });
+    expect(input.maxCostUsd).toBe(5);
+  });
+
+  it("leaves the row uncapped when neither sets a cap", () => {
+    const noBudget = { ...args, budgetUsd: null };
+    const input = overnightTaskInput(noBudget, "t-1", "s-1", {
+      agent: { task: { maxSteps: 1000, maxCostUsd: 0 } },
+    });
+    expect(input).not.toHaveProperty("maxCostUsd");
   });
 
   it("takes agent.task.maxSteps from the loaded config", () => {
