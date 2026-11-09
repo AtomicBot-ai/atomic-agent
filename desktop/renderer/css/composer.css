@@ -275,7 +275,8 @@
 
 /* The fan-out while the turn runs (fusion-live-workers.ts): one line per
    worker, the status dot in the app's grammar — pulsing brand while it
-   works, green done, red failed, amber cancelled. No control of its own. */
+   works, green done, red failed, amber cancelled. ATO-568: a running row
+   carries its own Stop and Steer when the agent supports them. */
 .fzlive{display:flex;flex-direction:column;gap:1px;min-width:0;padding:0 6px 4px}
 .fzlive .fzw{display:flex;align-items:center;gap:8px;min-width:0;min-height:20px;
   font:400 var(--fs-label)/18px var(--font-mono);letter-spacing:0;color:var(--ink-2)}
@@ -286,6 +287,26 @@
 .fzlive .fzw.cancelled .fzdot{background:var(--amber);animation:none}
 @keyframes fzpulse{0%,100%{opacity:1}50%{opacity:.35}}
 @media (prefers-reduced-motion: reduce){.fzlive .fzdot{animation:none}}
+/* ATO-568 (fusion-panel.js): each running row's tokens/$, a "stuck" mark,
+   and its own Stop and Steer. The line keeps the room; the extras sit at
+   its end and never wrap it. */
+.fzlive .fzt{flex:1 1 auto}
+.fzlive .fzspend{flex:none;color:var(--ink-3);white-space:nowrap}
+.fzlive .fzstuck{flex:none;padding:0 5px;border-radius:var(--r-pill);border:1px solid var(--amber);color:var(--amber);font-size:var(--fs-micro);line-height:14px}
+.fzlive .fzctl{flex:none;display:inline-flex;gap:4px;margin-left:auto}
+.fzlive .fzbtn{height:18px;padding:0 8px;border:1px solid var(--bd);border-radius:var(--r-pill);background:transparent;
+  font:500 var(--fs-micro)/16px var(--font-ui);color:var(--ink-2);cursor:pointer}
+.fzlive .fzbtn:hover:not([disabled]){border-color:var(--bd-2);color:var(--ink)}
+.fzlive .fzbtn.on{border-color:var(--brand);color:var(--brand)}
+.fzlive .fzbtn[disabled]{opacity:.55;cursor:default}
+.fzlive .fzbtn:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.fzlive .fzsteer{display:flex;align-items:center;gap:8px;min-width:0;padding:2px 0 4px 15px}
+.fzlive .fzsteer-lb{flex:none;font:400 var(--fs-micro)/1 var(--font-ui);color:var(--ink-3)}
+.fzlive .fzsteer-in{flex:1 1 auto;min-width:0;height:24px;box-sizing:border-box;padding:0 8px;border:1px solid var(--brand);border-radius:6px;
+  background:var(--well);color:var(--ink);font:400 var(--fs-label)/22px var(--font-ui)}
+.fzlive .fzsteer-in:focus-visible{outline:2px solid var(--blue);outline-offset:1px}
+.fzlive .fznote{padding:0 0 2px 15px;font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3)}
+.fzlive .fznote.bad{color:var(--critical)}
 
 /* Context gauge: the 20px ring alone; the figure is its tooltip and the
    numbers live in its popover. */

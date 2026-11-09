@@ -2221,6 +2221,8 @@ function render() {
   // Backlog 28: so does a landed model's start, held by a turn in another chat.
   obFlushDeferredSoon();
   exaKeyRestore(exaHeld);
+  // ATO-568: the caret goes into a worker's Steer field that was just opened.
+  if (typeof fzpAfterRender === 'function') fzpAfterRender();
 }
 
 
@@ -6707,6 +6709,8 @@ function act(a) {
   if (a === 'attach:window') { close(); render(); wsnapOpen(); return; }
   if (a === 'close') { close(); render(); if (menuWas) chatMenuFocusBack(menuWas); return; }
   if (k === 'toastx') { S.toasts = S.toasts.filter((x) => String(x.id) !== v); renderToasts(); return; }
+  // ATO-568: one Fusion worker's Stop / Steer (fusion-panel.js).
+  if (k === 'fzp') { fzpAct(v); return; }
   // ATO-229: the update toast and Settings › General's update rows (app-update.js).
   if (k === 'appupd') { appUpdAct(v); return; }
   // Backlog 18: the download card's verbs (dlCardAct).
@@ -7915,6 +7919,8 @@ document.addEventListener('compositionend', (e) => {
 document.addEventListener('input', (e) => {
   // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
+  // ATO-568: a worker's Steer field keeps its text across repaints.
+  if (typeof fzpInput === 'function' && fzpInput(e)) return;
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
     // Lane B — item 3: the draft's estimate moves the projected chip only
@@ -8868,6 +8874,8 @@ document.addEventListener('keydown', (e) => {
      candidate, Escape drops it. keyCode 229 is the same key on an engine
      that reports it with isComposing already false. */
   if (e.isComposing || e.keyCode === 229) return;
+  // ATO-568: Enter and Escape in a worker's Steer field are that field's.
+  if (typeof fzpKeydown === 'function' && fzpKeydown(e)) return;
   const k = e.key;
   /* ATO-226: the key the chords and the ⌘ shortcuts below match on, by the
      physical key on a non-Latin layout (shortcutKey). `k` stays the typed
@@ -10483,8 +10491,14 @@ function onChatEvent(ev) {
       summary: typeof p.summary === 'string' ? p.summary : undefined,
       etaSeconds: typeof p.eta_seconds === 'number' ? p.eta_seconds : undefined,
       contextTokens: typeof p.context_tokens === 'number' && p.context_tokens > 0 ? p.context_tokens : undefined,
+      // ATO-568: the chat the fan-out runs in (the address of a row's Stop and
+      // Steer), and the worker's spend when the agent sends it.
+      sessionId: typeof p.session_id === 'string' && p.session_id ? p.session_id : undefined,
+      tokens: typeof p.tokens === 'number' && p.tokens > 0 ? p.tokens : undefined,
+      spentUsd: typeof p.spent_usd === 'number' && Number.isFinite(p.spent_usd) ? p.spent_usd : undefined,
     };
     FZ.live = fzReduceLive(FZ.live, e);
+    if (typeof fzpNoteFrame === 'function') fzpNoteFrame(e);
     tpFzEnsureTick();
     // `usage` (agent with the worker token counts) only moves the live row's
     // context size: one transcript line per completion per worker would bury
@@ -10655,6 +10669,7 @@ function onChatEvent(ev) {
     S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
+    if (typeof FZP !== 'undefined') { FZP.open = null; FZP.draft = ''; }
     /* Item 1 (plan hand-off): finishTurn's rule, restated —
        src/tui/reducer-helpers.ts: "if (state.codingMode !== 'plan' || outcome
        !== 'completed') return next; return { ...next, planHandoff: true }".
@@ -19756,7 +19771,13 @@ function fzReduceLive(current, e) {
     model: e.model ?? (prev && prev.model) ?? null,
     tool: done ? null : (usage ? ((prev && prev.tool) ?? null) : (e.tool ?? (prev && prev.tool) ?? null)), done,
     // Kept once the leg is done: the final size answers "which worker ate the window".
-    contextTokens: e.contextTokens ?? (prev && prev.contextTokens) ?? null};
+    contextTokens: e.contextTokens ?? (prev && prev.contextTokens) ?? null,
+    // ATO-568 (fusion-panel.js): where the row's Stop and Steer go, what it spent,
+    // and whether the agent escalated it because it stalled.
+    sessionId: e.sessionId ?? (prev && prev.sessionId) ?? null,
+    tokens: e.tokens ?? (prev && prev.tokens) ?? null,
+    spentUsd: e.spentUsd ?? (prev && prev.spentUsd) ?? null,
+    stalled: (e.phase === 'escalated' && /\((?:stalled|first answer cut):/.test(e.summary || '')) || !!(prev && prev.stalled)};
   Object.assign(next, tpFzClock(prev, e, done));   // tui-parity.js: per-leg clock and estimate
   if (at < 0) return current.concat([next]);
   const copy = current.slice();
@@ -19782,6 +19803,8 @@ function fzWorkerLine(e) {
   // Kept off the transcript (onChatEvent); something true if it is ever printed.
   if (e.phase === 'usage') return who + ': ' + fmtTokens(e.contextTokens ?? 0) + ' ctx';
   if (e.phase === 'cancelled') return who + ': cancelled';
+  // ATO-568: an agent that escalates a stuck worker says what it did (format-fusion-worker-line.ts).
+  if (e.phase === 'escalated') return who + ': ' + (e.summary ?? 'escalated');
   if (e.phase === 'failed') return who + ': failed — ' + (e.summary ?? 'no detail');
   if (e.phase === 'finished') {
     const steps = e.stepCount === undefined ? '' : ' — ' + e.stepCount + ' steps';
@@ -19790,12 +19813,18 @@ function fzWorkerLine(e) {
   }
   return who;
 }
-/** The fan-out under the busy strip while the turn runs. Read-only: the one Stop is the send button. */
+/** The fan-out under the busy strip while the turn runs. ATO-568: a running row
+    carries its own Stop and Steer (fusion-panel.js) when the agent supports them;
+    the send button's Stop still stops the whole turn. */
 function fzLiveHTML() {
   if (!FZ.live.length || !(S.busy || S.pending)) return '';
-  return '<div class="fzlive" aria-live="polite">' + FZ.live.map((w) =>
+  const panel = typeof fzpRowExtrasHTML === 'function';
+  const now = Date.now();
+  return '<div class="fzlive" role="group" aria-label="Fusion workers">' + FZ.live.map((w) =>
     '<div class="fzw' + (w.done ? ' done' : '') + (w.phase === 'failed' ? ' failed' : w.phase === 'cancelled' ? ' cancelled' : '') + '">'
-    + '<span class="fzdot"></span><span class="fzt">' + esc(fzLiveLine(w)) + '</span></div>').join('') + '</div>';
+    + '<span class="fzdot"></span><span class="fzt">' + esc(fzLiveLine(w)) + '</span>'
+    + (panel ? fzpRowExtrasHTML(w, FZ.live, FZP, now) : '') + '</div>'
+    + (panel ? fzpSteerFieldHTML(w, FZP) + fzpNoteHTML(w, FZP, now) : '')).join('') + '</div>';
 }
 
 /* Smoke hooks — read-side ports and a probe that draws the switch for a
