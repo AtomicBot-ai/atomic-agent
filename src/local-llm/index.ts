@@ -16,6 +16,7 @@ export {
   type EmbeddingModelId,
   type EmbeddingModelDef,
 } from "./catalog/models-catalog.js";
+export { spotlightModelFor } from "./catalog/spotlight-model.js";
 export {
   recommendedModelFor,
   type RecommendedModelOptions,

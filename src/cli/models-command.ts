@@ -24,6 +24,7 @@ import {
 import { runModelsSearch } from "./models-search-command.js";
 import { runLocalModelsCheck } from "./models-check.js";
 import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
+import { runLocalModelsPullAndRun } from "./models-pull-run.js";
 
 const HELP =
   [
@@ -35,8 +36,10 @@ const HELP =
     "Subcommands:",
     "  list                          Show model catalog + disk presence (active marked with *)",
     "  pull <id> [--background]      Download a GGUF model from Hugging Face (resumes a partial;",
-    "            [--mmproj]          --background keeps going after this terminal closes;",
-    "                                --mmproj also fetches the vision projector)",
+    "            [--mmproj] [--run]  --background keeps going after this terminal closes;",
+    "                                --mmproj also fetches the vision projector;",
+    "                                --run then makes it active and starts it, with the",
+    "                                projector on a vision model (not with --background))",
     "  downloads [cancel <id>|clear] List background downloads, stop one (partial kept), or",
     "                                forget finished records",
     '  use <id>                      Set active model and switch mode to "managed"',
@@ -84,6 +87,7 @@ const HELP =
     "  atomic-agent models search claude vision",
     "  atomic-agent models pull qwen-3.5-4b",
     "  atomic-agent models pull --background qwen-3.5-35b",
+    "  atomic-agent models pull --run qwen-3.5-4b",
     "  atomic-agent models downloads",
     "  atomic-agent models recommend",
     "  atomic-agent models upgrade",
@@ -133,6 +137,7 @@ export async function modelsCommand(args: string[]): Promise<number> {
       case "list":
         return runLocalModelsList();
       case "pull":
+        if (args.includes("--run")) return await runLocalModelsPullAndRun(args.slice(1));
         return runLocalModelsPull(args.slice(1));
       case "pull-worker":
         return runLocalModelsPullWorker(args.slice(1));

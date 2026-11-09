@@ -349,7 +349,7 @@ export async function runLocalModelsPull(args: string[]): Promise<number> {
  * seeds is what `models downloads` shows a moment later.
  */
 /** The arguments that are not flags — nor the value of a flag that takes one. */
-function positionalArgs(args: readonly string[]): string[] {
+export function positionalArgs(args: readonly string[]): string[] {
   const out: string[] = [];
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i]!;

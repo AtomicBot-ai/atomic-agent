@@ -23,6 +23,8 @@ After an embedding model is picked, pulled, removed or toggled, and after the da
 
 The local HF lookup owns its AbortController/identity guard and explicit Escape cancellation. This move does not change shutdown behavior or prove every request lifetime is covered. Catalog writes and paired downloads still use local-llm; validated config writes/cache invalidation use the existing [shared TUI config helper](../persist-user-local-models-config.ts). That helper and [backend readiness](../local-backend-readiness.ts) are used by several flows/commands and remain outside this feature. CLI/domain operations must follow their domain owners, not import a view.
 
+[Model spotlight hint](model-spotlight-hint.ts) prints one chat line at startup while a catalog row is marked `spotlight`. It stays silent during first-run setup and shows at most once per model id, recorded in `<stateDir>/model-spotlight-seen.json`.
+
 ## Checks
 
 Run `npx vitest run src/tui/local-models src/tui/llm-panel src/tui/onboarding src/tui/providers src/tui/components/manage-panel-fit.test.tsx src/tui/components/status-bar.test.tsx src/tui/components/debug-pane-budget.test.ts` for view consumers, widths, local activation, provider seams and orchestration. Existing daemon-wedge-watch fixtures need a local loopback HTTP listener; sandbox EPERM is not a behavioral pass. Run `npm run lint`, `npm run typecheck:tests`, `npm run imports:check`, `npm run docs:check` and full `npm run test:ci`.
