@@ -4,7 +4,7 @@ Scope: `src/plugins/`. Inherit the root instructions; read [README.md](README.md
 
 ## Constraints
 
-- Reading, staging or installing a plugin never runs its code. Anything that can run a command (hooks, stdio MCP servers, skill scripts) is reported by `bundleRunsCode` and needs the user's consent where it is wired in.
+- Reading, staging or installing a plugin never runs its code. Anything that can run a command (hooks, stdio MCP servers, skill scripts) or receive the user's keys (an MCP entry with `${NAME}`) is reported by `bundleRunsCode` and needs the user's consent where it is wired in.
 - Every path a manifest names must resolve inside the plugin folder. Staging drops symlinks.
 - A plugin never grants itself trust: its MCP `trust` field is dropped, `allowed-tools` style fields are hints only, its skills cannot shadow a skill the user installed directly, and code-running parts wait for `runsCodeAccepted` (reset on every update).
 - A broken plugin degrades to a diagnostic; it must not stop the agent from starting.

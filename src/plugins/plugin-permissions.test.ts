@@ -91,6 +91,37 @@ describe("plugin permissions", () => {
     expect(describePermissionDiff(diff)).toEqual(["1 hook(s) removed", "New skills: b", "New commands: c", "New subagents: d"]);
   });
 
+  it("a remote server that receives the user's keys needs consent like code", () => {
+    const keyed = readPluginBundle(writeClaudePlugin(join(base, "k"), { mcp: { api: { type: "http", url: "https://one/mcp", headers: { Authorization: "Bearer ${API_KEY}" } } } }));
+    const snap = pluginPermissionSnapshot(keyed);
+    expect(snap.runsCode).toBe(true);
+    expect(snap.mcpServers).toEqual([{ name: "api", transport: "remote", url: "https://one/mcp", keys: ["API_KEY"] }]);
+    expect(describePluginCode(snap)).toContain("MCP server api at https://one/mcp (gets your keys: API_KEY)");
+  });
+
+  it("a plain remote server and the plugin's own path variables are not keys", () => {
+    const plain = readPluginBundle(writeClaudePlugin(join(base, "p"), { mcp: { docs: { type: "http", url: "https://docs/mcp", headers: { "X-Root": "${CLAUDE_PLUGIN_ROOT}" } } } }));
+    expect(pluginPermissionSnapshot(plain).mcpServers).toEqual([{ name: "docs", transport: "remote", url: "https://docs/mcp" }]);
+  });
+
+  it("sending a key somewhere new, or a new key, resets consent", () => {
+    const before: PluginPermissionSnapshot = { ...empty, runsCode: true, mcpServers: [{ name: "r", transport: "remote", url: "https://one", keys: ["A"] }] };
+    const moved = diffPermissionSnapshots(before, { ...before, mcpServers: [{ name: "r", transport: "remote", url: "https://evil", keys: ["A"] }] });
+    expect(moved.codeChanged).toBe(true);
+    expect(describePermissionDiff(moved)).toEqual(["MCP server r now connects to https://evil (was https://one) (gets your keys: A)"]);
+    const more = diffPermissionSnapshots(before, { ...before, mcpServers: [{ name: "r", transport: "remote", url: "https://one", keys: ["A", "B"] }] });
+    expect(more.codeChanged).toBe(true);
+    expect(describePermissionDiff(more)).toEqual(["MCP server r now gets your keys: A, B"]);
+    expect(codeConsentIdOf(before)).not.toBe(codeConsentIdOf({ ...before, mcpServers: [{ name: "r", transport: "remote", url: "https://evil", keys: ["A"] }] }));
+  });
+
+  it("a plain server starting to read a key is called out as needing consent", () => {
+    const before: PluginPermissionSnapshot = { ...empty, mcpServers: [{ name: "r", transport: "remote", url: "https://one" }] };
+    const diff = diffPermissionSnapshots(before, { ...before, runsCode: true, mcpServers: [{ name: "r", transport: "remote", url: "https://one", keys: ["A"] }] });
+    expect(diff).toMatchObject({ startsRunningCode: true, codeChanged: true });
+    expect(describePermissionDiff(diff)[1]).toBe("MCP server r now gets your keys: A");
+  });
+
   it("consent id follows exactly what runs", () => {
     const a: PluginPermissionSnapshot = { ...empty, runsCode: true, scripts: [{ path: "s.sh", sha256: "1" }] };
     expect(codeConsentIdOf(a)).toBe(codeConsentIdOf({ ...a, skills: ["new-skill"] }));

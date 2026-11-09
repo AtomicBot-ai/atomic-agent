@@ -29,7 +29,7 @@ Owner: src/plugins/
 
 ## Code consent
 
-Skills (as text), commands, subagent profiles and remote MCP servers work right after install. Parts that start programs on the computer (local stdio MCP servers, hooks, skill scripts) stay off until the user runs `atomic-agent plugin allow-code <name>` or installs with `--accept-code`. The consent is stored as `runsCodeAccepted` and dropped on every update.
+Skills (as text), commands, subagent profiles and remote MCP servers without keys work right after install. Parts that start programs on the computer (local stdio MCP servers, hooks, skill scripts) and MCP servers that read the user's keys stay off until the user runs `atomic-agent plugin allow-code <name>` or installs with `--accept-code`. The consent is stored as `runsCodeAccepted` and dropped on every update.
 
 ## Switching parts off
 

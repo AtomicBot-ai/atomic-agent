@@ -17,15 +17,15 @@ A client that shows the findings answers with the scan id (`approvedScanId`), so
 
 ## 2. Permission diff (update and `--force`)
 
-`diffPluginPermissions(oldBundle, newBundle)` compares what each version would run and what it adds: local (stdio) MCP servers added, removed or with a changed command; remote server URLs; hooks added or removed; script files added, changed (by sha256) or removed; new skills, commands and subagents; and whether the plugin starts running code. `describePermissionDiff` turns it into plain lines, printed before any question.
+`diffPluginPermissions(oldBundle, newBundle)` compares what each version would run and what it adds: local (stdio) MCP servers added, removed or with a changed command; remote server URLs; which of the user's keys each server receives; hooks added or removed; script files added, changed (by sha256) or removed; new skills, commands and subagents; and whether the plugin starts running code. `describePermissionDiff` turns it into plain lines, printed before any question.
 
-`codeChanged` is true when anything that runs is new or different. Remote URL changes and removals are shown but do not count: they run nothing here.
+`codeChanged` is true when anything that runs is new or different. URL changes of a remote server that receives no keys, and removals, are shown but do not count: they run nothing here and hand over nothing. Any change to a server that receives keys (a new address, a new key) does count.
 
 ## 3. Runs-code consent
 
-A plugin runs code when it ships hooks, a local MCP server or skill scripts (`bundleRunsCode`). Such a plugin installs with those parts off (`runsCodeAccepted: false`) until the person agrees, once per package:
+A plugin runs code when it ships hooks, a local MCP server or skill scripts, or when any MCP server of it receives the user's keys (`${NAME}` in its entry, `bundleRunsCode`). Handing over a key is trusted like running code: same flag, same question. Such a plugin installs with those parts off (`runsCodeAccepted: false`) until the person agrees, once per package:
 
-- In a terminal the CLI lists exactly what would run (`describePluginCode`: each local MCP command, each hook command, each script file) and asks.
+- In a terminal the CLI lists exactly what would run (`describePluginCode`: each local MCP command, each hook command, each script file, each server and the keys it gets) and asks.
 - `--accept-code` agrees up front. Without a terminal and without the flag the plugin installs with code off; `plugin allow-code <name>` turns it on later.
 - On update an earlier yes is kept only when `codeChanged` is false; otherwise the record is reset and the question comes back.
 - A desktop answer echoes `consentId` (`codeConsentIdOf`), a hash of exactly that list, so code that changed after the question was shown is never allowed unseen.

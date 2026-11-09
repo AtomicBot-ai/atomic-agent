@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative, resolve, sep } from "node:path";
+import { userKeyRefs } from "./plugin-keys.js";
 import { readPluginManifest, PluginManifestError } from "./plugin-manifest.js";
 import type { PluginAgentEntry, PluginBundle, PluginCommandEntry, PluginSkillEntry } from "./plugin-types.js";
 
@@ -41,11 +42,11 @@ export function readPluginBundle(root: string): PluginBundle {
   return { name: manifest.name, root: absRoot, format, manifest, skills, commands, agents, hooksFile, mcpServers, notes };
 }
 
-/** True when enabling the plugin can make the computer run something: hooks, stdio MCP servers or skill scripts. */
+/** True when enabling the plugin needs the user's consent: it can run something here (hooks, stdio MCP servers, skill scripts) or an MCP server of it receives the user's keys. */
 export function bundleRunsCode(bundle: PluginBundle): boolean {
   if (bundle.hooksFile || bundle.manifest.hooksInline) return true;
   if (bundle.skills.some(s => s.hasScripts)) return true;
-  return Object.values(bundle.mcpServers).some(s => typeof s.command === "string");
+  return Object.values(bundle.mcpServers).some(s => typeof s.command === "string" || userKeyRefs(s).length > 0);
 }
 
 function readSkills(root: string, dirs: string[]): PluginSkillEntry[] {
