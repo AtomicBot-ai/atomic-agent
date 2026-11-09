@@ -93,7 +93,14 @@ const closeSettings = (app) => app.clickSel('[data-act="settings:close"]');
 /** The Restart button in the Plugins pane, then a new `atag serve` really running. */
 async function restartAgent(app, base) {
   const before = await serveProcesses(base);
-  await app.clickSel('.set-plugins [data-act="agent:restart"]');
+  // The pane repaints as a removal settles, and a press across a repaint never becomes a click: wait for the button to stay put.
+  const button = `.set-plugins [data-act="agent:restart"]`;
+  await until(async () => {
+    await app.eval(`document.querySelector(${JSON.stringify(button)}).dataset.liveSettled = '1'`);
+    await new Promise((r) => setTimeout(r, 750));
+    return app.eval(`document.querySelector(${JSON.stringify(button)}).dataset.liveSettled === '1'`);
+  }, 'the Restart button to stop repainting', 15000);
+  await app.clickSel(button);
   await until(async () => {
     const now = await serveProcesses(base);
     return now.length > 0 && now.every((pid) => !before.includes(pid));
