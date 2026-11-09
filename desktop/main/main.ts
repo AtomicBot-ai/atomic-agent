@@ -1361,6 +1361,14 @@ function wireIpc(client: AgentClient): void {
     else return { ok: false, error: "questionId required" };
     return client.answerProjectTrust(out);
   });
+  // ATO-1144: Settings › Privacy › Approval rules (renderer/approval-rules.js).
+  ipcMain.handle("agent:approvalRules", async (_event, sessionId: unknown) => {
+    try { return await client.approvalRules(skillSession(sessionId)); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:approvalRuleDelete", async (_event, id: unknown) => {
+    if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return { ok: false, error: "invalid rule id" };
+    return client.deleteApprovalRule(id);
+  });
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
   resource("models", () => client.models());

@@ -5786,6 +5786,34 @@ async function projectTrustAct(v) {
     kind === 'trust' ? 'Its project skills and instructions load from the next message' : 'Nothing from this folder is loaded'); }
   else if (res && res.conflict) toast('The folder changed', 'Something new appeared in it; the question shows what is there now');
 }
+/* ATO-1144: Settings › Privacy › Approval rules (renderer/approval-rules.js).
+   Read on every entry to Privacy, for the chat's own folder; an agent
+   without /api/approval-rules says to update it. */
+const ARULES = createApprovalRules({
+  read: (id) => BR && BR.approvalRules ? BR.approvalRules(id) : {supported: false},
+  remove: (id) => BR && BR.approvalRuleDelete ? BR.approvalRuleDelete(id) : {supported: false},
+});
+let ARULES_GEN = null;
+function approvalRulesShown() { return !!S.settings && settingsPaneId(S.settingsPane) === 'privacy'; }
+async function approvalRulesLoad() {
+  if (ARULES_GEN !== AGENT_GEN) { ARULES_GEN = AGENT_GEN; ARULES.reset(); }
+  const pending = ARULES.load(skillSessionId());
+  if (approvalRulesShown()) render();
+  await pending;
+  if (approvalRulesShown()) render();
+}
+function approvalRulesSection() {
+  return approvalRulesHTML(ARULES.state, {esc, categoryPlain: (c) => CATEGORY_PLAIN[c] || CATEGORY_LABEL[c] || '', pathText: apprPath});
+}
+async function approvalRulesAct(v) {
+  if (v === 'reload') { approvalRulesLoad(); return; }
+  if (v.indexOf('del:') !== 0) return;
+  const pending = ARULES.remove(v.slice(4));
+  render();
+  const res = await pending;
+  render();
+  if (res && res.ok) toast('Rule deleted', 'Atomic Agent will ask about it again');
+}
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
   projectTrustCheck();
@@ -5836,6 +5864,8 @@ function settingsPaneEntered(opened) {
   if (TK.lastRefreshedAt === null && !TK.loading) tasksRefresh(true);
   // General (the analytics switch) and Privacy (its cross-link): fetch the effective value once; `r` re-reads on demand.
   if (['general', 'privacy'].includes(settingsPaneId(S.settingsPane)) && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
+  // ATO-1144: the saved approval rules, read again on every entry to Privacy.
+  if (settingsPaneId(S.settingsPane) === 'privacy') approvalRulesLoad();
   // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
   const pane = settingsPaneId(S.settingsPane);
   if (pane === 'skills') skillsTabEntered();
@@ -6391,6 +6421,7 @@ function privacyPane() {
           + (!known || PRIV.busy ? ' disabled' : '') + ' title="Turn analytics ' + (on ? 'off' : 'on') + '"></button>'
       + '</div>'
     + '</div>'
+    + approvalRulesSection()
     + '<p class="set-cap set-privnote">With a cloud model, your messages go to that provider.</p>'
     + privacyNoticesHTML()
     + '</div>';
@@ -6672,6 +6703,7 @@ function act(a) {
   if (k === 'dlc') { dlCardAct(v); return; }
   // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
+  if (k === 'arules') { approvalRulesAct(v || ''); return; }
   if (a === 'palette') { close(); S.overlay = 'palette'; render(); if (SK.workingDir) refreshSkillList(); return; }
   if (a === 'palette:slash') { close(); S.overlay = 'palette'; S.q = ''; render(); toast('Slash commands', 'Type / in the composer for the in-context list'); return; }
   if (a === 'shortcuts') { close(); S.overlay = 'shortcuts'; render(); return; }
