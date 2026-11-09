@@ -54,7 +54,9 @@ import { lexShellLine, type ShellWord } from "./shell-line-lexer.js";
  * install --cask`), and opening a folder, a document or any other app
  * are untouched. Matching is on the command's text, so a browser named
  * in a quoted string of an unrelated command (an `echo`) passes; only
- * scripting contexts look for one.
+ * scripting contexts look for one. Likewise a message a script only
+ * prints: a device sign-in saying `echo 'open https://… and enter the
+ * code'` is the step the agent has to run and hand over.
  */
 
 export const BROWSER_BYPASS_RULE = "browser.use_browser_tool";
@@ -156,6 +158,14 @@ const LINE_PROBLEMS: readonly ScriptProblem[] = [
     what: "opening a web address in the browser",
   },
 ];
+
+/**
+ * `echo` / `printf` with one quoted argument and nothing taking the output
+ * (a pipe or a file could carry it to a shell). What it says is not run,
+ * so the line-level rules do not read it.
+ */
+const PRINTED_MESSAGE =
+  /(^|[\s;&|(])(echo|printf)((?:\s+-[a-z]+)*)\s+(?:'[^'\n]*'|"[^"\n$`]*")(?=[ \t]*(?:[12]?>&[12][ \t]*)?(?:$|[\n;#]|&&|\|\|))/gm;
 
 /** Commands that run the command after them; the value-taking flags of each. */
 const PREFIX_COMMANDS: Readonly<Record<string, readonly string[]>> = {
@@ -269,8 +279,9 @@ function checkScriptFile(word: ShellWord, ctx: CommandContext, shell: boolean): 
 
 function checkText(raw: string, osascriptSource: string): GuardVerdict | null {
   const text = raw.normalize("NFKC").toLowerCase();
+  const whatRuns = text.replace(PRINTED_MESSAGE, "$1$2$3 ''");
   for (const problem of LINE_PROBLEMS) {
-    if (problem.test.test(text)) return refuse(problem.what);
+    if (problem.test.test(whatRuns)) return refuse(problem.what);
   }
   if (SCRIPTING_CONTEXT.test(text)) {
     let rest = text;
@@ -329,7 +340,10 @@ function checkLineCommands(line: string, ctx: CommandContext): GuardVerdict | nu
 function checkCommand(all: readonly ShellWord[], outer: CommandContext): GuardVerdict | null {
   // The words as the shell passes them on, quotes taken off: `osa''script`.
   const dequoted = all.map((word) => word.text).join(" ");
-  const asText = checkText(dequoted, dequoted);
+  // With its quotes off a printed message reads like a command; the line it
+  // came from was already checked with them on.
+  const printsOnly = ["echo", "printf"].includes(all[0]?.text ?? "");
+  const asText = printsOnly ? null : checkText(dequoted, dequoted);
   if (asText) return asText;
   const ctx = { ...outer };
   let i = 0;

@@ -102,6 +102,11 @@ export const run = () => liveScenario(SCENARIO_NAME(import.meta.url), async ({ a
   check(!leaked(everything).length, 'no key is in any request sent to the model', leaked(everything).join(', '));
 
   // ---- what the window holds -------------------------------------------------
+  /* A finished turn folds into one "Used 2 tools" line (ATO-464), and its cards
+     are not drawn until that line is opened. Opening it is what a person does
+     to see them, and it puts the cards into the page the scan below reads. */
+  await app.clickSel('#scroller [data-turnsum]');
+  await app.waitFor(`!!document.querySelector('.card[data-tool="os.shell.run"]')`, 'the tool cards, opened by a click');
   for (const tool of ['os.fs.read', 'os.shell.run']) {
     await app.clickSel(`.card[data-tool="${tool}"] .cardhead[data-toggle]`);
     await app.waitFor(`!!document.querySelector('.card[data-tool="${tool}"] .cardbody')`, `the ${tool} card open`);
