@@ -15,6 +15,7 @@ import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpd
 import { readChatFolders, writeChatFolders } from "./chat-folders.js";
 import { cpuFallbackOf, engineFailureOf, type EngineFailure } from "./engine-failure.js";
 import { runQuitShutdown, settleWithin } from "./quit-shutdown.js";
+import { busyPorts, modelPortsOf, onSmokeStopSignal, runSmokeGuarded, signalExitCode, smokeMayStopModels, smokeOwnsItsState, smokeScreenshot } from "./smoke-exit.js";
 import { randomUUID } from "node:crypto";
 import { freemem, homedir, tmpdir, totalmem } from "node:os";
 import { join } from "node:path";
@@ -3454,7 +3455,8 @@ function rendererCssText(): string {
 }
 
 async function smokeTest(): Promise<void> {
-  if (!win) return;
+  // ATO-896: thrown, not returned: runSmokeGuarded ends the run as a failure instead of leaving it open.
+  if (!win) throw new Error("no window to test");
   const js = <T,>(code: string) => win!.webContents.executeJavaScript(code) as Promise<T>;
   const fail: string[] = [];
   const check = (name: string, ok: boolean, detail = "") => {
@@ -4671,10 +4673,18 @@ async function smokeTest(): Promise<void> {
 
   if (MODELS_TEST) await modelsTest(js, check);
 
-  const image = await win.webContents.capturePage();
-  const out = join(app.getPath("temp"), "atomic-desktop-smoke.png");
-  writeFileSync(out, image.toPNG());
-  process.stdout.write(`SMOKE screenshot=${out} failures=${fail.length}\n`);
+  /* ATO-896: a screen that slept or is locked cannot be captured; that costs
+     the picture, never the verdict and the exit (the run used to hang here). */
+  const shotLine = await smokeScreenshot(
+    () => win!.webContents.capturePage(),
+    (png) => {
+      const out = join(app.getPath("temp"), "atomic-desktop-smoke.png");
+      writeFileSync(out, png);
+      return out;
+    },
+    fail.length,
+  );
+  process.stdout.write(shotLine);
   exitAfterAgentStop(fail.length === 0 ? 0 : 1);
 }
 
@@ -4692,7 +4702,8 @@ function exitAfterAgentStop(code: number): void {
   agent = null;
   // close, not stop: no restart, workspace change or import still on its way starts another agent after it.
   const shutdown = (client ? client.close() : Promise.resolve(true)).then(() => stopLocalDaemonOnQuit());
-  void Promise.race([shutdown, new Promise((r) => setTimeout(r, 10_000))])
+  // ATO-825: 20 s, not 10: the run's model-server stop (stopLocalDaemonOnQuit) needs up to ~12 s of it.
+  void Promise.race([shutdown, new Promise((r) => setTimeout(r, 20_000))])
     .catch(() => undefined)
     .finally(() => app.exit(code));
 }
@@ -10474,13 +10485,23 @@ void app.whenReady().then(async () => {
         return undefined;
       })
       .catch(() => undefined));
-    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore).then(() => {
+    // ATO-825: a stopped smoke job (tmux kill-session: SIGHUP; ^C; kill) still stops the run's agent and model server.
+    if (SMOKE) {
+      onSmokeStopSignal(process, (sig) => {
+        process.stdout.write(`FAIL smoke: stopped by ${sig}\n`);
+        exitAfterAgentStop(signalExitCode(sig));
+      });
+    }
+    void claimDesktopPorts().then(pruneIncompleteProvidersAtBoot).then(sweepAtLaunch).then(seedCore)
+      .then(() => (SMOKE ? smokePortsFree() : true)).then((portsFree) => {
+      if (!portsFree) return;
       // ATO-1127: a remote agent runs its own models; this computer starts none for it.
       const remote = !!agent?.isRemote;
       if (!remote) void pairBeside();
       void agent?.start();
       A.appOpened("cold", DESKTOP_STATE_WAS_FRESH, inApplicationsFolder());   // after start()'s synchronous orphan reap
-      if (SMOKE) void smokeTest();
+      // ATO-896: an error that escapes the suite ends the run (exit 1), not an unhandled rejection that keeps it open.
+      if (SMOKE) void runSmokeGuarded(smokeTest, (line) => process.stdout.write(line), exitAfterAgentStop);
       else if (!remote) void startLocalDaemonAtBoot().then(() => fetchStarterModel?.()).then(() => fetchUpgradeModel?.()).catch(() => undefined);
       else A.launchBackendSettled(true);
     });
@@ -10675,7 +10696,7 @@ function readQuitConfig(): Promise<Awaited<ReturnType<typeof readWholeConfig>> |
  * covers the update's shutdown below as well.
  */
 async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>, opts: { forUpdate?: boolean } = {}): Promise<void> {
-  if (SMOKE) return;
+  if (SMOKE) return stopSmokeModels(config);
   /* An app update: the stop runs whatever the config says (stopOnExit off
      included) and reads only the data dir from disk, no `atag` call, so it
      fits the updater's limit. `models stop` also retires an idle Atomic Core. */
@@ -10701,6 +10722,51 @@ async function stopLocalDaemonOnQuit(config?: ReturnType<typeof readQuitConfig>,
     if (killed.length) console.error(`[desktop] killed the model server that outlived its stop (pid ${killed.join(", ")})`);
   } catch {
     // Quitting wins over tidying up.
+  }
+}
+
+/**
+ * ATO-825 / ATO-896: a smoke run stops the model server it started — Atomic
+ * Core's sessions through `models stop`, a llama-server that outlives it by
+ * its pid file — but only on a throwaway state directory whose model data
+ * lives inside it (smokeMayStopModels). A smoke on the operator's own
+ * directory still leaves their server alone, as before. stopOnExit is not
+ * consulted: a run's leftovers on its ports answer the next run with the
+ * wrong key (401), whatever the run's config said.
+ */
+async function stopSmokeModels(config?: ReturnType<typeof readQuitConfig>): Promise<void> {
+  try {
+    const read = await (config ?? readQuitConfig());
+    const managed = (read?.ok ? read.config?.localModels?.managed : undefined) as { dataDirOverride?: string | null } | undefined;
+    const dataDir = managedDataDir(managed?.dataDirOverride);
+    if (!smokeMayStopModels({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV, dataDir })) return;
+    const killed = await stopDaemonForQuit(dataDir);
+    if (killed.length) console.error(`[desktop] smoke: killed the run's model server that outlived its stop (pid ${killed.join(", ")})`);
+  } catch {
+    // The run's verdict and exit win over tidying up.
+  }
+}
+
+/**
+ * ATO-825: before a smoke on a throwaway directory starts its agent, its
+ * model ports must be free. One that is taken is almost always a model
+ * server left by a run that was stopped midway, holding that run's key, and
+ * every turn of this run would get "401 Invalid API Key" from it. Say so and
+ * exit instead of producing a page of false failures.
+ */
+async function smokePortsFree(): Promise<boolean> {
+  if (!smokeOwnsItsState({ stateDir: DESKTOP_STATE_DIR, tuiStateDir: TUI_STATE_DIR, stateDirFromEnv: STATE_DIR_FROM_ENV })) return true;
+  try {
+    const read = await settleWithin(readWholeConfig(), 8_000, null);
+    const taken = await busyPorts(modelPortsOf(read?.ok ? read.config : null));
+    if (!taken.length) return true;
+    process.stdout.write(
+      `FAIL smoke: model port ${taken.join(", ")} is already taken by another process (a model server left by a stopped run?). Stop it and start the run again.\n`,
+    );
+    app.exit(2);
+    return false;
+  } catch {
+    return true;   // a config that cannot be read is the suite's to report, not this check's
   }
 }
 
