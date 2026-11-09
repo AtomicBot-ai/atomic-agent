@@ -72,8 +72,8 @@ export class PluginsOrchestrator {
       () => setPluginCodeAllowed(this.stateDir(), name, allow),
       name,
       allow
-        ? `${name} may run its local MCP servers, hooks and scripts. Servers start with the next agent start.`
-        : `${name}'s local MCP servers, hooks and scripts are off.`,
+        ? `${name} may run its local MCP servers, hooks and scripts and receive your keys. Servers start with the next agent start.`
+        : `${name}'s local MCP servers, hooks, scripts and servers that read your keys are off.`,
     );
   }
 

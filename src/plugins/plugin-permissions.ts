@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { extname, join, relative, sep } from "node:path";
 import { bundleRunsCode } from "./plugin-bundle.js";
+import { userKeyRefs } from "./plugin-keys.js";
 import type { PluginBundle } from "./plugin-types.js";
 
 /**
@@ -24,6 +25,8 @@ export interface PluginMcpPermission {
   /** Program and arguments, joined, for a local server. */
   command?: string;
   url?: string;
+  /** The user's keys this server receives (`${NAME}` in its entry), names only. Needs the same consent as running code. */
+  keys?: string[];
 }
 
 export interface PluginScriptFile {
@@ -67,11 +70,13 @@ export function pluginPermissionSnapshot(bundle: PluginBundle): PluginPermission
 }
 
 function mcpPermission(name: string, raw: Record<string, unknown>): PluginMcpPermission {
+  const found = userKeyRefs(raw);
+  const keys = found.length > 0 ? { keys: found } : {};
   if (typeof raw.command === "string") {
     const args = Array.isArray(raw.args) ? raw.args.filter((a): a is string => typeof a === "string") : [];
-    return { name, transport: "local", command: [raw.command, ...args].join(" ") };
+    return { name, transport: "local", command: [raw.command, ...args].join(" "), ...keys };
   }
-  return { name, transport: "remote", ...(typeof raw.url === "string" ? { url: raw.url } : {}) };
+  return { name, transport: "remote", ...(typeof raw.url === "string" ? { url: raw.url } : {}), ...keys };
 }
 
 /** Commands from hooks.json and inline manifest hooks: `{hooks: {Event: [{matcher, hooks: [{type, command}]}]}}` or the bare event map. */
@@ -155,10 +160,12 @@ export interface PluginPermissionDiff {
   /** runsCode was false and is now true. */
   startsRunningCode: boolean;
   /**
-   * Anything that can run changed (new or changed local MCP server, new or
-   * changed hook, new or changed script; or the plugin starts running
-   * code). When true an earlier "yes, it may run code" no longer covers it.
-   * Remote MCP URL changes are shown but do not reset consent: they run nothing here.
+   * Anything that needs consent changed (new or changed local MCP server,
+   * new or changed server that receives the user's keys, new or changed
+   * hook, new or changed script; or the plugin starts needing consent).
+   * When true an earlier "yes, it may run code" no longer covers it.
+   * URL changes of a remote server without keys are shown but do not reset
+   * consent: it runs nothing here and gets nothing of the user's.
    */
   codeChanged: boolean;
 }
@@ -190,7 +197,7 @@ export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null,
   const scriptsRemoved = old.scripts.filter(s => !newScripts.has(s.path)).map(s => s.path);
   const added = (a: string[], b: string[]) => { const set = new Set(a); return b.filter(x => !set.has(x)); };
   const startsRunningCode = !old.runsCode && after.runsCode;
-  const codeMcp = (m: PluginMcpPermission) => m.transport === "local";
+  const codeMcp = (m: PluginMcpPermission) => m.transport === "local" || (m.keys?.length ?? 0) > 0;
   const codeChanged =
     startsRunningCode ||
     mcpAdded.some(codeMcp) ||
@@ -217,13 +224,24 @@ export function diffPermissionSnapshots(before: PluginPermissionSnapshot | null,
 }
 
 function sameMcp(a: PluginMcpPermission, b: PluginMcpPermission): boolean {
+  return sameTarget(a, b) && (a.keys ?? []).join("\0") === (b.keys ?? []).join("\0");
+}
+
+function sameTarget(a: PluginMcpPermission, b: PluginMcpPermission): boolean {
   return a.transport === b.transport && a.command === b.command && a.url === b.url;
 }
 
-/** One line per thing that would run, in plain words. */
+function keysNote(m: PluginMcpPermission): string {
+  return m.keys?.length ? ` (gets your keys: ${m.keys.join(", ")})` : "";
+}
+
+/** One line per thing that needs consent, in plain words. */
 export function describePluginCode(snapshot: PluginPermissionSnapshot): string[] {
   const lines: string[] = [];
-  for (const m of snapshot.mcpServers) if (m.transport === "local") lines.push(`local MCP server ${m.name}: ${m.command}`);
+  for (const m of snapshot.mcpServers) {
+    if (m.transport === "local") lines.push(`local MCP server ${m.name}: ${m.command}${keysNote(m)}`);
+    else if (m.keys?.length) lines.push(`MCP server ${m.name} at ${m.url ?? "an unknown address"}${keysNote(m)}`);
+  }
   for (const h of snapshot.hooks) lines.push(`hook on ${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`);
   for (const s of snapshot.scripts) lines.push(`script file ${s.path}`);
   return lines;
@@ -233,12 +251,16 @@ export function describePluginCode(snapshot: PluginPermissionSnapshot): string[]
 export function describePermissionDiff(diff: PluginPermissionDiff): string[] {
   if (diff.fresh) return [];
   const lines: string[] = [];
-  if (diff.startsRunningCode) lines.push("This version can run programs on your computer; the previous one could not.");
-  for (const m of diff.mcpAdded) lines.push(m.transport === "local" ? `New local MCP server ${m.name} runs: ${m.command}` : `New remote MCP server ${m.name}${m.url ? ` at ${m.url}` : ""}`);
+  if (diff.startsRunningCode) lines.push("This version can run programs on your computer or receive your keys; the previous one could not.");
+  for (const m of diff.mcpAdded) lines.push((m.transport === "local" ? `New local MCP server ${m.name} runs: ${m.command}` : `New remote MCP server ${m.name}${m.url ? ` at ${m.url}` : ""}`) + keysNote(m));
   for (const c of diff.mcpChanged) {
-    lines.push(c.after.transport === "local"
+    if (sameTarget(c.before, c.after)) {
+      lines.push(c.after.keys?.length ? `MCP server ${c.after.name} now gets your keys: ${c.after.keys.join(", ")}` : `MCP server ${c.after.name} no longer gets your keys`);
+      continue;
+    }
+    lines.push((c.after.transport === "local"
       ? `MCP server ${c.after.name} now runs: ${c.after.command}${c.before.command ? ` (was: ${c.before.command})` : ""}`
-      : `MCP server ${c.after.name} now connects to ${c.after.url ?? "another address"}${c.before.url ? ` (was ${c.before.url})` : ""}`);
+      : `MCP server ${c.after.name} now connects to ${c.after.url ?? "another address"}${c.before.url ? ` (was ${c.before.url})` : ""}`) + keysNote(c.after));
   }
   for (const m of diff.mcpRemoved) lines.push(`MCP server ${m.name} was removed`);
   for (const h of diff.hooksAdded) lines.push(`New or changed hook on ${h.event}${h.matcher ? ` (${h.matcher})` : ""}: ${h.command}`);
@@ -259,7 +281,7 @@ export function describePermissionDiff(diff: PluginPermissionDiff): string[] {
  */
 export function codeConsentIdOf(snapshot: PluginPermissionSnapshot): string {
   const canonical = JSON.stringify({
-    mcp: snapshot.mcpServers.filter(m => m.transport === "local").map(m => [m.name, m.command]),
+    mcp: snapshot.mcpServers.filter(m => m.transport === "local" || m.keys?.length).map(m => [m.name, m.command ?? m.url ?? "", m.keys ?? []]),
     hooks: snapshot.hooks.map(h => [h.event, h.matcher ?? "", h.command]),
     scripts: snapshot.scripts.map(s => [s.path, s.sha256]),
   });
