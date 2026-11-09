@@ -135,6 +135,13 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "high-throughput inference",
   },
   {
+    id: "cheaperinference",
+    label: "Cheaper Inference",
+    baseUrl: "https://api.cheaperinference.com",
+    envVar: "CHEAPER_INFERENCE_API_KEY",
+    note: "OpenAI-compatible gateway to models from several labs",
+  },
+  {
     id: "deepseek",
     label: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
