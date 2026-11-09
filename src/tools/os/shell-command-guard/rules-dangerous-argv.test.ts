@@ -323,3 +323,29 @@ describe("splitCommandSegments", () => {
     expect(segments.flat()).toContain("-f");
   });
 });
+
+describe("dangerous.plugin_code_consent", () => {
+  it.each([
+    "atomic-agent plugin allow-code demo",
+    "atag plugin allow-code demo",
+    "npx atomic-agent plugin allow-code demo",
+    "node dist/index.js plugin allow-code demo",
+    "atomic-agent plugin install ./demo --accept-code --acknowledge-risk --yes",
+    "atomic-agent plugin update demo --accept-code",
+    "cd x && atomic-agent plugin allow-code demo",
+  ])("%s requires approval as dangerous", (line) => {
+    expect(guardLine(line)).toMatchObject({
+      action: "approval_required",
+      rule: "dangerous.plugin_code_consent",
+    });
+  });
+
+  it.each([
+    "atomic-agent plugin list",
+    "atomic-agent plugin deny-code demo",
+    "atomic-agent plugin install ./demo",
+    "atomic-agent plugin update demo",
+  ])("%s stays on the ordinary path", (line) => {
+    expectNotDangerous(line);
+  });
+});

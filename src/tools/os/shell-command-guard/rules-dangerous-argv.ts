@@ -58,7 +58,7 @@ export function matchDangerousArgv(
   input: NormalisedCommand,
 ): GuardVerdict | null {
   const segments = splitCommandSegments(input.joined);
-  const hit = matchGit(segments) ?? matchFind(segments);
+  const hit = matchGit(segments) ?? matchFind(segments) ?? matchPluginConsent(segments);
   if (hit === null) return null;
   return { action: "approval_required", rule: hit.id, reason: hit.reason };
 }
@@ -294,6 +294,45 @@ function matchFind(segments: readonly (readonly string[])[]): ArgvCheck | null {
             reason: "find -exec removing files",
           };
         }
+      }
+    }
+  }
+  return null;
+}
+
+/** The `plugin` subcommands whose consent flag lets a plugin run code. */
+const PLUGIN_CONSENT_FLAG_VERBS: ReadonlySet<string> = new Set([
+  "install",
+  "update",
+  "upgrade",
+]);
+
+/**
+ * The agent granting itself plugin consent: `atomic-agent plugin
+ * allow-code x`, or `plugin install|update … --accept-code`. Consent
+ * only ever comes from a person, so these ask every time whatever the
+ * level below full trust, and no `shell` grant covers them. Matched on
+ * the words after `plugin`, not on the binary name: the same command
+ * also runs as `atag`, `npx atomic-agent` or `node dist/index.js`.
+ */
+function matchPluginConsent(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const words of segments) {
+    for (let i = 0; i < words.length - 1; i += 1) {
+      if (words[i] !== "plugin") continue;
+      const verb = words[i + 1];
+      const rest = words.slice(i + 2);
+      if (
+        verb === "allow-code" ||
+        (verb !== undefined &&
+          PLUGIN_CONSENT_FLAG_VERBS.has(verb) &&
+          rest.includes("--accept-code"))
+      ) {
+        return {
+          id: "dangerous.plugin_code_consent",
+          reason: "allow a plugin to run code",
+        };
       }
     }
   }
