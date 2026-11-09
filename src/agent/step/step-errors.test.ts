@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { toLlmFailure } from "./step-errors.js";
+import { SUBSCRIPTION_CLI_TOOL_TAG, toLlmFailure } from "./step-errors.js";
 import type { StepContext } from "./step-contract.js";
 import { LlamaServerError, readLlamaErrorBody } from "../../llm/llama-server-client.js";
-import { GrammarError, TransportError } from "../../llm/reliability/llm-failures.js";
+import { GrammarError, ToolExecutionError, TransportError } from "../../llm/reliability/llm-failures.js";
+import { SubscriptionCliInvocationError } from "../../llm/provider/subscription-cli/subscription-cli-errors.js";
+import { extractSafeTool } from "../../error-reporting/error-scrubber.js";
 import { RequestTooLargeError } from "../../llm/reliability/request-too-large.js";
 import { classifyFailure } from "../../llm/reliability/classify-failure.js";
 import { shouldAdvance } from "../../llm/fallback/should-advance.js";
@@ -97,5 +99,25 @@ describe("toLlmFailure: llama-server size refusals (ATO-422)", () => {
   it("leaves endpoint statuses on transport", () => {
     const raw = new LlamaServerError("llama-server returned http 404", 404, URL);
     expect(toLlmFailure(raw, ctx)).toBeInstanceOf(TransportError);
+  });
+});
+
+describe("toLlmFailure: the tool a catch-all failure names (ATO-710)", () => {
+  it("names a failed subscription CLI run, not an unknown tool", () => {
+    const raw = new SubscriptionCliInvocationError('"cli" exited with code 1: no output', 1);
+    const failure = toLlmFailure(raw, ctx);
+    expect(failure).toBeInstanceOf(ToolExecutionError);
+    expect((failure as ToolExecutionError).tool).toBe(SUBSCRIPTION_CLI_TOOL_TAG);
+    // The category is unchanged: a CLI that ran does not advance the chain.
+    expect(failure.category).toBe("tool");
+    expect(failure.cause).toBe(raw);
+    // The word passes the scrubber's identifier allowlist, so it reaches the report.
+    expect(extractSafeTool(failure)).toBe("subscription_cli");
+  });
+
+  it("keeps \"unknown\" for a plain error nothing attributes", () => {
+    const failure = toLlmFailure(new SyntaxError("Unexpected token"), ctx);
+    expect(failure).toBeInstanceOf(ToolExecutionError);
+    expect((failure as ToolExecutionError).tool).toBe("unknown");
   });
 });
