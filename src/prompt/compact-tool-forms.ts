@@ -142,6 +142,10 @@ const FORMS: Record<string, CompactToolForm> = {
   "os.screen.key": { summary: "Press a key or shortcut (asks first).", tier: RARE },
   "skill.view": { summary: "Load a skill's full instructions." },
   "tool.view": { summary: "Load the full args of a tool listed under # extras." },
+  "tool.search": {
+    summary: "Find a tool listed under # extras by what it should do; loads the best matches to call next step.",
+    examples: ['{"query":"create a github issue"}'],
+  },
   "skill.run_script": { summary: "Run a skill's script (may require approval).", tier: RARE },
   "memory.profile.set": {
     summary: "Save a durable user fact; pinned=false needs keywords.",

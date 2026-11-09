@@ -452,7 +452,8 @@ function readTurnField(result: CompressedToolResult): {
  * Inspect well-known tool-result fields and fold them into the session
  * state. Tools communicate state updates through `details.skillLoaded`
  * (`skill.view`), `details.toolLoaded` (`tool.view`),
- * `details.planSnapshot` (`plan.update`), and
+ * `details.planSnapshot` (`plan.update`),
+ * `details.toolsLoaded` (`tool.search`), and
  * `details.worldSnapshot` (for browser actions) so the step executor
  * stays generic and tools remain pure.
  */
@@ -464,16 +465,25 @@ export function applyStateEffects(
   let next = session;
   const details = result.details;
   if (details && typeof details === "object") {
-    const toolLoaded = (details as Record<string, unknown>).toolLoaded;
-    if (
-      toolLoaded &&
-      typeof toolLoaded === "object" &&
-      typeof (toolLoaded as { name?: unknown }).name === "string" &&
-      typeof (toolLoaded as { summary?: unknown }).summary === "string" &&
-      typeof (toolLoaded as { argsSchema?: unknown }).argsSchema === "string" &&
-      ((toolLoaded as { source?: unknown }).source === "explicit" ||
-        (toolLoaded as { source?: unknown }).source === "auto")
-    ) {
+    // `tool.view` loads one schema (`toolLoaded`); `tool.search` loads
+    // its top hits at once (`toolsLoaded`, ATO-558). Same shape each.
+    const record = details as Record<string, unknown>;
+    const toolsLoaded = [
+      record.toolLoaded,
+      ...(Array.isArray(record.toolsLoaded) ? record.toolsLoaded : []),
+    ];
+    for (const toolLoaded of toolsLoaded) {
+      if (
+        !toolLoaded ||
+        typeof toolLoaded !== "object" ||
+        typeof (toolLoaded as { name?: unknown }).name !== "string" ||
+        typeof (toolLoaded as { summary?: unknown }).summary !== "string" ||
+        typeof (toolLoaded as { argsSchema?: unknown }).argsSchema !== "string" ||
+        ((toolLoaded as { source?: unknown }).source !== "explicit" &&
+          (toolLoaded as { source?: unknown }).source !== "auto")
+      ) {
+        continue;
+      }
       const t = toolLoaded as {
         name: string;
         summary: string;

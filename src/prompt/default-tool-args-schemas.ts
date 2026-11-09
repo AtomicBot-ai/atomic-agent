@@ -461,6 +461,7 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["items"],
     ),
   ],
+  ["tool.search", obj({ query: stringSchema, limit: numberSchema }, ["query"])],
   [
     "skill.run_script",
     obj(

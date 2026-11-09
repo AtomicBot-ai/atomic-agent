@@ -25,5 +25,6 @@ export function createAgentDefaults(): UserAgentConfig {
     smartApproval: false,
     smartApprovalModel: null,
     prompt: createPromptDefaults(),
+    tools: { search: "auto" },
   };
 }

@@ -6,9 +6,11 @@ import {
   CONVERSATION_MAX_PAIRS_MIN,
   parseAgentConfig,
   parseApprovalLevel,
+  parseAgentToolsConfig,
   parseReadScope,
   parseSmartApprovalModel,
   READ_SCOPES,
+  TOOL_SEARCH_MODES,
 } from "./agent-parser.js";
 import {
   parseUserConfigFile,
@@ -84,6 +86,7 @@ describe("agent configuration ownership", () => {
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
       "smartApproval", "smartApprovalModel",
       "prompt",
+      "tools",
     ]);
     expect(first.providerWait).not.toBe(second.providerWait);
     expect(first.task).not.toBe(second.task);
@@ -209,10 +212,27 @@ describe("agent configuration ownership", () => {
         "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
         "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
         "smartApproval", "smartApprovalModel",
-        "prompt",
+        "prompt", "tools",
       ]);
     } finally {
       USER_CONFIG_DEFAULTS.agent = saved;
     }
+  });
+});
+
+describe("agent.tools.search (ATO-558)", () => {
+  it("defaults to auto, accepts the three modes and refuses anything else", () => {
+    expect(TOOL_SEARCH_MODES).toEqual(["auto", "on", "off"]);
+    expect(createAgentDefaults().tools).toEqual({ search: "auto" });
+    expect(parseAgentToolsConfig(undefined, { search: "auto" })).toEqual({ search: "auto" });
+    expect(parseAgentToolsConfig({}, { search: "off" })).toEqual({ search: "off" });
+    expect(parseAgentToolsConfig({ search: "on" }, undefined)).toEqual({ search: "on" });
+    expect(thrownError(() => parseAgentToolsConfig({ search: "always" }, undefined))).toBeInstanceOf(ConfigValidationError);
+    expect(thrownError(() => parseAgentToolsConfig("on", undefined))).toBeInstanceOf(ConfigValidationError);
+  });
+
+  it("round-trips through the whole-file parser without a version bump", () => {
+    expect(parseUserConfigFile({ agent: { tools: { search: "off" } } }).agent.tools).toEqual({ search: "off" });
+    expect(parseUserConfigFile({ agent: {} }).agent.tools).toEqual({ search: "auto" });
   });
 });

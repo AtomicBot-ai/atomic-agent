@@ -66,6 +66,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.smartApproval` (default `false`).
 - `agent.smartApprovalModel` (default `null`).
 - `agent.prompt.compact` (default `"auto"`): `auto` uses the compact prompt scaffold when the model's known context window is at most 64K tokens, `on` always, `off` never.
+- `agent.tools.search` (default `"auto"`): `"auto"` describes only the core tools in full on a window of 32K or less, or when the catalog holds more than 100 tools, and lists the rest behind `tool.search`; `"on"` always, `"off"` never.
 
 ## http
 
