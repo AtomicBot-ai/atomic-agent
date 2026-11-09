@@ -1,3 +1,6 @@
+import { resolve as resolvePath } from "node:path";
+
+import { getProjectApprovalRulesPath } from "../../../approval/approval-rules-store.js";
 import { compressToolResult } from "../../../compressor/result-compressor.js";
 import { resolveUserPath } from "../expand-home.js";
 import {
@@ -80,11 +83,20 @@ export function buildOsFsArchiveExtractTool(
         options.backends,
       );
 
+      // An archive that carries the project's saved rules replaces them,
+      // so that one extract is judged as a write of the rules file.
+      const rulesPath = getProjectApprovalRulesPath(ctx.workingDir);
+      const entries = await resolved.backend.list(resolved.data);
+      const replacesRules = entries.some(
+        (entry) =>
+          resolvePath(destDir, entry.path).toLowerCase() === rulesPath.toLowerCase(),
+      );
+
       await requireFsApproval(
         options,
         {
-          kind: "extract",
-          paths: [destDir],
+          kind: replacesRules ? "write" : "extract",
+          paths: replacesRules ? [destDir, rulesPath] : [destDir],
           sessionId: ctx.sessionId,
           tool: "os.fs.archive.extract",
           reason: `extract ${resolved.format} ${resolved.absolute} → ${destDir}`,

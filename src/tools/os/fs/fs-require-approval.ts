@@ -4,6 +4,7 @@ import {
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import type { ApprovalCategory } from "../../../approval/approval-level.js";
+import { getProjectApprovalRulesPath } from "../../../approval/approval-rules-store.js";
 import {
   categorizeFsMutation,
   type FsMutationKind,
@@ -148,11 +149,20 @@ export async function requireFsApproval(
   request: FsApprovalRequest,
   signal: AbortSignal,
 ): Promise<FsApprovalOutcome> {
+  // The project's saved rules live in the workspace, but editing them
+  // changes what the agent may do next. An extract never matches by file
+  // (its one path is the destination), so the extract tool passes the
+  // rules file itself when the archive contains it.
+  const trustConfigPaths =
+    request.kind === "extract"
+      ? request.trustConfigPaths
+      : [
+          ...(request.trustConfigPaths ?? []),
+          getProjectApprovalRulesPath(request.workingDir),
+        ];
   const category = await categorizeFsMutation(request.kind, request.paths, {
     workingDir: request.workingDir,
-    ...(request.trustConfigPaths !== undefined
-      ? { trustConfigPaths: request.trustConfigPaths }
-      : {}),
+    ...(trustConfigPaths !== undefined ? { trustConfigPaths } : {}),
   });
   // A fan-out the operator authorised once covers every write its
   // workers make inside the directory that prompt named — except the
