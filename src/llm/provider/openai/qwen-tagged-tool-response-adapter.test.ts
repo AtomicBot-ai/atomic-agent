@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import type { CompletionRequest } from "../completion-types.js";
-import { adaptQwenTaggedToolResponse } from "./qwen-tagged-tool-response-adapter.js";
-import { descriptorsToOpenAiTools } from "./openai-tool-call-adapter.js";
+import {
+  adaptQwenCompletionResult,
+  adaptQwenTaggedToolResponse,
+} from "./qwen-tagged-tool-response-adapter.js";
+import {
+  descriptorsToOpenAiTools,
+  openAiToolCallAdapter,
+} from "./openai-tool-call-adapter.js";
 import { getDefaultArgsJsonSchema } from "../../../prompt/default-tool-args-schemas.js";
 
 const offeredTools: NonNullable<CompletionRequest["tools"]> = [
@@ -724,5 +730,112 @@ describe("adaptQwenTaggedToolResponse — the Hermes JSON dialect", () => {
     expect(
       firstMessage(adaptQwenTaggedToolResponse(original, request)).tool_calls,
     ).toHaveLength(1);
+  });
+});
+
+describe("adaptQwenTaggedToolResponse: mixed namespace spellings (ATO-1284)", () => {
+  const toolNamed = (
+    name: string,
+  ): NonNullable<CompletionRequest["tools"]>[number] => ({
+    type: "function",
+    function: {
+      name,
+      parameters: {
+        type: "object",
+        properties: { query: { type: "string" } },
+      },
+    },
+  });
+  const tools = [
+    toolNamed("os__web__search"),
+    toolNamed("os__fs__write"),
+    toolNamed("reply"),
+  ];
+  const callOf = (name: string): Record<string, unknown> =>
+    responseWith({
+      role: "assistant",
+      content: `<tool_call>\n<function=${name}>\n<parameter=query>\ntest\n</parameter>\n</function>\n</tool_call>`,
+    });
+  const namesOf = (response: Record<string, unknown>): string[] =>
+    (
+      firstMessage(response).tool_calls as Array<{
+        function: { name: string };
+      }>
+    ).map((call) => call.function.name);
+
+  it.each(["os.web__search", "os__web.search", " os.web__search "])(
+    "runs %s as the offered tool",
+    (spelling) => {
+      expect(
+        namesOf(adaptQwenTaggedToolResponse(callOf(spelling), { tools })),
+      ).toEqual(["os__web__search"]);
+    },
+  );
+
+  it("still accepts the exact, all-dots and all-escaped spellings", () => {
+    for (const spelling of ["os__web__search", "os.web.search"]) {
+      expect(
+        namesOf(adaptQwenTaggedToolResponse(callOf(spelling), { tools })),
+      ).toEqual(["os__web__search"]);
+    }
+    const dottedOffer = [toolNamed("os.web.search")];
+    expect(
+      namesOf(
+        adaptQwenTaggedToolResponse(callOf("os__web__search"), {
+          tools: dottedOffer,
+        }),
+      ),
+    ).toEqual(["os.web.search"]);
+  });
+
+  it("hands the approval layer the canonical tool name", () => {
+    const adapted = adaptQwenTaggedToolResponse(callOf("os.web__search"), {
+      tools,
+    });
+    const toolCalls = firstMessage(adapted).tool_calls as Parameters<
+      typeof openAiToolCallAdapter.toolCallsToBatch
+    >[0];
+    const batch = openAiToolCallAdapter.toolCallsToBatch(toolCalls, "");
+    expect(batch.calls.map((call) => call.tool)).toEqual(["os.web.search"]);
+  });
+
+  it("recovers the mixed spelling on the streaming path", () => {
+    const result = adaptQwenCompletionResult(
+      {
+        content:
+          "<tool_call><function=os.web__search><parameter=query>q</parameter></function></tool_call>",
+        reasoningContent: "",
+        toolCalls: [],
+        finishReason: "stop",
+      } as unknown as Parameters<typeof adaptQwenCompletionResult>[0],
+      { tools },
+    );
+    expect(result.toolCalls?.map((call) => call.function.name)).toEqual([
+      "os__web__search",
+    ]);
+    expect(result.content).toBe("");
+  });
+
+  it.each([
+    "os.web__fetch",
+    "os.web__searc",
+    "os.fs__trash",
+    "os.web___search",
+    "os_web__search",
+    "OS.WEB__SEARCH",
+  ])("leaves the unknown name %s unknown", (spelling) => {
+    const response = callOf(spelling);
+    expect(adaptQwenTaggedToolResponse(response, { tools })).toBe(response);
+  });
+
+  it("refuses a spelling that two offered tools share", () => {
+    const shared = [toolNamed("a.b__c"), toolNamed("a__b.c")];
+    const ambiguous = callOf("a__b__c");
+    expect(adaptQwenTaggedToolResponse(ambiguous, { tools: shared })).toBe(
+      ambiguous,
+    );
+    expect(
+      namesOf(adaptQwenTaggedToolResponse(callOf("a__b.c"), { tools: shared })),
+    ).toEqual(["a__b.c"]);
   });
 });
