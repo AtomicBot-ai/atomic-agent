@@ -1,9 +1,17 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { TOOL_SEARCH_MODES } from "./agent/agent-parser.js";
 import { COMPACTION_MODES } from "./agent/compaction-config.js";
 import { parseUserConfigFile, type UserConfigFile } from "./config-schema.js";
 import { LLM_TOOL_TRANSPORTS } from "./llm-config.js";
-import { FUSION_WORKER_REASONING_LEVELS, RUN_MODE_NAMES } from "./llm-run-mode-config.js";
+import {
+  FUSION_ESCALATION_MODES,
+  FUSION_ISOLATION_MODES,
+  FUSION_JUDGE_MODES,
+  FUSION_ROLES,
+  FUSION_WORKER_REASONING_LEVELS,
+  RUN_MODE_NAMES,
+} from "./llm-run-mode-config.js";
 import { keepSetAsideLocalModelValues } from "./local-models/keep-set-aside-values.js";
 import { WHILE_BUSY_SUBMIT_MODES } from "./tui-config.js";
 
@@ -19,6 +27,10 @@ export const SET_ASIDE_ENUM_KEYS: ReadonlyMap<string, readonly string[]> = new M
   ["llm.toolTransport", LLM_TOOL_TRANSPORTS],
   ["llm.runMode.mode", RUN_MODE_NAMES],
   ["llm.runMode.fusion.workerReasoning", FUSION_WORKER_REASONING_LEVELS],
+  ["llm.runMode.fusion.escalation", FUSION_ESCALATION_MODES],
+  ["llm.runMode.fusion.judge", FUSION_JUDGE_MODES],
+  ["llm.runMode.fusion.isolation", FUSION_ISOLATION_MODES],
+  ["agent.tools.search", TOOL_SEARCH_MODES],
   ["agent.compaction.mode", COMPACTION_MODES],
   ["tui.whileBusySubmit", WHILE_BUSY_SUBMIT_MODES],
 ]);
@@ -29,7 +41,8 @@ export const SET_ASIDE_ENUM_KEYS: ReadonlyMap<string, readonly string[]> = new M
  * a typo.
  */
 export function isSetAsideOnReadKey(key: string): boolean {
-  return key === "localModels.managed.engine" || key === "localModels.managed.backendVariant" || SET_ASIDE_ENUM_KEYS.has(key);
+  return key === "localModels.managed.engine" || key === "localModels.managed.backendVariant" ||
+    key.startsWith(`${FUSION_ROLES_KEY}.`) || SET_ASIDE_ENUM_KEYS.has(key);
 }
 
 /** References to a provider (and the leg's model label), set aside with it when its kind is unknown here. */
@@ -39,7 +52,11 @@ const PROVIDER_REF_KEYS: ReadonlyArray<readonly [string, string?]> = [
   ["llm.fallback.chain"],
   ["llm.runMode.fusion.orchestratorProvider", "llm.runMode.fusion.orchestratorModel"],
   ["llm.runMode.fusion.workerProvider", "llm.runMode.fusion.workerModel"],
+  ["llm.runMode.fusion.escalationProvider"],
+  ["llm.runMode.fusion.judgeProvider"],
 ];
+
+const FUSION_ROLES_KEY = "llm.runMode.fusion.roles";
 
 /**
  * The write half of reading a newer build's values leniently. A
@@ -66,6 +83,7 @@ export function keepSetAsideConfigValues(data: UserConfigFile, disk: Tree): User
     if (typeof d === "string" && d.length > 0 && !known.includes(d)) out = keepAt(out, disk, read, key);
   }
   out = keepSetAsideProviders(out, disk, read);
+  out = keepUnknownRolePins(out, disk, read);
   return out === (withLocalModels as unknown) ? withLocalModels : (out as unknown as UserConfigFile);
 }
 
@@ -92,6 +110,30 @@ function keepSetAsideProviders(out: Tree, disk: Tree, read: UserConfigFile): Tre
     if (!refers(getPath(disk, ref))) continue;
     next = keepAt(next, disk, read, ref);
     if (label) next = keepAt(next, disk, read, label);
+  }
+  const roles = getPath(disk, FUSION_ROLES_KEY);
+  if (isPlain(roles)) {
+    for (const [role, id] of Object.entries(roles)) {
+      if (refers(id)) next = keepAt(next, disk, read, `${FUSION_ROLES_KEY}.${role}`);
+    }
+  }
+  return next;
+}
+
+/**
+ * Pins of roles a newer build added (skipped on read). A pin to a provider
+ * that is gone stays gone: `scrubRunModeProviderPins` cannot see these
+ * roles, so putting it back would leave the newer build a dangling id.
+ */
+function keepUnknownRolePins(out: Tree, disk: Tree, read: UserConfigFile): Tree {
+  const roles = getPath(disk, FUSION_ROLES_KEY);
+  const providers = getPath(out, "llm.providers");
+  if (!isPlain(roles) || !Array.isArray(providers)) return out;
+  const ids = new Set(providers.map((p) => (isPlain(p) ? p.id : undefined)));
+  let next = out;
+  for (const [role, id] of Object.entries(roles)) {
+    if ((FUSION_ROLES as readonly string[]).includes(role) || !ids.has(id)) continue;
+    next = keepAt(next, disk, read, `${FUSION_ROLES_KEY}.${role}`);
   }
   return next;
 }

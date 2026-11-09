@@ -380,14 +380,17 @@ describe("reviewStallSteps (F41)", () => {
     expect(DEFAULT_FUSION_REVIEW_STALL_STEPS).toBe(6);
   });
 
-  it("accepts fusion.isolation off|worktree and rejects anything else (ATO-946)", () => {
+  it("accepts fusion.isolation off|worktree, leaves a newer value unset and rejects a wrong type (ATO-946)", () => {
     for (const isolation of ["off", "worktree"] as const) {
       expect(
         parseLlmRunModeConfig({ fusion: { isolation } }, providers, "llm.runMode"),
       ).toEqual({ fusion: { isolation } });
     }
-    expect(() =>
+    expect(
       parseLlmRunModeConfig({ fusion: { isolation: "on" } }, providers, "llm.runMode"),
+    ).toEqual({ fusion: {} });
+    expect(() =>
+      parseLlmRunModeConfig({ fusion: { isolation: 1 } }, providers, "llm.runMode"),
     ).toThrow(/llm\.runMode\.fusion\.isolation/);
   });
 });

@@ -221,13 +221,14 @@ describe("agent configuration ownership", () => {
 });
 
 describe("agent.tools.search (ATO-558)", () => {
-  it("defaults to auto, accepts the three modes and refuses anything else", () => {
+  it("defaults to auto, accepts the three modes, reads a newer string as the default and refuses a wrong type", () => {
     expect(TOOL_SEARCH_MODES).toEqual(["auto", "on", "off"]);
     expect(createAgentDefaults().tools).toEqual({ search: "auto" });
     expect(parseAgentToolsConfig(undefined, { search: "auto" })).toEqual({ search: "auto" });
     expect(parseAgentToolsConfig({}, { search: "off" })).toEqual({ search: "off" });
     expect(parseAgentToolsConfig({ search: "on" }, undefined)).toEqual({ search: "on" });
-    expect(thrownError(() => parseAgentToolsConfig({ search: "always" }, undefined))).toBeInstanceOf(ConfigValidationError);
+    expect(parseAgentToolsConfig({ search: "always" }, { search: "off" })).toEqual({ search: "off" });
+    expect(thrownError(() => parseAgentToolsConfig({ search: 7 }, undefined))).toBeInstanceOf(ConfigValidationError);
     expect(thrownError(() => parseAgentToolsConfig("on", undefined))).toBeInstanceOf(ConfigValidationError);
   });
 

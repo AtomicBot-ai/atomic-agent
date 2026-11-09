@@ -371,6 +371,11 @@ export class ChatOrchestrator {
         // operator string.
         runtime.reportModelConfigured("llama.cpp", "local");
       },
+      // A background download that lands must not restart the daemon under a turn.
+      isTurnRunning: () =>
+        this.currentController !== null ||
+        this.detachedTurns.size > 0 ||
+        (this.runtime.turnController?.busySessionIds?.().length ?? 0) > 0,
       // Atomic Core could not be installed or started: fixed words only
       // (stage, reason code), never the message, which may hold a path.
       onLocalEngineFailed: (failure) => {

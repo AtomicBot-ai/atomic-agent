@@ -58,7 +58,7 @@ export function unknownProviderReason(
 /**
  * The `llm` block with every reference to a set-aside provider removed:
  * the fallback chain skips it, a fusion leg pinned to it (and that leg's
- * model label) reads as unpinned, an active embedding provider resolves
+ * model label), an escalation, judge or role pin read as unpinned, an active embedding provider resolves
  * as if none were named, and an active text provider becomes `standIn`
  * (null when nothing is left to stand in, so the strict check reports
  * the original id).
@@ -83,6 +83,13 @@ export function withoutSetAsideProviderRefs(
     const next = { ...fusion };
     if (named(next.orchestratorProvider)) { delete next.orchestratorProvider; delete next.orchestratorModel; }
     if (named(next.workerProvider)) { delete next.workerProvider; delete next.workerModel; }
+    if (named(next.escalationProvider)) delete next.escalationProvider;
+    if (named(next.judgeProvider)) delete next.judgeProvider;
+    if (next.roles !== null && typeof next.roles === "object" && !Array.isArray(next.roles)) {
+      const roles = Object.entries(next.roles).filter(([, id]) => !named(id));
+      if (roles.length > 0) next.roles = Object.fromEntries(roles);
+      else delete next.roles;
+    }
     out.runMode = { ...runMode, fusion: next };
   }
   return out;
