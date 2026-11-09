@@ -6,7 +6,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readUserConfigFileSync, writeUserConfigFileSync } from "./config-file.js";
 import { setConfigNoticeSink } from "./config-primitives.js";
 import { parseUserConfigFile, USER_CONFIG_DEFAULTS, USER_CONFIG_VERSION, type UserConfigFile } from "./config-schema.js";
+import { isSetAsideOnReadKey } from "./keep-set-aside-values.js";
 import { parseLlmProviderEntry } from "./llm-config.js";
+import { scrubRunModeProviderPins } from "./llm-run-mode-config.js";
 
 /*
  * ATO-1241 (follow-up of ATO-1239): the desktop app and the terminal share
@@ -67,6 +69,10 @@ describe("enum-like values a newer build wrote (ATO-1241)", () => {
     { key: "llm.toolTransport", future: "future-transport-1241", reads: "auto", chosen: "grammar" },
     { key: "llm.runMode.mode", future: "future-mode-1241", reads: undefined, chosen: "cloud" },
     { key: "llm.runMode.fusion.workerReasoning", future: "future-effort-1241", reads: undefined, chosen: "low" },
+    { key: "llm.runMode.fusion.escalation", future: "future-escalation-1241", reads: undefined, chosen: "advisor" },
+    { key: "llm.runMode.fusion.judge", future: "future-judge-1241", reads: undefined, chosen: "on" },
+    { key: "llm.runMode.fusion.isolation", future: "future-isolation-1241", reads: undefined, chosen: "worktree" },
+    { key: "agent.tools.search", future: "future-search-1241", reads: "auto", chosen: "on" },
     { key: "agent.compaction.mode", future: "future-compaction-1241", reads: "auto", chosen: "model" },
     { key: "tui.whileBusySubmit", future: "future-submit-1241", reads: "steer", chosen: "queue" },
   ];
@@ -109,6 +115,45 @@ describe("enum-like values a newer build wrote (ATO-1241)", () => {
       });
     });
   }
+});
+
+describe("a fusion role a newer build added (ATO-1241)", () => {
+  function roleTree(): Tree {
+    const tree = baseTree();
+    tree.llm.runMode.fusion.roles = { build: "cloud", "future-role-1241": "cloud" };
+    return tree;
+  }
+  beforeEach(() => writeTree(roleTree()));
+
+  it("loads without throwing: the role is skipped, with one notice", () => {
+    const first = readUserConfigFileSync(path)!;
+    readUserConfigFileSync(path);
+    expect(first.llm!.runMode!.fusion!.roles).toEqual({ build: "cloud" });
+    expect(said("future-role-1241")).toBe(1);
+  });
+
+  it("a whole-file write of an unrelated change keeps its pin", () => {
+    writeUnrelated(readUserConfigFileSync(path)!);
+    expect(disk().llm.runMode.fusion.roles).toEqual(roleTree().llm.runMode.fusion.roles);
+  });
+
+  it("a pin to a provider removed here does not come back", () => {
+    const parsed = readUserConfigFileSync(path)!;
+    const llm = parsed.llm!;
+    writeUserConfigFileSync(path, {
+      ...parsed,
+      llm: {
+        ...llm,
+        providers: llm.providers.filter((p) => p.id !== "cloud"),
+        runMode: scrubRunModeProviderPins(llm.runMode, "cloud")!,
+      },
+    });
+    expect(disk().llm.runMode.fusion.roles).toBeUndefined();
+  });
+
+  it("config set refuses a role key this build does not know", () => {
+    expect(isSetAsideOnReadKey("llm.runMode.fusion.roles.future-role-1241")).toBe(true);
+  });
 });
 
 describe("a provider a newer build added (ATO-1241)", () => {

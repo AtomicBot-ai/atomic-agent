@@ -37,10 +37,15 @@ describe("llm.runMode.fusion.roles (ATO-943)", () => {
     });
   });
 
-  it("names the field for an unknown role, an unknown provider or a wrong type", () => {
+  it("skips a role a newer build added", () => {
+    expect(
+      parseLlmRunModeConfig({ fusion: { roles: { coder: "or-coder", build: "openrouter" } } }, providers, "llm.runMode").fusion?.roles,
+    ).toEqual({ build: "openrouter" });
+  });
+
+  it("names the field for an unknown provider or a wrong type", () => {
     const parse = (fusion: unknown) => () =>
       parseLlmRunModeConfig({ fusion }, providers, "llm.runMode");
-    expect(parse({ roles: { coder: "or-coder" } })).toThrow(/llm\.runMode\.fusion\.roles\.coder/);
     expect(parse({ roles: { build: "nope" } })).toThrow(/llm\.runMode\.fusion\.roles\.build/);
     expect(parse({ roles: { build: "" } })).toThrow(/roles\.build/);
     expect(parse({ roles: ["or-coder"] })).toThrow(/llm\.runMode\.fusion\.roles/);
