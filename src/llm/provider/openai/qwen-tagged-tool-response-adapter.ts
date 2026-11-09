@@ -7,6 +7,7 @@ import {
   coerceJsonSchemaValue,
   validateJsonSchemaValue,
 } from "./coerce-json-schema-value.js";
+import { nameUnescape } from "./openai-tool-call-adapter.js";
 
 type OfferedTool = {
   wireName: string;
@@ -14,6 +15,9 @@ type OfferedTool = {
   properties: Record<string, Record<string, unknown>>;
   required: ReadonlySet<string>;
 };
+
+/** The offered tool a name the model wrote refers to, if any. */
+type OfferedToolLookup = (emittedName: string) => OfferedTool | undefined;
 
 /**
  * One `<tool_call>` block, in either dialect the parser accepts:
@@ -144,7 +148,7 @@ export function adaptQwenCompletionResult(
 
 function indexOfferedTools(
   tools: NonNullable<CompletionRequest["tools"]>,
-): ReadonlyMap<string, OfferedTool> {
+): OfferedToolLookup {
   const offered = new Map<string, OfferedTool>();
   for (const tool of tools) {
     const fn = asRecord(tool.function);
@@ -187,18 +191,27 @@ function indexOfferedTools(
     };
     offered.set(fn.name, entry);
   }
-  for (const entry of [...offered.values()]) {
-    const dotted = entry.wireName.replace(/__/g, ".");
-    const escaped = entry.wireName.replace(/\./g, "__");
-    if (!offered.has(dotted)) offered.set(dotted, entry);
-    if (!offered.has(escaped)) offered.set(escaped, entry);
+  // A model writing the name from memory may mix the two separators
+  // (`os.web__search` for `os__web__search`), so a name that is not offered
+  // as spelled is compared with every separator read as a dot. Only the
+  // separator is forgiven: any other difference leaves the tool unknown,
+  // and so does a spelling two offered tools share (`null`), because
+  // picking one of them could run the wrong tool.
+  const byDottedName = new Map<string, OfferedTool | null>();
+  for (const entry of offered.values()) {
+    const key = nameUnescape(entry.wireName);
+    byDottedName.set(key, byDottedName.has(key) ? null : entry);
   }
-  return offered;
+  return (emittedName) => {
+    const name = emittedName.trim();
+    const tool = offered.get(name) ?? byDottedName.get(nameUnescape(name));
+    return tool ?? undefined;
+  };
 }
 
 function parseSource(
   source: unknown,
-  offered: ReadonlyMap<string, OfferedTool>,
+  findOffered: OfferedToolLookup,
 ): OpenAiToolCall[] | null {
   if (typeof source !== "string" || source.trim().length === 0) return [];
   if (!source.includes("<tool_call>")) return [];
@@ -207,7 +220,7 @@ function parseSource(
 
   const calls: OpenAiToolCall[] = [];
   for (const taggedCall of tagged) {
-    const tool = offered.get(taggedCall.name.trim());
+    const tool = findOffered(taggedCall.name);
     if (!tool) return null;
     const args =
       "args" in taggedCall
