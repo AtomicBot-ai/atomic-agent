@@ -39,6 +39,7 @@ describe("TaskRunner budgets", () => {
   function runnerWith(
     results: Array<Partial<RunTurnResult>>,
     reports: TaskReport[] = [],
+    extra: { budgetedMaxSteps?: number } = {},
   ): { runner: TaskRunner; seen: RunOptions[] } {
     const seen: RunOptions[] = [];
     let cursor = 0;
@@ -61,6 +62,7 @@ describe("TaskRunner budgets", () => {
       reportSink: (report) => {
         reports.push(report);
       },
+      ...extra,
     });
     return { runner, seen };
   }
@@ -103,6 +105,23 @@ describe("TaskRunner budgets", () => {
     expect(seen[0]).not.toHaveProperty("taskMaxCostUsd");
     expect(seen[0]).not.toHaveProperty("taskMaxDurationMs");
     expect(final?.spentUsd).toBe(0);
+  });
+
+  it("gives a budgeted task without maxSteps the task-wide step ceiling", async () => {
+    const { runner, seen } = runnerWith([{}, {}, {}], [], { budgetedMaxSteps: 1000 });
+    const base = { sessionId: session.id, userMessage: "x", origin: "cli" as const, maxAttempts: 1 };
+    await runner.runOne(store.create({ ...base, maxCostUsd: 5 }).id);
+    await runner.runOne(store.create({ ...base, maxDurationMs: 60_000 }).id);
+    await runner.runOne(store.create({ ...base, maxCostUsd: 5, maxSteps: 7 }).id);
+    expect(seen.map((options) => options.maxSteps)).toEqual([1000, 1000, 7]);
+  });
+
+  it("keeps the per-leg default for a task without a budget", async () => {
+    const { runner, seen } = runnerWith([{}], [], { budgetedMaxSteps: 1000 });
+    await runner.runOne(
+      store.create({ sessionId: session.id, userMessage: "x", origin: "cli", maxAttempts: 1 }).id,
+    );
+    expect(seen[0]?.maxSteps).toBe(5);
   });
 
   it("gives a retry only what earlier attempts left of the budget", async () => {

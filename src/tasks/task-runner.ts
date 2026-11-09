@@ -105,6 +105,12 @@ export interface TaskRunnerOptions {
    * value. Resolved from the runtime config at bootstrap.
    */
   defaultMaxSteps: number;
+  /**
+   * `agent.task.maxSteps`: used instead of `defaultMaxSteps` by a task
+   * that has a money or time budget but no step count, so the budget
+   * ends it and not the per-leg step default.
+   */
+  budgetedMaxSteps?: number;
   backoff: BackoffOptions;
   /** When `false`, `drainPending` is a no-op (mirrors `tasks.enabled=false`). */
   enabled: boolean;
@@ -458,7 +464,11 @@ export class TaskRunner {
           }
         : (reportHook ?? spendHook);
 
-    const maxSteps = claimed.maxSteps ?? this.options.defaultMaxSteps;
+    const hasBudget = claimed.maxCostUsd !== null || claimed.maxDurationMs !== null;
+    const maxSteps =
+      claimed.maxSteps ??
+      (hasBudget ? this.options.budgetedMaxSteps : undefined) ??
+      this.options.defaultMaxSteps;
     // Every run gets a stop of its own: an operator cancelling the task
     // (`cancel`), the runner stopping for shutdown (`stop`), and the
     // drain's signal — the scheduler aborts its own when the agent quits
