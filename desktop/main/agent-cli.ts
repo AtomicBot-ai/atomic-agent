@@ -502,6 +502,8 @@ export interface CatalogModel {
   recommendRank?: number;
   tag?: string;
   uncensored?: boolean;
+  /** A launch's model: the chat's "New: <name>" card (catalogue `spotlight`). */
+  spotlight?: boolean;
 }
 
 /**
@@ -542,6 +544,7 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
             ...(meta.recommendRank ? { recommendRank: meta.recommendRank } : {}),
             ...(meta.tag ? { tag: meta.tag } : {}),
             ...(meta.uncensored ? { uncensored: true } : {}),
+            ...(meta.spotlight ? { spotlight: true } : {}),
           }
         : {}),
     });
@@ -582,6 +585,7 @@ async function modelsUseNow(id: string): Promise<CliResult> {
 export function modelsPull(
   id: string,
   onLine: (line: string) => void,
+  mmproj = false,
 ): { done: Promise<CliResult>; cancel: () => void } {
   if (remoteModels) return { done: Promise.resolve({ ok: false, stdout: "", stderr: "", error: REMOTE_MODELS_HERE }), cancel: () => {} };
   const binary = resolveBinary();
@@ -592,7 +596,8 @@ export function modelsPull(
       cancel: () => {},
     };
   }
-  const child = spawn(binary, ["models", "pull", id], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  // `--mmproj`: a vision model's projector in the same pull, as the agent's CLI offers it.
+  const child = spawn(binary, ["models", "pull", id, ...(mmproj ? ["--mmproj"] : [])], { env: agentEnv(), stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   let stdout = "";
   let stderr = "";
   const relay = (chunk: Buffer, sink: "out" | "err") => {

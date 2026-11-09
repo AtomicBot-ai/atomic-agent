@@ -150,6 +150,10 @@ Notes on specific properties:
   names none); `model_id` as on `local_backend_started`; `up_ms` how long the
   server had been up; `engine` as above. Only seen while the watchdog runs:
   `localModels.managed.autoRestart` on and a route that needs the server.
+- `model_download_started.trigger`: `onboarding` (the first-run wizard),
+  `settings` (Settings' model list), `selector` (the composer's picker),
+  `first_run` (the starter model), `spotlight` (the chat's "New: <name>" card,
+  Download and switch), or `other`.
 - `llama_runtime_updated.trigger`: `setup` (the first-run runtime phase),
   `settings` (Settings' engine install or update, and Download again), or
   `launch` (the launch installing Atomic Core's backend before it starts the

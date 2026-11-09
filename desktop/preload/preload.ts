@@ -122,7 +122,7 @@ contextBridge.exposeInMainWorld("atomic", {
   chatModelsList: () => ipcRenderer.invoke("cli:chatModelsList"),
   modelsUse: (id: string) => ipcRenderer.invoke("cli:modelsUse", id),
   /** `opts.trigger` (onboarding | settings | selector) only labels the download for analytics. */
-  modelsPull: (id: string, opts?: { trigger?: string }) =>
+  modelsPull: (id: string, opts?: { trigger?: string; mmproj?: boolean }) =>
     opts === undefined ? ipcRenderer.invoke("cli:modelsPull", id) : ipcRenderer.invoke("cli:modelsPull", id, opts),
   cancelPull: () => ipcRenderer.invoke("cli:cancelPull"),
   onPull: (cb: (payload: unknown) => void) => on("cli:pull", cb),
@@ -146,6 +146,7 @@ contextBridge.exposeInMainWorld("atomic", {
   traceTools: (stateDir: string, sessionId: string) =>
     ipcRenderer.invoke("cli:traceTools", { stateDir, sessionId }),
   hostRam: () => ipcRenderer.invoke("app:hostRam"),
+  modelSpotlightIds: () => ipcRenderer.invoke("app:modelSpotlightIds"),
   keyEnv: () => ipcRenderer.invoke("app:keyEnv"),
   // ATO-507: free space on the models disk, {freeBytes, totalBytes, path} | null
   diskSpace: () => ipcRenderer.invoke("app:diskSpace"),

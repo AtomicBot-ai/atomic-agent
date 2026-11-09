@@ -21,6 +21,11 @@ const SU = require("../out/main/analytics/setup.js");
 
 /* ---- validator ---- */
 
+test("a download from the spotlight card keeps its own trigger", () => {
+  assert.ok(CV.DOWNLOAD_TRIGGERS.includes("spotlight"));
+  assert.equal(V.validateEvent("model_download_started", { trigger: "spotlight" }, "main").props.trigger, "spotlight");
+});
+
 test("unknown events are dropped, unknown props are dropped", () => {
   assert.equal(V.validateEvent("not_an_event", {}, "main"), null);
   const v = V.validateEvent("task_created", { kind: "cron", message: "secret prompt" }, "main");

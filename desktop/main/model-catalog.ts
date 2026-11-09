@@ -48,6 +48,13 @@ export interface CuratedModelMeta {
   tag?: string;
   /** `uncensored` — reduced-refusal weights; never auto-recommended. */
   uncensored?: boolean;
+  /**
+   * `spotlight` — mirrors the agent catalogue's field of the same name: a new
+   * family's launch. Marked rows put the "New: <name>" card on the chat
+   * (renderer/model-spotlight.js). Set on launch day, removed when the launch
+   * is over.
+   */
+  spotlight?: boolean;
 }
 
 export const CURATED_MODEL_META: readonly CuratedModelMeta[] = [
@@ -228,6 +235,11 @@ const BY_ID = new Map(CURATED_MODEL_META.map((m) => [m.id, m]));
 /** The entry for a catalogue id, or null — an unknown id gets no blurb. */
 export function curatedMeta(id: string): CuratedModelMeta | null {
   return BY_ID.get(id) ?? null;
+}
+
+/** The ids marked `spotlight`; empty means the window has no card to work out. */
+export function spotlightIds(): string[] {
+  return CURATED_MODEL_META.filter((m) => m.spotlight).map((m) => m.id);
 }
 
 /** Every id this table knows, for the smoke's drift check. */

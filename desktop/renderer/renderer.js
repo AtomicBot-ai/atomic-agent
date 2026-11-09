@@ -777,7 +777,14 @@ const DL = {
   /** S4: a Switch pressed while the runtime the model needs was still coming —
       the person's answer, carried out once when that runtime lands (obActivateHeld). */
   switchAfter: null,
+  /** The spotlight card's click: the model, and the route the agent was on then
+      (dlRouteKey). While it stands, the landing switches by itself (obModelLanded). */
+  spotlight: null,      // {id, route}
 };
+/* The spotlight card (renderDlcard). Declared up here for the same reason as DL.
+   `ids` is null until main has said which catalogue rows are marked, and `gate`
+   false until the boot gate has decided whether setup is due. */
+const SPOT = {gate: false, ids: null, asked: false, dismissed: null};
 /* Backlog 18 — the download card's own state (renderDlcard). Declared up
    here for the same reason as DL: the first top-level render() reads it. */
 const DLC = {
@@ -12776,7 +12783,9 @@ function dlPullStart(job) {
     const fresh = ENGF.fresh; ENGF.fresh = false;
     return fresh ? BR.modelsUpdateStream(undefined, {fresh: true}) : BR.modelsUpdateStream();
   }
-  return BR.modelsPull(job.id, {trigger: OB.open ? 'onboarding' : 'other'});
+  const opts = {trigger: job.trigger || (OB.open ? 'onboarding' : 'other')};
+  if (job.mmproj === true) opts.mmproj = true;
+  return BR.modelsPull(job.id, opts);
 }
 
 /**
@@ -13108,6 +13117,9 @@ function renderDlcard() {
       && (((LIVE_CONFIG && LIVE_CONFIG.localModels) || {}).managed || {}).modelId === DL.ready.id) DL.ready = null;
   const rows = OB.open ? [] : dlCardRows();
   if (!rows.length) {
+    // Nothing downloading or waiting: the card's corner is free for a launch's model.
+    const spot = modelSpotlightNow();
+    if (spot) { modelSpotlightPaint(el, spot); return; }
     if (!el.hidden || el.innerHTML) { el.hidden = true; el.innerHTML = ''; }
     DLC.shape = null;
     DLC.had = false;
@@ -13137,6 +13149,10 @@ function renderDlcard() {
       if (line && line.textContent !== text) line.textContent = text;
     });
   }
+  dlCardShow(el, appearing);
+}
+
+function dlCardShow(el, appearing) {
   el.hidden = false;
   dlCardPlace(el);
   if (appearing && typeof el.animate === 'function') {
@@ -13263,9 +13279,120 @@ if (typeof window !== 'undefined') {
   });
 }
 
+/* ---- The spotlight card: a launch's model, one click from running it ----
+   Dormant until a catalogue row is marked `spotlight` (main/model-catalog.ts):
+   with none, main says so once and the model list is not even read. The pick
+   is modelSpotlightPick (model-spotlight.js); the download is the setup
+   queue's (obStartLocalPull), so the engine check, the card's rows, Cancel and
+   Retry are the ones a setup download has. */
+
+/** The model the card offers now, or null. Chat view only, never over setup or a download. */
+function modelSpotlightNow() {
+  if (!SPOT.gate || OB.open || OB.settling || S.room !== 'chat' || S.settings) return null;
+  if (!LIVE_CONFIG || dlChipBusy() || xpullOwner()) return null;
+  // Main's own pull of the starter model: this window follows it, and would be refused a second one.
+  if (typeof STARTER !== 'undefined' && STARTER.phase === 'downloading') return null;
+  // The click is still being carried out: landed and waiting for a turn, or the switch itself.
+  if (DL.spotlight || DL.deferred || SWX.pending > 0) return null;
+  if (SPOT.ids === null) { modelSpotlightAsk(); return null; }
+  if (!SPOT.ids.length) return null;
+  // Landed a moment ago: the list has not been read again yet, and the card must not come back for it.
+  const models = DL.landed ? (SEL.local || []).map((m) => (m && m.id === DL.landed ? Object.assign({}, m, {downloaded: true}) : m)) : SEL.local;
+  let unfinished = modelSpotlightUnfinished();
+  // Already on it, by the picker or Settings: nothing is left to finish.
+  if (unfinished && dlRouteKey() === 'local:' + unfinished) { modelSpotlightMark(null); unfinished = null; }
+  return modelSpotlightPick({models, ramGb: hostRamGb(), dismissed: modelSpotlightDismissed(), fitFor, diskFit: modelDiskFit, unfinished});
+}
+
+/* The id whose card was pressed and whose model has not started yet. Kept
+   across a quit: its weights may be on disk with the projector or the switch
+   still owed, and that row would otherwise read as a launch already had. */
+function modelSpotlightUnfinished() {
+  try { return localStorage.getItem('atag.spotlightUnfinished') || null; } catch (e) { return null; }
+}
+function modelSpotlightMark(id) {
+  try {
+    if (id) localStorage.setItem('atag.spotlightUnfinished', id);
+    else localStorage.removeItem('atag.spotlightUnfinished');
+  } catch (e) { /* no storage: an interrupted launch is not offered again */ }
+}
+function modelSpotlightSettled(id) {
+  if (modelSpotlightUnfinished() === id) modelSpotlightMark(null);
+}
+
+/** Once a window: which rows are marked. Only then is the model list worth reading. */
+function modelSpotlightAsk() {
+  if (SPOT.asked) return;
+  SPOT.asked = true;
+  if (!BR || typeof BR.modelSpotlightIds !== 'function') { SPOT.ids = []; return; }
+  BR.modelSpotlightIds().then((ids) => {
+    SPOT.ids = Array.isArray(ids) ? ids : [];
+    if (SPOT.ids.length) bswSnapshot().then(() => renderDlcard());
+  }, () => { SPOT.ids = []; });
+}
+
+function modelSpotlightDismissed() {
+  if (SPOT.dismissed === null) {
+    let raw = null;
+    try { raw = localStorage.getItem('atag.spotlightDismissed'); } catch (e) { /* no storage: nothing was dismissed */ }
+    SPOT.dismissed = modelSpotlightParseDismissed(raw);
+  }
+  return SPOT.dismissed;
+}
+
+function modelSpotlightDismiss(id) {
+  SPOT.dismissed = modelSpotlightDismissed().concat(id);
+  try { localStorage.setItem('atag.spotlightDismissed', JSON.stringify(SPOT.dismissed)); } catch (e) { /* no storage: dismissed for this launch */ }
+}
+
+function modelSpotlightCardHTML(m) {
+  // Back after an interruption the weights are here: the full size is not what the button costs.
+  const line = m.downloaded ? modelBlurb(m) : modelBlurb(m) + ' · ' + modelSizeWord(m);
+  return '<section class="dlc" role="region" aria-label="New model">'
+    + '<div class="dlc-head"><span class="dlc-ttl">' + ic('download')
+      + '<span title="' + esc(m.id) + '">' + esc('New: ' + llmModelName(m)) + '</span></span>'
+    + '<button class="iconbtn sm dlc-x" data-act="dlc:spotlightNo" aria-label="Dismiss" title="Dismiss">' + ic('x') + '</button></div>'
+    + '<ul class="dlc-list"><li class="dlc-row"><p class="dlc-line" title="' + esc(line) + '">' + esc(line) + '</p>'
+    + '<div class="dlc-top"><button class="btn btn-p xs" data-act="dlc:spotlight">Download and switch</button></div></li></ul>'
+    + '</section>';
+}
+
+function modelSpotlightPaint(el, m) {
+  const html = modelSpotlightCardHTML(m);
+  const shape = 'spot|' + html;
+  const appearing = el.hidden;
+  if (DLC.shape !== shape) { DLC.shape = shape; el.innerHTML = html; }
+  dlCardShow(el, appearing);
+}
+
+/** Download and switch: the click is kept with the route it was made on. */
+async function modelSpotlightStart() {
+  const m = modelSpotlightNow();
+  if (!m) { render(); return; }
+  /* Connected to an agent on another computer since the card was drawn: main
+     answers no ids there, and the card goes instead of a refused download. */
+  let ids = null;
+  try { ids = await BR.modelSpotlightIds(); } catch (e) { /* read as none */ }
+  if (!Array.isArray(ids) || !ids.includes(m.id)) { SPOT.ids = []; render(); return; }
+  if (!modelSpotlightNow()) { render(); return; }
+  DL.spotlight = {id: m.id, route: dlRouteKey()};
+  modelSpotlightMark(m.id);
+  /* `atag models pull` brings the weights alone unless asked: a vision model
+     needs its projector too. Weights already on disk are not fetched again
+     (downloadModel returns at once), so this also finishes an interrupted one. */
+  obStartLocalPull(m.id, false, Object.assign({trigger: 'spotlight'}, m.vision === true ? {mmproj: true} : {}));
+}
+
 /** The card's verbs (data-act `dlc:<verb>`). */
 function dlCardAct(verb) {
   const v = String(verb || '');
+  if (v === 'spotlight') { modelSpotlightStart(); return; }
+  if (v === 'spotlightNo') {
+    const m = modelSpotlightNow();
+    if (m) modelSpotlightDismiss(m.id);
+    render();
+    return;
+  }
   if (v === 'fold' || v === 'unfold') {
     const el = document.getElementById('dlcard');
     const hadFocus = !!(el && el.contains(document.activeElement));
@@ -13307,6 +13434,7 @@ function dlCardAct(verb) {
     DL.queue = DL.queue.filter((q) => !(q.kind === kind && q.id === id));
     // F8: so does a vision projector waiting for its turn; its model is then not started.
     DL.projectorQueue = DL.projectorQueue.filter((p) => !(kind === 'projector' && p.id === id));
+    if (kind === 'weights' && DL.spotlight && DL.spotlight.id === id) DL.spotlight = null;
     // A llama.cpp runtime taken off with none other to come: what waited for it starts nothing by itself.
     if (kind === 'runtime' && !dlRuntimePending()) dlRuntimeMissed();
     // S1: the setup model's own row going is a download stopped: nothing to resume next launch.
@@ -13338,6 +13466,8 @@ function dlCardAct(verb) {
  * `done` frame its exit sends is read as the cancel it is.
  */
 function dlCancel() {
+  // A stopped spotlight download switches to nothing (one already landed and waiting for a turn is not this Cancel's).
+  if (DL.spotlight && DL.deferred !== DL.spotlight.id) DL.spotlight = null;
   /* A setup download the person stopped is not picked up again on the next
      launch — but only if this Cancel takes its row (S1): the pick, the running
      job and its own run, its projector. A setup model queued as a run of its
@@ -13375,6 +13505,8 @@ function dlCancel() {
 /** A download that failed becomes a row in the card, with Retry and dismiss. */
 function dlFail(job, error, retry) {
   obSetupPullFailed(job, error);
+  // A Retry is a new start: its landing asks on the card rather than switching by itself.
+  if (DL.spotlight && DL.spotlight.id === job.id) DL.spotlight = null;
   dlFailClear(job.kind, job.id);
   DL.failed.push({n: ++DL.failSeq, kind: job.kind, id: job.id, error: String(error || 'the download failed'),
     // The setup queue's own jobs go back in its queue; the rest need the one pull slot free.
@@ -13385,7 +13517,8 @@ function dlFailClear(kind, id) {
 }
 function dlRequeue(job) {
   // A run of its own: a Cancel on the job in front of it does not take it (dlCancel).
-  const j = {kind: job.kind, id: job.id, run: ++DL.runSeq};
+  const j = Object.assign({kind: job.kind, id: job.id, run: ++DL.runSeq},
+    job.trigger ? {trigger: job.trigger} : {}, job.mmproj === true ? {mmproj: true} : {});
   if (DL.job || DL.preparing) { DL.queue.push(j); render(); return; }
   dlStart([j]);
 }
@@ -15014,7 +15147,7 @@ function obBackendMissing(backendText) {
  * for, never assumed: only a missing binary earns a `models update` in
  * front of the weights.
  */
-async function obStartLocalPull(id, alreadyDownloaded) {
+async function obStartLocalPull(id, alreadyDownloaded, pull) {
   if (!BR) return;
   DL.error = null;
   if (alreadyDownloaded) {
@@ -15040,7 +15173,7 @@ async function obStartLocalPull(id, alreadyDownloaded) {
   DL.preparing = null;
   const jobs = [];
   if (needsRuntime) jobs.push({kind:'runtime', id:'llama.cpp'});
-  jobs.push({kind:'weights', id});
+  jobs.push(Object.assign({kind:'weights', id}, pull));
   dlStart(jobs);
 }
 
@@ -15066,6 +15199,7 @@ async function obActivateLocal(id) {
     return;
   }
   DL.deferred = null;
+  if (DL.spotlight && DL.spotlight.id === id) DL.spotlight = null;
   /* r5 integration (seam b): the wizard's own activation goes through the
      item-10 switch funnel like every other switch in this file. Without it
      the composer's send button would stay live through an `atag serve`
@@ -15085,6 +15219,7 @@ async function obActivateLocal(id) {
     return;
   }
   bswReport(res);
+  modelSpotlightSettled(id);
   OB.restarted = !!res.restart;
   OB.localStart = obLocalStartOf(res);
   obDispatch({type:'local_models_pull_finished', kind:'chat'});
@@ -15104,6 +15239,16 @@ function obFlushDeferredActivate() {
   // ATO-134: nor beside a switch on its way — one held for a scheduled task or a Telegram reply can take minutes.
   if (!id || restartStopsTurn() || SWX.pending > 0) return;
   DL.deferred = null;
+  /* A spotlight switch that waited out a turn: not if the person moved the
+     agent to another model during it. The card asks instead. */
+  if (DL.spotlight && DL.spotlight.id === id && !modelSpotlightStands(id)) {
+    DL.spotlight = null;
+    modelSpotlightSettled(id);
+    DL.ready = {id};
+    bswSnapshot();
+    render();
+    return;
+  }
   obActivateLocal(id);
 }
 function obFlushDeferredSoon() {
@@ -15159,6 +15304,18 @@ function obPullFinished(job, ev) {
      projector's Cancel is honoured. */
   if (!ok || job.cancelled) { render(); return; }
   if (DL.dry) { render(); return; }
+  /* A pull that brought the projector itself (`--mmproj`, the spotlight card's)
+     and lost it: the agent calls that success, but the daemon would serve a
+     vision model text-only, so it is a failed row and no start, as
+     obFetchProjector's failure is. The weights stay; Retry fetches the projector. */
+  if (ev.projectorSkipped === true) {
+    DL.landed = null;
+    DL.error = 'the vision projector did not download — the model was not started: it would serve text only';
+    dlFail({kind: 'projector', id: job.id}, DL.error, () => dlRequeue(job));
+    bswSnapshot();
+    render();
+    return;
+  }
   /* A vision model's projector is next — setup's pick in this launch, or the
      one the reminder kept across a quit (obSetupPullMmproj): `atag models
      pull` brought the weights alone. It comes down once nothing else does
@@ -15221,6 +15378,7 @@ function dlProjectorNext() {
  * (dlRetry), and the setup download's reminder, kept, the next launch.
  */
 function dlRuntimeMissed() {
+  DL.spotlight = null;
   DL.activateAfter = null;
   DL.switchAfter = null;
   DL.projectorQueue.forEach((p) => { if (p.held && DL.startGone.indexOf(p.id) < 0) DL.startGone.push(p.id); });
@@ -15252,10 +15410,26 @@ function obModelLanded(id, configRead) {
      config" read as "no model chosen": it started the model over the cloud
      model the person had moved to. The config is read first, then decided. */
   if (!LIVE_CONFIG && !configRead) { obModelLandedRead(id); return; }
-  if (!obRunsOnAnotherModel(id)) { obActivateLocal(id); return; }
+  /* The spotlight card's click is the person asking to leave the model they
+     are on, so that model is no reason to ask again — while it is still the
+     one they were on when they clicked. obActivateLocal waits out a running
+     turn (DL.deferred) and never restarts the agent under it. */
+  if (!obRunsOnAnotherModel(id) || modelSpotlightStands(id)) {
+    if (DL.spotlight && DL.spotlight.id === id) bswSnapshot();
+    obActivateLocal(id);
+    return;
+  }
+  if (DL.spotlight && DL.spotlight.id === id) DL.spotlight = null;
+  modelSpotlightSettled(id);   // the card below asks now, and the model is whole
   DL.ready = {id};
   bswSnapshot();
   render();
+}
+
+/** Whether the click on the spotlight card for `id` still stands: the agent is on the route it was made on. */
+function modelSpotlightStands(id) {
+  const s = DL.spotlight;
+  return !!s && s.id === id && s.route !== null && s.route === dlRouteKey();
 }
 
 /** Review S6: a landing before the agent connected reads the config, then is decided (obModelLanded). */
@@ -15290,6 +15464,24 @@ function obRunsOnAnotherModel(id) {
   const providerId = selActiveProviderId();
   const p = ((LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((x) => x.id === providerId) || activeProvider();
   return !!(p && p.kind !== 'llama-server' && ((SWX.want && SWX.want.model) || p.defaultChatModel || p.model));
+}
+
+/** The route the agent is on, as obRunsOnAnotherModel reads it; null with no config to read it off. */
+function dlRouteKey() {
+  if (!LIVE_CONFIG) return null;
+  const backend = selBackend();
+  if (backend === 'local') {
+    return 'local:' + ((SWX.want && SWX.want.backend === 'local' && SWX.want.model)
+      || ((LIVE_CONFIG.localModels || {}).managed || {}).modelId || '');
+  }
+  if (backend === 'fusion') {
+    const seats = fzSeats();
+    return 'fusion:' + [seats.plans.provider, seats.plans.label, seats.works.provider, seats.works.label].join('|');
+  }
+  if (backend === 'custom') return 'custom';
+  const providerId = selActiveProviderId();
+  const p = ((LIVE_CONFIG.llm && LIVE_CONFIG.llm.providers) || []).find((x) => x.id === providerId) || activeProvider();
+  return 'cloud:' + providerId + ':' + ((SWX.want && SWX.want.model) || (p && (p.defaultChatModel || p.model)) || '');
 }
 
 /* ---- R1 (review): the setup download across a quit ----
@@ -16478,7 +16670,8 @@ if (BR) {
      every row said "no RAM guidance"). */
   loadHostRamGb().then((n) => { if (n) render(); }).catch(() => {});
   if (BR && BR.unverified) BR.unverified().then((ids) => { UNVERIFIED = ids || []; render(); }).catch(() => {});
-  (BR.firstRun ? BR.firstRun() : Promise.resolve(null)).then((fr) => obBootGate(fr, freshAtBoot));
+  (BR.firstRun ? BR.firstRun() : Promise.resolve(null)).then((fr) => obBootGate(fr, freshAtBoot))
+    .finally(() => { SPOT.gate = true; renderDlcard(); });
 
   const prevAct = act;
   act = function (a) {
