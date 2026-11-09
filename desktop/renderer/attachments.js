@@ -458,6 +458,8 @@ function attMenuHTML() {
   return '<div class="attmenu" id="attmenu" role="menu"' + (ATT.menu ? '' : ' hidden') + '>'
     + '<button class="attmenurow" role="menuitem" data-att-pick="images">' + ic('image') + '<span>Images</span></button>'
     + '<button class="attmenurow" role="menuitem" data-att-pick="files">' + ic('file') + '<span>Files</span></button>'
+    // ATO-1113: a long task with a budget and a time limit (overnight.js owns the dialog).
+    + '<button class="attmenurow" role="menuitem" data-ovn="open">' + ic('moon') + '<span>Run overnight</span></button>'
     + '</div>';
 }
 /** Always emitted (hidden when empty), so attRepaint can swap it without a render(). */

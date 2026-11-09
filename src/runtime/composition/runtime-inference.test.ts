@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as configuration from "../../config/index.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import { LlamaServerClient } from "../../llm/llama-server-client.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
@@ -168,7 +169,7 @@ describe("runtime provider/context/fallback/reload phases", () => {
     });
   });
 
-  it("stream usage reaches the turn meter without double recording the unary cost accumulator", async () => {
+  it("stream usage reaches both the turn meter and the cost accumulator, once (ATO-1289)", async () => {
     const fixture = fallback();
     const served = providers.providerRegistry.getProvider("served");
     if (!served) throw new Error("served fixture missing");
@@ -183,7 +184,45 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(next.value.servedTransport).toBe("native_tools");
     while (!next.done) next = await stream.next();
     expect(fixture.turnUsageMeter.snapshot("turn")).toMatchObject({ promptTokens: 10, completionTokens: 5, costUsd: 0.00002 });
-    expect(fixture.costAccumulator.snapshot().sessionUsd).toBe(0);
+    expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.00002);
+    expect(fixture.costAccumulator.snapshot().lastModelId).toBe("priced-model");
+  });
+
+  it("a streamed completion with no session still reaches the cost accumulator, like the unary path (ATO-1289)", async () => {
+    const fixture = fallback();
+    const served = providers.providerRegistry.getProvider("served");
+    if (!served) throw new Error("served fixture missing");
+    vi.spyOn(served, "completeStream").mockImplementation(async function* () {
+      yield { delta: "answer", reasoningDelta: "", done: false };
+      return completion();
+    });
+    const wired = connectRuntimeFallback({}, fixture.deps);
+    if (!wired.llmCompleteStream) throw new Error("stream fixture missing");
+    const noSession = { prompt: params.prompt, grammar: params.grammar, slotId: params.slotId };
+    // The type asks for a session; a caller outside a turn has none at run time.
+    const stream = wired.llmCompleteStream({ ...noSession, providerId: "served" } as LlmStreamParams);
+    let next = await stream.next();
+    while (!next.done) next = await stream.next();
+    expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.00002);
+    expect(fixture.turnUsageMeter.snapshot("turn")).not.toHaveProperty("costUsd");
+  });
+
+  it("a streamed completion the service billed is counted at the billed cost (ATO-1289)", async () => {
+    const fixture = fallback();
+    const served = providers.providerRegistry.getProvider("served");
+    if (!served) throw new Error("served fixture missing");
+    const billed = completion();
+    billed.usage = { promptTokens: 10, completionTokens: 5, totalTokens: 15, costUsd: 0.5 };
+    vi.spyOn(served, "completeStream").mockImplementation(async function* () {
+      yield { delta: "answer", reasoningDelta: "", done: false };
+      return billed;
+    });
+    const wired = connectRuntimeFallback({}, fixture.deps);
+    if (!wired.llmCompleteStream) throw new Error("stream fixture missing");
+    const stream = wired.llmCompleteStream({ ...params, providerId: "served" });
+    let next = await stream.next();
+    while (!next.done) next = await stream.next();
+    expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.5);
   });
 
   it("a local completion without a usage block still counts its timings toward the turn, unpriced (ATO-276)", async () => {

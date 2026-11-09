@@ -223,6 +223,9 @@
 .prose .mdsolo .filechip svg{grid-row:1 / span 2;width:18px;height:18px}
 .prose .mdsolo .filechip::after{content:attr(title);grid-column:2;font:400 var(--fs-micro)/16px var(--font-ui);color:var(--ink-3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+/* ATO-664: footnotes — the mark in the text, the notes in a quiet list at the reply's end */
+.prose .mdfn{font-size:.72em;line-height:0;vertical-align:super;color:var(--blue);font-weight:600;padding:0 1px}
+.prose .mdfoot{margin-top:6px;padding-top:6px;border-top:1px solid var(--divider);font-size:var(--fs-cap);color:var(--ink-2)}
 .prose.usr .mdcode{background:var(--glass-18)}
 
 /* files and links inside replies — the chip keeps `.filechip` + data-file, so
@@ -272,6 +275,9 @@
 .turnsum .ts-sep{flex:none}
 .turnsum .ts-bad{flex:none;color:var(--critical)}
 .turnsum .ts-du{flex:none;font-size:var(--fs-label);font-variant-numeric:tabular-nums}
+/* ATO-1145: "Auto-approved N actions" under the line, its list in the reasoning body's box. */
+.ts-autolist{white-space:normal}
+.ts-autowhy{color:var(--ink-3)}
 
 /* "Working…" (0.6.7 item 10) — from the send to the turn's first step or word
    (workingRowHTML). It takes the reasoning line's box: the height, inset, gap

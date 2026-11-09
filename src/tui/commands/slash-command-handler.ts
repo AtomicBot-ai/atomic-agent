@@ -12,6 +12,7 @@ import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
+import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -20,6 +21,8 @@ export interface SlashDispatchCallbacks {
 
 export interface SlashDispatchResult {
   readonly skillInvocation?: { name: string; input: string };
+  /** A plugin command: the caller renders its template and sends it as the message. */
+  readonly pluginCommandInvocation?: { name: string; args: string };
   readonly modelModeCommand?: ModelModeCommand;
   /**
    * Reducer actions the caller should dispatch in order. Empty when the
@@ -29,6 +32,8 @@ export interface SlashDispatchResult {
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
   readonly compactionVerb?: "run" | "show";
+  /** `/goal …` (ATO-451): the orchestrator acts on the open chat's goal. */
+  readonly goalCommand?: GoalCommand;
   /**
    * `/enhance <text>`: the draft to rewrite. The buffer is left holding
    * the draft itself, and the caller hands the rewrite back to it.
@@ -138,6 +143,12 @@ export interface SlashDispatchResult {
    */
   readonly mouseVerb?: "on" | "off" | "status";
   /**
+   * `/steps [on|off]` — always show steps (ATO-963). Bare `/steps` is
+   * `toggle`. The caller sets `TuiState.showSteps` and writes
+   * `tui.showSteps` through `onShowStepsPersistRequested`.
+   */
+  readonly showStepsVerb?: "on" | "off" | "toggle";
+  /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
    * dialog it opens is what eventually asks for that.
@@ -158,6 +169,53 @@ export interface SlashDispatchResult {
     import("../../config/index.js").RunModeName | "status" | "swap";
   /** `/runmode workers N`: persist the fusion worker count. */
   readonly runModeWorkers?: number;
+  /**
+   * `/status` (ATO-965): print a status snapshot of the running turn. It
+   * is built from `TuiState`, which this pure dispatcher cannot see, so
+   * the caller (`submit-handler.ts`) formats it.
+   */
+  readonly triggerStatusSnapshot?: boolean;
+  /**
+   * `/worker stop|escalate <id>` and `/worker steer <id> <text>`: act on
+   * one running fusion worker of the current session (ATO-66, ATO-568).
+   * Needs the runtime, so the caller runs it. `text` is set for `steer`
+   * only.
+   */
+  readonly fusionWorkerAction?: FusionWorkerAction;
+  /**
+   * `/fusion [resume|discard] [runId]`: list, continue or drop a fusion
+   * run of the current session that a restart cut off (ATO-617). Needs
+   * the runtime, so the caller runs it.
+   */
+  readonly fusionRunAction?: {
+    action: "list" | "resume" | "discard";
+    runId?: string;
+  };
+}
+
+export type FusionWorkerAction =
+  | { action: "stop" | "escalate"; taskId: string }
+  | { action: "steer"; taskId: string; text: string };
+
+/**
+ * The arguments of `/worker`: `stop <id>`, `escalate <id>`, or
+ * `steer <id> <note…>` where the note is the rest of the line as typed
+ * (inner spacing kept, ends trimmed). `null` for anything else, so the
+ * caller prints the usage instead of acting on a guess.
+ */
+export function parseWorkerCommand(args: string): FusionWorkerAction | null {
+  const match = /^\s*(\S+)(?:\s+(\S+))?(?:\s+([\s\S]*))?$/.exec(args);
+  if (match === null) return null;
+  const [, verb, taskId, rest] = match;
+  if (taskId === undefined || taskId.length === 0) return null;
+  const tail = (rest ?? "").trim();
+  if (verb === "stop" || verb === "escalate") {
+    return tail.length === 0 ? { action: verb, taskId } : null;
+  }
+  if (verb === "steer") {
+    return tail.length === 0 ? null : { action: "steer", taskId, text: tail };
+  }
+  return null;
 }
 
 /**
@@ -207,6 +265,9 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
   if (resolved.skillName) {
     return pureActions([], { skillInvocation: { name: resolved.skillName, input: parsed.args } });
   }
+  if (resolved.pluginCommand) {
+    return pureActions([], { pluginCommandInvocation: { name: resolved.pluginCommand, args: parsed.args } });
+  }
   switch (resolved.name) {
     case "report":
       // The popup is the feedback; a system line here would be noise
@@ -234,8 +295,34 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       });
     case "queue":
       return dispatchQueueSub(parsed.args);
+    case "status":
+      return pureActions([], { triggerStatusSnapshot: true });
     case "steer":
       return dispatchSteerSub(parsed.args);
+    case "worker": {
+      const action = parseWorkerCommand(parsed.args);
+      if (action === null) {
+        return pureActions([], {
+          systemMessage:
+            "usage: /worker stop <id> | /worker escalate <id> | /worker steer <id> <note> — the id is in [brackets] on the worker's row",
+        });
+      }
+      return pureActions([], { fusionWorkerAction: action });
+    }
+    case "fusion": {
+      const [verb = "", runId, ...rest] = parsed.args.trim().split(/\s+/).filter((part) => part.length > 0);
+      const action =
+        verb === "" ? "list" : verb === "resume" || verb === "discard" ? verb : null;
+      if (action === null || rest.length > 0 || (action === "list" && runId !== undefined)) {
+        return pureActions([], {
+          systemMessage:
+            "usage: /fusion (list unfinished runs) | /fusion resume [run id] | /fusion discard [run id]",
+        });
+      }
+      return pureActions([], {
+        fusionRunAction: { action, ...(runId === undefined ? {} : { runId }) },
+      });
+    }
     case "abort":
       return pureActions([{ type: "abort_requested" }], {
         triggerAbort: true,
@@ -263,6 +350,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return parsed.args === "" || parsed.args === "show"
         ? pureActions([], { compactionVerb: parsed.args === "show" ? "show" : "run" })
         : pureActions([], { systemMessage: "Usage: /compact [show]" });
+    case "goal": {
+      const goal = parseGoalCommand(parsed.args);
+      return goal.kind === "error"
+        ? pureActions([], { systemMessage: goal.message })
+        : pureActions([], { goalCommand: goal });
+    }
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.
@@ -274,6 +367,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
           });
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
+    case "usage":
+      return pureActions([{ type: "usage_report_requested", now: Date.now() }]);
     case "chat":
       return pureActions([{ type: "ui_mode_set", mode: "chat" }]);
     case "observe":
@@ -307,9 +402,16 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         { type: "tab_changed", tab: "world" },
       ]);
     case "expand":
-      return pureActions([{ type: "tool_expand_all_set", expanded: true }]);
+      return dispatchExpandSub(parsed.args);
     case "collapse":
-      return pureActions([{ type: "tool_expand_all_set", expanded: false }]);
+      // Folds every finished turn back into its line and closes every
+      // tool card, so `/collapse` undoes `/expand all` in one step.
+      return pureActions([
+        { type: "turn_expand_set", scope: "all", expanded: false },
+        { type: "tool_expand_all_set", expanded: false },
+      ]);
+    case "steps":
+      return dispatchStepsSub(parsed.args);
     case "session":
       return pureActions([], {
         systemMessage: "use /sessions to switch, /new to start fresh",
@@ -346,6 +448,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         { type: "ui_mode_set", mode: "debug" },
         { type: "tab_changed", tab: "swarm" },
         { type: "swarm_message_cleared" },
+      ]);
+    case "plugins":
+      return pureActions([
+        { type: "ui_mode_set", mode: "debug" },
+        { type: "tab_changed", tab: "plugins" },
+        { type: "plugins_message_cleared" },
       ]);
     case "llm":
       return dispatchLlmSub(parsed.args);
@@ -544,6 +652,47 @@ function pureActions(
  * the registry and, on success, asks the caller to swap + persist + re-render.
  * Unknown names surface a usage hint instead of switching.
  */
+/**
+ * `/expand` opens the newest finished turn's folded steps (ATO-963), the
+ * keyboard's route to the click on its summary line. `/expand all` opens
+ * every finished turn and every tool card body, which is what bare
+ * `/expand` did before turns folded.
+ */
+function dispatchExpandSub(rawArgs: string): SlashDispatchResult {
+  const arg = rawArgs.trim().toLowerCase();
+  if (arg.length === 0 || arg === "last") {
+    return pureActions([
+      { type: "turn_expand_set", scope: "last", expanded: true },
+    ]);
+  }
+  if (arg === "all") {
+    return pureActions([
+      { type: "turn_expand_set", scope: "all", expanded: true },
+      { type: "tool_expand_all_set", expanded: true },
+    ]);
+  }
+  return pureActions([], {
+    systemMessage: `usage: /expand [all] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/**
+ * `/steps` flips "always show steps" (`tui.showSteps`); `on` / `off` set
+ * it. The caller applies it to the live state and persists it, because
+ * the toggle needs the current value this pure dispatcher does not have.
+ */
+function dispatchStepsSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { showStepsVerb: "toggle" });
+  if (verb === "on" || verb === "always") {
+    return pureActions([], { showStepsVerb: "on" });
+  }
+  if (verb === "off") return pureActions([], { showStepsVerb: "off" });
+  return pureActions([], {
+    systemMessage: `usage: /steps [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
 /**
  * `/mouse` with no argument reports state; `on` / `off` set it. Any
  * other word is rejected rather than guessed at — a typo'd `/mouse ff`

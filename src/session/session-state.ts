@@ -8,7 +8,9 @@ import {
   type ConversationTurn,
 } from "./conversation-turn.js";
 import type { ContextUsageState } from "./context-usage.js";
+import type { SessionUsageState } from "./usage-meter.js";
 import { appendMacroTurnStart } from "./macro-turn-starts.js";
+import type { PlanSnapshot } from "../agent/plan/plan-snapshot.js";
 
 export type SessionStatus =
   | "pending"
@@ -159,6 +161,23 @@ export interface SessionState {
    * sessions that predate the field or have never run a turn.
    */
   contextUsage?: ContextUsageState;
+  /**
+   * The live plan (ATO-486): the newest checklist the model sent through
+   * `plan.update`, or the one seeded from an approved plan-mode reply.
+   * Written by the step commit (`applyStateEffects`) and persisted with
+   * the session JSON, so reopening a chat or restarting the app draws
+   * the same checklist. Absent when the session has no plan; an empty
+   * `plan.update` clears it.
+   */
+  plan?: PlanSnapshot;
+  /**
+   * What the session has spent and the account limits last seen
+   * (ATO-569). Stamped by `executeTurn` beside `contextUsage`, for the
+   * same reason: a reopened session shows its spend at once, and its
+   * total keeps growing from where it stopped. Absent on sessions that
+   * predate the field or never made a call.
+   */
+  sessionUsage?: SessionUsageState;
   /**
    * Free-form session metadata. Reserved keys (set by the runtime, not
    * the agent — agents may read but must not overwrite them):
@@ -406,4 +425,21 @@ export function stripEphemeral(state: SessionState): SessionState {
     ...rest
   } = state;
   return rest;
+}
+
+/**
+ * Store the live plan on the session; `null` or an empty list removes it
+ * (ATO-486).
+ */
+export function recordPlan(
+  state: SessionState,
+  plan: PlanSnapshot | null,
+): SessionState {
+  if (plan === null || plan.items.length === 0) {
+    if (state.plan === undefined) return state;
+    const rest: SessionState = { ...state };
+    delete rest.plan;
+    return rest;
+  }
+  return { ...state, plan };
 }

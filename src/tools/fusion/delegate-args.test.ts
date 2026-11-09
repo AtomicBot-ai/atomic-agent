@@ -588,3 +588,34 @@ describe("parseDelegateArgs — contract inputs (F51)", () => {
     expect(error).toMatch(/contract renders to [\d,]+ chars; the limit is 8,000/);
   });
 });
+
+describe("parseDelegateArgs role and model (ATO-943)", () => {
+  it("keeps a known role and a model name on the task", () => {
+    const parsed = parseDelegateArgs({
+      tasks: [
+        { id: "a", instructions: "x", role: "build" },
+        { id: "b", instructions: "y", model: " sonnet " },
+        { id: "c", instructions: "z" },
+      ],
+    });
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    expect(parsed.tasks[0]).toMatchObject({ role: "build" });
+    expect(parsed.tasks[1]).toMatchObject({ model: "sonnet" });
+    expect(parsed.tasks[2]).not.toHaveProperty("role");
+    expect(parsed.tasks[2]).not.toHaveProperty("model");
+  });
+
+  it("refuses an unknown role and an empty model, naming both", () => {
+    const parsed = parseDelegateArgs({
+      tasks: [
+        { id: "a", instructions: "x", role: "coder" },
+        { id: "b", instructions: "y", model: "" },
+      ],
+    });
+    expect(parsed.ok).toBe(false);
+    if (parsed.ok) return;
+    expect(parsed.error).toContain("tasks[0].role must be one of plan|build|review|explore|utility");
+    expect(parsed.error).toContain("tasks[1].model must be a non-empty string");
+  });
+});

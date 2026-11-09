@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import {
   currentApprovalLedger,
+  recordAutoApproval,
   type ToolApprovalRecord,
 } from "./approval-ledger.js";
 import {
@@ -14,6 +15,25 @@ import {
   type ApprovalCategory,
   type ApprovalLevel,
 } from "./approval-level.js";
+import {
+  buildAlwaysRule,
+  canGrantAlways,
+  describeRule,
+  matchRules,
+  type ApprovalRule,
+  type ApprovalRuleDecision,
+  type RuleMatch,
+} from "./approval-rules.js";
+import type { ApprovalRulesSource } from "./approval-rules-store.js";
+import { currentApprovalWorkdir } from "./approval-workdir.js";
+import {
+  formatRiskNote,
+  isRiskReviewEligible,
+  RISK_REVIEW_LOW_REASON,
+  runRiskReview,
+  type RiskLevel,
+  type RiskReviewer,
+} from "./risk-review.js";
 
 export interface ApprovalRequest {
   approvalId: string;
@@ -38,6 +58,26 @@ export interface ApprovalRequest {
    */
   commandShape?: string;
   /**
+   * Parsed argv of a simple shell command (`["git", "status", "-s"]`),
+   * the unit a saved rule's `commandPrefix` matches. Set only by the shell
+   * tool, and only where `commandShape` is: a pipeline or a compound line
+   * has none, so no prefix rule can match it.
+   */
+  commandArgv?: string[];
+  /**
+   * Every simple command the call would run, parsed
+   * (`shellRuleSegments`), set even where `commandArgv` is withheld: a
+   * dangerous command, a compound line, a binary named by path. Only a
+   * saved deny or ask rule reads it, which can only make the call
+   * stricter; an allow rule still needs `commandArgv`.
+   */
+  commandSegments?: string[][];
+  /**
+   * The session's working directory, for rules scoped to a project. The
+   * gate fills it from the dispatching tool call when the tool did not.
+   */
+  workdir?: string;
+  /**
    * Absolute path this request would write, when the host may offer to
    * retarget it before approving (`[e]` in the TUI). Set only by tools
    * whose target is a free choice rather than a file the model just
@@ -58,6 +98,15 @@ export interface ApprovalRequest {
    * same action by another route.
    */
   targetPaths?: string[];
+  /**
+   * Set by the gate, never by a caller: what the smart-approval risk
+   * review (`risk-review.ts`) said about a request it did not let
+   * through, e.g. `risk check: medium (installs a package)`. A surface
+   * shows it beside the prompt; absent when no review ran.
+   */
+  riskNote?: string;
+  /** The level behind `riskNote`; absent when the review gave no verdict. */
+  riskLevel?: RiskLevel;
 }
 
 /**
@@ -67,9 +116,10 @@ export interface ApprovalRequest {
  * request's `commandShape` binary (`a`, shell only). The gate reads the
  * category/shape from its own pending request, never from the caller:
  * the caller names the scope, not the value, so a host cannot grant a
- * category the prompt was not about.
+ * category the prompt was not about. `always` saves an allow rule built
+ * from the pending request (`buildAlwaysRule`) in the rules store.
  */
-export type ApprovalGrantScope = "category" | "shape";
+export type ApprovalGrantScope = "category" | "shape" | "always";
 
 export interface ApprovalDecision {
   approvalId: string;
@@ -121,9 +171,35 @@ export type ApprovalEmitter = (request: ApprovalRequest) => void;
  * process exits. Auto-approval still wins first: a level or a grant that
  * would run the call without asking still runs it.
  */
+/** The fields of a request a saved rule can read. */
+export type RuleCheck = Pick<
+  ApprovalRequest,
+  | "sessionId"
+  | "tool"
+  | "category"
+  | "commandArgv"
+  | "commandSegments"
+  | "targetPaths"
+  | "affectedResources"
+  | "workdir"
+>;
+
 export interface SessionApprovalPolicy {
   onPrompt: "refuse";
   reason: string;
+  /**
+   * A refusal worded for this request, when the session's general
+   * `reason` would send the model the wrong way: a fusion worker told to
+   * re-delegate a step no fan-out can authorise (`rm -rf`, the agent's
+   * own `.env`) loops. `undefined` falls back to `reason`.
+   */
+  reasonFor?: (request: ApprovalRequest) => string | undefined;
+  /**
+   * The folder saved rules are matched against for this session, when it
+   * is not the session's own: a fusion worker in a throwaway worktree is
+   * still working on its parent's project.
+   */
+  ruleWorkdir?: string;
 }
 
 /** A live, in-memory view of a session's point grants. Diagnostic only. */
@@ -254,6 +330,15 @@ export class ApprovalGate {
    */
   readonly readScopeGrants = new ReadScopeGrants();
 
+  /** Saved allow / ask / deny rules (`approval-rules.ts`); none until `setRules`. */
+  private rules: ApprovalRulesSource | undefined;
+  /** The rule the last `grant: "always"` saved, for the host that asked. */
+  private lastAlwaysRule: { approvalId: string; rule: ApprovalRule } | null = null;
+  /** Smart approval (step 7 of `request`); unset = never consulted. */
+  private riskReviewer: RiskReviewer | undefined;
+  /** Requests on their way back into `request` after a review (see `requestAfterReview`). */
+  private readonly riskReviewed = new Set<string>();
+
   constructor(options: { emit: ApprovalEmitter; level?: ApprovalLevel }) {
     this.emitter = options.emit;
     this.level = options.level ?? MIN_APPROVAL_LEVEL;
@@ -266,6 +351,39 @@ export class ApprovalGate {
    */
   setSessionPolicy(sessionId: string, policy: SessionApprovalPolicy): void {
     this.policiesBySession.set(sessionId, policy);
+  }
+
+  /** Install (or with `undefined`, remove) the saved approval rules. */
+  setRules(store: ApprovalRulesSource | undefined): void {
+    this.rules = store;
+  }
+
+  /** The installed rules store, for hosts that list or delete rules. */
+  getRules(): ApprovalRulesSource | undefined {
+    return this.rules;
+  }
+
+  /** `canGrantAlways` plus: a rules store is installed to save the rule in. */
+  canGrantAlways(request: ApprovalRequest): boolean {
+    return this.rules !== undefined && canGrantAlways(request);
+  }
+
+  /** The rule `resolve({ grant: "always" })` saved for `approvalId`, once. */
+  takeAlwaysRule(approvalId: string): ApprovalRule | null {
+    const last = this.lastAlwaysRule;
+    if (last === null || last.approvalId !== approvalId) return null;
+    this.lastAlwaysRule = null;
+    return last.rule;
+  }
+
+  /**
+   * Install (or with `undefined` remove) the smart-approval reviewer. It
+   * is asked only about a request that would otherwise prompt, of a
+   * grantable category (`isRiskReviewEligible`), from a session with no
+   * prompt policy; its own `enabled()` is the live on/off switch.
+   */
+  setRiskReviewer(reviewer: RiskReviewer | undefined): void {
+    this.riskReviewer = reviewer;
   }
 
   /** Remove the session's policy so its requests prompt again. */
@@ -339,7 +457,12 @@ export class ApprovalGate {
     { signal }: { signal?: AbortSignal } = {},
   ): Promise<ApprovalDecision> {
     const approvalId = params.approvalId ?? randomUUID();
-    const request: ApprovalRequest = { ...params, approvalId };
+    const workdir = params.workdir ?? currentApprovalWorkdir();
+    const request: ApprovalRequest = {
+      ...params,
+      approvalId,
+      ...(workdir !== undefined ? { workdir } : {}),
+    };
     // Before auto-approval: a level or a grant that would run a write
     // silently must not become the way round the user's own Deny of it
     // a few steps earlier.
@@ -353,9 +476,41 @@ export class ApprovalGate {
         declinedEarlier: true,
       });
     }
-    const auto = this.autoApproval(request);
-    if (auto)
+    // Saved rules: a deny wins over everything below; an ask skips the
+    // level and the grants; an allow is the last way round a prompt.
+    const rule = this.matchRule(request);
+    if (rule?.decision === "deny") {
+      return Promise.resolve({
+        approvalId,
+        approved: false,
+        reason: `blocked by your rule ${rule.rule.id}: ${describeRule(rule.rule)}`,
+        automatic: true,
+      });
+    }
+    const auto = rule?.decision === "ask" ? null : this.autoApproval(request);
+    if (auto) {
+      // A grant is logged for the turn summary; the standing level is not.
+      if (!isAutoApprovedAt(this.level, request.category)) {
+        recordAutoApproval("grant", request.category, auto.replace(/^auto-approved \((.*)\)$/, "$1"));
+      }
       return Promise.resolve({ approvalId, approved: true, reason: auto });
+    }
+    if (rule?.decision === "allow") {
+      recordAutoApproval(
+        "rule",
+        request.category,
+        `rule ${rule.rule.id}: ${describeRule(rule.rule)}`,
+      );
+      return Promise.resolve({
+        approvalId,
+        approved: true,
+        reason: `auto-approved (rule ${rule.rule.id})`,
+      });
+    }
+    // An "ask" rule means the person wants the prompt: no model rates it away.
+    if (rule?.decision !== "ask" && this.shouldReviewRisk(request)) {
+      return this.requestAfterReview(request, signal);
+    }
     // Would prompt from here on. A session under a refuse policy gets its
     // denial now, and no emitter ever sees the request — there is no
     // surface that could answer it.
@@ -364,7 +519,7 @@ export class ApprovalGate {
       return Promise.resolve({
         approvalId,
         approved: false,
-        reason: policy.reason,
+        reason: policy.reasonFor?.(request) ?? policy.reason,
         automatic: true,
       });
     }
@@ -399,6 +554,67 @@ export class ApprovalGate {
   }
 
   /**
+   * Whether smart approval rates `request` before it prompts. Not for a
+   * session under a prompt policy (a fusion worker): nobody would see
+   * what the reviewer let through, and its refusal posture stays.
+   */
+  private shouldReviewRisk(request: ApprovalRequest): boolean {
+    const reviewer = this.riskReviewer;
+    if (reviewer === undefined || reviewer.enabled?.() === false) return false;
+    if (this.riskReviewed.has(request.approvalId)) return false;
+    if (this.policiesBySession.has(request.sessionId)) return false;
+    return isRiskReviewEligible(request.category);
+  }
+
+  /**
+   * Step 7: a `low` verdict approves; anything else, a failure included,
+   * goes back through `request` (which re-reads the turn's declines and
+   * the level, since the review took time) and prompts with the verdict
+   * in `riskNote`.
+   */
+  private async requestAfterReview(
+    request: ApprovalRequest,
+    signal: AbortSignal | undefined,
+  ): Promise<ApprovalDecision> {
+    const reviewer = this.riskReviewer;
+    const verdict =
+      reviewer === undefined
+        ? null
+        : await runRiskReview(reviewer, { request }, signal ? { signal } : {});
+    if (signal?.aborted) {
+      throw new ApprovalGateError(
+        "approval aborted before a decision was made",
+        request.approvalId,
+      );
+    }
+    if (verdict?.risk === "low") {
+      recordAutoApproval(
+        "risk-review",
+        request.category,
+        verdict.reason.length > 0 ? `risk review: low (${verdict.reason})` : "risk review: low",
+      );
+      return {
+        approvalId: request.approvalId,
+        approved: true,
+        reason: RISK_REVIEW_LOW_REASON,
+      };
+    }
+    this.riskReviewed.add(request.approvalId);
+    try {
+      return this.request(
+        {
+          ...request,
+          riskNote: formatRiskNote(verdict),
+          ...(verdict !== null ? { riskLevel: verdict.risk } : {}),
+        },
+        signal ? { signal } : {},
+      );
+    } finally {
+      this.riskReviewed.delete(request.approvalId);
+    }
+  }
+
+  /**
    * Decide whether `request` runs without a prompt, and why. The
    * standing level wins first; a session grant is the point exception
    * checked next. `trust_config` is excluded from grants here (it is
@@ -424,6 +640,45 @@ export class ApprovalGate {
       return `auto-approved (session grant: ${request.commandShape})`;
     }
     return null;
+  }
+
+  /**
+   * The saved rule that decides `request`: the global file's rules plus
+   * the ask / deny rules of the session's project file. A store that
+   * cannot be read never blocks a request; it is as if it had no rules.
+   */
+  private matchRule(request: RuleCheck): RuleMatch | null {
+    const store = this.rules;
+    if (store === undefined) return null;
+    try {
+      const folder =
+        this.policiesBySession.get(request.sessionId)?.ruleWorkdir ?? request.workdir;
+      const workdir =
+        folder === undefined
+          ? undefined
+          : (store.canonicalDir?.(folder) ?? resolvePath(folder));
+      const rules = [
+        ...store.list(),
+        ...(workdir !== undefined ? (store.projectRules?.(workdir) ?? []) : []),
+      ];
+      if (rules.length === 0) return null;
+      return matchRules(rules, request, workdir !== undefined ? { workdir } : {});
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * What a saved rule says about a call that may never reach `request`:
+   * a fan-out scope returns before the gate, and a deny or ask rule has
+   * to stop that shortcut. Asks nothing and records nothing.
+   */
+  ruleDecisionFor(check: RuleCheck): ApprovalRuleDecision | null {
+    const workdir = check.workdir ?? currentApprovalWorkdir();
+    return (
+      this.matchRule({ ...check, ...(workdir !== undefined ? { workdir } : {}) })
+        ?.decision ?? null
+    );
   }
 
   /**
@@ -467,7 +722,7 @@ export class ApprovalGate {
         const tool = declined.targets.get(target);
         if (
           tool !== undefined &&
-          (query.category === "shell" || tool === query.tool)
+          (isShellCommandCategory(query.category) || tool === query.tool)
         ) {
           return `${tool} on ${target} (this call would change that file too)`;
         }
@@ -502,7 +757,7 @@ export class ApprovalGate {
       this.declinedBySession.set(request.sessionId, declined);
     }
     declined.calls.add(callKey(request));
-    if (request.category === "shell") return;
+    if (isShellCommandCategory(request.category)) return;
     for (const target of normaliseTargets(request.targetPaths)) {
       declined.targets.set(target, request.tool);
     }
@@ -612,6 +867,10 @@ export class ApprovalGate {
     scope: ApprovalGrantScope,
   ): void {
     if (!isGrantableCategory(request.category)) return;
+    if (scope === "always") {
+      this.saveAlwaysRule(request);
+      return;
+    }
     const grants = this.grantsForSession(request.sessionId);
     if (scope === "category") {
       grants.categories.add(request.category);
@@ -619,6 +878,24 @@ export class ApprovalGate {
     }
     if (request.category === "shell" && request.commandShape) {
       grants.shapes.add(request.commandShape);
+    }
+  }
+
+  /**
+   * Save the allow rule "Allow always" stands for, built from the pending
+   * request and scoped to its project. Without a store, or when the rule
+   * cannot be built or written, the approval stays a one-off.
+   */
+  private saveAlwaysRule(request: ApprovalRequest): void {
+    const store = this.rules;
+    if (store === undefined || request.workdir === undefined) return;
+    const project = store.canonicalDir?.(request.workdir) ?? resolvePath(request.workdir);
+    const rule = buildAlwaysRule(request, project);
+    if (rule === null) return;
+    try {
+      this.lastAlwaysRule = { approvalId: request.approvalId, rule: store.add(rule) };
+    } catch {
+      // Not saved: this call still runs, the next one asks again.
     }
   }
 
@@ -728,6 +1005,14 @@ export function canGrantCategory(request: ApprovalRequest): boolean {
  */
 export function canGrantShape(request: ApprovalRequest): boolean {
   return request.category === "shell" && Boolean(request.commandShape);
+}
+
+/**
+ * A shell command, ordinary or dangerous (`shell_dangerous`, ATO-1220):
+ * the same-turn denial rule treats both alike.
+ */
+function isShellCommandCategory(category: ApprovalCategory): boolean {
+  return category === "shell" || category === "shell_dangerous";
 }
 
 /**

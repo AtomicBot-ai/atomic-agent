@@ -17,7 +17,7 @@ process.env.ATOMIC_AGENT_STATE_DIR = home;
 after(() => rmSync(home, { recursive: true, force: true }));
 
 const require = createRequire(import.meta.url);
-const { withCliStandIn, providerModels, answeredBeforeCrash } = require("../out/main/agent-cli.js");
+const { withCliStandIn, providerModels, answeredBeforeCrash, modelsSearch, modelWindow } = require("../out/main/agent-cli.js");
 
 const ASSERTION = "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\\win\\async.c, line 76\n";
 const LIST = JSON.stringify([
@@ -60,4 +60,39 @@ test("a refused key still reads as refused", async () => {
   const res = await withCliStandIn(standIn, () => providerModels("deepseek", "openai-compatible"));
   assert.equal(res.ok, false);
   assert.equal(res.status, 401);
+});
+
+// ATO-1197: the same trick for the other two `models search` callers.
+const WINDOW_LIST = JSON.stringify([
+  { provider: "deepseek-w", id: "deepseek-v4-pro", contextWindow: 131072 },
+]) + "\n";
+
+test("the model search keeps a list printed before the agent died at exit", async () => {
+  const standIn = async (args) => args[0] === "models" && args[1] === "search"
+    ? crashedAfterList
+    : { ok: false, stdout: "", stderr: "", error: "not this" };
+  const res = await withCliStandIn(standIn, () => modelsSearch("deepseek", "deepseek"));
+  assert.equal(res.ok, true, JSON.stringify(res));
+  assert.deepEqual(res.models.map((m) => m.id), ["deepseek-v4-flash", "deepseek-v4-pro"]);
+});
+
+test("the model search still fails when nothing was printed", async () => {
+  const standIn = async () => ({ ok: false, stdout: "", stderr: ASSERTION, exitCode: 3, error: ASSERTION.trim() });
+  const res = await withCliStandIn(standIn, () => modelsSearch("deepseek", "deepseek"));
+  assert.equal(res.ok, false);
+});
+
+test("the context window is read from a list printed before the agent died at exit", async () => {
+  const standIn = async (args) => args[0] === "models" && args[1] === "search"
+    ? { ok: false, stdout: WINDOW_LIST, stderr: ASSERTION, exitCode: 3, error: ASSERTION.trim() }
+    : { ok: false, stdout: "", stderr: "", error: "not this" };
+  const win = await withCliStandIn(standIn, () => modelWindow("deepseek-w", "openai-compatible", "deepseek-v4-pro"));
+  assert.equal(win, 131072);
+});
+
+test("a context-window lookup that printed nothing stays unknown", async () => {
+  const standIn = async () => ({ ok: false, stdout: "", stderr: ASSERTION, exitCode: 3, error: ASSERTION.trim() });
+  // A provider id of its own: modelWindow memoises per (provider, model).
+  const win = await withCliStandIn(standIn, () => modelWindow("deepseek-x", "openai-compatible", "deepseek-v4-pro"));
+  assert.equal(win, null);
 });

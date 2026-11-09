@@ -1,3 +1,5 @@
+import { rememberRenderedCommand } from "../../session/rendered-command-texts.js";
+import { pluginSkillPart, setPluginPartEnabled } from "../../plugins/plugin-install.js";
 import {
   ensureUserConfigFileSync,
   getConfig,
@@ -23,6 +25,7 @@ import {
   type SkillTap,
   type StagedSkillInstall,
 } from "../../skills/index.js";
+import { listPluginCommands, renderPluginCommand } from "../../plugins/plugin-commands.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
 import type { TuiEventBus } from "../tui-app.js";
 import type { HubSkillRow } from "./skills-panel-state.js";
@@ -77,6 +80,8 @@ export class SkillsOrchestrator {
     entries: HubSkillEntry[];
     errors: Array<{ repo: string; error: string }>;
   } | null = null;
+  /** Last plugin-command listing error, so a repeating failure is reported once. */
+  private pluginCommandsError: string | null = null;
   /** Memoised ClawHub client, rebuilt when the configured apiBase changes. */
   private clawHub: { client: ClawHubClient; apiBase: string } | null = null;
 
@@ -106,6 +111,35 @@ export class SkillsOrchestrator {
     workspace.skills.assertAvailable(name);
     return `Use the ${JSON.stringify(name)} skill. Load its instructions with skill.view(${JSON.stringify({ name })}) before proceeding.`
       + (input ? `\n\n${input}` : "");
+  }
+
+  /** Render a plugin command template; the result is sent as the user's message. */
+  preparePluginCommand(name: string, args: string): string {
+    const text = renderPluginCommand(this.runtime.config.paths.stateDir, name, args);
+    rememberRenderedCommand(text, args);
+    return text;
+  }
+
+  /**
+   * Publish enabled plugin commands to the slash palette. Separate from the
+   * skill scan so a broken plugin, or a failed skill scan, never hides the
+   * other; a plugin that fails to read only loses its own commands.
+   */
+  private refreshPluginCommands(): void {
+    try {
+      const { commands } = listPluginCommands(this.runtime.config.paths.stateDir);
+      this.bus.emit({
+        type: "skills_plugin_commands_set",
+        commands: commands.map(c => ({ name: c.name, command: c.command, description: c.description,
+          ...(c.argumentHint ? { argumentHint: c.argumentHint } : {}) })),
+      });
+      this.pluginCommandsError = null;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      // Refresh runs on every palette open and every 5 s: report a failure once.
+      if (msg !== this.pluginCommandsError) this.bus.emit({ type: "runtime_info", line: `plugin commands refresh failed: ${msg}` });
+      this.pluginCommandsError = msg;
+    }
   }
 
   toggleWorkspaceSkill(name: string): void {
@@ -153,6 +187,7 @@ export class SkillsOrchestrator {
 
   /** One-off refresh — dispatched on keypress `r` and after mutations. */
   refresh(): void {
+    this.refreshPluginCommands();
     try {
       this.bus.emit({ type: "skills_refresh_started" });
       const workspace = this.workspace();
@@ -227,6 +262,17 @@ export class SkillsOrchestrator {
    */
   async setSkillDisabled(name: string, disabled: boolean): Promise<void> {
     try {
+      const pluginSkill = pluginSkillPart(name);
+      if (pluginSkill) {
+        if (!setPluginPartEnabled(this.runtime.config.paths.stateDir, pluginSkill.plugin, pluginSkill.part, !disabled)) {
+          throw new Error(`plugin not installed: ${pluginSkill.plugin}`);
+        }
+        this.bus.emit({ type: "skills_toggle_settled", name, disabled });
+        this.bus.emit({ type: "runtime_info", line: disabled ? `skill disabled: ${name}` : `skill enabled: ${name}` });
+        await this.runtime.refreshSkills();
+        this.refresh();
+        return;
+      }
       const path = this.runtime.config.paths.userConfigFile;
       const file = ensureUserConfigFileSync(path);
       const current = new Set(file.skills.disabled);

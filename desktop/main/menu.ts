@@ -70,6 +70,9 @@ export function menuTemplate(
       submenu: [
         item("New Session", "session:new", "CommandOrControl+N"),
         sep,
+        // ATO-532: the composer's window picker (renderer/window-snapshot.js); no chord.
+        item("Attach App Window…", "attach:window"),
+        sep,
         item("Open Workspace…", "workspace:choose", "Shift+CommandOrControl+O"),
         sep,
         { role: "close" },

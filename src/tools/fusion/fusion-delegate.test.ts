@@ -1645,3 +1645,256 @@ describe("fusion.delegate — contract inputs (F51)", () => {
     expect(log).toHaveLength(6);
   });
 });
+
+describe("fusion.delegate models by role (ATO-943)", () => {
+  const roles: NonNullable<ResolvedRunMode["roles"]> = {
+    byRole: {
+      build: { providerId: "or-coder", model: "qwen-coder", local: false },
+      utility: { providerId: "local-llama", model: "small", local: true },
+      review: { providerId: "or-sonnet", model: "sonnet", local: false },
+    },
+    mixLocalModels: false,
+    localLegProviderIds: ["local-llama"],
+  };
+  const affine = (providerId: string): boolean =>
+    providerId === "local-llama" || providerId === "other-llama";
+
+  it("runs each task on its role's model and says so on the row", async () => {
+    const pins = new Map<string, string | undefined>();
+    const result = await buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () => fusionMode({ roles }),
+        workerSupportsSlotAffinity: affine,
+        runTurn: async (session, _msg, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          pins.set(meta.taskId, options.providerId);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "b", instructions: "build it", role: "build" },
+          { id: "u", instructions: "rename", role: "utility" },
+          { id: "d", instructions: "plain" },
+          { id: "m", instructions: "check", model: "sonnet" },
+        ],
+      },
+      ctx(),
+    );
+    expect(result.status).toBe("ok");
+    expect(Object.fromEntries(pins)).toEqual({
+      b: "or-coder",
+      u: "local-llama",
+      d: "local-llama",
+      m: "or-sonnet",
+    });
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows.map((r) => r.id)).toEqual(["b", "u", "d", "m"]);
+    expect(rows[0]).toMatchObject({ model: "qwen-coder", modelRole: "build" });
+    expect(rows[0]!.notes).toContain("ran on qwen-coder (role build)");
+    expect(rows[1]).toMatchObject({ model: "small", modelRole: "utility" });
+    expect(rows[2]).toMatchObject({ model: "small" });
+    expect(rows[3]).toMatchObject({ model: "sonnet" });
+  });
+
+  it("refuses a model that is not on the allowed list before any worker starts", async () => {
+    const runTurn = vi.fn(async () => turnResult());
+    const result = await buildFusionDelegateTool(
+      deps({ resolveRunMode: () => fusionMode({ roles }), runTurn }),
+    ).run(
+      { tasks: [{ id: "x", instructions: "go", model: "gpt-9" }] },
+      ctx(),
+    );
+    expect(result.status).toBe("error");
+    expect(result.summary).toContain('names model "gpt-9"');
+    expect(result.summary).toContain("`qwen-coder`");
+    expect(runTurn).not.toHaveBeenCalled();
+  });
+
+  it("keeps a second local model off the machine unless mixLocalModels says it fits", async () => {
+    const twoLocal: NonNullable<ResolvedRunMode["roles"]> = {
+      ...roles,
+      byRole: {
+        utility: { providerId: "other-llama", model: "tiny-8b", local: true },
+      },
+    };
+    const run = async (mode: ResolvedRunMode) => {
+      const pins: Array<string | undefined> = [];
+      const result = await buildFusionDelegateTool(
+        deps({
+          resolveRunMode: () => mode,
+          workerSupportsSlotAffinity: affine,
+          runTurn: async (_s, _m, options) => {
+            pins.push(options.providerId);
+            return turnResult();
+          },
+        }),
+      ).run({ tasks: [{ id: "u", instructions: "tidy", role: "utility" }] }, ctx());
+      return { pins, row: (result.details.tasks as WorkerTaskResult[])[0]! };
+    };
+    const guarded = await run(fusionMode({ roles: twoLocal }));
+    expect(guarded.pins).toEqual(["local-llama"]);
+    expect(guarded.row.notes?.join("\n")).toContain("mixLocalModels");
+    const mixed = await run(
+      fusionMode({ roles: { ...twoLocal, mixLocalModels: true } }),
+    );
+    expect(mixed.pins).toEqual(["other-llama"]);
+  });
+
+  it("without roles runs everything on the worker leg and leaves the rows as before", async () => {
+    const pins: Array<string | undefined> = [];
+    const result = await buildFusionDelegateTool(
+      deps({
+        runTurn: async (_s, _m, options) => {
+          pins.push(options.providerId);
+          return turnResult();
+        },
+      }),
+    ).run(
+      {
+        tasks: [
+          { id: "a", instructions: "one", role: "build" },
+          { id: "b", instructions: "two" },
+        ],
+      },
+      ctx(),
+    );
+    expect(pins).toEqual(["local-llama", "local-llama"]);
+    for (const row of result.details.tasks as WorkerTaskResult[]) {
+      expect(row).not.toHaveProperty("model");
+      expect((row.notes ?? []).join("\n")).not.toMatch(/ran on|role /);
+    }
+  });
+});
+
+describe("fusion.delegate — task tree (ATO-940)", () => {
+  const PROPOSAL =
+    "Too big for one worker.\n```split_proposal\n" +
+    JSON.stringify({
+      reason: "two parts",
+      tasks: [
+        { id: "a", title: "Part A", instructions: "Write part A" },
+        { id: "b", title: "Part B", instructions: "Write part B" },
+      ],
+    }) +
+    "\n```";
+
+  /** t1 proposes a split; everything else replies "done". */
+  function scripted(briefs: string[]): FusionDelegateDeps["runTurn"] {
+    return async (_session, userMessage, options) => {
+      briefs.push(userMessage);
+      const text =
+        userMessage.includes("Write part A") || userMessage.includes("Write part B")
+          ? "part written"
+          : userMessage.includes("Do one")
+            ? PROPOSAL
+            : "done";
+      options.eventHook?.({
+        type: "llm_event",
+        event: { type: "assistant_reply", text },
+      });
+      return turnResult();
+    };
+  }
+
+  it("is the flat fan-out when the flag is off: a proposal is just a reply", async () => {
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(deps({ runTurn: scripted(briefs) }));
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(briefs).toHaveLength(2);
+    expect(briefs.some((b) => b.includes("If this task is too big"))).toBe(false);
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]).toMatchObject({ id: "t1", status: "ok" });
+    expect(rows[0]?.reply).toContain("```split_proposal");
+    expect(result.details.taskTree).toBeUndefined();
+    expect(result.summary).not.toContain("Task tree:");
+  });
+
+  it("dispatches the proposed subtasks under their parent and returns the tree", async () => {
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: scripted(briefs),
+        resolveRunMode: () =>
+          fusionMode({ taskTree: { maxDepth: 2, maxNodes: 24 } }),
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    // t1, t2, then t1's two children.
+    expect(briefs).toHaveLength(4);
+    expect(briefs[0]).toContain("If this task is too big");
+    const childBriefs = briefs.filter((b) => b.includes("Write part"));
+    expect(childBriefs).toHaveLength(2);
+    for (const brief of childBriefs) {
+      expect(brief).toContain("Part of a larger task");
+      // Depth 2 is the limit: a child is not offered a split of its own.
+      expect(brief).not.toContain("If this task is too big");
+    }
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows.map((r) => r.id)).toEqual(["t1", "t2"]);
+    expect(rows[0]?.status).toBe("ok");
+    expect(rows[0]?.reply).toContain("Split by the worker into 2 subtasks (two parts)");
+    expect(rows[0]?.reply).toContain("[t1/a] ok");
+    const tree = result.details.taskTree as {
+      nodes: number;
+      splits: number;
+      roots: Array<{ id: string; children: Array<{ id: string; depth: number }> }>;
+    };
+    expect(tree.nodes).toBe(4);
+    expect(tree.splits).toBe(1);
+    expect(tree.roots.map((r) => r.id)).toEqual(["t1", "t2"]);
+    expect(tree.roots[0]?.children).toMatchObject([
+      { id: "t1/a", depth: 2 },
+      { id: "t1/b", depth: 2 },
+    ]);
+    expect(result.summary).toContain("Task tree: 1 task split by their workers");
+  });
+
+  it("runs the children on the model their parent ran on", async () => {
+    const pins = new Map<string, string | undefined>();
+    const roles: NonNullable<ResolvedRunMode["roles"]> = {
+      byRole: { build: { providerId: "or-coder", model: "qwen-coder", local: false } },
+      mixLocalModels: false,
+      localLegProviderIds: ["local-llama"],
+    };
+    const script = scripted([]);
+    const tool = buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () =>
+          fusionMode({ roles, taskTree: { maxDepth: 2, maxNodes: 24 } }),
+        runTurn: async (session, message, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          pins.set(meta.taskId, options.providerId);
+          return script(session, message, options);
+        },
+      }),
+    );
+    await tool.run(
+      { tasks: [{ id: "t1", title: "One", instructions: "Do one", role: "build" }] },
+      ctx(),
+    );
+    expect(Object.fromEntries(pins)).toEqual({
+      t1: "or-coder",
+      "t1/a": "or-coder",
+      "t1/b": "or-coder",
+    });
+  });
+
+  it("refuses a proposal past the node cap and leaves the task to the orchestrator", async () => {
+    const briefs: string[] = [];
+    const tool = buildFusionDelegateTool(
+      deps({
+        runTurn: scripted(briefs),
+        resolveRunMode: () =>
+          fusionMode({ taskTree: { maxDepth: 2, maxNodes: 3 } }),
+      }),
+    );
+    const result = await tool.run({ tasks: TASKS }, ctx());
+    expect(briefs).toHaveLength(2);
+    const rows = result.details.tasks as WorkerTaskResult[];
+    expect(rows[0]?.status).toBe("needs_orchestrator");
+    expect(rows[0]?.error).toMatch(/split proposal refused: .*limit is 3/);
+    expect(result.details.taskTree).toMatchObject({ splits: 0, rejected: 1, nodes: 2 });
+  });
+});

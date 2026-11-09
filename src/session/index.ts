@@ -15,6 +15,8 @@ export {
   turnOwnerFor,
 } from "./turn-owner.js";
 export type { TurnOwner, TurnOwnerProbe } from "./turn-owner.js";
+export { parseTurnProgress, serializeTurnProgress } from "./turn-progress.js";
+export type { TurnProgress, TurnResumeOptions } from "./turn-progress.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
 export type {
   PruneSessionsOptions,
@@ -88,6 +90,13 @@ export type {
   ContextUsageState,
   ContextUsageSection,
 } from "./context-usage.js";
+export {
+  EMPTY_SESSION_USAGE,
+  SessionUsageLedger,
+  formatUsageReport,
+  usageStatusParts,
+} from "./usage-meter.js";
+export type { SessionUsageState, LimitReading } from "./usage-meter.js";
 export {
   SESSION_LLM_METADATA_KEY,
   readSessionLlmStamp,

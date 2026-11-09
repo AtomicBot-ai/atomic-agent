@@ -11,6 +11,10 @@ Gemma-thinking uses a system turn containing `<|think|>` and ends at the model-t
 
 Thinking=off on a hand-built Qwen prompt uses its explicit disabled marker and plain grammar. Gemma has no equivalent marker in this path. The server-template path separately passes the template switch when supported; auto selects templating for plain-instruct profiles.
 
+## Detection
+
+`detectModelProfile` reads `/props`. A template that writes the full Gemma 4 thinking framing (`<|turn>system`, `<|think|>`, `<|turn>model` and `<|channel>thought`) resolves `gemma4-think` whatever the model is called, before any name-gated branch: Gemma 4 fine-tunes ship under other names (Nemotron 3.5 Bolt E4B). The ChatML `<think>` profiles stay name-gated (qwen/qwq/deepseek-r1, nemotron), because many unrelated templates mention `<think>`. Names are the served alias plus the file name from `model_path`, so the managed daemon (catalog id alias) and an external server (path or custom alias) resolve the same GGUF alike.
+
 ## Bounds and wire contract
 
 ReasoningBudgetTokens defaults to 0 (unbounded) since config v78; the grammar body uses an approximately four-characters-per-token bound. Zero retains the unbounded variant. Whitespace between the reasoning-close sentinel and array is bounded. Forced terminal steps use the unbounded reasoning variant. Preserve these distinctions in grammar, unary parsing, streaming and repair prompts.

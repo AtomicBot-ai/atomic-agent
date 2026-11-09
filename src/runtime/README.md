@@ -12,6 +12,7 @@ This area owns runtime assembly and ownership. Read [AGENTS.md](AGENTS.md) befor
 - [composition/README.md](composition/README.md): internal construction phases and component owners.
 - [turn-controller.ts](turn-controller.ts)
 - [steering-inbox.ts](steering-inbox.ts)
+- [turn-checkpoints.ts](turn-checkpoints.ts)
 - [llm-fallback-seam.ts](llm-fallback-seam.ts)
 - [session-workspace.ts](session-workspace.ts): per-session cloud preparation; [workspace contract](docs/cloud-workspace.md).
 

@@ -2,6 +2,8 @@ import { describeReason } from "./describe-reason.js";
 import type { FailedAttempt } from "./failed-attempts.js";
 import type { ResolvedFallbackChain } from "./fallback-config.js";
 import { falloverCause } from "./link-failure-kind.js";
+import { classifyFailureCause } from "../reliability/classify-failure-cause.js";
+import type { FailureCauseId } from "../reliability/failure-catalog.js";
 import {
   logFallbackAdvance,
   type FallbackLogger,
@@ -29,6 +31,12 @@ export interface ProviderSwitchNotice {
    * text is cut short and can read a rate limit as billing; this cannot.
    */
   cause?: "billing" | "auth" | "other";
+  /**
+   * The failure-catalog cause of the error behind an "away"
+   * (`classifyFailureCause`), for the plain "switched to" sentence
+   * (`falloverSentence`, ATO-483).
+   */
+  failure?: FailureCauseId;
 }
 
 /** What `pickProvider` decided for the turn about to run. */
@@ -288,6 +296,7 @@ export class ProviderFallbackChain {
         to: toId,
         reason: describeReason(err),
         ...(cause !== undefined ? { cause } : {}),
+        failure: classifyFailureCause(err).cause,
       });
     }
   }

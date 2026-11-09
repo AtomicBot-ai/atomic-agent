@@ -63,6 +63,7 @@ export {
   composioConfigWrite,
   composioStep,
   debugReportSaved,
+  overnightStarted,
   skillAction,
   skillInstalled,
   taskAction,

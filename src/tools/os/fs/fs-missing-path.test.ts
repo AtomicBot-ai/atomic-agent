@@ -139,11 +139,14 @@ describe("read-class tools on a missing path", () => {
 
   beforeEach(async () => {
     base = await mkdtemp(join(tmpdir(), "atomic-fs-missing-"));
-    work = join(base, "work");
+    // Two folders between it and the shared temp folder: the search lists a
+    // level or two above the working folder, and a temp folder crowded by
+    // other runs would use up its entry budget before it got to `projects`.
+    work = join(base, "outer", "inner", "work");
     await mkdir(join(work, "projects", "backlinks_demo"), { recursive: true });
     await writeFile(join(work, "projects", "notes.txt"), "secret body");
-    // A missing path inside a temp folder: the search lists the working
-    // folder and a level or two above it, never the real home folder.
+    // A missing path inside a temp folder: the search never reaches the
+    // real home folder.
     ctx = {
       workingDir: work,
       sessionId: "s-missing-path",

@@ -1,1 +1,1 @@
-export { buildToolViewTool } from "./tool-view.js";
+export { buildToolViewTool, type ToolViewDeps } from "./tool-view.js";

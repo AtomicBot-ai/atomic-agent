@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -45,6 +45,96 @@ describe("app_installed / analytics_disabled", () => {
       install_channel: "curl_sh",
       other_surface_installed: true,
     });
+  });
+
+  it("terminal first, then desktop: two app_installed, then none on restart (ATO-1227)", async () => {
+    const file = join(dir, "analytics.json");
+    const client = fakeClient();
+
+    // Terminal installs first.
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      installChannel: "curl_sh",
+      surface: "tui",
+    });
+    // Then the desktop, sharing the same folder and file.
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      installChannel: "dmg",
+      surface: "desktop",
+    });
+    expect(client.captureConfirmed).toHaveBeenCalledTimes(2);
+    expect(client.captureConfirmed).toHaveBeenNthCalledWith(
+      1,
+      ANALYTICS_EVENTS.appInstalled,
+      { install_channel: "curl_sh", other_surface_installed: false },
+    );
+    expect(client.captureConfirmed).toHaveBeenNthCalledWith(
+      2,
+      ANALYTICS_EVENTS.appInstalled,
+      { install_channel: "dmg", other_surface_installed: true },
+    );
+
+    // Restart both: nothing new.
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      surface: "tui",
+    });
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      surface: "desktop",
+    });
+    expect(client.captureConfirmed).toHaveBeenCalledTimes(2);
+  });
+
+  it("desktop first, then terminal: the terminal reports other_surface_installed", async () => {
+    const file = join(dir, "analytics.json");
+    const client = fakeClient();
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      surface: "desktop",
+    });
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      surface: "cli",
+    });
+    expect(client.captureConfirmed).toHaveBeenNthCalledWith(
+      2,
+      ANALYTICS_EVENTS.appInstalled,
+      { other_surface_installed: true },
+    );
+  });
+
+  it("an old state file with only appInstalledSent still lets the desktop report once", async () => {
+    const file = join(dir, "analytics.json");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        installId: "11111111-2222-4333-8444-555555555555",
+        appInstalledSent: true,
+        firstMessageSent: true,
+      }),
+      "utf8",
+    );
+    const client = fakeClient();
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      surface: "desktop",
+    });
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      surface: "desktop",
+    });
+    await captureAppInstalled(client, new AnalyticsStateStore(file), {
+      surface: "tui",
+    });
+    expect(client.captureConfirmed).toHaveBeenCalledTimes(1);
+    expect(client.captureConfirmed).toHaveBeenCalledWith(
+      ANALYTICS_EVENTS.appInstalled,
+      { other_surface_installed: true },
+    );
+  });
+
+  it("an undelivered desktop app_installed leaves the flag unset", async () => {
+    const file = join(dir, "analytics.json");
+    const offline = fakeClient();
+    offline.captureConfirmed.mockResolvedValue(false);
+    await captureAppInstalled(offline, new AnalyticsStateStore(file), {
+      surface: "desktop",
+    });
+    expect(new AnalyticsStateStore(file).isAppInstalledSent("desktop")).toBe(false);
   });
 
   it("analytics_disabled carries via and days_since_install for a fresh install", () => {

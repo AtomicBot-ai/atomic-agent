@@ -24,6 +24,16 @@ export type ApprovalCategory =
   | "fs_trash"
   | "http"
   | "shell"
+  /**
+   * A shell command the guard's dangerous layer matched (`dangerous.*`
+   * in `rules-dangerous.ts`): `rm -rf`, `git reset --hard`, a force
+   * push, `sudo`, `bash -c`, `eval` and the like. Its own category so
+   * that a `shell` grant (`[s]`, "Allow in this chat") or a shape grant
+   * on `git` never silences one: each risky command is asked about when
+   * it happens. Never granted for the session, and silent only at full
+   * trust (ATO-1220).
+   */
+  | "shell_dangerous"
   | "script"
   | "proc_kill"
   | "git_remote"
@@ -112,6 +122,13 @@ export type ApprovalCategory =
    * reverse; never granted for the session, like `email`.
    */
   | "local_model_restart"
+  /**
+   * A hook's `ask`: its author wants a person to look at this call. Its
+   * own category so that a session grant on anything else cannot answer
+   * it and the smart reviewer never sees it; a saved rule's `ask` works
+   * the same way.
+   */
+  | "hook_ask"
   | "other";
 
 /**
@@ -125,7 +142,8 @@ export type ApprovalCategory =
  *    moves to Trash, archive extraction, HTTP requests (the SSRF guard
  *    is not part of the gate and stays on), paid cloud generation,
  *    browser navigation outside `browser.allowedDomains`, screenshots.
- *  - level 4 (operator): guarded shell commands, skill scripts,
+ *  - level 4 (operator): guarded shell commands (not the dangerous
+ *    ones, `shell_dangerous`, which wait for level 5), skill scripts,
  *    process kills, screen control (mouse and keyboard), and network git (`os.git.{push,pull,fetch,clone}`
  *    plus adding a remote) — the same rung as a guarded `git push`
  *    through the shell, so the dedicated tools are never looser or
@@ -159,6 +177,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   publish: 4,
   git_remote: 4,
   fusion_fanout: 4,
+  shell_dangerous: 5,
   browser_commit: 4,
   screen_control: 4,
   browser_nonweb: 5,
@@ -168,6 +187,7 @@ const AUTO_APPROVE_FROM_LEVEL: Record<ApprovalCategory, ApprovalLevel> = {
   email: 5,
   fs_read_outside: 5,
   local_model_restart: 5,
+  hook_ask: 5,
   other: 5,
 };
 
@@ -215,6 +235,9 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   fs_trash: true,
   http: true,
   shell: true,
+  // `rm -rf`, `git reset --hard`, `sudo`: each one is its own decision.
+  // A `shell` or `[a]` grant never reaches this category either.
+  shell_dangerous: false,
   script: true,
   proc_kill: true,
   // Grantable, but only by its own name: an operator who answers
@@ -254,6 +277,8 @@ const GRANTABLE_CATEGORY: Record<ApprovalCategory, boolean> = {
   screen_capture: true,
   // Each out-of-memory restart is asked about when it happens.
   local_model_restart: false,
+  // A hook that asks for a person asks every time.
+  hook_ask: false,
   other: true,
 };
 
@@ -274,6 +299,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   fs_trash: "move to Trash",
   http: "HTTP request",
   shell: "shell command",
+  shell_dangerous: "dangerous shell command",
   script: "skill script",
   proc_kill: "process kill",
   publish: "publish · GitHub",
@@ -291,6 +317,7 @@ export const APPROVAL_CATEGORY_LABELS: Record<ApprovalCategory, string> = {
   screen_control: "screen · click / type",
   screen_capture: "screen · screenshot",
   local_model_restart: "local model · restart",
+  hook_ask: "hook · confirm",
   other: "uncategorised",
 };
 

@@ -248,6 +248,8 @@ export function loadConfig(): AtomicAgentConfig {
       toolTimeoutMs: user.agent.toolTimeoutMs,
       readScope: user.agent.readScope,
       approvalLevel: user.agent.approvalLevel,
+      smartApproval: user.agent.smartApproval,
+      smartApprovalModel: user.agent.smartApprovalModel,
       stablePrefixHashSalt:
         readEnv("ATOMIC_AGENT_STABLE_PREFIX_SALT") ??
         ENV_DEFAULTS.STABLE_PREFIX_SALT,
@@ -258,6 +260,8 @@ export function loadConfig(): AtomicAgentConfig {
       conversationLowWater: user.agent.conversationLowWater,
       sessionSectionsMaxTokens: user.agent.sessionSectionsMaxTokens,
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
+      prompt: user.agent.prompt,
+      ...(user.agent.tools ? { tools: user.agent.tools } : {}),
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
         ENV_DEFAULTS.LOADED_TOOLS_CAP,
@@ -336,6 +340,7 @@ export function loadConfig(): AtomicAgentConfig {
         2,
         1_000,
       ),
+      replyPolish: readBool("ATOMIC_AGENT_REPLY_POLISH", true),
     },
     browser: {
       enabled: readBool(
@@ -406,7 +411,7 @@ export function loadConfig(): AtomicAgentConfig {
         maxJobs: user.tools.shell.maxJobs,
         envPassthrough: [...user.tools.shell.envPassthrough],
       },
-      screen: { enabled: user.tools.screen.enabled },
+      screen: { enabled: user.tools.screen.enabled, point: user.tools.screen.point },
     },
     log: { level: logLevel },
     tasks: {
@@ -453,6 +458,25 @@ export function loadConfig(): AtomicAgentConfig {
       minIntervalMs: readInt(
         "ATOMIC_AGENT_TASKS_MIN_INTERVAL_MS",
         ENV_DEFAULTS.TASKS_MIN_INTERVAL_MS,
+      ),
+      report: {
+        quietHours: readEnv("ATOMIC_AGENT_TASKS_REPORT_QUIET_HOURS") ?? null,
+      },
+    },
+    statusSnapshot: {
+      everySteps: Math.max(
+        0,
+        readInt(
+          "ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_STEPS",
+          ENV_DEFAULTS.STATUS_SNAPSHOT_EVERY_STEPS,
+        ),
+      ),
+      everyMs: Math.max(
+        0,
+        readInt(
+          "ATOMIC_AGENT_STATUS_SNAPSHOT_EVERY_MS",
+          ENV_DEFAULTS.STATUS_SNAPSHOT_EVERY_MS,
+        ),
       ),
     },
     update: {
@@ -604,6 +628,7 @@ export function loadConfig(): AtomicAgentConfig {
       theme: user.tui.theme,
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
+      showSteps: user.tui.showSteps,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {

@@ -43,7 +43,7 @@ const ANX_ACTS = (() => {
     return {
       // chat, sessions and the window
       close:L, palette:{slash:L, theme:L}, shortcuts:L, context:L, modes:L, send:L, stop:L, retry:L,
-      clear:L, dump:L, report:L, 'help.report':L, tools:L, restart:L, quit:L, about:L, update:L,
+      attach:{window:L}, clear:L, dump:L, report:L, 'help.report':L, tools:L, restart:L, quit:L, about:L, update:L,
       workspace:{choose:L}, analytics:L, steer:L, onboarding:{choose:L, openNow:L}, voice:{add:L, dismiss:L, lang:L, pick:L, reset:L, settings:L},
       session:{new:L, switch:L, id:L}, ses:L, pin:L, unpin:L, unread:L, read:L, del:L, delask:L, sesmenu:L, rename:L,
       // ATO-1034: chat folders; the folder and chat ids after the verb are cut off.
@@ -74,6 +74,8 @@ const ANX_ACTS = (() => {
       skills:{auto:L, back:L, card:L, cardScroll:UPDOWN, detail:L, filter:set(skillFilters), hub:L,
         hubPage:UPDOWN, hubSearch:L, install:L, installAck:L, installCancel:L, page:UPDOWN,
         rebrowse:L, refresh:L, remove:L, removeCancel:L, removeConfirm:L, search:L, toggle:L, tools:L},
+      // ATO-954: Settings › Plugins (renderer/plugins-pane.js); the plugin and part names are cut off.
+      plugins:{refresh:L, expand:L, toggle:L, part:L, code:L, codeConfirm:L, codeCancel:L, remove:L, removeConfirm:L, removeCancel:L},
       memory:{auto:L, back:L, ch:set(memChannels), cycle:L, expand:L, filter:set(memFilters), jump:L,
         neighbor:L, open:L, page:UPDOWN, refresh:L},
       tasks:{auto:L, back:L, cancel:L, cancelConfirm:L, cancelKeep:L, clearSearch:L, detail:L,

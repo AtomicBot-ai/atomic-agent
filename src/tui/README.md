@@ -37,6 +37,7 @@ This area owns terminal interface. Read [AGENTS.md](AGENTS.md) before changing i
 - [Integrations hub](integrations/README.md)
 - [Telegram setup adapter](telegram/README.md)
 - [Swarm management](swarm/README.md)
+- [Plugins panel](plugins/README.md)
 
 ## Ownership and dependencies
 
@@ -63,5 +64,7 @@ Root terminal detection/restoration/output, turn/session attribution, provider-o
 Context maintenance commands are `/compact` and `/compact show`. They use the common menu registry and runtime control inbox, including during a running turn. See [context compaction](../runtime/docs/compaction.md).
 
 Compaction has a session-scoped live indicator: queued requests wait visibly for the current step, running summaries show a spinner, elapsed time and source token estimate, including between turns. The stop button cancels the operation; between turns Esc and Ctrl+C also cancel it, respecting overlay/selection precedence. Switching chats retains each chat's activity without mixing notices or changing agent turn status. [Live integration tests](context/compaction-live.test.tsx) exercise typed commands, queuing, completion, summary viewing and mouse cancellation against the real runtime with scripted model responses.
+
+`/goal <criteria>` sets a goal on the open chat and starts working on it ([goal mode](../agent/goal/README.md)): criteria one per line or split by `;`, a `check: <cmd>` item is a shell check. `/goal check add <cmd>`, `/goal check clear`, `/goal status`, `/goal pause|resume|clear` act on it; parsing is [goal-command.ts](commands/goal-command.ts) and the decisions [goal-commands.ts](goal/goal-commands.ts). While the chat's goal is active every message runs goal rounds; the status bar shows `Goal: 3/5 criteria green · round 2/10` and each evaluation leaves a line in the chat.
 
 `/enhance <text>` is opt-in prompt refinement: the draft goes straight back into the composer, the runtime runs one rewrite pass ([prompt-enhancer.ts](../runtime/prompt-enhancer.ts), its own `enhance:` fallback partition, output bound and 60 s deadline, aborted on shutdown), and the rewrite replaces the draft only if it was not edited meanwhile. Bare `/enhance` from the menu enhances the draft already in the composer; typed or picked from the palette it prints usage and clears only the command itself. Sending, Esc, switching or starting a session cancels a running pass. Nothing is sent; on failure the draft stays and a composer notice says why.

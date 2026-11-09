@@ -53,3 +53,17 @@ export function persistUserTuiMouse(mouse: boolean): void {
   writeUserConfigFileSync(path, validated);
   resetConfigCache();
 }
+
+/**
+ * Persist "always show steps" into `tui.showSteps` (ATO-963). Same read →
+ * merge → validate → write → reset cycle as the theme; the live
+ * `TuiState.showSteps` flip is the caller's job.
+ */
+export function persistUserTuiShowSteps(showSteps: boolean): void {
+  const path = getConfig().paths.userConfigFile;
+  const prev = ensureUserConfigFileSync(path);
+  const draft = { ...prev, tui: { ...prev.tui, showSteps } };
+  const validated = parseUserConfigFile(draft);
+  writeUserConfigFileSync(path, validated);
+  resetConfigCache();
+}

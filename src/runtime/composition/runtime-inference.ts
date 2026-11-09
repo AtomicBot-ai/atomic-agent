@@ -13,6 +13,8 @@ import { sanitizeModelAlias } from "../../analytics/index.js";
 import { completionUsageForTurn, type TurnUsageMeter } from "../../analytics/index.js";
 import type { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import type { ResolvedModel } from "../../llm/provider/model-resolver.js";
+import type { SessionUsageLedger } from "../../session/usage-meter.js";
+import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { LearnedContextWindows } from "../learned-context-windows.js";
 import { resolveVisionProvider, visionRouteAvailable } from "../vision-route.js";
@@ -242,6 +244,8 @@ export function connectRuntimeFallback(
     profileManager: RuntimeConnectedLocalProfile["profileManager"];
     costAccumulator: CostAccumulator | undefined;
     turnUsageMeter: TurnUsageMeter;
+    /** Session spend and account limits for the composer readout (ATO-569). */
+    sessionUsage?: SessionUsageLedger;
     resolveModelPricing: RuntimeModelContext["resolveModelPricing"];
     resolveCatalogContextWindow?: RuntimeModelContext["resolveCatalogContextWindow"];
   },
@@ -254,7 +258,35 @@ export function connectRuntimeFallback(
     costAccumulator,
     turnUsageMeter,
     resolveModelPricing,
+    sessionUsage,
   } = deps;
+  // Fold one completion into its session's spend and the account's
+  // limit readings (ATO-569). A local link is never priced; a cloud call
+  // with no usage block and no limits has nothing to say.
+  const recordSessionUsage = (
+    sessionId: string | undefined,
+    result: CompletionResult,
+    servedProviderId: string,
+    metered: boolean,
+    model: ResolvedModel | undefined,
+  ): void => {
+    if (!sessionUsage || !sessionId) return;
+    if (!metered && !result.rateLimits?.length) return;
+    const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === servedProviderId);
+    sessionUsage.record(sessionId, {
+      providerId: servedProviderId,
+      modelId: result.modelId,
+      ...(result.usage ? { usage: result.usage } : {}),
+      ...(model ? { model } : {}),
+      // A local server under another kind (LM Studio, Ollama, a
+      // llama.cpp behind the OpenAI-compatible entry) bills nothing too.
+      local:
+        metered &&
+        (entry === undefined || entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url)),
+      plan: entry?.kind === "subscription-cli",
+      ...(result.rateLimits ? { rateLimits: result.rateLimits } : {}),
+    });
+  };
   // Fold a unary completion's usage into cost + meter. Lifted out of the
   // seam so the fallback loop + `servedTransport` stamp live in the
   // testable `llm-fallback-seam` module (which knows nothing about cost
@@ -272,8 +304,12 @@ export function connectRuntimeFallback(
     // A local llama-server sends no usage block; its timings still count
     // toward the turn's tokens (the meter only), but are never priced.
     const metered = completionUsageForTurn(result);
-    if (!metered) return;
+    if (!metered) {
+      recordSessionUsage(params.sessionId, result, servedProviderId, false, undefined);
+      return;
+    }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    recordSessionUsage(params.sessionId, result, servedProviderId, true, model);
     if (costAccumulator && result.usage) {
       costAccumulator.recordTurn({
         modelId: result.modelId,
@@ -297,8 +333,24 @@ export function connectRuntimeFallback(
   ): void => {
     if (sessionId) turnUsageMeter.recordServed(sessionId, servedProviderId);
     const metered = completionUsageForTurn(result);
-    if (!metered || !sessionId) return;
+    if (!metered) {
+      recordSessionUsage(sessionId, result, servedProviderId, false, undefined);
+      return;
+    }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    // ATO-1289: most chat turns stream, so the cost accumulator must see
+    // a streamed completion exactly as it sees a unary one (same gate,
+    // no session required) — otherwise `costTracking` only ever counts
+    // the few non-streamed calls.
+    if (costAccumulator && result.usage) {
+      costAccumulator.recordTurn({
+        modelId: result.modelId,
+        usage: result.usage,
+        ...(model ? { model } : {}),
+      });
+    }
+    if (!sessionId) return;
+    recordSessionUsage(sessionId, result, servedProviderId, true, model);
     turnUsageMeter.record({
       sessionId,
       usage: metered,

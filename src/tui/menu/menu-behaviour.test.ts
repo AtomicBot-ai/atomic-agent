@@ -73,6 +73,7 @@ describe("menu rows", () => {
     expect(labels).toEqual([
       "Tasks",
       "Skills",
+      "Plugins",
       "Memory",
       "MCP",
       "Integrations",

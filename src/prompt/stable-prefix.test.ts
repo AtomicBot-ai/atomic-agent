@@ -141,3 +141,49 @@ describe("the run-commands-yourself line (ATO-1252)", () => {
     }
   });
 });
+
+/**
+ * ATO-558. In search mode (the catalog carries `tool.search`) the extras
+ * header, the rules sentence and the persona's extras hint name
+ * `tool.search` first; `tool.view` still loads by exact name. Without
+ * `tool.search` the prefix is unchanged.
+ */
+describe("search mode text (ATO-558)", () => {
+  const view = { name: "tool.view", summary: "Load the full args of a rare tool.", argsSchema: "{ name: string }" };
+  const search = { name: "tool.search", summary: "Find a tool by what it does.", argsSchema: "{ query: string }" };
+  const git = { name: "os.git.status", summary: "Git status.", argsSchema: "{ repo?: string }", tier: "rare" as const };
+  const build = (searchOn: boolean, compact: boolean, toolTransport: "grammar" | "native_tools") =>
+    buildStablePrefix({
+      toolDescriptors: searchOn ? [view, search, git] : [view, git],
+      capabilities: CAPS,
+      skillCatalog: [],
+      toolTransport,
+      compact,
+    });
+
+  it("points the extras header, the rules and the persona at tool.search, in both scaffolds and transports", () => {
+    for (const compact of [false, true]) {
+      for (const transport of ["grammar", "native_tools"] as const) {
+        const on = build(true, compact, transport);
+        const id = `${compact ? "compact" : "full"} ${transport}`;
+        expect(on, id).toContain('# extras (one-line; find one with `tool.search` { query: "<what it should do>" }, or load one by exact name with `tool.view` { name: "<tool>" })');
+        expect(on, id).not.toContain('use `tool.view` { name: "<tool>" } for full schema');
+        expect(on, id).not.toContain("Rare tool? `tool.view` first.");
+        expect(on, id).not.toContain("Tools under `# extras` need `tool.view` before");
+        expect(on, id).not.toContain("Summaries in `# extras` list rare tools; call `tool.view`");
+        expect(on.split("### tools")[0], id).toContain("`tool.search`");
+      }
+    }
+  });
+
+  it("leaves the prefix untouched without tool.search", () => {
+    for (const compact of [false, true]) {
+      const off = build(false, compact, "grammar");
+      expect(off).toContain('# extras (one-line; use `tool.view` { name: "<tool>" } for full schema)');
+      expect(off).not.toContain("tool.search");
+    }
+    expect(build(false, false, "grammar")).toContain("Rare tool? `tool.view` first.");
+    expect(build(false, false, "grammar")).toContain("Summaries in `# extras` list rare tools; call `tool.view`");
+    expect(build(false, true, "grammar")).toContain("Tools under `# extras` need `tool.view` before their first use.");
+  });
+});

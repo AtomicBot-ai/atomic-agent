@@ -35,7 +35,7 @@ test('Fusion engine and model menus are separate, with catalogs scoped to each r
   c.SEL.kind='model'; assert.equal(c.composerSeatModelRows()[0].leg,'orchestrator');
 });
 test('changing a worker keeps a local orchestrator and drops only the obsolete role model pin',()=>{
-  const cfg={llm:{activeTextProvider:'local-llama',providers:[{id:'local-llama',kind:'llama-server'},{id:'cloud',kind:'openai-compatible'},{id:'second',kind:'openai-compatible'}],
+  const cfg={llm:{activeTextProvider:'local-llama',providers:[{id:'local-llama',kind:'llama-server'},{id:'cloud',kind:'openai-compatible',defaultChatModel:'cloud-model'},{id:'second',kind:'openai-compatible',defaultChatModel:'second-model'}],
     runMode:{mode:'fusion',fusion:{orchestratorProvider:'local-llama',orchestratorModel:'local-model',workerProvider:'cloud',workerModel:'old-cloud-model'}}}};
   const result=planEnterFusion(cfg,{workerProvider:'second'},()=>true);
   assert.equal(result.write,true); assert.equal(cfg.llm.activeTextProvider,'local-llama');
@@ -51,7 +51,7 @@ test('each seat lists every cloud provider, the other seat\'s too, and the local
   assert.equal(worker.filter(r=>r.type==='localEngine').length,1);
 });
 test('two cloud seats may share a provider; both seats on the one local slot are refused',()=>{
-  const providers=[{id:'local-llama',kind:'llama-server'},{id:'cloud',kind:'openai-compatible'},{id:'second',kind:'openai-compatible'}];
+  const providers=[{id:'local-llama',kind:'llama-server'},{id:'cloud',kind:'openai-compatible',defaultChatModel:'cloud-model'},{id:'second',kind:'openai-compatible',defaultChatModel:'second-model'}];
   const shared={llm:{activeTextProvider:'cloud',providers:JSON.parse(JSON.stringify(providers)),runMode:{mode:'fusion',fusion:{orchestratorProvider:'cloud',workerProvider:'second'}}}};
   const same=planEnterFusion(shared,{orchestratorProvider:'cloud',workerProvider:'cloud'},()=>true);
   assert.equal(same.refusal,undefined); assert.equal(same.write,true);

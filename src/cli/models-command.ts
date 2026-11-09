@@ -23,6 +23,7 @@ import {
 } from "./models-downloads.js";
 import { runModelsSearch } from "./models-search-command.js";
 import { runLocalModelsCheck } from "./models-check.js";
+import { runModelsRecommend, runModelsUpgrade } from "./models-recommend.js";
 
 const HELP =
   [
@@ -39,6 +40,10 @@ const HELP =
     "  downloads [cancel <id>|clear] List background downloads, stop one (partial kept), or",
     "                                forget finished records",
     '  use <id>                      Set active model and switch mode to "managed"',
+    "  recommend [--json]            What this machine has (RAM, GPU memory, free disk) and",
+    "                                a fast / balanced / quality model for it",
+    "  upgrade [--json] [--dry-run]  Fetch the quality model in the background when it beats",
+    "                                the active one (never switches; 'use' does, when it lands)",
     "  status                        Show mode, backend version, active model, daemon/health",
     "  check [--json]                Ask localModels.url what answers there (llama.cpp, Ollama,",
     "                                still loading, not a model server); exit 1 unless llama.cpp",
@@ -80,6 +85,8 @@ const HELP =
     "  atomic-agent models pull qwen-3.5-4b",
     "  atomic-agent models pull --background qwen-3.5-35b",
     "  atomic-agent models downloads",
+    "  atomic-agent models recommend",
+    "  atomic-agent models upgrade",
     "  atomic-agent models use qwen-3.5-4b",
     "  atomic-agent models pull-embedding nomic-embed-text-v1.5",
     "  atomic-agent models use-embedding nomic-embed-text-v1.5",
@@ -133,6 +140,10 @@ export async function modelsCommand(args: string[]): Promise<number> {
         return runLocalModelsDownloads(args.slice(1));
       case "use":
         return runLocalModelsUse(args[1]);
+      case "recommend":
+        return await runModelsRecommend(args.slice(1));
+      case "upgrade":
+        return await runModelsUpgrade(args.slice(1));
       case "status":
         return runLocalModelsStatus();
       case "check":

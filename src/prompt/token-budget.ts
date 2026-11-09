@@ -211,6 +211,13 @@ export const CONVERSATION_CAP_SAFETY_MARGIN = 512;
 export const AGENT_FIXED_PROMPT_TOKENS = 8000;
 
 /**
+ * {@link AGENT_FIXED_PROMPT_TOKENS} for the compact scaffold (ATO-1116,
+ * `compact-prompt.ts`): measured at ~3.7k with every default tool
+ * mounted, rounded up for drift. Same use: the startup window check.
+ */
+export const AGENT_FIXED_PROMPT_TOKENS_COMPACT = 4000;
+
+/**
  * Most of the window the prompt budget will hold back for the reply.
  *
  * `localModels.completionMaxTokens` is one number for every model the
@@ -298,13 +305,19 @@ export function effectiveReplyReserve(
  * under ~102k "too small" — including the ones the agent runs on fine,
  * because the budget holds the reply to half of them. Without a window
  * (sizing a context that does not exist yet) the full cap still counts.
+ *
+ * `compact`: the window gets the compact scaffold (the caller's
+ * `decideCompactPrompt` for that window), whose fixed part is about half
+ * the full one. Counting the full scaffold there warned "too small" on
+ * 8K-16K windows the compact prompt runs on.
  */
 export function minUsableContextWindow(
   completionMaxTokens: number,
   contextWindow?: number | null,
+  options?: { compact?: boolean },
 ): number {
   return (
-    AGENT_FIXED_PROMPT_TOKENS +
+    (options?.compact ? AGENT_FIXED_PROMPT_TOKENS_COMPACT : AGENT_FIXED_PROMPT_TOKENS) +
     (contextWindow
       ? effectiveReplyReserve(completionMaxTokens, contextWindow)
       : completionMaxTokens) +

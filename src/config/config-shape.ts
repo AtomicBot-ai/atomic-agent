@@ -1,4 +1,6 @@
 import { USER_CONFIG_DEFAULTS } from "./config-schema.js";
+import type { UserLlmFallbackConfig, UserLlmFileConfig } from "./llm-config.js";
+import type { UserLlmFusionConfig, UserLlmRunModeConfig } from "./llm-run-mode-config.js";
 
 /**
  * Which object nodes of `config.json` have a field set this build knows
@@ -13,8 +15,9 @@ import { USER_CONFIG_DEFAULTS } from "./config-schema.js";
  * `carryUnknownConfigKeys`.
  *
  * - `fixed`: the block's field names are the schema's. Every object node
- *   of `USER_CONFIG_DEFAULTS` except `webhooks` is one, and so is the
- *   root (path `""`).
+ *   of `USER_CONFIG_DEFAULTS` except `webhooks` is one, and so are the
+ *   root (path `""`) and the `llm` blocks below, which the defaults do
+ *   not have.
  * - `dictionary`: names or entries are user data — `webhooks` (keyed by
  *   binding name), `mcp.servers` and `llm.providers` (lists of named
  *   entries). Arrays are always whole values, and so is everything
@@ -37,6 +40,8 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "agent.providerWait",
   "agent.task",
   "agent.compaction",
+  "agent.prompt",
+  "agent.tools",
   "http",
   "web",
   "web.search",
@@ -90,6 +95,10 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "git",
   "composio",
   "mcp",
+  "llm",
+  "llm.fallback",
+  "llm.runMode",
+  "llm.runMode.fusion",
 ]);
 
 export const DICTIONARY_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
@@ -98,9 +107,63 @@ export const DICTIONARY_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "llm.providers",
 ]);
 
+/*
+ * The fields of the `llm` blocks. A field missing here would look like a
+ * key from a newer build and come back after a caller removed it (the
+ * pins `scrubRunModeProviderPins` clears), so each list is a `Record` over
+ * its config type: a field added to the type and not here does not compile.
+ */
+const LLM_KEYS: Record<keyof UserLlmFileConfig, true> = {
+  activeTextProvider: true,
+  activeEmbeddingProvider: true,
+  toolTransport: true,
+  providers: true,
+  fallback: true,
+  runMode: true,
+  openrouter: true,
+};
+const LLM_FALLBACK_KEYS: Record<keyof UserLlmFallbackConfig, true> = {
+  chain: true,
+  appendLocal: true,
+  failureThreshold: true,
+  cooldownMs: true,
+  probeThrottleMs: true,
+  failureWindowMs: true,
+};
+const LLM_RUN_MODE_KEYS: Record<keyof UserLlmRunModeConfig, true> = {
+  mode: true,
+  fusion: true,
+};
+const LLM_FUSION_KEYS: Record<keyof UserLlmFusionConfig, true> = {
+  orchestratorProvider: true,
+  orchestratorModel: true,
+  workerProvider: true,
+  workerModel: true,
+  workers: true,
+  cloudWorkers: true,
+  workerReasoning: true,
+  workerMaxOutputTokens: true,
+  workerMaxSteps: true,
+  workerTimeoutMs: true,
+  reviewStallSteps: true,
+  turnBudgetUsd: true,
+  turnTimeBudgetMs: true,
+  escalation: true,
+  escalationReplace: true,
+  escalationProvider: true,
+  escalationMaxUsd: true,
+  judge: true,
+  judgeProvider: true,
+  autoReplan: true,
+  roles: true,
+  mixLocalModels: true,
+  isolation: true,
+  taskTree: true,
+};
+
 /**
  * Keys this build knows in a fixed block although they are not in
- * `USER_CONFIG_DEFAULTS`: emitted only when set (`llm`), or retired
+ * `USER_CONFIG_DEFAULTS`: emitted only when set (`llm` and its blocks), or retired
  * aliases the parse still reads but never writes back (`telemetry`,
  * `agent.approvalRequired`, `discord.ownerUserId`). Without this list
  * they would look like keys from a newer build and be carried forward
@@ -110,6 +173,10 @@ const KNOWN_KEYS_OUTSIDE_DEFAULTS: Readonly<Record<string, readonly string[]>> =
   "": ["llm", "telemetry"],
   agent: ["approvalRequired"],
   discord: ["ownerUserId"],
+  llm: Object.keys(LLM_KEYS),
+  "llm.fallback": Object.keys(LLM_FALLBACK_KEYS),
+  "llm.runMode": Object.keys(LLM_RUN_MODE_KEYS),
+  "llm.runMode.fusion": Object.keys(LLM_FUSION_KEYS),
 };
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

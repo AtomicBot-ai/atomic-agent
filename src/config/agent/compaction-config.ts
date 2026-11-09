@@ -1,5 +1,5 @@
 import { ConfigValidationError } from "../config-validation-error.js";
-import { parseBool, parseNonNegativeInt, parsePositiveInt, parseHalfOpenUnitInterval } from "../config-primitives.js";
+import { isSetAsideString, parseBool, parseNonNegativeInt, parsePositiveInt, parseHalfOpenUnitInterval } from "../config-primitives.js";
 
 /**
  * How a checkpoint summary is made. `model` asks the active model;
@@ -40,7 +40,9 @@ export function createCompactionDefaults(): CompactionConfig {
     reasoningReserveTokens: 4096, timeoutMs: 600_000, maxTotalTimeoutMs: 600_000, background: true };
 }
 
-function parseCompactionMode(raw: unknown): CompactionMode {
+function parseCompactionMode(raw: unknown, fallback: CompactionMode): CompactionMode {
+  // ATO-1241: a mode a newer build added reads as the default here.
+  if (isSetAsideString(raw, COMPACTION_MODES, "agent.compaction.mode", fallback)) return fallback;
   if (typeof raw === "string" && (COMPACTION_MODES as readonly string[]).includes(raw)) return raw as CompactionMode;
   throw new ConfigValidationError("agent.compaction.mode", `expected one of ${COMPACTION_MODES.join(", ")}`);
 }
@@ -53,7 +55,7 @@ export function parseCompactionConfig(raw: unknown, defaults: CompactionConfig):
   const input = raw as Record<string, unknown>;
   const result = {
     auto: parseBool(input.auto ?? defaults.auto, "agent.compaction.auto"),
-    mode: parseCompactionMode(input.mode ?? defaults.mode),
+    mode: parseCompactionMode(input.mode ?? defaults.mode, defaults.mode),
     triggerRatio: parseHalfOpenUnitInterval(input.triggerRatio ?? defaults.triggerRatio, "agent.compaction.triggerRatio"),
     targetRatio: parseHalfOpenUnitInterval(input.targetRatio ?? defaults.targetRatio, "agent.compaction.targetRatio"),
     summaryMaxTokens: parsePositiveInt(input.summaryMaxTokens ?? defaults.summaryMaxTokens, "agent.compaction.summaryMaxTokens"),

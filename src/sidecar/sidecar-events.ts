@@ -38,6 +38,7 @@ export type SidecarEventType =
   | "assistant_reply"
   | "assistant_delta"
   | "reasoning_delta"
+  | "plan_updated"
   | "turn_started"
   | "turn_finished"
   | "approval_request"

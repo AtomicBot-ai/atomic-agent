@@ -51,7 +51,7 @@ import {
  *   GET  /v1/models                 OpenAI-compatible model list
  *   POST /v1/chat/completions       the agent loop, streamed as SSE
  *   GET  /api/events                SSE stream of approval requests
- *   POST /api/approval/resolve      allow-once | allow-in-chat | deny
+ *   POST /api/approval/resolve      allow-once | allow-in-chat | allow-always | deny
  *
  * The server is bound to 127.0.0.1 on an ephemeral port and gated by a
  * bearer token generated per launch, so nothing outside this app can
@@ -63,9 +63,12 @@ import {
  * agent's shape grant for the rest of the chat; an agent offers it only
  * when `/api/capabilities` lists it in `agent.approvalDecisions`, and an
  * older one answers it with a 400 (the renderer then sends allow-once).
+ * `allow-always` (ATO-1142) saves an approval rule; the card offers it only
+ * for a request whose `approval_request` frame says `canAlways: true`, and
+ * a 400 leaves the card open for Allow once or Deny.
  */
-export type ApprovalDecision = "allow-once" | "allow-in-chat" | "deny";
-export const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ["allow-once", "allow-in-chat", "deny"];
+export type ApprovalDecision = "allow-once" | "allow-in-chat" | "allow-always" | "deny";
+export const APPROVAL_DECISIONS: readonly ApprovalDecision[] = ["allow-once", "allow-in-chat", "allow-always", "deny"];
 
 export type AgentState =
   | "stopped"
@@ -221,6 +224,28 @@ export interface ProjectTrustAnswerBody {
   answer: "trust" | "decline";
   questionId?: string;
   scope?: "all";
+}
+
+/** ATO-1144: one saved approval rule, as `GET /api/approval-rules` lists it. */
+export interface ApprovalRule {
+  id: string;
+  decision: "allow" | "ask" | "deny";
+  tool?: string;
+  category?: string;
+  commandPrefix?: string[];
+  path?: string;
+  project?: string;
+  createdAt?: string;
+  source?: "prompt" | "user";
+  note?: string;
+}
+
+/** ATO-1144: `GET /api/approval-rules`. `projectRules` are read-only (the folder's own file). */
+export interface ApprovalRulesList {
+  rules: ApprovalRule[];
+  globalPath: string;
+  projectPath?: string;
+  projectRules: ApprovalRule[];
 }
 
 /** The `error.message` of an agent's JSON error body, else the HTTP status. */
@@ -1114,6 +1139,8 @@ export class AgentClient extends EventEmitter {
   }
   capabilities = (sessionId?: string | null) => this.json<unknown>(`/api/capabilities${this.workspaceQuery(sessionId)}`);
   config = () => this.json<unknown>("/api/config");
+  /** ATO-32: Cheap / Balanced / Best picks per provider (agent presets/model-tiers.ts). 404 on an older core. */
+  modelTiers = () => this.json<unknown>("/api/model-tiers");
   skills = (sessionId?: string | null) => this.json<unknown>(`/api/skills${this.workspaceQuery(sessionId)}`);
   // Item 7 (settings surface): the TUI lists with DEFAULT_LIST_LIMIT = 200
   // (tasks-orchestrator.ts:25); route-tasks.ts defaults to 50 and caps at 500.
@@ -1193,7 +1220,32 @@ export class AgentClient extends EventEmitter {
       )}&discarded=${encodeURIComponent(String(discarded))}`,
     );
 
+  /* ATO-568 — the person's controls over one running Fusion worker, addressed
+     by the chat the fan-out runs in and the worker's task id. An agent from
+     before these routes answers 404 "no route" to all three; the renderer
+     reads that as "not supported" and keeps the rows read-only. */
+  fusionWorkers = (sessionId: string) =>
+    this.json<{ sessionId: string; running: string[]; actions?: string[] }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/fusion/workers`,
+    );
+  /** 200 `{stopped:true}`; 404 when the worker is not running. */
+  stopFusionWorker = (sessionId: string, taskId: string) =>
+    this.request<{ stopped: boolean; sessionId: string; taskId: string }>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(sessionId)}/fusion/workers/${encodeURIComponent(taskId)}/stop`,
+      {},
+    );
+  /** 200 `{steered:true}`; 404 not running; 409 not taking notes right now (nothing queued). */
+  steerFusionWorker = (sessionId: string, taskId: string, text: string) =>
+    this.request<{ steered: boolean; sessionId: string; taskId: string }>(
+      "POST",
+      `/api/sessions/${encodeURIComponent(sessionId)}/fusion/workers/${encodeURIComponent(taskId)}/steer`,
+      { text },
+    );
+
   task = (id: string) => this.json<unknown>(`/api/tasks/${encodeURIComponent(id)}`);
+  /** ATO-1113: `POST /api/tasks`, the overnight run (overnight-ipc.ts); `workingDir` opens its session in that folder. */
+  createTask = (body: Record<string, unknown>) => this.request<unknown>("POST", "/api/tasks", body);
   cancelTask = (id: string) => this.request<unknown>("DELETE", `/api/tasks/${encodeURIComponent(id)}`);
   /** Runs one attempt synchronously — an agent turn — so it waits longer than a read. */
   runTask = (id: string) =>
@@ -1486,6 +1538,48 @@ export class AgentClient extends EventEmitter {
     }
   }
 
+  /**
+   * ATO-1144: `GET /api/approval-rules` — the saved approval rules (Settings ›
+   * Privacy). `rules` are the global file's, deletable; `projectRules` are
+   * the ask/deny rules of the chat's own folder, read-only. An agent from
+   * before the route answers "No route for", reported as unsupported. Never throws.
+   */
+  async approvalRules(sessionId?: string | null): Promise<{ supported: false } | { supported: true; ok: true; data: ApprovalRulesList } | { supported: true; ok: false; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/approval-rules${sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""}`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (!res.ok) return { supported: true, ok: false, error: errorMessage(text, res.status) };
+      return { supported: true, ok: true, data: JSON.parse(text) as ApprovalRulesList };
+    } catch (err) {
+      return { supported: true, ok: false, error: requestErrorText(err) };
+    }
+  }
+
+  /**
+   * ATO-1144: `DELETE /api/approval-rules/:id`. Only a global-file rule can go.
+   * `notFound`: the agent has no rule by that id (removed elsewhere already).
+   */
+  async deleteApprovalRule(id: string): Promise<{ supported: false } | { ok: true } | { ok: false; notFound?: boolean; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/approval-rules/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        headers: this.headers(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const text = await res.text();
+      if (res.status === 404 && /No route for/.test(text)) return { supported: false };
+      if (res.ok) return { ok: true };
+      if (res.status === 404) return { ok: false, notFound: true, error: errorMessage(text, res.status) };
+      return { ok: false, error: errorMessage(text, res.status) };
+    } catch (err) {
+      return { ok: false, error: requestErrorText(err) };
+    }
+  }
+
   // --- Lane B — context before the first message (item 3) ---
 
   /**
@@ -1645,7 +1739,14 @@ export class AgentClient extends EventEmitter {
         // Opt into atomic's named SSE frames (session_id, reasoning_progress,
         // tool_progress). Without this header the stream is plain OpenAI
         // chunks and the UI has no tool cards to draw.
-        headers: { ...this.headers(), "x-atomic-extensions": "1" },
+        headers: {
+          ...this.headers(),
+          "x-atomic-extensions": "1",
+          /* ATO-1018: this window draws os.screen.point marks on THIS
+             computer's screen, so only its own agent is told it can. A
+             remote agent's points belong to another machine. */
+          ...(this.remote ? {} : { "x-atomic-screen-overlay": "1" }),
+        },
         // `session_id` continues the session the agent already holds, and is
         // ALWAYS sent: without one the agent derives the id from the first
         // message, and a new chat opened with an old chat's question would

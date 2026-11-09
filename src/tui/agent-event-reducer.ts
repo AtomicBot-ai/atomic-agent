@@ -1,6 +1,7 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
-import { describeFailedAttempts } from "../llm/fallback/index.js";
+import { formatUsageReport } from "../session/usage-meter.js";
+import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.js";
 import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   classifyLocalServerError,
@@ -73,6 +74,7 @@ import { reduceTelegramAction } from "./telegram/telegram-panel-reducer.js";
 import { reducePrivacyAction } from "./privacy/privacy-panel-reducer.js";
 import { reduceIntegrationsAction } from "./integrations/integrations-panel-reducer.js";
 import { reduceSwarmAction } from "./swarm/swarm-panel-reducer.js";
+import { reducePluginsAction } from "./plugins/plugins-panel-reducer.js";
 import {
   ISSUE_REPORT_LEVELS,
   isIssueReportAction,
@@ -130,6 +132,8 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
   if (integrationsHandled !== null) return integrationsHandled;
   const swarmHandled = reduceSwarmAction(state, action);
   if (swarmHandled !== null) return swarmHandled;
+  const pluginsHandled = reducePluginsAction(state, action);
+  if (pluginsHandled !== null) return pluginsHandled;
   if (isIssueReportAction(action)) {
     const next = reduceIssueReport(
       state.issueReport,
@@ -159,6 +163,13 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         line: action.line,
         color: "blue",
       });
+    case "usage_report_requested":
+      // `/usage` (ATO-569): the breakdown behind the composer's cost and
+      // limit readout, as a system line in the transcript.
+      return appendChatMessage(state, {
+        role: "system",
+        text: formatUsageReport(state.sessionUsage ?? undefined, action.now),
+      });
     case "system_message":
       return appendChatMessage(state, {
         role: "system",
@@ -176,6 +187,10 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         // old figure over would read as "this fresh session is already
         // 40% full" until the first prompt lands.
         contextUsage: EMPTY_CONTEXT_USAGE,
+        // A fresh thread has no plan yet (ATO-486).
+        plan: null,
+        // Same for spend: a fresh thread has spent nothing.
+        sessionUsage: null,
       };
     case "skill_count_changed":
       return {
@@ -691,6 +706,9 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
                 event.to,
                 event.reason,
                 event.cause,
+                event.failure !== undefined
+                  ? falloverSentence(event.from, event.to, event.failure, event.toModel)
+                  : undefined,
               ),
             })
           : withSwitch,
@@ -1064,6 +1082,13 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "yellow",
       });
     }
+    case "usage_updated":
+      // ATO-569: spend and limits for the composer readout. Session
+      // scoped: a background thread's spend must not land on the chat on
+      // screen.
+      return event.sessionId === state.session.sessionId
+        ? { ...state, sessionUsage: event.usage }
+        : state;
     case "loop_detected":
       // Deliberately not rendered: the loop detector's own `### notice`
       // changes what the model does, and the operator sees the effect
@@ -1219,6 +1244,12 @@ function reduceStepEvent(
           : state.currentTurnToolSteps + 1,
       };
     }
+    case "plan_updated":
+      // ATO-486: the whole checklist, newest wins; an empty one hides it.
+      return {
+        ...state,
+        plan: event.plan.items.length > 0 ? event.plan : null,
+      };
     case "rare_tool_autoloaded":
       return appendFeed(state, {
         kind: "runtime_info",

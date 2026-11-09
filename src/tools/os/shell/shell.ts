@@ -12,11 +12,13 @@ import { withToolchainEnv } from "../../../sandbox/command-toolchain-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
+  savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import { resolveUserPath } from "../expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
+import { shellCommandArgv, shellRuleSegments } from "./shell-command-argv.js";
 import {
   checkBrowserBypassArgv,
   checkBrowserBypassLine,
@@ -70,6 +72,14 @@ export {
   needsShellInterpretation,
   shellGrantShape,
 } from "./shell-interpretation.js";
+
+/**
+ * True for a verdict of the guard's dangerous layer (`dangerous.*` in
+ * `rules-dangerous.ts`): the command asks as `shell_dangerous`.
+ */
+export function isDangerousGuardRule(rule: string): boolean {
+  return rule.startsWith("dangerous.");
+}
 
 export interface OsShellToolOptions extends DangerousToolOptions {
   /**
@@ -153,12 +163,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       typeof rawArgs.cwd === "string" && rawArgs.cwd.length > 0
         ? resolveUserPath(rawArgs.cwd, ctx.workingDir)
         : ctx.workingDir;
-    // An explicit `timeoutMs` wins (`0` = none — long installs like
+    // An explicit `timeoutMs` wins (`-1` = none — long installs like
     // `brew install` need it) and kills at its limit: the model asked
     // for a bound. The operator's default (F47: a scan of a home
     // directory used to run until someone killed it) detaches
     // instead — a build the default interrupted is not one the model
     // wanted stopped. The turn's abort signal stays the safety valve.
+    // A zero `timeoutMs` reads as omitted (zero-filling models, ATO-1175).
     const timeout = resolveShellTimeout(rawArgs.timeoutMs, defaultTimeoutMs);
 
     // Two execution modes. Direct-exec (`spawn(cmd, args)`) keeps argv
@@ -234,7 +245,15 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // in" rather than something broader. One exception: a command
     // that would change a file the user declined this turn goes to the
     // gate, which refuses it, rather than running on the fan-out's yes.
+    // Same for a call a saved deny or ask rule covers.
+    // Nor does the directory cover a dangerous command (`rm -rf`, `git
+    // reset --hard`, `sudo`): the operator approved a directory of work,
+    // not those, so it goes to the gate too, where a worker's refuse
+    // policy hands it back as a step for the operator (ATO-1223).
+    const dangerous = isDangerousGuardRule(guardVerdict.rule);
+    const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
     const scopedByFanout =
+      !dangerous &&
       (options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ??
         false) &&
       !(
@@ -244,7 +263,16 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           category: "shell",
           targetPaths,
         }) ?? false
-      );
+      ) &&
+      !savedRuleOverridesScope(options.approvals, {
+        sessionId: ctx.sessionId,
+        tool: "os.shell.run",
+        category: "shell",
+        commandSegments,
+        affectedResources: [cwd],
+        targetPaths,
+        workdir: ctx.workingDir,
+      });
     if (guardVerdict.action === "approval_required" && !scopedByFanout) {
       // Shape grant unit: the bare binary name (lowercased), so `[a]`
       // and "Allow in this chat" cover exactly the argv[0] that would
@@ -252,17 +280,22 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
       // `git`. Withheld for those and for opaque interpreters
       // (`bash -c …`) where the binary name hides what runs — see
       // `shellGrantShape`.
-      const commandShape = shellGrantShape(
-        guardInput.cmd,
-        commandLine,
-        useShell,
-      );
+      //
+      // A command the dangerous layer matched (`rm -rf`, `git reset
+      // --hard`, `sudo`) asks as `shell_dangerous` with no shape: no
+      // `shell` grant, no `[a]` on `git` and no level below full trust
+      // runs it unasked, and no prompt offers to remember it (ATO-1220).
+      const commandShape = dangerous
+        ? undefined
+        : shellGrantShape(guardInput.cmd, commandLine, useShell);
+      // Saved approval rules match on argv and on the session's folder.
+      const commandArgv = shellCommandArgv(cmd, execArgs, useShell, commandShape);
       await requireApproval(
         options,
         {
           sessionId: ctx.sessionId,
           tool: "os.shell.run",
-          category: "shell",
+          category: dangerous ? "shell_dangerous" : "shell",
           reason:
             `${guardVerdict.reason} in ${cwd}` +
             // The user approves the lifetime too: a background command
@@ -278,6 +311,9 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           preview: formatShellPreview(cmd, execArgs, useShell),
           affectedResources: [cwd],
           ...(commandShape !== undefined ? { commandShape } : {}),
+          ...(commandArgv !== undefined ? { commandArgv } : {}),
+          commandSegments,
+          workdir: ctx.workingDir,
           targetPaths,
         },
         ctx.signal,

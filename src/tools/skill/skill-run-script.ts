@@ -9,6 +9,7 @@ import {
   requireApproval,
   type DangerousToolOptions,
 } from "../../approval/dangerous-tool.js";
+import { readPluginState } from "../../plugins/plugin-store.js";
 
 /**
  * Ingestion budget for every skill script, not just the auto-approved
@@ -145,6 +146,12 @@ export interface SkillRunScriptToolOptions extends DangerousToolOptions {
    * script still gets the filtered environment.
    */
   envPassthrough?: readonly string[];
+  /**
+   * Data folder holding `plugins/plugins.json`. When set, a script from a
+   * plugin skill runs only if the user allowed code for that plugin
+   * (`runsCodeAccepted`), the same consent its local MCP servers need.
+   */
+  pluginsStateDir?: string;
 }
 
 export function buildSkillRunScriptTool(
@@ -177,6 +184,14 @@ export function buildSkillRunScriptTool(
           : 30_000;
 
       const record = ctx.workspaceSkills?.assertAvailable(skillName).record ?? registry.get(skillName);
+      if (record.plugin !== undefined && options.pluginsStateDir !== undefined) {
+        const plugin = readPluginState(options.pluginsStateDir).plugins[record.plugin];
+        if (plugin?.runsCodeAccepted !== true) {
+          throw new Error(
+            `skill.run_script: scripts from plugin ${record.plugin} are off until code is allowed for it (atomic-agent plugin allow-code ${record.plugin})`,
+          );
+        }
+      }
       const preview = [
         `skill: ${record.manifest.name} (v${record.manifest.version})`,
         `script: ${scriptName}`,
@@ -191,6 +206,7 @@ export function buildSkillRunScriptTool(
       const autoApprovedGogCheck =
         !ctx.workspaceSkills &&
         record.source === "global" &&
+        record.plugin === undefined &&
         record.manifest.name === "gog-workspace" &&
         scriptName === "check-gog.sh" &&
         scriptArgs.length === 0;

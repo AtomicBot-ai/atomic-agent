@@ -111,6 +111,26 @@ describe("configCommand", () => {
     expect(readFileSync(path, "utf8")).toBe(before);
   });
 
+  it("ATO-1241: a compaction or while-busy mode a newer app wrote reads, but a typed unknown one is refused", async () => {
+    await configCommand(["get"]);
+    const path = join(stateDir, "config.json");
+    const tree = JSON.parse(readFileSync(path, "utf8"));
+    tree.agent = { ...tree.agent, compaction: { ...tree.agent?.compaction, mode: "future-compaction" } };
+    tree.tui = { ...tree.tui, whileBusySubmit: "future-submit" };
+    writeFileSync(path, JSON.stringify(tree));
+    resetConfigCache();
+    stdout = "";
+    expect(await configCommand(["get"])).toBe(0);
+    const before = readFileSync(path, "utf8");
+    expect(await configCommand(["set", "agent.compaction.mode", "turbo"])).toBe(1);
+    expect(stderr).toMatch(/agent\.compaction\.mode: "turbo" is not a value this build knows/);
+    expect(await configCommand(["set", "tui.whileBusySubmit", "later"])).toBe(1);
+    expect(stderr).toMatch(/tui\.whileBusySubmit: "later" is not a value this build knows/);
+    expect(readFileSync(path, "utf8")).toBe(before);
+    expect(await configCommand(["set", "tui.whileBusySubmit", "queue"])).toBe(0);
+    expect(JSON.parse(readFileSync(path, "utf8")).tui.whileBusySubmit).toBe("queue");
+  });
+
   it("set rejects malformed JSON without touching the file", async () => {
     await configCommand(["get"]);
     const before = readFileSync(join(stateDir, "config.json"), "utf8");

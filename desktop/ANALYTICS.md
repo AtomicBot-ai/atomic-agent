@@ -12,6 +12,9 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
   `~/.atomic-agent/config.json` says `analytics.enabled: false`, the desktop
   treats analytics as off and tells the agent it spawns the same.
 - A config file that exists but cannot be parsed counts as off.
+- `DO_NOT_TRACK=1` (also `true` / `yes` / `on`) in the environment turns
+  analytics and crash reports off whatever the config says, and the agent
+  the desktop spawns gets `ATOMIC_AGENT_ANALYTICS=off`.
 - Settings › Privacy applies live, no restart. Turning it off: the config
   write happens first; only if it succeeded is `analytics_disabled` sent and
   flushed (2 s at most), and then sending stops and the queue is dropped. A
@@ -49,7 +52,7 @@ and `preload/preload.ts` (`window.atomic.track` / `window.atomic.reportError`).
 | `ATOMIC_AGENT_SURFACE` | `desktop` |
 | `ATOMIC_AGENT_INSTALL_CHANNEL` | `dmg` / `exe` / `appimage` / `deb` |
 | `ATOMIC_AGENT_DESKTOP_VERSION` | the app version, when known |
-| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, or when the terminal opt-out is inherited |
+| `ATOMIC_AGENT_ANALYTICS` | `off` on a test or dev run, when the terminal opt-out is inherited, or under `DO_NOT_TRACK=1` |
 | `ATOMIC_AGENT_INSTALL_ID_FILE` | `<desktop state dir>/install-id` on a test or dev run; otherwise inherited unchanged |
 
 ## Global properties (every event)
@@ -73,10 +76,10 @@ send `ui` events.
 | Group | Main process | Renderer |
 |---|---|---|
 | Lifecycle | `app_opened`, `app_ready`, `agent_start_failed`, `agent_restarted` (manual / switch / auto / setup_finished / workspace_change / import / telegram / other), `window_crashed`, `app_closed`, `debug_report_saved`, `analytics_disabled` | |
-| Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out), `custom_endpoint_tested` |
+| Setup | `provider_key_checked` (ok / rejected / unreachable / payment_required), `model_configured` | `onboarding_step`, `onboarding_skipped`, `model_picked`, `provider_setup_started`, `provider_setup_failed` (… / catalog_empty / server_unreachable / certificate / timed_out / key_rejected / provider_error / list_failed; `provider_preset`), `custom_endpoint_tested` |
 | Models and backend | `model_download_started`, `model_download_finished`, `hf_lookup`, `llama_runtime_updated`, `local_backend_started`, `local_backend_supervised`, `local_backend_crashed`, `engine_recovery_shown`, `backend_switched`, `model_switched`, `fusion_configured` | |
 | Chat | `chat_turn_ui` (outcome completed / stopped_early (step or time limit, no progress, out of credit) / failed / cancelled; `error_category`, `http_status` on a failure) | `message_action`, `approval_answered`, `approval_closed` (stopped / expired / replaced / not_waiting), `coding_mode_changed`, `plan_handoff`, `attachment_added` (image / document; size bucket; button / drop / paste) |
-| Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
+| Features | `voice_used`, `voice_setup`, `task_created`, `task_action`, `overnight_started` (has_budget, hours, notify_telegram), `skill_installed`, `skill_action`, `telegram_setup` (enable / token_saved / token_cleared / owner_cleared), `composio_setup` (key_saved / key_removed / key_checked / enable / disable; ok / unverified / rejected / error), `import_run`, `workspace_chosen` | `ui_action`, `slash_command_used`, `settings_pane_viewed`, `session_action`, `mcp_server_added`, `mcp_server_action` |
 | App updates | `update_available` (auto / manual), `update_accepted`, `update_dismissed` (not_now / cancel / later), `update_skipped`, `update_installed` | |
 
 Notes on specific properties:
@@ -176,7 +179,17 @@ no agent is running).
   lines do not count); the lines themselves are never sent.
   `uptime` is lt_10s / lt_1m / lt_10m / lt_1h / gte_1h. `sentinel_alive` is
   yes / no: a dead sentinel means the agent closed itself on `--parent-pid`,
-  not a crash (ATO-763).
+  not a crash (ATO-763). `exit_status` is a word for a known exit code:
+  insufficient_resources (Windows 0xC000009A), no_memory, stack_overflow,
+  killed_from_outside, access_violation, or memory_guard (exit 86: the
+  agent's memory guard closed it cleanly before the system ran out,
+  ATO-1111). `free_mem` buckets the machine's free memory at the exit.
+  From the agent's last `[atomic-agent] memory …` sample (written every ten
+  minutes): `agent_rss` (lt_512m … gte_8g), `agent_heap` (heap share of its
+  ceiling) and `agent_mem_share` (RSS share of the machine), both lt_25 /
+  lt_50 / lt_75 / lt_90 / gte_90, and `agent_mem_verdict` (ok / warn /
+  exit). A growing agent shows a high `agent_heap`; a small machine shows a
+  modest `agent_rss` with a high `agent_mem_share`.
 - Scrubbing: the message is dropped (no message type is allowlisted); the
   type is kept only when it matches `SomethingError` / `SomethingException`
   or is one of the shell's own names, else `Error`; a renderer value that is

@@ -106,3 +106,44 @@ describe("selectVisibleMessages", () => {
     expect(slice.hiddenAbove).toBe(1);
   });
 });
+
+describe("estimateMessageHeight with a folded turn (ATO-963)", () => {
+  const withSteps: ChatMessage = {
+    id: "a1",
+    role: "assistant",
+    text: "done",
+    toolSteps: 2,
+    reasoningBlocks: ["thinking"],
+    toolCards: [
+      {
+        id: "c1",
+        stepIndex: 0,
+        tool: "os.fs.read",
+        args: {},
+        status: "ok",
+        summary: "ok",
+        truncated: false,
+        startedAt: 1,
+        finishedAt: 2,
+      },
+    ],
+    timestamp: 2,
+  };
+  const replyOnly = estimateMessageHeight({
+    id: "a0",
+    role: "assistant",
+    text: "done",
+    timestamp: 2,
+  });
+
+  it("charges the reply plus the two-row summary line when closed", () => {
+    expect(estimateMessageHeight(withSteps, "closed")).toBe(replyOnly + 2);
+  });
+
+  it("charges the summary line on top of the steps when open, without the steps footer", () => {
+    const open = estimateMessageHeight(withSteps, "open");
+    const none = estimateMessageHeight(withSteps, "none");
+    // +2 for the line, -1 for the "2 tool steps" footer it replaces.
+    expect(open).toBe(none + 2 - 1);
+  });
+});

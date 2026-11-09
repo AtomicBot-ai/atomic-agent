@@ -12,6 +12,10 @@ import {
   type ApprovalCategory,
 } from "../approval/approval-level.js";
 import {
+  canGrantAlways,
+  describeAlwaysRule,
+} from "../approval/approval-rules.js";
+import {
   excerptPreview,
   hiddenLinesNote,
   previewLines,
@@ -72,6 +76,13 @@ interface ApprovalModalProps {
  * and granting for a whole session are not the same act, and they no
  * longer look like it.
  */
+/**
+ * Appended to a `shell` grant's label: a category or `[a]` grant never
+ * covers a dangerous command (`rm -rf`, `git reset --hard`), which asks
+ * as `shell_dangerous` every time (ATO-1225).
+ */
+const RISKY_STILL_ASK = " (risky commands still ask)";
+
 export function ApprovalModal({
   request,
   pathDraft,
@@ -87,6 +98,8 @@ export function ApprovalModal({
   // `[a]` only when the shell tool supplied a command shape to grant.
   const grantCategory = canGrantCategory(request);
   const grantShape = canGrantShape(request);
+  // "Allow always": a saved rule, scoped to this project (ATO-1142).
+  const grantAlways = canGrantAlways(request);
   const editable = canEditPath(request);
   const editing = pathDraft !== null;
   return (
@@ -181,7 +194,7 @@ export function ApprovalModal({
             </ApprovalButton>
           </Box>
           {grantCategory || grantShape || editable ? (
-            <Box flexDirection="row" marginTop={1}>
+            <Box flexDirection="row" flexWrap="wrap" marginTop={1}>
               {grantCategory ? (
                 <>
                   <ApprovalButton
@@ -190,7 +203,7 @@ export function ApprovalModal({
                     grant="category"
                     tone="secondary"
                   >
-                    {`allow ${categoryLabel} this session · ctrl+${APPROVAL_CHORDS.grantCategory}`}
+                    {`allow ${categoryLabel} this session${request.category === "shell" ? RISKY_STILL_ASK : ""} · ctrl+${APPROVAL_CHORDS.grantCategory}`}
                   </ApprovalButton>
                   <Text> </Text>
                 </>
@@ -208,7 +221,7 @@ export function ApprovalModal({
                   grant="shape"
                   tone="secondary"
                 >
-                  {`allow all ${request.commandShape} this session · ctrl+${APPROVAL_CHORDS.contextual}`}
+                  {`allow all ${request.commandShape} this session${RISKY_STILL_ASK} · ctrl+${APPROVAL_CHORDS.contextual}`}
                 </ApprovalButton>
               ) : null}
               {editable ? (
@@ -216,6 +229,18 @@ export function ApprovalModal({
                   {`edit target path… · ctrl+${APPROVAL_CHORDS.contextual}`}
                 </CommandButton>
               ) : null}
+            </Box>
+          ) : null}
+          {grantAlways ? (
+            <Box flexDirection="row" marginTop={1}>
+              <ApprovalButton
+                request={request}
+                approved
+                grant="always"
+                tone="secondary"
+              >
+                {`${describeAlwaysRule(request)} · ctrl+${APPROVAL_CHORDS.grantAlways}`}
+              </ApprovalButton>
             </Box>
           ) : null}
           <Box marginTop={1}>
@@ -243,7 +268,7 @@ function footerHint(grantable: boolean, category: ApprovalCategory): string {
   if (!grantable) {
     return `${formatNeverGrantedNote(category)}; approve covers this call only · ${typing}`;
   }
-  return `approve covers this call once; the session grants last until the app exits (never persisted); loosen the standing stance with the coding-mode control in the composer · ${typing}`;
+  return `approve covers this call once; the session grants last until the app exits (never persisted), "always allow" is saved for this project; loosen the standing stance with the coding-mode control in the composer · ${typing}`;
 }
 
 /**

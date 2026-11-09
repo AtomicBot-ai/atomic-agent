@@ -2,7 +2,15 @@ import { resolve } from "node:path";
 
 import type { ChannelStatus } from "../../runtime/channel-status.js";
 import { getUserConfigPath } from "../../config/index.js";
-import type { TaskReport, TaskReportSink } from "../../tasks/index.js";
+import type { TurnStatusTracker } from "../../agent/status-snapshot.js";
+import {
+  isQuietAt,
+  type QuietHours,
+  type TaskLiveStatus,
+  type TaskReport,
+  type TaskReportSink,
+  type TaskSnapshotSink,
+} from "../../tasks/index.js";
 
 import { createAttachmentInbox } from "../attachments/inbox.js";
 import {
@@ -28,8 +36,15 @@ import {
   defaultTelegramSettingsSink,
 } from "./telegram-settings.js";
 import { sendOutbound, type TelegramParseMode } from "./outbound-sender.js";
-import { formatTaskReportMessage } from "./task-report-message.js";
+import {
+  formatTaskReportDigest,
+  splitTaskReportDigest,
+  formatTaskReportMessage,
+} from "./task-report-message.js";
 import { sendWelcomeMessage } from "./welcome-message.js";
+import { formatTaskLiveStatus } from "./task-status-message.js";
+import { TASK_MESSAGE_MAX_CHARS } from "./task-report-format.js";
+import { TelegramProgressIndicator } from "./telegram-progress-indicator.js";
 import {
   POLL_STALL_MS,
   TelegramReconnect,
@@ -154,6 +169,14 @@ export class TelegramChannel {
   private readonly inflight = new Map<string, AbortController>();
   /** Albums still arriving — see `InboundContext.mediaGroups`. */
   private readonly mediaGroups = new Map<string, PendingMediaGroup>();
+  /** `chatKey -> status` of the turn running there (ATO-965), for `/status`. */
+  private readonly liveTurns = new Map<string, TurnStatusTracker>();
+  /**
+   * `taskId -> the ONE message carrying that task's status snapshots`
+   * (ATO-965) in the owner's DM, edited in place. Dropped on stop: the
+   * next snapshot after a restart posts a fresh one.
+   */
+  private readonly taskSnapshotBubbles = new Map<string, TelegramProgressIndicator>();
   private readonly userConfigPath: string;
   private readonly stateDir: string;
   private readonly pairing: PairingMode;
@@ -402,6 +425,10 @@ export class TelegramChannel {
         // next channel (re)start.
         progressIndicator: this.deps.config.telegram.progressIndicator,
         inflight: this.inflight,
+        liveTurns: this.liveTurns,
+        statusSnapshot: this.deps.config.statusSnapshot ?? null,
+        pendingApprovalTool: (sessionId) =>
+          this.approvalBridge?.pendingToolForSession(sessionId) ?? null,
         inbox: createAttachmentInbox({
           dir: resolve(this.stateDir, "inbox", "telegram"),
         }),
@@ -420,7 +447,7 @@ export class TelegramChannel {
         await bot.api.setMyCommands?.([
           { command: "start", description: "Show help" },
           { command: "help", description: "Show help" },
-          { command: "status", description: "Show this chat's session" },
+          { command: "status", description: "What this chat's turn is doing now" },
           { command: "sessions", description: "List sessions by chat" },
           {
             command: "switch",
@@ -688,6 +715,8 @@ export class TelegramChannel {
       }
     }
     this.inflight.clear();
+    this.liveTurns.clear();
+    this.taskSnapshotBubbles.clear();
     for (const group of this.mediaGroups.values()) {
       try {
         group.cancel();
@@ -1004,6 +1033,117 @@ export class TelegramChannel {
     // replies (never per-chunk).
     this.deps.metrics?.recordTelegramMessage({ direction: "out" });
     return "sent";
+  }
+
+  /**
+   * Show a running task's status snapshot (ATO-965) in the owner's DM:
+   * the first one posts a silent message, every later one edits it, so
+   * a long task keeps ONE updating bubble. An edit that fails (message
+   * deleted, too old) posts a new bubble and edits that one from then
+   * on. Same body as the `/status` running-tasks block. Never queues: a
+   * snapshot is stale by the time the channel is back; the next one
+   * will do. Plain text, like every task message.
+   */
+  async sendTaskSnapshot(
+    status: TaskLiveStatus,
+  ): Promise<"sent" | "channel_not_up" | "not_paired"> {
+    const bot = this.bot;
+    if (this.currentState !== "up" || !bot) return "channel_not_up";
+    const ownerUserId = this.currentOwnerUserId;
+    if (ownerUserId === null) return "not_paired";
+    const text = formatTaskLiveStatus([status], Date.now(), TASK_MESSAGE_MAX_CHARS);
+    let bubble = this.taskSnapshotBubbles.get(status.taskId);
+    if (!bubble) {
+      bubble = new TelegramProgressIndicator(bot.api, ownerUserId, {
+        warn: (message, context) => this.deps.logger.warn(message, context),
+      });
+      this.taskSnapshotBubbles.set(status.taskId, bubble);
+    }
+    await bubble.showSnapshot(text);
+    return "sent";
+  }
+
+  /**
+   * The task's run is over: delete its snapshot bubble, best-effort. The
+   * final report (sent on its own) carries everything it showed.
+   */
+  async endTaskSnapshot(taskId: string): Promise<void> {
+    const bubble = this.taskSnapshotBubbles.get(taskId);
+    if (!bubble) return;
+    this.taskSnapshotBubbles.delete(taskId);
+    await bubble.remove();
+  }
+
+  /**
+   * `TaskRunner.snapshotSink` for Telegram (ATO-965). Resolves the channel
+   * at delivery time, like `buildTaskReportSink`. Inside quiet hours
+   * (`tasks.report.quietHours`) no snapshot goes out: the night is for
+   * the held morning digest, not for a bubble that lights up the chat.
+   */
+  static buildTaskSnapshotSink(deps: {
+    resolveChannel: () => TelegramChannel | null;
+    quietHours?: QuietHours | null;
+    now?: () => Date;
+  }): TaskSnapshotSink {
+    const now = deps.now ?? (() => new Date());
+    return {
+      update: async (status) => {
+        if (deps.quietHours && isQuietAt(deps.quietHours, now())) return;
+        await deps.resolveChannel()?.sendTaskSnapshot(status);
+      },
+      end: async (taskId) => {
+        await deps.resolveChannel()?.endTaskSnapshot(taskId);
+      },
+    };
+  }
+
+  /**
+   * Post reports held through quiet hours as a plain-text digest
+   * (`formatTaskReportDigest`): one message, or a few when more reports
+   * were held than one message shows in full (`splitTaskReportDigest`).
+   * The caller deletes the held rows after a confirmed send, so no
+   * report may be cut down to its id. Unlike `sendTaskReport` it never
+   * queues: the caller (`TaskReportHold`) keeps the reports durable and
+   * retries, so a channel that is not up answers `channel_not_up` and
+   * the reports stay held. A part that fails stops the send; a retry
+   * may repeat the parts already delivered, which beats losing any.
+   */
+  async sendTaskReportDigest(
+    reports: readonly TaskReport[],
+  ): Promise<TaskReportDelivery> {
+    const bot = this.bot;
+    if (this.currentState !== "up" || !bot) return "channel_not_up";
+    const ownerUserId = this.currentOwnerUserId;
+    if (ownerUserId === null) return "not_paired";
+    const groups = splitTaskReportDigest(reports);
+    for (const [i, group] of groups.entries()) {
+      const result = await sendOutbound({
+        api: bot.api,
+        chatId: ownerUserId,
+        text: formatTaskReportDigest(group, { index: i + 1, total: groups.length }),
+        parseMode: "plain",
+        logger: {
+          warn: (message, context) => this.deps.logger.warn(message, context),
+        },
+      });
+      if (result.dropped > 0) return "delivery_failed";
+      this.deps.metrics?.recordTelegramMessage({ direction: "out" });
+    }
+    return "sent";
+  }
+
+  /**
+   * The `deliverDigest` half of `TaskReportHold`: `true` only on a
+   * confirmed send, so anything else leaves the reports held.
+   */
+  static buildTaskReportDigestSender(deps: {
+    resolveChannel: () => TelegramChannel | null;
+  }): (reports: readonly TaskReport[]) => Promise<boolean> {
+    return async (reports) => {
+      const channel = deps.resolveChannel();
+      if (!channel) return false;
+      return (await channel.sendTaskReportDigest(reports)) === "sent";
+    };
   }
 
   /** FIFO-append with oldest-first eviction at `TASK_REPORT_QUEUE_LIMIT`. */

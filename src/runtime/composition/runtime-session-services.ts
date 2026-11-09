@@ -35,9 +35,15 @@ export function prepareRuntimeSessionStore(
   try {
     const recovered = sessionStore.recoverInterruptedTurns();
     if (recovered.length > 0) {
+      // Their steps up to the last checkpoint are kept (ATO-1109): the
+      // task runner continues the ones a durable task was running.
+      const checkpointed = recovered.filter(
+        (id) => sessionStore.readTurnProgress(id) !== null,
+      );
       logger.info("sessions left mid-turn by a stopped agent marked cancelled", {
         count: recovered.length,
         sessionIds: recovered.join(","),
+        checkpointed: checkpointed.length,
       });
     }
   } catch (err) {

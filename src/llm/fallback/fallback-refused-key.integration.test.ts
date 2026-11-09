@@ -81,7 +81,7 @@ const FIELD_LLM: ResolvedLlmConfig = {
     },
     { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:8080" },
   ],
-  fallback: { chain: ["dashscope"] },
+  fallback: { chain: ["dashscope"], appendLocal: true },
 };
 
 /** Records each completion a link is asked for, then lets it run. */

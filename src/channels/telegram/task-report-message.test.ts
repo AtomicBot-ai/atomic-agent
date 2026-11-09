@@ -121,10 +121,10 @@ describe("formatTaskReportMessage", () => {
   });
 
   it("never splits a surrogate pair when truncating the reply", () => {
-    // "a" + 1500 emoji (2 UTF-16 units each) = 3001 units; the 3000-unit
-    // cut lands in the middle of the last pair. A naive slice would leave
-    // a lone high surrogate at the cut.
-    const reply = `a${"💚".repeat(1500)}`;
+    // "a" + N/2 emoji (2 UTF-16 units each) = N + 1 units; the cut lands
+    // in the middle of a pair. A naive slice would leave a lone high
+    // surrogate at the cut.
+    const reply = `a${"💚".repeat(TASK_REPORT_RESULT_MAX_CHARS / 2)}`;
     expect(reply.length).toBe(TASK_REPORT_RESULT_MAX_CHARS + 1);
     const text = formatTaskReportMessage(makeReport({ replyText: reply }));
     expect(text).toContain(TASK_REPORT_TRUNCATION_MARKER);

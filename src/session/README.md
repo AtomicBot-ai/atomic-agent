@@ -12,6 +12,7 @@ This area owns session state and persistence. Read [AGENTS.md](AGENTS.md) before
 - [conversation-turn.ts](conversation-turn.ts)
 - [session-retention.ts](session-retention.ts)
 - [turn-owner.ts](turn-owner.ts)
+- [turn-progress.ts](turn-progress.ts)
 
 ## Ownership and dependencies
 
@@ -28,5 +29,7 @@ Read README.md for state/retention changes; ../runtime/docs/lifecycle.md for con
 `npx vitest run src/session`; `npm run lint`; `npm run docs:check`. The production typecheck excludes tests; see [development checks](../../docs/development.md).
 
 [Session compaction](session-compaction.ts) owns checkpoint validation and the shared history projection. The full transcript stays intact; semantic coverage and mechanical pack cuts have separate boundaries. Runtime owns [summarization and checkpoint persistence](../runtime/docs/compaction.md).
+
+[Turn progress](turn-progress.ts) (ATO-1109): `executeTurn` marks a turn's progress when it starts and checkpoints the transcript with the marker after every completed step (`SessionStore.checkpointTurn`, one row write guarded on the turn's own mark). A turn that ends on its own clears the marker; one that ends `cancelled`, or whose process died (the boot sweep ends the row and keeps the marker), keeps it so the work can be continued. The task runner continues tasks cut off by a crash or a restart; nothing continues a turn a person stopped.
 
 [Session titles](session-title.ts): the namer writes `metadata.title` once, after the first answered turn, and never renames. The operator can ([session-title-user.ts](session-title-user.ts), `SessionStore.renameSession`): that title carries `metadata.titleSetByUserAt`, and `save`/`finishTurn` keep it over any copy without the stamp or with an older one, so a stale snapshot cannot undo a rename.

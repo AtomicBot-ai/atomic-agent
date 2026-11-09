@@ -1,5 +1,6 @@
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
+import type { ShellGuardPolicy } from "../os/shell-command-guard/index.js";
 import type { ToolRegistry } from "../tool-registry.js";
 import { buildVerifyRunTool } from "./verify-run.js";
 import { verifySyntaxTool } from "./verify-syntax.js";
@@ -48,6 +49,8 @@ export {
   describeVerifyRun,
 } from "./verify-run.js";
 export type { VerifyRunToolOptions } from "./verify-run.js";
+export { guardVerifyCommand, guardVerifyRun, verifyRunCommands } from "./verify-run-guard.js";
+export type { VerifyGuardResult, VerifyGuardedCommand } from "./verify-run-guard.js";
 export { runVerify, runChecks } from "./run-verify.js";
 export type { VerifyRunResult, VerifyRunContext } from "./run-verify.js";
 export {
@@ -96,6 +99,8 @@ export { renderVerifyRunSummary, VERIFY_RUN_SUMMARY_MAX_CHARS } from "./verify-r
 
 export interface RegisterVerifyToolsOptions extends DangerousToolOptions {
   config: Pick<AtomicAgentConfig, "browser">;
+  /** The shell guard's operator policy, shared with `os.shell.run`. */
+  shellPolicy?: ShellGuardPolicy;
 }
 
 /**
@@ -113,6 +118,7 @@ export function registerVerifyTools(
       approvals: options.approvals,
       approvalRequired: options.approvalRequired,
       config: options.config,
+      ...(options.shellPolicy === undefined ? {} : { shellPolicy: options.shellPolicy }),
     }),
   );
 }

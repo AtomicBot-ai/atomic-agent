@@ -130,6 +130,35 @@ describe("fusion_worker over SSE", () => {
     expect(sse.written[1]!.payload).not.toHaveProperty("context_tokens");
   });
 
+  it("carries a worker's tokens and spend on its usage frame, and only when measured (ATO-568)", () => {
+    const sse = makeSse();
+    const hook = buildStreamEventHook(sse.writer as never, env(true));
+
+    hook({
+      type: "fusion_worker",
+      taskId: "t6",
+      title: "ui",
+      phase: "usage",
+      tokens: 41_200,
+      spentUsd: 0.031,
+    });
+    hook({ type: "fusion_worker", taskId: "t7", title: "local", phase: "usage", tokens: 900 });
+    hook({
+      type: "fusion_worker",
+      taskId: "t6",
+      title: "ui",
+      phase: "escalated",
+      summary: "escalated to big as advisor",
+      costUsd: 0.0018,
+    });
+
+    expect(sse.written[0]!.payload).toMatchObject({ tokens: 41_200, spent_usd: 0.031 });
+    expect(sse.written[1]!.payload).toMatchObject({ tokens: 900 });
+    expect(sse.written[1]!.payload).not.toHaveProperty("spent_usd");
+    expect(sse.written[2]!.payload).toMatchObject({ phase: "escalated", cost_usd: 0.0018 });
+    expect(sse.written[2]!.payload).not.toHaveProperty("tokens");
+  });
+
   it("keeps the orchestrator's own bracket line distinguishable", () => {
     const sse = makeSse();
     const hook = buildStreamEventHook(sse.writer as never, env(true));

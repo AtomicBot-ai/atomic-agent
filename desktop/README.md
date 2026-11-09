@@ -105,6 +105,16 @@ draw its trimming verdict over the numbers of the session they are on. A
 prompt-derived window is released when the active `<providerId> <chatModel>`
 changes, so the gauge never draws a new model against the old model's scale.
 
+**Cost and plan limit (ATO-569).** Beside the ring, a plain-text chip says
+what the chat has spent and how much of the account's limit is left
+(`$0.31 · 17% left`), with the breakdown and the reset time in its tooltip.
+The agent counts both ([usage-meter.js](renderer/usage-meter.js) only reads
+them): `GET /api/sessions/{id}` carries `sessionUsage`, read in the same
+refresh as `contextUsage`, and the stream's `usage_updated` frame updates it
+live while a turn runs. An unknown price is shown as `cost n/a`, never `$0`;
+local models say `local`, subscriptions say `plan`. An agent older than the
+field sends neither, and no chip is drawn.
+
 **Context compaction (ATO-259, ATO-295).** When the agent summarizes older
 history inside a turn, the stream carries `compaction_started`,
 `compaction_progress` and `compaction_completed` / `compaction_failed`; the
@@ -228,6 +238,11 @@ Real, driven by the running agent:
   `…`. Long args, summaries and results wrap inside the card;
   nothing widens the transcript. Three or more consecutive calls to the same
   tool fold into one line.
+- `/status` (ATO-965, `renderer/status-snapshot.js`) prints a snapshot of
+  the turn running in the chat on screen as a system row: what runs now, the
+  last result (tool name and how it ended, never its output), whether an
+  approval waits on you, time since the send and tool calls so far. Same
+  wording as the terminal's and Telegram's `/status`.
 - a finished turn folds its steps (ATO-464, `renderer/turn-summary.js`):
   while a turn runs, its reasoning rows, tool calls and approvals are drawn
   live, one by one. Once it has finished, the reasoning rows, the calls and
@@ -1632,10 +1647,15 @@ the update files into `desktop/release/`. Everything a release uploads to
 |---|---|
 | macOS | `stable-mac.yml`, `Atomic-Agent-<version>-arm64-mac.zip`; the zip's `.blockmap` is optional (it allows a differential download). The DMG is not needed in the feed. File names carry no space (`mac.artifactName`): GitHub renames a space in an uploaded asset to a dot, and `stable-mac.yml` would then point at a file that 404s (ATO-255). |
 | Windows | `stable.yml` (merged, below), `Atomic-Agent-Setup-<version>-x64.exe` and `Atomic-Agent-Setup-<version>-arm64.exe`; their `.blockmap`s are optional. |
+| Linux (AppImage) | `stable-linux.yml` with `Atomic-Agent-<version>-x86_64.AppImage`, and `stable-linux-arm64.yml` with `Atomic-Agent-<version>-arm64.AppImage` (ATO-573). The AppImage carries its blockmap inside, so there is no separate `.blockmap`. electron-updater reads `<channel>-linux.yml` on x64 and `<channel>-linux-<arch>.yml` on any other arch; the `linux-*` package jobs write them and fail when they do not (ATO-1230). The .deb and .rpm are not part of the feed. |
 
-Linux is not updated from inside the app yet (the updater is off there and
-Settings says so); AppImage and deb users take new versions from the
-download page.
+On Linux only the AppImage updates itself (ATO-573, above); deb and rpm
+users take new versions from the download page, and a deb or rpm installed
+from the atomic-agent apt/dnf repository is updated by the package manager.
+
+Without the two Linux files every AppImage asks the feed for
+`stable-linux.yml`, gets a 404 and never updates. That is how the 0.0.7 feed
+went up (ATO-1230). Check the folder before uploading (below).
 
 The `.yml` files name the installers by file name and carry their sha512, so
 the installers go up first and the `.yml` last (a client must never read a
@@ -1696,17 +1716,34 @@ ATAG_UPDATE_FEED_URL=https://github.com/AtomicBot-ai/atomic-agent/releases/downl
 
 It is a pre-release so it never becomes the repository's Latest release,
 which the terminal installers read. Each desktop release replaces its files
-(installers first, the `.yml` files last):
+(installers first, the `.yml` files last). Put the five artifacts' files in
+one folder (with the MERGED `stable.yml`), then let
+`scripts/feed-files.mjs` check it: it refuses a folder that misses any
+platform's `.yml` (mac, Windows, Linux x64, Linux arm64), a file one of them
+names, or a Windows `stable.yml` that lists only one arch, and prints the two
+upload commands in the right order. It needs no `npm ci`.
+
+```bash
+cd desktop
+node scripts/feed-files.mjs <folder>        # --channel beta for a beta feed
+```
+
+What it prints, for reference:
 
 ```bash
 gh release upload desktop-latest \
   "Atomic-Agent-<version>-arm64-mac.zip" "Atomic-Agent-<version>-arm64-mac.zip.blockmap" \
   "Atomic-Agent-Setup-<version>-x64.exe" "Atomic-Agent-Setup-<version>-x64.exe.blockmap" \
   "Atomic-Agent-Setup-<version>-arm64.exe" "Atomic-Agent-Setup-<version>-arm64.exe.blockmap" \
+  "Atomic-Agent-<version>-x86_64.AppImage" "Atomic-Agent-<version>-arm64.AppImage" \
   --repo AtomicBot-ai/atomic-agent --clobber
 # stable.yml here is the MERGED one (merge-update-yml.mjs above), never a single job's.
-gh release upload desktop-latest stable-mac.yml stable.yml --repo AtomicBot-ai/atomic-agent --clobber
+gh release upload desktop-latest stable-mac.yml stable.yml stable-linux.yml stable-linux-arm64.yml \
+  --repo AtomicBot-ai/atomic-agent --clobber
 ```
+
+The page's own downloads (DMG, .deb, .rpm, SHA256SUMS.txt) go up as before;
+the feed does not need them.
 
 Until the `desktop-latest` release exists, a check finds nothing (a failed
 automatic check shows nothing). A draft release does not work as a feed: its

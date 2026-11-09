@@ -55,7 +55,12 @@ describe("gated-call approval categories", () => {
 
   it("follows the ladder for single-category tools", () => {
     expect(gatedCallRunsUnattended("os.shell.run", { level: 3 })).toBe(false);
-    expect(gatedCallRunsUnattended("os.shell.run", { level: 4 })).toBe(true);
+    // `rm -rf` / `git reset --hard` ask as shell_dangerous until level 5.
+    expect(gatedCallRunsUnattended("os.shell.run", { level: 4 })).toBe(false);
+    expect(gatedCallRunsUnattended("os.shell.run", { level: 5 })).toBe(true);
+    // verify.run starts commands too: a dangerous one waits for level 5 (ATO-1266).
+    expect(gatedCallRunsUnattended("verify.run", { level: 4 })).toBe(false);
+    expect(gatedCallRunsUnattended("verify.run", { level: 5 })).toBe(true);
     expect(gatedCallRunsUnattended("os.http.request", { level: 3 })).toBe(true);
     expect(gatedCallRunsUnattended("os.email.send", { level: 4 })).toBe(false);
   });
@@ -77,11 +82,27 @@ describe("gated-call approval categories", () => {
 
   it("honours a session category grant, but never for a non-grantable category", () => {
     expect(
-      gatedCallRunsUnattended("os.shell.run", {
+      gatedCallRunsUnattended("os.screen.click", {
+        level: 1,
+        grantedCategories: ["screen_control"],
+      }),
+    ).toBe(true);
+    // verify.run may start a dangerous command, which a shell grant
+    // never covers (ATO-1266).
+    expect(
+      gatedCallRunsUnattended("verify.run", {
         level: 1,
         grantedCategories: ["shell"],
       }),
-    ).toBe(true);
+    ).toBe(false);
+    // A shell grant never covers shell_dangerous, so a shell call may
+    // still prompt (ATO-1220).
+    expect(
+      gatedCallRunsUnattended("os.shell.run", {
+        level: 1,
+        grantedCategories: ["shell", "shell_dangerous"],
+      }),
+    ).toBe(false);
     expect(
       gatedCallRunsUnattended("os.email.send", {
         level: 1,

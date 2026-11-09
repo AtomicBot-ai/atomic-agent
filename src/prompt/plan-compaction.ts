@@ -12,7 +12,9 @@ import type { PrefixReuse } from "../llm/model-profile.js";
  * Target share of the history allowance after compaction on a model without
  * prefix reuse. Every step after a cut re-reads the whole prompt there, so a
  * smaller kept tail makes each of those re-reads cheaper and the next
- * compaction further away. A lower configured `targetRatio` still wins.
+ * compaction further away. A lower configured `targetRatio` still wins, and
+ * when no cut fits this share the configured one is tried (see
+ * {@link decideCompaction}).
  */
 export const NO_PREFIX_REUSE_TARGET_RATIO = 0.35;
 
@@ -83,12 +85,26 @@ export function planCompaction(state: SessionState, prompt: BuiltPrompt, config:
 }
 
 export function decideCompaction(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested?: "manual" | "overflow", model: { prefixReuse?: PrefixReuse } = {}): CompactionDecision {
+  const reduced = model.prefixReuse === "none" && NO_PREFIX_REUSE_TARGET_RATIO < config.targetRatio;
+  const decision = decideAtRatio(state, prompt, config, requested, reduced ? NO_PREFIX_REUSE_TARGET_RATIO : config.targetRatio);
+  // The smaller tail is a preference, not a requirement. On a small window
+  // (a 16k model leaves about 3k of history) 35% of the allowance minus the
+  // summary reserve is about 500 tokens, less than one tool step, so no cut
+  // fitted, nothing was compacted and trimming dropped turns instead. The
+  // configured target is still tried before giving up.
+  if (reduced && decision.plan === null && decision.skip !== undefined && decision.skip !== "already_compact") {
+    const wider = decideAtRatio(state, prompt, config, requested, config.targetRatio);
+    if (wider.plan) return wider;
+  }
+  return decision;
+}
+
+function decideAtRatio(state: SessionState, prompt: BuiltPrompt, config: CompactionConfig, requested: "manual" | "overflow" | undefined, targetRatio: number): CompactionDecision {
   const budget = prompt.compactionBudget;
   if (!budget || state.turns.length < 2) return { plan: null };
   const reason = requested ?? (budget.activePairs > prompt.conversationPairsCap ? "pairs" : "threshold");
   if (!requested && (!config.auto || (reason !== "pairs" && budget.activeTokens < budget.cap * config.triggerRatio))) return { plan: null };
   const projection = projectSessionConversation(state);
-  const targetRatio = model.prefixReuse === "none" ? Math.min(config.targetRatio, NO_PREFIX_REUSE_TARGET_RATIO) : config.targetRatio;
   const targetTokens = Math.floor(targetRatio * (requested === "manual" ? Math.min(budget.cap, budget.activeTokens) : budget.cap));
   const summaryMaxTokens = Math.min(config.summaryMaxTokens, summaryReserve(budget.cap, targetTokens));
   // The window's own room, independent of the configured maximum and of how much history there is now.

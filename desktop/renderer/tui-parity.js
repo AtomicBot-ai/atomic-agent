@@ -325,7 +325,8 @@ function tpFzEnsureTick() {
     const running = FZ.live.some((w) => !w.done) && (S.busy || S.pending);
     if (!running) { clearInterval(TP_FZ_TICK); TP_FZ_TICK = 0; return; }
     const el = document.querySelector('.fzlive');
-    if (el) el.outerHTML = fzLiveHTML();
+    // ATO-568: morphed when the panel is loaded, so an open Steer field keeps its text and caret.
+    if (el) { if (typeof fzpRepaintStrip === 'function') fzpRepaintStrip(el); else el.outerHTML = fzLiveHTML(); }
   }, 1000);
 }
 

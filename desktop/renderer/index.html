@@ -14,6 +14,8 @@
 <link rel="stylesheet" href="css/chat.css">
 <link rel="stylesheet" href="css/composer.css">
 <link rel="stylesheet" href="css/attachments.css">
+<link rel="stylesheet" href="css/window-snapshot.css">
+<link rel="stylesheet" href="css/overnight.css">
 <link rel="stylesheet" href="css/file-preview.css">
 <link rel="stylesheet" href="css/onboarding.css">
 <link rel="stylesheet" href="css/settings.css">
@@ -43,6 +45,8 @@
            way the #dlbar strip it replaced did. -->
       <div id="dlcard" hidden></div>
       <div id="overlays"></div>
+      <!-- ATO-1113: the Run overnight dialog and its runs card (overnight.js draws it, render() never does). -->
+      <div id="overnight"></div>
       <div id="toasts"></div>
     </div>
   </div>
@@ -51,17 +55,22 @@
 <script src="analytics-acts.js"></script>
 <script src="analytics.js"></script>
 <script src="tui-parity.js"></script>
+<script src="fusion-panel.js"></script>
 <!-- Feature modules declare functions only; renderer.js boots the app and calls them. -->
 <script src="config-patch.js"></script>
 <script src="mcp-live.js"></script>
+<script src="plugins-pane.js"></script>
 <script src="mcp-smart-add.js"></script>
 <script src="session-titles.js"></script>
 <script src="context-compaction.js"></script>
+<!-- ATO-569: the chat's cost and the plan's limit beside the context ring. -->
+<script src="usage-meter.js"></script>
 <script src="dead-engine.js"></script>
 <!-- ATO-900: the memory model card says what its click did, on the card. -->
 <script src="memory-model-card.js"></script>
 <script src="app-update.js"></script>
 <script src="starter-chat.js"></script>
+<script src="upgrade-chat.js"></script>
 <script src="tts.js"></script>
 <script src="switch-queue.js"></script>
 <script src="chat-list.js"></script>
@@ -69,8 +78,10 @@
 <script src="chat-rename.js"></script>
 <!-- ATO-1034: chat folders, kept in ~/.atomic-agent/chat-folders.json. -->
 <script src="chat-folders.js"></script>
+<script src="handoff.js"></script>
 <script src="workspace-skills.js"></script>
 <script src="project-trust.js"></script>
+<script src="approval-rules.js"></script>
 <script src="composer-engines.js"></script>
 <script src="composio.js"></script>
 <!-- ATO-859: Telegram pairing from the app, the state and the card; renderer.js wires the IPC. -->
@@ -79,11 +90,13 @@
 <script src="telegram-restart.js"></script>
 <script src="hf-mirror.js"></script>
 <script src="attachments.js"></script>
+<script src="window-snapshot.js"></script>
 <script src="exa-key.js"></script>
 <script src="disk-space.js"></script>
 <script src="doctor-data.js"></script>
 <!-- ATO-519: a new task in plain words, sent to the agent in a new chat. -->
 <script src="task-ask.js"></script>
+<script src="overnight.js"></script>
 <!-- ATO-669: forgiving ⌘K search; fuzzysort is vendored (MIT, licence beside it). -->
 <script src="vendor/fuzzysort.js"></script>
 <script src="fuzzy-match.js"></script>
@@ -91,6 +104,9 @@
 <script src="dom-morph.js"></script>
 <!-- ATO-1025: colour in a reply's code blocks (no library, the theme's tokens). -->
 <script src="code-highlight.js"></script>
+<!-- ATO-664: marked parses a reply's markdown, DOMPurify checks the result (both vendored, licences beside them). -->
+<script src="vendor/marked.js"></script>
+<script src="vendor/purify.js"></script>
 <!-- ATO-1251: the reply's markdown blocks (renderMarkdown hands its text here). -->
 <script src="md-render.js"></script>
 <!-- ATO-1053: the file preview panel (main reads the file; this only draws it). -->
@@ -98,9 +114,17 @@
 <script src="file-preview.js"></script>
 <!-- ATO-464: a finished turn's steps fold into one summary line. -->
 <script src="turn-summary.js"></script>
+<!-- ATO-1272: the transcript draws its newest part; earlier rows are one "Show earlier" row. -->
+<script src="chat-window.js"></script>
+<!-- ATO-486: the live plan above the composer -->
+<script src="plan-bar.js"></script>
+<!-- ATO-965: /status, a snapshot of the running turn. -->
+<script src="status-snapshot.js"></script>
 <!-- A reply's videos and the progress of long tool calls (video.generate). -->
 <script src="chat-media.js"></script>
 <script src="tool-failures.js"></script>
+<!-- ATO-1249: the side panel's Steps and Reasoning, newest first, with a switch. -->
+<script src="insp-order.js"></script>
 <!-- Studio (Images, Video): the shell first, then each page registers itself with it. -->
 <script src="studio/shell.js"></script>
 <script src="studio/recent-prompts.js"></script>

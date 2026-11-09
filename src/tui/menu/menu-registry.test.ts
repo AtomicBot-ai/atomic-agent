@@ -93,13 +93,21 @@ const V0_2_2_SLASH_COMMANDS = [
     name: "world",
     description: "jump to the Observe → World tab",
   },
+  // ATO-963: finished turns fold into one line; /expand opens the last one,
+  // /steps keeps them all open.
   {
     name: "expand",
-    description: "expand every tool card in the chat log",
+    description:
+      "open the last finished turn's steps | `/expand all` opens every turn and tool card",
   },
   {
     name: "collapse",
-    description: "collapse every tool card in the chat log",
+    description: "fold every finished turn and tool card in the chat log",
+  },
+  {
+    name: "steps",
+    description:
+      "always show steps: `/steps` toggles | `/steps on` keeps finished turns open | `/steps off` folds them",
   },
   {
     name: "session",
@@ -192,6 +200,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "steer the running turn: `/steer <msg>` one-shot | bare `/steer` makes Enter steer",
   },
+  // ATO-965: a status snapshot of the running turn.
+  {
+    name: "status",
+    description:
+      "what the running turn is doing: plan, now, last result, blocked on an approval, time, steps",
+  },
   {
     name: "window",
     description: "open a new terminal window running atomic-agent (ctrl+n)",
@@ -205,6 +219,12 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "context",
     description: "show where this session's context window went",
+  },
+  // ATO-569: the cost and limit breakdown behind the composer readout.
+  {
+    name: "usage",
+    description: "show this session's cost and the account's rate limits",
+    aliases: ["cost"],
   },
   // The rail's fold toggle: the mouse has the « control, this is the
   // keyboard's route to the same flip.
@@ -241,6 +261,27 @@ const V0_2_2_SLASH_COMMANDS = [
   {
     name: "enhance",
     description: "rewrite a prompt into a clearer one in the composer; nothing is sent",
+  },
+  // Added with the plugin loader (ATO-954).
+  {
+    name: "plugins",
+    description:
+      "open the Plugins tab: installed plugins, what each brings, on/off switches for a plugin and its parts, code permission and missing keys",
+  },
+  {
+    name: "goal",
+    description:
+      "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
+  },
+  {
+    name: "worker",
+    description:
+      "act on one running fusion worker: `/worker stop <id>` · `/worker steer <id> <note>` (it reads the note at its next step) · `/worker escalate <id>` (ask the escalation model for a hint; shows its cost)",
+  },
+  {
+    name: "fusion",
+    description:
+      "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
   },
   {
     name: "uninstall",
@@ -348,6 +389,7 @@ describe("menu registry", () => {
     expect(menuChildren("go.manage").map((n) => n.label)).toEqual([
       "Tasks",
       "Skills",
+      "Plugins",
       "Memory",
       "MCP",
       "Integrations",
