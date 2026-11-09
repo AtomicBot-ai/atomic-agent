@@ -645,6 +645,9 @@ export class LocalModelsOrchestrator {
     opts?: PullOptions,
   ): Promise<void> {
     const selectionRevision = this.selectionRevision;
+    // Asked for here while already on a cloud route: the daemon start is
+    // part of the request. Anything else lands quietly on a cloud route.
+    const startDaemonOnCloud = !opts?.unattended && this.cloudRouteActive();
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
 
@@ -731,6 +734,7 @@ export class LocalModelsOrchestrator {
         projectorError,
         selectionRevision,
         opts?.unattended ? downloadJobId("chat", id) : null,
+        startDaemonOnCloud,
       );
       // Held for a running turn: the record stays until it really lands.
       if (!finished) return;
@@ -769,6 +773,7 @@ export class LocalModelsOrchestrator {
     projectorError: string | null = null,
     selectionRevision = this.selectionRevision,
     unattendedJobId: string | null = null,
+    startDaemonOnCloud = false,
   ): Promise<boolean> {
     return this.operations.run(async () => {
       if (selectionRevision !== this.selectionRevision) {
@@ -779,9 +784,15 @@ export class LocalModelsOrchestrator {
         this.holdLanding({ def, mode, projectorError, selectionRevision, jobId: unattendedJobId });
         return false;
       }
-      await this.finishChatPullNow(def, mode, projectorError);
+      await this.finishChatPullNow(def, mode, projectorError, startDaemonOnCloud);
       return true;
     }, true, false);
+  }
+
+  /** The same rule as `autoStartIfReady`: an active provider other than the managed one. */
+  private cloudRouteActive(): boolean {
+    const active = getConfig().llm?.activeTextProvider;
+    return !!active && active !== "local-llama";
   }
 
   private holdLanding(landing: HeldLanding): void {
@@ -842,6 +853,7 @@ export class LocalModelsOrchestrator {
     def: LocalModelDef,
     mode: "with-mmproj" | "gguf-only" | "mmproj-only",
     projectorError: string | null,
+    startDaemonOnCloud: boolean,
   ): Promise<void> {
     if (mode === "mmproj-only") {
       await this.refresh();
@@ -872,6 +884,16 @@ export class LocalModelsOrchestrator {
     // ATO-1045: the starter landed; the best model for this machine
     // follows as a background download, adopted on the next refresh.
     void this.followStarterWithUpgrade(def);
+
+    // The route moved to the cloud while this downloaded: the model is
+    // recorded for when the operator comes back, and nothing loads it.
+    if (!startDaemonOnCloud && this.cloudRouteActive()) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: `local-llm: ${def.name} installed. Chats stay on your cloud provider until you switch to a local model.`,
+      });
+      return;
+    }
 
     // Memory-v2 phase 1B onboarding: if the operator has just
     // pulled their first chat model and there is no embedding on

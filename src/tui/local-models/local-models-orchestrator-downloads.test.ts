@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ensureUserConfigFileSync,
   getConfig,
+  getUserConfigPath,
   resetConfigCache,
   writeUserConfigFileSync,
 } from "../../config/index.js";
@@ -721,6 +722,74 @@ describe("LocalModelsOrchestrator — pulls through the download worker", () => 
       );
       expect(first?.pull.percent).toBe(50);
       expect(existsSync(dest)).toBe(true);
+    });
+
+    describe("a download that lands on a cloud route", () => {
+      function activateCloud(): void {
+        const path = getUserConfigPath(stateDir);
+        const prev = ensureUserConfigFileSync(path);
+        writeUserConfigFileSync(path, {
+          ...prev,
+          llm: {
+            activeTextProvider: "cloud",
+            activeEmbeddingProvider: "local-llama",
+            toolTransport: "auto",
+            providers: [
+              { id: "local-llama", kind: "llama-server", url: "http://127.0.0.1:9931" },
+              { id: "cloud", kind: "openai-compatible", baseUrl: "https://api.example.com/v1" },
+            ],
+          },
+        } as never);
+        resetConfigCache();
+      }
+
+      it("records the model and starts no daemon", async () => {
+        const dataDir = getConfig().paths.localModelsDataDir;
+        const def = getLocalModelDef("qwen-3.5-4b");
+        const dest = resolveModelFilePath(dataDir, def.id, def.filename);
+        mkdirSync(join(dest, ".."), { recursive: true });
+        writeFileSync(dest, "gguf");
+        writeDownloadJob(dataDir, {
+          ...initialDownloadJob({
+            dataDir,
+            kind: "chat",
+            modelId: def.id,
+            mode: "gguf-only",
+            pid: 1,
+          }),
+          status: "done",
+          percent: 100,
+          finishedAt: "2026-09-07T12:00:00.000Z",
+        });
+        activateCloud();
+
+        orchestrator.adoptBackgroundDownloads();
+        await waitFor(
+          () => readDownloadJob(dataDir, "chat-qwen-3.5-4b") === null,
+        );
+
+        expect(startDaemon).not.toHaveBeenCalled();
+        expect(getConfig().localModels.managed.modelId).toBe("qwen-3.5-4b");
+        expect(getConfig().llm?.activeTextProvider).toBe("cloud");
+        expect(
+          infoLines(actions).some((l) => /Chats stay on your cloud provider/.test(l)),
+        ).toBe(true);
+      });
+
+      it("still starts the daemon for a pull asked for on the cloud route", async () => {
+        activateCloud();
+        globalThis.fetch = vi.fn(
+          async () =>
+            new Response(bodyOf(["gg", "uf"]), {
+              status: 200,
+              headers: { "content-length": "4" },
+            }),
+        ) as typeof fetch;
+
+        await orchestrator.pullModel("qwen-3.5-4b", "gguf-only");
+
+        expect(startDaemon).toHaveBeenCalledOnce();
+      });
     });
 
     describe("a download that lands during a turn", () => {
