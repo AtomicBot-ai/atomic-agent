@@ -132,7 +132,9 @@ describe("agent configuration ownership", () => {
     });
     expect(events).toEqual([
       "raw-wait", "read-defaults", "default-wait",
-      "raw-task", "read-defaults", "default-task", "read-defaults",
+      "raw-task", "read-defaults", "default-task",
+      // compaction, prompt and tools are always parsed against their defaults.
+      "read-defaults", "read-defaults", "read-defaults",
     ]);
     expect(parsed.providerWait).toEqual({ enabled: false, maxWaitMs: 1 });
     expect(parsed.task).toEqual({ maxSteps: 2, maxDurationMs: 3, autoContinue: false, resumeInterrupted: true, maxResumes: 3, maxCostUsd: 0 });
