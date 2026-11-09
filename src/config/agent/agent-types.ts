@@ -1,4 +1,5 @@
 import type { CompactionConfig } from "./compaction-config.js";
+import type { PromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { AgentTaskConfig, ProviderWaitConfig } from "../agent-execution-config.js";
 
@@ -197,6 +198,8 @@ export interface RuntimeAgentConfig {
    * Env-only: `ATOMIC_AGENT_REPLY_POLISH`.
    */
   replyPolish?: boolean;
+  /** Mirrors `UserAgentConfig.prompt`. */
+  prompt: PromptConfig;
 }
 
 export interface UserAgentConfig {
@@ -290,4 +293,11 @@ export interface UserAgentConfig {
    * a local `llama-server` link that has a model, else the active provider.
    */
   smartApprovalModel: string | null;
+  /**
+   * Stable-prefix shape. `compact` (default `"auto"`): the short
+   * scaffold for small context windows; `auto` turns it on when the
+   * model's known window is at most 64K tokens. See
+   * `src/prompt/compact-prompt.ts`.
+   */
+  prompt: PromptConfig;
 }

@@ -1,4 +1,5 @@
 import { createCompactionDefaults } from "./compaction-config.js";
+import { createPromptDefaults } from "./prompt-config.js";
 import type { UserAgentConfig } from "./agent-types.js";
 import { createProviderWaitDefaults, createAgentTaskDefaults } from "../agent-execution-config.js";
 
@@ -23,5 +24,6 @@ export function createAgentDefaults(): UserAgentConfig {
     worldSnapshotMaxTokens: 8_000,
     smartApproval: false,
     smartApprovalModel: null,
+    prompt: createPromptDefaults(),
   };
 }

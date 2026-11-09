@@ -83,6 +83,7 @@ describe("agent configuration ownership", () => {
       "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
       "nameSessions", "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
       "smartApproval", "smartApprovalModel",
+      "prompt",
     ]);
     expect(first.providerWait).not.toBe(second.providerWait);
     expect(first.task).not.toBe(second.task);
@@ -208,6 +209,7 @@ describe("agent configuration ownership", () => {
         "readScope", "approvalLevel", "compaction", "conversationMaxTokens", "conversationMaxPairs",
         "conversationLowWater", "sessionSectionsMaxTokens", "worldSnapshotMaxTokens",
         "smartApproval", "smartApprovalModel",
+        "prompt",
       ]);
     } finally {
       USER_CONFIG_DEFAULTS.agent = saved;

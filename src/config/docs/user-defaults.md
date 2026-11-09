@@ -65,6 +65,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `agent.worldSnapshotMaxTokens` (default `8000`).
 - `agent.smartApproval` (default `false`).
 - `agent.smartApprovalModel` (default `null`).
+- `agent.prompt.compact` (default `"auto"`): `auto` uses the compact prompt scaffold when the model's known context window is at most 64K tokens, `on` always, `off` never.
 
 ## http
 

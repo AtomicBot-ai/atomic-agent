@@ -1,4 +1,5 @@
 import { parseCompactionConfig } from "./compaction-config.js";
+import { parsePromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { ReadScope, UserAgentConfig } from "./agent-types.js";
 import { ConfigValidationError } from "../config-validation-error.js";
@@ -175,6 +176,7 @@ export function parseAgentConfig(
         : agent.smartApprovalModel,
       "agent.smartApprovalModel",
     ),
+    prompt: parsePromptConfig(agent.prompt, readDefaults().prompt),
   };
 }
 

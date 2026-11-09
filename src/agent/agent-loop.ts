@@ -50,6 +50,7 @@ import { getConfig } from "../config/index.js";
 
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
+import { CompactPromptLatch } from "../prompt/compact-prompt.js";
 
 /**
  * What the user reads when the step loop ran out before the model
@@ -68,6 +69,11 @@ export class AgentLoop {
   private readonly profileClipWarnings = new ProfileClipWarnings();
   /** Once-per-cut notice that the packer left older history out (ATO-295). */
   private readonly historyTrimWarnings = new HistoryTrimWarnings();
+  /**
+   * Compact-prompt decision per session (ATO-1116): keeps the stable
+   * prefix from flipping when a step cannot see the model's window.
+   */
+  private readonly compactPromptLatch = new CompactPromptLatch();
 
   constructor(private readonly deps: AgentLoopDependencies) {}
 
@@ -479,6 +485,7 @@ export class AgentLoop {
         const stepDeps: StepDependencies = {
             prepareWorkspace: this.deps.prepareWorkspace,
             registry: this.deps.registry,
+            compactPromptLatch: this.compactPromptLatch,
             commitSession: (next) => {
               state = next;
               stepContext.session = next;

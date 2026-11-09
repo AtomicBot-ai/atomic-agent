@@ -1,5 +1,6 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { getConfig } from "../../config/index.js";
+import { decideCompactPrompt } from "../../prompt/compact-prompt.js";
 import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import { LlamaServerClient } from "../../llm/llama-server-client.js";
@@ -125,15 +126,23 @@ export async function prepareRuntimeLocalProfile(
     // Judged against the reply reserve the budget really holds on this
     // window, so a cap raised past the window (96k on a 32k model) does
     // not make every model "too small".
+    // The compact scaffold (ATO-1116) this window gets needs about
+    // half the fixed room of the full one.
+    const compactPrompt = decideCompactPrompt(
+      config.agent.prompt?.compact ?? "auto",
+      candidate.contextWindow,
+    ).compact;
     const minUsableCtx = minUsableContextWindow(
       config.localModels.completionMaxTokens,
       candidate.contextWindow,
+      { compact: compactPrompt },
     );
     if (candidate.contextWindow && candidate.contextWindow < minUsableCtx) {
       logger.warn("context window too small for the agent prompt", {
         contextWindow: candidate.contextWindow,
         required: minUsableCtx,
         completionMaxTokens: config.localModels.completionMaxTokens,
+        promptCompact: compactPrompt,
         hint:
           config.localModels.mode === "managed"
             ? "raise localModels.managed.contextSize, lower localModels.completionMaxTokens, or pick a model that fits VRAM"
@@ -383,11 +392,20 @@ function logResolvedProfile(
   const alias =
     typeof props.model_alias === "string" ? props.model_alias : null;
   const totalSlots = extractTotalSlots(props);
+  // The prompt scaffold this window gets (ATO-1116), so a bench log
+  // shows compact vs full from the boot line. The per-step decision is
+  // logged again as "prompt scaffold" on each turn's first step.
+  const scaffold = decideCompactPrompt(
+    getConfig().agent.prompt?.compact ?? "auto",
+    resolved.contextWindow,
+  );
   logger.info("model profile resolved", {
     id: resolved.id,
     alias,
     contextWindow: resolved.contextWindow ?? null,
     totalSlots,
+    promptCompact: scaffold.compact,
+    promptCompactReason: scaffold.reason,
   });
   return { profile: resolved, modelAlias: alias, totalSlots };
 }
