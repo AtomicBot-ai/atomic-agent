@@ -98,8 +98,8 @@ export class ToolHookEngine {
         {
           sessionId: call.sessionId,
           tool: call.tool,
-          // `other` asks at every level below full trust, which is what a hook's `ask` means.
-          category: "other",
+          // Asks at every level below full trust; no grant or smart review answers it.
+          category: "hook_ask",
           reason: `A PreToolUse hook asks you to confirm this call${verdict.reason ? `: ${verdict.reason}` : "."}`,
           preview: previewOf(call.args),
         },

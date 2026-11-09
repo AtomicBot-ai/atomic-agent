@@ -38,6 +38,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "screen_control",
   "screen_capture",
   "local_model_restart",
+  "hook_ask",
   "other",
 ];
 
@@ -51,7 +52,7 @@ describe("session-grant eligibility", () => {
     );
   });
 
-  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, shell_dangerous and fusion_fanout", () => {
+  it("grants every category except trust_config, state_secret, email, browser_secret, local_model_restart, hook_ask, shell_dangerous and fusion_fanout", () => {
     for (const category of ALL_CATEGORIES) {
       expect(isGrantableCategory(category)).toBe(
         category !== "shell_dangerous" &&
@@ -60,7 +61,8 @@ describe("session-grant eligibility", () => {
           category !== "state_secret" &&
           category !== "email" &&
           category !== "browser_secret" &&
-          category !== "local_model_restart",
+          category !== "local_model_restart" &&
+          category !== "hook_ask",
       );
     }
   });
@@ -132,6 +134,7 @@ describe("approval ladder", () => {
       // A picture of whatever is open: asks on the lowest two levels, like http.
       screen_capture: 3,
       local_model_restart: 5,
+      hook_ask: 5,
       other: 5,
     };
     for (const [category, from] of Object.entries(silentFrom) as [
