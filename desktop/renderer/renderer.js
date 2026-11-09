@@ -187,9 +187,9 @@ const KIND_ROWS = [
   {id:'openrouter', kind:'openrouter', label:'OpenRouter (cloud chat + optional cloud embed)', env:'OPENROUTER_API_KEY', defaultModel:'openrouter/auto'},
   {id:'aimlapi', kind:'aimlapi', label:'AI/ML API (1000+ models, OpenAI-compatible)', env:'AIMLAPI_API_KEY'},
   {id:'gemini', kind:'gemini', label:'Gemini (Google AI)', env:'GEMINI_API_KEY', defaultModel:'gemini-2.5-flash'},
-  {id:'claude-cli', kind:'subscription-cli', subscriptionCli:'claude', word:'Claude Code', billingEnv:'ANTHROPIC_API_KEY', defaultModel:'sonnet',
+  {id:'claude-cli', kind:'subscription-cli', subscriptionCli:'claude', word:'Claude Code', plan:'Claude', billingEnv:'ANTHROPIC_API_KEY', defaultModel:'sonnet',
    label:'Claude Code subscription: the agent runs on your plan (signed-in `claude`)'},
-  {id:'codex-cli', kind:'subscription-cli', subscriptionCli:'codex', word:'Codex', billingEnv:'OPENAI_API_KEY', defaultModel:'',
+  {id:'codex-cli', kind:'subscription-cli', subscriptionCli:'codex', word:'Codex', plan:'ChatGPT', billingEnv:'OPENAI_API_KEY', defaultModel:'',
    label:'OpenAI Codex subscription: the agent runs on your plan (signed-in `codex`)'},
   {id:'openai-compatible', kind:'openai-compatible', label:'OpenAI-compatible API (custom base URL)', custom:true, defaultModel:'gpt-5.4-mini'},
 ];
@@ -6648,6 +6648,7 @@ function act(a) {
      cloud providers, with the provider setup started — what that pane's own
      Add provider button does (llm:add). */
   if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
+  if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
   /* The second of the two buttons an unchecked key offers. It is the
@@ -14351,13 +14352,14 @@ function obWizardHTML() {
     return '<div class="ob-wiz">'
       + '<div class="ob-kicker">Subscription</div>'
       + '<div class="ob-h">' + providerMark(k.id) + esc(wizService(k)) + '</div>'
-      + wizSubscriptionLines(k).map((l) => '<div class="ob-help' + (l.warn ? ' is-warn' : '') + '">' + esc(l.text) + '</div>').join('')
+      + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'div', 'is-warn')).join('')
       + (WIZ.error ? '<div class="ob-err">' + ic('alert') + '<span>' + esc(WIZ.error) + '</span></div>'
           + (wizErrDetail() ? '<details class="ob-errmore"><summary>Details</summary><span>' + esc(wizErrDetail()) + '</span></details>' : '') : '')
       + '<div class="ob-foot"><button class="btn btn-g" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>'
         + ic('chevL') + 'Back</button><span class="grow"></span>'
-        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
-        + (verifying ? 'Adding…' : 'Add' + ic('arrowR')) + '</button></div>'
+        + '<button class="btn btn-s" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
+        + '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+        + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>'
       + '</div>';
   }
   /* B.4 — one label, not three: "API key" once as the kicker, the provider
@@ -16517,7 +16519,7 @@ if (BR) {
        nothing at all until they were listed. Same shape as the defect the
        operator once reported as "when I click on next, nothing happens". */
     if (OB.open && OB.step === 'cloud'
-        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked')) {
+        && (a === 'wiz:model' || a === 'wiz:useDefault' || a === 'wiz:saveUnchecked' || a === 'wiz:subRecheck')) {
       return prevAct(a);
     }
     if (OB.open && OB.step === 'cloud' && (a === 'wiz:cancel' || a === 'wiz:back')) {
@@ -20196,12 +20198,13 @@ function wizardHTML() {
   }
   if (k.subscriptionCli) {
     return selShell(wizService(k),
-      '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => '<p class="ob-help' + (l.warn ? ' tk-help--warn' : '') + '">' + esc(l.text) + '</p>').join('')
+      '<div class="selbody selwiz">' + wizSubscriptionLines(k).map((l) => wizSubLineHTML(l, 'p', 'tk-help--warn')).join('')
       + (WIZ.error ? '<div class="ob-err"' + (wizErrDetail() ? ' title="' + esc(wizErrDetail()) + '"' : '') + '>' + esc(WIZ.error) + '</div>' : '')
       + '</div>',
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
-        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying ? ' disabled' : '') + '>'
-        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : 'Add') + '</button>',
+        + '<button class="btn btn-s xs" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
+        + '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
+        + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>',
       lead);
   }
   /* This is the SECOND place the app asks for an API key — the wizard's own
@@ -20310,10 +20313,54 @@ function wizBillingSet(env) {
     .catch(() => WIZ_BILLING.set(env, false));
   return false;
 }
-/** What the subscription step says, in order: what runs, then the billing warning when it applies. */
+/* ATO-756: is the CLI installed and signed in? Asked once per CLI (main reads
+   files only, runs nothing: subscription-cli-detect.ts) and again on "Check
+   again". null while unknown or when the bridge cannot ask. */
+const WIZ_SUB = new Map();
+function wizSubStatus(k) {
+  const cli = k && k.subscriptionCli;
+  if (!cli || !BR || !BR.subscriptionStatus) return null;
+  if (WIZ_SUB.has(cli)) { const v = WIZ_SUB.get(cli); return v === 'asking' ? null : v; }
+  WIZ_SUB.set(cli, 'asking');
+  Promise.resolve(BR.subscriptionStatus(cli))
+    .then((r) => { WIZ_SUB.set(cli, r && r.ok && r.status ? r.status : {installed: null, signedIn: null}); if (WIZ.row && WIZ.row.subscriptionCli === cli) render(); })
+    .catch(() => WIZ_SUB.set(cli, {installed: null, signedIn: null}));
+  return null;
+}
+function wizSubRecheck(k) { if (k && k.subscriptionCli) WIZ_SUB.delete(k.subscriptionCli); WIZ.error = null; render(); }
+/** Install steps per CLI and platform; the person runs them, the app never does. */
+function wizSubInstallCmd(cli) {
+  const win = /win/i.test(navigator.platform || '');
+  if (cli === 'claude') return win ? 'irm https://claude.ai/install.ps1 | iex' : 'curl -fsSL https://claude.ai/install.sh | bash';
+  return 'npm install -g @openai/codex';
+}
+/** False only when the CLI is known to be missing: the step's button then waits for it. */
+function wizSubReady(k) { const st = wizSubStatus(k); return !(st && st.installed === false); }
+/** What the subscription step says, in order: what is found, what to do, then the billing warning when it applies. */
 function wizSubscriptionLines(k) {
-  const lines = [{text: 'No API key needed. The agent runs your signed-in ' + k.subscriptionCli
-    + ' CLI on your ' + wizService(k) + ' plan, so it must be installed and signed in on ' + THIS_MACHINE + '.'}];
+  const st = wizSubStatus(k);
+  const cli = k.subscriptionCli;
+  const terminal = /win/i.test(navigator.platform || '') ? 'PowerShell' : 'Terminal';
+  const lines = [];
+  if (!st || st.installed === null) {
+    lines.push({text: 'No API key needed. The agent runs your signed-in ' + cli
+      + ' CLI on your ' + wizService(k) + ' plan, so it must be installed and signed in on ' + THIS_MACHINE + '.'});
+  } else if (!st.installed) {
+    lines.push({warn: true, text: wizService(k) + ' is not installed on ' + THIS_MACHINE + '. To use your ' + k.plan + ' subscription:'});
+    lines.push({text: '1. Open ' + terminal + ' and run:'});
+    lines.push({code: true, text: wizSubInstallCmd(cli)});
+    lines.push({text: '2. Run ' + cli + (cli === 'codex' ? ' login' : '') + ' once and sign in with your ' + k.plan + ' account.'});
+    lines.push({text: '3. Come back here and press Check again.'});
+  } else if (st.signedIn === false) {
+    lines.push({warn: true, text: 'Found ' + wizService(k) + ', but it is not signed in' + (st.apiKeyLogin ? ' with ChatGPT (it is using an API key, which bills per token)' : '') + '.'});
+    lines.push({text: '1. Open ' + terminal + ' and run:'});
+    lines.push({code: true, text: cli === 'codex' ? 'codex login' : 'claude'});
+    lines.push({text: '2. Sign in with your ' + k.plan + ' account' + (cli === 'claude' ? ' (type /login if it does not ask)' : '') + ', then press Check again.'});
+  } else if (st.signedIn === true) {
+    lines.push({text: 'Found ' + wizService(k) + ' and you are signed in. Press the button and the agent answers on your ' + k.plan + ' plan, no API key needed.'});
+  } else {
+    lines.push({text: 'Found ' + wizService(k) + '. If the first answer says you are signed out, run ' + cli + (cli === 'codex' ? ' login' : '') + ' in ' + terminal + ' and sign in with your ' + k.plan + ' account.'});
+  }
   if (wizBillingSet(k.billingEnv)) {
     lines.push({warn: true, text: k.billingEnv + ' is set on ' + THIS_MACHINE + ', so the ' + k.subscriptionCli
       + ' CLI may bill your API account per token instead of your plan. Unset it to use only your subscription.'});
@@ -20322,12 +20369,25 @@ function wizSubscriptionLines(k) {
 }
 /** The entry the TUI's wizard writes for this row (buildProviderEntryFromWizard). */
 function wizSubscriptionEntry(k) {
-  return {id: k.id, kind: k.kind, subscriptionCli: {cli: k.subscriptionCli}, ...(k.defaultModel ? {defaultChatModel: k.defaultModel} : {})};
+  /* ATO-756: a CLI found outside the app's PATH (a Dock-opened app gets a short
+     one) is saved with its path, or the agent would not find it. */
+  const st = wizSubStatus(k);
+  const binPath = st && st.installed && st.binPath ? st.binPath : null;
+  return {id: k.id, kind: k.kind, subscriptionCli: {cli: k.subscriptionCli, ...(binPath ? {binPath} : {})}, ...(k.defaultModel ? {defaultChatModel: k.defaultModel} : {})};
+}
+/** The subscription step's main button: "Use my Claude subscription". */
+function wizSubButton(k) { return 'Use my ' + (k.plan || wizService(k)) + ' subscription'; }
+/** One line of the step, a command line drawn as code the person copies. */
+function wizSubLineHTML(l, cls, warnCls) {
+  return '<' + (cls === 'p' ? 'p' : 'div') + ' class="ob-help' + (l.warn ? ' ' + warnCls : '') + '">'
+    + (l.code ? '<code class="mono">' + esc(l.text) + '</code>' : esc(l.text)) + '</' + (cls === 'p' ? 'p' : 'div') + '>';
 }
 async function wizSubscriptionStep(k) {
   const id = k.id;
   /* The model step's second pass: the entry is saved, the choice is made. */
   if (WIZ.modelChosen) return wizActivate(k, id, WIZ.modelPick || '', null);
+  /* ATO-756: Enter reaches here too; a CLI known to be missing is not saved. */
+  if (!wizSubReady(k)) { render(); return; }
   WIZ.phase = 'verifying'; WIZ.error = null; WIZ.errorDetail = null; WIZ.noFundsNote = null; render();
   const res = await BR.upsertProvider(wizSubscriptionEntry(k));
   if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }

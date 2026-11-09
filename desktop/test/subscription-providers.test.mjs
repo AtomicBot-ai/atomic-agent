@@ -15,19 +15,24 @@ function slice(start, end) {
   return renderer.slice(i, j);
 }
 
-function load(present) {
+function load(present, status) {
   const asked = [];
+  const statusAsked = [];
   const ctx = createContext({
     THIS_MACHINE: 'this Mac',
     WIZ: { row: null },
+    navigator: { platform: 'MacIntel' },
     render() {},
-    BR: { providerKeyPresent: (q) => { asked.push(q); return Promise.resolve({ ok: true, present }); } },
+    BR: {
+      providerKeyPresent: (q) => { asked.push(q); return Promise.resolve({ ok: true, present }); },
+      ...(status ? { subscriptionStatus: (cli) => { statusAsked.push(cli); return Promise.resolve({ ok: true, status: status(cli) }); } } : {}),
+    },
   });
   runInContext(slice('const KIND_ROWS = [', '];') + '];'
     + slice('function wizService(row)', '\n') + '\n'
     + slice('const WIZ_BILLING = new Map();', 'async function wizSubscriptionStep(k)')
-    + ';this.rows = KIND_ROWS; this.entry = wizSubscriptionEntry; this.lines = wizSubscriptionLines; this.service = wizService;', ctx);
-  return { ctx, asked };
+    + ';this.rows = KIND_ROWS; this.entry = wizSubscriptionEntry; this.lines = wizSubscriptionLines; this.service = wizService; this.wizSubReady = wizSubReady; this.wizSubButton = wizSubButton;', ctx);
+  return { ctx, asked, statusAsked };
 }
 
 test('both subscription rows are offered with the terminal labels, after the one-key services', () => {
@@ -77,4 +82,50 @@ test('Next on a subscription row takes the no-key path, and both setup screens d
   const sub = slice('async function wizSubscriptionStep(k)', 'async function wizNext()');
   assert.doesNotMatch(sub, /verifyProviderKey/);
   assert.match(sub, /wizActivate\(k, id, '', null\)/, 'Codex, with no model list, is activated as it is');
+});
+
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const plain = (x) => JSON.parse(JSON.stringify(x));
+
+test('ATO-756: a missing CLI gets install steps, the button waits, nothing is run', async () => {
+  const { ctx, statusAsked } = load(false, (cli) => ({ cli, installed: false, binPath: null, signedIn: false }));
+  const claude = ctx.rows[3];
+  ctx.lines(claude); await tick();
+  const lines = plain(ctx.lines(claude));
+  assert.ok(lines[0].warn);
+  assert.match(lines[0].text, /Claude Code is not installed on this Mac\. To use your Claude subscription:/);
+  assert.deepEqual(lines.filter((l) => l.code).map((l) => l.text), ['curl -fsSL https://claude.ai/install.sh | bash']);
+  assert.match(lines.at(-1).text, /Check again/);
+  assert.equal(ctx.wizSubReady(claude), false);
+  assert.deepEqual(statusAsked, ['claude'], 'asked once');
+  assert.equal(ctx.wizSubButton(claude), 'Use my Claude subscription');
+  assert.equal(ctx.wizSubButton(ctx.rows[4]), 'Use my ChatGPT subscription');
+});
+
+test('ATO-756: installed but signed out says how to sign in; Codex on an API key says so', async () => {
+  const { ctx } = load(false, (cli) => ({ cli, installed: true, binPath: null, signedIn: false, ...(cli === 'codex' ? { apiKeyLogin: true } : {}) }));
+  ctx.lines(ctx.rows[3]); ctx.lines(ctx.rows[4]); await tick();
+  const claude = plain(ctx.lines(ctx.rows[3]));
+  assert.match(claude[0].text, /not signed in/);
+  assert.deepEqual(claude.filter((l) => l.code).map((l) => l.text), ['claude']);
+  const codex = plain(ctx.lines(ctx.rows[4]));
+  assert.match(codex[0].text, /API key, which bills per token/);
+  assert.deepEqual(codex.filter((l) => l.code).map((l) => l.text), ['codex login']);
+  assert.equal(ctx.wizSubReady(ctx.rows[3]), true, 'signed-out is still allowed: the CLI may know better');
+});
+
+test('ATO-756: ready says so, and a CLI found off PATH is saved with its path', async () => {
+  const { ctx } = load(false, (cli) => ({ cli, installed: true, binPath: '/Users/nadia/.local/bin/claude', signedIn: true }));
+  ctx.lines(ctx.rows[3]); await tick();
+  const lines = plain(ctx.lines(ctx.rows[3]));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0].text, /^Found Claude Code and you are signed in\./);
+  assert.deepEqual(plain(ctx.entry(ctx.rows[3])),
+    { id: 'claude-cli', kind: 'subscription-cli', subscriptionCli: { cli: 'claude', binPath: '/Users/nadia/.local/bin/claude' }, defaultChatModel: 'sonnet' });
+});
+
+test('ATO-756: Check again is a wizard verb in first run too, and Enter cannot save a missing CLI', () => {
+  assert.match(renderer, /a === 'wiz:saveUnchecked' \|\| a === 'wiz:subRecheck'/);
+  const sub = slice('async function wizSubscriptionStep(k)', 'async function wizNext()');
+  assert.match(sub, /if \(!wizSubReady\(k\)\) \{ render\(\); return; \}/);
 });

@@ -9,6 +9,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, p
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
+import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
 import { readChatFolders, writeChatFolders } from "./chat-folders.js";
@@ -1963,6 +1964,13 @@ function wireIpc(client: AgentClient): void {
       ...(typeof apiKeyEnvVar === "string" && apiKeyEnvVar ? { apiKeyEnvVar } : {}),
       ...(typeof baseUrl === "string" && baseUrl ? { baseUrl } : {}),
     });
+  });
+  /* ATO-756: is the Claude Code / Codex CLI installed and signed in? Read from
+     files only (subscription-cli-detect.ts): nothing is run, and only
+     yes / no / unknown and an install path come back. */
+  ipcMain.handle("cli:subscriptionStatus", (_event, cli: unknown) => {
+    if (!isSubscriptionCli(cli)) return { ok: false, error: "cli must be claude or codex" };
+    return { ok: true, status: detectSubscriptionCli(cli) };
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };
