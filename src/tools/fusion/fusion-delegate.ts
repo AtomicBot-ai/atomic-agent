@@ -947,8 +947,16 @@ export function buildFusionDelegateTool(
                 : { parentContract: parsed.contract }),
               workerMaxSteps: mode.workerMaxSteps,
               workerTimeoutMs: mode.workerTimeoutMs,
-              runChildren: (children, childContract, suffix) =>
-                runTasks(children, childContract, suffix, true),
+              runChildren: (children, childContract, suffix) => {
+                // A split stays on the leg its parent ran on and is billed at.
+                for (const child of children) {
+                  const parentId = tree.parentOf(child.id);
+                  const leg =
+                    parentId === undefined ? undefined : taskLegs.get(parentId);
+                  if (leg !== undefined) taskLegs.set(child.id, leg);
+                }
+                return runTasks(children, childContract, suffix, true);
+              },
               evaluateChildren: async (rows, children, childContract) => {
                 const provides = await inspectContractProvides(
                   childContract,

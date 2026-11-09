@@ -119,6 +119,10 @@ export class TaskTreeState {
     return this.byId.get(taskId)?.depth ?? 1;
   }
 
+  parentOf(taskId: string): string | undefined {
+    return this.byId.get(taskId)?.parentId;
+  }
+
   /** Whether a node at `depth` may still propose a split. */
   canSplitAt(depth: number): boolean {
     return depth < this.limits.maxDepth && this.nodesLeft >= MIN_SPLIT_TASKS;

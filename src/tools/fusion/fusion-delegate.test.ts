@@ -1851,6 +1851,36 @@ describe("fusion.delegate — task tree (ATO-940)", () => {
     expect(result.summary).toContain("Task tree: 1 task split by their workers");
   });
 
+  it("runs the children on the model their parent ran on", async () => {
+    const pins = new Map<string, string | undefined>();
+    const roles: NonNullable<ResolvedRunMode["roles"]> = {
+      byRole: { build: { providerId: "or-coder", model: "qwen-coder", local: false } },
+      mixLocalModels: false,
+      localLegProviderIds: ["local-llama"],
+    };
+    const script = scripted([]);
+    const tool = buildFusionDelegateTool(
+      deps({
+        resolveRunMode: () =>
+          fusionMode({ roles, taskTree: { maxDepth: 2, maxNodes: 24 } }),
+        runTurn: async (session, message, options) => {
+          const meta = session.metadata?.fusionWorker as { taskId: string };
+          pins.set(meta.taskId, options.providerId);
+          return script(session, message, options);
+        },
+      }),
+    );
+    await tool.run(
+      { tasks: [{ id: "t1", title: "One", instructions: "Do one", role: "build" }] },
+      ctx(),
+    );
+    expect(Object.fromEntries(pins)).toEqual({
+      t1: "or-coder",
+      "t1/a": "or-coder",
+      "t1/b": "or-coder",
+    });
+  });
+
   it("refuses a proposal past the node cap and leaves the task to the orchestrator", async () => {
     const briefs: string[] = [];
     const tool = buildFusionDelegateTool(

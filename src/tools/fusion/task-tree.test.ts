@@ -267,6 +267,17 @@ describe("expandSplits", () => {
     ]);
   });
 
+  it("knows each child's parent", async () => {
+    const { deps, tree } = setup();
+    await expandSplits(
+      [PARENT],
+      [row("build", "ok", fence({ tasks: TWO }))],
+      deps,
+    );
+    expect(tree.parentOf("build/engine")).toBe("build");
+    expect(tree.parentOf("build")).toBeUndefined();
+  });
+
   it("hands the parent back to the orchestrator when a child did not close", async () => {
     const { deps } = setup(undefined, async (tasks) => [
       row(tasks[0]!.id, "ok"),
