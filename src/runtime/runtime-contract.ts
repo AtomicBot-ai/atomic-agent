@@ -32,6 +32,7 @@ import type { SkillRegistry } from "../skills/skill-registry.js";
 import type { CapabilitiesSummary, SkillCatalogEntry, ToolDescriptor } from "../prompt/stable-prefix.js";
 import type { AgentLoop } from "../agent/agent-loop.js";
 import type { AgentLoopEvent, RunTurnResult } from "../agent/agent-contract.js";
+import type { GoalSpec, GoalState } from "../agent/goal/index.js";
 import type { SessionStore, FusionWorkerMeta, SessionState } from "../session/index.js";
 import type { TaskRunner, TaskStore } from "../tasks/index.js";
 import type { Scheduler } from "../scheduler/index.js";
@@ -470,8 +471,24 @@ export interface AgentRuntime {
        * when the message carries a resume note (ATO-1109).
        */
       checkpoint?: TurnCheckpointOptions;
+      /**
+       * Goal mode (ATO-451, `RunTurnOptions.goal`): run rounds of
+       * ordinary turns until the acceptance list is green, a person is
+       * needed or a limit is reached. The goal is stored with the session
+       * (`metadata.goal`); the same list resumes a stored goal.
+       */
+      goal?: GoalSpec;
+      /** Called after every goal state change, for a live goal line. */
+      onGoalProgress?: (goal: GoalState) => void;
     },
   ): Promise<RunTurnResult>;
+  /**
+   * Ask the goal running on a session to stop after its current round:
+   * `pause` keeps it stored as paused, `clear` removes it. `false` when no
+   * goal runs there (the caller then edits `metadata.goal` itself).
+   * Optional so embedders and test doubles need not implement it.
+   */
+  controlGoal?(sessionId: string, verb: "pause" | "clear"): boolean;
   /**
    * Inline counterpart to `runTurn` — runs the agent loop and
    * persists the result without acquiring the per-session lock. Use

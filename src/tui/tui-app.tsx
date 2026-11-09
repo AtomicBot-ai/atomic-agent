@@ -293,6 +293,8 @@ export interface TuiAppCallbacks {
   /** Ask the orchestrator to start a fresh session. */
   onSessionNewRequested?(): void;
   onCompactionRequested?(verb: "run" | "show"): void;
+  /** `/goal …`: act on the open chat's goal (ATO-451). */
+  onGoalCommand?(command: import("./commands/goal-command.js").GoalCommand): void;
   /** `/enhance <text>`: rewrite the draft once and hand it back to the composer. */
   onPromptEnhanceRequested?(draft: string): void;
   /** Idle Esc: stop a running `/enhance` (no-op when none is running). */

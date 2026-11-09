@@ -22,6 +22,7 @@ This area owns agent turn and step execution. Read [AGENTS.md](AGENTS.md) before
 - [Dispatch](dispatch/README.md): synchronous gates and resource scheduling; batch-executor is a compatibility facade.
 - [Progress](progress/README.md): fingerprints, notices, thresholds and observation helpers. ToolLoopTracker remains the single state owner in loop-detector.ts.
 - [Policies](policies/README.md): plan/fusion restrictions, claim/link evidence and tool-set admission.
+- [Goal](goal/README.md): goal mode rounds, checks, judge and the goal stored with the session.
 
 Session state and dependencies are passed explicitly. Root orchestration retains the original await points: synchronous parse and recovery must not yield before dispatch, retry or steering closure. Read the mechanism documents before changing these decisions.
 

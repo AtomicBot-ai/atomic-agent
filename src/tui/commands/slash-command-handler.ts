@@ -12,6 +12,7 @@ import { parseSlashCommand } from "./slash-command-parser.js";
 import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./slash-commands.js";
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
+import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -31,6 +32,8 @@ export interface SlashDispatchResult {
   /** Text to inject into the chat log as a system confirmation. */
   readonly systemMessage?: string;
   readonly compactionVerb?: "run" | "show";
+  /** `/goal …` (ATO-451): the orchestrator acts on the open chat's goal. */
+  readonly goalCommand?: GoalCommand;
   /**
    * `/enhance <text>`: the draft to rewrite. The buffer is left holding
    * the draft itself, and the caller hands the rewrite back to it.
@@ -333,6 +336,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return parsed.args === "" || parsed.args === "show"
         ? pureActions([], { compactionVerb: parsed.args === "show" ? "show" : "run" })
         : pureActions([], { systemMessage: "Usage: /compact [show]" });
+    case "goal": {
+      const goal = parseGoalCommand(parsed.args);
+      return goal.kind === "error"
+        ? pureActions([], { systemMessage: goal.message })
+        : pureActions([], { goalCommand: goal });
+    }
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.
