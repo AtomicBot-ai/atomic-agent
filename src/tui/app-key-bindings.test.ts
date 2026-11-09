@@ -620,6 +620,10 @@ describe("handleAppKey", () => {
       ctrlCArmed: false,
       setCtrlCArmed: vi.fn(),
       sidebarVisible: false,
+      menuLeaderArmed: false,
+      setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(),
+      activateComposerSwitch: vi.fn(),
     });
     expect(handled).toBe(true);
     expect(onApprovalDecision).toHaveBeenCalledWith("ap-1", true, "always");
@@ -641,6 +645,10 @@ describe("handleAppKey", () => {
       ctrlCArmed: false,
       setCtrlCArmed: vi.fn(),
       sidebarVisible: false,
+      menuLeaderArmed: false,
+      setMenuLeaderArmed: vi.fn(),
+      activateMenuNode: vi.fn(),
+      activateComposerSwitch: vi.fn(),
     });
     expect(onApprovalDecision).not.toHaveBeenCalled();
   });
