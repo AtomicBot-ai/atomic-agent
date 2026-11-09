@@ -235,6 +235,9 @@ contextBridge.exposeInMainWorld("atomic", {
   attachDiscard: (path: string) => ipcRenderer.invoke("attachments:discard", path),
   attachCheck: (path: string) => ipcRenderer.invoke("attachments:check", path),
   attachOpen: (path: string) => ipcRenderer.invoke("attachments:open", path),
+  /** ATO-532: other apps' windows for the composer's window picker, and one of them captured (main/window-snapshot-ipc.ts). */
+  snapshotWindows: () => ipcRenderer.invoke("snapshot:windows"),
+  snapshotCapture: (id: string) => ipcRenderer.invoke("snapshot:capture", id),
   /** A dropped File's path on disk ("" for one that has none); the sandboxed window cannot read it itself. */
   pathForFile: (file: File) => {
     try {

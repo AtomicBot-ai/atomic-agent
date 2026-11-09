@@ -1,0 +1,44 @@
+/* ============================================================
+   ATO-532 — the window picker (renderer/window-snapshot.js).
+   The window button beside "+" reuses .attbtn; the picker is a sheet over
+   the window, drawn into #window outside what render() redraws (z-index just
+   over the sheets in overlays.css). Colours come from tokens only.
+   ============================================================ */
+
+.wsnapscrim{position:absolute;inset:0;z-index:27;display:flex;align-items:flex-start;justify-content:center;
+  padding:70px 16px 24px;background:var(--scrim);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px)}
+.wsnap{width:680px;max-width:100%;max-height:100%;display:flex;flex-direction:column;overflow:hidden;
+  background:var(--lift);border-radius:var(--r-sheet);box-shadow:var(--sh-pop)}
+
+.wsnaphead{flex:none;display:flex;align-items:flex-start;gap:12px;padding:16px 14px 12px 20px;border-bottom:1px solid var(--bd)}
+.wsnaphead > div{flex:1;min-width:0}
+.wsnaptitle{font:600 var(--fs-ui)/20px var(--font-ui);color:var(--ink)}
+.wsnapsub{margin-top:2px;font:400 var(--fs-label)/16px var(--font-ui);color:var(--ink-2)}
+.wsnapx{flex:none;width:28px;height:28px;display:grid;place-items:center;border-radius:50%;background:transparent;color:var(--ink-2)}
+.wsnapx:hover{background:var(--hover);color:var(--ink)}
+
+.wsnapbody{flex:1;min-height:0;overflow-y:auto;padding:14px}
+.wsnapgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px}
+
+.wsnaptile{display:flex;flex-direction:column;gap:6px;min-width:0;padding:6px;border-radius:12px;
+  background:transparent;color:var(--ink);text-align:left;
+  transition:background var(--t-state) var(--ease)}
+.wsnaptile:hover:not([disabled]){background:var(--hover)}
+.wsnaptile[disabled]{cursor:default}
+.wsnaptile[disabled]:not(.is-busy){opacity:.5}
+.wsnapthumb{position:relative;display:block;aspect-ratio:16/10;border-radius:8px;overflow:hidden;background:var(--panel-2)}
+.wsnapthumb img{display:block;width:100%;height:100%;object-fit:contain}
+.wsnaptile.is-busy .wsnapthumb img{opacity:.55}
+.wsnapname{display:flex;align-items:center;gap:6px;min-width:0;padding:0 2px;
+  font:500 var(--fs-cap)/1.25 var(--font-ui)}
+.wsnapname > span{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wsnapname > svg,.wsnapicon{flex:none;width:16px;height:16px;color:var(--ink-3)}
+
+.wsnapnote{position:relative;display:flex;align-items:flex-start;gap:10px;padding:18px 8px;
+  font:400 var(--fs-cap)/1.45 var(--font-ui);color:var(--ink-2)}
+.wsnapnote p{margin:0}
+.wsnapnote > svg{flex:none;width:16px;height:16px;margin-top:2px}
+.wsnapnote > .attspin{position:static;flex:none;margin:1px 0 0}
+.wsnapnote.is-perm{color:var(--ink)}
+.wsnapline{display:flex;align-items:center;gap:8px;margin:0 2px 10px;font:400 var(--fs-label)/1.4 var(--font-ui);color:var(--ink-2)}
+.wsnapline svg{flex:none;width:14px;height:14px}
