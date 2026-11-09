@@ -44,7 +44,8 @@ export type {
 } from "./plugin-install.js";
 export { listEnabledPluginSkills, loadEnabledPlugins, resetPluginCache } from "./plugin-runtime.js";
 export type { LoadedPlugin, LoadedPlugins, PluginSkillDir } from "./plugin-runtime.js";
-export { loadPluginMcpServers, expandVars, expandUserKeys, uniqueName, userKeyRefs } from "./plugin-mcp.js";
+export { loadPluginMcpServers, expandVars, expandUserKeys, uniqueName } from "./plugin-mcp.js";
+export { userKeyRefs } from "./plugin-keys.js";
 export type { PluginMcpServers } from "./plugin-mcp.js";
 export { listPluginSubagents, parseSubagentFile } from "./plugin-subagents.js";
 export type { PluginSubagentProfile } from "./plugin-subagents.js";

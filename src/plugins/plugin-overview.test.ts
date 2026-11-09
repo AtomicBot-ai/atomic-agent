@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readPluginBundle } from "./plugin-bundle.js";
+import { bundleRunsCode, readPluginBundle } from "./plugin-bundle.js";
 import { installPluginFromDir, setPluginCodeAllowed, setPluginPartEnabled } from "./plugin-install.js";
 import {
   buildPluginOverview,
@@ -67,6 +67,13 @@ describe("buildPluginOverview", () => {
   let base: string;
   beforeEach(() => { base = mkdtempSync(join(tmpdir(), "atomic-plugin-overview-")); });
   afterEach(() => rmSync(base, { recursive: true, force: true }));
+
+  it("a remote server that receives the user's keys counts as code and goes through the same consent", () => {
+    const entry = { type: "http", url: "https://example.invalid/mcp", headers: { Authorization: "Bearer ${API_KEY}" } };
+    const bundle = readPluginBundle(writeClaudePlugin(join(base, "keyed"), { mcp: { api: entry } }));
+    expect(bundleRunsCode(bundle)).toBe(true);
+    expect(pluginCodeParts(bundle)).toContain("MCP servers that get your keys: api (API_KEY)");
+  });
 
   it("counts every part and gives each the id the part toggles use", () => {
     const root = writeClaudePlugin(join(base, "p"), {

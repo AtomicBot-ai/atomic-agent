@@ -58,7 +58,7 @@ describe("PluginsOrchestrator", () => {
     expect(actions.filter((a) => a.type === "plugins_action_settled").map((a) => a.message)).toEqual([
       "demo off. Its MCP servers stop with the next agent start.",
       "demo mcp:gh off. Takes effect with the next agent start.",
-      "demo may run its local MCP servers, hooks and scripts. Servers start with the next agent start.",
+      "demo may run its local MCP servers, hooks and scripts and receive your keys. Servers start with the next agent start.",
     ]);
     expect(actions.at(-1)?.type).toBe("plugins_synced");
   });

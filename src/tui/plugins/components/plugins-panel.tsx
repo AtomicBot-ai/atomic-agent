@@ -135,7 +135,7 @@ function PluginLine({
         <Text color={theme.colors.error}>
           {panel.mode === "remove"
             ? "  remove this plugin and its files? y / esc"
-            : `  allow it to run ${plugin.codeParts.join("; ") || "code"}? y / esc`}
+            : `  allow ${plugin.codeParts.join("; ") || "its code"}? y / esc`}
         </Text>
       ) : plugin.filesOk ? (
         <>
