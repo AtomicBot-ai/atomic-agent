@@ -1522,8 +1522,10 @@
           paint('form'); paint('foot');
         }
         if (ev.type === 'load' && ev.state !== 'loading') refreshCatalog();
-        else if (ev.type === 'download' && ev.download && ev.download.state === 'done') refreshCatalog();
+        // A cancelled download leaves part files: the size on the button changes.
+        else if (ev.type === 'download' && ev.download && (ev.download.state === 'done' || ev.download.state === 'cancelled')) refreshCatalog();
         else if (ev.type === 'removed') refreshCatalog();
+        else if (ev.type === 'engine' && !(ev.engine && ev.engine.state === 'installing')) refreshCatalog();
       },
       focusFile,
       _state: S,

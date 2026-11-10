@@ -256,7 +256,9 @@
       }, () => undefined);
     }, 300);
   }
-  const LOCAL_CHANGE = new Set(['load', 'download', 'removed']);
+  /* `engine`: an install finished or failed, or the engine turned out not to run here
+     (the catalog's `local.engine` decides whether Download and local generation are offered). */
+  const LOCAL_CHANGE = new Set(['load', 'download', 'removed', 'engine']);
   function onLocal(ev) {
     if (!ev || !LOCAL_CHANGE.has(ev.type)) return;
     if (ev.type === 'download' && ev.download && ev.download.id) {
@@ -265,7 +267,9 @@
       paintDl();
     }
     if (ev.type === 'load' && ev.state === 'loading') return;
-    if (ev.type === 'download' && !(ev.download && ev.download.state === 'done')) return;
+    if (ev.type === 'engine' && ev.engine && ev.engine.state === 'installing') return;
+    // A cancelled download leaves part files: the size on the button changes.
+    if (ev.type === 'download' && !(ev.download && (ev.download.state === 'done' || ev.download.state === 'cancelled'))) return;
     refreshCatalog();
   }
 
@@ -282,6 +286,8 @@
   }
 
   /** Download a local model's quant (CONTRACT.md localDownload); `workflow` when a mode needs one more file. */
+  /** The mode a download is for: edit and reference may need a family's vision projector too. */
+  const dlWorkflow = () => (IM.form.mode && IM.form.mode !== 'create' ? IM.form.mode : undefined);
   function download(m, workflow) {
     const s = br();
     const q = simgQuantToGet(m);
@@ -662,8 +668,8 @@
       case 'trymodel': { const bar = a.indexOf('|'); const m = simgFindModel(IM.catalog, a.slice(bar + 1), a.slice(0, bar)); IM.jobErr = null; if (m) { chooseModel(m); save(); paintForm(); refreshPrice(); generate(); } else paintStage(); return; }
       case 'dismiss': IM.jobErr = null; paintStage(); return;
       case 'settings': STUDIO.openSettings('openrouter'); return;
-      case 'download': download(simgFindModel(IM.catalog, a, 'local')); return;
-      case 'download-err': IM.jobErr = null; paintStage(); download(IM.model, IM.form.mode && IM.form.mode !== 'create' ? IM.form.mode : undefined); return;
+      case 'download': download(simgFindModel(IM.catalog, a, 'local'), dlWorkflow()); return;
+      case 'download-err': IM.jobErr = null; paintStage(); download(IM.model, dlWorkflow()); return;
       case 'dlstop': stopDownload(a); return;
       case 'mode': IM.modeWhy = null; switchMode(a); save(); paintForm(); refreshPrice(); return;
       case 'modewhy': IM.modeWhy = a; paintForm(); return;

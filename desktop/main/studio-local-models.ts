@@ -175,10 +175,13 @@ export class StudioLocalModels {
    * Start fetching what `id` (`<family>:<quant>`) still misses; resolves
    * once it started (or at once when nothing is missing). Refused before
    * any byte moves when the disk cannot hold it. `workflow` edit or
-   * reference adds the vision projector a family may need for those.
+   * reference adds the vision projector a family may need for those. Refused too on a
+   * computer the engine does not run on: the files would never be used there.
    */
   async download(id: unknown, workflow = "create"): Promise<LocalDownloadState> {
     const { family, quant } = await this.artifact(id);
+    const engine = this.engine ?? (await this.engineStatus().catch(() => null));
+    if (engine?.state === "unsupported") throw new StudioCoreError(engine.message, "ENGINE_UNSUPPORTED");
     const key = `${family.id}:${quant.id}`;
     const running = this.downloads.get(key);
     if (running && (running.state.state === "downloading" || running.state.state === "verifying")) return running.state;

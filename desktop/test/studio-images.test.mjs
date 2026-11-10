@@ -353,7 +353,7 @@ test('the machine is "this Mac" only on macOS; Windows and Linux say "this compu
 /* ---------- ATO-1394: the page re-reads the catalog after a local change ---------- */
 
 /** images-logic.js, images-view.js and images.js in one vm context with a stub STUDIO, BR and timers. */
-function loadImagesPage(cat) {
+function loadImagesPage(cat, extra = {}) {
   const pages = {};
   const timers = [];
   let reads = 0;
@@ -367,6 +367,7 @@ function loadImagesPage(cat) {
   };
   ctx.window = ctx;
   ctx.atomic = { platform: 'darwin', studio: { catalog: () => { reads++; return Promise.resolve({ ok: true, data: cat }); }, price: () => Promise.resolve({ ok: false }) } };
+  Object.assign(ctx.atomic.studio, extra.studio || {});
   vm.createContext(ctx);
   for (const f of ['images-logic.js', 'images-view.js', 'images.js']) {
     vm.runInContext(readFileSync(new URL('../renderer/studio/' + f, import.meta.url), 'utf8'), ctx, { filename: f });
@@ -505,4 +506,34 @@ test('a local model that is not on disk gets a Download, not just an error (ATO-
     assert.match(off, /cannot make pictures locally\. Switch the chat to the cloud/);
     assert.doesNotMatch(off, /download:/);
   } finally { delete globalThis.esc; delete globalThis.ic; for (const k of lent) delete globalThis[k]; }
+});
+
+test('the Images page downloads for the mode in use, and re-reads the catalog after a cancel or an engine change (ATO-1395)', async () => {
+  const q = {id: 'flux:q8', quant: 'q8', label: 'Q8', bytes: 12e9, downloadBytes: 12e9, installed: false, recommended: true, fit: {verdict: 'ok'}};
+  const cold = localModel({id: 'flux', name: 'FLUX', local: {family: 'flux', loaded: false, installed: false, defaultQuant: 'flux:q8', quants: [q]}});
+  const asked = [];
+  const P = loadImagesPage(catalog([cloudModel()], [cold]), {studio: {
+    localDownload: (id, opts) => { asked.push([id, opts]); return Promise.resolve({ok: true, data: {id, state: 'downloading', transferred: 0, total: 12e9, percent: 0}}); },
+    localState: () => Promise.resolve({ok: true, data: {downloads: [], engine: null}}),
+  }});
+  P.page.onShow();
+  await settle();
+  P.page.act('download:flux');
+  P.page.act('mode:transform');
+  P.page.act('download:flux');
+  await settle();
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [['flux:q8', undefined], ['flux:q8', {workflow: 'transform'}]], 'create sends no workflow, another mode sends its own');
+  const before = P.reads();
+  P.page.onLocal({type: 'download', download: {id: 'flux:q8', state: 'cancelled'}});
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), before + 1, 'a cancel re-reads the catalog: part files change the size on the button');
+  P.page.onLocal({type: 'engine', engine: {state: 'installing'}});
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), before + 1, 'an install in progress reads nothing');
+  P.page.onLocal({type: 'engine', engine: {state: 'unsupported', message: 'This computer cannot run local image models.'}});
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), before + 2, 'the engine turning out unsupported re-reads the catalog');
 });

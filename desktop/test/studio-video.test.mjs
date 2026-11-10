@@ -549,3 +549,30 @@ test('a local video model that is not on disk is downloaded from Studio, then Ge
   assert.equal(V.blockReason({ mode: 'text', prompt: 'x' }, S.catalog.local.models[0]), '');
   assert.doesNotMatch(foot.innerHTML, /data-vact="download"/);
 });
+
+test('the Video page re-reads the catalog after a cancelled download and an engine change, not during an install (ATO-1395)', async () => {
+  let reads = 0;
+  const studio = {
+    catalog: async () => { reads++; return { ok: true, data: { cloud: { models: [veo], keyMissing: false }, local: { models: [wan] } } }; },
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; } } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const root = { innerHTML: '', addEventListener() {}, contains: () => true, querySelector: () => null };
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(reads, 1);
+  page.onLocal({ type: 'download', download: { id: 'wan2.2-5b:q4', state: 'cancelled' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2, 'a cancel changes what is left to download');
+  page.onLocal({ type: 'engine', engine: { state: 'installing' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2);
+  page.onLocal({ type: 'engine', engine: { state: 'ready' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 3);
+});
