@@ -12,8 +12,14 @@
  *  - Moonshot's Kimi K3.1 family accepts exactly one temperature, 1, and
  *    answers anything else with a 400 ("only 1 is allowed for this
  *    model"). Kimi K2.x takes any value and keeps the historical body.
+ *  - Anthropic's newer Claude models (Opus 4.7 and later, Sonnet 5 and
+ *    later, Haiku 5 and later, every Fable and Mythos) no longer take
+ *    sampling parameters and answer `temperature` with a 400 (ATO-1397).
+ *    Older Claude models (Opus 4.6, Sonnet 4.6, Haiku 4.5, …) keep it.
  *  - A model can also be taught its one temperature at run time, from
- *    the 400 that named it (`rememberAllowedTemperature`).
+ *    the 400 that named it (`rememberAllowedTemperature`), or that it
+ *    takes none at all, from a 400 that refused the field
+ *    (`rememberTemperatureForbidden`).
  *  - Everything else keeps the historical body byte for byte.
  *
  * The id is read after any vendor prefix (`openai/o3` on OpenRouter is
@@ -26,14 +32,15 @@
  * What a model accepts as `temperature`:
  *  - `free`: any value; the caller's, else its default.
  *  - `forbidden`: the field must not be sent at all.
- *  - `fixed`: only this value. `learned` marks one taught by a 400 at
- *    run time rather than known up front; that one also beats an
- *    operator's `extraBody` / `params`, since the service has just said
- *    the operator's value is refused.
+ *  - `fixed`: only this value.
+ *
+ * `learned` marks a rule taught by a 400 at run time rather than known up
+ * front; that one also beats an operator's `extraBody` / `params`, since
+ * the service has just said the operator's value is refused.
  */
 export type TemperatureRule =
   | { readonly kind: "free" }
-  | { readonly kind: "forbidden" }
+  | { readonly kind: "forbidden"; readonly learned?: true }
   | { readonly kind: "fixed"; readonly value: number; readonly learned?: true };
 
 export interface ModelParamProfile {
@@ -55,10 +62,50 @@ const OPENAI_REASONING_MODEL_RE = /^(?:o[1-9]|gpt-5)(?![a-z])/i;
  */
 const KIMI_K31_MODEL_RE = /^kimi-k3\.1(?![0-9])/i;
 
+/**
+ * A Claude model id in Anthropic's naming: family, major version and an
+ * optional minor version (`claude-sonnet-5-5`, `claude-opus-4.8`,
+ * `anthropic/claude-fable-5`, Bedrock's `anthropic.claude-haiku-5-5`). The
+ * minor is one or two digits so a date suffix
+ * (`claude-sonnet-5-20260101`) is not read as one. The old naming
+ * (`claude-3-5-sonnet`) does not match and keeps the free rule.
+ */
+const CLAUDE_MODEL_RE =
+  /(?:^|[^a-z0-9])claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d{1,2}))?(?![0-9])/i;
+
+/**
+ * Whether a Claude model rejects `temperature`. Anthropic removed the
+ * sampling parameters from Opus 4.7 on, from the Sonnet and Haiku 5
+ * generations on, and from every Fable and Mythos model; the 5.5 models
+ * answer a non-default value with a 400. Unknown future versions fall on
+ * the "rejects" side of the line, and the run-time lesson covers a model
+ * this rule gets wrong.
+ */
+function claudeRejectsTemperature(bare: string): boolean {
+  const match = CLAUDE_MODEL_RE.exec(bare);
+  if (!match) return false;
+  const family = match[1]!.toLowerCase();
+  const major = Number(match[2]);
+  const minor = match[3] === undefined ? 0 : Number(match[3]);
+  switch (family) {
+    case "fable":
+    case "mythos":
+      return true;
+    case "opus":
+      return major > 4 || (major === 4 && minor >= 7);
+    default:
+      // sonnet, haiku
+      return major >= 5;
+  }
+}
+
 const FREE: TemperatureRule = { kind: "free" };
 
-/** Temperatures services told us at run time, keyed by model id. */
-const learnedTemperatures = new Map<string, number>();
+/**
+ * Temperatures services told us at run time, keyed by model id: the one
+ * value a model accepts, or `forbidden` when it refused the field.
+ */
+const learnedTemperatures = new Map<string, number | "forbidden">();
 
 export function modelParamProfile(modelId: string): ModelParamProfile {
   const bare = modelId.includes("/")
@@ -71,6 +118,12 @@ export function modelParamProfile(modelId: string): ModelParamProfile {
     };
   }
   const learned = learnedTemperatures.get(modelId.trim());
+  if (learned === "forbidden") {
+    return {
+      temperature: { kind: "forbidden", learned: true },
+      capField: "max_tokens",
+    };
+  }
   if (learned !== undefined) {
     return {
       temperature: { kind: "fixed", value: learned, learned: true },
@@ -79,6 +132,9 @@ export function modelParamProfile(modelId: string): ModelParamProfile {
   }
   if (KIMI_K31_MODEL_RE.test(bare)) {
     return { temperature: { kind: "fixed", value: 1 }, capField: "max_tokens" };
+  }
+  if (claudeRejectsTemperature(bare)) {
+    return { temperature: { kind: "forbidden" }, capField: "max_tokens" };
   }
   return { temperature: FREE, capField: "max_tokens" };
 }
@@ -115,6 +171,18 @@ export function rememberAllowedTemperature(
   const key = modelId.trim();
   if (learnedTemperatures.get(key) === value) return false;
   learnedTemperatures.set(key, value);
+  return true;
+}
+
+/**
+ * Remember, for the rest of the process, that a service refused
+ * `temperature` for this model altogether. Returns whether anything
+ * changed, like `rememberAllowedTemperature`.
+ */
+export function rememberTemperatureForbidden(modelId: string): boolean {
+  const key = modelId.trim();
+  if (learnedTemperatures.get(key) === "forbidden") return false;
+  learnedTemperatures.set(key, "forbidden");
   return true;
 }
 

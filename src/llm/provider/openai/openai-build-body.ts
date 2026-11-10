@@ -116,8 +116,9 @@ export function buildOpenAiChatBody(
         ];
   // OpenAI's reasoning models reject the field outright (`Unsupported
   // parameter: 'temperature'`), so for them it is not sent at all — not
-  // even a caller's own value. Kimi K3.1 accepts only 1, so it gets 1
-  // whatever the caller asked. See `model-params.ts`.
+  // even a caller's own value; nor is it for the Claude models that
+  // dropped sampling parameters (ATO-1397). Kimi K3.1 accepts only 1, so
+  // it gets 1 whatever the caller asked. See `model-params.ts`.
   const temperature = resolveTemperature(profile, filtered.temperature, 0.2);
   const body: Record<string, unknown> = {
     model: defaultChatModel,
@@ -255,10 +256,17 @@ export function buildOpenAiChatBody(
     else delete merged[key];
   }
   // A temperature the service itself named in a 400 beats the operator's
-  // passthrough: that value is exactly what was just refused. A rule
-  // known up front (Kimi K3.1) stays overridable like any other field.
+  // passthrough: that value is exactly what was just refused. So does a
+  // 400 that refused the field outright: it goes, whoever set it. A rule
+  // known up front (Kimi K3.1, Claude 5.x) stays overridable like any
+  // other field.
   if (profile.temperature.kind === "fixed" && profile.temperature.learned) {
     merged.temperature = profile.temperature.value;
+  } else if (
+    profile.temperature.kind === "forbidden" &&
+    profile.temperature.learned
+  ) {
+    delete merged.temperature;
   }
   return checkedBody(merged, request);
 }

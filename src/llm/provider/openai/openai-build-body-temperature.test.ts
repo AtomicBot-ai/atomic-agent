@@ -4,6 +4,7 @@ import { buildOpenAiChatBody } from "./openai-build-body.js";
 import {
   forgetLearnedModelParams,
   rememberAllowedTemperature,
+  rememberTemperatureForbidden,
 } from "./model-params.js";
 
 afterEach(() => {
@@ -53,5 +54,41 @@ describe("buildOpenAiChatBody — temperature per model (ATO-1214)", () => {
       { modelParams: { temperature: 0.4 } },
     );
     expect(body.temperature).toBe(1);
+  });
+});
+
+describe("buildOpenAiChatBody — Claude models without temperature (ATO-1397)", () => {
+  it.each(["claude-sonnet-5-5", "claude-haiku-5-5", "claude-opus-5-5", "claude-fable-5-1"])(
+    "sends no temperature for %s, whatever the caller asked, and keeps max_tokens",
+    (model) => {
+      const body = buildOpenAiChatBody(
+        { prompt: "hi", temperature: 0.7, maxTokens: 512 },
+        model,
+        false,
+      );
+      expect(body).not.toHaveProperty("temperature");
+      expect(body.max_tokens).toBe(512);
+    },
+  );
+
+  it("keeps the historical 0.2 default for claude-sonnet-4-6", () => {
+    expect(
+      buildOpenAiChatBody({ prompt: "hi" }, "claude-sonnet-4-6", false).temperature,
+    ).toBe(0.2);
+  });
+
+  it("drops a temperature from extraBody and model params once the service refused it", () => {
+    rememberTemperatureForbidden("vendor/strict-model");
+    const body = buildOpenAiChatBody(
+      { prompt: "hi", temperature: 0.3 },
+      "vendor/strict-model",
+      false,
+      { temperature: 0.5 },
+      undefined,
+      undefined,
+      undefined,
+      { modelParams: { temperature: 0.4 } },
+    );
+    expect(body).not.toHaveProperty("temperature");
   });
 });

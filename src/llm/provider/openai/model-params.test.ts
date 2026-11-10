@@ -4,6 +4,7 @@ import {
   forgetLearnedModelParams,
   modelParamProfile,
   rememberAllowedTemperature,
+  rememberTemperatureForbidden,
   resolveTemperature,
 } from "./model-params.js";
 
@@ -67,6 +68,60 @@ describe("modelParamProfile", () => {
   });
 });
 
+describe("modelParamProfile — Claude models without sampling parameters (ATO-1397)", () => {
+  it.each([
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-opus-5-5",
+    "claude-opus-5",
+    "claude-sonnet-5",
+    "claude-fable-5",
+    "claude-fable-5-1",
+    "claude-mythos-5-1",
+    "claude-opus-4-8",
+    "claude-opus-4-7",
+    "anthropic/claude-sonnet-5",
+    "anthropic/claude-opus-4.8",
+    "anthropic/claude-opus-5-fast",
+    "anthropic/claude-sonnet-5.5",
+    "anthropic.claude-haiku-5-5",
+    "claude-sonnet-5-20260101",
+    "Claude-Sonnet-5-5",
+    // An unknown future version falls on the side of the line that omits.
+    "claude-sonnet-6",
+  ])("forbids temperature but keeps max_tokens for %s", (model) => {
+    expect(modelParamProfile(model)).toEqual({
+      temperature: { kind: "forbidden" },
+      capField: "max_tokens",
+    });
+  });
+
+  it.each([
+    "claude-opus-4-6",
+    "claude-opus-4-1-20250805",
+    "claude-opus-4",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5-20250929",
+    "claude-haiku-4-5",
+    "anthropic/claude-haiku-4.5",
+    "claude-3-5-sonnet-20241022",
+  ])("leaves temperature free for the older %s", (model) => {
+    expect(modelParamProfile(model).temperature).toEqual({ kind: "free" });
+  });
+
+  it("learns at run time that a model takes no temperature, for that id only", () => {
+    expect(rememberTemperatureForbidden("vendor/new-model")).toBe(true);
+    expect(rememberTemperatureForbidden("vendor/new-model")).toBe(false);
+    expect(modelParamProfile("vendor/new-model")).toEqual({
+      temperature: { kind: "forbidden", learned: true },
+      capField: "max_tokens",
+    });
+    expect(modelParamProfile("vendor/other-model").temperature).toEqual({
+      kind: "free",
+    });
+  });
+});
+
 describe("resolveTemperature", () => {
   it("sends the caller's value, else the fallback, when free", () => {
     const profile = modelParamProfile("gpt-4o");
@@ -77,6 +132,9 @@ describe("resolveTemperature", () => {
 
   it("sends nothing when forbidden", () => {
     expect(resolveTemperature(modelParamProfile("gpt-5"), 0.7, 0.2)).toBeUndefined();
+    expect(
+      resolveTemperature(modelParamProfile("claude-sonnet-5-5"), 0.7, 0.2),
+    ).toBeUndefined();
   });
 
   it("sends the one allowed value when fixed, whatever was asked", () => {
