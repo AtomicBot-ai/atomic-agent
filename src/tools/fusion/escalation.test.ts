@@ -213,6 +213,53 @@ describe("advisor escalation of a stuck worker (ATO-942)", () => {
   });
 });
 
+describe("the re-run's money is counted once (ATO-1319)", () => {
+  it("keeps the local attempt's usage on the row and counts the re-run as escalation spend", async () => {
+    const completed = (
+      hook: TurnOptions["eventHook"],
+      promptTokens: number,
+      completionTokens: number,
+    ): void =>
+      hook?.({
+        type: "llm_event",
+        event: {
+          type: "llm_completed",
+          completion: {
+            content: "",
+            usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens },
+          },
+        },
+      } as never);
+    const h = harness(async (_s, options) => {
+      if (options.providerId === "cloud") {
+        completed(options.eventHook, 10_000, 1_000);
+        return done();
+      }
+      completed(options.eventHook, 100, 10);
+      for (let i = 0; i < 3; i += 1) sameStep(options.eventHook, i);
+      await flush();
+      for (let i = 3; i < 6; i += 1) sameStep(options.eventHook, i);
+      return {
+        session: createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+        reason: options.signal?.aborted ? "cancelled" : "reply",
+        stepCount: 6,
+      } as RunTurnResult;
+    });
+    const escalationSpend: number[] = [];
+    const [row] = await runWorkerTasks(h.deps, {
+      ...BASE,
+      tasks: TASK,
+      signal: new AbortController().signal,
+      escalation: { target: { ...TARGET, replace: true, maxUsd: 10 }, pricing: PRICING },
+      onEscalationSpend: (_t, usd) => escalationSpend.push(usd),
+    });
+    expect(row!.usage?.promptTokens).toBe(100);
+    expect(row!.usage?.completionTokens).toBe(10);
+    // advisor call(s) plus the re-run's one completion, each counted once
+    expect(escalationSpend.some((usd) => Math.abs(usd - (10_000 * 1 + 1_000 * 4) / 1e6) < 1e-9)).toBe(true);
+  });
+});
+
 describe("the person's stop and escalate on one worker (ATO-66)", () => {
   it("escalates a running worker on request and stops it alone", async () => {
     const live = new FusionLiveWorkers();

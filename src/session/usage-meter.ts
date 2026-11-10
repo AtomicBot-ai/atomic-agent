@@ -176,6 +176,8 @@ export function activeLimits(
 export class SessionUsageLedger {
   private readonly sessions = new Map<string, SessionUsageState>();
   private readonly readings = new Map<string, LimitReading>();
+  /** Fusion worker session id → the session whose turn spawned it (ATO-1388). */
+  private readonly forwards = new Map<string, string>();
   private readonly onChange: ((sessionId: string, state: SessionUsageState) => void) | undefined;
   private readonly now: () => number;
   private readonly maxSessions: number;
@@ -199,7 +201,27 @@ export class SessionUsageLedger {
     this.remember(sessionId, state);
   }
 
+  /**
+   * Count a fusion worker's calls on the session that spawned it
+   * (ATO-1388). A worker runs in a throwaway session nobody sees and
+   * nothing saves, so its spend recorded there never reached the
+   * composer readout: the person saw less than they spent. Once linked,
+   * every call recorded under `workerSessionId` lands on
+   * `parentSessionId` with the same pricing rules (unpriced stays
+   * unpriced, local stays local). Kept bounded like the sessions map.
+   */
+  forward(workerSessionId: string, parentSessionId: string): void {
+    if (workerSessionId === parentSessionId) return;
+    this.forwards.delete(workerSessionId);
+    this.forwards.set(workerSessionId, parentSessionId);
+    if (this.forwards.size > this.maxSessions) {
+      const oldest = this.forwards.keys().next().value;
+      if (oldest !== undefined) this.forwards.delete(oldest);
+    }
+  }
+
   record(sessionId: string, input: UsageRecordInput): SessionUsageState {
+    sessionId = this.forwards.get(sessionId) ?? sessionId;
     const now = this.now();
     for (const w of input.rateLimits ?? []) {
       this.readings.set(`${input.providerId}/${w.scope}/${w.name}`, {

@@ -750,7 +750,14 @@ export async function createAgentRuntime(
     logger, localProfile, connectedLocal, providerRegistry,
   );
 
-  const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  const { createSession, createEphemeralSession: createWorkerSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  // A fusion worker's calls count on the session that spawned it, so the
+  // composer's `$` readout includes what the workers spent (ATO-1388).
+  const createEphemeralSession: typeof createWorkerSession = (meta, inheritedDir) => {
+    const worker = createWorkerSession(meta, inheritedDir);
+    sessionUsage.forward(worker.id, meta.parentSessionId);
+    return worker;
+  };
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
@@ -771,6 +778,7 @@ export async function createAgentRuntime(
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
     turnBudget: fusionTurnBudget,
+    sessionUsage,
     liveWorkers: fusionLiveWorkers,
     runCheckpoints: fusionRuns,
     steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),

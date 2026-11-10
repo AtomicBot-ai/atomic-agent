@@ -1507,6 +1507,12 @@ async function runOneTask(
       `re-running the task on ${targetLabel}: the advisor's hint did not unstick the local worker`,
     );
     const localFindings = collector.findings();
+    // The re-run's cost is counted as escalation spend as it lands
+    // (`onEscalationSpend`). The row keeps the local attempt's usage, so
+    // the status header and the checkpoint, which price a row's usage
+    // at the worker's rate, do not count the re-run a second time
+    // (ATO-1319).
+    const localUsage = result.usage;
     try {
       const turn = await deps.runTurn(
         replaceSession,
@@ -1579,6 +1585,10 @@ async function runOneTask(
       clearTimeout(replaceTimer);
       unregisterReplace?.();
       disarmWorkerSession(replaceSession.id);
+    }
+    {
+      const { usage: _replaceUsage, ...row } = result;
+      result = localUsage === undefined ? row : { ...row, usage: localUsage };
     }
     // The local turn's own endings no longer describe the row.
     timedOutOutcome = false;

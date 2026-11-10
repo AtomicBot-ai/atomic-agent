@@ -77,6 +77,24 @@ describe("SessionUsageLedger", () => {
     expect(seen.map(([id]) => id)).toEqual(["a", "a", "b"]);
   });
 
+  it("counts a fusion worker's calls on the session that spawned it (ATO-1388)", () => {
+    const seen: string[] = [];
+    const ledger = new SessionUsageLedger({ now: () => NOW, onChange: (id) => seen.push(id) });
+    ledger.record("s-parent", { providerId: "openrouter", modelId: "m", usage, model: priced, local: false });
+    ledger.forward("s-w-1", "s-parent");
+    ledger.record("s-w-1", { providerId: "openrouter", modelId: "m", usage, model: priced, local: false });
+    ledger.record("s-w-1", { providerId: "openrouter", modelId: "x", usage, local: false });
+    ledger.record("s-w-1", { providerId: "llama", modelId: "q", usage, local: true });
+    const parent = ledger.get("s-parent");
+    expect(parent?.costUsd).toBeCloseTo(9);
+    expect(parent?.pricedCalls).toBe(2);
+    expect(parent?.unpricedCalls).toBe(1);
+    expect(parent?.localCalls).toBe(1);
+    expect(formatSessionCost(parent)).toBe("$9.00+");
+    expect(ledger.get("s-w-1")).toBeUndefined();
+    expect(seen.every((id) => id === "s-parent")).toBe(true);
+  });
+
   it("continues from what a reopened session persisted, once", () => {
     const ledger = new SessionUsageLedger({ now: () => NOW });
     const stored: SessionUsageState = { ...EMPTY_SESSION_USAGE, costUsd: 1, pricedCalls: 1, costSources: ["catalog"] };

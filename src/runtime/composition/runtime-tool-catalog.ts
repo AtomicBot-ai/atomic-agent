@@ -12,6 +12,8 @@ import { resolveLlmConfig } from "../../llm/provider/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
+import type { SessionUsageLedger } from "../../session/usage-meter.js";
+import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
 import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
@@ -642,6 +644,8 @@ export function registerRuntimeFusionAndReadScope(input: {
   workingDir: string;
   logger: StructuredLogger;
   turnBudget?: FusionDelegateDeps["turnBudget"];
+  /** The composer's `$` readout: escalation and judge calls land here (ATO-1388). */
+  sessionUsage?: Pick<SessionUsageLedger, "record">;
   liveWorkers?: FusionDelegateDeps["liveWorkers"];
   steerWorker?: FusionDelegateDeps["steerWorker"];
   orchestratorTurnSpendUsd?: FusionDelegateDeps["orchestratorTurnSpendUsd"];
@@ -650,7 +654,7 @@ export function registerRuntimeFusionAndReadScope(input: {
   const { config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest, declaredInputs,
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
     llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
-    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints } = input;
+    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints, sessionUsage } = input;
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -701,7 +705,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // Escalation (ATO-942): one completion pinned to the configured
       // escalation provider — never the fallback chain, so it cannot
       // land on a model the operator did not pick for it.
-      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal }) => {
+      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal, sessionId }) => {
         const provider = providerRegistry.getProvider(providerId);
         if (provider === undefined) {
           throw new Error(`escalation provider ${providerId} is not configured`);
@@ -711,6 +715,29 @@ export function registerRuntimeFusionAndReadScope(input: {
           maxOutputTokens,
           signal,
         });
+        // These calls go straight to the provider, past the seam that
+        // feeds the session's readout, so they are counted here on the
+        // session that delegated (ATO-1388). Priced like any other call:
+        // no known price stays "unpriced", a local server stays local.
+        if (sessionUsage !== undefined && sessionId !== undefined) {
+          try {
+            const resolved = resolveLlmConfig(getConfig());
+            const entry = resolved.providers.find((p) => p.id === providerId);
+            const model = resolveModelPricingFor(resolved, result.modelId, providerId);
+            sessionUsage.record(sessionId, {
+              providerId,
+              modelId: result.modelId,
+              ...(result.usage === undefined ? {} : { usage: result.usage }),
+              ...(model === undefined ? {} : { model }),
+              local:
+                entry !== undefined &&
+                (entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url)),
+              plan: entry?.kind === "subscription-cli",
+            });
+          } catch {
+            // The readout never takes an escalation down.
+          }
+        }
         return {
           content: result.content,
           ...(result.usage === undefined ? {} : { usage: result.usage }),
