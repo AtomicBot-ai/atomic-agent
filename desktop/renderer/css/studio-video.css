@@ -166,3 +166,6 @@
 @media (max-width: 860px) {
   .studio-video .studio-cols { grid-template-columns:1fr; overflow:auto; }
 }
+/* ATO-1307: the picker's "Studio follows your chat" line under its one group. */
+.studio-video .studio-video-follow { display:flex; gap:6px; align-items:flex-start; border-top:1px solid var(--bd); margin-top:4px; padding:8px 10px 4px; }
+.studio-video .studio-video-follow svg { flex:none; margin-top:1px; }

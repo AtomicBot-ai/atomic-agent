@@ -523,13 +523,17 @@
 
   function restore(item) {
     const r = simgRecipeToForm(item);
-    const m = (r.modelId && simgFindModel(IM.catalog, r.modelId, r.provider)) || IM.model;
+    /* ATO-1307: a picture made in the other place restores its words and settings, not its model. */
+    const away = simgRestoreNote(item, IM.place);
+    const found = r.modelId && !away ? simgFindModel(IM.catalog, r.modelId, r.provider) : null;
+    const m = found || IM.model;
     const next = Object.assign({}, IM.form, r);
     delete next.modelId; delete next.provider;
     IM.model = m;
     next.modelId = m ? m.id : null; next.provider = m ? m.provider : null;
     IM.form = simgNormalize(next, m);
-    if (r.modelId && m && m.id !== r.modelId) toast('Settings restored', 'That model is not listed now, so the current one stays');
+    if (away) toast('Settings restored', away);
+    else if (r.modelId && m && m.id !== r.modelId) toast('Settings restored', 'That model is not listed now, so the current one stays');
     else toast('Settings restored', '');
     save(); paintForm(); refreshPrice();
   }

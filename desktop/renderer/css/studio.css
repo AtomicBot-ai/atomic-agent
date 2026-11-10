@@ -254,3 +254,6 @@ span.st-glass{cursor:default}
   .st-pop{left:10px !important;right:10px;width:auto}
   .st-top .st-sub{display:none}
 }
+/* ATO-1307: the picker's "Studio follows your chat" line under its one group. */
+.st-pop-follow{display:flex;gap:6px;align-items:flex-start;border-top:1px solid var(--bd);margin-top:4px;padding-top:8px}
+.st-pop-follow svg{flex:none;margin-top:1px}

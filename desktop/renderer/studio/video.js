@@ -317,6 +317,13 @@
   /** 'local' | 'cloud': where a model runs; null for no model. */
   const placeOf = (m) => (m ? (isLocal(m) ? 'local' : 'cloud') : null);
 
+  /** The picker's line under its one group (ATO-1307): Studio follows the chat, and how to reach the other place. */
+  function followLine(place) {
+    if (place === 'cloud') return 'Studio follows your chat. To use a model on ' + machine() + ', switch the chat to local.';
+    if (place === 'local') return 'Studio follows your chat. To use a cloud model, switch the chat to the cloud.';
+    return '';
+  }
+
   /**
    * The model to select. `saved`: an id, or ids in order (the one last chosen in this
    * place, then the form's). With a place (STUDIO.chatPlace, ATO-1306) only that place's
@@ -383,7 +390,7 @@
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
     supportsImageStart, localDims, buildRequest, blockReason, localHint, priceParams, priceLabel, generateLabel,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
-    clockText, formFromItem, machine, modelGroups, placeOf, pickModel, fitFormToModel, errorText, escHtml,
+    clockText, formFromItem, machine, modelGroups, placeOf, followLine, pickModel, fitFormToModel, errorText, escHtml,
   };
 
   /* ============================================================
@@ -855,11 +862,15 @@
       const patch = formFromItem(item);
       if (!patch) return;
       const all = S.catalog ? modelGroups(S.catalog).all : [];
-      const m = all.find((x) => x.id === patch.modelId) || model();
+      const was = all.find((x) => x.id === patch.modelId);
+      /* ATO-1307: a clip made in the other place restores its words and settings, not its model. */
+      const away = !!(was && S.place && placeOf(was) !== S.place);
+      const m = (!away && was) || model();
       const ff = S.form.firstFrame;
       const by = m ? Object.assign({}, S.form.modelByPlace, { [placeOf(m)]: m.id }) : S.form.modelByPlace;
       S.form = fitFormToModel(Object.assign({}, S.form, patch, { firstFrame: patch.mode === 'image' ? ff : S.form.firstFrame, modelByPlace: by }), m);
-      if (m && !all.find((x) => x.id === patch.modelId)) S.notice = 'That model is not listed any more, so the current one stays.';
+      if (away) S.notice = (S.place === 'cloud' ? 'That clip was made on ' + machine() : 'That clip was made in the cloud') + '. Studio follows your chat, so the current model stays.';
+      else if (m && !was) S.notice = 'That model is not listed any more, so the current one stays.';
       saveForm(); paint(); refreshQuote();
     }
 
@@ -1177,7 +1188,8 @@
       const match = (m) => !q || (m.name + ' ' + m.id).toLowerCase().includes(q);
       const f = S.form;
       let h = '';
-      const cloud = gr.cloud.filter(match), local = gr.local.filter(match);
+      /* ATO-1307: only the place the chat runs in (the 'model' verb still takes any id). No place yet: both. */
+      const cloud = S.place === 'local' ? [] : gr.cloud.filter(match), local = S.place === 'cloud' ? [] : gr.local.filter(match);
       if (cloud.length) {
         h += '<div class="studio-pop-g">' + icon('cloud') + 'Cloud · OpenRouter'
           + (S.catalog.cloud.keyMissing ? '<span class="r">needs an OpenRouter key</span>' : '') + '</div>';
@@ -1201,8 +1213,10 @@
           h += optRow(m, right, f.mode === 'image', extra, v.level === 'exceeds');
         }
       }
-      if (S.catalog.cloud && S.catalog.cloud.error) h += '<div class="studio-video-ds studio-video-perr">' + escHtml(S.catalog.cloud.error.message) + '</div>';
-      return h || '<div class="studio-video-ds studio-video-perr">No models match.</div>';
+      if (S.place !== 'local' && S.catalog.cloud && S.catalog.cloud.error) h += '<div class="studio-video-ds studio-video-perr">' + escHtml(S.catalog.cloud.error.message) + '</div>';
+      if (!h) h = '<div class="studio-video-ds studio-video-perr">' + (q ? 'No models match.' : S.place === 'local' ? 'No video models on ' + escHtml(machine()) + ' yet.' : 'No models listed.') + '</div>';
+      const follow = followLine(S.place);
+      return h + (follow ? '<div class="studio-video-ds studio-video-follow">' + icon('info') + escHtml(follow) + '</div>' : '');
     }
 
     function optRow(m, right, disabled, extra, dim) {
