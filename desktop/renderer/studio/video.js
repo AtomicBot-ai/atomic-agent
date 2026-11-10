@@ -148,6 +148,13 @@
     return '';
   }
 
+  /** The footer line for a local model that is not loaded: Generate loads a downloaded one by itself (CONTRACT.md). */
+  function localHint(model) {
+    const local = model && model.local;
+    if (!local || local.loaded) return '';
+    return local.installed ? 'This model loads when you press Generate.' : 'This model is not downloaded yet.';
+  }
+
   /** PriceParams for BR.studio.price. */
   function priceParams(req) {
     if (!req) return null;
@@ -354,7 +361,7 @@
   const helpers = {
     needsPoster, needsChatPoster, posterTime,
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
-    supportsImageStart, localDims, buildRequest, blockReason, priceParams, priceLabel, generateLabel,
+    supportsImageStart, localDims, buildRequest, blockReason, localHint, priceParams, priceLabel, generateLabel,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
     clockText, formFromItem, modelGroups, pickModel, fitFormToModel, errorText, escHtml,
   };
@@ -1144,7 +1151,8 @@
         const v = estimateVerdict(est);
         h += '<div class="studio-est ' + v.level + '">' + icon(v.level === 'exceeds' ? 'warn' : 'cpu') + '<span><b>Free</b>' + (v.text ? ' · ' + escHtml(v.text) : '') + '</span></div>';
         if (v.warn) h += '<div class="studio-est warn">' + icon('warn') + '<span>' + escHtml(v.warn) + (S.armed ? '. Click again to start anyway.' : '. Close other apps or pick a smaller model.') + '</span></div>';
-        if (m.local && !m.local.loaded) h += '<div class="studio-est">' + icon('info') + '<span>Load this model in Atomic Core first.</span></div>';
+        const hint = localHint(m);
+        if (hint) h += '<div class="studio-est">' + icon('info') + '<span>' + escHtml(hint) + '</span></div>';
       } else if (S.catalog && S.catalog.cloud && S.catalog.cloud.keyMissing) {
         h += '<div class="studio-est warn">' + icon('key') + '<span>Cloud clips need an OpenRouter key.</span><button class="studio-link" data-vact="settings">Add a key</button></div>';
       }

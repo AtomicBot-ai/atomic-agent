@@ -310,3 +310,14 @@ test('no em dash in the Images page text', () => {
     assert.equal(strings.filter((s) => s.includes('—')).length, 0, f);
   }
 });
+
+test('the local model hint says what Generate does: it loads a downloaded model by itself (ATO-1303)', () => {
+  const { simgvLocalHint } = req('../renderer/studio/images-view.js');
+  assert.equal(simgvLocalHint({ local: { loaded: false, installed: true } }), ' · loads when you press Generate');
+  assert.equal(simgvLocalHint({ local: { loaded: false, installed: false } }), ' · not downloaded yet');
+  assert.equal(simgvLocalHint({ local: { loaded: true, installed: true } }), '');
+  assert.equal(simgvLocalHint({ local: null }), '');
+  const view = readFileSync(new URL('../renderer/studio/images-view.js', import.meta.url), 'utf8');
+  assert.match(view, /runs on this Mac' \+ simgvLocalHint\(model\)/);
+  assert.doesNotMatch(view, /load the model first/);
+});

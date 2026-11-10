@@ -180,6 +180,13 @@ function simgvForm(IM) {
   return '<div class="st-form-scroll">' + parts.join('') + '</div><div class="st-foot" data-foot>' + simgvFoot(IM) + '</div>';
 }
 
+/** The footer's addition for a local model: Generate loads a downloaded one by itself (CONTRACT.md). */
+function simgvLocalHint(model) {
+  const local = model && model.local;
+  if (!local || local.loaded) return '';
+  return local.installed ? ' · loads when you press Generate' : ' · not downloaded yet';
+}
+
 function simgvFoot(IM) {
   const model = IM.model;
   const live = IM.job && (IM.job.state === 'queued' || IM.job.state === 'generating');
@@ -187,7 +194,7 @@ function simgvFoot(IM) {
   if (model && model.group === 'cloud' && IM.catalog && IM.catalog.cloud && IM.catalog.cloud.keyMissing) {
     lines.push('<div class="st-est warn">' + ic('key') + '<span>Cloud models need an OpenRouter key. <button class="st-link" ' + SIMGV_A('settings') + '>Add a key</button></span></div>');
   } else if (model && model.group === 'local') {
-    lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on this Mac' + (model.local && !model.local.loaded ? ' · load the model first' : '') + '</span></div>');
+    lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on this Mac' + simgvLocalHint(model) + '</span></div>');
   } else if (model && model.group === 'cloud') {
     lines.push('<div class="st-est">' + ic('cloud') + '<span>Charged to your OpenRouter key</span></div>');
   }
@@ -422,4 +429,4 @@ function simgvPage(IM) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine};
+if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine, simgvLocalHint};
