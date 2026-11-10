@@ -7,6 +7,7 @@ import {
   OPENROUTER_CHAT_MODEL_ORDER,
   OPENROUTER_MODELS_CATALOG,
 } from "./openrouter-models-catalog.js";
+import { compareChatRows, pricePerMillion, scoreChat } from "./openrouter-chat-score.js";
 
 const MODELS_URL = "https://openrouter.ai/api/v1/models";
 const FETCH_TIMEOUT_MS = 20_000;
@@ -16,6 +17,8 @@ type OpenRouterApiModel = {
   id?: string;
   name?: string;
   context_length?: number;
+  /** Unix seconds the model was listed; the tiebreak in `compareChatRows`. */
+  created?: number;
   pricing?: { prompt?: string; completion?: string };
   supported_parameters?: string[];
   architecture?: { input_modalities?: string[] };
@@ -31,75 +34,6 @@ let cached: { fetchedAt: number; picks: readonly OpenRouterChatPick[] } | null =
   null;
 /** Stated image support per id from the cached fetch; see `getAdvertisedOpenRouterVision`. */
 let advertisedVision: ReadonlyMap<string, boolean> = new Map();
-
-function pricePerMillion(tokenPrice: string | undefined): number {
-  const n = parseFloat(tokenPrice ?? "0");
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return Math.round(n * 1_000_000 * 100) / 100;
-}
-
-/**
- * Tool support as advertised by the API.
- *
- * A missing or empty `supported_parameters` means the response says
- * nothing, not that the model lacks tools. Treating silence as a "no"
- * is what emptied the aimlapi catalog when that provider dropped its
- * capability field, so this reader keeps the two cases apart.
- */
-function readAdvertisedTools(m: OpenRouterApiModel): boolean | undefined {
-  if (!Array.isArray(m.supported_parameters)) return undefined;
-  if (m.supported_parameters.length === 0) return undefined;
-  return m.supported_parameters.includes("tools");
-}
-
-function hasTools(m: OpenRouterApiModel): boolean {
-  return readAdvertisedTools(m) ?? true;
-}
-
-/**
- * Ranking, not gatekeeping.
- *
- * This function used to return -1 for every `anthropic/*` id and
- * everything matching `/gemini/i`, which removed ~40 currently served
- * models — the whole Claude 5 and Gemini 3.x lines — from the picker
- * with no way for an operator to get them back. Nothing in the runtime
- * needs that: both families speak the same OpenAI-shaped
- * `/v1/chat/completions` OpenRouter exposes for everything else, and
- * `native_tools` transport is what the picker already requires via
- * `hasTools`. The exclusions are gone; the families are scored instead,
- * so the models this agent is tuned for still sort to the top.
- *
- * A negative score is now reserved for rows that genuinely cannot be
- * used: non-chat surfaces (embeddings, rerank, TTS) and models that
- * explicitly advertise no tool support.
- */
-function scoreChat(m: OpenRouterApiModel): number {
-  const id = m.id ?? "";
-  if (!id) return -1;
-  if (/qwen3\.5/i.test(id)) return -1;
-  if (/embed|rerank|moderation|ocr|tts|transcribe/i.test(id)) return -1;
-  if (!hasTools(m)) return -1;
-  let s = 10;
-  const ctx = m.context_length ?? 0;
-  if (ctx >= 1_000_000) s += 8;
-  else if (ctx >= 200_000) s += 5;
-  if (/qwen3\.7|qwen3\.6/i.test(id)) s += 20;
-  if (/gpt-5\./i.test(id)) s += 15;
-  if (/claude-(opus|sonnet|fable|haiku)-5|claude-opus-4\.8/i.test(id)) s += 18;
-  else if (id.startsWith("anthropic/")) s += 6;
-  if (/gemini-3\./i.test(id)) s += 14;
-  else if (/gemini/i.test(id)) s += 4;
-  if (/deepseek.*v4|deepseek.*v3/i.test(id)) s += 10;
-  if (/kimi-k2\.6/i.test(id)) s += 12;
-  else if (/kimi-k2/i.test(id)) s += 8;
-  if (/z-ai\/glm-5|z-ai\/glm-4\.7-flash/i.test(id)) s += 11;
-  else if (/z-ai\/glm/i.test(id)) s += 7;
-  if (/4o-mini|3\.5-turbo/i.test(id)) s -= 8;
-  if (/thinking|reasoner|r1/i.test(id)) s -= 5;
-  const pin = pricePerMillion(m.pricing?.prompt);
-  if (pin > 0 && pin < 1) s += 3;
-  return s;
-}
 
 function apiRowToEntry(m: OpenRouterApiModel): ModelCatalogEntry {
   const id = m.id!;
@@ -232,7 +166,7 @@ async function fetchAndCacheCatalog(): Promise<CatalogRefreshResult> {
     );
     const ranked = rows
       .filter((m) => scoreChat(m) >= 0)
-      .sort((a, b) => scoreChat(b) - scoreChat(a));
+      .sort(compareChatRows);
 
     const seen = new Set<string>();
     const picks: OpenRouterChatPick[] = [];
