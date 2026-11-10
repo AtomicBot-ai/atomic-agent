@@ -35,11 +35,14 @@ function composerFusionEngineRows(leg) {
   const rm = rmNow();
   const chosen = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
   const other = leg === 'worker' ? rm.orchestratorProviderId : rm.workerProviderId;
-  // Both seats may use one cloud provider (two of its models).
+  // Both seats may use one provider (two of its models).
   const cloud = selProviders().map((p) => ({
     type:'fusionLeg', leg, id:p.id, label:p.id,
     // A saved key the provider turned down says so, as the provider rows do (T32).
-    detail: BSW.readyIds.includes(p.id) ? 'Cloud provider'
+    /* ATO-1401: Ollama, LM Studio, Atomic Chat (and any server on this computer) are
+       local, whatever kind of provider entry carries them, and need no key. */
+    detail: typeof llmKeylessLocal === 'function' && llmKeylessLocal(p) ? 'An app on this computer'
+      : BSW.readyIds.includes(p.id) ? 'Cloud provider'
       : typeof savedKeyInvalid === 'function' && savedKeyInvalid(p) ? 'saved key is invalid · paste it again' : 'No API key',
     active:p.id === chosen,
   }));
