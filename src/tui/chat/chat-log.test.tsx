@@ -372,7 +372,7 @@ describe("ChatLog", () => {
     it("hides the tool cards behind one summary line", () => {
       const { lastFrame } = renderAtSize(<ChatLog state={turnState()} />, BIG);
       const text = strip(lastFrame() ?? "");
-      expect(text).toContain("Used 2 tools · 1 failed · 40s ▸");
+      expect(text).toContain("Ran 1 search, ran 1 command · 1 failed · 40s ▸");
       expect(text).toContain("Here you go.");
       expect(text).not.toContain("Listed files in src");
       expect(text).not.toContain("LISTING-BODY");
@@ -385,7 +385,7 @@ describe("ChatLog", () => {
         BIG,
       );
       const text = strip(lastFrame() ?? "");
-      expect(text).toContain("Used 2 tools · 1 failed · 40s ▾");
+      expect(text).toContain("Ran 1 search, ran 1 command · 1 failed · 40s ▾");
       expect(text).toContain("Listed files in src");
       expect(text).toContain("Ran false");
       expect(text).toContain("EXIT-1-BODY");
@@ -398,7 +398,7 @@ describe("ChatLog", () => {
         BIG,
       );
       const text = strip(lastFrame() ?? "");
-      expect(text).not.toContain("Used 2 tools");
+      expect(text).not.toContain("Ran 1 search, ran 1 command");
       expect(text).toContain("LISTING-BODY");
       expect(text).toMatch(/2 tool steps/);
     });
@@ -414,7 +414,7 @@ describe("ChatLog", () => {
       };
       const { lastFrame } = renderAtSize(<ChatLog state={running} />, BIG);
       const text = strip(lastFrame() ?? "");
-      expect(text).not.toContain("Used 2 tools");
+      expect(text).not.toContain("Ran 1 search, ran 1 command");
       expect(text).toContain("Listed files in src");
     });
   });
