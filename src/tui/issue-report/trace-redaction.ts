@@ -134,6 +134,7 @@ const ERROR_LEVEL_EVENTS: ReadonlySet<string> = new Set([
   "loop_detected",
   "provider_waiting",
   "provider_recovered",
+  "reply_time_limit_retried",
   "trace_truncated",
   "turn_finished",
   "step_finished",

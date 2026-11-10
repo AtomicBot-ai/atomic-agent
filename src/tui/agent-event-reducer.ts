@@ -52,6 +52,7 @@ import {
   upsertReasoning,
 } from "./reducer-helpers.js";
 import {
+  discardDeadAttempt,
   parkProviderOutage,
   retryProviderOutage,
 } from "./provider-outage-state.js";
@@ -1039,6 +1040,15 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "yellow",
       });
     }
+    case "reply_time_limit_retried":
+      // A feed line and no outage state: the provider is answering. The
+      // retry streams from the start, so the lost reply is dropped here.
+      return appendFeed(discardDeadAttempt(state, event.stepIndex), {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» the provider's time limit ended this reply and none of it was kept. Asking for a shorter one (${event.attempt}/${event.budget})`,
+        color: "yellow",
+      });
     case "empty_completion_recovered":
       // Same reason as above, and more so: an empty completion produces
       // literally nothing, so without this line the feed shows a step

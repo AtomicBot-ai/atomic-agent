@@ -11,6 +11,7 @@ import { readProviderErrorVerdict } from "../../llm/reliability/provider-error-v
 import { classifyFailureCause } from "../../llm/reliability/classify-failure-cause.js";
 import { classifyProviderWaitCause } from "../../llm/reliability/provider-wait-cause.js";
 import { composeSizeRejectionNotice, planSizeRejectionRepack } from "./size-rejection-recovery.js";
+import { MID_REPLY_TIMEOUT_STEP_BUDGET, composeMidReplyTimeoutNotice, planMidReplyTimeoutRetry } from "./mid-reply-timeout-recovery.js";
 import { composeTruncationNotice, planTruncationRetry, truncationRetryMaxTokens, type TruncationRetry, type TruncationRetryPlan } from "./truncation-recovery.js";
 import { PARSE_RECOVERY_BUDGET, composeParseFailureNotice, isRecoverableParseFailure } from "./parse-failure-recovery.js";
 import { EMPTY_COMPLETION_RECOVERY_BUDGET, composeEmptyCompletionNotice, isRecoverableEmptyCompletion, repeatedEmptyCompletionError } from "./empty-completion-recovery.js";
@@ -39,6 +40,8 @@ export interface TurnRecoveryContext {
   recoveryStepAvailable: (stepIndex: number) => boolean;
   /** The model mode serving the step; absent (legacy wiring) reads as `local`. */
   modelMode?: "local" | "cloud";
+  /** How long the failed step's request ran. */
+  requestElapsedMs?: number;
   /**
    * The plain error the turn ends with when it fails on a context-size
    * refusal after the loop's overflow compaction (ATO-1028). Replaces the
@@ -504,6 +507,60 @@ export function recoverTurnStep(
         error: runError.message,
       });
       return { kind: "local_out_of_memory", contextWindow: outOfMemory.contextWindow, cause: runError };
+    }
+  }
+  // A provider's time limit ended a long reply. Waiting and replaying
+  // the same request hits the same limit, so the retry asks for less.
+  // Bounded per step; a request that ran only briefly falls through to
+  // the outage wait below.
+  if (category === "transport" && !cancelled && !creditRefused && providerWaitCfg.enabled) {
+    const stepAttempts =
+      turn.midReplyTimeoutRetry?.stepIndex === i ? turn.midReplyTimeoutRetry.attempts : 0;
+    const plan = planMidReplyTimeoutRetry({
+      error: err,
+      requestElapsedMs: context.requestElapsedMs,
+      stepAttempts,
+    });
+    if (plan && turn.awaitingRecovery) {
+      // An earlier outage wait on this step is over: the provider has
+      // just been answering for a minute or more.
+      deps.onEvent?.({ type: "provider_recovered", waitedMs: turn.outageWaitedMs });
+      turn.awaitingRecovery = false;
+      turn.outageWaitedMs = 0;
+      turn.outageAttempts = 0;
+    }
+    if (plan?.kind === "give_up") {
+      return reportTurnFailure(
+        plan.error,
+        { category, cancelled: false, creditRefused: false },
+        { state, stepIndex: i },
+        deps,
+        turn,
+      );
+    }
+    if (plan?.kind === "retry") {
+      turn.midReplyTimeoutRetry = { stepIndex: i, attempts: plan.attempts };
+      turn.pendingNotice = composeMidReplyTimeoutNotice(noticeForThisStep);
+      const waitedOn = readFailingLink(err);
+      // Its own event, not `provider_waiting`: the provider is answering,
+      // so nothing here may read as an outage.
+      deps.onEvent?.({
+        type: "reply_time_limit_retried",
+        stepIndex: i,
+        attempt: plan.attempts,
+        budget: MID_REPLY_TIMEOUT_STEP_BUDGET,
+        reason: runError.message,
+      });
+      deps.logger?.warn("provider time limit ended a long reply; retrying the step with a notice", {
+        sessionId: state.id,
+        stepIndex: i,
+        attempt: plan.attempts,
+        requestElapsedMs: context.requestElapsedMs,
+        error: runError.message,
+        ...(waitedOn !== undefined ? { providerId: waitedOn } : {}),
+      });
+      runError = null;
+      return { kind: "retry_same" };
     }
   }
   // The provider is not answering. Park the turn instead of

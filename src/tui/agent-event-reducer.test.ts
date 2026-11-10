@@ -1671,6 +1671,48 @@ describe("truncated completion", () => {
   });
 });
 
+describe("provider time limit on a long reply (ATO-1398)", () => {
+  const retried: TuiAction = {
+    type: "agent_event",
+    event: {
+      type: "reply_time_limit_retried",
+      stepIndex: 1,
+      attempt: 1,
+      budget: 2,
+      reason: "A Timeout Occurred",
+    } as never,
+  };
+
+  it("says what happened without calling it an outage", () => {
+    const next = reduceTuiState(createInitialTuiState(fakeSession()), retried);
+    expect(next.feed.at(-1)?.line).toContain("(1/2)");
+    expect(next.providerOutage).toBeNull();
+  });
+
+  it("drops the lost reply so the retry is not spliced onto it", () => {
+    const streaming = {
+      ...createInitialTuiState(fakeSession()),
+      reasoning: [{ id: "r", timestamp: 1, stepIndex: 1, text: "lost thinking" }],
+      streamingAssistantText: "lost text",
+    };
+    const next = reduceTuiState(streaming, retried);
+    expect(next.reasoning).toEqual([]);
+    expect(next.streamingAssistantText).toBeNull();
+  });
+
+  it("does not report a wait when the turn gives up", () => {
+    const next = reduceTuiState(
+      reduceTuiState(createInitialTuiState(fakeSession()), retried),
+      {
+        type: "agent_event",
+        event: { type: "loop_failed", error: new Error("stopped on a time limit 3 times"), category: "transport" },
+      } as TuiAction,
+    );
+    expect(next.messages.at(-1)?.text).not.toContain("Stopped waiting");
+    expect(next.providerOutage).toBeNull();
+  });
+});
+
 describe("parse-failure recovery", () => {
   const recovered = (over: Record<string, unknown> = {}): TuiAction => ({
     type: "agent_event",

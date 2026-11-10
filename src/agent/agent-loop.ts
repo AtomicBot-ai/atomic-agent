@@ -384,6 +384,9 @@ export class AgentLoop {
       // summary step gets at least its own five minutes — it is
       // reserved whichever ceiling bit, and llama-server keeps decoding
       // the abandoned request until it notices the closed connection.
+      // Reset right before the model call: a slow compaction ahead of it
+      // must not count as a long reply.
+      let requestStartedAt = Date.now();
       const requestDeadline = createRequestDeadline(
         options.signal,
         finalizationStep
@@ -642,6 +645,7 @@ export class AgentLoop {
             });
           }
         }
+        requestStartedAt = Date.now();
         const outcome = await executeStep(stepContext, stepDeps);
         requestDeadline.dispose();
         const durationMs = Date.now() - started;
@@ -1037,6 +1041,7 @@ export class AgentLoop {
           state, options, stepIndex: i, finalizationStep, noticeForThisStep,
           effectiveTransport, requestDeadline, resumesStoppedTask, taskStartedAt,
           durationCeilingMs, providerWaitCfg, recoveryStepAvailable,
+          requestElapsedMs: Date.now() - requestStartedAt,
           ...(stepModelMode !== undefined ? { modelMode: stepModelMode } : {}),
           ...(contextExhausted !== undefined ? { contextExhausted } : {}),
         }, this.deps, turn);

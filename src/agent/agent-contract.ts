@@ -808,6 +808,20 @@ export type AgentLoopEvent =
     }
   | {
       /**
+       * A provider time limit ended a long reply to step `stepIndex` and
+       * the step is being retried with a notice asking for a shorter
+       * one. Not an outage: the provider is answering. `attempt` counts
+       * within the step, `budget` is the ceiling after which the turn
+       * fails.
+       */
+      type: "reply_time_limit_retried";
+      stepIndex: number;
+      attempt: number;
+      budget: number;
+      reason: string;
+    }
+  | {
+      /**
        * The completion for step `stepIndex` came back with nothing in
        * any channel, and the turn is spending another step on it rather
        * than ending: the next prompt carries a `### notice` saying the
