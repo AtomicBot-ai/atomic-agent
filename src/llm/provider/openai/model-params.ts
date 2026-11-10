@@ -4,7 +4,7 @@
  * Facts the builders need about a model id, kept next to each other so
  * the rule that reads the id lives in one place:
  *
- *  - OpenAI's reasoning models (`o1`, `o3`, `o4-mini`, `gpt-5`, …) reject
+ *  - OpenAI's reasoning models (`o1`, `o3`, `o4-mini`, `gpt-5`, `gpt-6`, …) reject
  *    `temperature` and reject `max_tokens` in favour of
  *    `max_completion_tokens`. atag's own `request-size-rejection.ts`
  *    quotes the second rejection verbatim and used to rely on the
@@ -43,7 +43,12 @@ export interface ModelParamProfile {
   capField: "max_tokens" | "max_completion_tokens";
 }
 
-const OPENAI_REASONING_MODEL_RE = /^(?:o[1-9]|gpt-5)(?![a-z])/i;
+/**
+ * `o1`…`o9` and every GPT generation from 5 on (`gpt-5.4-mini`,
+ * `gpt-6.2-sol`, `openai/gpt-6-terra`, ATO-1339). GPT-4.x and older take
+ * `temperature` and `max_tokens` and keep the historical body.
+ */
+const OPENAI_REASONING_MODEL_RE = /^(?:o[1-9]|gpt-(?:[5-9]|[1-9][0-9]))(?![a-z])/i;
 
 /**
  * `kimi-k3.1`, `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, with or

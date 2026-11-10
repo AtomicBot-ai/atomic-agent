@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 describe("modelParamProfile", () => {
-  it.each(["o3", "o4-mini", "gpt-5", "openai/gpt-5-codex"])(
+  it.each(["o3", "o4-mini", "gpt-5", "openai/gpt-5-codex", "gpt-6", "gpt-6.1-sol", "gpt-6.2-sol", "openai/gpt-6-terra", "GPT-6-Astra"])(
     "forbids temperature and caps with max_completion_tokens for %s",
     (model) => {
       expect(modelParamProfile(model)).toEqual({
@@ -45,6 +45,7 @@ describe("modelParamProfile", () => {
     "kimi-k3-preview",
     "kimi-k3.10",
     "gpt-4o",
+    "gpt-4.1-mini",
     "olmo-3",
   ])("leaves temperature free for %s", (model) => {
     expect(modelParamProfile(model)).toEqual({
