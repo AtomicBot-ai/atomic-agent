@@ -128,7 +128,7 @@ describe("candidateRoots", () => {
       exists,
     });
     expect(plan.blocked).not.toContain("/Users/u/Desktop");
-    expect(plan.roots).toContainEqual({ dir: "/Users/u/Desktop", depth: 3, outer: true });
+    expect(plan.roots).toContainEqual({ dir: "/Users/u/Desktop", depth: 3 });
   });
 
   // ATO-1333: a crowded parent must not use up the working folder's budget.

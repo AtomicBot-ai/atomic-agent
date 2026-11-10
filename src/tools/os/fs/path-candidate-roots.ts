@@ -15,8 +15,8 @@ import { isInside } from "../../../approval/fanout-scope.js";
  * missing path, the working folder or a user-named path is already
  * inside it; otherwise it is blocked.
  *
- * A root that is not inside the working folder or a user-named path (the
- * missing path's ancestors, a protected folder above the session) is
+ * A root that is not inside the working folder or a user-named path and
+ * does not hold the missing path (the folders above the session) is
  * marked `outer`: it is searched after the others, under a small budget
  * of its own, so a crowded one cannot starve the search near the session.
  */
@@ -96,12 +96,16 @@ export async function candidateRoots(
   const ancestor = await nearestExisting(dirname(missing), exists);
   if (ancestor !== null) {
     const parent = dirname(ancestor);
-    roots.push(placed(ancestor, 2), placed(parent, 1), placed(dirname(parent), 1));
+    // The folder the missing path points into stays near: it is where the
+    // file was expected. Only the folders above it are outer.
+    roots.push({ dir: ancestor, depth: 2 }, placed(parent, 1), placed(dirname(parent), 1));
   }
   roots.push(
     ...searchable
       .filter((dir) => qualifies(dir))
-      .map((dir) => placed(dir, PROTECTED_DEPTH)),
+      .map((dir) =>
+        isInside(dir, missing) ? { dir, depth: PROTECTED_DEPTH } : placed(dir, PROTECTED_DEPTH),
+      ),
   );
   return {
     roots: roots.filter(({ dir }) => dir !== home && !isFilesystemRoot(dir)),
