@@ -88,6 +88,7 @@ describe("PROVIDER_PRESETS", () => {
       moonshot: "https://api.moonshot.ai",
       novita: "https://api.novita.ai/openai",
       perplexity: "https://api.perplexity.ai",
+      runcrate: "https://api.runcrate.ai",
       sambanova: "https://api.sambanova.ai",
     };
     for (const [id, baseUrl] of Object.entries(expected)) {
@@ -141,6 +142,7 @@ describe("PROVIDER_PRESETS", () => {
     expect(keyless).toContain("nous");
     expect(keyless).toContain("ollama-cloud");
     expect(keyless).toContain("novita");
+    expect(keyless).toContain("runcrate");
     expect(keyless).toContain("sambanova");
   });
 
