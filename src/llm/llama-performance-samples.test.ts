@@ -5,6 +5,7 @@ import {
   PerformanceRing,
   count,
   generationRate,
+  lenientNum,
   num,
   sampleFromPayload,
   type PerformanceSample,
@@ -191,6 +192,15 @@ describe("generationRate", () => {
       expect(generationRate(timings)).toBe(before(timings));
     });
   }
+
+  it("reads numeric strings only when asked, as the throughput mean always has", () => {
+    const t = { predicted_per_second: "33.5", predicted_n: "10", predicted_ms: "1000" };
+    expect(generationRate(t)).toBeNull();
+    expect(generationRate(t, lenientNum)).toBe(33.5);
+    expect(generationRate({ predicted_n: "100", predicted_ms: "10000" }, lenientNum)).toBe(10);
+    expect(lenientNum("abc")).toBeNull();
+    expect(lenientNum("")).toBeNull();
+  });
 });
 
 describe("PerformanceRing", () => {

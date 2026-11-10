@@ -41,6 +41,20 @@ export function num(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? v : null;
 }
 
+/**
+ * `num`, but a numeric string counts too. The client's throughput mean
+ * (what Fusion sizes worker time limits from) has always read timings this
+ * way, so it keeps doing so through `generationRate(t, lenientNum)`; the
+ * performance samples read numbers only.
+ */
+export function lenientNum(v: unknown): number | null {
+  if (typeof v === "string" && v.length > 0) {
+    const parsed = Number.parseFloat(v);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return num(v);
+}
+
 /** A whole, non-negative count, or `null`. */
 export function count(v: unknown): number | null {
   const n = num(v);
@@ -53,11 +67,14 @@ export function count(v: unknown): number | null {
  * without it still reports the count and the milliseconds it took.
  * `null` when neither gives a positive speed.
  */
-export function generationRate(timings: Record<string, unknown>): number | null {
-  const stated = num(timings.predicted_per_second);
+export function generationRate(
+  timings: Record<string, unknown>,
+  read: (v: unknown) => number | null = num,
+): number | null {
+  const stated = read(timings.predicted_per_second);
   if (stated !== null && stated > 0) return stated;
-  const n = num(timings.predicted_n);
-  const ms = num(timings.predicted_ms);
+  const n = read(timings.predicted_n);
+  const ms = read(timings.predicted_ms);
   if (n !== null && ms !== null && n > 0 && ms > 0) return (n / ms) * 1000;
   return null;
 }
