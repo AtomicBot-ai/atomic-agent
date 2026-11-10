@@ -26,6 +26,8 @@ beforeAll(async () => {
   await writeFile(join(cwd, "open.py"), 'import subprocess\nsubprocess.run(["open", "-a", "Safari", "https://x.com"])\n');
   await writeFile(join(cwd, "sign-in.py"), 'code = "ABCD-1234"\nprint(f"To sign in, open https://example.test/device and enter {code}")\n');
   await writeFile(join(cwd, "sign-in.js"), 'console.log("To sign in, open https://example.test/device and enter ABCD-1234");\n');
+  await writeFile(join(cwd, "prints.py"), 'print("open https://x.com")\n');
+  await writeFile(join(cwd, "prints.js"), 'console.log("open https://x.com");\n');
 });
 afterAll(async () => {
   await rm(cwd, { recursive: true, force: true });
@@ -118,6 +120,16 @@ const CASES: [string, boolean][] = [
  [`node -e 'console.log("hi"); require("child_process").execSync("xdg-open https://x.com")'`, true],
  [`node -e 'console.log(\`\${require("child_process").execSync("open https://x.com")}\`)'`, true],
  [`echo 'hi' "open https://x.com" | sh`, true],
+ // What a script prints, carried on to something that runs it.
+ [`python3 prints.py | sh`, true],
+ [`node prints.js | sh`, true],
+ [`python3 prints.py > run.sh`, true],
+ [`bash -c 'python3 prints.py | xargs open'`, true],
+ // A print name rebound to something that runs commands.
+ [`python3 -c 'import os; print = os.system; print("open https://x.com")'`, true],
+ [`node -e 'console.log = require("child_process").execSync; console.log("open https://x.com")'`, true],
+ [`python3 -c 'import os,types; log=types.SimpleNamespace(info=os.system); log.info("open https://x.com")'`, true],
+ [`python3 -c 'import subprocess; print("open https://x.com", file=subprocess.Popen(["sh"],stdin=-1,text=True).stdin)'`, true],
 ];
 
 describe("checkBrowserBypassLine", () => {

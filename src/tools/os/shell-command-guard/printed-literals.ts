@@ -19,14 +19,64 @@ const OUTPUT_RUN_ON =
   /\|\s*(?:sudo\s+)?(?:\S*\/)?(?:sh|bash|zsh|dash|ksh|fish|csh|tcsh|osascript|python\d*(?:\.\d+)?|node|deno|bun|perl|ruby|php|xargs|eval|source|open|xdg-open)\b|\beval\b|\$\(|<\(/;
 
 /**
+ * A print name rebound, output sent somewhere other than the terminal, or
+ * anything that runs a command: then a "print" may not only print, and the
+ * text is read whole. `print = os.system`, `console.log = execSync`,
+ * `log = SimpleNamespace(info=os.system)`, `print(…, file=proc.stdin)`.
+ */
+const NOT_ONLY_PRINTING =
+  /(?:print|pprint|write|log|info|warn|warning|error|debug|critical|exception|stdout|stderr|console)\s*=(?!=)|\b(?:log|logger|logging)\b[^\n]*=|console\s*\[|\b(?:def|function)\s+(?:print|pprint|log\w*|info|warn\w*|error|debug|critical|exception|write)\b|\bas\s+(?:print|pprint|log|logger|logging|console|sys)\b|\bfile\s*=|redirect_std|dup2|setattr|getattr|__import__|builtins|defineproperty|object\s*\.\s*assign|reflect\s*\.|subprocess|popen|\bsystem\b|child_process|\bexec|\bspawn|\beval\b/;
+
+/**
+ * Whether what a command line's commands print stays on the terminal: no
+ * pipe, no redirect into a file (`2>&1` and `/dev/null` aside), no command
+ * substitution or process substitution, no `eval` / `xargs`. Quoted text
+ * is skipped, except `$(…)` and backticks inside double quotes, which run.
+ * Read on the outer line, so `python3 x.py | sh` blanks nothing in `x.py`.
+ */
+export function outputStaysHere(line: string): boolean {
+  let quote: "'" | '"' | null = null;
+  let bare = "";
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]!;
+    if (quote === "'") {
+      if (c === "'") quote = null;
+      continue;
+    }
+    if (c === "\\") {
+      i += 1;
+      continue;
+    }
+    if (c === "`" || (c === "$" && line[i + 1] === "(")) return false;
+    if (quote === '"') {
+      if (c === '"') quote = null;
+      continue;
+    }
+    if (c === "'" || c === '"') {
+      quote = c;
+      continue;
+    }
+    bare += c;
+  }
+  const rest = bare
+    .toLowerCase()
+    .replace(/\|\|/g, " ")
+    .replace(/[0-9&]?>&\s*(?:[0-9]+|-)/g, " ")
+    .replace(/[0-9&]?>>?\s*\/dev\/(?:null|stdout|stderr|tty)\b/g, " ");
+  return !/\||>|<\(|\beval\b|\bxargs\b/.test(rest);
+}
+
+/**
  * The text with the string literals passed straight to a print-only call
  * emptied: `print("open https://x")` reads as `print("")`. Strings inside
  * a nested call (`print(os.system("open …"))`) and the code in an f-string
  * or template-literal interpolation are kept, as is the whole text when its
- * output could be run or a call cannot be read to its end.
+ * output could be run, a print may do more than print, or a call cannot
+ * be read to its end. The caller decides from the outer line whether the
+ * output stays on the terminal (`outputStaysHere`) before calling this.
  */
 export function blankPrintedLiterals(text: string): string {
-  if (OUTPUT_RUN_ON.test(text)) return text;
+  if (OUTPUT_RUN_ON.test(text) || NOT_ONLY_PRINTING.test(text)) return text;
   let out = "";
   let from = 0;
   PRINT_CALL.lastIndex = 0;
