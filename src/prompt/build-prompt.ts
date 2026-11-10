@@ -203,7 +203,12 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
   const effectiveCatalog = workspaceCatalog ?? upstreamCatalog;
   const stablePrefix = buildStablePrefix({
     toolDescriptors: input.toolDescriptors,
-    capabilities: input.workspace ? { ...input.capabilities, workingDir: input.session.workingDir } : input.capabilities,
+    // The session's folder, in every model mode: bootstrap capabilities
+    // carry the folder the runtime started in, and a live folder switch
+    // only moves `session.workingDir`. Local mode prepares no workspace,
+    // so gating on it left the old folder in the prompt (issue #1121).
+    // The prefix still moves only when the folder does.
+    capabilities: { ...input.capabilities, workingDir: input.session.workingDir },
     skillCatalog: effectiveCatalog?.entries ?? input.skillCatalog,
     ...(effectiveCatalog ? { skillCatalogDropped: effectiveCatalog.dropped } : input.skillCatalogDropped !== undefined
       ? { skillCatalogDropped: input.skillCatalogDropped }

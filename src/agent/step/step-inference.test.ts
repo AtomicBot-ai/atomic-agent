@@ -255,3 +255,27 @@ describe("compact prompt decision (ATO-1116)", () => {
   });
 });
 
+describe("working_dir after a live folder switch (issue #1121)", () => {
+  it("local mode renders the session's folder, not the bootstrap one, without preparing a workspace", () => {
+    const { ctx, deps } = fixture();
+    let prepared = 0;
+    const localDeps: StepDependencies = {
+      ...deps,
+      modelMode: { mode: "local", source: "provider", providerId: "primary", modelId: null },
+      prepareWorkspace: () => { prepared += 1; throw new Error("local mode must not prepare a workspace"); },
+    };
+    const before = prepareStepInference(ctx, localDeps);
+    expect(before.prompt.stablePrefix).toContain("working_dir: /fixture");
+
+    // The desktop folder picker moves the session; bootstrap capabilities still say /fixture.
+    const switched: StepContext = { ...ctx, workspace: undefined, session: { ...ctx.session, workingDir: "/switched" } };
+    const after = prepareStepInference(switched, localDeps);
+    expect(after.prompt.stablePrefix).toContain("working_dir: /switched");
+    expect(after.prompt.stablePrefix).not.toContain("working_dir: /fixture");
+    expect(prepared).toBe(0);
+
+    // Same folder again: the stable prefix is byte-identical, so the cache survives.
+    const again = prepareStepInference(switched, localDeps);
+    expect(again.prompt.stablePrefix).toBe(after.prompt.stablePrefix);
+  });
+});
