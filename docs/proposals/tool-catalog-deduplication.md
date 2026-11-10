@@ -1,6 +1,6 @@
 # Remove existing Git tool descriptor duplicates
 
-Status: proposed
+Status: done (ATO-1296)
 Owner: src/prompt/ + src/tools/os/git/
 
 Stage05l found 88 DEFAULT_TOOL_DESCRIPTORS entries for 85 names. os.git.checkout occurs at zero-based positions31/48, commit32/47 and push33/43. These copies predate the reorganization. [The conformance test](../../src/tools/tool-contract-conformance.test.ts) freezes complete ordered fingerprints and positions with owner/reason; changed, removed, third or newly duplicated entries fail.
@@ -9,4 +9,6 @@ Removing entries during a mechanical move would change behavior: both copies con
 
 A separate change should select one descriptor from actual Git parser/schema/approval semantics, remove the second copies and retire the exact ledger entries together. Verify plain/strict native wire, tool.view under all roles, rare-tool loading, grammar offered names, Git arguments and approval. Record the expected stable-prefix byte change and one-time cache invalidation; do not merely regenerate golden outputs. Require 85 unique entries with no duplicate ledger afterward. Do not infer Git policy from readonly or change Git execution incidentally.
 
-This is explicit behavioral debt outside mechanical05l acceptance. Other families' canonical ownership can expand separately: the current global gate proves presence/format for them, rather than semantic equality of every representation. [Stage05 acceptance](../testing/stage-05-validation.md) records that limit.
+Resolved by ATO-1296. Each tool kept the copy that matches its implementation in `src/tools/os/git/` and the JSON Schema in `src/prompt/github-tool-args-schemas.ts`: commit keeps `paths` (the second copy had dropped it), push keeps `setUpstream`, and checkout keeps its schema argument order. All three keep the default tier, as the first copy (the one native wire already used) had; `compact-tool-forms.ts` still collapses push and checkout under the compact prompt. The full prompt loses the three second copies, so the stable prefix changes once. The ledger is gone and the conformance test now requires every descriptor name to be unique.
+
+This was explicit behavioral debt outside mechanical05l acceptance. Other families' canonical ownership can expand separately: the current global gate proves presence/format for them, rather than semantic equality of every representation. [Stage05 acceptance](../testing/stage-05-validation.md) records that limit.
