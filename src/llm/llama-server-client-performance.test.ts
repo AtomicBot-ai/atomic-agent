@@ -280,6 +280,19 @@ describe("LlamaServerClient performance samples", () => {
     await expectNothingLeftOpen(client);
   });
 
+  it("records nothing when the caller aborts after the done chunk", async () => {
+    const { client } = clientWith([ok]);
+    const abort = new AbortController();
+    const stream = client.completeStream({ prompt: "p", signal: abort.signal });
+    let next = await stream.next();
+    while (!next.done && !next.value.done) next = await stream.next();
+    expect(next.value).toMatchObject({ done: true });
+    abort.abort();
+    await stream.next().catch(() => undefined);
+    expect(client.performanceSamples()).toEqual([]);
+    await expectNothingLeftOpen(client);
+  });
+
   it("records nothing for a stream that ends without a stop event", async () => {
     const { client } = clientWith([() => sse([DELTA]), ok]);
     await drain(client.completeStream({ prompt: "p" }));

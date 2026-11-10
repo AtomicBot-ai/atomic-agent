@@ -85,6 +85,16 @@ describe("LlamaServerClient.measuredTokensPerSecond (F19)", () => {
     expect(client.measuredTokensPerSecond()).toBe(20);
   });
 
+  it("ignores a rate that overflows to Infinity, as it always has", async () => {
+    const client = clientWith([
+      { timings: { predicted_per_second: 30 } },
+      { timings: { predicted_n: 1, predicted_ms: 1e-320 } },
+    ]);
+    await client.complete({ prompt: "p" });
+    await client.complete({ prompt: "p" });
+    expect(client.measuredTokensPerSecond()).toBe(30);
+  });
+
   it("still reads numeric-string timings, as it always has", async () => {
     const client = clientWith([
       { timings: { predicted_per_second: "40" } },

@@ -193,6 +193,11 @@ describe("generationRate", () => {
     });
   }
 
+  it("never returns a non-finite rate, whatever n / ms works out to", () => {
+    expect(generationRate({ predicted_n: 1, predicted_ms: 1e-320 })).toBeNull();
+    expect(generationRate({ predicted_n: "1", predicted_ms: "1e-320" }, lenientNum)).toBeNull();
+  });
+
   it("reads numeric strings only when asked, as the throughput mean always has", () => {
     const t = { predicted_per_second: "33.5", predicted_n: "10", predicted_ms: "1000" };
     expect(generationRate(t)).toBeNull();
