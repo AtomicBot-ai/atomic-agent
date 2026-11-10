@@ -567,6 +567,26 @@ describe("buildOpenAiChatBody — per-model parameters", () => {
     });
     expect(plain).not.toHaveProperty("reasoning");
   });
+
+  // ATO-1368: Fable 5.2's API default is the expensive `high`.
+  it("runs Fable 5.2 on OpenRouter at medium when the turn asked for no effort", () => {
+    const fable = "anthropic/claude-fable-5.2";
+    const or = { providerKind: "openrouter" };
+    const build = (request: { prompt: string; reasoningEffort?: "low" | "medium" | "high" }, extraBody?: Record<string, unknown>) =>
+      buildOpenAiChatBody(request, fable, false, extraBody, undefined, undefined, undefined, or);
+    expect(build({ prompt: "hi" }).reasoning).toEqual({ effort: "medium" });
+    // The turn's own choice wins, and so does the operator's passthrough.
+    expect(build({ prompt: "hi", reasoningEffort: "high" }).reasoning).toEqual({ effort: "high" });
+    expect(build({ prompt: "hi" }, { reasoning: { effort: "low" } }).reasoning).toEqual({ effort: "low" });
+    // Other models and other kinds keep the service default.
+    expect(
+      buildOpenAiChatBody({ prompt: "hi" }, "anthropic/claude-opus-5.5", false, undefined, undefined, undefined, undefined, or),
+    ).not.toHaveProperty("reasoning");
+    const direct = buildOpenAiChatBody({ prompt: "hi" }, "claude-fable-5-2", false, undefined, undefined, undefined, undefined, {
+      providerKind: "openai-compatible",
+    });
+    expect(direct).not.toHaveProperty("reasoning_effort");
+  });
 });
 
 describe("buildOpenAiChatBody — the native message layout", () => {

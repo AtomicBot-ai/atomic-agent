@@ -124,6 +124,29 @@ export function forgetLearnedModelParams(): void {
 }
 
 /**
+ * Claude Fable 5.2 and later (`anthropic/claude-fable-5.2`,
+ * `claude-fable-5-2`). The API's own default effort for it is `high`,
+ * which on a measured task cost about four times `medium` for the same
+ * result; Claude Code and the Claude apps run it at `medium` (ATO-1368).
+ */
+const FABLE_MEDIUM_DEFAULT_RE =
+  /^claude-fable-(?:5[.-](?:[2-9]|[1-9][0-9])|(?:[6-9]|[1-9][0-9]))(?![0-9])/i;
+
+/**
+ * The effort to send when the turn asked for none, or `undefined` to
+ * leave the service's default. Only for a model whose service default
+ * is known to overspend; every other model keeps its own default.
+ */
+export function defaultReasoningEffort(
+  modelId: string,
+): "low" | "medium" | "high" | undefined {
+  const bare = modelId.includes("/")
+    ? modelId.slice(modelId.lastIndexOf("/") + 1)
+    : modelId;
+  return FABLE_MEDIUM_DEFAULT_RE.test(bare) ? "medium" : undefined;
+}
+
+/**
  * How `reasoningEffort` is spelled for a provider kind. OpenRouter takes a
  * `reasoning` object; OpenAI-compatible services take the flat
  * `reasoning_effort` OpenAI documents; the rest document neither, and a
