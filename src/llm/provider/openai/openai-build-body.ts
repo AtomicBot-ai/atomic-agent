@@ -9,6 +9,7 @@ import {
 } from "./model-params.js";
 import { buildNativeMessages } from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
+import { normalizeToolSchemaBooleans } from "./tool-schema-booleans.js";
 import { nameEscape } from "./openai-tool-call-adapter.js";
 import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
 import { assertContextCapacity } from "../context-capacity.js";
@@ -185,9 +186,14 @@ export function buildOpenAiChatBody(
     // is a reserved key: the loop below restores `body.tools` over the
     // merge, so the transformed array is what survives. Off by default,
     // and off it must leave this line byte-identical to what it was.
-    const emittedTools = strictTools
-      ? toStrictOpenAiTools(filtered.tools)
-      : filtered.tools;
+    //
+    // Boolean subschemas (`"evidence": true`) are spelled as objects
+    // first, for every service: llama.cpp and LM Studio refuse the whole
+    // request over one, and the rewrite keeps or loosens the meaning
+    // (`tool-schema-booleans.ts`). Tools without one come back as the
+    // same array, so the body stays byte-identical for them.
+    const tools = normalizeToolSchemaBooleans(filtered.tools);
+    const emittedTools = strictTools ? toStrictOpenAiTools(tools) : tools;
     body.tools = emittedTools;
     // Structured Outputs and parallel function calls do not compose:
     // OpenAI documents that a parallel call generated under strict mode
