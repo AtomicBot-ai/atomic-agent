@@ -39,6 +39,45 @@ describe("shellRuleSegments", () => {
     ]);
   });
 
+  it("lists the commands a nested `bash -c` runs after the shell itself (ATO-1332)", () => {
+    expect(shellRuleSegments("bash", ["-c", "rm -rf tmp"], false)).toEqual([
+      ["bash", "-c", "rm -rf tmp"],
+      ["rm", "-rf", "tmp"],
+    ]);
+    expect(shellRuleSegments('bash -c "rm -rf tmp"', [], true)).toEqual([
+      ["bash", "-c", "rm -rf tmp"],
+      ["rm", "-rf", "tmp"],
+    ]);
+  });
+
+  it("reads bundled flags and splits the nested line into its commands", () => {
+    expect(shellRuleSegments("sh -lc 'cd x && rm y'", [], true)).toEqual([
+      ["sh", "-lc", "cd x && rm y"],
+      ["cd", "x"],
+      ["rm", "y"],
+    ]);
+    expect(shellRuleSegments("zsh", ["-e", "-o", "pipefail", "-c", "npm publish"], false)).toContainEqual([
+      "npm",
+      "publish",
+    ]);
+    expect(shellRuleSegments("sudo bash -ec 'npm publish'", [], true)).toContainEqual([
+      "npm",
+      "publish",
+    ]);
+  });
+
+  it("unwraps shells nested in shells", () => {
+    expect(
+      shellRuleSegments(`bash -c "sh -c 'rm y'"`, [], true),
+    ).toContainEqual(["rm", "y"]);
+  });
+
+  it("does not read a script's own `-c` argument as a command line", () => {
+    expect(shellRuleSegments("bash", ["run.sh", "-c", "rm y"], false)).toEqual([
+      ["bash", "run.sh", "-c", "rm y"],
+    ]);
+  });
+
   it("lists a wrapped command both ways", () => {
     expect(shellRuleSegments("FOO=1 sudo -n npm publish", [], true)).toEqual([
       ["FOO=1", "sudo", "-n", "npm", "publish"],

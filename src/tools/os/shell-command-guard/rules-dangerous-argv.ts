@@ -2,7 +2,9 @@ import type { GuardVerdict, NormalisedCommand } from "./guard-types.js";
 import {
   invocationsOf,
   isLongOption,
+  NESTED_SHELL_PROGRAMS,
   programName,
+  scanNestedShellOptions,
   shortOptionLetters,
   splitCommandSegments,
 } from "./command-segments.js";
@@ -377,8 +379,6 @@ export function matchHardlineRm(input: NormalisedCommand): GuardVerdict | null {
   return null;
 }
 
-const SHELL_PROGRAMS: readonly string[] = ["bash", "sh", "zsh", "dash", "ksh"];
-
 /**
  * `bash -lc …`, `env bash -c …`, `cd x && sh -c …`: a nested shell
  * however it is started. Only the options before the first script
@@ -387,25 +387,10 @@ const SHELL_PROGRAMS: readonly string[] = ["bash", "sh", "zsh", "dash", "ksh"];
 function matchNestedShell(
   segments: readonly (readonly string[])[],
 ): ArgvCheck | null {
-  for (const program of SHELL_PROGRAMS) {
+  for (const program of NESTED_SHELL_PROGRAMS) {
     for (const args of invocationsOf(segments, program)) {
-      for (let i = 0; i < args.length; i += 1) {
-        const word = args[i] ?? "";
-        if (!word.startsWith("-") || word === "-" || word === "--") break;
-        if (isLongOption(word, "--command")) {
-          return { id: "dangerous.shell_dash_c", reason: "nested shell command" };
-        }
-        if (word === "--rcfile" || word === "--init-file") {
-          i += 1;
-          continue;
-        }
-        const letters = shortOptionLetters(word, "oO");
-        if (letters === null) continue;
-        if (letters.includes("c")) {
-          return { id: "dangerous.shell_dash_c", reason: "nested shell command" };
-        }
-        // `-o pipefail`: the value is the next word.
-        if (letters.at(-1) === "o" || letters.at(-1) === "O") i += 1;
+      if (scanNestedShellOptions(args).runsCommand) {
+        return { id: "dangerous.shell_dash_c", reason: "nested shell command" };
       }
     }
   }

@@ -1,5 +1,8 @@
 import {
+  invocationsOf,
+  NESTED_SHELL_PROGRAMS,
   programName,
+  scanNestedShellOptions,
   splitCommandSegments,
 } from "../shell-command-guard/command-segments.js";
 
@@ -62,11 +65,19 @@ function withoutWrappers(words: readonly string[]): string[] {
 }
 
 /**
+ * How many `bash -c` levels deep a deny rule still looks. A real line
+ * nests one or two; the bound only stops a pathological input.
+ */
+const MAX_NESTED_SHELL_DEPTH = 4;
+
+/**
  * Every simple command a call would run, for saved deny and ask rules
  * (`ApprovalRequest.commandSegments`). Unlike `shellCommandArgv` this is
  * never withheld: a rule that only tightens is safe to apply on a best
  * reading of the line. A wrapped command is listed both ways, so a rule
- * on `sudo` and a rule on what it runs both match.
+ * on `sudo` and a rule on what it runs both match. The line a nested
+ * shell runs (`bash -c "rm -rf x"`, `sh -lc 'cd x && rm y'`) is split
+ * the same way and its commands listed after the shell's own (ATO-1332).
  */
 export function shellRuleSegments(
   cmd: string,
@@ -76,8 +87,32 @@ export function shellRuleSegments(
   const segments = useShell
     ? splitCommandSegments([cmd, ...execArgs].join(" "))
     : [[cmd, ...execArgs]];
-  return segments.flatMap((words) => {
-    const inner = withoutWrappers(words);
-    return inner.length > 0 && inner.length < words.length ? [words, inner] : [words];
-  });
+  return segments.flatMap((words) => expandSegment(words, 0));
+}
+
+function expandSegment(words: string[], depth: number): string[][] {
+  const inner = withoutWrappers(words);
+  const listed = inner.length > 0 && inner.length < words.length ? [words, inner] : [words];
+  if (depth >= MAX_NESTED_SHELL_DEPTH) return listed;
+  const nested = nestedShellScripts(words).flatMap((script) =>
+    splitCommandSegments(script).flatMap((w) => expandSegment(w, depth + 1)),
+  );
+  return [...listed, ...nested];
+}
+
+/**
+ * The command lines nested shells in `words` run: `bash -c <line>`
+ * anywhere in the segment, so `sudo bash -c`, `nice -n 5 sh -c` and
+ * `xargs sh -c` are read too, the way the guard's dangerous layer finds
+ * them.
+ */
+function nestedShellScripts(words: readonly string[]): string[] {
+  const scripts: string[] = [];
+  for (const program of NESTED_SHELL_PROGRAMS) {
+    for (const args of invocationsOf([words], program)) {
+      const { script } = scanNestedShellOptions(args);
+      if (script !== undefined && script.trim() !== "") scripts.push(script);
+    }
+  }
+  return scripts;
 }

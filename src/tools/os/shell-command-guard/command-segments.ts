@@ -126,3 +126,53 @@ export function isLongOption(
   if (word === name || word.startsWith(`${name}=`)) return true;
   return word.length >= minLength && name.startsWith(word);
 }
+
+/** Shells whose `-c` runs the next word as a command line. */
+export const NESTED_SHELL_PROGRAMS: readonly string[] = ["bash", "sh", "zsh", "dash", "ksh"];
+
+export interface NestedShellOptions {
+  /** `-c` (alone or bundled, `-lc`, `-ec`) or `--command` was given. */
+  runsCommand: boolean;
+  /**
+   * The command line it runs: the first word after the options, or the
+   * value of `--command=…`. Undefined when there is none.
+   */
+  script?: string;
+}
+
+/**
+ * Read the options of a nested shell, `args` being the words after the
+ * program (`bash -lc 'cd x && rm y'` → `-lc`, `cd x && rm y`). Only the
+ * options before the first operand count: `bash run.sh -c` passes `-c`
+ * to the script.
+ */
+export function scanNestedShellOptions(args: readonly string[]): NestedShellOptions {
+  let runsCommand = false;
+  let inline: string | undefined;
+  let i = 0;
+  for (; i < args.length; i += 1) {
+    const word = args[i] ?? "";
+    if (word === "--") {
+      i += 1;
+      break;
+    }
+    if (!word.startsWith("-") || word === "-") break;
+    if (isLongOption(word, "--command")) {
+      runsCommand = true;
+      if (word.startsWith("--command=")) inline = word.slice("--command=".length);
+      continue;
+    }
+    if (word === "--rcfile" || word === "--init-file") {
+      i += 1;
+      continue;
+    }
+    const letters = shortOptionLetters(word, "oO");
+    if (letters === null) continue;
+    if (letters.includes("c")) runsCommand = true;
+    // `-o pipefail`: the value is the next word.
+    if (letters.at(-1) === "o" || letters.at(-1) === "O") i += 1;
+  }
+  if (!runsCommand) return { runsCommand };
+  const script = inline ?? args[i];
+  return script !== undefined ? { runsCommand, script } : { runsCommand };
+}
