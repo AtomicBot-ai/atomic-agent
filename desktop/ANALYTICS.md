@@ -157,6 +157,10 @@ Notes on specific properties:
   `settings` (Settings' model list), `selector` (the composer's picker),
   `first_run` (the starter model), `spotlight` (the chat's "New: <name>" card,
   Download and switch), or `other`.
+- `model_download_started.projector_only` (also on `model_download_finished`):
+  the weights were already on disk and only the vision projector downloaded
+  (Get vision files, or a Retry after the projector failed). Not a new model
+  download: filter it out when counting those.
 - `llama_runtime_updated.trigger`: `setup` (the first-run runtime phase),
   `settings` (Settings' engine install or update, and Download again), or
   `launch` (the launch installing Atomic Core's backend before it starts the

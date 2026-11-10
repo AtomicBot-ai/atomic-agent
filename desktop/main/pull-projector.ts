@@ -33,12 +33,17 @@ const PROJECTOR_PHASE = "downloading mmproj ";
  * each from 0 to 100, and the bar would otherwise reach the end and fall back
  * to nothing. This puts both on the size the catalogue promised. Sizes are the
  * catalogue's, in GiB as the agent's own estimate reads them.
+ *
+ * ATO-1369: `weightsHere` is a pull whose weights are already on disk. The
+ * agent skips them without a progress line and fetches the projector alone,
+ * so the bar is the projector's size: it starts near 0%, not at ~85%, and
+ * shows the projector's GB, not the weights' nobody is downloading.
  */
-export function wholePullProgress(id: string): (line: string, progress: PullProgress) => PullProgress {
+export function wholePullProgress(id: string, weightsHere = false): (line: string, progress: PullProgress) => PullProgress {
   const meta = curatedMeta(id);
-  const weights = (meta?.sizeGb ?? 0) * GIB;
+  const weights = weightsHere ? 0 : (meta?.sizeGb ?? 0) * GIB;
   const projector = (meta?.mmprojSizeGb ?? 0) * GIB;
-  if (!weights || !projector) return (_line, progress) => progress;
+  if (!projector || (!weights && !weightsHere)) return (_line, progress) => progress;
   const total = weights + projector;
   let onProjector = false;
   return (line, progress) => {
@@ -51,6 +56,18 @@ export function wholePullProgress(id: string): (line: string, progress: PullProg
     const transferredBytes = Math.min(total, (onProjector ? weights : 0) + progress.transferredBytes);
     return { ...progress, percent, transferredBytes, totalBytes: Math.round(total) };
   };
+}
+
+/**
+ * ATO-1369: a model's folder holds finished weights: a `.gguf` that is not a
+ * projector. A `.part` file does not count, so a resumed pull keeps the whole bar.
+ */
+export function weightsOnDisk(modelDir: string): boolean {
+  try {
+    return readdirSync(modelDir).some((f) => /\.gguf$/i.test(f) && !isMmprojFile(f));
+  } catch {
+    return false;
+  }
 }
 
 /** A model's folder holds a finished projector; a `.part` file does not count. */
