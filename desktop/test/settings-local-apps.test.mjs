@@ -30,8 +30,10 @@ test("the custom server field knows LM Studio, Ollama and Atomic Chat by their p
   assert.equal(presetOf("http://127.0.0.1:11434"), "ollama");
   assert.equal(presetOf("http://127.0.0.1:1337"), "atomic-chat");
   assert.equal(presetOf("http://127.0.0.1:8080"), null);
-  // Port 1234 on another machine is not LM Studio on this one.
+  // A port on another machine is not an app on this one.
   assert.equal(presetOf("http://192.168.1.20:1234"), null);
+  assert.equal(presetOf("http://192.168.1.20:11434"), null);
+  assert.equal(presetOf("http://192.168.1.20:1337"), null);
 });
 
 test("the prompt for an OpenAI-compatible server never says cloud", () => {
@@ -42,6 +44,29 @@ test("the prompt for an OpenAI-compatible server never says cloud", () => {
   assert.match(plate, /Add it as a local app\?/);
 });
 
-test("a Fusion seat on a local app is labelled as on this computer, not Cloud provider", () => {
-  assert.match(engines, /llmKeylessLocal\(p\) \? 'An app on this computer'/);
+// The Fusion seat picker's rows, built for real in a vm with one ready
+// Ollama on this computer, one on a LAN box, and one cloud provider.
+function fusionRows() {
+  const c = vm.createContext({
+    URL,
+    rmNow: () => ({ workerProviderId: "ollama", orchestratorProviderId: "openrouter" }),
+    selProviders: () => [
+      { id: "ollama", kind: "openai-compatible", baseUrl: "http://127.0.0.1:11434" },
+      { id: "lan-ollama", kind: "openai-compatible", baseUrl: "http://192.168.1.20:11434" },
+      { id: "openrouter", kind: "openrouter", baseUrl: "https://openrouter.ai/api/v1" },
+    ],
+    BSW: { readyIds: ["ollama", "lan-ollama", "openrouter"] },
+    savedKeyInvalid: () => false,
+    llmManaged: () => ({}),
+  });
+  vm.runInContext(engines + "\nthis.rows = composerFusionEngineRows;", c);
+  const detail = (id) => (c.rows("worker").find((r) => r.id === id) || {}).detail;
+  return { detail };
+}
+
+test("a Fusion seat on a local app reads as on this computer, never Cloud provider", () => {
+  const { detail } = fusionRows();
+  assert.equal(detail("ollama"), "An app on this computer");
+  assert.equal(detail("lan-ollama"), "Cloud provider");
+  assert.equal(detail("openrouter"), "Cloud provider");
 });

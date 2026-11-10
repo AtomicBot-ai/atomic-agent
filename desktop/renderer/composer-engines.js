@@ -31,6 +31,12 @@ function composerLocalEngineRows(leg) {
     active: !leg || seat === 'local-llama',
   }];
 }
+/** ATO-1401: whether a provider entry points at a server on this computer. */
+function composerProviderOnThisComputer(p) {
+  if (!p || !p.baseUrl) return false;
+  try { return ['localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'].includes(new URL(p.baseUrl).hostname.toLowerCase()); }
+  catch (err) { return false; }
+}
 function composerFusionEngineRows(leg) {
   const rm = rmNow();
   const chosen = leg === 'worker' ? rm.workerProviderId : rm.orchestratorProviderId;
@@ -39,9 +45,10 @@ function composerFusionEngineRows(leg) {
   const cloud = selProviders().map((p) => ({
     type:'fusionLeg', leg, id:p.id, label:p.id,
     // A saved key the provider turned down says so, as the provider rows do (T32).
-    /* ATO-1401: Ollama, LM Studio, Atomic Chat (and any server on this computer) are
-       local, whatever kind of provider entry carries them, and need no key. */
-    detail: typeof llmKeylessLocal === 'function' && llmKeylessLocal(p) ? 'An app on this computer'
+    /* ATO-1401: Ollama, LM Studio, Atomic Chat (any server on this computer) are
+       local, whatever kind of provider entry carries them. Judged by the address,
+       not the preset id: an Ollama on another machine is not on this one. */
+    detail: composerProviderOnThisComputer(p) ? 'An app on this computer'
       : BSW.readyIds.includes(p.id) ? 'Cloud provider'
       : typeof savedKeyInvalid === 'function' && savedKeyInvalid(p) ? 'saved key is invalid · paste it again' : 'No API key',
     active:p.id === chosen,

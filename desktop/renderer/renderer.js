@@ -26963,14 +26963,17 @@ function llmModalHTML() {
   return '';
 }
 function llmLooksLikeOllama(url) { try { return new URL(url).port === '11434'; } catch (err) { return false; } }
-/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick: Ollama's
-   port (any host), Atomic Chat's :1337 only on this machine (its preset
-   saves 127.0.0.1), anything else → null (the manual compat row). */
+/* openai-compat-steer.ts wizardForOpenAiCompatUrl's preset pick, on this
+   machine only (ATO-1401): Ollama's :11434, Atomic Chat's :1337, LM Studio's
+   :1234; anything else → null (the manual compat row). */
 function llmSteerPresetId(url) {
-  if (llmLooksLikeOllama(url)) return 'ollama';
   try {
     const u = new URL(url);
     const here = ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase());
+    /* ATO-1401: every preset here is "an app on this computer", keyless and
+       labelled local in Fusion, so each is matched on this machine only.
+       Ollama on another host (:11434 on a LAN box) is a plain provider. */
+    if (llmLooksLikeOllama(url) && here) return 'ollama';
     if (u.port === '1337' && here) return 'atomic-chat';
     /* ATO-1401: LM Studio's server port (its default, 1234), on this machine only:
        1234 elsewhere is just a port, and its preset is keyless and "local". */
