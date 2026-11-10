@@ -585,7 +585,12 @@ describe("buildOpenAiChatBody — per-model parameters", () => {
     const direct = buildOpenAiChatBody({ prompt: "hi" }, "claude-fable-5-2", false, undefined, undefined, undefined, undefined, {
       providerKind: "openai-compatible",
     });
-    expect(direct).not.toHaveProperty("reasoning_effort");
+    expect(direct).not.toHaveProperty("reasoning_effort");    // A request that turned thinking off (the risk reviewer) gets no default.
+    const reviewer = buildOpenAiChatBody(
+      { prompt: "x", disableThinking: true, maxTokens: 384 },
+      fable, false, undefined, undefined, undefined, undefined, or,
+    );
+    expect(reviewer).not.toHaveProperty("reasoning");
   });
 });
 

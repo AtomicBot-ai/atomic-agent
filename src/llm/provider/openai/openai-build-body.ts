@@ -157,9 +157,12 @@ export function buildOpenAiChatBody(
   // that asked for none gets the model's own default where the service's
   // overspends (Fable on OpenRouter, ATO-1368); `extraBody` and model
   // params are merged later and still win.
+  // A request that asked for no thinking at all (the risk reviewer, context
+  // compaction) never gets the default: it would turn thinking on inside
+  // a small output cap.
   const effort =
     filtered.reasoningEffort ??
-    (options.providerKind === "openrouter"
+    (options.providerKind === "openrouter" && !filtered.disableThinking
       ? defaultReasoningEffort(defaultChatModel)
       : undefined);
   if (effort !== undefined) {
