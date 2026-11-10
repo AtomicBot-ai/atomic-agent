@@ -747,13 +747,6 @@ export function createRuntimeTurnService(
 }
 
 /**
- * Which engine serves a turn on `providerId`, for `message_sent`'s
- * `local_engine`; undefined for a cloud provider. The managed engine only
- * answers for the synthesized `local-llama` entry in managed mode; any
- * other llama-server entry, or external mode, is a server the operator
- * runs. A fixed word, never a URL.
- */
-/**
  * Whether a turn ended because money ran out: its own budget, or the
  * provider account's credit (ATO-1350). No further paid side call
  * (the session namer) follows such a turn.
@@ -762,6 +755,13 @@ export function stoppedForMoney(stopCause: RunTurnResult["stopCause"]): boolean 
   return stopCause === "cost_ceiling" || stopCause === "credit_exhausted";
 }
 
+/**
+ * Which engine serves a turn on `providerId`, for `message_sent`'s
+ * `local_engine`; undefined for a cloud provider. The managed engine only
+ * answers for the synthesized `local-llama` entry in managed mode; any
+ * other llama-server entry, or external mode, is a server the operator
+ * runs. A fixed word, never a URL.
+ */
 export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: string): LocalEngine | undefined {
   if (!providerIdIsLlamaServer(resolveLlmConfig(config), providerId)) return undefined;
   if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";
