@@ -6791,6 +6791,8 @@ function act(a) {
      cloud providers, with the provider setup started — what that pane's own
      Add provider button does (llm:add). */
   if (a === 'sel:addProvider') { closeSelector(); act('settings:llm'); act('llm:add'); return; }
+  // ATO-1372: the picker's Get vision files chip.
+  if (a.startsWith('sel:vision:')) { selVisionFetch(a.slice('sel:vision:'.length)); return; }
   if (a === 'wiz:subRecheck') { wizSubRecheck(WIZ.row); return; }
   if (a === 'wiz:back') { WIZ.phase = WIZ.phase === 'pick_model' ? 'configure' : WIZ.phase === 'configure' ? 'pick_kind' : null; WIZ.error = null; WIZ.uncheckedFor = null; WIZ.acceptUnchecked = false; WIZ.forId = null; render(); return; }
   if (a === 'wiz:next') { wizNext(); return; }
@@ -14210,6 +14212,23 @@ function modelDiskFit(model) {
   if (!model || model.downloaded) return {ok: true};
   return diskFit(obDownloadGb(model) * DISK_GIB, diskSpaceNow(BR));
 }
+/* ATO-1370 / ATO-1372: a catalogue vision model on disk without its vision
+   projector (projectorMissing, read off the disk by main) can fetch the
+   projector alone. It is the usual pull: the agent skips the weights already
+   there, and main puts the bar on the projector's size (ATO-1369). The model
+   stays a choice for text meanwhile; this is a second action, not its row's. */
+function visionFetchable(model) {
+  return !!model && model.downloaded === true && model.projectorMissing === true;
+}
+function visionFetchLabel(model) {
+  const gb = Number(model && model.mmprojSizeGb) || 0;
+  return 'Get vision files' + (gb ? ' \u00b7 ' + obGbWord(gb) : '');
+}
+/* Its own disk check: modelDiskFit waves a downloaded model through, and a
+   projector is up to 2 GB. */
+function projectorDiskFit(model) {
+  return diskFit((Number(model && model.mmprojSizeGb) || 0) * DISK_GIB, diskSpaceNow(BR));
+}
 /* A Hugging Face file's fit: its size in GB as the lookup gave it. */
 function hfDiskFit(choice) {
   const gb = Number(choice && choice.fileSizeGb) || 0;
@@ -18135,9 +18154,13 @@ function selLocalRows(custom) {
       const note = modelPickNote(m, ram);
       // ATO-507: a download with no room for it on this disk has no Download chip, and says why.
       const disk = modelDiskFit(m);
+      // ATO-1372: the picker says text only too, and offers the projector on its own chip.
+      const vision = visionFetchable(m);
       return {type:'localModel', id:m.id, label:llmModelName(m), downloaded:m.downloaded, active:m.active,
-        detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '']
+        detail: [modelBlurb(m), modelSizeWord(m), m.downloaded ? 'on ' + THIS_MACHINE : custom ? 'not downloaded' : '',
+          vision ? modelVisionFact(m) : '']
           .filter(Boolean).join(' · '),
+        projectorMissing: vision, visionLabel: vision ? visionFetchLabel(m) : null,
         note, noRoom: disk.ok ? null : disk.text};
     });
 }
@@ -18373,11 +18396,19 @@ function selPullFinished(id, ev) {
   else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
 }
 
+/* ATO-1372: the picker's chip. The usual pull: main fetches the projector alone. */
+function selVisionFetch(id) {
+  const model = (SEL.local || []).find((m) => m && m.id === id);
+  if (!visionFetchable(model)) return false;
+  return selPull(id);
+}
 function selPull(id) {
   // false: refused. A Retry keeps its row on that (dlRetry); the other callers do not read it.
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return false; }
   // ATO-507: no room on the models disk for it: say so instead of a pull that fails an hour in.
-  const disk = modelDiskFit((SEL.local || []).find((m) => m && m.id === id));
+  // ATO-1372: a model on disk fetching its projector alone needs room for the projector.
+  const model = (SEL.local || []).find((m) => m && m.id === id);
+  const disk = visionFetchable(model) ? projectorDiskFit(model) : modelDiskFit(model);
   if (!disk.ok) { toast('Not enough disk space', disk.text, 'info'); return false; }
   SEL.pulling = id; SEL.pullLine = 'starting…'; SEL.err = null;
   closeSelector(); render();
@@ -18496,6 +18527,11 @@ function selectorHTML() {
           + (r.setup ? '<span class="tk-chip tk-chip--sm selsetup">Set up</span>' : '')
           + (r.type === 'backend' && !r.addProvider && !r.setup ? '<span class="radio' + (r.active ? ' on' : '') + '"></span>' : '')
           + (r.type === 'localModel' && !r.downloaded && !r.noRoom ? '<span class="tk-chip tk-chip--sm tk-chip--blue seldl">' + ic('download') + 'Download</span>' : '')
+          /* ATO-1372: its own act, so the chip fetches the projector and a
+             click on the rest of the row still picks the model for text. */
+          + (r.type === 'localModel' && r.projectorMissing && SEL.pulling !== r.id
+            ? '<span role="button" tabindex="-1" class="tk-chip tk-chip--sm tk-chip--blue seldl selvision" data-act="sel:vision:' + esc(r.id) + '"'
+              + ' title="Download the vision projector so this model reads images">' + ic('download') + esc(r.visionLabel) + '</span>' : '')
           /* An unlit cell, not a lit one: this is a state we could not
              confirm, not a fault we found. It goes out when a turn succeeds. */
           + (r.unverified ? '<span class="ann caution">Unverified</span>' : '');
@@ -26626,6 +26662,8 @@ function llmRowHTML(row, index, cursor) {
       /* ATO-119: every model on disk has its Remove, the one in use and the
          embedding models included; the confirm says when the server stops
          first (llmRemoveStops). Not while it is coming down. */
+      // ATO-1370: a vision model on disk without its projector fetches it here; its pill still picks it for text.
+      + (chat && visionFetchable(m) && row.primaryAction !== 'downloading' ? rowAct('llm:visionAt:' + index, visionFetchLabel(m)) : '')
       + (m.downloaded && row.primaryAction !== 'downloading' && !(mem && row.memBusy) ? rowAct('llm:removeAt:' + index, 'Remove') : '')
       // ATO-900: the one action that fixes a failed card (Retry, or the engine's Download again), beside the row's pill.
       + (mem && mem.act ? rowAct(mem.act === 'llm:embRetry' ? 'llm:embRetry:' + index : mem.act, mem.label) : '')
@@ -27704,6 +27742,15 @@ function llmNoRoom(m) {
   toast('Not enough disk space', disk.text, 'info');
   return true;
 }
+/* ATO-1370: fetch a downloaded model's missing vision projector alone. Main
+   sees the weights on disk and fetches the projector only, on its own bar. */
+function llmVisionFetch(m) {
+  if (!visionFetchable(m)) return false;
+  const disk = projectorDiskFit(m);
+  if (!disk.ok) { toast('Not enough disk space', disk.text, 'info'); return false; }
+  llmPull('chat', m.id);
+  return true;
+}
 function llmPull(kind, id) {
   if (!BR) return;
   if (xpullOwner() || dlChipBusy()) { toast('A download is already running', 'You can keep using the app while it finishes', 'info'); return; }
@@ -28038,6 +28085,8 @@ function llmAct(what) {
   }
   // Calm (S5): a row's own Remove / Edit (the keys acted on the cursor row).
   if (verb === 'removeAt') { LLMP.cursor[LLMP.mode] = +arg; llmAct('remove'); return; }
+  // ATO-1370: the row's Get vision files.
+  if (verb === 'visionAt') { LLMP.cursor[LLMP.mode] = +arg; const row = llmRowAt(); if (row && row.kind === 'localTextModel') llmVisionFetch(row.model); return; }
   if (verb === 'edit') { const p = llmProvider(arg); if (p) { llmSetMode('cloud'); llmOpenWizard(p); } return; }
   if (verb === 'confirm') {
     const c = LLMP.confirm; if (!c) return;
