@@ -10624,6 +10624,7 @@ function onChatEvent(ev) {
       tokens: typeof p.tokens === 'number' && p.tokens > 0 ? p.tokens : undefined,
       spentUsd: typeof p.spent_usd === 'number' && Number.isFinite(p.spent_usd) ? p.spent_usd : undefined,
     };
+    if (typeof fzpNoteStarted === 'function') fzpNoteStarted(FZP, e, FZ.live);   // ATO-1329: reads the row as it was
     FZ.live = fzReduceLive(FZ.live, e);
     if (typeof fzpNoteFrame === 'function') fzpNoteFrame(e);
     tpFzEnsureTick();
@@ -10798,6 +10799,7 @@ function onChatEvent(ev) {
     if (item && S.turnStartedAt && !item.workedMs) item.workedMs = Math.max(0, (ev.at || Date.now()) - S.turnStartedAt);
     S.turnId = null; clearInterval(ticker);
     S.reasonId = null;
+    if (typeof fzpForgetRows === 'function') fzpForgetRows(FZP, FZ.live);   // ATO-1329: this turn's rows, while they are still here
     FZ.live = [];   // the fan-out readout belongs to the turn that is over
     if (typeof FZP !== 'undefined') { FZP.open = null; FZP.draft = ''; }
     /* Item 1 (plan hand-off): finishTurn's rule, restated —
