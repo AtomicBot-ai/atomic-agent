@@ -3190,7 +3190,31 @@ function resendUser(id) {
 
 /* ATO-1299: whether the agent can take a turn back. Left true until an agent
    answers with its unknown-route 404; then every Regenerate resends. */
-const ROLLBACK = {supported: true, pending: false};
+const ROLLBACK = {supported: true, pending: false, stash: new Map()};
+/* A question the agent took back while its chat was not on screen (the
+   person switched chats during the call): it lives only here until that
+   chat is opened again, then waits in the composer (openSession). */
+function rollbackStashBack(sid) {
+  const text = ROLLBACK.stash.get(sid);
+  if (!text) return;
+  const e = $('#entry');
+  if (String((e ? e.value : S.draft) || '').trim()) return;   // kept until the composer is free
+  ROLLBACK.stash.delete(sid);
+  S.draft = attToEditor(text);
+  if (e) { e.value = S.draft; autosize(e); }
+  refreshSend();
+  ctxDraftChanged();
+  toast('Your question is back in the box', 'Its old answer was taken back. Send it when you are ready.');
+}
+/** How many questions (steers not counted) come before `m` in the log. */
+function priorQuestions(m) {
+  let count = 0;
+  for (const x of S.log) {
+    if (x === m) return count;
+    if (x.k === 'user' && !x.steered) count++;
+  }
+  return count;
+}
 /** ATO-1300: the words for the agent refusing to take the last turn back (its 409 code). */
 function rollbackRefusalText(r) {
   const code = r && r.code;
@@ -3247,14 +3271,18 @@ async function regenerateReply(id, fromFailure) {
   const log = S.log;
   ROLLBACK.pending = true;
   let r;
-  try { r = await BR.rollbackLastTurn(sid, String(m.text || '')); }
+  /* The question by its text AND its position: a failed "continue" the
+     agent never stored must not match an earlier "continue" with a real
+     answer. The count is of the questions before this one, so a question
+     that never reached the agent cannot line up with the one before it. */
+  try { r = await BR.rollbackLastTurn(sid, String(m.text || ''), priorQuestions(m)); }
   catch (err) { r = {ok: false, supported: true, error: String((err && err.message) || err)}; }
   finally { ROLLBACK.pending = false; }
   if (r && r.supported === false) { ROLLBACK.supported = false; resendUser(id); return; }
   if (!r || !r.ok) {
     /* turn_mismatch: the agent's last question is not this one (a failed
        turn it never stored), and it removed nothing: the old resend is right. */
-    if (r && r.code === 'turn_mismatch') { resendUser(id); return; }
+    if (r && (r.code === 'turn_mismatch' || r.code === 'turn_stopped')) { resendUser(id); return; }
     if (fromFailure && !(r && r.code === 'turn_in_progress')) { resendUser(id); return; }
     toast("Couldn't regenerate", rollbackRefusalText(r), 'bad');
     return;
@@ -3262,7 +3290,8 @@ async function regenerateReply(id, fromFailure) {
   // The person opened another chat while the agent answered: that chat is
   // right on the agent side and redraws from it when opened again.
   if (S.log !== log || S.agentSession !== sid) {
-    toast('The answer was taken back', 'Open that chat again to send the question once more.', 'bad');
+    ROLLBACK.stash.set(sid, text);
+    toast('The answer was taken back', 'Your question waits in the box when you open that chat again.', 'bad');
     return;
   }
   /* The agent removed ITS last question. When that is not the one on screen
@@ -3288,7 +3317,12 @@ async function regenerateReply(id, fromFailure) {
   const e3 = $('#entry');
   const draftNow = String((e3 ? e3.value : S.draft) || '').trim();
   if (S.busy || S.pending || (draftNow && draftNow !== caption)) {
-    toast('The answer was taken back', 'Your question was not sent because the composer is in use. Use its retry when you are ready.', 'bad');
+    /* The agent dropped the old answer, so the screen must too: drawn
+       again from the agent, and the question kept for the composer (it goes
+       in as soon as the box is free, now or on the next open of this chat). */
+    ROLLBACK.stash.set(sid, text);
+    toast('The answer was taken back', 'Your question was not sent because the composer is in use. It waits for you in the box.', 'bad');
+    await openSession(sid);
     return;
   }
   ANX.messageAction('regenerate');
@@ -20604,6 +20638,7 @@ async function openSession(id) {
   S.agentSession = id;
   S.history = [];
   markSeen(id);   // item 6: opening a chat is reading it
+  rollbackStashBack(id);   // ATO-1300: a question taken back while this chat was not on screen
   /* Item 38: not under a turn running on screen again. It runs on the model
      the window is on, and the notice would land below its reply, saying the
      session ran on the model of the turn before it. */

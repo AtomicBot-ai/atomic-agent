@@ -1731,7 +1731,7 @@ export class AgentClient extends EventEmitter {
    * agent without the route answers its unknown-route 404 with no code and is
    * reported as unsupported, so the window falls back to resending.
    */
-  async rollbackLastTurn(sessionId: string, expectText?: string): Promise<{
+  async rollbackLastTurn(sessionId: string, expectText?: string, expectPriorQuestions?: number): Promise<{
     ok: boolean; supported: boolean; text?: string; code?: string; error?: string;
   }> {
     try {
@@ -1741,7 +1741,12 @@ export class AgentClient extends EventEmitter {
         // The question on screen: the agent refuses (turn_mismatch) rather
         // than take back a different one, e.g. when a failed turn's question
         // never reached its store and its last question is the one before.
-        body: JSON.stringify(typeof expectText === "string" && expectText ? { expectText } : {}),
+        // expectPriorQuestions: its position (questions before it), since two
+        // questions can share a text ("continue").
+        body: JSON.stringify({
+          ...(typeof expectText === "string" && expectText ? { expectText } : {}),
+          ...(Number.isInteger(expectPriorQuestions) && (expectPriorQuestions as number) >= 0 ? { expectPriorQuestions } : {}),
+        }),
         signal: AbortSignal.timeout(30_000),
       });
       let body: { id?: unknown; text?: unknown; error?: { message?: unknown; code?: unknown } } | null = null;

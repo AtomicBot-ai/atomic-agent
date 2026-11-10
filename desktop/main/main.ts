@@ -2421,9 +2421,13 @@ function wireIpc(client: AgentClient): void {
   });
   // ATO-1299: "Regenerate" under the last reply takes the turn back first.
   ipcMain.handle("agent:rollbackLastTurn", (_event, payload: unknown) => {
-    const { sessionId, expectText } = (payload ?? {}) as { sessionId?: unknown; expectText?: unknown };
+    const { sessionId, expectText, expectPriorQuestions } = (payload ?? {}) as { sessionId?: unknown; expectText?: unknown; expectPriorQuestions?: unknown };
     if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
-    return client.rollbackLastTurn(sessionId, typeof expectText === "string" ? expectText : undefined);
+    return client.rollbackLastTurn(
+      sessionId,
+      typeof expectText === "string" ? expectText : undefined,
+      typeof expectPriorQuestions === "number" ? expectPriorQuestions : undefined,
+    );
   });
 
   // Files the agent produced: open, reveal, copy, save elsewhere.

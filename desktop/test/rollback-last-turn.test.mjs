@@ -49,8 +49,8 @@ test("a rollback hands back the removed question", async () => {
 test("the question on screen goes along as expectText", async () => {
   const s = await standIn(() => [409, { error: { message: "not that one", code: "turn_mismatch" } }]);
   try {
-    const r = await s.client.rollbackLastTurn("s1", "What is 2+2?");
-    assert.equal(s.seen[0].body, JSON.stringify({ expectText: "What is 2+2?" }));
+    const r = await s.client.rollbackLastTurn("s1", "What is 2+2?", 3);
+    assert.equal(s.seen[0].body, JSON.stringify({ expectText: "What is 2+2?", expectPriorQuestions: 3 }));
     assert.deepEqual(r, { ok: false, supported: true, code: "turn_mismatch", error: "not that one" });
   } finally { await s.close(); }
 });
@@ -120,7 +120,7 @@ function windowWith({ log, answer, busy = false, draft = "", voice = "idle", sid
     VOICE: { state: voice },
     ATT: { items: [] },
     ANX: { messageAction() {} },
-    BR: { rollbackLastTurn: async (id, expectText) => { calls.rollback.push(id); calls.expect = expectText; return answer; } },
+    BR: { rollbackLastTurn: async (id, expectText, prior) => { calls.rollback.push(id); calls.expect = expectText; calls.prior = prior; return answer; } },
     $: () => entry,
     toast: (t, s) => calls.toasts.push([t, s]),
     attSplitMessage: () => null,
@@ -134,7 +134,7 @@ function windowWith({ log, answer, busy = false, draft = "", voice = "idle", sid
     entry,
   });
   vm.runInContext(
-    constLine("ROLLBACK") + block("function rollbackRefusalText(") + block("async function regenerateReply(")
+    constLine("ROLLBACK") + block("function rollbackStashBack(") + block("function priorQuestions(") + block("function rollbackRefusalText(") + block("async function regenerateReply(")
       + "globalThis.regenerateReply = regenerateReply; globalThis.ROLLBACK = ROLLBACK;"
       + "globalThis.submit = () => calls.submit.push(S.draft);",
     c,
@@ -153,6 +153,7 @@ test("Regenerate takes the turn back, drops its rows in place and sends the ques
   await w.regenerateReply("q1", false);
   assert.deepEqual(w.calls.rollback, ["ses-1"]);
   assert.equal(w.calls.expect, "Tell me a joke", "the question on screen is sent for the agent to match");
+  assert.equal(w.calls.prior, 1, "and its position: one question before it");
   assert.equal(w.S.log, log, "the same array, so the transcript window keeps its place");
   assert.deepEqual(log.map((x) => x.id), ["q0", "a0"]);
   assert.deepEqual(w.calls.submit, ["Tell me a joke"]);
@@ -231,3 +232,26 @@ test("a question the agent never stored falls back to the old resend", async () 
   assert.equal(log.length, 4, "nothing removed on screen");
   assert.deepEqual(w.calls.submit, []);
 });
+
+test("a stopped turn falls back to the old resend", async () => {
+  const log = plain();
+  const w = windowWith({ log, answer: { ok: false, supported: true, code: "turn_stopped", error: "x" } });
+  await w.regenerateReply("q1", false);
+  assert.deepEqual(w.calls.resend, ["q1"]);
+  assert.equal(log.length, 4);
+});
+
+test("a question taken back while another chat was opened waits for its own chat", async () => {
+  const log = plain();
+  const w = windowWith({ log, answer: { ok: true, supported: true, text: "Tell me a joke" } });
+  // The person opens another chat while the agent answers.
+  w.BR.rollbackLastTurn = async () => { w.S.log = []; w.S.agentSession = "ses-2"; return { ok: true, supported: true, text: "Tell me a joke" }; };
+  await w.regenerateReply("q1", false);
+  assert.deepEqual(w.calls.submit, []);
+  assert.equal(w.ROLLBACK.stash.get("ses-1"), "Tell me a joke");
+  w.S.agentSession = "ses-1";
+  w.rollbackStashBack("ses-1");
+  assert.equal(w.entry.value, "Tell me a joke");
+  assert.equal(w.ROLLBACK.stash.has("ses-1"), false);
+});
+
