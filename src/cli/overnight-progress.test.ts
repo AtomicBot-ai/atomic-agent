@@ -135,10 +135,19 @@ describe("overnight progress", () => {
   });
 
   it("exits 2 and says stopped when a limit ended the run (ATO-1323)", () => {
-    for (const cause of ["cost_ceiling", "time_ceiling", "step_ceiling", "no_progress"]) {
+    for (const cause of ["cost_ceiling", "time_ceiling", "step_ceiling", "no_progress", "credit_exhausted"]) {
       expect(overnightExitCode({ status: "completed", stopCause: cause })).toBe(2);
       expect(overnightOutcome({ status: "completed", stopCause: cause })).toBe(`stopped (${cause})`);
     }
     expect(overnightOutcome({ status: "completed", stopCause: null })).toBe("completed");
+  });
+
+  it("treats a resume blocked on a used-up budget or time as stopped (exit 2)", () => {
+    const spent = { status: "blocked" as const, stopCause: null, lastError: "budget_spent: $5.00 of $5.00 already spent" };
+    expect(overnightExitCode(spent)).toBe(2);
+    expect(overnightOutcome(spent)).toBe("stopped (cost_ceiling)");
+    const timed = { status: "blocked" as const, stopCause: null, lastError: "time_spent: 480 min of 480 min" };
+    expect(overnightOutcome(timed)).toBe("stopped (time_ceiling)");
+    expect(overnightExitCode({ status: "blocked", stopCause: null, lastError: "session_not_found: s" })).toBe(1);
   });
 });
