@@ -27,7 +27,7 @@ function constLine(name) {
 function meter() {
   const clock = { ms: 0 };
   const c = vm.createContext({ Date: { now: () => clock.ms }, Math });
-  for (const name of ["DL_RATE_MIN_SECONDS", "DL_RATE_STALL_SECONDS"]) {
+  for (const name of ["DL_RATE_MIN_SECONDS", "DL_RATE_STALL_SECONDS", "DL_RATE_MIN_BYTES"]) {
     vm.runInContext(constLine(name).replace(/^const /, "var "), c);
   }
   for (const name of ["dlRateStep", "dlEtaFrom"]) vm.runInContext(fn(name), c);
@@ -77,40 +77,80 @@ test("lines a moment apart are not a speed", () => {
   assert.equal(m.holder.rate, 20 * 1024 * 1024);
 });
 
+// Small counts below are in MiB: a slope spans at least four 0.01 GB steps (DL_RATE_MIN_BYTES).
+const U = 1024 * 1024;
+
 test("unmoved lines do not drag the rate towards zero", () => {
   const m = meter();
   m.at(0, 0);
-  m.at(10, 100);
-  m.at(20, 200);
+  m.at(10, 100 * U);
+  m.at(20, 200 * U);
   const before = m.holder.rate;
-  m.at(30, 200);
-  m.at(40, 200);
+  assert.ok(before > 0);
+  m.at(30, 200 * U);
+  m.at(40, 200 * U);
   assert.equal(m.holder.rate, before);
 });
 
-test("a stall starts the estimate over, and it comes back when the bytes move", () => {
+test("a long stall drops the estimate, and it comes back when the bytes move", () => {
   const m = meter();
   m.at(0, 0);
-  m.at(10, 1000);
-  m.at(20, 2000);
-  assert.ok(m.eta(2000, 10000) > 0);
-  m.at(80, 2000);
+  m.at(10, 100 * U);
+  m.at(20, 200 * U);
+  assert.ok(m.eta(200 * U, 1000 * U) > 0);
+  m.at(80, 200 * U);
+  assert.ok(m.holder.rate > 0, "a minute is not a stall: slow links step that slowly");
+  m.at(330, 200 * U);
   assert.equal(m.holder.rate, null);
-  assert.equal(m.eta(2000, 10000), null);
-  // Nothing of the stalled minute goes into the new speed.
-  m.at(90, 12000);
-  assert.equal(m.holder.rate, 1000);
-  m.at(100, 22000);
+  assert.equal(m.eta(200 * U, 1000 * U), null);
+  // The slope spans from the first sight of those bytes, the stall included.
+  m.at(340, 3400 * U);
+  assert.equal(m.holder.rate, 10 * U);
+  m.at(350, 4400 * U);
   assert.equal(m.holder.samples, 2);
+});
+
+test("a slope over one rounded step is not a speed", () => {
+  const m = meter();
+  m.at(0, 0);
+  m.at(100, 100 * U);
+  const before = m.holder.rate;
+  // The next 0.01 GB step, 4 s later: 2.5 GB/s if it counted.
+  m.at(104, 110 * U);
+  assert.equal(m.holder.rate, before);
+});
+
+test("a slow link (100 KB/s, bytes in 0.01 GB steps) keeps an estimate near the truth", () => {
+  const m = meter();
+  const total = 1.3 * GIB;
+  const speed = 100 * 1024;
+  let shown = 0;
+  let blank = 0;
+  // A progress tick every second; a line only while the percent is a multiple of 5.
+  for (let t = 1; t * speed < total; t += 1) {
+    const real = t * speed;
+    const percent = Math.floor((real / total) * 100);
+    if (percent % 5 !== 0) continue;
+    const done = asPrinted(real);
+    m.at(t, done);
+    const eta = m.eta(done, total);
+    if (eta === null) { if (shown) blank += 1; continue; }
+    shown += 1;
+    const truth = (total - real) / speed;
+    assert.ok(eta > truth * 0.7 && eta < truth * 1.4,
+      `at ${percent}% (${t} s) it said ${eta} s, the truth is ${Math.round(truth)} s`);
+  }
+  assert.ok(shown > 100, `an estimate was on screen for ${shown} lines`);
+  assert.equal(blank, 0, "once shown, the estimate does not blink off");
 });
 
 test("a counter that goes back carries nothing over", () => {
   const m = meter();
   m.at(0, 0);
-  m.at(10, 5000);
-  m.at(20, 10000);
-  m.at(30, 400);
+  m.at(10, 5000 * U);
+  m.at(20, 10000 * U);
+  m.at(30, 400 * U);
   assert.equal(m.holder.rate, null);
   assert.equal(m.holder.samples, 0);
-  assert.deepEqual({ ...m.holder.last }, { bytes: 400, at: 30000 });
+  assert.deepEqual({ ...m.holder.last }, { bytes: 400 * U, at: 30000 });
 });

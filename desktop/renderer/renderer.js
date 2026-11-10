@@ -13171,20 +13171,37 @@ function dlOnPull(ev) {
  * The cost: the first estimate comes a few seconds later.
  */
 const DL_RATE_MIN_SECONDS = 3;
-const DL_RATE_STALL_SECONDS = 60;   // lines still coming, bytes not: the old rate says nothing now
+/* Lines still coming, bytes not, for this long: the old rate says nothing now.
+   Review: the CLI prints bytes in 0.01 GB steps, so on a slow link (100 KB/s)
+   the counter sits still for over a minute between steps. A 60 s reset blanked
+   the estimate every step, and moving `last` to the reset made the next slope
+   twice the real speed. So the wait is longer, and `last` keeps the moment the
+   counter first showed those bytes: the next slope spans the whole step. */
+const DL_RATE_STALL_SECONDS = 300;
+/* Review: the first line of a burst can show bytes rounded half a step up, so
+   a slope over one 0.01 GB step a few seconds later can read many times the
+   real speed. A slope spans at least four steps, and the rounding is then a
+   small share of it. */
+const DL_RATE_MIN_BYTES = 4 * 0.01 * 1024 * 1024 * 1024;
 function dlRateStep(holder, bytes) {
   const now = Date.now();
   const last = holder.last;
   const seconds = last ? (now - last.at) / 1000 : 0;
-  // The counter went back (the download restarted) or sat still too long: measure afresh.
-  if (last && (bytes < last.bytes || (bytes === last.bytes && seconds >= DL_RATE_STALL_SECONDS))) {
+  // The counter went back (the download restarted): measure afresh.
+  if (last && bytes < last.bytes) {
     holder.rate = null;
     holder.samples = 0;
     holder.last = {bytes, at: now};
     return;
   }
+  // Sat still too long: the estimate goes, the first sight of those bytes stays.
+  if (last && bytes === last.bytes && seconds >= DL_RATE_STALL_SECONDS) {
+    holder.rate = null;
+    holder.samples = 0;
+    return;
+  }
   if (!last) { holder.last = {bytes, at: now}; return; }
-  if (bytes === last.bytes || seconds < DL_RATE_MIN_SECONDS) return;
+  if (bytes === last.bytes || seconds < DL_RATE_MIN_SECONDS || bytes - last.bytes < DL_RATE_MIN_BYTES) return;
   const sample = (bytes - last.bytes) / seconds;
   holder.rate = holder.rate === null ? sample : holder.rate + 0.3 * (sample - holder.rate);
   holder.samples = (holder.samples || 0) + 1;   // how many rate samples are behind the estimate
