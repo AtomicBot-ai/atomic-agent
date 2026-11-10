@@ -227,6 +227,19 @@
 #onboarding .ob-hfrow:hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
 #onboarding .ob-hfrow:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
 #onboarding .ob-hfrow.on{background:var(--lift);box-shadow:0 0 0 2px var(--brand),var(--sh-card)}
+/* ATO-816 / ATO-1402: the two ways in for a model you already have (an app
+   that serves one, a .gguf on disk), under the Hugging Face card. The same
+   card look, side by side when there is room, and never shrinking: the
+   model list above keeps its own min-height. */
+#onboarding .ob-wayins{flex:none;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;margin-top:8px}
+#onboarding .ob-wayin{display:flex;align-items:center;gap:12px;min-height:56px;padding:10px 14px 10px 18px;border:0;text-align:left;
+  border-radius:var(--r-card);background:var(--lift);box-shadow:var(--sh-card);color:var(--ink);font:inherit;cursor:pointer}
+#onboarding .ob-wayin:hover{background:color-mix(in srgb,var(--ink) 3%,var(--lift))}
+#onboarding .ob-wayin:active{background:color-mix(in srgb,var(--ink) 6%,var(--lift))}
+#onboarding .ob-wayin:focus-visible{outline:none;box-shadow:0 0 0 2px var(--brand),var(--sh-card)}
+#onboarding .ob-wayin-t{display:flex;flex-direction:column;gap:2px;min-width:0}
+#onboarding .ob-wayin-l{font-weight:600}
+#onboarding .ob-wayin-d{font-size:var(--fs-label);line-height:1.4;color:var(--ink-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Out of reach: shown, explained, not a control — a quiet well inside the
    list card, after the rows it could not be one of. Folded under its
    heading by default (Danya, 01.10); the heading is the block's one
@@ -276,7 +289,6 @@
   border:0;border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font:600 var(--fs-cap)/1 var(--font-ui);cursor:pointer;
   transition:background var(--t-state) var(--ease),color var(--t-state) var(--ease)}
 #onboarding .ob-offer.ob-offer-inline:hover{background:var(--press);color:var(--ink)}
-#onboarding .ob-offer.ob-routehint{align-self:flex-start}
 #onboarding .ob-help{padding-left:4px}
 /* ATO-161: the request for a key, in ink — nothing has failed. */
 #onboarding .ob-help.wiz-ask{color:var(--ink)}

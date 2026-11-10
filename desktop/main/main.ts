@@ -256,6 +256,7 @@ import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
 import { diskSpaceAt, modelsDirOf } from "./disk-space.js";
+import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
@@ -1953,6 +1954,35 @@ function wireIpc(client: AgentClient): void {
     const res = await addCustomModelEntry(built.def as unknown as Record<string, unknown>);
     if (!res.ok) return { ok: false, error: res.error ?? "could not write the config" };
     return { ok: true, id: built.def.id, def: built.def };
+  });
+  /* ATO-1402: "Use a .gguf file I already have". The open dialog picks the
+     file, and it is registered where it lies (main/local-gguf.ts, the TUI's
+     own entry for a pasted path): nothing is copied or downloaded. The
+     renderer then hands the id to the same `models pull` a curated pick
+     uses, which finds the weights present and starts the model.
+     `--fake-gguf=<path>` (TEST ONLY, like --fake-pick) answers the dialog. */
+  ipcMain.handle("cli:ggufPick", async () => {
+    const fake = process.argv.find((a) => a.startsWith("--fake-gguf="));
+    let path: string | null = fake ? fake.slice("--fake-gguf=".length) : null;
+    if (!path) {
+      if (!win) return { ok: false, cancelled: true, error: "cancelled" };
+      const picked = await dialog.showOpenDialog(win, {
+        properties: ["openFile"],
+        message: "Choose a .gguf model file",
+        filters: [{ name: "GGUF models", extensions: ["gguf"] }],
+      });
+      if (picked.canceled || !picked.filePaths[0]) return { ok: false, cancelled: true, error: "cancelled" };
+      path = picked.filePaths[0];
+    }
+    let def: ReturnType<typeof buildLocalGgufModelDef>;
+    try {
+      def = buildLocalGgufModelDef(resolveLocalGgufFile(path, { managedModelsDir: modelsDirOf(managedDataDirNow()) }));
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    const res = await addCustomModelEntry(def);
+    if (!res.ok) return { ok: false, error: res.error ?? "could not write the config" };
+    return { ok: true, id: def.id, def };
   });
   /**
    * `atag models pull` fetches weights only, so the projector is fetched
@@ -11947,6 +11977,48 @@ async function onboardingTest(
       `empty=${JSON.stringify(hintsEmpty)}/${clearEmpty} typed=${JSON.stringify(hintsTyped)}/${clearTyped}`,
     );
     await js<ObState>("window.__obKey('esc')");
+
+    /* ---- ATO-816: the model apps are under Local models, not Cloud ---- */
+    /* Ollama, LM Studio and Atomic Chat run on this computer, and people who
+       have them read "Cloud models" as not theirs. The Cloud list leaves them
+       out; the Local models screen has "Use an app you already have", which
+       lists exactly those three and whose Back returns to the model list. The
+       old "Already run Ollama or LM Studio?" hint on the choose screen is gone. */
+    {
+      type Apps = { phase: string | null; rows: string[] };
+      const APPS = ["Atomic Chat (local)", "Ollama (local)", "LM Studio (local)"];
+      await js<ObState>("window.__obOpen('choose')");
+      const chooseHint = await js<number>("document.querySelectorAll('#onboarding [data-obact=\"route:apps\"]').length");
+      await js<ObState>("window.__obKey('2')");
+      const cloudList = await js<Apps>("window.__wizList()");
+      await js<void>("window.__obKey('/')");
+      await js<void>(
+        "(function(){const i=document.getElementById('wiz-q'); i.value='ollama'; " +
+          "i.dispatchEvent(new Event('input',{bubbles:true}));})()",
+      );
+      const cloudSearch = await js<Apps>("window.__wizList()");
+      await js<ObState>("window.__obKey('esc')");
+      await js<ObState>("window.__obKey('esc')");
+      await js<ObState>("window.__obOpen('local_pick')");
+      const wayIn = await js<number>("document.querySelectorAll('#onboarding .ob-wayin[data-obact=\"route:apps\"]').length");
+      await js<void>("(document.querySelector('#onboarding .ob-wayin[data-obact=\"route:apps\"]') || {click(){}}).click()");
+      const appsState = await js<ObState>("window.__ob()");
+      const appsList = await js<Apps>("window.__wizList()");
+      const appsTitle = await js<string>("((document.querySelector('#onboarding .ob-title') || {}).textContent || '')");
+      await js<ObState>("window.__obKey('esc')");
+      const backState = await js<ObState>("window.__ob()");
+      check(
+        "wizard: Ollama, LM Studio and Atomic Chat are reached from Local models, not listed under Cloud",
+        chooseHint === 0 &&
+          cloudList.rows.length > 3 && !cloudList.rows.some((r) => APPS.includes(r)) && cloudSearch.rows.length === 0 &&
+          wayIn === 1 &&
+          appsState.step === "cloud" && appsState.resumeAfterCloud === "local_pick" &&
+          JSON.stringify(appsList.rows) === JSON.stringify(APPS) && appsTitle === "Use an app you already have" &&
+          backState.step === "local_pick",
+        `choose hint=${chooseHint} cloud=${JSON.stringify(cloudList.rows)} search ollama=${JSON.stringify(cloudSearch.rows)} ` +
+          `way in=${wayIn} apps=${appsState.step}/${appsState.resumeAfterCloud} ${JSON.stringify(appsList.rows)} title=${JSON.stringify(appsTitle)} back=${backState.step}`,
+      );
+    }
 
     /* ---- the cloud step's own keyboard ---- */
     /* Its footer is the TUI's `↑/↓ move   / search   enter select   esc

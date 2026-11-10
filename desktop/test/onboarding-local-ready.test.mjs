@@ -17,10 +17,10 @@ function fn(name) {
   return source.slice(at + 1, source.indexOf("\n}\n", at) + 2);
 }
 
-function screen(outcome, res) {
+function screen(outcome, res, viaApps) {
   const c = vm.createContext({
-    OB: { outcome, localStart: null },
-    OB_COPY: { cloudReadyLabel: "Cloud model ready" },
+    OB: { outcome, localStart: null, viaApps: !!viaApps },
+    OB_COPY: { cloudReadyLabel: "Cloud model ready", appReadyLabel: "Model ready" },
     esc: (s) => String(s),
     ic: (name) => "<i:" + name + ">",
   });
@@ -56,6 +56,14 @@ test("a pick whose start was not seen says selected, not ready", () => {
     assert.equal(s.label, "Local model selected");
     assert.doesNotMatch(s.html, /<i:check>/);
   }
+});
+
+// ATO-816: an app from "Use an app you already have" (Ollama, LM Studio,
+// Atomic Chat) is not a cloud model; the outcome stays "cloud" for analytics.
+test("a model app on this computer says Model ready, not Cloud model ready", () => {
+  const s = screen("cloud", undefined, true);
+  assert.equal(s.label, "Model ready");
+  assert.match(s.html, /<i:check>/);
 });
 
 test("cloud and other outcomes are unchanged", () => {
