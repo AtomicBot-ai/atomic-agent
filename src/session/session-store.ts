@@ -44,6 +44,16 @@ import {
   type TurnProgress,
   type TurnProgressStatements,
 } from "./turn-progress.js";
+import {
+  ARCHIVED_TURNS_KEY,
+  TURN_ARCHIVE_TABLE,
+  archivedTurnsMarker,
+  ensureTurnArchiveTable,
+  prepareTurnArchiveStatements,
+  restoreArchivedTurns,
+  syncTurnArchive,
+  type TurnArchiveStatements,
+} from "./turn-archive.js";
 
 // `turn_owner` names the process running a turn on the row (see
 // `beginTurn`) and is null otherwise — a shutdown's stand-in keeps it
@@ -86,12 +96,52 @@ SELECT json_extract(t.value, '$.kind') AS kind,
                        AND json_type(s.payload, '$.turns') = 'array'
                       THEN s.payload ELSE '{}' END,
                  '$.turns') AS t
- WHERE s.id = ?
+ WHERE s.id = @id
    AND t.type = 'object'
    AND json_extract(t.value, '$.kind') IN ('user', 'assistant_reply')
    AND json_type(t.value, '$.text') = 'text'
    AND json_extract(t.value, '$.progressNote') IS NOT 1
  ORDER BY t.key ASC`;
+
+/**
+ * {@link CHAT_LINES_SQL} with the turns kept in the archive
+ * (`turn-archive.ts`) read first: only the rows the payload's marker
+ * counts, then the payload's own `turns`. Each arm keeps its guards in
+ * its own `WHERE`, in the order the single-table query has them. An
+ * archived row is always one whole JSON document, so `json_extract` on
+ * it cannot raise; the `CASE` is there for a row written by hand.
+ */
+const CHAT_LINES_WITH_ARCHIVE_SQL = `
+SELECT kind, text FROM (
+  SELECT 0 AS part, a.idx AS ord,
+         json_extract(CASE WHEN json_valid(a.turn) THEN a.turn ELSE '{}' END, '$.kind') AS kind,
+         json_extract(CASE WHEN json_valid(a.turn) THEN a.turn ELSE '{}' END, '$.text') AS text
+    FROM sessions AS s
+    JOIN ${TURN_ARCHIVE_TABLE} AS a ON a.session_id = s.id
+   WHERE s.id = @id
+     AND json_valid(s.payload)
+     AND a.idx < COALESCE(json_extract(s.payload, '$.${ARCHIVED_TURNS_KEY}.count'), 0)
+     AND json_valid(a.turn)
+     AND json_type(a.turn) = 'object'
+     AND json_extract(a.turn, '$.kind') IN ('user', 'assistant_reply')
+     AND json_type(a.turn, '$.text') = 'text'
+     AND json_extract(a.turn, '$.progressNote') IS NOT 1
+  UNION ALL
+  SELECT 1 AS part, t.key AS ord,
+         json_extract(t.value, '$.kind') AS kind,
+         json_extract(t.value, '$.text') AS text
+    FROM sessions AS s,
+         json_each(CASE WHEN json_valid(s.payload)
+                         AND json_type(s.payload, '$.turns') = 'array'
+                        THEN s.payload ELSE '{}' END,
+                   '$.turns') AS t
+   WHERE s.id = @id
+     AND t.type = 'object'
+     AND json_extract(t.value, '$.kind') IN ('user', 'assistant_reply')
+     AND json_type(t.value, '$.text') = 'text'
+     AND json_extract(t.value, '$.progressNote') IS NOT 1
+)
+ ORDER BY part ASC, ord ASC`;
 
 /** One line of `listChatLines`. */
 export interface SessionChatLine {
@@ -211,11 +261,15 @@ interface TurnMarkStatements {
   recover: Database.Statement;
 }
 
-/** A row as the readers select it: the status column and the payload. */
+/** A row as the readers select it: the id and status columns and the payload. */
 interface StoredPayloadRow {
+  id?: unknown;
   status?: unknown;
   payload: string;
 }
+
+/** Thrown inside a write transaction to roll it back; never escapes. */
+const ROLLBACK = Symbol("rollback");
 
 /** Narrow projection returned by `listRecentWorkingDirs`. */
 export interface RecentWorkingDirRow {
@@ -224,9 +278,11 @@ export interface RecentWorkingDirRow {
 }
 
 /**
- * Durable session persistence. We serialise the whole SessionState as JSON
- * because it is small (<10 KB) and we optimise for developer iteration
- * over schema stability. A columnar migration can come later.
+ * Durable session persistence. The SessionState is serialised as JSON,
+ * optimising for developer iteration over schema stability, except for the
+ * turns a context compaction covers: those move to `session_turn_archive`
+ * once, so a long session's every write does not re-serialise its whole
+ * history (`turn-archive.ts`, ATO-1271).
  */
 export class SessionStore {
   private readonly db: Database.Database;
@@ -260,6 +316,12 @@ export class SessionStore {
    * did before them.
    */
   private readonly progress: TurnProgressStatements | null;
+  /**
+   * The archive of compacted turns (`turn-archive.ts`, ATO-1271), or
+   * `null` when the table could not be created: transcripts are then
+   * stored in full, as before.
+   */
+  private readonly archive: TurnArchiveStatements | null;
   /** The database file's real path, as marks record it; `undefined` in memory. */
   private readonly dbIdentity: string | undefined;
   /**
@@ -293,6 +355,10 @@ export class SessionStore {
     // Checkpoints are guarded on the turn's mark, so they need both.
     const withProgress =
       withMarks && ensureTurnProgressColumn(this.db) === null;
+    this.archive =
+      ensureTurnArchiveTable(this.db) === null
+        ? prepareTurnArchiveStatements(this.db)
+        : null;
     this.turnOwnerProbe = options.turnOwnerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(file);
     this.insertStmt = this.db.prepare(
@@ -315,7 +381,7 @@ export class SessionStore {
     // Every reader takes `status` from the column, beside the payload:
     // see `readPayload`.
     this.selectStmt = this.db.prepare(
-      `SELECT status, payload FROM sessions WHERE id = ?`,
+      `SELECT id, status, payload FROM sessions WHERE id = ?`,
     );
     // Projected in SQL rather than parsed in JS: `save` runs this on
     // every write, and a transcript payload is the one thing in this
@@ -331,10 +397,10 @@ export class SessionStore {
       `SELECT status, ${turnOwnerColumn} AS turnOwner FROM sessions WHERE id = ?`,
     );
     this.listByWorkingDirStmt = this.db.prepare(
-      `SELECT status, payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT id, status, payload FROM sessions WHERE working_dir = ? ORDER BY updated_at DESC LIMIT ?`,
     );
     this.listRecentStmt = this.db.prepare(
-      `SELECT status, payload FROM sessions ORDER BY updated_at DESC LIMIT ?`,
+      `SELECT id, status, payload FROM sessions ORDER BY updated_at DESC LIMIT ?`,
     );
     this.listRecentDirsStmt = this.db.prepare(
       `SELECT working_dir AS workingDir, updated_at AS updatedAt
@@ -347,7 +413,9 @@ export class SessionStore {
     this.summaryFirstPageStmt = this.db.prepare(SUMMARY_FIRST_PAGE_SQL);
     this.summaryNextPageStmt = this.db.prepare(SUMMARY_NEXT_PAGE_SQL);
     this.countUnreadableStmt = this.db.prepare(COUNT_UNREADABLE_SQL);
-    this.chatLinesStmt = this.db.prepare(CHAT_LINES_SQL);
+    this.chatLinesStmt = this.db.prepare(
+      this.archive === null ? CHAT_LINES_SQL : CHAT_LINES_WITH_ARCHIVE_SQL,
+    );
     this.deleteStmt = this.db.prepare(`DELETE FROM sessions WHERE id = ?`);
     this.finishTurnStmt = withMarks
       ? this.db.prepare(
@@ -506,17 +574,25 @@ export class SessionStore {
     // namer's title written since is only in the row, and replacing the
     // payload without it would lose it for good (`finishTurn` reads the
     // row's title to keep it).
-    const row = this.serialize(
-      withStoredTitle(state, this.storedRow(state.id)),
-    );
-    const result = this.progress.checkpoint.run({
-      id: state.id,
-      owner,
-      payload: row.payload,
-      updated_at: row.updated_at,
-      progress: serializeTurnProgress(progress),
-    }) as { changes: number };
-    return result.changes > 0;
+    const progressStatements = this.progress;
+    // One transaction with the archive rows the write adds, rolled back
+    // when the guard finds the row no longer this turn's: archive rows
+    // written for a payload that was never stored would not match the
+    // payload that is.
+    return this.inWriteTransaction(() => {
+      const row = this.serialize(
+        withStoredTitle(state, this.storedRow(state.id)),
+      );
+      const result = progressStatements.checkpoint.run({
+        id: state.id,
+        owner,
+        payload: row.payload,
+        updated_at: row.updated_at,
+        progress: serializeTurnProgress(progress),
+      }) as { changes: number };
+      if (result.changes === 0) throw ROLLBACK;
+      return true;
+    }, false);
   }
 
   /**
@@ -680,19 +756,38 @@ export class SessionStore {
    * only `save` is held to `statusForSave`.
    */
   private write(state: SessionState, endsTurn: boolean): void {
-    const stored = this.storedRow(state.id);
-    const status = endsTurn
-      ? state.status
-      : statusForSave(state.status, stored);
-    let next: SessionState =
-      status === state.status ? state : { ...state, status };
-    if (stored === undefined) {
-      this.insertStmt.run(this.serialize(next));
-      return;
+    // One transaction: the archive rows the write adds and the payload
+    // that counts them land together or not at all.
+    this.inWriteTransaction(() => {
+      const stored = this.storedRow(state.id);
+      const status = endsTurn
+        ? state.status
+        : statusForSave(state.status, stored);
+      let next: SessionState =
+        status === state.status ? state : { ...state, status };
+      if (stored === undefined) {
+        this.insertStmt.run(this.serialize(next));
+        return;
+      }
+      next = withStoredTitle(next, stored);
+      const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
+      update.run(this.serialize(next));
+    }, undefined);
+  }
+
+  /**
+   * Run `fn` in one `BEGIN IMMEDIATE` transaction, so the write lock is
+   * waited for (busy timeout) up front rather than failing on an upgrade
+   * from read to write. `fn` throws {@link ROLLBACK} to undo its writes
+   * and return `onRollback`; any other error rolls back and propagates.
+   */
+  private inWriteTransaction<T>(fn: () => T, onRollback: T): T {
+    try {
+      return this.db.transaction(fn).immediate();
+    } catch (err) {
+      if (err === ROLLBACK) return onRollback;
+      throw err;
     }
-    next = withStoredTitle(next, stored);
-    const update = endsTurn ? this.finishTurnStmt : this.updateStmt;
-    update.run(this.serialize(next));
   }
 
   /**
@@ -756,8 +851,10 @@ export class SessionStore {
       (batch: readonly SessionState[]): string[] => {
         const inserted: string[] = [];
         for (const state of batch) {
+          // Stored in full: archiving here would write rows for a copy
+          // the `OR IGNORE` may then drop. The next write archives it.
           const result = this.insertIfAbsentStmt.run(
-            this.serialize(endLiveTurn(state)),
+            this.serialize(endLiveTurn(state), { archive: false }),
           ) as { changes: number };
           if (result.changes > 0) inserted.push(state.id);
         }
@@ -787,17 +884,23 @@ export class SessionStore {
   }
 
   load(id: string): SessionState | null {
-    const row = this.selectStmt.get(id) as StoredPayloadRow | undefined;
-    if (!row) return null;
-    return this.readPayload(row);
+    // One read transaction, so the payload and the archived turns it
+    // counts come from the same snapshot of the file.
+    return this.db.transaction((): SessionState | null => {
+      const row = this.selectStmt.get(id) as StoredPayloadRow | undefined;
+      if (!row) return null;
+      return this.readPayload(row);
+    })();
   }
 
   listByWorkingDir(workingDir: string, limit = 25): SessionState[] {
-    const rows = this.listByWorkingDirStmt.all(
-      workingDir,
-      limit,
-    ) as StoredPayloadRow[];
-    return this.readPayloads(rows);
+    return this.db.transaction((): SessionState[] => {
+      const rows = this.listByWorkingDirStmt.all(
+        workingDir,
+        limit,
+      ) as StoredPayloadRow[];
+      return this.readPayloads(rows);
+    })();
   }
 
   /**
@@ -806,8 +909,10 @@ export class SessionStore {
    * ongoing threads from any project root.
    */
   listRecent(limit = 25): SessionState[] {
-    const rows = this.listRecentStmt.all(limit) as StoredPayloadRow[];
-    return this.readPayloads(rows);
+    return this.db.transaction((): SessionState[] => {
+      const rows = this.listRecentStmt.all(limit) as StoredPayloadRow[];
+      return this.readPayloads(rows);
+    })();
   }
 
   /**
@@ -844,7 +949,7 @@ export class SessionStore {
    * an unknown id or a payload that will not parse.
    */
   listChatLines(id: string): SessionChatLine[] {
-    return this.chatLinesStmt.all(id) as SessionChatLine[];
+    return this.chatLinesStmt.all({ id }) as SessionChatLine[];
   }
 
   /** Rows whose payload is not valid JSON — the ones every reader skips. */
@@ -870,7 +975,10 @@ export class SessionStore {
   }
 
   delete(id: string): void {
-    this.deleteStmt.run(id);
+    this.db.transaction(() => {
+      this.deleteStmt.run(id);
+      this.archive?.clear.run(id);
+    })();
   }
 
   /**
@@ -903,7 +1011,17 @@ export class SessionStore {
   private readPayload(row: StoredPayloadRow): SessionState | null {
     let state: SessionState;
     try {
-      state = normalizeSessionState(JSON.parse(row.payload));
+      const raw: unknown = JSON.parse(row.payload);
+      if (typeof raw === "object" && raw !== null && !Array.isArray(raw)) {
+        // The archived prefix goes back in front before the checkpoint
+        // is checked against the transcript (ATO-1271).
+        const record = raw as Record<string, unknown>;
+        const id = typeof row.id === "string" ? row.id : record.id;
+        if (typeof id === "string") {
+          restoreArchivedTurns(this.archive, id, record);
+        }
+      }
+      state = normalizeSessionState(raw);
     } catch {
       this.unreadableSkips += 1;
       return null;
@@ -922,13 +1040,43 @@ export class SessionStore {
     return states;
   }
 
-  private serialize(state: SessionState): Record<string, unknown> {
-    const persistable = stripEphemeral(state);
+  /**
+   * The row for `state`. With the archive on, the turns a compaction
+   * covers are written to it (once each) and left out of the payload,
+   * which then carries only the rest and a marker counting them
+   * (`turn-archive.ts`, ATO-1271). Writes archive rows, so callers run it
+   * inside the transaction that writes the row.
+   */
+  private serialize(
+    state: SessionState,
+    options: { archive?: boolean } = {},
+  ): Record<string, unknown> {
+    const persistable = stripEphemeral(state) as SessionState & {
+      [ARCHIVED_TURNS_KEY]?: unknown;
+    };
+    const archived =
+      this.archive !== null && options.archive !== false
+        ? syncTurnArchive(this.archive, persistable)
+        : 0;
+    // A marker never lives on a loaded state; drop one a copy may carry
+    // from elsewhere (an imported payload) so it cannot miscount.
+    const { [ARCHIVED_TURNS_KEY]: _marker, ...rest } = persistable;
+    const payload =
+      archived === 0
+        ? JSON.stringify(rest)
+        : JSON.stringify({
+            ...rest,
+            turns: persistable.turns.slice(archived),
+            [ARCHIVED_TURNS_KEY]: archivedTurnsMarker(
+              persistable.turns,
+              archived,
+            ),
+          });
     return {
       id: persistable.id,
       working_dir: persistable.workingDir,
       status: persistable.status,
-      payload: JSON.stringify(persistable),
+      payload,
       created_at: persistable.createdAt,
       updated_at: persistable.updatedAt,
     };
