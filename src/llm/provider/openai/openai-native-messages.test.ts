@@ -318,7 +318,7 @@ describe("buildNativeMessages: reasoning the service requires back (ATO-1397)", 
     expect(assistants.map((m) => m.reasoning_content)).toEqual([older, newer]);
   });
 
-  it("gives a call without reasoning an empty field once the model is thinking", () => {
+  it("gives a call without reasoning an empty field", () => {
     const messages = buildNativeMessages(
       prompt({
         turns: [
@@ -341,17 +341,41 @@ describe("buildNativeMessages: reasoning the service requires back (ATO-1397)", 
     );
   });
 
-  it("adds nothing when no call carries reasoning (thinking off)", () => {
+  it("keeps the field on answered calls on the first step of a follow-up turn", () => {
+    // The new turn has no calls yet, so no turn carries reasoning at all.
     const messages = buildNativeMessages(
       prompt({
         turns: [
-          { kind: "user", text: "go" },
+          { kind: "user", text: "read a" },
           { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a" } },
           result,
+          { kind: "assistant_reply", text: "read it" },
+          { kind: "user", text: "now b" },
         ],
       }),
       { ...options, reasoningRequired: true },
     );
-    expect(messages[2]).not.toHaveProperty("reasoning_content");
+    const calls = messages.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.reasoning_content).toBe("");
+  });
+
+  it("holds the reasoning to reasoningBudget, newest first, and leaves the rest empty", () => {
+    const older = words(600, "old");
+    const newer = words(600, "new");
+    const messages = buildNativeMessages(
+      prompt({
+        turns: [
+          { kind: "user", text: "go" },
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a" }, reasoning: older },
+          result,
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "b" }, reasoning: newer },
+          result,
+        ],
+      }),
+      { ...options, reasoningRequired: true, reasoningBudget: estimateTokens(newer) },
+    );
+    const calls = messages.filter((m) => m.role === "assistant");
+    expect(calls.map((m) => m.reasoning_content)).toEqual(["", newer]);
   });
 });

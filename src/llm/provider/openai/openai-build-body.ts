@@ -7,11 +7,15 @@ import {
   reasoningEffortField,
   resolveTemperature,
 } from "./model-params.js";
-import { buildNativeMessages } from "./openai-native-messages.js";
+import {
+  buildNativeMessages,
+  type NativeMessageOptions,
+} from "./openai-native-messages.js";
 import { toStrictOpenAiTools } from "./openai-strict-tools.js";
 import { nameEscape } from "./openai-tool-call-adapter.js";
 import { applyAnthropicCacheControl } from "./prompt-cache-control.js";
 import { assertContextCapacity } from "../context-capacity.js";
+import { estimateTokens } from "../../../prompt/token-budget.js";
 
 /**
  * Fields the caller owns unconditionally. `extraBody` is merged *under*
@@ -105,17 +109,27 @@ export function buildOpenAiChatBody(
   // layout; a sub-call, or a service that refused the layout, sends the
   // flat text — which `messages` was built beside, from the same packed
   // conversation, so both say the same thing.
+  // Settled before the messages too: the reasoning DeepSeek requires back
+  // is held to the room the window has left after it (ATO-1397).
+  const cap =
+    filtered.maxTokens ?? filtered.maxOutputTokens ?? maxOutputTokens;
+  const nativeOptions: NativeMessageOptions = {
+    nameEscape: options.nameEscape ?? nameEscape,
+    // A local server renders the template, which reads the
+    // reasoning back where the model expects it (ATO-887).
+    ...(options.templateKwargs ? { preserveReasoning: true } : {}),
+    // DeepSeek refuses a thinking-mode tool history without it
+    // (ATO-1397).
+    ...(options.reasoningRequired
+      ? { preserveReasoning: true, reasoningRequired: true }
+      : {}),
+  };
   const messages =
     resolveMessageShape(filtered, options) === "native" && filtered.messages
       ? buildNativeMessages(filtered.messages, {
-          nameEscape: options.nameEscape ?? nameEscape,
-          // A local server renders the template, which reads the
-          // reasoning back where the model expects it (ATO-887).
-          ...(options.templateKwargs ? { preserveReasoning: true } : {}),
-          // DeepSeek refuses a thinking-mode tool history without it
-          // (ATO-1397).
+          ...nativeOptions,
           ...(options.reasoningRequired
-            ? { preserveReasoning: true, reasoningRequired: true }
+            ? reasoningRoom(filtered, filtered.messages, nativeOptions, cap)
             : {}),
         })
       : [
@@ -161,8 +175,6 @@ export function buildOpenAiChatBody(
   // family's own: OpenAI's reasoning models answer `max_tokens` with
   // "'max_tokens' is not supported with this model. Use
   // 'max_completion_tokens' instead."
-  const cap =
-    filtered.maxTokens ?? filtered.maxOutputTokens ?? maxOutputTokens;
   if (typeof cap === "number") body[profile.capField] = cap;
   // Reasoning effort, in the field this kind reads (`model-params.ts`);
   // omitted for a kind without a known one rather than guessed.
@@ -281,6 +293,35 @@ export function buildOpenAiChatBody(
     delete merged.temperature;
   }
   return checkedBody(merged, request);
+}
+
+/**
+ * The reasoning budget for a body that must carry its tool calls'
+ * reasoning (`reasoningRequired`): what the cloud window has left once the
+ * same messages without any reasoning, the tools, the reply reserve and
+ * the safety margin `checkedBody` checks against are counted. The cloud
+ * prompt's own budget counts calls and results, not reasoning, so without
+ * this a long thinking turn would fail the capacity check instead of
+ * sending less of it. Ten per cent is kept back for JSON escaping. No
+ * budget (unbounded) when the request has no cloud window to check.
+ */
+function reasoningRoom(
+  request: CompletionRequest,
+  prompt: NonNullable<CompletionRequest["messages"]>,
+  nativeOptions: NativeMessageOptions,
+  cap: number | undefined,
+): { reasoningBudget?: number } {
+  const budget =
+    request.modelMode?.mode === "cloud" ? request.contextBudget : undefined;
+  if (!budget || budget.window === null) return {};
+  const bare = buildNativeMessages(prompt, { ...nativeOptions, reasoningBudget: 0 });
+  const used = estimateTokens(
+    JSON.stringify({ messages: bare, tools: request.tools, response_format: request.responseFormat }),
+  );
+  const reserve =
+    typeof cap === "number" && Number.isFinite(cap) ? cap : budget.replyReserve;
+  const room = budget.window - used - reserve - 1024;
+  return { reasoningBudget: Math.max(0, Math.floor(room * 0.9)) };
 }
 
 function checkedBody(body: Record<string, unknown>, request: CompletionRequest): Record<string, unknown> {

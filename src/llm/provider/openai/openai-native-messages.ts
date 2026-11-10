@@ -50,14 +50,21 @@ export interface NativeMessageOptions {
   /**
    * The service itself requires the reasoning back (DeepSeek's thinking
    * mode answers a tool-call history without it with a 400, ATO-1397).
-   * Implies `preserveReasoning`, without the token cap: a dropped piece is
-   * what the service refuses, and a cloud window has room for it. Once
-   * any call in the request carries reasoning (the model is thinking),
-   * every assistant tool-call message carries the field, as an empty
-   * string where the transcript kept none (later calls of a batch, calls
-   * of answered turns), so no message lacks it.
+   * Implies `preserveReasoning`, without the local token cap (the body
+   * builder passes the room the window has left as `reasoningBudget`).
+   * Every assistant tool-call message carries the field: the call's own
+   * reasoning, else an empty string (answered turns, later calls of a
+   * batch, reasoning the budget left out), so no tool-call message lacks
+   * it — not even on the first step of a follow-up turn, when only
+   * answered calls are in the history.
    */
   reasoningRequired?: boolean;
+  /**
+   * Most reasoning, in estimated tokens, handed back under
+   * `reasoningRequired`; newest calls first, as `capPreservedReasoning`
+   * does. Absent, no cap.
+   */
+  reasoningBudget?: number;
 }
 
 /**
@@ -132,17 +139,13 @@ export function buildNativeMessages(
   let orphanLines: string[] = [];
   const reasoningByTurn =
     options.reasoningRequired === true
-      ? capPreservedReasoning(prompt.turns, Number.POSITIVE_INFINITY)
+      ? capPreservedReasoning(prompt.turns, options.reasoningBudget ?? Number.POSITIVE_INFINITY)
       : options.preserveReasoning === true
         ? capPreservedReasoning(prompt.turns)
         : new Map<number, string>();
   // What a tool-call message without reasoning of its own carries:
-  // nothing, unless the service requires the field and the model is
-  // thinking in this conversation.
-  const missingReasoning =
-    options.reasoningRequired === true && reasoningByTurn.size > 0
-      ? ""
-      : undefined;
+  // nothing, unless the service requires the field.
+  const missingReasoning = options.reasoningRequired === true ? "" : undefined;
 
   const flushOrphans = (): void => {
     if (orphanLines.length === 0) return;

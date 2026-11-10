@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { buildPrompt } from "./build-prompt.js";
 import type { BuildPromptInput } from "./build-prompt-types.js";
 import { createEmptySessionState } from "../session/session-state.js";
 import { userTurn, assistantToolCallTurn, toolResultTurn, assistantReplyTurn } from "../session/conversation-turn.js";
 import { buildOpenAiChatBody } from "../llm/provider/openai/openai-build-body.js";
+import { OpenAiProvider } from "../llm/provider/openai/openai-provider.js";
 import { buildNativeMessages } from "../llm/provider/openai/openai-native-messages.js";
 import { compactionBoundaryHash } from "../session/session-compaction.js";
 import { planCompaction } from "./plan-compaction.js";
@@ -148,5 +149,38 @@ describe("cloud message retention", () => {
     const second = buildPrompt(input);
     const answered = second.messages.turns.find((turn) => turn.kind === "assistant_tool_call");
     expect(answered).not.toHaveProperty("reasoning");
+  });
+
+  it("sends DeepSeek the turn's reasoning_content from session to wire (ATO-1397)", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return new Response(
+        JSON.stringify({ model: "deepseek-v4-flash", choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    });
+    const deepseek = new OpenAiProvider({ id: "deepseek", baseUrl: "https://api.deepseek.com", apiKey: "",
+      defaultChatModel: "deepseek-v4-flash", fetchImpl: fetchImpl as unknown as typeof fetch });
+    const tools = [{ type: "function" as const, function: { name: "os__fs__read", parameters: { type: "object", properties: {} } } }];
+    const send = async (prompt: ReturnType<typeof buildPrompt>) => {
+      await deepseek.complete({ prompt: prompt.text, messages: prompt.messages, tools, modelMode: mode,
+        ...(prompt.contextBudget ? { contextBudget: prompt.contextBudget } : {}) });
+      const sent = bodies[bodies.length - 1]!.messages as Array<Record<string, unknown>>;
+      return sent.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
+    };
+
+    const input = fixture();
+    input.session.turns.push(
+      assistantToolCallTurn({ tool: "os.fs.read", args: { path: "a" }, reasoning: "need a", at: 2 }),
+      toolResultTurn({ tool: "os.fs.read", status: "ok", summary: "A", at: 3 }),
+    );
+    const step = buildPrompt(input);
+    expect((await send(step)).map((m) => m.reasoning_content)).toEqual(["need a"]);
+
+    // First step of the next turn: the answered call still carries the field.
+    input.session.cloudContext = step.cloudContext;
+    input.session.turns.push(assistantReplyTurn("done", 4), userTurn("next", 5));
+    expect((await send(buildPrompt(input))).map((m) => m.reasoning_content)).toEqual([""]);
   });
 });

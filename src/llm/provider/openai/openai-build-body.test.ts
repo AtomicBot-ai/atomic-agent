@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildOpenAiChatBody } from "./openai-build-body.js";
+import { estimateTokens } from "../../../prompt/token-budget.js";
 
 describe("buildOpenAiChatBody", () => {
   it("forwards responseFormat as response_format with type=json_schema and strict=true by default", () => {
@@ -760,5 +761,30 @@ describe("buildOpenAiChatBody: reasoning DeepSeek requires back (ATO-1397)", () 
 
   it("keeps the field off the same cloud body otherwise", () => {
     expect(assistant(ask({ providerKind: "openai-compatible" }))).not.toHaveProperty("reasoning_content");
+  });
+
+  it("sends less reasoning instead of failing the capacity check when the window is tight", () => {
+    const long = Array.from({ length: 4000 }, (_, i) => `step${i}`).join(" ");
+    const tight = {
+      ...messages,
+      turns: messages.turns.map((turn) =>
+        turn.kind === "assistant_tool_call" ? { ...turn, reasoning: long } : turn,
+      ),
+    };
+    const request = {
+      prompt: "flat",
+      messages: tight,
+      tools,
+      modelMode: { mode: "cloud" as const, source: "provider" as const, providerId: "deepseek", modelId: "deepseek-v4-flash" },
+      contextBudget: { window: 4000, replyReserve: 1000 },
+    } as Parameters<typeof buildOpenAiChatBody>[0];
+    const build = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
+      buildOpenAiChatBody(request, "deepseek-v4-flash", false, undefined, undefined, undefined, undefined, options);
+    const body = build({ providerKind: "openai-compatible", reasoningRequired: true });
+    const sent = assistant(body)?.reasoning_content as string;
+    expect(sent.length).toBeLessThan(long.length);
+    expect(long.endsWith(sent)).toBe(true);
+    // The whole reasoning would not have fitted: proof the cap did the work.
+    expect(estimateTokens(long)).toBeGreaterThan(4000);
   });
 });
