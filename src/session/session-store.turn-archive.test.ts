@@ -208,6 +208,78 @@ describe("SessionStore turn archive", () => {
     expect(row?.firstPrompt).toBe("question 0");
   });
 
+  it("never loses archived history when a store cannot use the archive", () => {
+    const turns = conversation(5);
+    store.save(session("deg", turns, 6));
+    expect(archivedRows("deg")).toHaveLength(6);
+
+    // A second process that could not create or read the table.
+    const degraded = new SessionStore({ dbFile: file, turnArchiveUnavailable: true });
+    try {
+      const tail = degraded.load("deg")!;
+      // Only the tail is in hand, with the marker still on it.
+      expect(tail.turns).toEqual(turns.slice(6));
+      expect(tail).toHaveProperty(ARCHIVED_TURNS_KEY);
+      degraded.save(recordTurn(tail, userTurn("from the degraded store", 500)));
+      expect(archivedRows("deg")).toHaveLength(6);
+      expect(rawPayload("deg")[ARCHIVED_TURNS_KEY]).toMatchObject({ count: 6 });
+
+      // A whole transcript cannot be split without the archive: the save
+      // is skipped rather than storing the tail as the full history.
+      const whole = store.load("deg")!;
+      degraded.save({ ...whole, metadata: { ...whole.metadata, touched: true } });
+      expect(store.load("deg")?.metadata.touched).toBeUndefined();
+    } finally {
+      degraded.close();
+    }
+
+    // Reopened normally: the whole transcript is there, and stays after a save.
+    store.close();
+    store = new SessionStore({ dbFile: file });
+    const reopened = store.load("deg")!;
+    expect(reopened.turns).toHaveLength(turns.length + 1);
+    expect(reopened.turns.slice(0, turns.length)).toEqual(turns);
+    expect(reopened.compaction?.coveredThrough).toBe(6);
+    store.save(reopened);
+    expect(archivedRows("deg")).toHaveLength(6);
+    expect(store.load("deg")?.turns).toHaveLength(turns.length + 1);
+  });
+
+  it("writes a tail loaded without the archive back as a tail once the archive is back", () => {
+    const turns = conversation(4);
+    store.save(session("tail", turns, 4));
+    const degraded = new SessionStore({ dbFile: file, turnArchiveUnavailable: true });
+    const tail = degraded.load("tail")!;
+    degraded.close();
+    // The normal store saves the tail copy: the archive is left alone.
+    store.save(recordTurn(tail, userTurn("later", 900)));
+    expect(archivedRows("tail")).toEqual([0, 1, 2, 3]);
+    expect(store.load("tail")?.turns).toHaveLength(turns.length + 1);
+  });
+
+  it("rolls the archive rows back when a checkpoint no longer owns the row", () => {
+    const turns = conversation(4);
+    store.save(session("ckpt", turns));
+    expect(store.beginTurn("ckpt", 1_000)).toBe(true);
+    // Another process took the row since.
+    store
+      .getDatabaseHandleForRetention()
+      .prepare(`UPDATE sessions SET turn_owner = 'someone-else' WHERE id = ?`)
+      .run("ckpt");
+    const written = store.checkpointTurn(session("ckpt", turns, 4), {
+      stepsDone: 1,
+      lastStepIndex: 0,
+      request: "go",
+      options: {},
+      resumes: 0,
+      startedAt: 1_000,
+      updatedAt: 2_000,
+    } as Parameters<SessionStore["checkpointTurn"]>[1]);
+    expect(written).toBe(false);
+    expect(archivedRows("ckpt")).toEqual([]);
+    expect(rawPayload("ckpt").turns).toEqual(turns);
+  });
+
   it("removes the archived turns with the session", () => {
     store.save(session("gone", conversation(3), 4));
     expect(archivedRows("gone")).toHaveLength(4);

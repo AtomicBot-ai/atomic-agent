@@ -77,6 +77,15 @@ export function ensureTurnArchiveTable(db: Database.Database): string | null {
   }
 }
 
+/** Whether the archive table is there (a read; never takes the write lock). */
+export function turnArchiveTableExists(db: Database.Database): boolean {
+  return (
+    db
+      .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
+      .get(TURN_ARCHIVE_TABLE) !== undefined
+  );
+}
+
 export function prepareTurnArchiveStatements(
   db: Database.Database,
 ): TurnArchiveStatements {
@@ -197,15 +206,22 @@ export function readArchivedTurnsMarker(
  * transcript then no longer matches its checkpoint, which
  * `normalizeSessionState` notices and drops, rather than the whole
  * session being lost.
+ *
+ * Without the archive (`statements` null: the table could not be read)
+ * the payload is left exactly as it is, marker included. The state then
+ * holds only the tail, and the marker on it is what tells the store's
+ * writes so: they store that tail with the same marker and never treat
+ * it as a whole transcript (see {@link carriesArchivedTurnsMarker}).
  */
 export function restoreArchivedTurns(
   statements: TurnArchiveStatements | null,
   id: string,
   raw: Record<string, unknown>,
 ): void {
+  if (statements === null) return;
   const marker = readArchivedTurnsMarker(raw);
   if (ARCHIVED_TURNS_KEY in raw) delete raw[ARCHIVED_TURNS_KEY];
-  if (marker === null || statements === null) return;
+  if (marker === null) return;
   const tail = Array.isArray(raw.turns) ? (raw.turns as unknown[]) : [];
   const turns: unknown[] = [];
   const rows = statements.read.iterate(id, marker.count) as IterableIterator<{
@@ -223,6 +239,15 @@ export function restoreArchivedTurns(
 }
 
 /**
+ * Whether a state still carries a payload marker: it was loaded while the
+ * archive was unavailable, so its `turns` are only the tail after the
+ * archived rows, not the whole transcript.
+ */
+export function carriesArchivedTurnsMarker(state: object): boolean {
+  return readArchivedTurnsMarker(state as Record<string, unknown>) !== null;
+}
+
+/**
  * Remove the archived turns of deleted sessions. Tolerates a database
  * without the table (one only an older binary has opened).
  */
@@ -231,10 +256,7 @@ export function deleteArchivedTurns(
   ids: readonly string[],
 ): void {
   if (ids.length === 0) return;
-  const exists = db
-    .prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`)
-    .get(TURN_ARCHIVE_TABLE);
-  if (exists === undefined) return;
+  if (!turnArchiveTableExists(db)) return;
   const placeholders = ids.map(() => "?").join(", ");
   db.prepare(
     `DELETE FROM ${TURN_ARCHIVE_TABLE} WHERE session_id IN (${placeholders})`,
