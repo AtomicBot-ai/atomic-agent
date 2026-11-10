@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 const {
-  PERF_POLL_MS, perfEsc, perfSummary, perfFormatRate, perfFormatMs, perfFormatContext,
+  PERF_POLL_MS, PERF_STALL_MS, perfEsc, perfSummary, perfFormatRate, perfFormatMs, perfFormatContext,
   perfChartSVG, perfPaneHTML, perfPoller,
 } = createRequire(import.meta.url)('../renderer/perf-panel.js');
 
@@ -255,7 +255,7 @@ test('a malformed body draws without throwing or printing NaN', () => {
 /* ---------------- poll lifecycle ---------------- */
 
 function rig({visible = true} = {}) {
-  const clock = {timers: new Map(), next: 1};
+  const clock = {timers: new Map(), next: 1, ms: 0};
   const calls = [];
   const changes = [];
   const view = {visible};
@@ -265,6 +265,7 @@ function rig({visible = true} = {}) {
     clearInterval: (id) => { clock.timers.delete(id); },
     isVisible: () => view.visible,
     onChange: (st) => changes.push(st.phase),
+    now: () => clock.ms,
   });
   const tick = () => { for (const t of [...clock.timers.values()]) t.fn(); };
   const settle = () => new Promise((r) => setImmediate(r));
@@ -426,4 +427,29 @@ test('chart coordinates stay finite for any size', () => {
   assert.doesNotMatch(svg, /Infinity|NaN/);
   const tiny = perfChartSVG([{generationPerSecond: 1}], 'generationPerSecond', {width: 0, height: -5});
   assert.doesNotMatch(tiny, /Infinity|NaN/);
+});
+
+test('a request that never settles is given up on after the stall limit, and polling goes on', async () => {
+  const r = rig();
+  r.ctl.enter();
+  r.ctl.leave();
+  r.ctl.enter();
+  assert.equal(r.calls.length, 1);
+  r.clock.ms = PERF_STALL_MS - 1;
+  r.tick();
+  assert.equal(r.calls.length, 1, 'still waiting inside the limit');
+  r.clock.ms = PERF_STALL_MS;
+  r.tick();
+  assert.equal(r.calls.length, 2, 'a fresh request once the stuck one is given up on');
+  assert.equal(r.ctl.state.phase, 'unreachable');
+  r.calls[0].resolve({ok: true, data: body({url: 'the stuck one'})});
+  await r.settle();
+  assert.equal(r.ctl.state.phase, 'unreachable', 'its late answer is dropped');
+  assert.equal(r.ctl.busy, true, 'and does not free the newer request\'s lock');
+  r.calls[1].resolve({ok: true, data: body({url: 'fresh'})});
+  await r.settle();
+  assert.equal(r.ctl.state.phase, 'ok');
+  assert.equal(r.ctl.state.data.url, 'fresh');
+  r.tick();
+  assert.equal(r.calls.length, 3, 'and the next poll goes out as usual');
 });
