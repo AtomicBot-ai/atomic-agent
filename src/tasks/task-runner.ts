@@ -151,8 +151,8 @@ export interface TaskRunnerOptions {
   logger?: StructuredLogger;
   /**
    * This process's live approval level (ATO-1324). A task that recorded
-   * the level it was started under is left for a process at that level.
-   * Omitted (tests, hosts without a gate): every task is runnable.
+   * another level than this one is blocked with `approval_level_mismatch:`
+   * instead of run. Omitted (tests, hosts without a gate): no check.
    */
   approvalLevel?: () => number;
   metrics?: AgentMetrics;
@@ -237,8 +237,6 @@ export class TaskRunner {
   private readonly runs = new Map<string, InFlightRun>();
   /** Set by `stop`: nothing is claimed after it. */
   private stopping = false;
-  /** Tasks already logged as left for a process at another approval level. */
-  private readonly levelSkipsLogged = new Set<string>();
   /** Summary collectors of the runs in progress, for `liveStatus`. */
   private readonly live = new Map<
     string,
@@ -357,11 +355,6 @@ export class TaskRunner {
     if (!task) return null;
     if (task.status !== "pending") return task;
 
-    // Started under another approval level (an interrupted overnight
-    // run): leave the row for a process at that level instead of
-    // resuming it with more, or fewer, actions allowed.
-    if (this.leftForOtherLevel(task)) return task;
-
     const resolvedTask = this.ensureSessionBeforeClaim(task);
     if (!resolvedTask) {
       return this.options.store.get(task.id);
@@ -401,6 +394,24 @@ export class TaskRunner {
         message:
           `budget_spent: ${formatUsd(claimed.spentUsd ?? 0)} of ` +
           `${formatUsd(claimed.maxCostUsd ?? 0)} already spent by earlier attempts`,
+      });
+      this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
+      return blocked;
+    }
+
+    // Started under another approval level (an interrupted overnight
+    // run, ATO-1324): resuming it here would allow what it denied, or
+    // wait for a person who is not there. Blocked with a plain reason
+    // rather than left pending, where it would sit at the head of the
+    // due queue forever and hold up every other task.
+    const processLevel = this.options.approvalLevel?.();
+    if (!approvalLevelAllows(claimed, processLevel)) {
+      const blocked = this.options.store.markBlocked(claimed.id, {
+        category: "tool",
+        message:
+          `approval_level_mismatch: started at approval level ${claimed.approvalLevel}, ` +
+          `this agent runs at ${processLevel}; start it again with \`atomic-agent overnight\``,
       });
       this.recordTerminal(blocked);
       this.maybeReport(blocked, null);
@@ -908,9 +919,6 @@ export class TaskRunner {
       let current: TaskRecord | null = task;
       while (current && current.status === "pending") {
         if (signal?.aborted || this.stopping) return;
-        // `runOne` hands such a row back untouched; counting it as a
-        // retry would spin this loop on it (ATO-1324).
-        if (this.leftForOtherLevel(current)) break;
         const before = current;
         current = await this.runOne(current.id, signal);
         outcome.drained += 1;
@@ -947,24 +955,6 @@ export class TaskRunner {
         }
       }
     }
-  }
-
-  /**
-   * True when `task` was started under another approval level than this
-   * process runs at (ATO-1324). Logged once per task, not every tick.
-   */
-  private leftForOtherLevel(task: TaskRecord): boolean {
-    const processLevel = this.options.approvalLevel?.();
-    if (approvalLevelAllows(task, processLevel)) return false;
-    if (!this.levelSkipsLogged.has(task.id)) {
-      this.levelSkipsLogged.add(task.id);
-      this.options.logger?.info("task left for a process at its own approval level", {
-        taskId: task.id,
-        taskApprovalLevel: task.approvalLevel ?? null,
-        processApprovalLevel: processLevel ?? null,
-      });
-    }
-    return true;
   }
 
   private handleFailure(

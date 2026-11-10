@@ -106,9 +106,9 @@ describe("TaskRunner", () => {
     ]);
   });
 
-  it("leaves a task started under another approval level for that level (ATO-1324)", async () => {
+  it("blocks a task started under another approval level instead of running it (ATO-1324)", async () => {
     const { runtime, calls } = fakeRuntime();
-    let level = 5;
+    const level = 5;
     const runner = new TaskRunner({
       store,
       runtime,
@@ -128,13 +128,32 @@ describe("TaskRunner", () => {
       approvalLevel: 2,
     });
     expect(store.get(t.id)?.approvalLevel).toBe(2);
-    const skipped = await runner.runOne(t.id);
-    expect(skipped?.status).toBe("pending");
-    expect(store.get(t.id)?.attempts).toBe(0);
-    const drained = await runner.drainPending();
-    expect(drained.drained).toBe(0);
+    const blocked = await runner.runOne(t.id);
+    expect(blocked?.status).toBe("blocked");
+    expect(blocked?.lastError).toMatch(/^approval_level_mismatch: started at approval level 2, this agent runs at 5/);
     expect(calls).toEqual([]);
-    level = 2;
+  });
+
+  it("runs a task at the approval level it was started under (ATO-1324)", async () => {
+    const { runtime, calls } = fakeRuntime();
+    const runner = new TaskRunner({
+      store,
+      runtime,
+      sessionLoader: fakeSessionLoader(session),
+      defaultMaxSteps: 5,
+      backoff: { initialMs: 1, maxMs: 10 },
+      enabled: true,
+      runOnCreate: false,
+      sleep: async () => undefined,
+      approvalLevel: () => 2,
+    });
+    const t = store.create({
+      sessionId: session.id,
+      userMessage: "overnight work",
+      origin: "cli",
+      maxAttempts: 1,
+      approvalLevel: 2,
+    });
     const final = await runner.runOne(t.id);
     expect(final?.status).toBe("completed");
     expect(calls).toHaveLength(1);

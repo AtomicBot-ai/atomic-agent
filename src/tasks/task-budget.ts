@@ -20,10 +20,30 @@ export const TASK_BUDGET_COLUMNS = [
   { name: "spent_usd", type: "REAL" },
   { name: "elapsed_ms", type: "INTEGER" },
   { name: "stop_cause", type: "TEXT" },
-  // The approval level the task was started under (ATO-1324). Not a
-  // budget, but the same kind of nullable column old binaries ignore.
-  { name: "approval_level", type: "INTEGER" },
 ] as const;
+
+/**
+ * The approval level a task was started under (ATO-1324): the same kind
+ * of nullable column older binaries ignore, added on its own so a
+ * failure to add it never turns the budgets off. Returns why it is
+ * missing, or `null` when it is there.
+ */
+export function ensureApprovalLevelColumn(db: Database.Database): string | null {
+  try {
+    const present = (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>)
+      .some((column) => column.name === "approval_level");
+    if (present) return null;
+    try {
+      db.exec(`ALTER TABLE tasks ADD COLUMN approval_level INTEGER`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column/i.test(message)) throw err;
+    }
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
 
 /**
  * Give `tasks` its budget columns. Returns why they are missing (the
