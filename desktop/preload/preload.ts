@@ -443,6 +443,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:contextPreview", { sessionId, message }),
   /** ATO-259: summarize the chat's older history now (POST /api/sessions/{id}/compact). */
   compactSession: (sessionId: string) => ipcRenderer.invoke("agent:compactSession", { sessionId }),
+  /** ATO-1299: remove the chat's last question and answer (POST /api/sessions/{id}/rollback-last-turn). */
+  rollbackLastTurn: (sessionId: string, expectText?: string) => ipcRenderer.invoke("agent:rollbackLastTurn", { sessionId, expectText }),
 
   /** Item 7A — add a model from Hugging Face (the port lives in main/huggingface.ts). */
   hfResolve: (ref: string) => ipcRenderer.invoke("cli:hfResolve", ref),

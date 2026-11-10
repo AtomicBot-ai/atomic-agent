@@ -1,5 +1,5 @@
-// ATO-861: the last reply of a turn that ran no tool offers "Ask again",
-// which resends the turn's question. acted-retry-hint.test.mjs stubs the
+// ATO-861: the last reply of a turn that ran no tool offers a retry of the
+// turn's question; since ATO-1300 it is "Regenerate" (data-regen). acted-retry-hint.test.mjs stubs the
 // turn walk; this one runs the real replyRetryAsk / replyTurnActed over
 // drawn transcripts.
 //
@@ -39,16 +39,17 @@ function actsFor(log, m, busy = false) {
   return c.msgActs(m);
 }
 
-const again = (html) => (/data-resend="([^"]+)"[^>]*title="Ask again"/.exec(html) || [])[1] || null;
+const again = (html) => (/data-regen="([^"]+)"[^>]*title="Regenerate"/.exec(html) || [])[1] || null;
 
 test("a plain answer can be asked again, through its question, before Copy", () => {
   const log = [{ id: "q1", k: "user", text: "Hi" }, { id: "a1", k: "assistant", text: "Hello" }];
   const html = actsFor(log, log[1]);
   assert.equal(again(html), "q1");
-  assert.ok(html.indexOf("Ask again") < html.indexOf("Copy message"));
+  assert.ok(html.indexOf("Regenerate") < html.indexOf("Copy message"));
+  assert.doesNotMatch(html, /data-resend/, "the reply's button is not the bubble's resend");
 });
 
-test("a turn that ran a tool or asked for approval has no Ask again, live or reopened", () => {
+test("a turn that ran a tool or asked for approval has no Regenerate, live or reopened", () => {
   for (const mid of [{ id: "t", k: "tool", name: "os.fs.list_dir" }, { id: "p", k: "approval", stored: true }]) {
     const log = [{ id: "q1", k: "user", text: "List my files" }, mid, { id: "a1", k: "assistant", text: "Here they are" }];
     const html = actsFor(log, log[2]);
@@ -63,7 +64,7 @@ test("a tool in an earlier turn does not take the retry from a later plain one",
   assert.equal(again(actsFor(log, log[4])), "q2");
 });
 
-test("a steer belongs to the turn: Ask again resends the question before it", () => {
+test("a steer belongs to the turn: Regenerate targets the question before it", () => {
   const log = [{ id: "q1", k: "user", text: "Hi" }, { id: "s", k: "user", text: "shorter", steered: true }, { id: "a1", k: "assistant", text: "Hey" }];
   assert.equal(again(actsFor(log, log[2])), "q1");
 });

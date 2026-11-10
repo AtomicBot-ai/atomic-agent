@@ -2419,6 +2419,12 @@ function wireIpc(client: AgentClient): void {
     if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, error: "No chat to compact yet" };
     return client.compactSession(sessionId);
   });
+  // ATO-1299: "Regenerate" under the last reply takes the turn back first.
+  ipcMain.handle("agent:rollbackLastTurn", (_event, payload: unknown) => {
+    const { sessionId, expectText } = (payload ?? {}) as { sessionId?: unknown; expectText?: unknown };
+    if (typeof sessionId !== "string" || !sessionId) return { ok: false, supported: true, code: "session_not_found", error: "This chat is not saved yet" };
+    return client.rollbackLastTurn(sessionId, typeof expectText === "string" ? expectText : undefined);
+  });
 
   // Files the agent produced: open, reveal, copy, save elsewhere.
   const safePath = (p: unknown): string | null => {
@@ -13503,8 +13509,8 @@ async function chromeTest(
        failure, so the expectation follows what the transcript drew. */
     // ATO-1046: Read aloud follows copy where the system has voices.
     const speak = !!asstActs && Array.isArray(asstActs.order) && asstActs.order[asstActs.order.length - 1] === "speak";
-    const asstOrder = (asstActs && !asstActs.acted ? '["resend","copy"' : '["hint","copy"') + (speak ? ',"speak"]' : "]");
-    const asstTitles = (asstActs && !asstActs.acted ? '["Ask again","Copy message"' : '["Repeating this turn could create or delete files a second time","Copy message"') + (speak ? ',"Read aloud"]' : "]");
+    const asstOrder = (asstActs && !asstActs.acted ? '["regen","copy"' : '["hint","copy"') + (speak ? ',"speak"]' : "]");
+    const asstTitles = (asstActs && !asstActs.acted ? '["Regenerate","Copy message"' : '["Repeating this turn could create or delete files a second time","Copy message"') + (speak ? ',"Read aloud"]' : "]");
     check(
       "item 4: every message carries a copy control at its end; a user message and a tool-free last reply carry retry",
       !!asstActs && asstActs.present && JSON.stringify(asstActs.order) === asstOrder
@@ -13615,14 +13621,15 @@ async function chromeTest(
       toolTip: { content: string | null; opacity: string | null; events: string | null; hover: string | null };
     };
     const rr = await js<ReplyRetry>("window.__replyRetry()");
-    const again = '["resend:rr-u:Ask again","copy"]';
+    // ATO-1300: the button is Regenerate now, with its own data-regen on the question.
+    const again = '["regen:rr-u:Regenerate","copy"]';
     check(
-      "item 4: the last reply of a turn without tools offers Ask again (data-resend on its question), left of copy",
+      "item 4: the last reply of a turn without tools offers Regenerate (data-regen on its question), left of copy",
       JSON.stringify(rr.plain) === again && JSON.stringify(rr.earlier) === again && JSON.stringify(rr.steered) === again,
       JSON.stringify({ plain: rr.plain, earlier: rr.earlier, steered: rr.steered }),
     );
     check(
-      "item 4: no Ask again after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
+      "item 4: no Regenerate after a tool card or an approval, while a turn runs, under a placeholder, or above a stopped turn",
       JSON.stringify(rr.tool) === '["hint:true:Repeating this turn could create or delete files a second time","copy"]' && JSON.stringify(rr.busy) === '["copy"]'
         && JSON.stringify(rr.placeholder) === '["copy"]' && JSON.stringify(rr.stopped) === '["copy"]' && rr.approval === null,
       JSON.stringify({ tool: rr.tool, busy: rr.busy, placeholder: rr.placeholder, stopped: rr.stopped, approval: rr.approval }),

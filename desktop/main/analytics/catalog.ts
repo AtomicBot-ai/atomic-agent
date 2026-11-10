@@ -270,7 +270,7 @@ export const EVENTS: Record<string, EventSpec> = {
   },
   message_action: {
     owner: "ui",
-    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply"]) },
+    props: { action: en(["copy", "resend", "retry", "continue", "steer", "unqueue", "stop", "copy_reply", "regenerate"]) },
   },
   approval_answered: {
     owner: "ui",
