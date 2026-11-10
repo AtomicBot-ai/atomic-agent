@@ -11,6 +11,13 @@ import { createStreamRepetitionWatcher } from "./reliability/stream-repetition-w
 import { drySamplerFields } from "./dry-sampler.js";
 import { takePromptProgress } from "./llama-prompt-progress.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
+import {
+  PERFORMANCE_CAPACITY,
+  PerformanceRing,
+  generationRate,
+  sampleFromPayload,
+  type PerformanceSample,
+} from "./llama-performance-samples.js";
 import type {
   CompletionRequest,
   CompletionResult,
@@ -586,6 +593,16 @@ export interface LlamaServerProps {
 /** Completions the rolling throughput mean is taken over. */
 const THROUGHPUT_WINDOW = 8;
 
+/**
+ * One `complete()` / `completeStream()` call while it is open, retries
+ * and backoff included. `peak` is the most calls open on this client at
+ * any moment of its life, itself counted.
+ */
+interface OpenCall {
+  readonly openedAt: number;
+  peak: number;
+}
+
 export class LlamaServerClient {
   /** When set, this fixed base wins; otherwise each request reads `getConfig().llama.url`. */
   private readonly baseUrlOverride: string | undefined;
@@ -611,6 +628,12 @@ export class LlamaServerClient {
   private readonly logger: Pick<StructuredLogger, "debug"> | undefined;
   /** Recent generation speeds, tokens/s, newest last — see `measuredTokensPerSecond`. */
   private readonly throughputSamples: number[] = [];
+  /** Completed calls' timings for the performance view — see `performanceSamples`. */
+  private readonly performance = new PerformanceRing();
+  /** The completion calls open right now — see `openCall`. */
+  private readonly openCalls = new Set<OpenCall>();
+  /** How many samples `performanceSamples()` keeps. */
+  readonly performanceCapacity = PERFORMANCE_CAPACITY;
   /**
    * The base URL whose `/slots` answered 404/405/501 — the endpoint is
    * not built into this llama.cpp, so the progress watch can never do
@@ -742,18 +765,61 @@ export class LlamaServerClient {
   private recordThroughput(payload: Record<string, unknown>): void {
     const timings = payload.timings;
     if (timings === null || typeof timings !== "object") return;
-    const t = timings as Record<string, unknown>;
-    let perSecond = toNumber(t.predicted_per_second, Number.NaN);
-    if (!Number.isFinite(perSecond) || perSecond <= 0) {
-      const n = toNumber(t.predicted_n, 0);
-      const ms = toNumber(t.predicted_ms, 0);
-      perSecond = n > 0 && ms > 0 ? (n / ms) * 1000 : Number.NaN;
-    }
-    if (!Number.isFinite(perSecond) || perSecond <= 0) return;
+    const perSecond = generationRate(timings as Record<string, unknown>);
+    if (perSecond === null) return;
     this.throughputSamples.push(perSecond);
     if (this.throughputSamples.length > THROUGHPUT_WINDOW) {
       this.throughputSamples.shift();
     }
+  }
+
+  /**
+   * The timings of this client's recent completed calls, oldest first, at
+   * most `performanceCapacity` (issue #996). A copy. A call is recorded
+   * only once it has succeeded: a stream that fails or is abandoned after
+   * its stop event leaves nothing behind.
+   */
+  performanceSamples(): PerformanceSample[] {
+    return this.performance.list();
+  }
+
+  /**
+   * Open one call's registration: entered once per `complete()` /
+   * `completeStream()`, just before `runWithRetry`, so retries, backoff
+   * and a refreshed-key replay all happen inside it and never add to the
+   * count. Every open call's `peak` rises to the new number open, so two
+   * calls that overlap at any moment both report 2. Close it with
+   * `closeCall` on every exit.
+   */
+  private openCall(): OpenCall {
+    const call: OpenCall = { openedAt: Date.now(), peak: 0 };
+    this.openCalls.add(call);
+    const open = this.openCalls.size;
+    for (const other of this.openCalls) {
+      if (other.peak < open) other.peak = open;
+    }
+    return call;
+  }
+
+  private closeCall(call: OpenCall): void {
+    this.openCalls.delete(call);
+  }
+
+  /** Record a completed call's sample, from the payload staged where its timings arrived. */
+  private commitSample(
+    payload: Record<string, unknown> | null,
+    call: OpenCall,
+    streamed: boolean,
+    ttftMs: number | null,
+  ): void {
+    if (payload === null) return;
+    const sample = sampleFromPayload(payload, {
+      streamed,
+      ttftMs,
+      concurrent: call.peak,
+      at: Date.now(),
+    });
+    if (sample !== null) this.performance.push(sample);
   }
 
   /**
@@ -935,37 +1001,49 @@ export class LlamaServerClient {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const { url, headers, body } = this.prepareRequest(request, false);
-    return this.runWithRetry(
-      url,
-      async () => {
-        const { controller, cleanup, timedOut } = this.createRequestController(
-          request.signal,
-          "total",
-          undefined,
-          request.requestTimeoutMs,
-        );
-        try {
-          const response = await this.fetchImpl(url, {
-            method: "POST",
-            headers,
-            body,
-            signal: controller.signal,
-          });
-          if (!response.ok) {
-            throw await buildHttpError(response, url);
+    // The payload of the attempt that answered, recorded once the result
+    // is in hand: a throw after it (normalisation) records nothing.
+    let staged = null as Record<string, unknown> | null;
+    const call = this.openCall();
+    try {
+      const result = await this.runWithRetry(
+        url,
+        async () => {
+          staged = null;
+          const { controller, cleanup, timedOut } = this.createRequestController(
+            request.signal,
+            "total",
+            undefined,
+            request.requestTimeoutMs,
+          );
+          try {
+            const response = await this.fetchImpl(url, {
+              method: "POST",
+              headers,
+              body,
+              signal: controller.signal,
+            });
+            if (!response.ok) {
+              throw await buildHttpError(response, url);
+            }
+            const json = (await response.json()) as Record<string, unknown>;
+            this.recordThroughput(json);
+            staged = json;
+            return normaliseCompletionResponse(json);
+          } catch (err) {
+            throw this.wrapTransportError(err, url, timedOut(), request.requestTimeoutMs);
+          } finally {
+            cleanup();
           }
-          const json = (await response.json()) as Record<string, unknown>;
-          this.recordThroughput(json);
-          return normaliseCompletionResponse(json);
-        } catch (err) {
-          throw this.wrapTransportError(err, url, timedOut(), request.requestTimeoutMs);
-        } finally {
-          cleanup();
-        }
-      },
-      request.signal,
-      headers,
-    );
+        },
+        request.signal,
+        headers,
+      );
+      this.commitSample(staged, call, false, null);
+      return result;
+    } finally {
+      this.closeCall(call);
+    }
   }
 
   async *completeStream(
@@ -994,6 +1072,11 @@ export class LlamaServerClient {
       keepAlive: (next: Exclude<LlamaTimeoutKind, "total">) => void;
       startStreamDeadline: () => void;
     };
+    // One registration for the whole call, retries included; closed in
+    // the `catch` just below or the generator's `finally`, whichever ends
+    // it. The first-token time counts from here: failed attempts, backoff
+    // and queueing are all part of the wait the person sees.
+    const call = this.openCall();
     try {
       opened = await this.runWithRetry(
         url,
@@ -1057,6 +1140,7 @@ export class LlamaServerClient {
         headers,
       );
     } catch (err) {
+      this.closeCall(call);
       if (err instanceof LlamaServerError) throw err;
       const message = err instanceof Error ? err.message : String(err);
       throw new LlamaServerError(
@@ -1133,6 +1217,10 @@ export class LlamaServerClient {
       let looped: CompletionResult | null = null;
       // A real (non-progress) event has arrived (ATO-1027).
       let replyStarted = false;
+      // The stop event's payload, recorded as a sample only if this
+      // generator then returns normally; and when the first delta came.
+      let staged: Record<string, unknown> | null = null;
+      let firstDeltaAt: number | null = null;
       while (looped === null) {
         const { value, done } = await reader.read();
         if (done) break;
@@ -1201,6 +1289,7 @@ export class LlamaServerClient {
                 ? parsed.reasoning_content
                 : "";
             if (delta.length > 0 || reasoningDelta.length > 0) {
+              firstDeltaAt ??= Date.now();
               accumulated += delta;
               accumulatedReasoning += reasoningDelta;
               yield { delta, reasoningDelta, done: false };
@@ -1221,6 +1310,7 @@ export class LlamaServerClient {
             }
             if (parsed.stop) {
               this.recordThroughput(parsed);
+              staged = parsed;
               finalResult = normaliseCompletionResponse(parsed);
               if (finalResult.content.length === 0) {
                 finalResult.content = accumulated;
@@ -1243,9 +1333,11 @@ export class LlamaServerClient {
         controller.abort();
         yield { delta: "", reasoningDelta: "", done: true };
         outcome = "done";
+        this.commitSample(staged, call, true, ttftOf(firstDeltaAt, call));
         return looped;
       }
       outcome = "done";
+      this.commitSample(staged, call, true, ttftOf(firstDeltaAt, call));
       return finalResult;
     } catch (err) {
       outcome = "error";
@@ -1313,6 +1405,7 @@ export class LlamaServerClient {
         abortedBeforeRelease: abortedBefore,
         ...(failure === undefined ? {} : { error: failure }),
       });
+      this.closeCall(call);
     }
   }
 
@@ -1959,6 +2052,11 @@ function tryParseJson(text: string): unknown {
   } catch {
     return null;
   }
+}
+
+/** Wait from the call's start to its first delta; `null` without one. */
+function ttftOf(firstDeltaAt: number | null, call: OpenCall): number | null {
+  return firstDeltaAt === null ? null : Math.max(0, firstDeltaAt - call.openedAt);
 }
 
 function parseSseEvent(rawEvent: string): Record<string, unknown> | null {
