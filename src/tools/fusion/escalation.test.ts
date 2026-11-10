@@ -213,6 +213,37 @@ describe("advisor escalation of a stuck worker (ATO-942)", () => {
   });
 });
 
+describe("the re-run's side effects reach the checkpoint at once (ATO-1316)", () => {
+  it("reports the re-run's tool calls as they start", async () => {
+    const h = harness(async (_s, options) => {
+      if (options.providerId === "cloud") {
+        options.eventHook?.({
+          type: "llm_event",
+          event: { type: "tool_call_parsed", call: { tool: "os.shell.run", args: {} } },
+        } as never);
+        return done();
+      }
+      for (let i = 0; i < 3; i += 1) sameStep(options.eventHook, i);
+      await flush();
+      for (let i = 3; i < 6; i += 1) sameStep(options.eventHook, i);
+      return {
+        session: createEmptySessionState({ id: "s-x", workingDir: "/repo" }),
+        reason: options.signal?.aborted ? "cancelled" : "reply",
+        stepCount: 6,
+      } as RunTurnResult;
+    });
+    const tools: Array<[string, string]> = [];
+    await runWorkerTasks(h.deps, {
+      ...BASE,
+      tasks: TASK,
+      signal: new AbortController().signal,
+      escalation: { target: { ...TARGET, replace: true }, pricing: PRICING },
+      onWorkerTool: (taskId, tool) => tools.push([taskId, tool]),
+    });
+    expect(tools).toContainEqual(["t0", "os.shell.run"]);
+  });
+});
+
 describe("the person's stop and escalate on one worker (ATO-66)", () => {
   it("escalates a running worker on request and stops it alone", async () => {
     const live = new FusionLiveWorkers();

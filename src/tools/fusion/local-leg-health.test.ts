@@ -5,6 +5,7 @@ import type { FusionWorkerMeta } from "../../session/fusion-worker-session.js";
 import { createEmptySessionState } from "../../session/session-state.js";
 import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
 import { runWorkerTasks, type WorkerRunnerDeps } from "./worker-runner.js";
+import { FusionLiveWorkers } from "./escalation.js";
 import {
   LocalLegHealth,
   LOCAL_LEG_UNRESPONSIVE_ERROR,
@@ -166,5 +167,21 @@ describe("dispatch after a cut-off local worker (ATO-917)", () => {
     });
     expect(probes).toBe(0);
     expect(deps.turns).toBe(1);
+  });
+
+  it("marks the leg when the person stops a local worker (ATO-1317)", async () => {
+    const health = new LocalLegHealth();
+    const live = new FusionLiveWorkers();
+    const deps = harness(servedThenHung, { localLegHealth: health, liveWorkers: live });
+    const run = runWorkerTasks(deps, {
+      ...BASE,
+      tasks: TASK,
+      signal: new AbortController().signal,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(live.stop("s-parent", "t0")).toBe(true);
+    await run;
+    expect(health.isSuspect()).toBe(true);
+    expect(health.cause()).toBe("task t0 was stopped by the person");
   });
 });
