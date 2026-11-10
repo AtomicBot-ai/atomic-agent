@@ -169,6 +169,12 @@ export interface CompletionRequest {
   imageData?: ReadonlyArray<{ id: number; data: string }>;
   /** OpenAI tools path — ignored by grammar-only providers. */
   tools?: ReadonlyArray<Record<string, unknown>>;
+  /**
+   * Qualified tool name -> the wire name `tools` offers it under, only
+   * where that is not the plain escape (ATO-1365). The history's
+   * `tool_calls` are named through it. Never serialized.
+   */
+  toolWireNames?: ReadonlyMap<string, string>;
   toolChoice?: unknown;
   parallelToolCalls?: boolean;
   /**

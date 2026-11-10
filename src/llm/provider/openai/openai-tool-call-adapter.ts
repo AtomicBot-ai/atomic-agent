@@ -113,6 +113,13 @@ interface BuiltFunctions {
    * also somebody's wire name. See `assignWireNames`.
    */
   wireToCanonical: ReadonlyMap<string, string>;
+  /**
+   * Qualified name -> wire name, only for the names that did NOT get
+   * their plain `nameEscape` (a collision suffix). Empty in the common
+   * case; the history's `tool_calls` read it so a past call is written
+   * under the name the request offers for that tool.
+   */
+  suffixedWireNames: ReadonlyMap<string, string>;
 }
 
 /**
@@ -187,6 +194,10 @@ function buildFunctions(
   for (const name of wireOf.keys()) {
     if (!wireToCanonical.has(name)) wireToCanonical.set(name, name);
   }
+  const suffixedWireNames = new Map<string, string>();
+  for (const [name, wire] of wireOf) {
+    if (wire !== nameEscape(name)) suffixedWireNames.set(name, wire);
+  }
   for (const d of all) {
     const escaped = wireOf.get(d.name)!;
     if (seen.has(escaped)) continue;
@@ -203,7 +214,7 @@ function buildFunctions(
       },
     });
   }
-  return { tools: out, widenedArgs, wireToCanonical };
+  return { tools: out, widenedArgs, wireToCanonical, suffixedWireNames };
 }
 
 /**
@@ -301,6 +312,20 @@ export function openAiWireToCanonical(
   options?: ToolDefinitionOptions,
 ): ReadonlyMap<string, string> {
   return buildFunctionsMemo(descriptors, options).wireToCanonical;
+}
+
+/**
+ * For the same descriptors: each qualified name whose wire name is not
+ * its plain `nameEscape`, mapped to the wire name it was offered under.
+ * Empty unless two tools escaped alike. Rides on the request as
+ * `toolWireNames` so the history's `tool_calls` name a past call the way
+ * this request offers it, not as its sibling (ATO-1365).
+ */
+export function openAiSuffixedWireNames(
+  descriptors: readonly ToolDescriptor[],
+  options?: ToolDefinitionOptions,
+): ReadonlyMap<string, string> {
+  return buildFunctionsMemo(descriptors, options).suffixedWireNames;
 }
 
 /**
@@ -509,5 +534,6 @@ export const openAiToolCallAdapter: ToolCallAdapter = {
   descriptorsToTools: descriptorsToOpenAiTools,
   strictWidenedArgs: strictOpenAiWidenedArgs,
   wireToCanonical: openAiWireToCanonical,
+  suffixedWireNames: openAiSuffixedWireNames,
   toolCallsToBatch: openAiToolCallsToBatch,
 };

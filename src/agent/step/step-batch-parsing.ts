@@ -84,13 +84,15 @@ export function finishStepBatchRepair(
   retryParseDeps: ParseDeps,
 ): { ok: true; batch: ToolCallBatch } {
   const { ctx, deps, prepared, policy, assumesOpenReasoning } = args;
-  const { stepToolDescriptors, thinkingOff } = prepared;
+  // The descriptors the request was BUILT from, as in the first parse:
+  // the strict-widened and wire-name maps must match the wire.
+  const { stepDescriptors, thinkingOff } = prepared;
 
   let parsed = tryParseToolCalls(
     completion,
     deps.profile,
     retryParseDeps,
-    stepToolDescriptors,
+    stepDescriptors,
     thinkingOff,
   );
   parsed = admitRepairedJson(args, completion, parsed);

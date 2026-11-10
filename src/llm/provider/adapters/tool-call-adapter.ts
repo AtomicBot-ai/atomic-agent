@@ -79,6 +79,16 @@ export interface ToolCallAdapter {
     descriptors: readonly ToolDescriptor[],
     options?: ToolDefinitionOptions,
   ): ReadonlyMap<string, string>;
+  /**
+   * For the same descriptors: the qualified names `descriptorsToTools`
+   * could not give their plain `nameEscape`, mapped to the wire name it
+   * used instead. Carried on the request as `toolWireNames` for the
+   * history's `tool_calls`. Omitted by an adapter that never renames.
+   */
+  suffixedWireNames?(
+    descriptors: readonly ToolDescriptor[],
+    options?: ToolDefinitionOptions,
+  ): ReadonlyMap<string, string>;
   /** Convert provider tool_calls into the runtime `ToolCallBatch`. */
   toolCallsToBatch(
     toolCalls: ReadonlyArray<OpenAiToolCall>,
