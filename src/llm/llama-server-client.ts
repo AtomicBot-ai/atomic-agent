@@ -1334,11 +1334,20 @@ export class LlamaServerClient {
         controller.abort();
         yield { delta: "", reasoningDelta: "", done: true };
         outcome = "done";
-        this.commitSample(staged, call, true, ttftOf(firstDeltaAt, call));
+        // `controller` was aborted on purpose just above; only the
+        // caller's own abort means this call did not complete.
+        if (!request.signal?.aborted) {
+          this.commitSample(staged, call, true, ttftOf(firstDeltaAt, call));
+        }
         return looped;
       }
       outcome = "done";
-      this.commitSample(staged, call, true, ttftOf(firstDeltaAt, call));
+      // A caller that aborted after the done chunk, or a deadline that
+      // fired, ends a call that did not complete: a body already closed
+      // will not throw on the next read, so ask the signals.
+      if (!controller.signal.aborted && !request.signal?.aborted) {
+        this.commitSample(staged, call, true, ttftOf(firstDeltaAt, call));
+      }
       return finalResult;
     } catch (err) {
       outcome = "error";

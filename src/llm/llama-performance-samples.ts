@@ -75,8 +75,10 @@ export function generationRate(
   if (stated !== null && stated > 0) return stated;
   const n = read(timings.predicted_n);
   const ms = read(timings.predicted_ms);
-  if (n !== null && ms !== null && n > 0 && ms > 0) return (n / ms) * 1000;
-  return null;
+  if (n === null || ms === null || n <= 0 || ms <= 0) return null;
+  // A tiny `ms` can overflow the division; the mean never took Infinity.
+  const rate = (n / ms) * 1000;
+  return Number.isFinite(rate) && rate > 0 ? rate : null;
 }
 
 /** The last segment of a path, so a local file path never leaves the process. */
