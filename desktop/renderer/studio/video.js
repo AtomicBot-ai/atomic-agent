@@ -150,6 +150,7 @@
       if (!form.firstFrame) return 'Add a first frame.';
       return '';
     }
+    if (notDownloaded(model)) return 'Download this model first.';
     if (!String(form.prompt || '').trim()) return 'Write a prompt first.';
     return '';
   }
@@ -314,6 +315,11 @@
     return { cloud, local, all: cloud.concat(local) };
   }
 
+  /** True when a local model is known not to be on disk yet (ATO-1395). */
+  const notDownloaded = (m) => !!(m && isLocal(m) && m.local && m.local.installed === false);
+  /* The download helpers are the Images page's (images-logic.js, loaded before this file). */
+  const dlHelp = (name, ...args) => (typeof g[name] === 'function' ? g[name](...args) : null);
+
   /** 'local' | 'cloud': where a model runs; null for no model. */
   const placeOf = (m) => (m ? (isLocal(m) ? 'local' : 'cloud') : null);
 
@@ -418,6 +424,7 @@
       delArmed: null,
       pickerOpen: false, pickerQuery: '', libraryOpen: false, library: [], libThumbs: {},
       outDir: null, busy: false, notice: null,
+      dl: {},   // ATO-1395: local downloads this window knows of, artifact id → LocalDownload (CONTRACT.md)
       focusPath: null,   // "Open in Studio" waiting for the gallery's first page
       recent: typeof g.studioRecentLoad === 'function' ? g.studioRecentLoad(KIND) : [], recentOpen: false,   // ATO-809: prompts sent before (recent-prompts.js)
       improve: typeof g.studioImproveBlank === 'function' ? g.studioImproveBlank() : null,   // ATO-809: Improve prompt (improve-prompt.js)
@@ -510,8 +517,46 @@
         const res = await Promise.resolve(br.catalog(KIND)).catch(() => null);
         if (seq !== refreshSeq || !res || !res.ok || !res.data) return;
         S.catalog = res.data;
+        /* ATO-1308: nothing was there and a download just landed: take it (never the other place). */
+        if (!model() && S.place && !running() && !S.busy) { applyPlace(S.place); saveForm(); refreshQuote(); }
         paint('form'); paint('foot'); if (S.pickerOpen) paint('picker-list');
       }, 300);
+    }
+
+    /* ---------------- local downloads (ATO-1395, ATO-1308) ---------------- */
+
+    /** Download a local model's quant (CONTRACT.md localDownload). */
+    function download(m) {
+      const br = BR();
+      const q = dlHelp('simgQuantToGet', m);
+      if (!m || !q) return;
+      if (!br || !br.localDownload) { S.notice = 'Studio needs a newer app build to download models.'; paint('foot'); return; }
+      if (!model() && !running()) { S.form = fitFormToModel(Object.assign({}, S.form, { modelByPlace: Object.assign({}, S.form.modelByPlace, { local: m.id }) }), m); saveForm(); }
+      S.dl[q.id] = { id: q.id, state: 'downloading', transferred: 0, total: Number(q.downloadBytes) || 0, percent: 0, file: null, error: null };
+      paint('form'); paint('foot');
+      const failed = (e) => { S.dl[q.id] = Object.assign({}, S.dl[q.id], { state: 'failed', error: e || { code: 'DOWNLOAD_FAILED', message: 'The download did not start.' } }); paint('form'); paint('foot'); };
+      Promise.resolve(br.localDownload(q.id)).then((r) => {
+        if (!r || !r.ok) return failed(r && r.error);
+        if (r.data && r.data.state === 'done') { delete S.dl[q.id]; refreshCatalog(); }
+        else if (r.data && S.dl[q.id] && S.dl[q.id].state === 'downloading' && !(S.dl[q.id].percent > 0)) S.dl[q.id] = r.data;
+        paint('form'); paint('foot');
+      }, () => failed(null));
+    }
+
+    function stopDownload(id) {
+      const br = BR();
+      if (!br || !br.localCancel || !id) return;
+      Promise.resolve(br.localCancel(id)).then((r) => { if (r && r.ok && r.data && r.data.cancelled) { delete S.dl[id]; paint('form'); paint('foot'); } }, () => undefined);
+    }
+
+    /** Downloads still running after a window reload. */
+    async function loadDownloads() {
+      const br = BR();
+      if (!br || !br.localState) return;
+      const r = await Promise.resolve(br.localState()).catch(() => null);
+      const list = r && r.ok && r.data && Array.isArray(r.data.downloads) ? r.data.downloads : [];
+      for (const d of list) if (d && d.id && (d.state === 'downloading' || d.state === 'verifying')) S.dl[d.id] = d;
+      if (list.length) { paint('form'); paint('foot'); }
     }
 
     /* The gallery is read by page; "Load more" (more = true) asks for the next one.
@@ -1017,6 +1062,9 @@
         case 'del': del(v); break;
         case 'out-dir': chooseDir(); break;
         case 'retry-catalog': loadCatalog(); break;
+        case 'download': download(modelGroups(S.catalog).local.find((x) => x.id === v)); break;
+        case 'download-err': S.jobError = null; paint('stage'); download(model()); break;
+        case 'dlstop': stopDownload(v); break;
         case 'settings': if (g.STUDIO && typeof g.STUDIO.openSettings === 'function') g.STUDIO.openSettings('openrouter'); else try { g.dispatchEvent(new g.CustomEvent('studio:open-settings', { detail: { pane: 'openrouter' } })); } catch (_) { /* no window */ } break;
         default: return;
       }
@@ -1166,7 +1214,37 @@
       return h;
     }
 
+    /** ATO-1395/ATO-1308: Download for a local model not on disk: the button with its size, a bar while it runs, or why it failed. */
+    function viewDownload(m) {
+      const q = dlHelp('simgQuantToGet', m);
+      if (!q) return '';
+      const dl = dlHelp('simgDownloadOf', m, S.dl);
+      const line = dlHelp('simgDownloadLine', dl) || '';
+      let h = '';
+      if (dl && (dl.state === 'downloading' || dl.state === 'verifying')) {
+        const pct = Math.max(0, Math.min(100, Math.round(Number(dl.percent) || 0)));
+        h = '<div class="studio-dl-row"><span>' + escHtml(line) + '</span><span class="studio-sp"></span>'
+          + (dl.state === 'downloading' ? '<button class="studio-link" data-vact="dlstop" data-v="' + escHtml(dl.id) + '">Stop</button>' : '') + '</div>'
+          + '<div class="studio-bar"><i style="width:' + pct + '%"></i></div>';
+      } else {
+        if (dl && dl.state === 'failed') h += '<div class="studio-est warn">' + icon('warn') + '<span>' + escHtml(line) + '</span></div>';
+        else if (m.local && m.local.gated) h += '<div class="studio-est">' + icon('key') + '<span>Needs a Hugging Face token (HF_TOKEN) and the licence accepted on Hugging Face.</span></div>';
+        h += '<button class="studio-btn studio-dl-go" data-vact="download" data-v="' + escHtml(m.id) + '">' + icon('download')
+          + escHtml(dl && dl.state === 'failed' ? 'Try again' : (dlHelp('simgDownloadLabel', q) || 'Download')) + '</button>';
+      }
+      return '<div class="studio-dl">' + h + '</div>';
+    }
+
     function viewModelButton(m) {
+      /* ATO-1308: the chat runs locally and no video model is on this computer: say so and offer one. */
+      if (!m && S.place === 'local' && S.catalog) {
+        const off = !!dlHelp('simgLocalUnsupported', S.catalog);
+        const offer = off ? null : dlHelp('simgSuggestDownload', { cloud: { models: [] }, local: S.catalog.local });
+        const meta = off ? 'This computer cannot make clips locally. Switch the chat to the cloud to use Studio.'
+          : offer ? offer.name + ' runs here, free and private.' : 'Pick one to start';
+        return '<button class="studio-model" data-vact="picker"><span class="studio-sp"><span class="studio-mname">' + escHtml('No video model on ' + machine() + ' yet') + '</span>'
+          + '<span class="studio-mmeta">' + escHtml(meta) + '</span></span>' + icon('chevD') + '</button>' + (offer ? viewDownload(offer) : '');
+      }
       if (!m) return '<button class="studio-model" data-vact="picker">Pick a model</button>';
       const local = isLocal(m);
       const meta = local ? 'On ' + machine() + (m.local && m.local.developer ? ' · ' + m.local.developer : '') : 'via OpenRouter';
@@ -1242,6 +1320,7 @@
         if (v.warn) h += '<div class="studio-est warn">' + icon('warn') + '<span>' + escHtml(v.warn) + (S.armed ? '. Click again to start anyway.' : '. Close other apps or pick a smaller model.') + '</span></div>';
         const hint = localHint(m);
         if (hint) h += '<div class="studio-est">' + icon('info') + '<span>' + escHtml(hint) + '</span></div>';
+        if (notDownloaded(m)) h += viewDownload(m);
       } else if (S.catalog && S.catalog.cloud && S.catalog.cloud.keyMissing) {
         h += '<div class="studio-est warn">' + icon('key') + '<span>Cloud clips need an OpenRouter key.</span><button class="studio-link" data-vact="settings">Add a key</button></div>';
       }
@@ -1282,8 +1361,13 @@
     function viewError() {
       const e = S.jobError;
       const key = e.code === 'NO_KEY' ? '<button class="studio-btn" data-vact="settings">' + icon('key') + 'Add a key</button>' : '';
-      return '<div class="studio-viewer studio-empty"><div class="studio-video-err">' + icon('warn') + '<span>' + escHtml(errorText(e)) + '</span></div>'
-        + '<div class="studio-below">' + key + '<button class="studio-btn" data-vact="dismiss">OK</button></div></div>';
+      /* ATO-1395: the model is not on disk: download it from here. */
+      const m = model();
+      const get = e.code === 'MODEL_NOT_DOWNLOADED' && isLocal(m) && dlHelp('simgQuantToGet', m)
+        ? '<button class="studio-btn" data-vact="download-err">' + icon('download') + 'Download</button>' : '';
+      const off = e.code === 'ENGINE_UNSUPPORTED' ? ' Switch the chat to the cloud to make clips there.' : '';
+      return '<div class="studio-viewer studio-empty"><div class="studio-video-err">' + icon('warn') + '<span>' + escHtml(errorText(e) + off) + '</span></div>'
+        + '<div class="studio-below">' + get + key + '<button class="studio-btn" data-vact="dismiss">OK</button></div></div>';
     }
 
     function viewResult() {
@@ -1413,7 +1497,7 @@
         S.shown = true;
         paint();
         if (!S.catalog) loadCatalog();
-        loadGallery(); loadOutDir(); recoverJob();
+        loadGallery(); loadOutDir(); recoverJob(); loadDownloads();
         checkImprove();
       },
       onEvent(ev) {
@@ -1432,6 +1516,11 @@
       /* ATO-1394: a model loaded, downloaded or removed (shell.js forwards BR.studio.onLocal). */
       onLocal(ev) {
         if (!ev) return;
+        if (ev.type === 'download' && ev.download && ev.download.id) {
+          const d = ev.download;
+          if (d.state === 'done' || d.state === 'cancelled') delete S.dl[d.id]; else S.dl[d.id] = d;
+          paint('form'); paint('foot');
+        }
         if (ev.type === 'load' && ev.state !== 'loading') refreshCatalog();
         else if (ev.type === 'download' && ev.download && ev.download.state === 'done') refreshCatalog();
         else if (ev.type === 'removed') refreshCatalog();

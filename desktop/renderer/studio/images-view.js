@@ -94,8 +94,40 @@ function simgvCountRow(IM, model) {
   return cells.length ? '<div class="st-row2">' + cells.join('') + '</div>' : '';
 }
 
+/** ATO-1395/ATO-1308: Download for a local model that is not on disk: the button with its size,
+    then a bar while it runs (Stop keeps what came, the next Download resumes), or why it failed.
+    Wrapped in `data-dl` so a progress event repaints only this. */
+function simgvDownload(IM, m) {
+  const q = simgQuantToGet(m);
+  if (!q) return '';
+  const dl = simgDownloadOf(m, IM.dl);
+  let h = '';
+  if (dl && (dl.state === 'downloading' || dl.state === 'verifying')) {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(dl.percent) || 0)));
+    h = '<div class="st-dl-row"><span>' + esc(simgDownloadLine(dl)) + '</span><span class="st-sp"></span>'
+      + (dl.state === 'downloading' ? '<button class="st-link" ' + SIMGV_A('dlstop:' + dl.id) + '>Stop</button>' : '') + '</div>'
+      + '<div class="st-bar"><i style="width:' + pct + '%"></i></div>';
+  } else {
+    if (dl && dl.state === 'failed') h += '<div class="st-est warn" role="status">' + ic('alert') + '<span>' + esc(simgDownloadLine(dl)) + '</span></div>';
+    else if (m.local && m.local.gated) h += '<div class="st-est">' + ic('key') + '<span>Needs a Hugging Face token (HF_TOKEN) and the licence accepted on Hugging Face.</span></div>';
+    h += '<button class="btn st-dl-go" ' + SIMGV_A('download:' + m.id) + '>' + ic('download')
+      + esc(dl && dl.state === 'failed' ? 'Try again' : simgDownloadLabel(q)) + '</button>';
+  }
+  return '<div class="st-dl" data-dl="' + esc(m.id) + '">' + h + '</div>';
+}
+
 function simgvModelField(IM, model) {
   if (IM.catLoading && !model) return '<div><div class="st-lbl">Model</div><div class="st-model">Loading models…</div></div>';
+  /* ATO-1308: the chat runs locally and no image model is on this computer: say so and offer one. */
+  if (!model && IM.place === 'local' && IM.catalog) {
+    const off = simgLocalUnsupported(IM.catalog);
+    const offer = off ? null : simgSuggestDownload(IM.catalog);
+    const meta = off ? 'This computer cannot make pictures locally. Switch the chat to the cloud to use Studio.'
+      : offer ? offer.name + ' runs here, free and private.' : 'Pick one to start';
+    return '<div><div class="st-lbl">Model</div><button class="st-model" ' + SIMGV_A('pop:model') + '>'
+      + '<span class="st-sp"><span class="st-mname">' + esc('No image model on ' + simgMachine() + ' yet') + '</span><span class="st-mmeta">' + esc(meta) + '</span></span>' + ic('chevD') + '</button>'
+      + (offer ? simgvDownload(IM, offer) : '') + '</div>';
+  }
   if (!model) {
     return '<div><div class="st-lbl">Model</div><button class="st-model" ' + SIMGV_A('pop:model') + '>'
       + '<span class="st-sp"><span class="st-mname">No model yet</span><span class="st-mmeta">' + esc((IM.catErr && IM.catErr.message) || 'Pick one to start') + '</span></span>' + ic('chevD') + '</button></div>';
@@ -198,13 +230,14 @@ function simgvFoot(IM) {
     lines.push('<div class="st-est warn">' + ic('key') + '<span>Cloud models need an OpenRouter key. <button class="st-link" ' + SIMGV_A('settings') + '>Add a key</button></span></div>');
   } else if (model && model.group === 'local') {
     lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on ' + esc(simgMachine()) + simgvLocalHint(model) + '</span></div>');
+    if (simgNotDownloaded(model)) lines.push(simgvDownload(IM, model));
   } else if (model && model.group === 'cloud') {
     lines.push('<div class="st-est">' + ic('cloud') + '<span>Charged to your OpenRouter key</span></div>');
   }
   if (IM.formMsg) lines.push('<div class="st-est warn" role="status">' + ic('info') + '<span>' + esc(IM.formMsg) + '</span></div>');
   const btn = live
     ? '<button class="st-go stop" ' + SIMGV_A('stop') + '>' + ic('x') + 'Stop</button>'
-    : '<button class="st-go" ' + SIMGV_A('generate') + (IM.starting || !model ? ' disabled' : '') + '>' + ic('wand')
+    : '<button class="st-go" ' + SIMGV_A('generate') + (IM.starting || !model || simgNotDownloaded(model) ? ' disabled' : '') + '>' + ic('wand')
       + esc(IM.starting ? 'Starting…' : simgGenerateLabel(IM.price)) + '<kbd>⌘ ↵</kbd></button>';
   return lines.join('') + btn;
 }
@@ -312,9 +345,14 @@ function simgvError(IM) {
   if (simgRateLimited(e) && (IM.lastReq || {}).provider !== 'local') return simgvRateLimited(IM);
   const key = e.code === 'NO_KEY';
   const core = /^CORE_/.test(e.code || '');
+  /* ATO-1395: the model (or the extra file this mode needs) is not on disk: download it from here. */
+  const missing = e.code === 'MODEL_NOT_DOWNLOADED' && IM.model && IM.model.group === 'local' && simgQuantToGet(IM.model);
+  const off = e.code === 'ENGINE_UNSUPPORTED';
   return '<div class="st-prog st-err" role="alert"><div class="st-prog-h"><div class="st-erri">' + ic('alert') + '</div>'
-    + '<div><div class="t">' + esc(key ? 'Add an OpenRouter key' : 'That did not work') + '</div><div class="s">' + esc(e.message || 'Something went wrong.') + '</div></div></div>'
+    + '<div><div class="t">' + esc(key ? 'Add an OpenRouter key' : missing ? 'Download the model first' : 'That did not work') + '</div><div class="s">'
+      + esc((e.message || 'Something went wrong.') + (off ? ' Switch the chat to the cloud to make pictures there.' : '')) + '</div></div></div>'
     + '<div class="st-prog-f"><span class="st-sp"></span>'
+    + (missing ? '<button class="btn" ' + SIMGV_A('download-err') + '>' + ic('download') + 'Download</button>' : '')
     + (key ? '<button class="btn" ' + SIMGV_A('settings') + '>' + ic('key') + 'Open Settings</button>' : '')
     + (core ? '<button class="btn" ' + SIMGV_A('retry') + '>' + ic('retry') + 'Try again</button>' : '')
     + '<button class="btn" ' + SIMGV_A('dismiss') + '>Close</button></div></div>';
@@ -438,4 +476,4 @@ function simgvPage(IM) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine, simgvLocalHint, simgvPop};
+if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine, simgvLocalHint, simgvPop, simgvDownload, simgvModelField, simgvFoot};
