@@ -160,6 +160,7 @@ export function buildOpenAiChatBody(
         options.providerKind,
         filtered.reasoningEffort,
         defaultChatModel,
+        { disableThinking: filtered.disableThinking === true },
       ),
     );
   }

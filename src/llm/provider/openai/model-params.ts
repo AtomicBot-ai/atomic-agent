@@ -133,6 +133,14 @@ export function forgetLearnedModelParams(): void {
  */
 const GEMINI_THINKING_MODEL_RE = /^gemini-(?:2\.5|[3-9])(?![0-9])/i;
 const GEMINI_NON_CHAT_VARIANT_RE = /(?:image|tts|audio|live|embedding)/i;
+/**
+ * 2.5 Flash and Flash-Lite can switch thinking off with
+ * `reasoning_effort: "none"`. Flash-Lite does not think by default, so a
+ * `low` sent there turns thinking on; Pro and 3.x cannot switch it off.
+ */
+const GEMINI_FLASH_25_RE = /^gemini-2\.5-flash/i;
+/** `gpt-5-chat-latest` and the like: OpenAI ids that are not reasoners. */
+const OPENAI_NON_REASONING_VARIANT_RE = /-chat(?![a-z])/i;
 
 function bareModelId(modelId: string): string {
   return modelId.includes("/")
@@ -158,6 +166,7 @@ export function reasoningEffortField(
   providerKind: string | undefined,
   effort: "low" | "medium" | "high",
   modelId?: string,
+  options: { disableThinking?: boolean } = {},
 ): Record<string, unknown> {
   switch (providerKind) {
     case "openrouter":
@@ -167,12 +176,18 @@ export function reasoningEffortField(
       return { reasoning_effort: effort };
     case "gemini": {
       const bare = modelId ? bareModelId(modelId) : "";
-      return GEMINI_THINKING_MODEL_RE.test(bare) && !GEMINI_NON_CHAT_VARIANT_RE.test(bare)
-        ? { reasoning_effort: effort }
-        : {};
+      if (!GEMINI_THINKING_MODEL_RE.test(bare) || GEMINI_NON_CHAT_VARIANT_RE.test(bare)) return {};
+      // A call that wants no thinking (the compaction summary) must not
+      // turn it on: Flash takes "none", and elsewhere `low` is the floor.
+      if (options.disableThinking === true && GEMINI_FLASH_25_RE.test(bare)) {
+        return { reasoning_effort: "none" };
+      }
+      return { reasoning_effort: effort };
     }
     case "aimlapi":
-      return modelId && OPENAI_REASONING_MODEL_RE.test(bareModelId(modelId))
+      return modelId &&
+        OPENAI_REASONING_MODEL_RE.test(bareModelId(modelId)) &&
+        !OPENAI_NON_REASONING_VARIANT_RE.test(bareModelId(modelId))
         ? { reasoning_effort: effort }
         : {};
     default:
