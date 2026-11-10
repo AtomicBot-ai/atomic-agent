@@ -490,6 +490,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           orchestrator.steerMessage(message);
         },
         onMessageSubmitted: (text) => orchestrator.sendMessage(text),
+        onLastTurnRollbackRequested: (expectText) => orchestrator.rollbackLastTurn(expectText),
         onQueueClearRequested: () => orchestrator.clearQueue(),
         onMessageSteered: (text) => orchestrator.steerMessage(text),
         onWhileBusyModePersistRequested: (mode) =>

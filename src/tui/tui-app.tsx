@@ -2,6 +2,7 @@ import { ContextChip } from "./context/context-chip.js";
 import { UsageReadout, usageReadoutLabel } from "./context/usage-readout.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
+import type { LastTurnRollbackRefusal } from "../session/session-truncate.js";
 import {
   codingModeLook,
   resolveCodingMode,
@@ -211,6 +212,11 @@ function Rule({ width }: { width: number }): ReactElement {
   );
 }
 
+/** What {@link TuiAppCallbacks.onLastTurnRollbackRequested} answers. */
+export type LastTurnRollbackOutcome =
+  | { ok: true; text: string }
+  | { ok: false; code: LastTurnRollbackRefusal };
+
 export interface TuiAppCallbacks {
   onApprovalDecision(
     approvalId: string,
@@ -251,6 +257,15 @@ export interface TuiAppCallbacks {
   onAbort(): void;
   onQuit(): void;
   onMessageSubmitted(message: string): void;
+  /**
+   * `[try again]` on the chat's last question (ATO-1302): take that
+   * question and its answer back out of the session so the resend is a
+   * fresh try, not a second turn after the first answer. Refuses (and
+   * changes nothing) when the turn ran tools, was steered or compacted,
+   * or anything is running or queued; the button then resends as a new
+   * turn. On success `text` is the question to send again.
+   */
+  onLastTurnRollbackRequested?(expectText?: string): LastTurnRollbackOutcome;
   /** Drop every message parked behind the running turn (`/queue clear`). */
   onQueueClearRequested?(): void;
   /**

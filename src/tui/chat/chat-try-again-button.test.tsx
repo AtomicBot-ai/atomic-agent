@@ -7,13 +7,14 @@ import type { TuiMouseEvent } from "../mouse/mouse-event.js";
 import { MouseProvider } from "../mouse/mouse-context.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import type { TuiAction } from "../tui-action.js";
-import type { TuiAppCallbacks } from "../tui-app.js";
+import type { LastTurnRollbackOutcome, TuiAppCallbacks } from "../tui-app.js";
 import {
   createInitialTuiState,
+  type ChatMessage,
   type TuiSessionInfo,
   type TuiState,
 } from "../tui-state.js";
-import { ChatTryAgainButton } from "./chat-try-again-button.js";
+import { ChatTryAgainButton, isLastQuestion } from "./chat-try-again-button.js";
 
 const SESSION: TuiSessionInfo = fakeSession({
   sessionId: "again",
@@ -83,6 +84,8 @@ interface Harness {
   actions: TuiAction[];
   submitted: string[];
   steered: string[];
+  /** How many times the button asked the orchestrator for a rollback. */
+  rollbacks: () => number;
   unmount: () => void;
 }
 
@@ -91,7 +94,12 @@ function mount(
   {
     withMouse = true,
     initial,
-  }: { withMouse?: boolean; initial?: TuiState } = {},
+    rollback,
+  }: {
+    withMouse?: boolean;
+    initial?: TuiState;
+    rollback?: () => LastTurnRollbackOutcome;
+  } = {},
 ): Harness {
   const registry = new MouseTargetRegistry();
   // A real reducer behind the provider: the point of these tests is what
@@ -105,7 +113,16 @@ function mount(
   };
   const submitted: string[] = [];
   const steered: string[] = [];
+  let rollbackCalls = 0;
   const callbacks: TuiAppCallbacks = {
+    ...(rollback
+      ? {
+          onLastTurnRollbackRequested: () => {
+            rollbackCalls += 1;
+            return rollback();
+          },
+        }
+      : {}),
     onApprovalDecision: () => {},
     onAbort: () => {},
     onQuit: () => {},
@@ -146,6 +163,7 @@ function mount(
     actions,
     submitted,
     steered,
+    rollbacks: () => rollbackCalls,
     unmount,
   };
 }
@@ -245,5 +263,112 @@ describe("ChatTryAgainButton", () => {
     expect(app.submitted).toEqual(["expensive turn"]);
     expect(app.steered).toEqual(["expensive turn"]);
     app.unmount();
+  });
+
+  describe("a real retry of the last question (ATO-1302)", () => {
+    const pair: ChatMessage[] = [
+      { id: "u1", role: "user", text: "first question" },
+      { id: "a1", role: "assistant", text: "first answer" },
+      { id: "u2", role: "user", text: "second question" },
+      { id: "a2", role: "assistant", text: "second answer" },
+      { id: "n2", role: "system", text: "a notice about that turn" },
+    ];
+    const withMessages = (extra: Partial<TuiState> = {}): TuiState => ({
+      ...createInitialTuiState(SESSION),
+      messages: pair,
+      ...extra,
+    });
+
+    it("takes the last turn back, drops it from the screen, and asks again", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="second question" messageId="u2" />,
+        {
+          initial: withMessages(),
+          rollback: () => ({ ok: true, text: "second question" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(1);
+      expect(app.submitted).toEqual(["second question"]);
+      const types = app.actions.map((a) => a.type);
+      // The cut lands before the resend, so the new turn's prompt (echoed
+      // by the runtime once it starts) is the only copy on screen.
+      expect(types.indexOf("chat_messages_truncated")).toBeLessThan(
+        types.indexOf("message_submitted"),
+      );
+      expect(app.state().messages.map((m) => m.text)).toEqual([
+        "first question",
+        "first answer",
+      ]);
+      app.unmount();
+    });
+
+    it("resends as a new turn when the orchestrator refuses (tools ran)", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="second question" messageId="u2" />,
+        {
+          initial: withMessages(),
+          rollback: () => ({ ok: false, code: "turn_has_tools" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(1);
+      expect(app.submitted).toEqual(["second question"]);
+      expect(app.actions.map((a) => a.type)).not.toContain(
+        "chat_messages_truncated",
+      );
+      expect(app.state().messages.map((m) => m.text)).toContain("second answer");
+      app.unmount();
+    });
+
+    it("does not ask for a rollback on an earlier question", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="first question" messageId="u1" />,
+        {
+          initial: withMessages(),
+          rollback: () => ({ ok: true, text: "second question" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(0);
+      expect(app.submitted).toEqual(["first question"]);
+      app.unmount();
+    });
+
+    it("does not ask for a rollback while a turn is running", async () => {
+      const app = mount(
+        <ChatTryAgainButton text="second question" messageId="u2" />,
+        {
+          initial: withMessages({ status: "running", whileBusyMode: "queue" }),
+          rollback: () => ({ ok: true, text: "second question" }),
+        },
+      );
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(0);
+      app.unmount();
+    });
+
+    it("a notice's button (no message id) always resends", async () => {
+      const app = mount(<ChatTryAgainButton text="second question" />, {
+        initial: withMessages(),
+        rollback: () => ({ ok: true, text: "second question" }),
+      });
+      await app.clickUntil("[try again]", () => app.submitted.length > 0);
+      expect(app.rollbacks()).toBe(0);
+      app.unmount();
+    });
+  });
+});
+
+describe("isLastQuestion", () => {
+  it("skips steers and answers to find the turn-opening prompt", () => {
+    const messages: ChatMessage[] = [
+      { id: "u1", role: "user", text: "ask" },
+      { id: "s1", role: "user", text: "also this", steered: true },
+      { id: "a1", role: "assistant", text: "reply" },
+    ];
+    expect(isLastQuestion(messages, "u1")).toBe(true);
+    expect(isLastQuestion(messages, "s1")).toBe(false);
+    expect(isLastQuestion([], "u1")).toBe(false);
   });
 });

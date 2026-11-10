@@ -489,3 +489,31 @@ describe("reduceUiAction finished-turn folds (ATO-963)", () => {
     expect(cleared?.turnsExpandedById).toEqual({});
   });
 });
+
+describe("reduceUiAction chat_messages_truncated (ATO-1302)", () => {
+  const withPairs = () => ({
+    ...createInitialTuiState(SESSION),
+    messages: [
+      { id: "u1", role: "user" as const, text: "q1" },
+      { id: "a1", role: "assistant" as const, text: "r1" },
+      { id: "u2", role: "user" as const, text: "q2" },
+      { id: "a2", role: "assistant" as const, text: "r2" },
+    ],
+  });
+
+  it("drops the message and everything after it", () => {
+    const next = reduceUiAction(withPairs(), {
+      type: "chat_messages_truncated",
+      fromMessageId: "u2",
+    });
+    expect(next?.messages.map((m) => m.id)).toEqual(["u1", "a1"]);
+    expect(next?.contextUsage).toEqual(EMPTY_CONTEXT_USAGE);
+  });
+
+  it("is a no-op for an id that is not on screen", () => {
+    const state = withPairs();
+    expect(
+      reduceUiAction(state, { type: "chat_messages_truncated", fromMessageId: "gone" }),
+    ).toBe(state);
+  });
+});
