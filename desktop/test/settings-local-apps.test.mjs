@@ -30,6 +30,8 @@ test("the custom server field knows LM Studio, Ollama and Atomic Chat by their p
   assert.equal(presetOf("http://127.0.0.1:11434"), "ollama");
   assert.equal(presetOf("http://127.0.0.1:1337"), "atomic-chat");
   assert.equal(presetOf("http://127.0.0.1:8080"), null);
+  // Port 1234 on another machine is not LM Studio on this one.
+  assert.equal(presetOf("http://192.168.1.20:1234"), null);
 });
 
 test("the prompt for an OpenAI-compatible server never says cloud", () => {

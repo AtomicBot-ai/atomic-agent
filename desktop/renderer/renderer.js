@@ -26970,9 +26970,11 @@ function llmSteerPresetId(url) {
   if (llmLooksLikeOllama(url)) return 'ollama';
   try {
     const u = new URL(url);
-    if (u.port === '1337' && ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase())) return 'atomic-chat';
-    // ATO-1401: LM Studio's server port (its default, 1234). The probe already said it answers the OpenAI way.
-    if (u.port === '1234') return 'lmstudio';
+    const here = ['localhost','127.0.0.1','::1','[::1]','0.0.0.0'].includes(u.hostname.toLowerCase());
+    if (u.port === '1337' && here) return 'atomic-chat';
+    /* ATO-1401: LM Studio's server port (its default, 1234), on this machine only:
+       1234 elsewhere is just a port, and its preset is keyless and "local". */
+    if (u.port === '1234' && here) return 'lmstudio';
   } catch (err) { /* not a URL */ }
   return null;
 }
