@@ -459,12 +459,12 @@
     const chatPlace = () => (g.STUDIO && typeof g.STUDIO.chatPlace === 'function' ? g.STUDIO.chatPlace() : null);
 
     /** The form on `place`'s model: the one last chosen there (`modelByPlace`), else the
-        form's when it is from there, else the place's default. The current model is kept
-        as its own place's choice first, so going back finds it. */
+        form's when it is from there, else the place's default. The current model is recorded
+        as its own place's choice first (it is the latest one picked there), so going back finds it. */
     function applyPlace(place) {
       const cur = model();
       const by = Object.assign({}, S.form.modelByPlace);
-      if (cur && !by[placeOf(cur)]) by[placeOf(cur)] = cur.id;
+      if (cur) by[placeOf(cur)] = cur.id;
       const next = pickModel(S.catalog, place ? [by[place], S.form.modelId] : S.form.modelId, place);
       S.form = fitFormToModel(Object.assign({}, S.form, { modelByPlace: by }), next);
     }
@@ -857,7 +857,8 @@
       const all = S.catalog ? modelGroups(S.catalog).all : [];
       const m = all.find((x) => x.id === patch.modelId) || model();
       const ff = S.form.firstFrame;
-      S.form = fitFormToModel(Object.assign({}, S.form, patch, { firstFrame: patch.mode === 'image' ? ff : S.form.firstFrame }), m);
+      const by = m ? Object.assign({}, S.form.modelByPlace, { [placeOf(m)]: m.id }) : S.form.modelByPlace;
+      S.form = fitFormToModel(Object.assign({}, S.form, patch, { firstFrame: patch.mode === 'image' ? ff : S.form.firstFrame, modelByPlace: by }), m);
       if (m && !all.find((x) => x.id === patch.modelId)) S.notice = 'That model is not listed any more, so the current one stays.';
       saveForm(); paint(); refreshQuote();
     }

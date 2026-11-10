@@ -427,3 +427,43 @@ test('the Video page switches its model when the chat moves, keeps the prompt, a
   await settle();
   assert.equal(S.form.modelId, veo.id, 'the running clip keeps its form');
 });
+
+test('the model kept for a place is the latest one used there, a restored one included (ATO-1306)', async () => {
+  let place = 'cloud';
+  const kling = { ...veo, id: 'kling/2', name: 'Kling', default: false };
+  const cat = { cloud: { models: [veo, kling], keyMissing: false }, local: { models: [wan] } };
+  const studio = {
+    catalog: async () => ({ ok: true, data: cat }),
+    job: async () => ({ ok: false }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => place } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const on = {};
+  const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true, querySelector: () => null };
+  const click = (vact) => on.click({ target: { closest: (q) => (q === '[data-vact]' ? { getAttribute: (k) => (k === 'data-vact' ? vact : null), disabled: false } : null) } });
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  const move = async (to) => { page.onHide(); place = to; page.onShow(); await settle(); };
+  page.render(root);
+  await settle();
+  const S = page._state;
+  assert.equal(S.form.modelId, veo.id);
+  // The cloud slot already says Veo; the form now runs Kling (picked by a path that did not record it).
+  S.form = Object.assign({}, S.form, { modelId: kling.id, modelByPlace: { cloud: veo.id } });
+  await move('local');
+  assert.equal(S.form.modelId, wan.id);
+  await move('cloud');
+  assert.equal(S.form.modelId, kling.id, 'back in the cloud: the model last used there, not the older slot');
+  // Restoring a clip made with Veo makes Veo the cloud choice.
+  S.result = { id: 'v1', path: '/x/v1.mp4', prompt: 'a fox', model: { id: veo.id }, recipe: { prompt: 'a fox' } };
+  click('restore');
+  assert.equal(S.form.modelId, veo.id);
+  assert.equal(S.form.modelByPlace.cloud, veo.id);
+  await move('local');
+  await move('cloud');
+  assert.equal(S.form.modelId, veo.id, 'the restored model is the one the cloud comes back to');
+});
