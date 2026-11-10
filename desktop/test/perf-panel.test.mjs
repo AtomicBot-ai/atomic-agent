@@ -315,10 +315,11 @@ test('leave then re-enter: the stale first answer is dropped and the fresh one u
   r.ctl.enter();
   r.ctl.leave();
   r.ctl.enter();
-  assert.equal(r.calls.length, 2, 're-entry asks again at once');
+  assert.equal(r.calls.length, 1, 're-entry waits for the request already out');
   r.calls[0].resolve({ok: true, data: body({url: 'stale'})});
   await r.settle();
   assert.equal(r.ctl.state.phase, 'loading');
+  assert.equal(r.calls.length, 2, 'then asks for the new generation at once');
   r.calls[1].resolve({ok: true, data: body({url: 'fresh'})});
   await r.settle();
   assert.equal(r.ctl.state.phase, 'ok');
@@ -329,10 +330,11 @@ test('an agent restart makes an answer already on its way stale', async () => {
   const r = rig();
   r.ctl.enter();
   r.ctl.agentRestarted();
-  assert.equal(r.calls.length, 2);
+  assert.equal(r.calls.length, 1, 'the restart waits for the request already out');
   r.calls[0].resolve({ok: true, data: body({url: 'old agent'})});
   await r.settle();
   assert.equal(r.ctl.state.phase, 'loading');
+  assert.equal(r.calls.length, 2);
   r.calls[1].resolve({ok: true, data: body({url: 'new agent'})});
   await r.settle();
   assert.equal(r.ctl.state.data.url, 'new agent');
@@ -387,4 +389,41 @@ test('a tick with the pane off screen leaves instead of asking', () => {
     assert.equal(r.clock.timers.size, 0);
     assert.equal(r.ctl.active, false);
   });
+});
+
+test('never two requests out: enter, leave, enter and a restart while one is pending', async () => {
+  const r = rig();
+  r.ctl.enter();
+  r.ctl.leave();
+  r.ctl.enter();
+  r.ctl.agentRestarted();
+  r.tick(); r.tick();
+  assert.equal(r.calls.length, 1);
+  r.calls[0].reject(new Error('old agent gone'));
+  await r.settle();
+  assert.equal(r.calls.length, 2, 'one fresh request once the old one settled');
+  assert.equal(r.ctl.state.phase, 'loading', 'the stale failure changed nothing');
+  r.tick();
+  assert.equal(r.calls.length, 2);
+  r.calls[1].resolve({ok: true, data: body()});
+  await r.settle();
+  assert.equal(r.ctl.state.phase, 'ok');
+});
+
+test('a stale answer after leaving for good asks nothing more', async () => {
+  const r = rig();
+  r.ctl.enter();
+  r.ctl.leave();
+  r.ctl.enter();
+  r.ctl.leave();
+  r.calls[0].resolve({ok: true, data: body()});
+  await r.settle();
+  assert.equal(r.calls.length, 1);
+});
+
+test('chart coordinates stay finite for any size', () => {
+  const svg = perfChartSVG([{generationPerSecond: 1}, {generationPerSecond: 2}], 'generationPerSecond', {width: Number.MAX_VALUE, height: Number.MAX_VALUE});
+  assert.doesNotMatch(svg, /Infinity|NaN/);
+  const tiny = perfChartSVG([{generationPerSecond: 1}], 'generationPerSecond', {width: 0, height: -5});
+  assert.doesNotMatch(tiny, /Infinity|NaN/);
 });

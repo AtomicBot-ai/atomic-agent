@@ -98,7 +98,10 @@ function perfClock(at) {
   return two(d.getHours()) + ':' + two(d.getMinutes()) + ':' + two(d.getSeconds());
 }
 
-function perfCoord(n) { return String(Math.round(n * 10) / 10); }
+function perfCoord(n) {
+  const v = Math.round(n * 10) / 10;
+  return String(Number.isFinite(v) ? v : 0);
+}
 
 /**
  * One series over the sample index, as an inline <svg>. A missing or
@@ -108,8 +111,10 @@ function perfCoord(n) { return String(Math.round(n * 10) / 10); }
  */
 function perfChartSVG(samples, key, size) {
   const xs = perfSamples(samples);
-  const w = perfNum(size && size.width) || PERF_CHART.width;
-  const h = perfNum(size && size.height) || PERF_CHART.height;
+  // A size outside 1..10000 falls back to the default, so no coordinate overflows.
+  const dim = (v, d) => { const n = perfNum(v); return n !== null && n >= 1 && n <= 10000 ? n : d; };
+  const w = dim(size && size.width, PERF_CHART.width);
+  const h = dim(size && size.height, PERF_CHART.height);
   const pad = 6;
   const vals = xs.map((s) => { const v = perfNum(s[key]); return v !== null && v >= 0 ? v : null; });
   const top = Math.max(0, ...vals.filter((v) => v !== null));
@@ -251,11 +256,12 @@ function perfPoller(o) {
     state: {phase: 'loading', data: null, error: null},
     gen: 0,
     busy: false,
+    /** A tick that found a request already out: ask again once it settles. */
+    owed: false,
     active: false,
     timer: null,
     enter() {
       ctl.gen++;
-      ctl.busy = false;
       ctl.active = true;
       ctl.state = {phase: 'loading', data: ctl.state.data, error: null};
       ctl.startTimer();
@@ -263,13 +269,12 @@ function perfPoller(o) {
     },
     leave() {
       ctl.gen++;
-      ctl.busy = false;
+      ctl.owed = false;
       ctl.active = false;
       ctl.stopTimer();
     },
     agentRestarted() {
       ctl.gen++;
-      ctl.busy = false;
       if (!ctl.active) return;
       // A new agent may be a newer one: an unsupported pane asks again.
       if (ctl.state.phase === 'unsupported') ctl.state = {phase: 'loading', data: null, error: null};
@@ -285,7 +290,11 @@ function perfPoller(o) {
     tick() {
       if (!ctl.active) return;
       if (o.isVisible && !o.isVisible()) { ctl.leave(); return; }
-      if (ctl.busy || ctl.state.phase === 'unsupported') return;
+      if (ctl.state.phase === 'unsupported') return;
+      // One request out at a time, across enters, leaves and restarts too:
+      // a newer generation waits for the older request to settle, then asks.
+      if (ctl.busy) { ctl.owed = true; return; }
+      ctl.owed = false;
       const gen = ctl.gen;
       ctl.busy = true;
       let p;
@@ -293,8 +302,13 @@ function perfPoller(o) {
       p.then((res) => ctl.answer(gen, res), (err) => ctl.answer(gen, {ok: false, kind: 'unreachable', error: String((err && err.message) || err)}));
     },
     answer(gen, res) {
-      if (gen !== ctl.gen) return; // an older enter, leave or agent: not this pane's answer
-      ctl.busy = false;
+      ctl.busy = false; // whichever generation asked, its request is settled
+      if (gen !== ctl.gen) {
+        // An older enter, leave or agent: not this pane's answer. If the
+        // current generation was kept waiting behind it, ask for it now.
+        if (ctl.active && ctl.owed) ctl.tick();
+        return;
+      }
       if (o.isVisible && !o.isVisible()) { ctl.leave(); return; }
       if (res && res.ok === true && res.data && typeof res.data === 'object') {
         ctl.state = {phase: 'ok', data: res.data, error: null};
