@@ -634,13 +634,15 @@ export function createRuntimeTurnService(
           goal,
           ...(runOptions.signal ? { signal: runOptions.signal } : {}),
           ...(runOptions.taskMaxDurationMs === undefined ? {} : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+          ...(runOptions.taskMaxCostUsd === undefined ? {} : { taskMaxCostUsd: runOptions.taskMaxCostUsd }),
           ...(onGoalProgress ? { onGoalProgress } : {}),
         },
         // Each round is an ordinary turn: queued, approved and saved alike.
-        (roundSession, message, remainingMs) =>
+        (roundSession, message, remainingMs, remainingUsd) =>
           runTurn(roundSession, message, {
             ...turnOptions,
             ...(remainingMs === undefined ? {} : { taskMaxDurationMs: remainingMs }),
+            ...(remainingUsd === undefined ? {} : { taskMaxCostUsd: remainingUsd }),
           }),
       );
     }

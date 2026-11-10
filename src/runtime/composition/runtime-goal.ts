@@ -47,6 +47,7 @@ export interface RuntimeGoalRunOptions {
   goal: GoalSpec;
   signal?: AbortSignal;
   taskMaxDurationMs?: number;
+  taskMaxCostUsd?: number;
   onGoalProgress?: (goal: GoalState) => void;
 }
 
@@ -55,6 +56,7 @@ export type GoalRoundRunner = (
   session: SessionState,
   message: string,
   taskMaxDurationMs: number | undefined,
+  taskMaxCostUsd?: number,
 ) => Promise<RunTurnResult>;
 
 export function createRuntimeGoalRunner(deps: RuntimeGoalDeps) {
@@ -155,7 +157,7 @@ export function createRuntimeGoalRunner(deps: RuntimeGoalDeps) {
     try {
       const outcome = await runGoal(
         {
-          runRound: (s, m, o) => runRound(s, m, o.taskMaxDurationMs),
+          runRound: (s, m, o) => runRound(s, m, o.taskMaxDurationMs, o.taskMaxCostUsd),
           runChecks,
           judge,
           saveGoal,
@@ -173,6 +175,8 @@ export function createRuntimeGoalRunner(deps: RuntimeGoalDeps) {
           signal: options.signal ?? new AbortController().signal,
           // All rounds together stay inside the turn's own time ceiling.
           taskMaxDurationMs: options.taskMaxDurationMs ?? getConfig().agent.task.maxDurationMs,
+          // And inside its money budget (ATO-1288): one cap for all rounds.
+          taskMaxCostUsd: options.taskMaxCostUsd ?? getConfig().agent.task.maxCostUsd,
         },
       );
       if (outcome.goal === null) saveGoal(session.id, null);
