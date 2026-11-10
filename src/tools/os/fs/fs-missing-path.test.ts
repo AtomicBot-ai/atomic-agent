@@ -128,7 +128,21 @@ describe("candidateRoots", () => {
       exists,
     });
     expect(plan.blocked).not.toContain("/Users/u/Desktop");
-    expect(plan.roots).toContainEqual({ dir: "/Users/u/Desktop", depth: 3 });
+    expect(plan.roots).toContainEqual({ dir: "/Users/u/Desktop", depth: 3, outer: true });
+  });
+
+  // ATO-1333: a crowded parent must not use up the working folder's budget.
+  it("marks folders above the working folder as outer, and the working folder as near", async () => {
+    const plan = await candidateRoots({
+      missing: "/Users/u/work/projects/backlinks_demo",
+      workingDir: "/Users/u/work/projects",
+      home: "/Users/u/home",
+      platform: "darwin",
+      exists,
+    });
+    expect(plan.roots).toContainEqual({ dir: "/Users/u/work/projects", depth: 3 });
+    expect(plan.roots).toContainEqual({ dir: "/Users/u/work", depth: 1, outer: true });
+    expect(plan.roots).toContainEqual({ dir: "/Users/u", depth: 1, outer: true });
   });
 });
 
