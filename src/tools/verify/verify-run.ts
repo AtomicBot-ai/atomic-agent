@@ -27,7 +27,10 @@ import type { BrowserLauncher } from "./run-page-kind.js";
 import { runVerify } from "./run-verify.js";
 import { parseVerifyRunArgs, type VerifyRunArgs } from "./verify-run-args.js";
 import { needsShellInterpretation } from "../os/shell/shell-interpretation.js";
-import { shellRuleSegments } from "../os/shell/shell-command-argv.js";
+import {
+  shellRuleSegments,
+  shellRunsUnreadableScript,
+} from "../os/shell/shell-command-argv.js";
 import { guardVerifyRun, verifyRunCommands } from "./verify-run-guard.js";
 
 export const VERIFY_RUN_TOOL = "verify.run";
@@ -101,6 +104,13 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
           needsShellInterpretation(command.cmd, command.args),
         ),
       );
+      const commandUnreadable = verifyRunCommands(args).some((command) =>
+        shellRunsUnreadableScript(
+          command.cmd,
+          command.args,
+          needsShellInterpretation(command.cmd, command.args),
+        ),
+      );
       const scopedByFanout =
         !dangerous &&
         (options.approvals.fanoutScopes?.allows(ctx.sessionId, [ctx.workingDir]) ?? false) &&
@@ -109,6 +119,7 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
           tool: VERIFY_RUN_TOOL,
           category: "shell",
           commandSegments,
+          ...(commandUnreadable ? { commandUnreadable } : {}),
           affectedResources: [ctx.workingDir],
           workdir: ctx.workingDir,
         });
@@ -126,6 +137,7 @@ export function buildVerifyRunTool(options: VerifyRunToolOptions): ToolDefinitio
             preview: description,
             affectedResources: [ctx.workingDir],
             commandSegments,
+            ...(commandUnreadable ? { commandUnreadable } : {}),
           },
           ctx.signal,
         );

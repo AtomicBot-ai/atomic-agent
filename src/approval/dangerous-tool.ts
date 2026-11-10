@@ -26,6 +26,8 @@ export interface ApprovalPrompt {
   commandArgv?: readonly string[];
   /** Every simple command the call would run; see `ApprovalRequest.commandSegments`. */
   commandSegments?: readonly (readonly string[])[];
+  /** A script fed to a shell no rule can read; see `ApprovalRequest.commandUnreadable`. */
+  commandUnreadable?: boolean;
   /** Session working directory; see `ApprovalRequest.workdir`. */
   workdir?: string;
   /**
@@ -194,6 +196,7 @@ export async function requireApproval(
       ...(prompt.commandSegments !== undefined
         ? { commandSegments: prompt.commandSegments.map((words) => [...words]) }
         : {}),
+      ...(prompt.commandUnreadable === true ? { commandUnreadable: true } : {}),
       ...(prompt.workdir !== undefined ? { workdir: prompt.workdir } : {}),
       ...(prompt.redirectablePath !== undefined
         ? { redirectablePath: prompt.redirectablePath }

@@ -73,6 +73,14 @@ export interface ApprovalRequest {
    */
   commandSegments?: string[][];
   /**
+   * The call runs a script no rule can read: a shell or interpreter with
+   * no script of its own, fed through a pipe, a redirect or a heredoc
+   * (`printf 'rm -rf x' | sh`, `shellRunsUnreadableScript`). Only a deny
+   * or ask command rule reads it, and it then matches whatever its
+   * prefix: what runs could be the very command the rule names.
+   */
+  commandUnreadable?: boolean;
+  /**
    * The session's working directory, for rules scoped to a project. The
    * gate fills it from the dispatching tool call when the tool did not.
    */
@@ -179,6 +187,7 @@ export type RuleCheck = Pick<
   | "category"
   | "commandArgv"
   | "commandSegments"
+  | "commandUnreadable"
   | "targetPaths"
   | "affectedResources"
   | "workdir"
@@ -483,7 +492,11 @@ export class ApprovalGate {
       return Promise.resolve({
         approvalId,
         approved: false,
-        reason: `blocked by your rule ${rule.rule.id}: ${describeRule(rule.rule)}`,
+        reason:
+          `blocked by your rule ${rule.rule.id}: ${describeRule(rule.rule)}` +
+          (request.commandUnreadable === true
+            ? " (the command runs a script fed to a shell or interpreter, which a rule cannot read)"
+            : ""),
         automatic: true,
       });
     }

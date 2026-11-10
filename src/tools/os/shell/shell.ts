@@ -19,7 +19,11 @@ import {
 import { resolveUserPath } from "../expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
-import { shellCommandArgv, shellRuleSegments } from "./shell-command-argv.js";
+import {
+  shellCommandArgv,
+  shellRuleSegments,
+  shellRunsUnreadableScript,
+} from "./shell-command-argv.js";
 import {
   checkBrowserBypassArgv,
   checkBrowserBypassLine,
@@ -253,11 +257,13 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // policy hands it back as a step for the operator (ATO-1223).
     const dangerous = isDangerousGuardRule(guardVerdict.rule);
     const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
+    const commandUnreadable = shellRunsUnreadableScript(cmd, execArgs, useShell);
     const ruleCheck = {
       sessionId: ctx.sessionId,
       tool: "os.shell.run",
       category: "shell" as const,
       commandSegments,
+      ...(commandUnreadable ? { commandUnreadable } : {}),
       affectedResources: [cwd],
       targetPaths,
       workdir: ctx.workingDir,
@@ -326,6 +332,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           ...(commandShape !== undefined ? { commandShape } : {}),
           ...(commandArgv !== undefined ? { commandArgv } : {}),
           commandSegments,
+          ...(commandUnreadable ? { commandUnreadable } : {}),
           workdir: ctx.workingDir,
           targetPaths,
         },

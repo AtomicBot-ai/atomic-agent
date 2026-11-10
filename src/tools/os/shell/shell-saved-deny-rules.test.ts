@@ -114,6 +114,45 @@ describe.skipIf(process.platform === "win32")(
       expect(asked).toEqual([]);
     });
 
+    // Review round: every line here ran `rm -rf tmp` past a deny rule on
+    // `rm`. At level 5 the rule is the only thing between it and the disk.
+    it.each([
+      `tcsh -c "rm -rf tmp"`,
+      `csh -c "rm -rf tmp"`,
+      `fish -c "rm -rf tmp"`,
+      `bash +x -c "rm -rf tmp"`,
+      `sh +e -c "rm -rf tmp"`,
+      "timeout 5 rm -rf tmp",
+      "sudo -u root rm -rf tmp",
+      "nice -n 5 rm -rf tmp",
+      "env -u X rm -rf tmp",
+      "eval rm -rf tmp",
+      "echo tmp | xargs rm -rf",
+      "printf 'rm -rf tmp' | sh",
+    ])("a deny rule on `rm` refuses %s at full trust", async (line) => {
+      gate.setLevel(5);
+      await mkdir(join(dir, "tmp"));
+      withRules({ decision: "deny", commandPrefix: ["rm"] });
+      const err = await denial({ cmd: line });
+      expect(err.message).toContain("blocked by your rule r1");
+      expect((await stat(join(dir, "tmp"))).isDirectory()).toBe(true);
+      expect(asked).toEqual([]);
+    });
+
+    it("a script piped into a bare shell is refused under any deny rule, and says why", async () => {
+      gate.setLevel(5);
+      withRules({ decision: "deny", commandPrefix: ["npm", "publish"] });
+      const err = await denial({ cmd: "printf 'echo hi' | sh" });
+      expect(err.message).toContain("a rule cannot read");
+    });
+
+    it("a script piped into a shell still runs when no deny rule exists", async () => {
+      gate.setLevel(5);
+      withRules({ decision: "allow", commandPrefix: ["sh"] });
+      const result = await tool().run({ cmd: "printf 'echo hi' | sh" }, ctx());
+      expect(result.status).toBe("ok");
+    });
+
     it("a safe command no deny rule names still runs unasked", async () => {
       withRules({ decision: "deny", commandPrefix: ["rm"] });
       const result = await tool().run({ cmd: "echo", args: ["hi"] }, ctx());

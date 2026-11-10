@@ -2,6 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { expandHome } from "../expand-home.js";
 import { BROWSER_BUNDLE_IDS } from "../screen/screen-protected.js";
+import { NESTED_SHELL_PROGRAMS, PREFIX_COMMANDS } from "./command-segments.js";
 import type { GuardVerdict } from "./guard-types.js";
 import { basenameCommand } from "./normalise.js";
 import { lexShellLine, type ShellWord } from "./shell-line-lexer.js";
@@ -167,29 +168,7 @@ const LINE_PROBLEMS: readonly ScriptProblem[] = [
 const PRINTED_MESSAGE =
   /(^|[\s;&|(])(echo|printf)((?:\s+-[a-z]+)*)\s+(?:'[^'\n]*'|"[^"\n$`]*")(?=[ \t]*(?:[12]?>&[12][ \t]*)?(?:$|[\n;#]|&&|\|\|))/gm;
 
-/** Commands that run the command after them; the value-taking flags of each. */
-const PREFIX_COMMANDS: Readonly<Record<string, readonly string[]>> = {
-  sudo: ["-u", "-g", "-h", "-p", "-c", "-r", "-t", "-C", "-D", "-U"],
-  doas: ["-u", "-C"],
-  env: ["-u", "-C", "-P", "--unset", "--chdir"],
-  command: [],
-  builtin: [],
-  exec: ["-a"],
-  nohup: [],
-  nice: ["-n", "--adjustment"],
-  time: ["-f", "-o", "--format", "--output"],
-  caffeinate: ["-t", "-w"],
-  arch: [],
-  timeout: ["-s", "-k", "--signal", "--kill-after"],
-  gtimeout: ["-s", "-k", "--signal", "--kill-after"],
-  stdbuf: ["-i", "-o", "-e"],
-  unbuffer: [],
-  noglob: [],
-  xargs: ["-I", "-i", "-n", "-L", "-l", "-P", "-d", "-E", "-e", "-s", "-a", "--max-args", "--max-procs", "--delimiter", "--arg-file", "--replace"],
-  watch: ["-n", "-d", "--interval"],
-};
-
-const NESTED_SHELLS: ReadonlySet<string> = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh"]);
+const NESTED_SHELLS: ReadonlySet<string> = new Set(NESTED_SHELL_PROGRAMS);
 
 const WEB_SCHEME = /^(?:https?|ftp|file|javascript|data|about|view-source|chrome|edge|brave|opera|vivaldi|safari-\S*|x-safari-https?|googlechromes?|firefox|microsoft-edge|webcal):/i;
 const WEB_FILE = /\.(?:html?|xhtml|shtml|webloc|inetloc|url|mhtml?|webarchive|svg|xml)$/i;

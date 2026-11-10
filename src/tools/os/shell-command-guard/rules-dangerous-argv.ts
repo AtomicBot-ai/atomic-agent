@@ -389,7 +389,7 @@ function matchNestedShell(
 ): ArgvCheck | null {
   for (const program of NESTED_SHELL_PROGRAMS) {
     for (const args of invocationsOf(segments, program)) {
-      if (scanNestedShellOptions(args).runsCommand) {
+      if (scanNestedShellOptions(args, program).runsCommand) {
         return { id: "dangerous.shell_dash_c", reason: "nested shell command" };
       }
     }

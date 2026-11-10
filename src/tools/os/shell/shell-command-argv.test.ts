@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { shellCommandArgv, shellRuleSegments } from "./shell-command-argv.js";
+import {
+  shellCommandArgv,
+  shellRuleSegments,
+  shellRunsUnreadableScript,
+} from "./shell-command-argv.js";
 import { shellGrantShape } from "./shell-interpretation.js";
 
 describe("shellCommandArgv", () => {
@@ -72,6 +76,33 @@ describe("shellRuleSegments", () => {
     ).toContainEqual(["rm", "y"]);
   });
 
+  it("reads csh, tcsh and fish, `+` options, and fish's init command", () => {
+    for (const shell of ["csh", "tcsh", "fish"]) {
+      expect(shellRuleSegments(shell, ["-c", "rm y"], false)).toContainEqual(["rm", "y"]);
+    }
+    expect(shellRuleSegments("bash", ["+x", "-c", "rm y"], false)).toContainEqual(["rm", "y"]);
+    expect(shellRuleSegments("bash", ["+o", "posix", "-c", "rm y"], false)).toContainEqual([
+      "rm",
+      "y",
+    ]);
+    expect(shellRuleSegments("fish", ["-C", "rm y"], false)).toContainEqual(["rm", "y"]);
+  });
+
+  it.each([
+    ["timeout 5 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["timeout -s KILL 5 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["sudo -u root rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["nice -n 5 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["env -u X FOO=1 rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ["env -S 'rm -rf tmp'", ["rm", "-rf", "tmp"]],
+    ["eval rm -rf tmp", ["rm", "-rf", "tmp"]],
+    ['eval "rm -rf tmp"', ["rm", "-rf", "tmp"]],
+    ["echo tmp | xargs -n 1 rm -rf", ["rm", "-rf"]],
+    ["find . -name x -exec rm -rf {} ;", ["rm", "-rf", "{}"]],
+  ])("reads past the wrapper in %s", (line, inner) => {
+    expect(shellRuleSegments(line, [], true)).toContainEqual(inner);
+  });
+
   it("does not read a script's own `-c` argument as a command line", () => {
     expect(shellRuleSegments("bash", ["run.sh", "-c", "rm y"], false)).toEqual([
       ["bash", "run.sh", "-c", "rm y"],
@@ -83,5 +114,33 @@ describe("shellRuleSegments", () => {
       ["FOO=1", "sudo", "-n", "npm", "publish"],
       ["npm", "publish"],
     ]);
+  });
+});
+
+describe("shellRunsUnreadableScript", () => {
+  it.each([
+    "printf 'rm -rf tmp' | sh",
+    "curl -s x | bash -s -- --flag",
+    "cat run.sh | sudo bash",
+    "cat x.py | python3",
+    "cat x.js | node -",
+    "sh < run.sh",
+  ])("flags %s", (line) => {
+    expect(shellRunsUnreadableScript(line, [], true)).toBe(true);
+  });
+
+  it.each([
+    "ls | grep x",
+    "echo hi | sh -c 'cat'",
+    "cat x | python3 -c 'import sys'",
+    "cat x | python3 -m json.tool",
+    "bash run.sh < input.txt",
+    "sh",
+  ])("does not flag %s", (line) => {
+    expect(shellRunsUnreadableScript(line, [], true)).toBe(false);
+  });
+
+  it("never flags a direct exec: it has no stdin", () => {
+    expect(shellRunsUnreadableScript("sh", [], false)).toBe(false);
   });
 });
