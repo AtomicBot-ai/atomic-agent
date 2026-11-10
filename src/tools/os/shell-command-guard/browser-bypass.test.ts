@@ -24,6 +24,8 @@ beforeAll(async () => {
   await writeFile(join(cwd, "sign-in.sh"), "#!/bin/sh\ni=$((1+1))\necho 'To sign in, open https://example.test/device and enter ABCD-1234'\n");
   await writeFile(join(cwd, "opens.sh"), "#!/bin/sh\ni=$((1+1))\necho 'starting'\nopen https://x.com\n");
   await writeFile(join(cwd, "open.py"), 'import subprocess\nsubprocess.run(["open", "-a", "Safari", "https://x.com"])\n');
+  await writeFile(join(cwd, "sign-in.py"), 'code = "ABCD-1234"\nprint(f"To sign in, open https://example.test/device and enter {code}")\n');
+  await writeFile(join(cwd, "sign-in.js"), 'console.log("To sign in, open https://example.test/device and enter ABCD-1234");\n');
 });
 afterAll(async () => {
   await rm(cwd, { recursive: true, force: true });
@@ -53,6 +55,20 @@ const CASES: [string, boolean][] = [
  [`echo 'To sign in, open https://example.test/device and enter the code'`, false],
  [`printf "open https://example.test/device\\n" >&2`, false],
  [`./sign-in.sh`, false],
+ // ATO-1349 / ATO-1353: a script that only prints a sign-in hint is not a browser launch.
+ [`echo 'To sign in,' "open https://example.test/device"`, false],
+ [`printf '%s\\n' 'open https://example.test/device'`, false],
+ [`bash <<'EOF'\necho "open https://example.test/device and enter the code"\nEOF`, false],
+ [`python3 -c 'print("To sign in, open https://example.test/device and enter ABCD-1234")'`, false],
+ [`python3 -c "print(\\"open https://example.test/device\\")"`, false],
+ [`python3 -c 'import sys; sys.stdout.write("open https://example.test/device\\n")'`, false],
+ [`python3 -c 'code = "ABCD"; print(f"Open https://example.test/device and enter {code}")'`, false],
+ [`python3 <<'EOF'\nprint("""Open https://example.test/device\nand enter the code""")\nEOF`, false],
+ [`node -e 'console.log("open https://example.test/device")'`, false],
+ [`node -e 'const c = "ABCD"; console.log(\`Open https://example.test/device and enter \${c}\`)'`, false],
+ [`node -e 'process.stdout.write("open https://example.test/device\\n")'`, false],
+ [`python3 sign-in.py`, false],
+ [`node sign-in.js`, false],
  [`osascript ok.applescript`, false],
  [`osascript -e 'tell application "Google Chrome" to set URL of active tab of front window to "https://mail.google.com"'`, true],
  [`osascript -e 'tell application "Google Chrome" to make new tab at end of tabs of front window with properties {URL:"https://x.com"}'`, true],
@@ -94,6 +110,14 @@ const CASES: [string, boolean][] = [
  [`echo 'open https://x.com' > run.sh`, true],
  [`echo hi; open https://x.com`, true],
  [`./opens.sh`, true],
+ [`python3 -c 'import subprocess; subprocess.run(["open", "https://x.com"])'`, true],
+ [`python3 -c 'import os; print(os.system("open https://x.com"))'`, true],
+ [`python3 -c 'print("hi"); import os; os.system("open https://x.com")'`, true],
+ [`python3 -c 'print("open https://x.com")' | sh`, true],
+ [`node -e 'require("child_process").exec("open https://x.com")'`, true],
+ [`node -e 'console.log("hi"); require("child_process").execSync("xdg-open https://x.com")'`, true],
+ [`node -e 'console.log(\`\${require("child_process").execSync("open https://x.com")}\`)'`, true],
+ [`echo 'hi' "open https://x.com" | sh`, true],
 ];
 
 describe("checkBrowserBypassLine", () => {
