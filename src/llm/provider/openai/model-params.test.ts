@@ -85,6 +85,7 @@ describe("modelParamProfile — Claude models without sampling parameters (ATO-1
     "anthropic/claude-opus-5-fast",
     "anthropic/claude-sonnet-5.5",
     "anthropic.claude-haiku-5-5",
+    "us.anthropic.claude-opus-5-5",
     "claude-sonnet-5-20260101",
     "Claude-Sonnet-5-5",
     // An unknown future version falls on the side of the line that omits.
@@ -105,7 +106,10 @@ describe("modelParamProfile — Claude models without sampling parameters (ATO-1
     "claude-haiku-4-5",
     "anthropic/claude-haiku-4.5",
     "claude-3-5-sonnet-20241022",
-  ])("leaves temperature free for the older %s", (model) => {
+    // Names Claude but is not one: the rule is anchored at the id's start.
+    "Qwen3-8B-Claude-Sonnet-5-Distill",
+    "someorg/Qwen3-8B-Claude-Sonnet-5-Distill",
+  ])("leaves temperature free for %s", (model) => {
     expect(modelParamProfile(model).temperature).toEqual({ kind: "free" });
   });
 

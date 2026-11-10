@@ -65,13 +65,16 @@ const KIMI_K31_MODEL_RE = /^kimi-k3\.1(?![0-9])/i;
 /**
  * A Claude model id in Anthropic's naming: family, major version and an
  * optional minor version (`claude-sonnet-5-5`, `claude-opus-4.8`,
- * `anthropic/claude-fable-5`, Bedrock's `anthropic.claude-haiku-5-5`). The
- * minor is one or two digits so a date suffix
+ * `anthropic/claude-fable-5`, Bedrock's `anthropic.claude-haiku-5-5` and
+ * `us.anthropic.claude-opus-5-5`). Anchored at the start of the id (after
+ * any router prefix, which `modelParamProfile` strips at the last `/`), so
+ * a fine-tune that only names Claude (`Qwen3-8B-Claude-Sonnet-5-Distill`)
+ * keeps its temperature. The minor is one or two digits so a date suffix
  * (`claude-sonnet-5-20260101`) is not read as one. The old naming
  * (`claude-3-5-sonnet`) does not match and keeps the free rule.
  */
 const CLAUDE_MODEL_RE =
-  /(?:^|[^a-z0-9])claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d{1,2}))?(?![0-9])/i;
+  /^(?:[a-z]+\.)?(?:anthropic\.)?claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d{1,2}))?(?![0-9])/i;
 
 /**
  * Whether a Claude model rejects `temperature`. Anthropic removed the

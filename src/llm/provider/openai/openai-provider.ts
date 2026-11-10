@@ -319,7 +319,7 @@ export class OpenAiProvider implements LlmProvider {
       try {
         return await send(shape);
       } catch (err) {
-        if (temperatureRetried || !this.learnTemperature(request, err)) {
+        if (temperatureRetried || !this.learnTemperature(request, err, sentBody)) {
           throw err;
         }
         temperatureRetried = true;
@@ -407,17 +407,24 @@ export class OpenAiProvider implements LlmProvider {
    * ATO-1397). The lesson is remembered for the model for the rest of the
    * process, so the next body built — the resend, and every later turn —
    * carries it. The caller allows one such resend per completion.
+   *
+   * A refusal already on record for a body that carried no temperature
+   * is not this lesson at all (the 400 is about something else that names
+   * temperature), so it gets no resend: the same body would go out again.
    */
   private learnTemperature(
     request: CompletionRequest,
     err: unknown,
+    sentBody: Record<string, unknown> | undefined,
   ): boolean {
     if (request.signal?.aborted) return false;
     const lesson = temperatureLessonFromError(err);
     if (lesson === undefined) return false;
     const model = this.defaultChatModel!;
     if (lesson.kind === "forbidden") {
-      if (!rememberTemperatureForbidden(model)) return true;
+      if (!rememberTemperatureForbidden(model)) {
+        return sentBody === undefined || "temperature" in sentBody;
+      }
       this.http.logger?.warn(
         `llm: "${this.id}" refused temperature for this model; resending once without it and keeping that for this model`,
         { provider: this.id, model, status: 400, temperature: null },
@@ -617,7 +624,7 @@ export class OpenAiProvider implements LlmProvider {
         if (
           !committed &&
           !temperatureRetried &&
-          this.learnTemperature(request, err)
+          this.learnTemperature(request, err, body)
         ) {
           temperatureRetried = true;
           body = this.buildBody(request, true, shape);

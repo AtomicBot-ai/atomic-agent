@@ -4,7 +4,10 @@ import type {
   CompletionResult,
   StreamChunk,
 } from "../completion-types.js";
-import { forgetLearnedModelParams } from "./model-params.js";
+import {
+  forgetLearnedModelParams,
+  rememberTemperatureForbidden,
+} from "./model-params.js";
 import { OpenAiProvider } from "./openai-provider.js";
 
 /**
@@ -175,6 +178,23 @@ describe("OpenAiProvider — refused-temperature retry (ATO-1397)", () => {
     await drain(p.completeStream({ prompt: "again" }));
     expect(fetchImpl).toHaveBeenCalledTimes(3);
     expect(bodies[2]).not.toHaveProperty("temperature");
+  });
+
+  it("does not resend when the refusal is on record and the body carried no temperature", async () => {
+    rememberTemperatureForbidden(MODEL);
+    const { fetchImpl, bodies } = scripted([
+      () => json(DEPRECATED_400, 400),
+      okUnary,
+    ]);
+    await expect(provider(fetchImpl).complete({ prompt: "hi" })).rejects.toThrow(/400/);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(bodies[0]).not.toHaveProperty("temperature");
+
+    const streamed = scripted([() => json(DEPRECATED_400, 400), okStream]);
+    await expect(drain(provider(streamed.fetchImpl).completeStream({ prompt: "hi" }))).rejects.toThrow(
+      /400/,
+    );
+    expect(streamed.fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("sends no temperature to claude-sonnet-5-5 in the first place", async () => {
