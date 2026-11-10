@@ -14,7 +14,7 @@ import { prepareAgentTurn, prepareTurnPolicies, prepareTurnBudgets, createTurnLo
 import { refreshMemoryContext, createSurfacedMemoryTracker } from "./turn/turn-memory-context.js";
 export { MAX_SURFACED_NOTE_ALLOWLIST } from "./turn/turn-memory-context.js";
 import { finalizeAgentTurn, finalizeFailedAgentTurn } from "./turn/turn-finalization.js";
-import { costCeilingNotice, costCeilingReached, recordStepSpend } from "./turn/turn-spend.js";
+import { costCeilingNotice, costCeilingReached, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
 import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
@@ -619,6 +619,7 @@ export class AgentLoop {
             signal: requestDeadline.signal,
             ...(options.providerId ? { providerId: options.providerId } : {}),
             ...(options.ephemeral ? { ephemeral: true } : {}),
+            onSpend: (usd) => recordCompactionSpend(turn, usd),
           });
           while (maintenance) {
             state = await maintenance;
@@ -639,6 +640,7 @@ export class AgentLoop {
               signal: requestDeadline.signal,
               ...(options.providerId ? { providerId: options.providerId } : {}),
               ...(options.ephemeral ? { ephemeral: true } : {}),
+              onSpend: (usd) => recordCompactionSpend(turn, usd),
             });
           }
         }
@@ -996,6 +998,7 @@ export class AgentLoop {
               signal: requestDeadline.signal, requested: "overflow",
               ...(options.providerId ? { providerId: options.providerId } : {}),
               ...(options.ephemeral ? { ephemeral: true } : {}),
+              onSpend: (usd) => recordCompactionSpend(turn, usd),
             }) ?? Promise.resolve(state));
           } catch (compactionError) {
             this.deps.logger?.warn("overflow compaction failed", { ...logFields,

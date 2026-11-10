@@ -5,6 +5,7 @@ import {
   costCeilingHeadline,
   costCeilingNotice,
   costCeilingReached,
+  recordCompactionSpend,
   recordStepSpend,
   resolveCostCeilingUsd,
 } from "./turn-spend.js";
@@ -68,5 +69,16 @@ describe("turn spend ceiling helpers", () => {
     });
     expect(stopped).toMatch(/^\(stopped: spent \$5\.31 of \$5\.00 budget, after 7 steps over ~2 min\.\)/);
     expect(stopped).toContain("agent.task.maxCostUsd");
+  });
+
+  it("adds a compaction's summary cost to the turn spend (ATO-1322)", () => {
+    const turn = { spendUsd: 0.5, spendPriced: false };
+    recordCompactionSpend(turn, 0.25);
+    expect(turn).toEqual({ spendUsd: 0.75, spendPriced: true });
+    recordCompactionSpend(turn, 0);
+    recordCompactionSpend(turn, Number.NaN);
+    recordCompactionSpend(turn, -1);
+    expect(turn.spendUsd).toBe(0.75);
+    expect(costCeilingReached(turn.spendUsd, 0.75)).toBe(true);
   });
 });
