@@ -158,6 +158,8 @@ async function handleReplay(args: string[]): Promise<number> {
     browserChannel: config.browser.channel,
   });
 
+  // The full catalog, `tool.search` included: the replay derives the
+  // search-mode-off and -on prompts from it itself (ATO-1335).
   const report = await replaySession({
     path,
     context: {
