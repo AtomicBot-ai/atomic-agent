@@ -18459,11 +18459,16 @@ async function selActivate(row) {
 }
 
 /** How the composer's pull ended. No Switch for a model that lost its projector: it stays a choice in the list. */
-function selPullFinished(id, ev) {
-  if (ev.ok && ev.projectorSkipped === true) { bswSnapshot(); toast('Downloaded without vision', projectorSkippedText(), 'bad'); }
-  else if (ev.ok && visionLanded(id)) { bswSnapshot(); render(); }   // ATO-1373: the serving model got its projector
-  else if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
-  else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
+async function selPullFinished(id, ev) {
+  if (ev.ok && ev.projectorSkipped === true) { bswSnapshot(); toast('Downloaded without vision', projectorSkippedText(), 'bad'); return; }
+  if (!ev.ok) { toast('Download stopped', ev.error || 'The download did not finish', 'bad'); return; }
+  /* ATO-1373 review: LLMP.status is refreshed only by Settings, its poll and
+     Diagnostics. Read it now, as llmAfterPull does, so a switch made in the
+     picker since then does not answer for the model that is serving. */
+  try { await llmRefreshStatus(true); } catch (e) { /* the live config stands in (modelServingNow) */ }
+  if (visionLanded(id)) { bswSnapshot(); render(); return; }   // the serving model got its projector
+  DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it');
+  render();
 }
 
 /* ATO-1372: the picker's chip. The usual pull: main fetches the projector alone. */

@@ -102,8 +102,26 @@ test("the offer row is not a download in progress", () => {
   assert.equal(c.dlCardLine({ state: "restart" }), "Restart the model to read images.");
 });
 
+test("the picker's pull reads the status afresh: a stale reading of the old model does not answer", async () => {
+  const c = ctx({ LIVE_CONFIG: { localModels: { managed: { modelId: "gemma-4-e4b" } } } });
+  // Settings was open earlier on the old model; the picker switched to Gemma since.
+  c.LLMP.status = running("qwen-3.5-4b", 17);
+  vm.runInContext(`
+    var snapshots = 0;
+    function bswSnapshot() { snapshots++; }
+    function projectorSkippedText() { return 'text only'; }
+    async function llmRefreshStatus() { LLMP.status = { daemonRunning: true, activeModel: 'gemma-4-e4b', daemonPid: 52 }; }
+  `, c);
+  vm.runInContext(fn("selPullFinished"), c);
+  await c.selPullFinished("gemma-4-e4b", { ok: true });
+  assert.equal(c.VISION.restart.id, "gemma-4-e4b");
+  assert.equal(c.VISION.restart.pid, 52, "the new server's pid, not the old one");
+  assert.equal(c.DL.ready, null, "no Switch for the current model");
+});
+
 test("both finished-pull paths ask visionLanded before a Switch", () => {
-  assert.ok(source.includes("else if (ev.ok && visionLanded(id))"), "the composer's pull");
+  assert.ok(source.includes("if (visionLanded(id)) { bswSnapshot(); render(); return; }"), "the composer's pull");
+  assert.ok(source.indexOf("await llmRefreshStatus(true); } catch") < source.indexOf("if (visionLanded(id)) { bswSnapshot();"), "after a fresh status read");
   assert.ok(source.includes("if (!visionLanded(p.id)) DL.ready = {id:p.id};"), "Settings' pull");
   assert.ok(source.includes("if (v === 'visionRestart') { void visionRestart(); return; }"));
 });
