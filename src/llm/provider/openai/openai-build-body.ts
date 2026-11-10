@@ -156,7 +156,11 @@ export function buildOpenAiChatBody(
   if (filtered.reasoningEffort !== undefined) {
     Object.assign(
       body,
-      reasoningEffortField(options.providerKind, filtered.reasoningEffort),
+      reasoningEffortField(
+        options.providerKind,
+        filtered.reasoningEffort,
+        defaultChatModel,
+      ),
     );
   }
   // The template's thinking switch, for a request that asked for none

@@ -124,14 +124,40 @@ export function forgetLearnedModelParams(): void {
 }
 
 /**
+ * Gemini models that think and take `reasoning_effort` on Gemini's
+ * OpenAI-compatible endpoint: 2.5 and 3.x (`gemini-2.5-flash`,
+ * `gemini-2.5-pro`, `gemini-3-pro-preview`, with or without the
+ * `models/` prefix). Not 2.0 and older, which do not think, and not the
+ * image, speech, live or embedding variants, which are not chat
+ * reasoners.
+ */
+const GEMINI_THINKING_MODEL_RE = /^gemini-(?:2\.5|[3-9])(?![0-9])/i;
+const GEMINI_NON_CHAT_VARIANT_RE = /(?:image|tts|audio|live|embedding)/i;
+
+function bareModelId(modelId: string): string {
+  return modelId.includes("/")
+    ? modelId.slice(modelId.lastIndexOf("/") + 1)
+    : modelId;
+}
+
+/**
  * How `reasoningEffort` is spelled for a provider kind. OpenRouter takes a
  * `reasoning` object; OpenAI-compatible services take the flat
  * `reasoning_effort` OpenAI documents; the rest document neither, and a
  * field a service does not know is at best ignored and at worst a 400.
+ *
+ * Gemini and AI/ML API get the flat field only for models known to take
+ * it (`modelId`, ATO-1359): Gemini's thinking models (2.5 and 3.x) on its
+ * OpenAI-compatible endpoint, and OpenAI's reasoning models on AI/ML API.
+ * Without it a compaction summary on those models thought without bound
+ * (Gemini 2.5 thinks dynamically by default), spent the reasoning room
+ * and fell back to the crude summary. Other models there keep the body
+ * as before, since the field is not documented for them.
  */
 export function reasoningEffortField(
   providerKind: string | undefined,
   effort: "low" | "medium" | "high",
+  modelId?: string,
 ): Record<string, unknown> {
   switch (providerKind) {
     case "openrouter":
@@ -139,6 +165,16 @@ export function reasoningEffortField(
     case "openai-compatible":
     case "qwen-openai-compatible":
       return { reasoning_effort: effort };
+    case "gemini": {
+      const bare = modelId ? bareModelId(modelId) : "";
+      return GEMINI_THINKING_MODEL_RE.test(bare) && !GEMINI_NON_CHAT_VARIANT_RE.test(bare)
+        ? { reasoning_effort: effort }
+        : {};
+    }
+    case "aimlapi":
+      return modelId && OPENAI_REASONING_MODEL_RE.test(bareModelId(modelId))
+        ? { reasoning_effort: effort }
+        : {};
     default:
       return {};
   }
