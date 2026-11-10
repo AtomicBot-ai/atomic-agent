@@ -2147,7 +2147,7 @@ function providerSwitchedLine(p) {
 }
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
-const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
+const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'reply_polished', 'progress_note', 'reply_attachments', 'fusion_worker',
   'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
@@ -10675,6 +10675,8 @@ function onChatEvent(ev) {
       callId: typeof callId === 'string' && callId ? callId : null,
       doneLine: typeof doneLine === 'string' && doneLine ? doneLine.slice(0, 200) : null};
     S.log.splice(S.log.indexOf(item), 0, card);
+    // ATO-1379: the call ends the step; reply text from here on is the next step's.
+    item.stepFrom = item.text.length;
     /* ATO-207: the call ends the step its reasoning was for. The next
        reasoning is a row of its own under this card, as a reopened chat
        draws it (one per stored call); it used to grow the turn's first row
@@ -10713,6 +10715,20 @@ function onChatEvent(ev) {
     if (ev.text) waitOverByOutput(item);   // ATO-428
     return;
   }
+  /* ATO-1379: the agent cleaned the reply that ends the turn ("Hope this
+     helps!" off) after its deltas streamed (`event: reply_polished`, ATO-967).
+     The clean text is that one step's reply, the step's deltas as the agent
+     counts them (`stepStreamed`, reset at each step), and it is what the store
+     keeps. So only the text since this step began is swapped: an earlier
+     step's words (an intro before a tool call) stay. */
+  if (ev.kind === 'reply_polished') {
+    const text = pick(ev.payload, 'text');
+    if (typeof text !== 'string' || !text || !item) return;
+    const from = Math.min(item.stepFrom || 0, item.text.length);
+    item.text = item.text.slice(0, from) + text;
+    streamPaint('chat');
+    return;
+  }
   /* ATO-408: the files the reply that ends the turn delivers (agent with
      ATO-408, `event: reply_attachments`, right after the reply's text). An
      older agent sends nothing, and the chat shows them once reopened. */
@@ -10738,6 +10754,7 @@ function onChatEvent(ev) {
     const text = String(pick(ev.payload, 'text') || '');
     if (!text.trim() || !item) return;
     item.text = stripStreamedNote(item.text, text);
+    item.stepFrom = item.text.length;   // ATO-1379: the note's step is over
     S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'interim', text});
     render();
     return;
