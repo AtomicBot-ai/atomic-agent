@@ -355,6 +355,9 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
 
 type OvernightRuntime = Awaited<ReturnType<typeof createAgentRuntime>>;
 
+const TELEGRAM_NO_BOT = "no Telegram bot is set up for this agent";
+const TELEGRAM_TURNED_OFF = "Telegram is turned off in this agent's settings";
+
 /** How long a channel still connecting may take to send the report. */
 const TELEGRAM_FLUSH_WAIT_MS = 15_000;
 
@@ -368,8 +371,13 @@ async function warnIfReportStuck(runtime: OvernightRuntime, taskId: string): Pro
   // The report is handed to the channel from the runner's report hook.
   await new Promise((resolve) => setImmediate(resolve));
   const channel = runtime.telegramChannel;
-  if (!channel) {
-    process.stderr.write(formatTelegramUndelivered("Telegram is not set up for this agent", taskId));
+  // Neither of these queues the report: it was dropped at once.
+  if (!channel || !channel.hasToken()) {
+    process.stderr.write(formatTelegramUndelivered(TELEGRAM_NO_BOT, taskId));
+    return;
+  }
+  if (channel.state() === "disabled" && channel.hasPendingTaskReport(taskId)) {
+    process.stderr.write(formatTelegramUndelivered(TELEGRAM_TURNED_OFF, taskId));
     return;
   }
   const deadline = Date.now() + TELEGRAM_FLUSH_WAIT_MS;
