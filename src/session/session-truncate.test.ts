@@ -218,10 +218,10 @@ describe("planLastTurnRollback", () => {
     expect(plan.state.turnCount).toBe(1);
   });
 
-  it("takes back a turn that ended on a stop marker", () => {
-    const state = turn(fresh(), user("long story", 1), stoppedTurnMarker(2));
-    const plan = planLastTurnRollback(state);
-    expect(plan.ok && plan.state.turns.length).toBe(0);
+  it("refuses a stopped turn: the stop may have cut a tool batch the transcript does not show", () => {
+    // A local turn stopped during `rm` stores only [user, stop marker].
+    const state = turn(fresh(), user("delete the build folder", 1), stoppedTurnMarker(2));
+    expect(planLastTurnRollback(state)).toEqual({ ok: false, code: "turn_stopped" });
   });
 
   it("takes back a turn that has no answer at all (a provider error)", () => {
@@ -289,6 +289,21 @@ describe("planLastTurnRollback", () => {
       .toEqual({ ok: false, code: "turn_mismatch" });
     state = turn(state, user("second", 3), reply("two", 4));
     expect(planLastTurnRollback(state, { expectText: "  second\n" }).ok).toBe(true);
+  });
+
+  it("tells two questions with the same text apart by their position", () => {
+    // q0 "continue" answered; q1 "continue" failed and was never stored.
+    const state = turn(fresh(), user("continue", 1), reply("a0", 2));
+    expect(planLastTurnRollback(state, { expectText: "continue", expectPriorQuestions: 1 }))
+      .toEqual({ ok: false, code: "turn_mismatch" });
+    expect(planLastTurnRollback(state, { expectText: "continue", expectPriorQuestions: 0 }).ok)
+      .toBe(true);
+  });
+
+  it("does not count steers as questions before the one meant", () => {
+    let state = turn(fresh(), user("a", 1), user("also", 2, true), reply("b", 3));
+    state = turn(state, user("c", 4), reply("d", 5));
+    expect(planLastTurnRollback(state, { expectPriorQuestions: 1 }).ok).toBe(true);
   });
 
   it("refuses two answers after one prompt", () => {

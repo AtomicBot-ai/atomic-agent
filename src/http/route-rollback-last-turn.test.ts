@@ -84,6 +84,30 @@ describe("POST /api/sessions/{id}/rollback-last-turn (ATO-1298)", () => {
     expect((await post("rb-5", { expectText: "first" })).status).toBe(200);
   });
 
+  it("refuses with turn_mismatch when the question's position differs", async () => {
+    // q0 "continue" answered; the second "continue" failed and never reached the store.
+    seed("rb-6", [
+      { kind: "user", text: "continue", at: 1 },
+      { kind: "assistant_reply", text: "a0", at: 2 },
+    ], [2]);
+    const res = await post("rb-6", { expectText: "continue", expectPriorQuestions: 1 });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("turn_mismatch");
+    expect(harness.runtime.sessionStore.load("rb-6")?.turns).toHaveLength(2);
+    expect((await post("rb-6", { expectPriorQuestions: -1 })).status).toBe(400);
+    expect((await post("rb-6", { expectText: "continue", expectPriorQuestions: 0 })).status).toBe(200);
+  });
+
+  it("refuses a stopped turn", async () => {
+    seed("rb-7", [
+      { kind: "user", text: "delete the build folder", at: 1 },
+      { kind: "assistant_reply", text: "(stopped)", stopped: true, at: 2 },
+    ], [2]);
+    const res = await post("rb-7");
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: { code: string } }).error.code).toBe("turn_stopped");
+  });
+
   it("answers 404 session_not_found for an unknown chat", async () => {
     const res = await post("nope");
     expect(res.status).toBe(404);

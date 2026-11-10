@@ -110,9 +110,19 @@ export type LastTurnRollbackRefusal =
   | "turn_steered"
   /** A compaction checkpoint already summarises the turn. */
   | "turn_compacted"
+  /**
+   * The person stopped the turn. A stop can land while a tool batch runs,
+   * and a local turn does not record the cancelled step, so the stored
+   * tail shows no tool even when one ran: a stopped turn is never taken
+   * back.
+   */
+  | "turn_stopped"
   /** The rows after the prompt are not one plain answer. */
   | "turn_unrecognized"
-  /** The last question is not the one the caller meant (`expectText`). */
+  /**
+   * The last question is not the one the caller meant (`expectText`,
+   * `expectPriorQuestions`).
+   */
   | "turn_mismatch";
 
 export type LastTurnRollbackPlan =
@@ -127,13 +137,6 @@ export type LastTurnRollbackPlan =
   | { ok: false; code: LastTurnRollbackRefusal };
 
 /**
- * Take back the last turn when doing so changes nothing but the
- * transcript: a prompt answered by one reply, by a stop marker, or by
- * nothing at all (a provider error). Anything the turn did outside the
- * transcript (tool calls) or that the person added to it mid-way (a
- * steer) makes it refuse, because sending the prompt again would then
- * not be a fresh try of the same question.
- */
 export interface LastTurnRollbackOptions {
   /**
    * The question the caller means to take back. When the stored last
@@ -143,7 +146,25 @@ export interface LastTurnRollbackOptions {
    * with surrounding whitespace trimmed.
    */
   expectText?: string;
+  /**
+   * How many questions (user rows that opened a turn, steers not counted)
+   * come before the one the caller means. Text alone cannot tell two
+   * questions apart ("continue", then a "continue" whose failed turn was
+   * never stored); the position can. A different count refuses with
+   * `turn_mismatch`.
+   */
+  expectPriorQuestions?: number;
 }
+
+/**
+ * Take back the last turn when doing so changes nothing but the
+ * transcript: a prompt answered by one reply, or by nothing at all (a
+ * provider error). Anything the turn did outside the transcript (tool
+ * calls), that the person added to it mid-way (a steer), or a stop
+ * (which may have cut a tool batch the transcript does not show) makes
+ * it refuse, because sending the prompt again would then not be a fresh
+ * try of the same question.
+ */
 
 export function planLastTurnRollback(
   state: SessionState,
@@ -170,6 +191,14 @@ export function planLastTurnRollback(
   ) {
     return { ok: false, code: "turn_mismatch" };
   }
+  if (options.expectPriorQuestions !== undefined) {
+    const prior = turns
+      .slice(0, start)
+      .filter((turn) => turn.kind === "user" && turn.steered !== true).length;
+    if (prior !== options.expectPriorQuestions) {
+      return { ok: false, code: "turn_mismatch" };
+    }
+  }
 
   const after = turns.slice(start + 1);
   if (
@@ -181,6 +210,9 @@ export function planLastTurnRollback(
     )
   ) {
     return { ok: false, code: "turn_has_tools" };
+  }
+  if (after.some((turn) => turn.kind === "assistant_reply" && turn.stopped === true)) {
+    return { ok: false, code: "turn_stopped" };
   }
   if (after.length > 1) return { ok: false, code: "turn_unrecognized" };
   const reply = after[0];
