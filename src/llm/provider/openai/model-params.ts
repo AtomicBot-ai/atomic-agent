@@ -46,9 +46,10 @@ export interface ModelParamProfile {
 /**
  * `o1`…`o9` and every GPT generation from 5 on (`gpt-5.4-mini`,
  * `gpt-6.2-sol`, `openai/gpt-6-terra`, ATO-1339). GPT-4.x and older take
- * `temperature` and `max_tokens` and keep the historical body.
+ * `temperature` and `max_tokens` and keep the historical body, and so
+ * does Azure's `gpt-35-turbo`: the generation is one digit, never two.
  */
-const OPENAI_REASONING_MODEL_RE = /^(?:o[1-9]|gpt-(?:[5-9]|[1-9][0-9]))(?![a-z])/i;
+const OPENAI_REASONING_MODEL_RE = /^(?:o[1-9](?![a-z])|gpt-[5-9](?![0-9a-z]))/i;
 
 /**
  * `kimi-k3.1`, `kimi-k3.1-pro`, `kimi-k3.1-pro-highspeed`, with or

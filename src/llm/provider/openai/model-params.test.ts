@@ -46,6 +46,9 @@ describe("modelParamProfile", () => {
     "kimi-k3.10",
     "gpt-4o",
     "gpt-4.1-mini",
+    "gpt-35-turbo",
+    "gpt-35-turbo-16k",
+    "gpt-35-turbo-instruct",
     "olmo-3",
   ])("leaves temperature free for %s", (model) => {
     expect(modelParamProfile(model)).toEqual({
