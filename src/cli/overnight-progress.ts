@@ -4,6 +4,10 @@
  * closing summary. Pure, so the wording is pinned by unit tests.
  */
 import type { AgentLoopEvent } from "../agent/index.js";
+import {
+  describeChannelLockConflict,
+  isChannelLockConflict,
+} from "../channels/channel-lock-error.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import type { TaskRecord } from "../tasks/index.js";
 
@@ -113,6 +117,30 @@ export function formatDetachedNotice(taskId: string, logPath: string, dir: strin
     `  stop it:    atomic-agent task cancel ${taskId}`,
     "",
   ].join("\n");
+}
+
+/**
+ * The line `overnight --notify telegram` prints when its report never
+ * left (ATO-1358). The report waits in this process's memory for the
+ * channel, and this process is about to exit. The usual cause: the
+ * desktop app or the TUI holds the Telegram connection (`telegram.lock`).
+ */
+export function formatTelegramUndelivered(lastError: string | null, taskId: string): string {
+  let why: string;
+  if (isChannelLockConflict(lastError)) {
+    // "already running in another atomic-agent (pid 123)"
+    const held = describeChannelLockConflict(lastError ?? "");
+    why = `Telegram is ${held || "already running in another atomic-agent"} ` +
+      "(the desktop app or the TUI), so this run could not use it";
+  } else {
+    why = lastError
+      ? `the Telegram channel did not come up (${lastError})`
+      : "the Telegram channel did not come up";
+  }
+  return (
+    `  telegram report not sent: ${why}. ` +
+    `The result is above and in \`atomic-agent task show ${taskId}\`.\n`
+  );
 }
 
 export function overnightExitCode(status: TaskRecord["status"]): number {
