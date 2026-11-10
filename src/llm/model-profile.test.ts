@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   detectModelProfile,
+  detectModelProfileWithMatch,
   extractTotalSlots,
   detectVisionSupport,
   GEMMA4_THINK_PROFILE,
@@ -75,14 +76,33 @@ describe("detectModelProfile", () => {
     expect(profile.reasoningStyle).toBe("think-tags");
   });
 
-  // Pins the alias gate: the Nemotron detector must require a `nemotron`
-  // alias, not fire on the template markers alone. An alias carrying none of
-  // the qwen/qwq/deepseek-r1/nemotron hints must fall through to plain even
-  // though the template is a full ChatML + <think> + enable_thinking match.
-  it("requires a nemotron alias — template markers alone do not classify", () => {
+  // ATO-1294. A fine-tune with the full ChatML + `<think>` thinking
+  // template keeps its reasoning channel under a neutral alias: the
+  // template alone is enough when it is the exact framing the qwen
+  // profile reproduces.
+  it("resolves a neutral-alias ChatML + <think> template from the template alone", () => {
+    for (const props of [NEMOTRON_PROPS, QWEN3_PROPS]) {
+      const detected = detectModelProfileWithMatch({
+        ...props,
+        model_alias: "some-other-chatml-think-model",
+      });
+      expect(detected.profile).toEqual(QWEN_THINK_PROFILE);
+      expect(detected.matchedBy).toBe("template");
+    }
+  });
+
+  // The Nemotron gate still matters for a template that is not ChatML:
+  // without ChatML markers the template alone does not classify, and the
+  // `nemotron` name hint is what tips it onto the think-tags profile.
+  it("requires a nemotron alias when the template is not the ChatML framing", () => {
+    const nonChatMl = NEMOTRON_PROPS.chat_template.replaceAll(
+      "<|im_start|>",
+      "<|turn_start|>",
+    );
     expect(
       detectModelProfile({
         ...NEMOTRON_PROPS,
+        chat_template: nonChatMl,
         model_alias: "some-other-chatml-think-model",
       }),
     ).toEqual({
@@ -90,6 +110,45 @@ describe("detectModelProfile", () => {
       ...PLAIN_INSTRUCT_PROFILE,
       supportsThinkingSwitch: true,
     });
+    const named = detectModelProfileWithMatch({
+      ...NEMOTRON_PROPS,
+      chat_template: nonChatMl,
+    });
+    expect(named.profile).toEqual(QWEN_THINK_PROFILE);
+    expect(named.matchedBy).toBe("name");
+  });
+
+  it("keeps a ChatML template plain when the generation prompt does not open <think>", () => {
+    // Non-thinking ChatML fine-tune: reads `enable_thinking` and strips old
+    // think blocks from history, but never writes `<think>` at the
+    // generation point.
+    const historyStripOnly = {
+      model_alias: "my-finetune",
+      chat_template:
+        "{%- for m in messages -%}{{- '<|im_start|>' + m['role'] + '\\n' -}}" +
+        "{%- set c = m['content'].split('</think>')[-1] if '<think>' in m['content'] else m['content'] -%}" +
+        "{{- c -}}{{- '<|im_end|>\\n' -}}{%- endfor -%}" +
+        "{%- if add_generation_prompt -%}{{- '<|im_start|>assistant\\n' -}}{%- endif -%}" +
+        "{%- if enable_thinking is defined -%}{%- endif -%}",
+    };
+    const detected = detectModelProfileWithMatch(historyStripOnly);
+    expect(detected.profile.id).toBe("plain-instruct");
+    expect(detected.matchedBy).toBe("fallback");
+  });
+
+  it("keeps a GLM-like template plain under a neutral alias", () => {
+    const glmLike = {
+      model_alias: "my-local-model",
+      chat_template:
+        "[gMASK]<sop>{% for m in messages %}<|{{ m['role'] }}|>\n{{ m['content'] }}{% endfor %}{% if add_generation_prompt %}<|assistant|>\n<think>{% endif %}{% if enable_thinking is defined and not enable_thinking %}<think></think>{% endif %}",
+    };
+    expect(detectModelProfile(glmLike).id).toBe("plain-instruct");
+  });
+
+  it("reports what matched: name for an alias-gated profile, fallback for plain", () => {
+    expect(detectModelProfileWithMatch(QWEN3_PROPS).matchedBy).toBe("name");
+    expect(detectModelProfileWithMatch(LLAMA3_PROPS).matchedBy).toBe("fallback");
+    expect(detectModelProfileWithMatch(GEMMA4_PROPS).matchedBy).toBe("template");
   });
 
   // Pins branch ordering. This alias satisfies BOTH gates (it contains
@@ -207,6 +266,12 @@ describe("detectModelProfile", () => {
       expect(
         detectModelProfile({
           ...NEMOTRON_PROPS,
+          // Not ChatML, so the template alone does not classify (ATO-1294)
+          // and only a name hint could — which the directory must not give.
+          chat_template: NEMOTRON_PROPS.chat_template.replaceAll(
+            "<|im_start|>",
+            "<|turn_start|>",
+          ),
           model_alias: "some-other-chatml-think-model",
           model_path: "/home/me/nemotron/llama-3.1-8b-instruct.gguf",
         }).id,
