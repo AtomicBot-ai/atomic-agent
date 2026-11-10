@@ -54,12 +54,17 @@ function perfSummary(samples, slots) {
   const xs = perfSamples(samples);
   const newest = xs.length ? xs[xs.length - 1] : null;
   const pick = (k) => ({last: newest ? perfNum(newest[k]) : null, mean: perfMean(xs.map((s) => s[k]))});
+  // A non-streamed request has no first-token time by definition, so the
+  // newest first-token time is the newest STREAMED request's: the agent's own
+  // side requests (titles, memory) would otherwise blank the row after a turn.
+  const streamed = xs.filter((s) => s.streamed === true);
+  const newestStreamed = streamed.length ? streamed[streamed.length - 1] : null;
   const conc = xs.map((s) => perfNum(s.concurrent)).filter((v) => v !== null);
   return {
     count: xs.length,
     generation: pick('generationPerSecond'),
     prompt: pick('promptPerSecond'),
-    ttft: pick('ttftMs'),
+    ttft: {last: newestStreamed ? perfNum(newestStreamed.ttftMs) : null, mean: perfMean(xs.map((s) => s.ttftMs))},
     context: {
       lastTokens: newest ? perfNum(newest.contextTokens) : null,
       perSlot: slots && typeof slots === 'object' ? perfNum(slots.contextPerSlot) : null,
@@ -152,7 +157,6 @@ function perfChartSVG(samples, key, size) {
     out += '<circle class="perf-pt" cx="' + perfCoord(xAt(i)) + '" cy="' + perfCoord(yAt(v)) + '" r="2.5"><title>'
       + perfEsc(perfClock(xs[i].at) + ' · ' + unit(v) + who) + '</title></circle>';
   });
-  if (top > 0) out += '<text class="perf-axis" x="' + pad + '" y="' + (pad + 8) + '">' + perfEsc(unit(top)) + '</text>';
   return out + '</svg>';
 }
 
@@ -205,10 +209,28 @@ function perfBodyHTML(data, nowMs) {
       + (cap !== null ? ' (keeps up to ' + perfInt(cap) + ')' : '') + (ago ? ' · newest ' + ago : ''))
     + '</p>';
   out += '<div class="perf-charts">'
-    + '<figure class="perf-fig"><figcaption>Generation speed</figcaption>' + perfChartSVG(xs, 'generationPerSecond', PERF_CHART) + '</figure>'
-    + '<figure class="perf-fig"><figcaption>Prompt speed</figcaption>' + perfChartSVG(xs, 'promptPerSecond', PERF_CHART) + '</figure>'
+    + perfFigHTML('Generation speed', xs, 'generationPerSecond')
+    + perfFigHTML('Prompt speed', xs, 'promptPerSecond')
     + '</div>';
   return out;
+}
+
+/**
+ * One chart with its caption. The peak is printed in the caption, in the
+ * window's own font, rather than inside the SVG: there it scaled with the
+ * chart's width and sat on top of the line when the first point was the peak.
+ */
+function perfFigHTML(title, xs, key) {
+  const peak = perfMax(xs.map((s) => s[key]));
+  return '<figure class="perf-fig"><figcaption><span>' + perfEsc(title) + '</span>'
+    + (peak !== null ? '<span class="perf-peak">peak ' + perfEsc(perfFormatRate(peak)) + '</span>' : '')
+    + '</figcaption>' + perfChartSVG(xs, key, PERF_CHART) + '</figure>';
+}
+
+/** The largest finite, non-negative value; null when there is none. */
+function perfMax(values) {
+  const vs = values.map(perfNum).filter((v) => v !== null && v >= 0);
+  return vs.length ? Math.max(...vs) : null;
 }
 
 function perfNoteHTML(text, tone) {

@@ -40,7 +40,7 @@ import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient, APPROVAL_DECISIONS, commandOf, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
-import { localPerformanceResult } from "./local-performance.js"; f8f34c415 (feat(desktop): ask the agent for the local model's performance over IPC)
+import { localPerformanceResult } from "./local-performance.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
