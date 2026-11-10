@@ -20,6 +20,9 @@ export const TASK_BUDGET_COLUMNS = [
   { name: "spent_usd", type: "REAL" },
   { name: "elapsed_ms", type: "INTEGER" },
   { name: "stop_cause", type: "TEXT" },
+  // The approval level the task was started under (ATO-1324). Not a
+  // budget, but the same kind of nullable column old binaries ignore.
+  { name: "approval_level", type: "INTEGER" },
 ] as const;
 
 /**
@@ -71,6 +74,33 @@ export function validateMaxDurationMs(raw: number | null | undefined): number | 
     );
   }
   return raw;
+}
+
+/** `approval_level`: an integer 1..5, or `null` for "any process may run it". */
+export function validateApprovalLevel(raw: number | null | undefined): number | null {
+  if (raw === undefined || raw === null) return null;
+  if (!Number.isInteger(raw) || raw < 1 || raw > 5) {
+    throw new TaskValidationError(
+      "approvalLevel",
+      `approvalLevel must be an integer from 1 to 5, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * Whether a process at `processLevel` may claim `task` (ATO-1324). A
+ * task that recorded the level it was started under runs only at that
+ * level: an interrupted overnight run that denied what needed approval
+ * must not be resumed by a process that would approve it, nor by one
+ * that would ask a person who is not there.
+ */
+export function approvalLevelAllows(
+  task: Pick<TaskRecord, "approvalLevel">,
+  processLevel: number | undefined,
+): boolean {
+  const wanted = task.approvalLevel ?? null;
+  return wanted === null || processLevel === undefined || processLevel === wanted;
 }
 
 /**

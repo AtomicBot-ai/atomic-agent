@@ -159,6 +159,7 @@ export function overnightTaskInput(
   taskId: string,
   sessionId: string,
   config: { agent: { task: { maxSteps: number; maxCostUsd: number } } },
+  approvalLevel?: number,
 ): TaskCreateInput {
   const capUsd = args.budgetUsd ?? config.agent.task.maxCostUsd;
   return {
@@ -172,6 +173,9 @@ export function overnightTaskInput(
     maxDurationMs: args.durationMs,
     ...(capUsd > 0 ? { maxCostUsd: capUsd } : {}),
     ...(args.notify ? { notify: args.notify } : {}),
+    // Nobody is there to answer, so what this run denies or allows is
+    // fixed when it starts: a resume elsewhere must keep it (ATO-1324).
+    ...(approvalLevel !== undefined ? { approvalLevel } : {}),
   };
 }
 
@@ -279,12 +283,13 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
   let spentBeforeUsd = 0;
   let resolveApproval: ((approvalId: string) => void) | null = null;
 
+  const approvalLevel = resolveBootApprovalLevel(args.noApproval, config.agent.approvalLevel);
   const runtime = await createAgentRuntime({
     // Tools resolve paths against the session's working dir, and a
     // session takes the runtime's: this is what makes --dir the run's
     // folder rather than a hint in the prompt.
     workingDir: args.dir,
-    approvalLevel: resolveBootApprovalLevel(args.noApproval, config.agent.approvalLevel),
+    approvalLevel,
     handlers: {
       onAgentEvent: (event, eventSessionId) => {
         if (sessionId === null || eventSessionId !== sessionId) return;
@@ -327,7 +332,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
     const session = runtime.createSession({ metadata: { overnight: true } });
     sessionId = session.id;
     const created = runtime.taskStore.create(
-      overnightTaskInput(args, taskId, session.id, config),
+      overnightTaskInput(args, taskId, session.id, config, approvalLevel),
     );
     spentBeforeUsd = runtime.taskStore.get(created.id)?.spentUsd ?? 0;
     process.stderr.write(

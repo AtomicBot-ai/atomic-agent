@@ -20,6 +20,7 @@ import {
   ensureBudgetColumns,
   validateMaxCostUsd,
   validateMaxDurationMs,
+  validateApprovalLevel,
 } from "./task-budget.js";
 import { parseScheduleRow, serializeScheduleValue } from "./task-schedule.js";
 import {
@@ -91,6 +92,11 @@ export interface TaskCreateInput {
   maxCostUsd?: number | null;
   maxDurationMs?: number | null;
   /**
+   * Run only at this approval level (ATO-1324). Omit / `null` to let
+   * any process run it at its own.
+   */
+  approvalLevel?: number | null;
+  /**
    * Optional explicit id. Used by tests to make assertions; production
    * callers always let the store generate one.
    */
@@ -136,6 +142,7 @@ interface TaskRow {
   spent_usd?: number | null;
   elapsed_ms?: number | null;
   stop_cause?: string | null;
+  approval_level?: number | null;
 }
 
 interface RunningRow {
@@ -211,10 +218,10 @@ export class TaskStore {
     this.budgetsUnavailable = ensureBudgetColumns(this.db);
     const withBudgets = this.budgetsUnavailable === null;
     const budgetColumns = withBudgets
-      ? ",\n         max_cost_usd, max_duration_ms, spent_usd, elapsed_ms, stop_cause"
+      ? ",\n         max_cost_usd, max_duration_ms, spent_usd, elapsed_ms, stop_cause, approval_level"
       : "";
     const budgetValues = withBudgets
-      ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd, @elapsed_ms, @stop_cause"
+      ? ",\n         @max_cost_usd, @max_duration_ms, @spent_usd, @elapsed_ms, @stop_cause, @approval_level"
       : "";
     this.ownerProbe = options.ownerProbe ?? currentTurnOwnerProbe();
     this.dbIdentity = databaseIdentity(options.dbFile);
@@ -414,8 +421,9 @@ export class TaskStore {
     const notify = validateNotify(input.notify);
     const maxCostUsd = validateMaxCostUsd(input.maxCostUsd);
     const maxDurationMs = validateMaxDurationMs(input.maxDurationMs);
+    const approvalLevel = validateApprovalLevel(input.approvalLevel);
     if (
-      (maxCostUsd !== null || maxDurationMs !== null) &&
+      (maxCostUsd !== null || maxDurationMs !== null || approvalLevel !== null) &&
       this.budgetsUnavailable !== null
     ) {
       // Never drop a budget the caller asked for: an overnight run
@@ -460,6 +468,7 @@ export class TaskStore {
       spent_usd: null,
       elapsed_ms: null,
       stop_cause: null,
+      approval_level: approvalLevel,
     };
     this.insertStmt.run(this.bindRow(row));
     return rowToRecord(row);
@@ -866,6 +875,7 @@ export class TaskStore {
         spent_usd: row.spent_usd ?? null,
         elapsed_ms: row.elapsed_ms ?? null,
         stop_cause: row.stop_cause ?? null,
+        approval_level: row.approval_level ?? null,
       };
     }
     const bare = { ...row };
@@ -874,6 +884,7 @@ export class TaskStore {
     delete bare.spent_usd;
     delete bare.elapsed_ms;
     delete bare.stop_cause;
+    delete bare.approval_level;
     return bare;
   }
 
@@ -946,6 +957,7 @@ function rowToRecord(row: TaskRow): TaskRecord {
     spentUsd: row.spent_usd ?? null,
     elapsedMs: row.elapsed_ms ?? null,
     stopCause: row.stop_cause ?? null,
+    approvalLevel: row.approval_level ?? null,
   };
 }
 
@@ -979,6 +991,7 @@ function recordToRow(record: TaskRecord): TaskRow {
     spent_usd: record.spentUsd ?? null,
     elapsed_ms: record.elapsedMs ?? null,
     stop_cause: record.stopCause ?? null,
+    approval_level: record.approvalLevel ?? null,
   };
 }
 

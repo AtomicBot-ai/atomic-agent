@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  approvalLevelAllows,
   formatRunTime,
   remainingCostUsd,
   remainingDurationMs,
   validateMaxCostUsd,
   validateMaxDurationMs,
+  validateApprovalLevel,
 } from "./task-budget.js";
 import { TaskValidationError } from "./task-types.js";
 
@@ -43,5 +45,19 @@ describe("task budget rules", () => {
     expect(validateMaxDurationMs(undefined)).toBeNull();
     expect(validateMaxDurationMs(60_000)).toBe(60_000);
     expect(() => validateMaxDurationMs(-1)).toThrow(TaskValidationError);
+  });
+
+  it("keeps a recorded approval level to processes at that level (ATO-1324)", () => {
+    expect(validateApprovalLevel(undefined)).toBeNull();
+    expect(validateApprovalLevel(3)).toBe(3);
+    expect(() => validateApprovalLevel(0)).toThrow(TaskValidationError);
+    expect(() => validateApprovalLevel(6)).toThrow(TaskValidationError);
+    expect(() => validateApprovalLevel(2.5)).toThrow(TaskValidationError);
+    expect(approvalLevelAllows({ approvalLevel: null }, 5)).toBe(true);
+    expect(approvalLevelAllows({}, 1)).toBe(true);
+    expect(approvalLevelAllows({ approvalLevel: 2 }, 2)).toBe(true);
+    expect(approvalLevelAllows({ approvalLevel: 2 }, 5)).toBe(false);
+    expect(approvalLevelAllows({ approvalLevel: 5 }, 2)).toBe(false);
+    expect(approvalLevelAllows({ approvalLevel: 2 }, undefined)).toBe(true);
   });
 });
