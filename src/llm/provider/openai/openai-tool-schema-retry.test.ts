@@ -166,6 +166,23 @@ describe("OpenAiProvider — drop a tool the server cannot use (ATO-1399)", () =
     );
   });
 
+  it("throws the original schema error when the resend fails differently", async () => {
+    const other400 = () => json('{"error":{"message":"invalid max_tokens"}}', 400);
+    for (const run of [
+      (p: OpenAiProvider) =>
+        p.complete({ prompt: "hi", tools: [GOOD_TOOL, BAD_TOOL] }),
+      (p: OpenAiProvider) =>
+        drain(p.completeStream({ prompt: "hi", tools: [GOOD_TOOL, BAD_TOOL] })),
+    ]) {
+      const { provider, fetchImpl } = setup([
+        () => json(SCHEMA_500, 500),
+        other400,
+      ]);
+      await expect(run(provider)).rejects.toThrow(/JSON schema error/);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    }
+  });
+
   it("drops at most one tool per completion", async () => {
     const { provider, fetchImpl } = setup([() => json(SCHEMA_500, 500)]);
     await expect(

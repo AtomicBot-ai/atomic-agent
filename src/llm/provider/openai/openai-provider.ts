@@ -285,7 +285,14 @@ export class OpenAiProvider implements LlmProvider {
       // use (ATO-1399); a second refusal goes back as the server wrote it.
       const reduced = this.withoutRejectedTool(request, err);
       if (!reduced) throw err;
-      return await this.completeOnce(reduced);
+      try {
+        return await this.completeOnce(reduced);
+      } catch (retryErr) {
+        if (request.signal?.aborted) throw retryErr;
+        // The schema refusal is what the user needs to read, not
+        // whatever the reduced request then ran into.
+        throw err;
+      }
     }
   }
 
@@ -523,8 +530,11 @@ export class OpenAiProvider implements LlmProvider {
     let committed = false;
     // Whether the one resend for a named temperature has been spent.
     let temperatureRetried = false;
-    // Whether the one resend without a rejected tool has been spent.
+    // Whether the one resend without a rejected tool has been spent, and
+    // the schema refusal that spent it: if the resend fails before any
+    // output, that refusal is the error the caller gets.
     let toolDropped = false;
+    let schemaError: unknown;
     // One completion, one budget. Passed into every open so a reopen
     // draws from the same pot the opens do — the alternative is two
     // nested loops of `OPENAI_MAX_ATTEMPTS` and 9 requests per turn.
@@ -664,6 +674,7 @@ export class OpenAiProvider implements LlmProvider {
           const reduced = this.withoutRejectedTool(activeRequest, err);
           if (reduced) {
             toolDropped = true;
+            schemaError = err;
             activeRequest = reduced;
             body = this.buildBody(activeRequest, true, shape);
             continue;
@@ -696,8 +707,11 @@ export class OpenAiProvider implements LlmProvider {
         // An error event inside the stream (OpenRouter's `504 Upstream
         // idle timeout` after output) becomes the typed HTTP error the
         // loop classifies, carrying the generation id for the trace.
-        if (err instanceof OpenAiSseError) throw this.httpErrorFromSse(err, path);
-        if (!canReopenStream(err, committed, budget)) throw err;
+        const original = !committed ? schemaError : undefined;
+        if (err instanceof OpenAiSseError) {
+          throw original ?? this.httpErrorFromSse(err, path);
+        }
+        if (!canReopenStream(err, committed, budget)) throw original ?? err;
         // Nothing to release here: the dead attempt's transport went
         // through the block above on the way out, and on this path it is
         // a no-op either way. The only way to reach this line with a

@@ -116,6 +116,31 @@ describe("normalizeSchemaBooleans (ATO-1399)", () => {
     expect(out.definitions).toEqual({ Never: { not: {} }, Any: {} });
   });
 
+  it("caps items: false at the prefixItems length, not at zero", () => {
+    const tuple = { type: "string" };
+    expect(
+      normalizeSchemaBooleans({
+        type: "array",
+        prefixItems: [tuple, tuple],
+        items: false,
+        minItems: 2,
+      }),
+    ).toEqual({
+      type: "array",
+      prefixItems: [tuple, tuple],
+      minItems: 2,
+      maxItems: 2,
+    });
+    expect(
+      normalizeSchemaBooleans({
+        type: "array",
+        prefixItems: [tuple, tuple],
+        items: false,
+        maxItems: 1,
+      }),
+    ).toMatchObject({ maxItems: 1 });
+  });
+
   it("turns a boolean root into an object schema", () => {
     expect(normalizeSchemaBooleans(true)).toEqual({ type: "object" });
   });

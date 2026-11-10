@@ -18,7 +18,8 @@
  *   - `false` under `properties` / `patternProperties` /
  *     `dependentSchemas` drops the entry (and the name from
  *     `required`); under `anyOf` / `oneOf` drops the branch. As
- *     `items` it becomes `maxItems: 0`; `not: false` is dropped.
+ *     `items` it becomes `maxItems`: the `prefixItems` length (0 with
+ *     no tuple); `not: false` is dropped.
  *   - any other `false` becomes `{ not: {} }`.
  *
  * Every `false` rewrite either keeps the meaning or **loosens** it (a
@@ -168,8 +169,13 @@ function normalizeNode(node: unknown, depth: number): unknown {
   if (node.items === true) {
     set("items", undefined);
   } else if (node.items === false) {
+    // No items past the tuple: with `prefixItems` that is its length
+    // (kept tighter if a `maxItems` already says so), without it none.
     set("items", undefined);
-    set("maxItems", 0);
+    const tuple = Array.isArray(node.prefixItems) ? node.prefixItems.length : 0;
+    const cap =
+      typeof node.maxItems === "number" ? Math.min(node.maxItems, tuple) : tuple;
+    set("maxItems", cap);
   } else if (Array.isArray(node.items)) {
     set("items", normalizeList(node.items, next, () => false));
   } else if (isPlainObject(node.items)) {
