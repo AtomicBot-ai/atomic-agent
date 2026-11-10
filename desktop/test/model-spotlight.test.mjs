@@ -231,6 +231,7 @@ test("a projector the agent skipped is a failed row and no start; Retry fetches 
   assert.equal(a.c.DL.failed.length, 1);
   assert.equal(a.c.DL.failed[0].kind, "projector");
   assert.match(a.c.DL.failed[0].error, /text only/);
+  assert.match(a.c.DL.failed[0].error, /not started.*You can still pick this model for text\.$/, "ATO-1371: still a choice for text");
   assert.equal(a.c.modelSpotlightUnfinished(), "new", "still owed");
   a.c.dlRetry(a.c.DL.failed[0].n);
   await tick();
