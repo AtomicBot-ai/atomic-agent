@@ -664,10 +664,12 @@ export async function runWorkerTasks(
   const runners = Array.from({ length: width }, async () => {
     for (let i = claim(); i < options.tasks.length; i = claim()) {
       // A stopped turn starts nothing more, capped or not (ATO-1334):
-      // `shouldStart` is only wired when a budget cap is set.
-      const stop = options.signal.aborted
-        ? "the turn was stopped"
-        : options.shouldStart?.();
+      // `shouldStart` is only wired when a budget cap is set. The cap is
+      // asked first: a cap reached aborts the same signal, and its row
+      // must say the cap, not the person, stopped it.
+      const stop =
+        options.shouldStart?.() ??
+        (options.signal.aborted ? "the turn was stopped" : undefined);
       results[i] =
         stop === undefined
           ? await runOneTask(deps, options, options.tasks[i]!)
