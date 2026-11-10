@@ -158,3 +158,18 @@ test('Video page: a clip from a chat opens on its own, playing from its file: UR
   assert.equal(st.videoSrc, STUDIO.mediaUrl('/Users/n/work/my clip.mp4'));
   assert.equal(st.playError, false);
 });
+
+test('onLocal: a model load, download or removal reaches every page; a core event only the strip (ATO-1394)', () => {
+  let cb = null;
+  const { STUDIO } = load({ atomic: { studio: { onLocal: (fn) => { cb = fn; } } } });
+  const got = { images: [], video: [] };
+  STUDIO.register('images', { title: 'Images', onLocal: (e) => got.images.push(e.type) });
+  STUDIO.register('video', { title: 'Video', onLocal: (e) => got.video.push(e.type) });
+  assert.equal(typeof cb, 'function');
+  cb({ type: 'load', id: 'z-image:q4', state: 'loaded', message: '' });
+  cb({ type: 'removed', id: 'z-image:q4' });
+  cb({ type: 'core', core: { state: 'ready', message: '' } });
+  cb(null);
+  assert.deepEqual(got.images, ['load', 'removed']);
+  assert.deepEqual(got.video, ['load', 'removed']);
+});

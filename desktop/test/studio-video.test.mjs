@@ -333,3 +333,37 @@ test('local video models say "this Mac" only on macOS, "this computer" on Window
   const strings = (SRC.match(/'[^'\n]*'/g) || []).filter((x) => /this Mac|This Mac|Show in Finder/.test(x));
   assert.deepEqual(strings.filter((x) => x !== "'this Mac'" && x !== "'Show in Finder'"), []);
 });
+
+test('after Generate loads a local model the page reads the catalog again and stops saying "Not loaded" (ATO-1394)', async () => {
+  let loaded = false;
+  let reads = 0;
+  const cat = () => ({ cloud: { models: [veo], keyMissing: false }, local: { models: [{ ...wan, local: { ...wan.local, installed: true, loaded } }] } });
+  const studio = {
+    catalog: async () => { reads++; return { ok: true, data: cat() }; },
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => JSON.stringify({ modelId: wan.id }), setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; } } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const foot = { innerHTML: '' };
+  const root = { innerHTML: '', addEventListener() {}, contains: () => true, querySelector: (q) => (q === '[data-vregion="foot"]' ? foot : null) };
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(page._state.form.modelId, wan.id);
+  assert.equal(reads, 1);
+  loaded = true;
+  page.onLocal({ type: 'load', id: wan.id, state: 'loading', message: '' });
+  page.onLocal({ type: 'download', download: { id: wan.id, state: 'downloading' } });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 1, 'progress events do not read the catalog');
+  page.onEvent({ id: 'j1', kind: 'video', state: 'completed', cloud: false, outputs: [] });
+  page.onLocal({ type: 'load', id: wan.id, state: 'loaded', message: '' });
+  await new Promise((r) => setTimeout(r, 350));
+  assert.equal(reads, 2, 'a burst of changes makes one read');
+  assert.equal(page._state.catalog.local.models[0].local.loaded, true);
+  assert.equal(page._state.form.modelId, wan.id, 'the chosen model stays');
+  assert.doesNotMatch(foot.innerHTML, /loads when you press Generate/);
+});

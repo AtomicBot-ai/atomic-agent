@@ -27,7 +27,8 @@
    Atomic Core being put in place before the first call (a cloud-route install never
    started it): main pushes `core` events on onLocal; the shell shows "Preparing the
    engine… 42%" with a bar at the top of the page on screen while it installs, and hands
-   each status to the page's optional onCore(status).
+   each status to the page's optional onCore(status). Every other onLocal event (a model
+   loaded, a download done, a model removed) goes to each page's optional onLocal(event).
    The pure helpers (fileUrl, mediaKindOf, dataUrlToBytes, draftWithPath, coreLine) are
    exported under Node for test/studio-shell.test.mjs. */
 (function () {
@@ -130,7 +131,11 @@
   }
 
   function onLocal(ev) {
-    if (!ev || ev.type !== 'core' || !ev.core) return;
+    if (!ev || typeof ev !== 'object') return;
+    /* A model loaded, unloaded, downloaded or removed (ATO-1394): every page, shown or not,
+       so its picker and footer stop saying "Not loaded" once Generate has loaded the model. */
+    if (ev.type !== 'core') { for (const k of Object.keys(pages)) safe(pages[k].onLocal, ev); return; }
+    if (!ev.core) return;
     coreStatus = ev.core;
     paintCore();
     const page = shown ? pages[shown] : null;
