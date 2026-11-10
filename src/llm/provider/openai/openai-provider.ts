@@ -30,7 +30,8 @@ import {
   type OpenAiBodyOptions,
 } from "./openai-build-body.js";
 import { isNativeShapeRejection } from "./openai-native-messages.js";
-import { allowedTemperatureFromError } from "./allowed-temperature.js";
+import { temperatureLessonFromError } from "./allowed-temperature.js";
+import { requiresReasoningEcho } from "./reasoning-echo-url.js";
 import { rememberAllowedTemperature } from "./model-params.js";
 import { OPENAI_DEFAULT_REQUEST_TIMEOUT_MS } from "../../transport-deadlines.js";
 import {
@@ -239,6 +240,7 @@ export class OpenAiProvider implements LlmProvider {
       ...(isTemplateKwargsKind(options.providerKind) && isLocalServerUrl(options.baseUrl)
         ? { templateKwargs: true }
         : {}),
+      ...(requiresReasoningEcho(options.baseUrl) ? { requireReasoning: true } : {}),
       ...(options.modelParams ? { modelParams: options.modelParams } : {}),
       ...(resolveAnthropicCacheControl(options)
         ? { anthropicCacheControl: true }
@@ -398,7 +400,8 @@ export class OpenAiProvider implements LlmProvider {
 
   /**
    * Whether a failed send is a 400 naming the one temperature this model
-   * accepts (Moonshot's "only 1 is allowed"). The value is remembered for
+   * accepts (Moonshot's "only 1 is allowed"), or saying it takes none
+   * (Anthropic's "`temperature` is deprecated"). The lesson is remembered for
    * the model for the rest of the process, so the next body built — the
    * resend, and every later turn — carries it. The caller allows one
    * such resend per completion.
@@ -408,11 +411,13 @@ export class OpenAiProvider implements LlmProvider {
     err: unknown,
   ): boolean {
     if (request.signal?.aborted) return false;
-    const value = allowedTemperatureFromError(err);
+    const value = temperatureLessonFromError(err);
     if (value === undefined) return false;
     if (!rememberAllowedTemperature(this.defaultChatModel!, value)) return true;
     this.http.logger?.warn(
-      `llm: "${this.id}" accepts only temperature ${value} for this model; resending once and keeping it for this model`,
+      value === "omit"
+        ? `llm: "${this.id}" takes no temperature for this model; resending once without it and keeping that for this model`
+        : `llm: "${this.id}" accepts only temperature ${value} for this model; resending once and keeping it for this model`,
       {
         provider: this.id,
         model: this.defaultChatModel,

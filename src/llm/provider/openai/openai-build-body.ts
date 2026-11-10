@@ -61,6 +61,11 @@ export interface OpenAiBodyOptions {
    * `disableThinking` reach the wire. Absent, it is dropped.
    */
   templateKwargs?: boolean;
+  /**
+   * The service requires `reasoning_content` back on every assistant
+   * tool call (DeepSeek's thinking mode; see `reasoning-echo-url.ts`).
+   */
+  requireReasoning?: boolean;
 }
 
 /** The wire layout `buildOpenAiChatBody` chose for a request. */
@@ -105,6 +110,8 @@ export function buildOpenAiChatBody(
           // A local server renders the template, which reads the
           // reasoning back where the model expects it (ATO-887).
           ...(options.templateKwargs ? { preserveReasoning: true } : {}),
+          // DeepSeek's thinking mode refuses the loop without it (ATO-1397).
+          ...(options.requireReasoning ? { requireReasoning: true } : {}),
         })
       : [
           {
@@ -259,6 +266,10 @@ export function buildOpenAiChatBody(
   // known up front (Kimi K3.1) stays overridable like any other field.
   if (profile.temperature.kind === "fixed" && profile.temperature.learned) {
     merged.temperature = profile.temperature.value;
+  }
+  // Likewise a service that said it takes no temperature at all.
+  if (profile.temperature.kind === "forbidden" && profile.temperature.learned) {
+    delete merged.temperature;
   }
   return checkedBody(merged, request);
 }

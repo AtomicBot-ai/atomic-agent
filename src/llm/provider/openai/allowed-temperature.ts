@@ -8,9 +8,13 @@
  * once with the named value and keep it for the rest of the process
  * (`rememberAllowedTemperature`).
  *
- * Deliberately narrow: only a 400, only the "only N is allowed" phrasing,
- * and only when "temperature" is said close to it. Any other 400 is left
- * alone and fails the way it always did.
+ * Anthropic answers a Claude 5.x request that carries any temperature at
+ * all with "`temperature` is deprecated for this model" (ATO-1397); the
+ * lesson there is "send none", read by `temperatureRefusedFromError`.
+ *
+ * Deliberately narrow: only a 400, only those phrasings, and only when
+ * "temperature" is said close to them. Any other 400 is left alone and
+ * fails the way it always did.
  */
 
 const ONLY_ALLOWED_RE = /only\s+([0-9]+(?:\.[0-9]+)?)\s+is\s+allowed/i;
@@ -31,9 +35,42 @@ export function parseAllowedTemperature(text: string): number | undefined {
   return value;
 }
 
+/**
+ * "`temperature` is deprecated for this model" (Anthropic), "Unsupported
+ * parameter: 'temperature'" (OpenAI reasoning models), "temperature is
+ * not supported": the service takes no temperature at all.
+ */
+const REFUSED_RE =
+  /\btemperature\b[^.\n]{0,80}?\b(?:is\s+deprecated|deprecated|not\s+supported|unsupported|does\s+not\s+support)\b|\b(?:unsupported\s+parameter|unknown\s+parameter|not\s+supported)\b[^.\n]{0,40}?\btemperature\b/i;
+
+export function parseTemperatureRefused(text: string): boolean {
+  // A body that names an allowed value is the other lesson, not this one.
+  if (parseAllowedTemperature(text) !== undefined) return false;
+  return REFUSED_RE.test(text);
+}
+
 /** The allowed temperature an HTTP error names, if it is that 400. */
 export function allowedTemperatureFromError(err: unknown): number | undefined {
   if (!(err instanceof Error)) return undefined;
   if ((err as { status?: unknown }).status !== 400) return undefined;
   return parseAllowedTemperature(err.message);
+}
+
+/** Whether an HTTP error is the 400 saying the model takes no temperature. */
+export function temperatureRefusedFromError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if ((err as { status?: unknown }).status !== 400) return false;
+  return parseTemperatureRefused(err.message);
+}
+
+/**
+ * What a 400 teaches about temperature: the one value to send, `"omit"`
+ * to send none, or `undefined` when the error is about something else.
+ */
+export function temperatureLessonFromError(
+  err: unknown,
+): number | "omit" | undefined {
+  const value = allowedTemperatureFromError(err);
+  if (value !== undefined) return value;
+  return temperatureRefusedFromError(err) ? "omit" : undefined;
 }

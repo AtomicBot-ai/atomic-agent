@@ -53,6 +53,37 @@ describe("modelParamProfile", () => {
     });
   });
 
+  // Anthropic answers any temperature on Claude 5.x with "`temperature`
+  // is deprecated for this model" (ATO-1397).
+  it.each([
+    "claude-sonnet-5-5",
+    "claude-haiku-5-5",
+    "claude-opus-5-5",
+    "claude-fable-5-1",
+    "anthropic/claude-sonnet-5.5",
+  ])("sends no temperature to %s", (model) => {
+    expect(modelParamProfile(model)).toEqual({
+      temperature: { kind: "forbidden" },
+      capField: "max_tokens",
+    });
+  });
+
+  it.each(["claude-sonnet-4-5", "anthropic/claude-3.7-sonnet", "claude-opus-4-1"])(
+    "leaves temperature free for older Claude %s",
+    (model) => {
+      expect(modelParamProfile(model).temperature).toEqual({ kind: "free" });
+    },
+  );
+
+  it("forbids temperature once a service said the model takes none", () => {
+    expect(rememberAllowedTemperature("vendor/no-temp", "omit")).toBe(true);
+    expect(rememberAllowedTemperature("vendor/no-temp", "omit")).toBe(false);
+    expect(modelParamProfile("vendor/no-temp")).toEqual({
+      temperature: { kind: "forbidden", learned: true },
+      capField: "max_tokens",
+    });
+  });
+
   it("uses a temperature learned at run time, for that model id only", () => {
     expect(rememberAllowedTemperature("vendor/new-model", 0.6)).toBe(true);
     expect(rememberAllowedTemperature("vendor/new-model", 0.6)).toBe(false);

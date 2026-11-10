@@ -189,6 +189,39 @@ describe("buildNativeMessages: reasoning handed back (ATO-887)", () => {
   });
 });
 
+describe("buildNativeMessages: reasoning required back (DeepSeek thinking mode, ATO-1397)", () => {
+  const turns: PromptMessages["turns"] = [
+    { kind: "user", text: "read a.txt and b.txt" },
+    { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "a first" },
+    { kind: "tool_result", tool: "os.fs.read", status: "ok", body: "hello", truncated: false },
+    { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "b.txt" } },
+    { kind: "tool_result", tool: "os.fs.read", status: "ok", body: "world", truncated: false },
+  ];
+
+  it("puts reasoning_content on every assistant tool call, empty when unknown", () => {
+    const messages = buildNativeMessages(prompt({ turns }), { ...options, requireReasoning: true });
+    const calls = messages.filter((m) => m.role === "assistant");
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.reasoning_content).toBe("a first");
+    expect(calls[1]).toHaveProperty("reasoning_content", "");
+  });
+
+  it("keeps the field on a call whose reasoning the budget dropped", () => {
+    const long = "x ".repeat(PRESERVED_REASONING_TOKEN_BUDGET * 8);
+    const heavy: PromptMessages["turns"] = [
+      { kind: "user", text: "go" },
+      { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "old" },
+      { kind: "tool_result", tool: "os.fs.read", status: "ok", body: "1", truncated: false },
+      { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "b.txt" }, reasoning: long },
+      { kind: "tool_result", tool: "os.fs.read", status: "ok", body: "2", truncated: false },
+    ];
+    const calls = buildNativeMessages(prompt({ turns: heavy }), { ...options, requireReasoning: true })
+      .filter((m) => m.role === "assistant");
+    expect(calls[0]).toHaveProperty("reasoning_content", "");
+    expect(String(calls[1]!.reasoning_content).length).toBeGreaterThan(0);
+  });
+});
+
 describe("capPreservedReasoning: reasoning handed back stays within a fixed budget (ATO-887)", () => {
   const call = (reasoning?: string): PromptMessages["turns"][number] => ({
     kind: "assistant_tool_call",

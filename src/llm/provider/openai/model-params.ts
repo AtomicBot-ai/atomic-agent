@@ -12,8 +12,12 @@
  *  - Moonshot's Kimi K3.1 family accepts exactly one temperature, 1, and
  *    answers anything else with a 400 ("only 1 is allowed for this
  *    model"). Kimi K2.x takes any value and keeps the historical body.
- *  - A model can also be taught its one temperature at run time, from
- *    the 400 that named it (`rememberAllowedTemperature`).
+ *  - Anthropic's Claude 5.x models (Sonnet / Haiku / Opus 5.5, Fable)
+ *    answer any `temperature` with a 400 ("`temperature` is deprecated
+ *    for this model", ATO-1397), so they get none.
+ *  - A model can also be taught at run time, from the 400 that named
+ *    the one temperature it takes, or said it takes none
+ *    (`rememberAllowedTemperature`).
  *  - Everything else keeps the historical body byte for byte.
  *
  * The id is read after any vendor prefix (`openai/o3` on OpenRouter is
@@ -25,7 +29,8 @@
 /**
  * What a model accepts as `temperature`:
  *  - `free`: any value; the caller's, else its default.
- *  - `forbidden`: the field must not be sent at all.
+ *  - `forbidden`: the field must not be sent at all. `learned` marks a
+ *    refusal taught by a 400, which also strips an operator's value.
  *  - `fixed`: only this value. `learned` marks one taught by a 400 at
  *    run time rather than known up front; that one also beats an
  *    operator's `extraBody` / `params`, since the service has just said
@@ -33,7 +38,7 @@
  */
 export type TemperatureRule =
   | { readonly kind: "free" }
-  | { readonly kind: "forbidden" }
+  | { readonly kind: "forbidden"; readonly learned?: true }
   | { readonly kind: "fixed"; readonly value: number; readonly learned?: true };
 
 export interface ModelParamProfile {
@@ -55,10 +60,22 @@ const OPENAI_REASONING_MODEL_RE = /^(?:o[1-9]|gpt-5)(?![a-z])/i;
  */
 const KIMI_K31_MODEL_RE = /^kimi-k3\.1(?![0-9])/i;
 
+/**
+ * `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-opus-5-5`,
+ * `claude-fable-5-1`, and the dotted OpenRouter spelling
+ * (`anthropic/claude-sonnet-5.5`). Claude 4.x and older keep the free
+ * rule; a refusal there is learned at run time instead.
+ */
+const CLAUDE_NO_TEMPERATURE_RE =
+  /^claude-(?:opus|sonnet|haiku|fable)-(?:[5-9]|[1-9][0-9])(?![0-9])/i;
+
 const FREE: TemperatureRule = { kind: "free" };
 
-/** Temperatures services told us at run time, keyed by model id. */
-const learnedTemperatures = new Map<string, number>();
+/**
+ * Temperatures services told us at run time, keyed by model id: the one
+ * value a model takes, or `"omit"` when it takes none.
+ */
+const learnedTemperatures = new Map<string, number | "omit">();
 
 export function modelParamProfile(modelId: string): ModelParamProfile {
   const bare = modelId.includes("/")
@@ -71,11 +88,20 @@ export function modelParamProfile(modelId: string): ModelParamProfile {
     };
   }
   const learned = learnedTemperatures.get(modelId.trim());
+  if (learned === "omit") {
+    return {
+      temperature: { kind: "forbidden", learned: true },
+      capField: "max_tokens",
+    };
+  }
   if (learned !== undefined) {
     return {
       temperature: { kind: "fixed", value: learned, learned: true },
       capField: "max_tokens",
     };
+  }
+  if (CLAUDE_NO_TEMPERATURE_RE.test(bare)) {
+    return { temperature: { kind: "forbidden" }, capField: "max_tokens" };
   }
   if (KIMI_K31_MODEL_RE.test(bare)) {
     return { temperature: { kind: "fixed", value: 1 }, capField: "max_tokens" };
@@ -105,12 +131,13 @@ export function resolveTemperature(
 
 /**
  * Remember, for the rest of the process, the one temperature a service
- * said this model accepts. Returns whether anything changed, so a caller
- * retrying on the lesson can tell a new one from a repeat.
+ * said this model accepts, or `"omit"` when it said it takes none.
+ * Returns whether anything changed, so a caller retrying on the lesson
+ * can tell a new one from a repeat.
  */
 export function rememberAllowedTemperature(
   modelId: string,
-  value: number,
+  value: number | "omit",
 ): boolean {
   const key = modelId.trim();
   if (learnedTemperatures.get(key) === value) return false;

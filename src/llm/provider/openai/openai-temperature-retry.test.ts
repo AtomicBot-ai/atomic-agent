@@ -136,3 +136,50 @@ describe("OpenAiProvider — named-temperature retry (ATO-1217)", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 });
+
+describe("OpenAiProvider — no-temperature retry (ATO-1397)", () => {
+  const DEPRECATED_400 = JSON.stringify({
+    type: "error",
+    error: {
+      type: "invalid_request_error",
+      message: "`temperature` is deprecated for this model.",
+    },
+  });
+
+  it("resends once without temperature and keeps that for the model", async () => {
+    const { fetchImpl, bodies } = scripted([
+      () => json(DEPRECATED_400, 400),
+      okStream,
+      okStream,
+    ]);
+    const p = provider(fetchImpl);
+    const result = await drain(p.completeStream({ prompt: "hi" }));
+
+    expect(result.content).toBe("ok");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(bodies[0]!.temperature).toBe(0.2);
+    expect("temperature" in bodies[1]!).toBe(false);
+
+    await drain(p.completeStream({ prompt: "again" }));
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    expect("temperature" in bodies[2]!).toBe(false);
+  });
+
+  it("drops an operator's temperature too once the service refused it", async () => {
+    const { fetchImpl, bodies } = scripted([
+      () => json(DEPRECATED_400, 400),
+      okUnary,
+    ]);
+    const p = new OpenAiProvider({
+      id: "test",
+      baseUrl: "https://example.invalid",
+      apiKey: "",
+      defaultChatModel: MODEL,
+      extraBody: { temperature: 0.7 },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    await p.complete({ prompt: "hi" });
+    expect(bodies[0]!.temperature).toBe(0.7);
+    expect("temperature" in bodies[1]!).toBe(false);
+  });
+});

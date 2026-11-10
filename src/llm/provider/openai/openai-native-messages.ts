@@ -47,6 +47,13 @@ export interface NativeMessageOptions {
    * unknown fields with a 400, so it is off by default.
    */
   preserveReasoning?: boolean;
+  /**
+   * The service refuses a tool loop unless every assistant `tool_calls`
+   * message carries `reasoning_content` (DeepSeek's thinking mode,
+   * ATO-1397). Implies `preserveReasoning`, and a call whose reasoning
+   * is unknown or was cut by the budget still gets the field, empty.
+   */
+  requireReasoning?: boolean;
 }
 
 /**
@@ -120,7 +127,14 @@ export function buildNativeMessages(
   // Consecutive orphan result lines, folded into one user message.
   let orphanLines: string[] = [];
   const reasoningByTurn =
-    options.preserveReasoning === true ? capPreservedReasoning(prompt.turns) : new Map<number, string>();
+    options.preserveReasoning === true || options.requireReasoning === true
+      ? capPreservedReasoning(prompt.turns)
+      : new Map<number, string>();
+  const reasoningFor = (index: number): Record<string, unknown> => {
+    const kept = reasoningByTurn.get(index);
+    if (kept !== undefined) return { reasoning_content: kept };
+    return options.requireReasoning === true ? { reasoning_content: "" } : {};
+  };
 
   const flushOrphans = (): void => {
     if (orphanLines.length === 0) return;
@@ -160,9 +174,7 @@ export function buildNativeMessages(
         out.push({
           role: "assistant",
           content: null,
-          ...(reasoningByTurn.has(index)
-            ? { reasoning_content: reasoningByTurn.get(index) }
-            : {}),
+          ...reasoningFor(index),
           tool_calls: [
             {
               id,

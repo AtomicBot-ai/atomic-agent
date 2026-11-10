@@ -100,5 +100,8 @@ function withPassthrough(
   if (profile.temperature.kind === "fixed" && profile.temperature.learned) {
     merged.temperature = profile.temperature.value;
   }
+  if (profile.temperature.kind === "forbidden" && profile.temperature.learned) {
+    delete merged.temperature;
+  }
   return merged;
 }
