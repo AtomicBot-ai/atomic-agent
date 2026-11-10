@@ -20,6 +20,13 @@ export const APPROVAL_TIME_LIMIT_REASON =
 /** How often, once past the limit, a new prompt is denied. */
 export const APPROVAL_DEADLINE_REPEAT_MS = 5_000;
 
+/**
+ * The longest delay `setTimeout` honours. Node runs a larger one after
+ * 1 ms, which would deny every prompt at once under a limit of more
+ * than ~24.8 days; such a wait is split into hops of at most this.
+ */
+export const MAX_TIMER_MS = 2_147_483_647;
+
 export interface ApprovalDeadlineTimers {
   setTimeout(fn: () => void, ms: number): unknown;
   clearTimeout(handle: unknown): void;
@@ -51,10 +58,14 @@ export function armApprovalDeadline(input: {
   msLeft: number;
   deny: (reason: string) => void;
   timers?: ApprovalDeadlineTimers;
+  now?: () => number;
 }): () => void {
   const timers = input.timers ?? realTimers;
+  const now = input.now ?? Date.now;
   if (!Number.isFinite(input.msLeft)) return () => undefined;
+  const deadline = now() + Math.max(0, input.msLeft);
   let repeat: unknown = null;
+  let pending: unknown = null;
   const fire = (): void => {
     try {
       input.deny(APPROVAL_TIME_LIMIT_REASON);
@@ -62,12 +73,22 @@ export function armApprovalDeadline(input: {
       // A failing gate must not take the step down with it.
     }
   };
-  const first = timers.setTimeout(() => {
-    fire();
-    repeat = timers.setInterval(fire, APPROVAL_DEADLINE_REPEAT_MS);
-  }, Math.max(0, input.msLeft));
+  const arm = (): void => {
+    const left = deadline - now();
+    if (left > MAX_TIMER_MS) {
+      // Not there yet: wait one full hop and look again.
+      pending = timers.setTimeout(arm, MAX_TIMER_MS);
+      return;
+    }
+    pending = timers.setTimeout(() => {
+      pending = null;
+      fire();
+      repeat = timers.setInterval(fire, APPROVAL_DEADLINE_REPEAT_MS);
+    }, Math.max(0, left));
+  };
+  arm();
   return () => {
-    timers.clearTimeout(first);
+    if (pending !== null) timers.clearTimeout(pending);
     if (repeat !== null) timers.clearInterval(repeat);
   };
 }

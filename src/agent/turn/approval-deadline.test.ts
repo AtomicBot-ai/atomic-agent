@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
+  MAX_TIMER_MS,
   APPROVAL_DEADLINE_REPEAT_MS,
   APPROVAL_TIME_LIMIT_REASON,
   armApprovalDeadline,
@@ -54,5 +55,26 @@ describe("armApprovalDeadline (ATO-1367)", () => {
     armApprovalDeadline({ msLeft: Number.POSITIVE_INFINITY, deny })();
     vi.advanceTimersByTime(1e9);
     expect(deny).not.toHaveBeenCalled();
+  });
+
+  it("does not fire early on a limit longer than setTimeout allows (real timers)", async () => {
+    const deny = vi.fn();
+    const dispose = armApprovalDeadline({ msLeft: 2 ** 31, deny });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(deny).not.toHaveBeenCalled();
+    dispose();
+  });
+
+  it("splits a very long limit into hops and fires at the real deadline", () => {
+    vi.useFakeTimers();
+    const deny = vi.fn();
+    const dispose = armApprovalDeadline({ msLeft: MAX_TIMER_MS + 1_000, deny });
+    vi.advanceTimersByTime(MAX_TIMER_MS);
+    expect(deny).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(999);
+    expect(deny).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(deny).toHaveBeenCalledTimes(1);
+    dispose();
   });
 });
