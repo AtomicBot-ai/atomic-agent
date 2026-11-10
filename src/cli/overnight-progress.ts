@@ -5,7 +5,7 @@
  */
 import type { AgentLoopEvent } from "../agent/index.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
-import type { TaskRecord } from "../tasks/index.js";
+import { stopCauseLine, type TaskRecord } from "../tasks/index.js";
 
 const SUMMARY_MAX = 100;
 
@@ -81,10 +81,13 @@ export function formatOvernightSummary(input: OvernightSummaryInput): string {
   const spent = formatUsd(task.spentUsd ?? 0);
   const lines = [
     "",
-    `overnight ${task.status}: ${task.id}`,
+    `overnight ${overnightOutcome(task)}: ${task.id}`,
     `  time:  ${formatElapsed(input.elapsedMs)}`,
     `  spent: ${input.capUsd > 0 ? `${spent} of ${formatUsd(input.capUsd)}` : spent} (estimate; local models count as $0)`,
   ];
+  if (stoppedByLimit(task)) {
+    lines.push(`  ${stopCauseLine(task.stopCause!)}`);
+  }
   if (input.deniedApprovals > 0) {
     lines.push(
       `  denied ${input.deniedApprovals} action(s) that needed approval; rerun with --no-approval to allow them`,
@@ -115,6 +118,28 @@ export function formatDetachedNotice(taskId: string, logPath: string, dir: strin
   ].join("\n");
 }
 
-export function overnightExitCode(status: TaskRecord["status"]): number {
-  return status === "completed" ? 0 : 1;
+/**
+ * The store calls a run a ceiling ended `completed` and keeps the cause
+ * beside it (ATO-1323). For the person or script reading the result
+ * that is not "done": the work may be unfinished.
+ */
+function stoppedByLimit(task: Pick<TaskRecord, "status" | "stopCause">): boolean {
+  return task.status === "completed" && typeof task.stopCause === "string" && task.stopCause.length > 0;
+}
+
+/** `completed`, `stopped (cost_ceiling)`, `failed`, ... */
+export function overnightOutcome(task: Pick<TaskRecord, "status" | "stopCause">): string {
+  return stoppedByLimit(task) ? `stopped (${task.stopCause})` : task.status;
+}
+
+/** Exit code when a step, time or money limit (or no progress) ended the run. */
+export const OVERNIGHT_STOPPED_EXIT_CODE = 2;
+
+/**
+ * 0 only when the agent finished on its own; 2 when a limit stopped it
+ * (the run itself worked, the task may not be done); 1 otherwise.
+ */
+export function overnightExitCode(task: Pick<TaskRecord, "status" | "stopCause">): number {
+  if (stoppedByLimit(task)) return OVERNIGHT_STOPPED_EXIT_CODE;
+  return task.status === "completed" ? 0 : 1;
 }

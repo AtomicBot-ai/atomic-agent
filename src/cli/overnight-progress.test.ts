@@ -7,6 +7,7 @@ import {
   formatOvernightSummary,
   formatProgressLine,
   overnightExitCode,
+  overnightOutcome,
   replyFromEvent,
 } from "./overnight-progress.js";
 
@@ -127,9 +128,17 @@ describe("overnight progress", () => {
     expect(failed).not.toContain("denied");
   });
 
-  it("exits 0 only on completed", () => {
-    expect(overnightExitCode("completed")).toBe(0);
-    expect(overnightExitCode("failed")).toBe(1);
-    expect(overnightExitCode("cancelled")).toBe(1);
+  it("exits 0 only when the agent finished on its own", () => {
+    expect(overnightExitCode({ status: "completed", stopCause: null })).toBe(0);
+    expect(overnightExitCode({ status: "failed", stopCause: null })).toBe(1);
+    expect(overnightExitCode({ status: "cancelled", stopCause: null })).toBe(1);
+  });
+
+  it("exits 2 and says stopped when a limit ended the run (ATO-1323)", () => {
+    for (const cause of ["cost_ceiling", "time_ceiling", "step_ceiling", "no_progress"]) {
+      expect(overnightExitCode({ status: "completed", stopCause: cause })).toBe(2);
+      expect(overnightOutcome({ status: "completed", stopCause: cause })).toBe(`stopped (${cause})`);
+    }
+    expect(overnightOutcome({ status: "completed", stopCause: null })).toBe("completed");
   });
 });
