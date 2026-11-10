@@ -14093,7 +14093,7 @@ function obWayInHTML(act, label, detail, icon) {
 function obLocalWaysInHTML() {
   return '<div class="ob-wayins">'
     + obWayInHTML('route:apps', OB_APPS_LABEL, 'Atomic Chat, Ollama or LM Studio, already running', 'laptop')
-    + (BR && BR.ggufPick ? obWayInHTML('local:gguf', OB_GGUF_LABEL, 'Runs it from where it is. Nothing to download', 'file') : '')
+    + (BR && BR.ggufPick ? obWayInHTML('local:gguf', OB_GGUF_LABEL, 'Runs it from where it is. No model download', 'file') : '')
     + '</div>';
 }
 
@@ -15471,13 +15471,19 @@ function obOpenApps() {
 /* ATO-1402: "Use a .gguf file I already have". main registers the file where
    it lies (cli:ggufPick); then it is the same hand-over as a curated pick's
    Download, whose pull finds the weights present and starts the model. */
+/* The card is drawn while the catalogue is still loading (OB.busy), and it
+   works then too: the file dialog does not need the list. Only a dialog
+   already open is a reason to do nothing. */
+let OB_GGUF_PICKING = false;
 async function obGgufPick() {
-  if (!BR || !BR.ggufPick || OB.busy) return;
+  if (!BR || !BR.ggufPick || OB_GGUF_PICKING) return;
   if (dlBusy() || DL.projector || SEL.pulling || LLMP.pulling) {
     obDispatch({type:'onboarding_error_set', error:'a download is already running'});
     return;
   }
-  const res = await BR.ggufPick();
+  OB_GGUF_PICKING = true;
+  let res;
+  try { res = await BR.ggufPick(); } finally { OB_GGUF_PICKING = false; }
   if (!OB.open || OB.step !== 'local_pick') return;
   if (!res || res.ok !== true) {
     if (res && res.cancelled) return;
