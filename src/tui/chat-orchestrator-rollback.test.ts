@@ -171,11 +171,29 @@ describe("ChatOrchestrator.rollbackLastTurn", () => {
 
   it("refuses a different stored last question than the one clicked", () => {
     const h = makeHarness();
-    expect(h.orchestrator.rollbackLastTurn("a question never stored")).toEqual({
+    expect(h.orchestrator.rollbackLastTurn({ expectText: "a question never stored" })).toEqual({
       ok: false,
       code: "turn_mismatch",
     });
+    // Same text, wrong position: a failed copy of the question that never reached the store.
+    expect(
+      h.orchestrator.rollbackLastTurn({ expectText: "second question", expectPriorQuestions: 2 }),
+    ).toEqual({ ok: false, code: "turn_mismatch" });
     expect(h.save).not.toHaveBeenCalled();
-    expect(h.orchestrator.rollbackLastTurn("second question").ok).toBe(true);
+    expect(
+      h.orchestrator.rollbackLastTurn({ expectText: "second question", expectPriorQuestions: 1 }).ok,
+    ).toBe(true);
+  });
+
+  it("falls back for a stopped turn: the stop may have cut a tool short", () => {
+    const stopped = turn(twoTurnSession(), user("delete the build folder", 5), {
+      kind: "assistant_reply",
+      text: "(stopped)",
+      stopped: true,
+      at: 6,
+    });
+    const h = makeHarness({ initial: stopped });
+    expect(h.orchestrator.rollbackLastTurn()).toEqual({ ok: false, code: "turn_stopped" });
+    expect(h.save).not.toHaveBeenCalled();
   });
 });

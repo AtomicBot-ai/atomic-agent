@@ -22,7 +22,10 @@ import {
   type SessionSummaryCursor,
 } from "../session/session-summary-page.js";
 import { readSessionTitle } from "../session/session-title.js";
-import { planLastTurnRollback } from "../session/session-truncate.js";
+import {
+  planLastTurnRollback,
+  type LastTurnRollbackOptions,
+} from "../session/session-truncate.js";
 import { getConfig } from "../config/index.js";
 import { resolveLlmConfig } from "../llm/provider/registry/index.js";
 import {
@@ -1518,7 +1521,7 @@ export class ChatOrchestrator {
    * holding submissions, a manual compaction, or a turn another origin
    * runs on the same chat. A refusal changes nothing.
    */
-  rollbackLastTurn(expectText?: string): LastTurnRollbackOutcome {
+  rollbackLastTurn(expect: LastTurnRollbackOptions = {}): LastTurnRollbackOutcome {
     const session = this.session;
     if (this.quitting || !session) return { ok: false, code: "nothing_to_undo" };
     if (
@@ -1531,9 +1534,10 @@ export class ChatOrchestrator {
     ) {
       return { ok: false, code: "turn_in_progress" };
     }
-    // `expectText`: the bubble clicked; a different stored last question
-    // (a failed turn never recorded) is refused, not removed.
-    const plan = planLastTurnRollback(session, expectText === undefined ? {} : { expectText });
+    // `expect`: the bubble clicked, by text and position; a different
+    // stored last question (a failed turn never recorded) is refused, not
+    // removed. A stopped turn is refused too (`turn_stopped`).
+    const plan = planLastTurnRollback(session, expect);
     if (!plan.ok) return { ok: false, code: plan.code };
     // Stop a compaction started on this chat: it would summarise the turn
     // being removed (a background rolling summary re-checks before saving).

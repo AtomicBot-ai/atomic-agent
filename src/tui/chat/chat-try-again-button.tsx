@@ -92,6 +92,19 @@ export function isLastQuestion(
   return false;
 }
 
+/** How many questions (steers not counted) come before `messageId`. */
+export function priorQuestions(
+  messages: readonly ChatMessage[],
+  messageId: string,
+): number {
+  let count = 0;
+  for (const message of messages) {
+    if (message.id === messageId) return count;
+    if (message.role === "user" && message.steered !== true) count += 1;
+  }
+  return count;
+}
+
 /** Nothing running, waiting, or parked that the cut could race with. */
 function chatIsIdle(state: TuiState): boolean {
   return (
@@ -132,7 +145,13 @@ export function retryChatMessage(
     chatIsIdle(state) &&
     isLastQuestion(state.messages, messageId)
   ) {
-    const outcome = rollback(text);
+    // The clicked question by text and by how many questions precede it:
+    // a failed turn that never reached the store must not match an
+    // earlier question with the same text.
+    const outcome = rollback({
+      expectText: text,
+      expectPriorQuestions: priorQuestions(state.messages, messageId),
+    });
     if (outcome.ok) {
       mouse.dispatch({ type: "chat_messages_truncated", fromMessageId: messageId });
       // The session's own copy of the prompt: what the model was asked.

@@ -14,7 +14,7 @@ import {
   type TuiSessionInfo,
   type TuiState,
 } from "../tui-state.js";
-import { ChatTryAgainButton, isLastQuestion } from "./chat-try-again-button.js";
+import { ChatTryAgainButton, isLastQuestion, priorQuestions } from "./chat-try-again-button.js";
 
 const SESSION: TuiSessionInfo = fakeSession({
   sessionId: "again",
@@ -372,3 +372,17 @@ describe("isLastQuestion", () => {
     expect(isLastQuestion([], "u1")).toBe(false);
   });
 });
+
+describe("priorQuestions", () => {
+  it("counts the turn-opening prompts before a message, steers left out", () => {
+    const messages: ChatMessage[] = [
+      { id: "u0", role: "user", text: "continue" },
+      { id: "s0", role: "user", text: "also", steered: true },
+      { id: "a0", role: "assistant", text: "reply" },
+      { id: "u1", role: "user", text: "continue" },
+    ];
+    expect(priorQuestions(messages, "u0")).toBe(0);
+    expect(priorQuestions(messages, "u1")).toBe(1);
+  });
+});
+

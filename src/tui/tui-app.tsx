@@ -2,7 +2,10 @@ import { ContextChip } from "./context/context-chip.js";
 import { UsageReadout, usageReadoutLabel } from "./context/usage-readout.js";
 import { formatProviderOutageParts } from "./format-provider-outage.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
-import type { LastTurnRollbackRefusal } from "../session/session-truncate.js";
+import type {
+  LastTurnRollbackOptions,
+  LastTurnRollbackRefusal,
+} from "../session/session-truncate.js";
 import {
   codingModeLook,
   resolveCodingMode,
@@ -265,7 +268,7 @@ export interface TuiAppCallbacks {
    * or anything is running or queued; the button then resends as a new
    * turn. On success `text` is the question to send again.
    */
-  onLastTurnRollbackRequested?(expectText?: string): LastTurnRollbackOutcome;
+  onLastTurnRollbackRequested?(expect?: LastTurnRollbackOptions): LastTurnRollbackOutcome;
   /** Drop every message parked behind the running turn (`/queue clear`). */
   onQueueClearRequested?(): void;
   /**
