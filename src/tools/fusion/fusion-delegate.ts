@@ -782,9 +782,10 @@ export function buildFusionDelegateTool(
         allowSplit: boolean,
       ): Promise<WorkerTaskResult[]> =>
         runWorkerTasks(
-          ctx.modelMode === "cloud"
-            ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true }
-            : deps,
+          // Workers run in the parent's folder in every model mode, so a
+          // live folder switch reaches them too (#1121). Only cloud
+          // workers inherit the parent's workspace.
+          { ...deps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -845,9 +846,7 @@ export function buildFusionDelegateTool(
         );
         const onlyRole = roles.size === 1 ? [...roles][0] : "-";
         return runWorkerTasks(
-          ctx.modelMode === "cloud"
-            ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true }
-            : deps,
+          { ...deps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),

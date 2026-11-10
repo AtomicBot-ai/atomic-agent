@@ -12,7 +12,8 @@ import { join } from "node:path";
 import type { RunTurnResult } from "../../agent/agent-loop.js";
 import { resetConfigCache } from "../../config/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
-import { createEmptySessionState } from "../../session/session-state.js";
+import { createEmptySessionState, type SessionState } from "../../session/session-state.js";
+import { createRuntimeSessionFactories } from "../../runtime/composition/runtime-session-services.js";
 import { FUSION_WORKER_ID_PREFIX } from "../../session/fusion-worker-session.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { ToolContext } from "../tool-registry.js";
@@ -119,6 +120,24 @@ describe("fusion.delegate", () => {
     const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
       { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "cloud" }));
     expect(result.status).toBe("ok"); expect(create.mock.calls[0]?.[1]).toBe("/selected"); expect(runTurn).toHaveBeenCalledOnce();
+    expect(create.mock.calls[0]?.[2]).toBe(true);
+  });
+
+  it("runs a local worker in the parent's folder without inheriting a workspace (issue #1121)", async () => {
+    // The real factory: bootstrap folder /boot, parent switched live to /selected.
+    const factories = createRuntimeSessionFactories("/boot", { save: () => {} }, () => null);
+    const create = vi.fn(factories.createEphemeralSession);
+    const runTurn = vi.fn(async (session: SessionState) => {
+      expect(session.workingDir).toBe("/selected");
+      expect(session.inheritedWorkspace).toBeUndefined();
+      return turnResult({ session });
+    });
+    const result = await buildFusionDelegateTool(deps({ createEphemeralSession: create, runTurn, workingDir: "/boot" })).run(
+      { tasks: [TASKS[0]!] }, ctx({ workingDir: "/selected", modelMode: "local" }));
+    expect(result.status).toBe("ok");
+    expect(create.mock.calls[0]?.[1]).toBe("/selected");
+    expect(create.mock.calls[0]?.[2]).toBe(false);
+    expect(runTurn).toHaveBeenCalledOnce();
   });
   it("is not readonly and carries its own name", () => {
     const tool = buildFusionDelegateTool(deps());

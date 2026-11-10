@@ -142,9 +142,15 @@ export function createRuntimeSessionFactories(
 
   // In memory only: no `sessionStore.save`, no `ensureRecorder`. The
   // worker stamp is what `executeTurn` keys its skips on.
-  const createEphemeralSession = (meta: FusionWorkerMeta, inheritedDir?: string): SessionState => ({
-    ...createFusionWorkerSession({ workingDir: inheritedDir ?? workingDir, meta }),
-    ...(inheritedDir !== undefined ? { inheritedWorkspace: true } : {}),
+  // The folder and the cloud-workspace flag are separate: a local worker
+  // runs in its parent's folder without inheriting a workspace (#1121).
+  const createEphemeralSession = (
+    meta: FusionWorkerMeta,
+    dir?: string,
+    inheritWorkspace: boolean = dir !== undefined,
+  ): SessionState => ({
+    ...createFusionWorkerSession({ workingDir: dir ?? workingDir, meta }),
+    ...(inheritWorkspace ? { inheritedWorkspace: true } : {}),
   });
 
   return { createSession, createEphemeralSession };
