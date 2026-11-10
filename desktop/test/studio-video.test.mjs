@@ -84,7 +84,7 @@ test('form → cloud request: only what the model takes', () => {
 test('form → local request: width and height, no cloud fields, never image-to-video', () => {
   const r = V.buildRequest({ prompt: 'fox', negativePrompt: 'text', mode: 'image', durationSecs: 4, aspectRatio: '9:16', audio: true, firstFrame: { path: '/a.png' } }, wan);
   assert.deepEqual({ ...r }, { provider: 'local', model: 'wan2.2-5b', mode: 'create', prompt: 'fox', negativePrompt: 'text', width: 704, height: 1280 });
-  assert.equal(V.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this Mac is coming soon. Pick a cloud model.');
+  assert.equal(V.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this Mac is coming soon. Switch the chat to the cloud to use it.');
   assert.equal(V.blockReason({ mode: 'text', prompt: ' ' }, veo), 'Write a prompt first.');
   assert.equal(V.blockReason({ mode: 'image', prompt: '' }, veo), 'Add a first frame.');
   assert.equal(V.blockReason({ mode: 'image', prompt: '', firstFrame: { path: '/a' } }, veo), '');
@@ -327,7 +327,7 @@ test('local video models say "this Mac" only on macOS, "this computer" on Window
   for (const platform of ['win32', 'linux']) {
     const W = load({ atomic: { platform } }).StudioVideo;
     assert.equal(W.machine(), 'this computer');
-    assert.equal(W.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this computer is coming soon. Pick a cloud model.');
+    assert.equal(W.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this computer is coming soon. Switch the chat to the cloud to use it.');
   }
   assert.equal(load({ atomic: { platform: 'darwin' } }).StudioVideo.machine(), 'this Mac');
   const strings = (SRC.match(/'[^'\n]*'/g) || []).filter((x) => /this Mac|This Mac|Show in Finder/.test(x));
@@ -366,4 +366,64 @@ test('after Generate loads a local model the page reads the catalog again and st
   assert.equal(page._state.catalog.local.models[0].local.loaded, true);
   assert.equal(page._state.form.modelId, wan.id, 'the chosen model stays');
   assert.doesNotMatch(foot.innerHTML, /loads when you press Generate/);
+});
+
+test('the model follows where the chat runs: only that place, the last one chosen there first (ATO-1306)', () => {
+  const ltx = { ...wan, id: 'ltx-2', name: 'LTX 2', local: { family: 'ltx-2', loaded: false, installed: true } };
+  const cold = { ...wan, id: 'cold', name: 'Cold', local: { family: 'cold', loaded: false, installed: false } };
+  const kling = { ...veo, id: 'kling/2', name: 'Kling', default: false };
+  const cat = { cloud: { models: [kling, veo] }, local: { models: [cold, ltx, wan] } };
+  assert.equal(V.placeOf(wan), 'local');
+  assert.equal(V.placeOf(veo), 'cloud');
+  assert.equal(V.placeOf(null), null);
+  // Cloud: the saved local model is not taken; the cloud default is.
+  assert.equal(V.pickModel(cat, 'wan2.2-5b', 'cloud').id, veo.id);
+  assert.equal(V.pickModel(cat, ['gone', 'kling/2'], 'cloud').id, 'kling/2');
+  // Local: the saved cloud model is not taken; a loaded model, else a downloaded one.
+  assert.equal(V.pickModel(cat, veo.id, 'local').id, 'wan2.2-5b');
+  assert.equal(V.pickModel({ cloud: { models: [veo] }, local: { models: [cold, ltx] } }, null, 'local').id, 'ltx-2');
+  assert.equal(V.pickModel(cat, ['cold'], 'local').id, 'cold', 'one chosen there is kept even when not downloaded');
+  // Nothing there: no model, never the other place.
+  assert.equal(V.pickModel({ cloud: { models: [veo] }, local: { models: [cold] } }, null, 'local'), null);
+  assert.equal(V.pickModel({ cloud: { models: [] }, local: { models: [wan] } }, null, 'cloud'), null);
+  // Settings not read yet: as before.
+  assert.equal(V.pickModel(cat, 'wan2.2-5b', null).id, 'wan2.2-5b');
+  assert.equal(V.pickModel(cat, 'gone', null).id, veo.id);
+});
+
+test('the Video page switches its model when the chat moves, keeps the prompt, and returns to the old one (ATO-1306)', async () => {
+  let place = 'cloud';
+  const cat = { cloud: { models: [veo], keyMissing: false }, local: { models: [wan] } };
+  const studio = {
+    catalog: async () => ({ ok: true, data: cat }),
+    job: async () => ({ ok: false }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+  };
+  let page;
+  const store = {};
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: (k) => store[k] || null, setItem: (k, v) => { store[k] = v; } },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => place } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const root = { innerHTML: '', addEventListener() {}, contains: () => true, querySelector: () => null };
+  const settle = () => new Promise((r) => setTimeout(r, 20));
+  page.render(root);
+  await settle();
+  const S = page._state;
+  assert.equal(S.form.modelId, veo.id, 'cloud chat: a cloud model');
+  S.form.prompt = 'a fox';
+  place = 'local';
+  page.onHide(); page.onShow();
+  await settle();
+  assert.equal(S.form.modelId, wan.id, 'local chat: a local model');
+  assert.equal(S.form.prompt, 'a fox');
+  page.onHide(); place = 'cloud'; page.onShow();
+  await settle();
+  assert.equal(S.form.modelId, veo.id, 'back in the cloud: the cloud model again');
+  // Not while a clip is being made.
+  S.job = { id: 'j', kind: 'video', state: 'generating', cloud: true };
+  page.onHide(); place = 'local'; page.onShow();
+  await settle();
+  assert.equal(S.form.modelId, veo.id, 'the running clip keeps its form');
 });

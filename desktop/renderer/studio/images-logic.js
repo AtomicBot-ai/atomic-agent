@@ -51,13 +51,37 @@ function simgFindModel(catalog, id, provider) {
   return simgModels(catalog).find((m) => m.id === id && (!provider || m.provider === provider)) || null;
 }
 
-/** The model a fresh form starts on: the cloud default, else a loaded local one, else the first. */
-function simgDefaultModel(catalog) {
+/** 'local' | 'cloud': where a model runs; null for no model. */
+function simgPlaceOf(model) {
+  if (!model) return null;
+  return model.group === 'local' || model.provider === 'local' ? 'local' : 'cloud';
+}
+
+/** The model a fresh form starts on. For a place (STUDIO.chatPlace, ATO-1305) only that place's
+    models: in the cloud the cloud default, else the first; here a loaded model, else a downloaded
+    one; else none (Studio never moves to the other place by itself). With no place (the settings
+    are not read yet): the cloud default, else a loaded local one, else the first. */
+function simgDefaultModel(catalog, place) {
   const all = simgModels(catalog);
+  if (place === 'cloud') return all.find((m) => m.group === 'cloud' && m.default) || all.find((m) => m.group === 'cloud') || null;
+  if (place === 'local') {
+    const here = all.filter((m) => m.group === 'local');
+    return here.find((m) => m.local && m.local.loaded) || here.find((m) => m.local && m.local.installed) || null;
+  }
   return all.find((m) => m.group === 'cloud' && m.default)
     || all.find((m) => m.group === 'cloud')
     || all.find((m) => m.local && m.local.loaded)
     || all[0] || null;
+}
+
+/** The model to open on: the first of `wants` ({modelId, provider}, remembered choices in order)
+    still listed and, with a place, from that place; else simgDefaultModel(catalog, place). */
+function simgPickModel(catalog, place, wants) {
+  for (const w of wants || []) {
+    const m = w && w.modelId ? simgFindModel(catalog, w.modelId, w.provider) : null;
+    if (m && (!place || simgPlaceOf(m) === place)) return m;
+  }
+  return simgDefaultModel(catalog, place);
 }
 
 /** A mode as the end of "<model> cannot ...". */
@@ -403,7 +427,7 @@ function simgPinnedList(items, more) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
+  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};

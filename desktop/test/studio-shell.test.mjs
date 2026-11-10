@@ -173,3 +173,26 @@ test('onLocal: a model load, download or removal reaches every page; a core even
   assert.deepEqual(got.images, ['load', 'removed']);
   assert.deepEqual(got.video, ['load', 'removed']);
 });
+
+test('chatPlace: Studio works where the chat runs; custom counts as local, Fusion as its orchestrator (ATO-1304)', () => {
+  const { STUDIO } = load();
+  const placeOf = STUDIO._pure.placeOf;
+  assert.equal(placeOf('cloud'), 'cloud');
+  assert.equal(placeOf('local'), 'local');
+  assert.equal(placeOf('custom'), 'local');
+  assert.equal(placeOf('fusion', 'openrouter'), 'cloud');
+  assert.equal(placeOf('fusion', null), 'cloud');
+  assert.equal(placeOf('fusion', 'llama-server'), 'local');
+  assert.equal(placeOf(undefined), null);
+
+  // No settings read yet: null, though selBackend() would say 'cloud'.
+  assert.equal(load({ LIVE_CONFIG: null, selBackend: () => 'cloud' }).STUDIO.chatPlace(), null);
+  assert.equal(load({ selBackend: () => 'cloud' }).STUDIO.chatPlace(), null);
+  const cfg = { llm: { providers: [{ id: 'local-llama', kind: 'llama-server' }, { id: 'openrouter', kind: 'openrouter' }] } };
+  for (const [backend, orch, want] of [['cloud', null, 'cloud'], ['local', null, 'local'], ['custom', null, 'local'],
+    ['fusion', 'openrouter', 'cloud'], ['fusion', 'local-llama', 'local']]) {
+    const got = load({ LIVE_CONFIG: cfg, selBackend: () => backend, rmNow: () => ({ orchestratorProviderId: orch }) }).STUDIO.chatPlace();
+    assert.equal(got, want, backend + ' ' + orch);
+  }
+  assert.equal(load({ LIVE_CONFIG: cfg, selBackend: () => { throw new Error('x'); } }).STUDIO.chatPlace(), null);
+});

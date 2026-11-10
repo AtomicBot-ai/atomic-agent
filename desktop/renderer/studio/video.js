@@ -145,7 +145,7 @@
   function blockReason(form, model) {
     if (!model) return 'Pick a model first.';
     if (form.mode === 'image') {
-      if (isLocal(model)) return 'Starting from an image on ' + machine() + ' is coming soon. Pick a cloud model.';
+      if (isLocal(model)) return 'Starting from an image on ' + machine() + ' is coming soon. Switch the chat to the cloud to use it.';
       if (!supportsImageStart(model)) return 'This model starts from text only.';
       if (!form.firstFrame) return 'Add a first frame.';
       return '';
@@ -314,10 +314,24 @@
     return { cloud, local, all: cloud.concat(local) };
   }
 
-  /** The model to select: the saved one if still listed, else the cloud default, else the first. */
-  function pickModel(catalog, savedId) {
+  /** 'local' | 'cloud': where a model runs; null for no model. */
+  const placeOf = (m) => (m ? (isLocal(m) ? 'local' : 'cloud') : null);
+
+  /**
+   * The model to select. `saved`: an id, or ids in order (the one last chosen in this
+   * place, then the form's). With a place (STUDIO.chatPlace, ATO-1306) only that place's
+   * models: a saved one still listed, else in the cloud the default or the first, here a
+   * loaded model or a downloaded one; else none (never the other place). With no place
+   * (settings not read yet): a saved one, else the cloud default, else the first.
+   */
+  function pickModel(catalog, saved, place) {
     const gr = modelGroups(catalog);
-    return gr.all.find((m) => m.id === savedId) || gr.cloud.find((m) => m.default) || gr.cloud[0] || gr.local[0] || null;
+    const ids = (Array.isArray(saved) ? saved : [saved]).filter(Boolean);
+    const pool = place === 'cloud' ? gr.cloud : place === 'local' ? gr.local : gr.all;
+    for (const id of ids) { const m = pool.find((x) => x.id === id); if (m) return m; }
+    if (place === 'cloud') return gr.cloud.find((m) => m.default) || gr.cloud[0] || null;
+    if (place === 'local') return gr.local.find((m) => m.local && m.local.loaded) || gr.local.find((m) => m.local && m.local.installed) || null;
+    return gr.cloud.find((m) => m.default) || gr.cloud[0] || gr.local[0] || null;
   }
 
   /** Form fields valid for this model (keeps what still applies). */
@@ -369,7 +383,7 @@
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
     supportsImageStart, localDims, buildRequest, blockReason, localHint, priceParams, priceLabel, generateLabel,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
-    clockText, formFromItem, machine, modelGroups, pickModel, fitFormToModel, errorText, escHtml,
+    clockText, formFromItem, machine, modelGroups, placeOf, pickModel, fitFormToModel, errorText, escHtml,
   };
 
   /* ============================================================
@@ -386,7 +400,7 @@
 
     const S = {
       root: null, shown: false,
-      catalog: null, catalogError: null,
+      catalog: null, catalogError: null, place: null,   // place: where the chat ran when the model was picked (ATO-1306)
       form: loadForm(),
       prices: {}, estimates: {},
       job: null, jobError: null, armed: false,
@@ -437,8 +451,43 @@
       const res = await br.catalog(KIND);
       if (!res || !res.ok) { S.catalogError = errorText(res && res.error); paint(); return; }
       S.catalog = res.data; S.catalogError = null;
-      S.form = fitFormToModel(S.form, pickModel(S.catalog, S.form.modelId));
+      S.place = chatPlace();
+      applyPlace(S.place);
       paint(); refreshQuote();
+    }
+
+    const chatPlace = () => (g.STUDIO && typeof g.STUDIO.chatPlace === 'function' ? g.STUDIO.chatPlace() : null);
+
+    /** The form on `place`'s model: the one last chosen there (`modelByPlace`), else the
+        form's when it is from there, else the place's default. The current model is kept
+        as its own place's choice first, so going back finds it. */
+    function applyPlace(place) {
+      const cur = model();
+      const by = Object.assign({}, S.form.modelByPlace);
+      if (cur && !by[placeOf(cur)]) by[placeOf(cur)] = cur.id;
+      const next = pickModel(S.catalog, place ? [by[place], S.form.modelId] : S.form.modelId, place);
+      S.form = fitFormToModel(Object.assign({}, S.form, { modelByPlace: by }), next);
+    }
+
+    /* ATO-1306: the chat moved (cloud ↔ local) since the model was picked: read the catalog
+       again and fit the form to that place's model. The prompt stays. Not while a clip is
+       being made or started. */
+    let following = false;
+    async function followChat() {
+      const place = chatPlace();
+      const br = BR();
+      if (!place || place === S.place || !S.catalog || following || running() || S.busy || !br || !br.catalog) return;
+      following = true;
+      const res = await Promise.resolve(br.catalog(KIND)).catch(() => null);
+      following = false;
+      if (running() || S.busy || chatPlace() !== place) return;
+      if (res && res.ok && res.data) S.catalog = res.data;
+      const was = S.form.modelId;
+      S.place = place;
+      applyPlace(place);
+      if (S.form.modelId === was) return;
+      S.pickerOpen = false; S.armed = false; S.notice = null;
+      saveForm(); paint(); refreshQuote();
     }
 
     /* ATO-1394: the catalog again, quietly, after something changed a local model's state
@@ -749,6 +798,7 @@
         S.notice = 'Stopped.'; S.job = null;
       }
       paint('stage'); paint('foot');
+      if (!running() && S.shown) followChat();
     }
 
     async function showResult(item) {
@@ -898,7 +948,7 @@
       const m = modelGroups(S.catalog).all.find((x) => x.id === id);
       if (!m) return;
       if (S.form.mode === 'image' && isLocal(m)) return;
-      S.form = fitFormToModel(S.form, m);
+      S.form = fitFormToModel(Object.assign({}, S.form, { modelByPlace: Object.assign({}, S.form.modelByPlace, { [placeOf(m)]: m.id }) }), m);
       S.pickerOpen = false; S.armed = false; S.notice = null;
       saveForm(); paint(); refreshQuote();
     }
@@ -1080,7 +1130,7 @@
       const ff = S.form.firstFrame;
       let h = '<div class="studio-lbl">First frame</div>';
       if (m && isLocal(m)) {
-        h += '<div class="studio-video-soon">' + icon('info') + '<span>Starting from an image on ' + machine() + ' is coming soon. Cloud models can do it now.</span></div>';
+        h += '<div class="studio-video-soon">' + icon('info') + '<span>Starting from an image on ' + machine() + ' is coming soon. Cloud models can do it now: switch the chat to the cloud.</span></div>';
       }
       if (ff) {
         h += '<div class="studio-video-drop filled">'
@@ -1361,6 +1411,7 @@
         if (S.job && BR()) BR().job(KIND, S.job.id).then((r) => { if (r && r.ok && r.data) onJob(r.data); });
         loadGallery();
         checkImprove();
+        followChat();
       },
       onHide() { S.shown = false; S.pickerOpen = false; S.libraryOpen = false; },
       /* ATO-1394: a model loaded, downloaded or removed (shell.js forwards BR.studio.onLocal). */

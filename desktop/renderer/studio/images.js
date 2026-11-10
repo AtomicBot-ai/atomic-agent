@@ -4,7 +4,13 @@
 
    The form is remembered per mode in localStorage (`atag.studio.images`), the
    same per-viewer store the window keeps its theme and last Settings section
-   in; pictures and paths of sources are not (a source is picked again). */
+   in; pictures and paths of sources are not (a source is picked again).
+
+   The model follows where the chat runs (STUDIO.chatPlace, ATO-902/ATO-1305):
+   the page opens on a model of that place, remembers the last model chosen in
+   each place (`byPlace`), and when the chat has moved since it was last shown it
+   switches to that place's model, keeping the prompt and the inputs. Never
+   while a picture is being made, and never to the other place by itself. */
 (function () {
   const KEY = 'atag.studio.images';
   const PAGE = 50;
@@ -13,7 +19,7 @@
 
   const IM = {
     root: null, shown: false,
-    catalog: null, catLoading: false, catErr: null, model: null,
+    catalog: null, catLoading: false, catErr: null, model: null, place: null,   // place: where the chat ran when the model was picked
     form: blankForm(), saved: loadSaved(),
     job: null, jobCount: 1, jobErr: null, lastReq: null, starting: false, formMsg: '',
     items: [], total: 0, hasMore: false, filter: 'all', galLoading: false, galErr: null,
@@ -53,9 +59,18 @@
       IM.saved.modes = IM.saved.modes || {};
       IM.saved.modes[f.mode] = keep;
       IM.saved.last = {mode: f.mode, modelId: f.modelId, provider: f.provider};
+      remember(IM.model);
       try { localStorage.setItem(KEY, JSON.stringify(IM.saved)); } catch (e) { /* no storage: remembered for this launch */ }
     }, 300);
   }
+
+  /** The last model chosen in its place (cloud or local), for when the chat comes back there. */
+  function remember(m) {
+    const place = simgPlaceOf(m);
+    if (!place) return;
+    IM.saved.byPlace = Object.assign({}, IM.saved.byPlace, {[place]: {modelId: m.id, provider: m.provider}});
+  }
+  const chatPlace = () => (window.STUDIO && typeof STUDIO.chatPlace === 'function' ? STUDIO.chatPlace() : null);
 
   /* ---------- painting ---------- */
 
@@ -182,13 +197,41 @@
       const last = IM.saved.last || {};
       const mode = last.mode || 'create';
       const kept = (IM.saved.modes || {})[mode] || {};
-      const m = simgFindModel(IM.catalog, kept.modelId || last.modelId, kept.provider || last.provider) || simgDefaultModel(IM.catalog);
+      const place = chatPlace();
+      IM.place = place;
+      const m = simgPickModel(IM.catalog, place, [place && (IM.saved.byPlace || {})[place],
+        {modelId: kept.modelId || last.modelId, provider: kept.provider || last.provider}]);
       IM.model = m;
       IM.form = simgNormalize(Object.assign(blankForm(), m ? simgModelDefaults(m) : {}, kept, {mode, source: IM.form.source, mask: IM.form.mask, refs: IM.form.refs,
         prompt: IM.form.prompt || kept.prompt || '', modelId: m && m.id, provider: m && m.provider}), m);
       paintForm();
       refreshPrice();
     }, () => { IM.catLoading = false; IM.catErr = {message: 'Could not read the models.'}; paintForm(); });
+  }
+
+  /* ATO-1305: the chat moved (cloud ↔ local) since the model was picked: read the catalog
+     again and take that place's model, the one last chosen there when it is still listed.
+     The prompt, the mode where the new model has it, and the inputs stay. Not while a
+     picture is being made: the form is the job's, and Retry sends it again. */
+  function followChat() {
+    const place = chatPlace();
+    const s = br();
+    if (!place || place === IM.place || !IM.catalog || IM.catLoading || isLive(IM.job) || IM.starting || !s || !s.catalog) return;
+    const was = IM.place;
+    IM.place = place;
+    Promise.resolve(s.catalog('image')).then((r) => {
+      if (isLive(IM.job) || IM.starting || chatPlace() !== place) { IM.place = was; return; }
+      if (r && r.ok && r.data) { IM.catalog = r.data; IM.catErr = null; }
+      const cur = {modelId: IM.form.modelId, provider: IM.form.provider};
+      remember(IM.model);
+      const m = simgPickModel(IM.catalog, place, [(IM.saved.byPlace || {})[place], cur]);
+      if (m && IM.model && m.id === IM.model.id && m.provider === IM.model.provider) { IM.model = m; if (IM.shown) paintForm(); return; }
+      chooseModel(m);
+      IM.modeWhy = null; IM.pop = null; IM.formMsg = ''; IM.priceKey = '';
+      save();
+      if (IM.shown) { paintForm(); paintPop(); }
+      refreshPrice();
+    }, () => { IM.place = was; });
   }
 
   /* ATO-1394: the catalog again, quietly, after something changed a local model's state
@@ -362,7 +405,7 @@
     }
     if (!job.cloud) refreshCatalog();   // ATO-1394: Generate loaded the model (or a failed load unloaded one)
     if (job.state === 'completed' && !IM.shown && typeof toast === 'function') toast('Images are ready', 'Open Studio › Images to see them');
-    if (IM.shown) { paintStage(); paintFoot(); paintGallery(); }
+    if (IM.shown) { paintStage(); paintFoot(); paintGallery(); followChat(); }
   }
 
   function addOutputs(outs, select) {
@@ -776,6 +819,7 @@
       if (!IM.catalog && !IM.catLoading) loadCatalog();
       checkImprove();
       paintAll();
+      followChat();
       const t = document.getElementById('sti-prompt');
       if (t && !IM.form.prompt) t.focus();
     },
