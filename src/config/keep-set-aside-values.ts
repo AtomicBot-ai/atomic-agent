@@ -2,6 +2,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { TOOL_SEARCH_MODES } from "./agent/agent-parser.js";
 import { COMPACTION_MODES } from "./agent/compaction-config.js";
+import { COMPACT_PROMPT_MODES } from "./agent/prompt-config.js";
 import { parseUserConfigFile, type UserConfigFile } from "./config-schema.js";
 import { LLM_TOOL_TRANSPORTS } from "./llm-config.js";
 import {
@@ -32,6 +33,7 @@ export const SET_ASIDE_ENUM_KEYS: ReadonlyMap<string, readonly string[]> = new M
   ["llm.runMode.fusion.isolation", FUSION_ISOLATION_MODES],
   ["agent.tools.search", TOOL_SEARCH_MODES],
   ["agent.compaction.mode", COMPACTION_MODES],
+  ["agent.prompt.compact", COMPACT_PROMPT_MODES],
   ["tui.whileBusySubmit", WHILE_BUSY_SUBMIT_MODES],
 ]);
 
