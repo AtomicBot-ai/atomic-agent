@@ -542,7 +542,15 @@ export function createRuntimeTurnService(
         // turn is already saved and already returned, and an unnamed
         // session simply keeps showing its prompt — which is what every
         // session showed before. It must never delay or fail a reply.
-        if (getConfig().agent.nameSessions && shouldNameSession(finished)) {
+        // Not after a budget stop (ATO-1350): the naming call is billed
+        // too, and a run that promised to stop at its cap must not make
+        // one more paid call. The session stays unnamed until a later
+        // turn answers within its budget.
+        if (
+          getConfig().agent.nameSessions &&
+          !stoppedForMoney(result.stopCause) &&
+          shouldNameSession(finished)
+        ) {
           void nameSession(finished);
         }
         // `finish` ended the whole session: its kept jobs go with it.
@@ -745,6 +753,15 @@ export function createRuntimeTurnService(
  * other llama-server entry, or external mode, is a server the operator
  * runs. A fixed word, never a URL.
  */
+/**
+ * Whether a turn ended because money ran out: its own budget, or the
+ * provider account's credit (ATO-1350). No further paid side call
+ * (the session namer) follows such a turn.
+ */
+export function stoppedForMoney(stopCause: RunTurnResult["stopCause"]): boolean {
+  return stopCause === "cost_ceiling" || stopCause === "credit_exhausted";
+}
+
 export function resolveTurnLocalEngine(config: AtomicAgentConfig, providerId: string): LocalEngine | undefined {
   if (!providerIdIsLlamaServer(resolveLlmConfig(config), providerId)) return undefined;
   if (providerId !== "local-llama" || config.localModels.mode !== "managed") return "external";

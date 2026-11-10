@@ -17,7 +17,7 @@ import { TurnController } from "../turn-controller.js";
 import { SteeringInbox } from "../steering-inbox.js";
 import { createRuntimeTraces } from "./runtime-traces.js";
 import { connectRuntimeProviders } from "./runtime-inference.js";
-import { createRuntimeTurnService, prepareRuntimeTurnState, type RuntimeTurnDependencies } from "./runtime-turn-service.js";
+import { createRuntimeTurnService, prepareRuntimeTurnState, stoppedForMoney, type RuntimeTurnDependencies } from "./runtime-turn-service.js";
 import { resolveModelMode } from "../../llm/model-mode.js";
 import { resolveLlmConfig } from "../../llm/provider/registry/provider-types.js";
 import type { TurnProgress } from "../../session/turn-progress.js";
@@ -392,5 +392,16 @@ describe("runtime turn ownership recipes", () => {
     await vi.advanceTimersByTimeAsync(SESSION_TITLE_TIMEOUT_MS);
     expect(signal?.aborted).toBe(true);
     expect(fixture.state.pendingSessionNamings.size).toBe(0);
+  });
+});
+
+describe("stoppedForMoney (ATO-1350)", () => {
+  it("is true only when the budget or the provider credit ended the turn", () => {
+    expect(stoppedForMoney("cost_ceiling")).toBe(true);
+    expect(stoppedForMoney("credit_exhausted")).toBe(true);
+    expect(stoppedForMoney("time_ceiling")).toBe(false);
+    expect(stoppedForMoney("step_ceiling")).toBe(false);
+    expect(stoppedForMoney("no_progress")).toBe(false);
+    expect(stoppedForMoney(undefined)).toBe(false);
   });
 });
