@@ -13162,17 +13162,32 @@ function dlOnPull(ev) {
  * The rate is the slope between two REAL samples, smoothed the way
  * useTransferRate smooths it (SMOOTHING 0.3) — nothing else. `holder` keeps
  * {rate, last, samples}: DL for the setup queue, XPULL for the other pulls.
+ *
+ * ATO-1342: `models pull` writes a line for every progress tick while the
+ * percent is a multiple of 5, with the bytes rounded to 0.01 GB. A slope
+ * between two lines of one such burst is 0 or far above the real speed,
+ * and the estimate swung with it. So `last` stays put until the bytes have
+ * moved and a few seconds have passed, and the slope spans that whole stretch.
+ * The cost: the first estimate comes a few seconds later.
  */
+const DL_RATE_MIN_SECONDS = 3;
+const DL_RATE_STALL_SECONDS = 60;   // lines still coming, bytes not: the old rate says nothing now
 function dlRateStep(holder, bytes) {
   const now = Date.now();
-  if (holder.last && bytes >= holder.last.bytes) {
-    const seconds = (now - holder.last.at) / 1000;
-    if (seconds > 0) {
-      const sample = (bytes - holder.last.bytes) / seconds;
-      holder.rate = holder.rate === null ? sample : holder.rate + 0.3 * (sample - holder.rate);
-      holder.samples = (holder.samples || 0) + 1;   // how many rate samples are behind the estimate
-    }
+  const last = holder.last;
+  const seconds = last ? (now - last.at) / 1000 : 0;
+  // The counter went back (the download restarted) or sat still too long: measure afresh.
+  if (last && (bytes < last.bytes || (bytes === last.bytes && seconds >= DL_RATE_STALL_SECONDS))) {
+    holder.rate = null;
+    holder.samples = 0;
+    holder.last = {bytes, at: now};
+    return;
   }
+  if (!last) { holder.last = {bytes, at: now}; return; }
+  if (bytes === last.bytes || seconds < DL_RATE_MIN_SECONDS) return;
+  const sample = (bytes - last.bytes) / seconds;
+  holder.rate = holder.rate === null ? sample : holder.rate + 0.3 * (sample - holder.rate);
+  holder.samples = (holder.samples || 0) + 1;   // how many rate samples are behind the estimate
   holder.last = {bytes, at: now};
 }
 
