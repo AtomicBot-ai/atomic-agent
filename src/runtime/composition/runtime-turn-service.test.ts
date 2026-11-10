@@ -393,6 +393,28 @@ describe("runtime turn ownership recipes", () => {
     expect(signal?.aborted).toBe(true);
     expect(fixture.state.pendingSessionNamings.size).toBe(0);
   });
+
+  it("makes no naming call after a turn that stopped for money (ATO-1350)", async () => {
+    vi.useFakeTimers(); fixture.config.agent.nameSessions = true;
+    const naming = vi.fn(async () => completion("Generated title"));
+    fixture.deps.execution.llmComplete = naming;
+    const service = createRuntimeTurnService(fixture.config, fixture.deps);
+    for (const stopCause of ["cost_ceiling", "credit_exhausted"] as const) {
+      fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) =>
+        ({ ...result(value, options), stopCause }));
+      const output = await service.executeTurn(session(`broke-${stopCause}`), "request");
+      await flushNaming();
+      expect(fixture.state.pendingSessionNamings.size).toBe(0);
+      expect(fixture.rows.get(output.session.id)?.metadata?.title).toBeUndefined();
+    }
+    expect(naming).not.toHaveBeenCalled();
+    // The same first turn stopped by time still gets its title call.
+    fixture.loop.runTurn.mockImplementationOnce(async (value: SessionState, options: RunTurnOptions) =>
+      ({ ...result(value, options), stopCause: "time_ceiling" }));
+    await service.executeTurn(session("timed-out"), "request");
+    await flushNaming();
+    expect(naming).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("stoppedForMoney (ATO-1350)", () => {
