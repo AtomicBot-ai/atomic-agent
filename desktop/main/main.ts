@@ -32,6 +32,7 @@ import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
+import { localPerformanceResult } from "./local-performance.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
@@ -1453,6 +1454,10 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
+
+  /* Issue #996 — Settings › Performance: the local model's speed. Always one
+     of ok / unsupported (404) / unreachable; never a throw into the window. */
+  ipcMain.handle("agent:localPerformance", () => localPerformanceResult(() => client.localPerformance()));
 
   /* ATO-568 — one Fusion worker's Stop and Steer, and the list the renderer
      feature-detects with. Errors come back as `error` text; the renderer

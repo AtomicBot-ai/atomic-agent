@@ -481,6 +481,8 @@ contextBridge.exposeInMainWorld("atomic", {
   undeliveredSteers: (sessionId: string) => ipcRenderer.invoke("agent:undeliveredSteers", sessionId),
   ackSteers: (sessionId: string, through: number, discarded: number) =>
     ipcRenderer.invoke("agent:ackSteers", { sessionId, through, discarded }),
+  /** Issue #996 — Settings › Performance: GET /api/local-model/performance as {ok, data} | {ok:false, kind}. */
+  localPerformance: () => ipcRenderer.invoke("agent:localPerformance"),
   /** ATO-568 — one Fusion worker's Stop / Steer, and what the agent supports (404 on an older agent). */
   fusionWorkersList: (sessionId: string) => ipcRenderer.invoke("agent:fusionWorkers", sessionId),
   fusionWorkerStop: (sessionId: string, taskId: string) =>

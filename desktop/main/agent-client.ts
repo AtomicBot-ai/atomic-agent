@@ -1134,6 +1134,23 @@ export class AgentClient extends EventEmitter {
     return (await res.json()) as T;
   }
 
+  /* Issue #996 — Settings › Performance polls this every 2 s while it is on
+     screen, so it waits 5 s, not `json`'s 15, and answers the status instead
+     of throwing: a 404 is an agent from before the route, which the pane
+     words differently from one that is not answering. A 200 whose body is
+     not JSON throws (main/local-performance.ts reads that as unreachable). */
+  async localPerformance(): Promise<{ status: number; body: unknown }> {
+    const res = await fetch(`${this.base()}/api/local-model/performance`, {
+      headers: this.headers(),
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (res.status !== 200) {
+      await res.body?.cancel().catch(() => {});
+      return { status: res.status, body: null };
+    }
+    return { status: res.status, body: (await res.json()) as unknown };
+  }
+
   private workspaceQuery(sessionId?: string | null): string {
     return `?workspace=true${sessionId ? `&sessionId=${encodeURIComponent(sessionId)}` : ""}`;
   }
