@@ -259,6 +259,25 @@ export class SessionUsageLedger {
   }
 }
 
+/**
+ * Wrap the runtime's worker-session factory so every worker it mints
+ * counts its calls on the session that spawned it (ATO-1388).
+ */
+export function forwardWorkerUsage<
+  M extends { parentSessionId: string },
+  S extends { id: string },
+  D = string | undefined,
+>(
+  create: (meta: M, dir?: D) => S,
+  ledger: Pick<SessionUsageLedger, "forward">,
+): (meta: M, dir?: D) => S {
+  return (meta, dir) => {
+    const worker = create(meta, dir);
+    ledger.forward(worker.id, meta.parentSessionId);
+    return worker;
+  };
+}
+
 /* ---------------- formatting ---------------- */
 
 /**

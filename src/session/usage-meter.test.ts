@@ -4,6 +4,7 @@ import {
   SessionUsageLedger,
   STALE_READING_MS,
   activeLimits,
+  forwardWorkerUsage,
   formatLimit,
   formatResetTime,
   formatSessionCost,
@@ -93,6 +94,18 @@ describe("SessionUsageLedger", () => {
     expect(formatSessionCost(parent)).toBe("$9.00+");
     expect(ledger.get("s-w-1")).toBeUndefined();
     expect(seen.every((id) => id === "s-parent")).toBe(true);
+  });
+
+  it("links every worker the wrapped factory mints to its parent (ATO-1388)", () => {
+    const ledger = new SessionUsageLedger({ now: () => NOW });
+    const create = forwardWorkerUsage(
+      (meta: { parentSessionId: string; taskId: string }, dir?: string) => ({ id: `s-w-${meta.taskId}`, dir }),
+      ledger,
+    );
+    expect(create({ parentSessionId: "s-parent", taskId: "t1" }, "/repo")).toEqual({ id: "s-w-t1", dir: "/repo" });
+    ledger.record("s-w-t1", { providerId: "openrouter", modelId: "m", usage, model: priced, local: false });
+    expect(ledger.get("s-parent")?.costUsd).toBeCloseTo(4.5);
+    expect(ledger.get("s-w-t1")).toBeUndefined();
   });
 
   it("continues from what a reopened session persisted, once", () => {
