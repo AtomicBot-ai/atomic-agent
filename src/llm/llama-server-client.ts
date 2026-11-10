@@ -15,6 +15,7 @@ import {
   PERFORMANCE_CAPACITY,
   PerformanceRing,
   generationRate,
+  lenientNum,
   sampleFromPayload,
   type PerformanceSample,
 } from "./llama-performance-samples.js";
@@ -765,7 +766,7 @@ export class LlamaServerClient {
   private recordThroughput(payload: Record<string, unknown>): void {
     const timings = payload.timings;
     if (timings === null || typeof timings !== "object") return;
-    const perSecond = generationRate(timings as Record<string, unknown>);
+    const perSecond = generationRate(timings as Record<string, unknown>, lenientNum);
     if (perSecond === null) return;
     this.throughputSamples.push(perSecond);
     if (this.throughputSamples.length > THROUGHPUT_WINDOW) {
