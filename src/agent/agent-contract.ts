@@ -118,6 +118,12 @@ export interface AgentLoopDependencies {
    * for the rest of the turn, and a new turn or a steer is a new answer.
    */
   forgetDeclinedApprovals?: (sessionId: string) => void;
+  /**
+   * Deny every approval `sessionId` is waiting on, as nobody's decision
+   * (`ApprovalGate.denyPendingForSession`). The loop calls it once a
+   * task's time limit passes during a step (ATO-1367).
+   */
+  denyPendingApprovals?: (sessionId: string, reason: string) => void;
   slotManager: SlotManager;
   grammar: string;
   llmComplete: (params: LlmStreamParams) => Promise<CompletionResult>;

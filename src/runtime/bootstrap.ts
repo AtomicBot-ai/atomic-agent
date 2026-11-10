@@ -558,6 +558,9 @@ export async function createAgentRuntime(
       );
     },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
+    denyPendingApprovals: (sessionId: string, reason: string) => {
+      approvals.denyPendingForSession(sessionId, reason);
+    },
     slotManager,
     grammar: getGrammar(),
     persistContext: (state: SessionState) => {
