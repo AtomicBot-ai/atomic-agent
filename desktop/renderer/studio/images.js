@@ -380,7 +380,7 @@
       if (!url) continue;
       const key = 'local:' + (++localSeq);
       LOCAL.set(key, url);
-      setSlot(slot, {base64: url, key, name: file.name || 'Pasted image', note: 'from your Mac'});
+      setSlot(slot, {base64: url, key, name: file.name || 'Pasted image', note: 'from your ' + (simgMachine() === 'this Mac' ? 'Mac' : 'computer')});
       if (slot !== 'ref') break;
     }
   }
@@ -399,7 +399,7 @@
     const r = await Promise.resolve(s.pickImages(slot === 'ref')).catch(() => null);
     const list = r && r.ok && Array.isArray(r.data) ? r.data : [];
     for (const f of list) {
-      setSlot(slot, {path: f.path, key: f.path, name: f.name, note: 'from your Mac'});
+      setSlot(slot, {path: f.path, key: f.path, name: f.name, note: 'from your ' + (simgMachine() === 'this Mac' ? 'Mac' : 'computer')});
       if (slot !== 'ref') break;
     }
   }

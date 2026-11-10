@@ -11,6 +11,9 @@
 const SIMGV_A = (verb) => 'data-act="studio:images:' + esc(verb) + '"';
 const SIMGV_IDEAS = ['A fox reading under a lamp', 'Isometric tiny office', 'Poster for a jazz night'];
 
+/** "Show in Finder" on macOS, Explorer or Folder elsewhere (renderer.js fileManagerName). */
+const simgvReveal = () => (typeof fileManagerName === 'function' ? fileManagerName() : 'Show in Finder');
+
 function simgvTag(t) {
   return '<span class="st-tag' + (t.cls ? ' ' + t.cls : '') + '">' + esc(t.text) + '</span>';
 }
@@ -194,7 +197,7 @@ function simgvFoot(IM) {
   if (model && model.group === 'cloud' && IM.catalog && IM.catalog.cloud && IM.catalog.cloud.keyMissing) {
     lines.push('<div class="st-est warn">' + ic('key') + '<span>Cloud models need an OpenRouter key. <button class="st-link" ' + SIMGV_A('settings') + '>Add a key</button></span></div>');
   } else if (model && model.group === 'local') {
-    lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on this Mac' + simgvLocalHint(model) + '</span></div>');
+    lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on ' + esc(simgMachine()) + simgvLocalHint(model) + '</span></div>');
   } else if (model && model.group === 'cloud') {
     lines.push('<div class="st-est">' + ic('cloud') + '<span>Charged to your OpenRouter key</span></div>');
   }
@@ -227,7 +230,7 @@ function simgvPop(IM) {
     + '<label class="st-pop-s">' + ic('search') + '<input id="sti-mq" placeholder="Search image models" value="' + esc(IM.modelQ || '') + '" autocomplete="off"></label>'
     + '<div class="st-pop-g">' + ic('cloud') + 'Cloud · OpenRouter</div>' + err(IM.catalog && IM.catalog.cloud)
     + (cloud.length ? cloud.map(row).join('') : '<div class="st-pop-none">No cloud models' + (q ? ' match' : '') + '</div>')
-    + '<div class="st-pop-g">' + ic('cpu') + 'On this Mac · free, private</div>' + err(IM.catalog && IM.catalog.local)
+    + '<div class="st-pop-g">' + ic('cpu') + esc('On ' + simgMachine()) + ' · free, private</div>' + err(IM.catalog && IM.catalog.local)
     + (local.length ? local.map(row).join('') : '<div class="st-pop-none">No local models' + (q ? ' match' : ' yet') + '</div>')
     + '</div>';
 }
@@ -248,7 +251,7 @@ function simgvProgress(IM) {
   const batch = (job.progress && job.progress.batchSize) || IM.jobCount || 1;
   return '<div class="st-prog" data-prog="' + esc(job.id) + '">'
     + '<div class="st-prog-h"><div class="st-spin"></div><div><div class="t" data-p="title">' + esc(p.title) + '</div>'
-      + '<div class="s">' + esc(model.name + ' · ' + (job.cloud ? 'in the cloud' : 'on this Mac')) + '</div></div></div>'
+      + '<div class="s">' + esc(model.name + ' · ' + (job.cloud ? 'in the cloud' : 'on ' + simgMachine())) + '</div></div></div>'
     + '<div class="st-bar"><i data-p="bar" style="width:' + Math.round(p.fraction * 100) + '%"></i></div>'
     + '<div class="st-prog-m"><span data-p="line">' + esc(p.line) + '</span><span class="mono" data-p="eta">' + esc(p.eta) + '</span></div>'
     + '<div class="st-phases" data-p="phases">' + phases + '</div>'
@@ -353,7 +356,7 @@ function simgvFromChat(item) {
     + '<div class="st-shot" data-pic="' + esc(item.path) + '" data-full="1"></div>'
     + '<div class="st-actions">'
       + '<button ' + SIMGV_A('saveas') + '>' + ic('download') + 'Save as…</button>'
-      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + 'Show in Finder</button>'
+      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + esc(simgvReveal()) + '</button>'
       + '<button ' + SIMGV_A('copy') + '>' + ic('copy') + 'Copy</button>'
       + '<span class="sep"></span>'
       + '<button class="pri" ' + SIMGV_A('tochat') + '>' + ic('chat') + 'Send to chat</button>'
@@ -374,7 +377,7 @@ function simgvResult(IM, item) {
     + (IM.recipe ? simgvRecipe(item) : '')
     + '<div class="st-actions">'
       + '<button ' + SIMGV_A('saveas') + '>' + ic('download') + 'Save as…</button>'
-      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + 'Show in Finder</button>'
+      + '<button ' + SIMGV_A('reveal') + '>' + ic('folder') + esc(simgvReveal()) + '</button>'
       + '<button ' + SIMGV_A('copy') + '>' + ic('copy') + 'Copy</button>'
       + '<span class="sep"></span>'
       + '<button ' + SIMGV_A('usesource') + '>' + ic('swap') + 'Use as source</button>'

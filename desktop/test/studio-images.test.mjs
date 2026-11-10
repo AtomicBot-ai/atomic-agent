@@ -318,6 +318,33 @@ test('the local model hint says what Generate does: it loads a downloaded model 
   assert.equal(simgvLocalHint({ local: { loaded: true, installed: true } }), '');
   assert.equal(simgvLocalHint({ local: null }), '');
   const view = readFileSync(new URL('../renderer/studio/images-view.js', import.meta.url), 'utf8');
-  assert.match(view, /runs on this Mac' \+ simgvLocalHint\(model\)/);
+  assert.match(view, /runs on ' \+ esc\(simgMachine\(\)\) \+ simgvLocalHint\(model\)/);
   assert.doesNotMatch(view, /load the model first/);
+});
+
+test('the machine is "this Mac" only on macOS; Windows and Linux say "this computer" (ATO-1400)', () => {
+  const had = globalThis.atomic;
+  try {
+    delete globalThis.atomic;
+    assert.equal(L.simgMachine(), 'this Mac');
+    for (const platform of ['win32', 'linux']) {
+      globalThis.atomic = {platform};
+      assert.equal(L.simgMachine(), 'this computer');
+      assert.equal(L.simgMachineCap(), 'This computer');
+      assert.equal(L.simgModelMeta({group: 'local', local: {developer: 'Tongyi'}}), 'Tongyi · On this computer');
+      const cat = catalog();
+      const tabs = L.simgModeTabs(model(cat, 'google/nano-banana'), cat);
+      assert.equal(tabs.find((t) => t.id === 'transform').why, 'Needs a model on this computer');
+      assert.equal(L.simgModeNote(tabs), 'Transform, Inpaint, Extend and Upscale need a model on this computer.');
+    }
+    globalThis.atomic = {platform: 'darwin'};
+    assert.equal(L.simgModelMeta({group: 'local', local: {}}), 'On this Mac');
+  } finally {
+    if (had === undefined) delete globalThis.atomic; else globalThis.atomic = had;
+  }
+  for (const f of ['../renderer/studio/images-view.js', '../renderer/studio/images.js', '../renderer/studio/images-logic.js']) {
+    const src = readFileSync(new URL(f, import.meta.url), 'utf8');
+    const strings = (src.match(/'[^'\n]*'/g) || []).filter((x) => /this Mac|your Mac|Show in Finder/.test(x));
+    assert.deepEqual(strings.filter((x) => x !== "'this Mac'" && x !== "'Mac'" && x !== "'Show in Finder'"), [], f);
+  }
 });

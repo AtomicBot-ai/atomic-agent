@@ -321,3 +321,15 @@ test('the local model hint says what Generate does: it loads a downloaded model 
   assert.match(SRC, /const hint = localHint\(m\);/);
   assert.doesNotMatch(SRC, /Load this model in Atomic Core first/);
 });
+
+test('local video models say "this Mac" only on macOS, "this computer" on Windows and Linux (ATO-1400)', () => {
+  assert.equal(V.machine(), 'this Mac');
+  for (const platform of ['win32', 'linux']) {
+    const W = load({ atomic: { platform } }).StudioVideo;
+    assert.equal(W.machine(), 'this computer');
+    assert.equal(W.blockReason({ mode: 'image', prompt: 'x' }, wan), 'Starting from an image on this computer is coming soon. Pick a cloud model.');
+  }
+  assert.equal(load({ atomic: { platform: 'darwin' } }).StudioVideo.machine(), 'this Mac');
+  const strings = (SRC.match(/'[^'\n]*'/g) || []).filter((x) => /this Mac|This Mac|Show in Finder/.test(x));
+  assert.deepEqual(strings.filter((x) => x !== "'this Mac'" && x !== "'Show in Finder'"), []);
+});

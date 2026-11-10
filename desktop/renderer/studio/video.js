@@ -1,7 +1,7 @@
 /* ---------------- Studio › Video ----------------
    The Video page of Studio: a form (prompt, start from text or a first frame,
    length, resolution, shape, sound, model), the line under it (price for a
-   cloud model, time and memory for one on this Mac), Generate, progress with
+   cloud model, time and memory for a local one), Generate, progress with
    Stop, the result player and the clip gallery.
 
    Loaded as a plain script after the Studio shell (studio/shell.js) or before
@@ -35,6 +35,12 @@
   const escHtml = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const icon = (n) => (typeof g.ic === 'function' ? g.ic(n) : '');
   const isLocal = (m) => !!m && m.provider === 'local';
+  /** What the copy calls the machine (renderer.js THIS_MACHINE): "this Mac" on macOS and
+      with no bridge, "this computer" on Windows and Linux (ATO-1400). */
+  const machine = () => (g.atomic && g.atomic.platform && g.atomic.platform !== 'darwin' ? 'this computer' : 'this Mac');
+  /** "Show in Finder" on macOS, Explorer or Folder elsewhere (renderer.js fileManagerName). */
+  const reveal = () => (typeof g.fileManagerName === 'function' ? g.fileManagerName() : 'Show in Finder');
+  const machineCap = () => machine().charAt(0).toUpperCase() + machine().slice(1);
 
   /** Length chips (seconds) a model offers: its own list, or picks inside its range. */
   function durationOptions(model) {
@@ -139,7 +145,7 @@
   function blockReason(form, model) {
     if (!model) return 'Pick a model first.';
     if (form.mode === 'image') {
-      if (isLocal(model)) return 'Starting from an image on this Mac is coming soon. Pick a cloud model.';
+      if (isLocal(model)) return 'Starting from an image on ' + machine() + ' is coming soon. Pick a cloud model.';
       if (!supportsImageStart(model)) return 'This model starts from text only.';
       if (!form.firstFrame) return 'Add a first frame.';
       return '';
@@ -363,7 +369,7 @@
     durationOptions, pickDuration, aspectOptions, pickAspect, resolutionOptions, pickResolution,
     supportsImageStart, localDims, buildRequest, blockReason, localHint, priceParams, priceLabel, generateLabel,
     spanText, estimateVerdict, fitChip, gbText, modelLabels, phaseList, etaText, stepText, tookText,
-    clockText, formFromItem, modelGroups, pickModel, fitFormToModel, errorText, escHtml,
+    clockText, formFromItem, machine, modelGroups, pickModel, fitFormToModel, errorText, escHtml,
   };
 
   /* ============================================================
@@ -1056,7 +1062,7 @@
       const ff = S.form.firstFrame;
       let h = '<div class="studio-lbl">First frame</div>';
       if (m && isLocal(m)) {
-        h += '<div class="studio-video-soon">' + icon('info') + '<span>Starting from an image on this Mac is coming soon. Cloud models can do it now.</span></div>';
+        h += '<div class="studio-video-soon">' + icon('info') + '<span>Starting from an image on ' + machine() + ' is coming soon. Cloud models can do it now.</span></div>';
       }
       if (ff) {
         h += '<div class="studio-video-drop filled">'
@@ -1083,10 +1089,10 @@
     function viewModelButton(m) {
       if (!m) return '<button class="studio-model" data-vact="picker">Pick a model</button>';
       const local = isLocal(m);
-      const meta = local ? 'On this Mac' + (m.local && m.local.developer ? ' · ' + m.local.developer : '') : 'via OpenRouter';
+      const meta = local ? 'On ' + machine() + (m.local && m.local.developer ? ' · ' + m.local.developer : '') : 'via OpenRouter';
       return '<button class="studio-model' + (S.pickerOpen ? ' open' : '') + '" data-vact="picker" aria-haspopup="listbox" aria-expanded="' + S.pickerOpen + '">'
         + '<span class="studio-sp"><span class="studio-mname">' + escHtml(m.name) + '</span><span class="studio-mmeta">' + escHtml(meta) + '</span></span>'
-        + '<span class="studio-tag ' + (local ? 'local' : 'cloud') + '">' + icon(local ? 'cpu' : 'cloud') + (local ? 'This Mac' : 'Cloud') + '</span>'
+        + '<span class="studio-tag ' + (local ? 'local' : 'cloud') + '">' + icon(local ? 'cpu' : 'cloud') + (local ? escHtml(machineCap()) : 'Cloud') + '</span>'
         + icon('chevD') + '</button>';
     }
 
@@ -1114,7 +1120,7 @@
         }
       }
       if (local.length) {
-        h += '<div class="studio-pop-g">' + icon('cpu') + 'On this Mac · free, private</div>';
+        h += '<div class="studio-pop-g">' + icon('cpu') + 'On ' + machine() + ' · free, private</div>';
         for (const m of local) {
           const req = buildRequest(Object.assign({}, fitFormToModel(f, m), { mode: 'text' }), m);
           const est = S.estimates[m.id + '|' + reqKey(req)];
@@ -1204,11 +1210,11 @@
       const meta = [it.model && it.model.name, it.durationSecs ? Math.round(it.durationSecs) + ' s' : '', it.height ? it.height + 'p' : '', 'MP4'].filter(Boolean).join(' · ');
       let h = '<div class="studio-viewer studio-video-result">';
       h += S.playError
-        ? '<div class="studio-video-noplay">' + (S.thumbs[it.id] ? '<img alt="" src="' + escHtml(S.thumbs[it.id]) + '">' : '') + '<span>' + NO_PLAY + '</span></div>'
+        ? '<div class="studio-video-noplay">' + (S.thumbs[it.id] ? '<img alt="" src="' + escHtml(S.thumbs[it.id]) + '">' : '') + '<span>' + escHtml(noPlay()) + '</span></div>'
         : '<video class="studio-video-player" controls preload="metadata"' + poster + ' src="' + escHtml(S.videoSrc) + '"></video>';
       h += '<div class="studio-below"><span class="studio-meta">' + escHtml(meta) + '</span>'
         + '<button class="studio-btn" data-vact="save-as">' + icon('download') + 'Save as…</button>'
-        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + 'Show in Finder</button>'
+        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + escHtml(reveal()) + '</button>'
         + '<button class="studio-btn" data-vact="copy-path">' + icon('copy') + 'Copy path</button>'
         + '<button class="studio-btn" data-vact="restore">' + icon('undo') + 'Restore these settings</button>'
         + '<button class="studio-btn pri" data-vact="send">' + icon('send') + 'Send to chat</button></div></div>';
@@ -1216,19 +1222,19 @@
     }
 
     /* A clip that will not play: gone since, or a codec Chromium does not have. */
-    const NO_PLAY = 'This clip can\'t play here. It may have been moved, or its format isn\'t supported. Show in Finder opens it in another player.';
+    const noPlay = () => 'This clip can\'t play here. It may have been moved, or its format isn\'t supported. ' + reveal() + ' opens it in another player.';
 
     function viewFromChat(it) {
       const name = String(it.path).split(/[\\/]/).pop() || it.path;
       const th = S.thumbs[it.id];
       let h = '<div class="studio-viewer studio-video-result">';
       h += S.playError
-        ? '<div class="studio-video-noplay">' + (th ? '<img alt="" src="' + escHtml(th) + '">' : '') + '<span>' + NO_PLAY + '</span></div>'
+        ? '<div class="studio-video-noplay">' + (th ? '<img alt="" src="' + escHtml(th) + '">' : '') + '<span>' + escHtml(noPlay()) + '</span></div>'
         : '<video class="studio-video-player" controls preload="metadata"' + (th ? ' poster="' + escHtml(th) + '"' : '') + ' src="' + escHtml(S.videoSrc) + '"></video>';
       if (S.notice) h += '<div class="studio-notebox">' + icon('info') + '<span>' + escHtml(S.notice) + '</span></div>';
       h += '<div class="studio-below"><span class="studio-meta" title="' + escHtml(it.path) + '">From chat · ' + escHtml(name) + '</span>'
         + '<button class="studio-btn" data-vact="save-as">' + icon('download') + 'Save as…</button>'
-        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + 'Show in Finder</button>'
+        + '<button class="studio-btn" data-vact="reveal">' + icon('folder') + escHtml(reveal()) + '</button>'
         + '<button class="studio-btn" data-vact="copy-path">' + icon('copy') + 'Copy path</button>'
         + '<button class="studio-btn pri" data-vact="send">' + icon('send') + 'Send to chat</button></div></div>';
       return h;
