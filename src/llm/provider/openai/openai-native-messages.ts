@@ -47,6 +47,17 @@ export interface NativeMessageOptions {
    * unknown fields with a 400, so it is off by default.
    */
   preserveReasoning?: boolean;
+  /**
+   * The service itself requires the reasoning back (DeepSeek's thinking
+   * mode answers a tool-call history without it with a 400, ATO-1397).
+   * Implies `preserveReasoning`, without the token cap: a dropped piece is
+   * what the service refuses, and a cloud window has room for it. Once
+   * any call in the request carries reasoning (the model is thinking),
+   * every assistant tool-call message carries the field, as an empty
+   * string where the transcript kept none (later calls of a batch, calls
+   * of answered turns), so no message lacks it.
+   */
+  reasoningRequired?: boolean;
 }
 
 /**
@@ -120,7 +131,18 @@ export function buildNativeMessages(
   // Consecutive orphan result lines, folded into one user message.
   let orphanLines: string[] = [];
   const reasoningByTurn =
-    options.preserveReasoning === true ? capPreservedReasoning(prompt.turns) : new Map<number, string>();
+    options.reasoningRequired === true
+      ? capPreservedReasoning(prompt.turns, Number.POSITIVE_INFINITY)
+      : options.preserveReasoning === true
+        ? capPreservedReasoning(prompt.turns)
+        : new Map<number, string>();
+  // What a tool-call message without reasoning of its own carries:
+  // nothing, unless the service requires the field and the model is
+  // thinking in this conversation.
+  const missingReasoning =
+    options.reasoningRequired === true && reasoningByTurn.size > 0
+      ? ""
+      : undefined;
 
   const flushOrphans = (): void => {
     if (orphanLines.length === 0) return;
@@ -162,7 +184,9 @@ export function buildNativeMessages(
           content: null,
           ...(reasoningByTurn.has(index)
             ? { reasoning_content: reasoningByTurn.get(index) }
-            : {}),
+            : missingReasoning !== undefined
+              ? { reasoning_content: missingReasoning }
+              : {}),
           tool_calls: [
             {
               id,

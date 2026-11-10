@@ -246,6 +246,7 @@ export class OpenAiProvider implements LlmProvider {
       ...(resolveAnthropicCacheControl(options)
         ? { anthropicCacheControl: true }
         : {}),
+      ...(isDeepSeekHost(options.baseUrl) ? { reasoningRequired: true } : {}),
     };
     this.http = {
       baseUrl: normalizeOpenAiBaseUrl(options.baseUrl),
@@ -866,6 +867,23 @@ function resolveAnthropicCacheControl(options: OpenAiProviderOptions): boolean {
         (options.defaultChatModel && isAnthropicModel(options.defaultChatModel)) ||
         isAnthropicHost(options.baseUrl)
       );
+  }
+}
+
+/**
+ * Whether the base URL is DeepSeek's own API, whose thinking mode
+ * requires the previous tool calls' `reasoning_content` back on the next
+ * request and answers a history without it with a 400 (ATO-1397). Kept to
+ * the vendor's host: other services may reject the unknown field, and
+ * routers (OpenRouter) carry reasoning their own way.
+ */
+export function isDeepSeekHost(baseUrl: string | undefined): boolean {
+  if (!baseUrl) return false;
+  try {
+    const host = new URL(baseUrl).hostname.toLowerCase();
+    return host === "deepseek.com" || host.endsWith(".deepseek.com");
+  } catch {
+    return false;
   }
 }
 

@@ -61,6 +61,13 @@ export interface OpenAiBodyOptions {
    * `disableThinking` reach the wire. Absent, it is dropped.
    */
   templateKwargs?: boolean;
+  /**
+   * The service requires the reasoning of earlier tool calls back on the
+   * assistant messages (DeepSeek's thinking mode, ATO-1397). Hands it back
+   * uncapped; see `NativeMessageOptions.reasoningRequired`. Absent, a cloud
+   * body carries no reasoning, as before.
+   */
+  reasoningRequired?: boolean;
 }
 
 /** The wire layout `buildOpenAiChatBody` chose for a request. */
@@ -105,6 +112,11 @@ export function buildOpenAiChatBody(
           // A local server renders the template, which reads the
           // reasoning back where the model expects it (ATO-887).
           ...(options.templateKwargs ? { preserveReasoning: true } : {}),
+          // DeepSeek refuses a thinking-mode tool history without it
+          // (ATO-1397).
+          ...(options.reasoningRequired
+            ? { preserveReasoning: true, reasoningRequired: true }
+            : {}),
         })
       : [
           {

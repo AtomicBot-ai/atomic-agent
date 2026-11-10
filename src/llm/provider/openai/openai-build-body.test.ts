@@ -734,3 +734,31 @@ describe("buildOpenAiChatBody: reasoning handed back to a local template (ATO-88
     }
   });
 });
+
+describe("buildOpenAiChatBody: reasoning DeepSeek requires back (ATO-1397)", () => {
+  const messages = {
+    system: "sys",
+    droppedSummary: null,
+    tail: "",
+    turns: [
+      { kind: "user" as const, text: "read a.txt" },
+      { kind: "assistant_tool_call" as const, tool: "os.fs.read", args: { path: "a.txt" }, reasoning: "need the file" },
+      { kind: "tool_result" as const, tool: "os.fs.read", status: "ok" as const, body: "hello", truncated: false },
+    ],
+  };
+  const tools = [{ type: "function" as const, function: { name: "os__fs__read", parameters: { type: "object" } } }];
+  const ask = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
+    buildOpenAiChatBody({ prompt: "flat", messages, tools } as Parameters<typeof buildOpenAiChatBody>[0], "deepseek-v4-flash", false, undefined, undefined, undefined, undefined, options);
+  const assistant = (body: Record<string, unknown>) =>
+    (body.messages as Array<Record<string, unknown>>).find((m) => m.role === "assistant");
+
+  it("sends reasoning_content on a cloud body when the service requires it", () => {
+    expect(
+      assistant(ask({ providerKind: "openai-compatible", reasoningRequired: true }))?.reasoning_content,
+    ).toBe("need the file");
+  });
+
+  it("keeps the field off the same cloud body otherwise", () => {
+    expect(assistant(ask({ providerKind: "openai-compatible" }))).not.toHaveProperty("reasoning_content");
+  });
+});
