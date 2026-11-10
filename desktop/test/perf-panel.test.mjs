@@ -453,3 +453,23 @@ test('a request that never settles is given up on after the stall limit, and pol
   r.tick();
   assert.equal(r.calls.length, 3, 'and the next poll goes out as usual');
 });
+
+test('the newest first-token time is the newest streamed request, not a side request after it', () => {
+  // A turn streams; the agent's own side requests (titles, memory) are non-streamed and have no first-token time.
+  const s = perfSummary([
+    sample({streamed: true, ttftMs: 3000}),
+    sample({streamed: true, ttftMs: 4800}),
+    sample({streamed: false, ttftMs: null}),
+    sample({streamed: false, ttftMs: null}),
+  ], null);
+  assert.equal(s.ttft.last, 4800);
+  assert.equal(s.ttft.mean, 3900);
+  assert.equal(perfSummary([sample({streamed: false, ttftMs: null})], null).ttft.last, null);
+});
+
+test('the chart carries no text of its own; the peak sits in the caption', () => {
+  const xs = [sample({generationPerSecond: 69}), sample({generationPerSecond: 30}), sample({generationPerSecond: 40})];
+  assert.doesNotMatch(perfChartSVG(xs, 'generationPerSecond', {width: 520, height: 96}), /<text/);
+  const html = perfPaneHTML({phase: 'ok', data: {local: true, url: 'u', capacity: 300, samples: xs, slots: null}, error: null}, Date.now());
+  assert.match(html, /<figcaption><span>Generation speed<\/span><span class="perf-peak">peak 69 tok\/s<\/span><\/figcaption>/);
+});
