@@ -94,6 +94,38 @@ export function buildOpenAiChatBody(
   providerPreferences?: Record<string, unknown>,
   options: OpenAiBodyOptions = {},
 ): Record<string, unknown> {
+  const assemble = (reasoningBudget: number | undefined) =>
+    assembleOpenAiChatBody(request, defaultChatModel, stream, extraBody,
+      maxOutputTokens, strictTools, providerPreferences, options, reasoningBudget);
+  const budget =
+    request.modelMode?.mode === "cloud" ? request.contextBudget : undefined;
+  if (!options.reasoningRequired || !budget || budget.window === null) {
+    return checkedBody(assemble(undefined), request);
+  }
+  // The reasoning DeepSeek requires back is not counted by the cloud
+  // prompt's budget, so it is sized here against the capacity check
+  // itself (ATO-1397): the finished body without any reasoning — after
+  // the extraBody / model params merge, with the tools as they go on the
+  // wire — is measured the way `checkedBody` measures, and what the
+  // window has left, less ten per cent for JSON escaping, is the budget.
+  // Without it a long thinking turn fails the check instead of sending
+  // less of it.
+  const bare = assemble(0);
+  const room = budget.window - capacityUsed(bare, budget.replyReserve);
+  return checkedBody(assemble(Math.max(0, Math.floor(room * 0.9))), request);
+}
+
+function assembleOpenAiChatBody(
+  request: CompletionRequest,
+  defaultChatModel: string,
+  stream: boolean,
+  extraBody: Record<string, unknown> | undefined,
+  maxOutputTokens: number | undefined,
+  strictTools: boolean | undefined,
+  providerPreferences: Record<string, unknown> | undefined,
+  options: OpenAiBodyOptions,
+  reasoningBudget: number | undefined,
+): Record<string, unknown> {
   const filtered = filterCloudCompletionRequest(request);
   const profile = modelParamProfile(defaultChatModel);
   // Settled before the body exists because it also decides the prompt:
@@ -109,10 +141,6 @@ export function buildOpenAiChatBody(
   // layout; a sub-call, or a service that refused the layout, sends the
   // flat text — which `messages` was built beside, from the same packed
   // conversation, so both say the same thing.
-  // Settled before the messages too: the reasoning DeepSeek requires back
-  // is held to the room the window has left after it (ATO-1397).
-  const cap =
-    filtered.maxTokens ?? filtered.maxOutputTokens ?? maxOutputTokens;
   const nativeOptions: NativeMessageOptions = {
     nameEscape: options.nameEscape ?? nameEscape,
     // A local server renders the template, which reads the
@@ -128,9 +156,7 @@ export function buildOpenAiChatBody(
     resolveMessageShape(filtered, options) === "native" && filtered.messages
       ? buildNativeMessages(filtered.messages, {
           ...nativeOptions,
-          ...(options.reasoningRequired
-            ? reasoningRoom(filtered, filtered.messages, nativeOptions, cap)
-            : {}),
+          ...(reasoningBudget !== undefined ? { reasoningBudget } : {}),
         })
       : [
           {
@@ -175,6 +201,8 @@ export function buildOpenAiChatBody(
   // family's own: OpenAI's reasoning models answer `max_tokens` with
   // "'max_tokens' is not supported with this model. Use
   // 'max_completion_tokens' instead."
+  const cap =
+    filtered.maxTokens ?? filtered.maxOutputTokens ?? maxOutputTokens;
   if (typeof cap === "number") body[profile.capField] = cap;
   // Reasoning effort, in the field this kind reads (`model-params.ts`);
   // omitted for a kind without a known one rather than guessed.
@@ -266,7 +294,7 @@ export function buildOpenAiChatBody(
     );
   }
   const modelParams = options.modelParams;
-  if (!extraBody && !modelParams) return checkedBody(body, request);
+  if (!extraBody && !modelParams) return body;
   // Vendor passthrough, then the model's own parameters. Merged last so
   // they can reach fields this builder does not model, then reserved
   // keys are restored on top.
@@ -292,45 +320,35 @@ export function buildOpenAiChatBody(
   ) {
     delete merged.temperature;
   }
-  return checkedBody(merged, request);
-}
-
-/**
- * The reasoning budget for a body that must carry its tool calls'
- * reasoning (`reasoningRequired`): what the cloud window has left once the
- * same messages without any reasoning, the tools, the reply reserve and
- * the safety margin `checkedBody` checks against are counted. The cloud
- * prompt's own budget counts calls and results, not reasoning, so without
- * this a long thinking turn would fail the capacity check instead of
- * sending less of it. Ten per cent is kept back for JSON escaping. No
- * budget (unbounded) when the request has no cloud window to check.
- */
-function reasoningRoom(
-  request: CompletionRequest,
-  prompt: NonNullable<CompletionRequest["messages"]>,
-  nativeOptions: NativeMessageOptions,
-  cap: number | undefined,
-): { reasoningBudget?: number } {
-  const budget =
-    request.modelMode?.mode === "cloud" ? request.contextBudget : undefined;
-  if (!budget || budget.window === null) return {};
-  const bare = buildNativeMessages(prompt, { ...nativeOptions, reasoningBudget: 0 });
-  const used = estimateTokens(
-    JSON.stringify({ messages: bare, tools: request.tools, response_format: request.responseFormat }),
-  );
-  const reserve =
-    typeof cap === "number" && Number.isFinite(cap) ? cap : budget.replyReserve;
-  const room = budget.window - used - reserve - 1024;
-  return { reasoningBudget: Math.max(0, Math.floor(room * 0.9)) };
+  return merged;
 }
 
 function checkedBody(body: Record<string, unknown>, request: CompletionRequest): Record<string, unknown> {
   if (request.modelMode?.mode === "cloud" && request.contextBudget) {
-    const cap = body.max_completion_tokens ?? body.max_tokens;
-    assertContextCapacity({ messages: body.messages, tools: body.tools, response_format: body.response_format }, {
+    assertContextCapacity(capacityInput(body), {
       window: request.contextBudget.window,
-      replyReserve: typeof cap === "number" && Number.isFinite(cap) ? cap : request.contextBudget.replyReserve,
+      replyReserve: capacityReserve(body, request.contextBudget.replyReserve),
     });
   }
   return body;
+}
+
+/** What the capacity check measures of a finished body. */
+function capacityInput(body: Record<string, unknown>): Record<string, unknown> {
+  return { messages: body.messages, tools: body.tools, response_format: body.response_format };
+}
+
+/** The reply reserve the capacity check uses: the body's own cap, else the turn's. */
+function capacityReserve(body: Record<string, unknown>, replyReserve: number): number {
+  const cap = body.max_completion_tokens ?? body.max_tokens;
+  return typeof cap === "number" && Number.isFinite(cap) ? cap : replyReserve;
+}
+
+/**
+ * Tokens the capacity check counts against the window for this body:
+ * the same estimate and margin `assertContextCapacity` applies.
+ */
+function capacityUsed(body: Record<string, unknown>, replyReserve: number): number {
+  return estimateTokens(JSON.stringify(capacityInput(body))) +
+    capacityReserve(body, replyReserve) + 1024;
 }

@@ -763,28 +763,63 @@ describe("buildOpenAiChatBody: reasoning DeepSeek requires back (ATO-1397)", () 
     expect(assistant(ask({ providerKind: "openai-compatible" }))).not.toHaveProperty("reasoning_content");
   });
 
-  it("sends less reasoning instead of failing the capacity check when the window is tight", () => {
-    const long = Array.from({ length: 4000 }, (_, i) => `step${i}`).join(" ");
-    const tight = {
-      ...messages,
-      turns: messages.turns.map((turn) =>
-        turn.kind === "assistant_tool_call" ? { ...turn, reasoning: long } : turn,
-      ),
-    };
-    const request = {
+  const words = (count: number) => Array.from({ length: count }, (_, i) => `step${i}`).join(" ");
+  const cloudRequest = (reasoning: string, window: number, extra: Record<string, unknown> = {}) =>
+    ({
       prompt: "flat",
-      messages: tight,
+      messages: {
+        ...messages,
+        turns: messages.turns.map((turn) =>
+          turn.kind === "assistant_tool_call" ? { ...turn, reasoning } : turn,
+        ),
+      },
       tools,
       modelMode: { mode: "cloud" as const, source: "provider" as const, providerId: "deepseek", modelId: "deepseek-v4-flash" },
-      contextBudget: { window: 4000, replyReserve: 1000 },
-    } as Parameters<typeof buildOpenAiChatBody>[0];
-    const build = (options: Parameters<typeof buildOpenAiChatBody>[7]) =>
-      buildOpenAiChatBody(request, "deepseek-v4-flash", false, undefined, undefined, undefined, undefined, options);
-    const body = build({ providerKind: "openai-compatible", reasoningRequired: true });
+      contextBudget: { window, replyReserve: 1000 },
+      ...extra,
+    }) as Parameters<typeof buildOpenAiChatBody>[0];
+
+  it("sends less reasoning instead of failing the capacity check when the window is tight", () => {
+    const long = words(4000);
+    const body = buildOpenAiChatBody(cloudRequest(long, 4000), "deepseek-v4-flash", false,
+      undefined, undefined, undefined, undefined, { providerKind: "openai-compatible", reasoningRequired: true });
     const sent = assistant(body)?.reasoning_content as string;
-    expect(sent.length).toBeLessThan(long.length);
-    expect(long.endsWith(sent)).toBe(true);
-    // The whole reasoning would not have fitted: proof the cap did the work.
+    // The whole reasoning would not have fitted: the cap did the work.
     expect(estimateTokens(long)).toBeGreaterThan(4000);
+    expect(sent.length).toBeGreaterThan(0);
+    expect(long.endsWith(sent)).toBe(true);
+    // Roughly the room left: 4000 - 1000 reply - 1024 margin - the rest of the body.
+    expect(estimateTokens(sent)).toBeGreaterThan(1000);
+    expect(estimateTokens(sent)).toBeLessThanOrEqual(4000 - 1000 - 1024);
+  });
+
+  it("sizes the reasoning against a max_tokens from model params, as the capacity check does", () => {
+    const long = words(40000);
+    const build = () =>
+      buildOpenAiChatBody(cloudRequest(long, 128000), "deepseek-v4-flash", false,
+        undefined, undefined, undefined, undefined,
+        { providerKind: "openai-compatible", reasoningRequired: true, modelParams: { max_tokens: 65536 } });
+    expect(build).not.toThrow();
+    const body = build();
+    expect(body.max_tokens).toBe(65536);
+    const sent = assistant(body)?.reasoning_content as string;
+    expect(sent.length).toBeGreaterThan(0);
+    expect(estimateTokens(sent)).toBeLessThanOrEqual(128000 - 65536 - 1024);
+    expect(estimateTokens(sent)).toBeGreaterThan(40000);
+  });
+
+  it("measures the strict tools that go on the wire", () => {
+    const long = words(4000);
+    const strictTools = [{ type: "function" as const, function: { name: "os__fs__read",
+      parameters: { type: "object", properties: Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [`field_${i}`, { type: "string", description: `field number ${i}` }]),
+      ) } } }];
+    const build = () =>
+      buildOpenAiChatBody(cloudRequest(long, 6000, { tools: strictTools }), "deepseek-v4-flash", false,
+        undefined, undefined, true, undefined, { providerKind: "openai-compatible", reasoningRequired: true });
+    expect(build).not.toThrow();
+    const sent = assistant(build())?.reasoning_content as string;
+    expect(sent.length).toBeGreaterThan(0);
+    expect(long.endsWith(sent)).toBe(true);
   });
 });
