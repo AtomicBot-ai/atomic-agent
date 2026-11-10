@@ -22,6 +22,8 @@
    may have been updated meanwhile). */
 
 const PERF_POLL_MS = 2000;
+/** A poll request out longer than this is given up on (the agent call itself times out at 5 s). */
+const PERF_STALL_MS = 15000;
 const PERF_CHART = {width: 520, height: 96};
 
 /* renderer.js's `esc` is not visible from here; the same mapping, plus '. */
@@ -252,7 +254,10 @@ function perfPaneHTML(state, nowMs) {
  *   tick()           one poll: skipped while a request is out or the poll stopped
  */
 function perfPoller(o) {
+  const now = () => (o.now ? o.now() : Date.now());
   const ctl = {
+    busySince: 0,
+    reqId: 0,
     state: {phase: 'loading', data: null, error: null},
     gen: 0,
     busy: false,
@@ -293,16 +298,28 @@ function perfPoller(o) {
       if (ctl.state.phase === 'unsupported') return;
       // One request out at a time, across enters, leaves and restarts too:
       // a newer generation waits for the older request to settle, then asks.
-      if (ctl.busy) { ctl.owed = true; return; }
+      if (ctl.busy) {
+        // A request that never settles must not hold the pane forever: past
+        // PERF_STALL_MS it is given up on (its answer, if it ever comes, is
+        // dropped as stale) and this tick asks afresh.
+        if (now() - ctl.busySince < (o.stallMs || PERF_STALL_MS)) { ctl.owed = true; return; }
+        ctl.gen++;
+        ctl.state = {phase: 'unreachable', data: ctl.state.data, error: 'no answer from the agent'};
+        if (o.onChange) o.onChange(ctl.state);
+      }
       ctl.owed = false;
       const gen = ctl.gen;
       ctl.busy = true;
+      ctl.busySince = now();
+      const mine = ctl.reqId = (ctl.reqId || 0) + 1;
       let p;
       try { p = Promise.resolve(o.request()); } catch (err) { p = Promise.reject(err); }
-      p.then((res) => ctl.answer(gen, res), (err) => ctl.answer(gen, {ok: false, kind: 'unreachable', error: String((err && err.message) || err)}));
+      p.then((res) => ctl.answer(gen, res, mine), (err) => ctl.answer(gen, {ok: false, kind: 'unreachable', error: String((err && err.message) || err)}, mine));
     },
-    answer(gen, res) {
-      ctl.busy = false; // whichever generation asked, its request is settled
+    answer(gen, res, req) {
+      // Whichever generation asked, its request is settled, unless a newer
+      // request replaced it after a stall.
+      if (req === undefined || req === ctl.reqId) ctl.busy = false;
       if (gen !== ctl.gen) {
         // An older enter, leave or agent: not this pane's answer. If the
         // current generation was kept waiting behind it, ask for it now.
@@ -380,7 +397,7 @@ function perfAgentRestarted() {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    PERF_POLL_MS, perfEsc, perfSummary, perfFormatRate, perfFormatMs, perfFormatContext,
+    PERF_POLL_MS, PERF_STALL_MS, perfEsc, perfSummary, perfFormatRate, perfFormatMs, perfFormatContext,
     perfChartSVG, perfPaneHTML, perfPoller,
   };
 }
