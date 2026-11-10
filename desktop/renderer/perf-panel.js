@@ -118,7 +118,7 @@ function perfChartSVG(samples, key, size) {
   const xAt = (i) => (xs.length > 1 ? pad + i * step : w / 2);
   const yAt = (v) => h - pad - (v / scale) * (h - 2 * pad);
   const unit = perfFormatRate;
-  let out = '<svg class="perf-chart" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" role="img" aria-label="'
+  let out = '<svg class="perf-chart" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="'
     + perfEsc(key === 'promptPerSecond' ? 'Prompt speed over recent requests' : 'Generation speed over recent requests') + '">';
   out += '<line class="perf-base" x1="0" y1="' + perfCoord(h - pad) + '" x2="' + w + '" y2="' + perfCoord(h - pad) + '"/>';
   // Ticks first, so the line and points draw over them.
