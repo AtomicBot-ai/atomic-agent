@@ -787,6 +787,12 @@ const DL = {
 const SPOT = {gate: false, ids: null, asked: false, dismissed: null};
 /* Backlog 18 — the download card's own state (renderDlcard). Declared up
    here for the same reason as DL: the first top-level render() reads it. */
+/* ATO-1373: a vision projector landed for the model that is serving now. The
+   projector is read only when a model starts, so the running one still has no
+   vision. The download card offers a Restart model instead of restarting it
+   unasked: a restart would end a reply in progress (llmRestartModel refuses
+   under a running turn). {id, pid, busy, error} or null. */
+const VISION = {restart: null};
 const DLC = {
   /** Folded to the round badge. A fold lasts one run of downloads: the next
       run, after the card has been empty, starts open (DownloadPanel). */
@@ -13249,6 +13255,11 @@ function dlCardRows() {
   }
   // F8: a vision projector waiting for its turn (dlProjectorPark). Its × takes it off.
   DL.projectorQueue.forEach((p) => rows.push({src:'dl', kind:'projector', id: p.id, state:'queued', cancel:'dlc:drop:projector:' + p.id}));
+  // ATO-1373: the serving model's projector landed; a restart makes it read images.
+  const vr = VISION.restart;
+  if (vr && !rows.some((r) => r.kind === 'weights' && r.id === vr.id)) {
+    rows.push({src:'restart', kind:'weights', id: vr.id, state: vr.busy ? 'restarting' : 'restart', error: vr.error});
+  }
   // Backlog 18: landed while the agent was on another model; it waits for a Switch.
   if (DL.ready && !rows.some((r) => r.kind === 'weights' && r.id === DL.ready.id)) {
     rows.push({src:'ready', kind:'weights', id: DL.ready.id, state:'ready'});
@@ -13313,6 +13324,8 @@ function dlCardPercent(r) {
 function dlCardLine(r) {
   if (r.state === 'failed') return r.error;
   if (r.state === 'ready') return 'Downloaded. The agent stays on its current model until you switch.';
+  if (r.state === 'restart') return r.error || 'Restart the model to read images.';
+  if (r.state === 'restarting') return 'Restarting the model…';
   const lead = r.kind === 'projector' ? 'Vision projector · ' : '';
   if (r.state === 'queued') return lead + 'Queued';
   if (r.state === 'cancelling') return 'Cancelling…';
@@ -13327,6 +13340,17 @@ function dlCardLine(r) {
 
 function dlCardRowHTML(r, i) {
   const name = dlCardName(r);
+  if (r.state === 'restart' || r.state === 'restarting') {
+    // ATO-1373: no bar, the files are on disk. The restart is the person's to press.
+    const busy = r.state === 'restarting';
+    return '<li class="dlc-row is-ready" data-dlc-row="' + i + '">'
+      + '<div class="dlc-top"><span class="dlc-name" title="' + esc(r.id) + '">' + esc('Vision files for ' + name + ' are ready') + '</span>'
+      + '<button class="btn btn-t xs dlc-switch" data-act="dlc:visionRestart"' + (busy ? ' disabled' : '')
+      + ' title="Restart ' + esc(name) + ' so it reads images">' + (busy ? 'Restarting…' : 'Restart model') + '</button>'
+      + (busy ? '' : '<button class="iconbtn sm dlc-x" data-act="dlc:visionLater" aria-label="Dismiss, and restart later"'
+        + ' title="Later: the next start reads images">' + ic('x') + '</button>') + '</div>'
+      + '<p class="dlc-line">' + esc(dlCardLine(r)) + '</p></li>';
+  }
   if (r.state === 'ready') {
     // No bar: there is nothing left to move. Switch is the start it did not get by itself.
     return '<li class="dlc-row is-ready" data-dlc-row="' + i + '">'
@@ -13352,17 +13376,22 @@ function dlCardRowHTML(r, i) {
     + '</li>';
 }
 
+/** A row whose bytes are still coming: not failed, not landed, not a restart offer (ATO-1373). */
+function dlRowMoving(r) {
+  return r.state !== 'failed' && r.state !== 'ready' && r.src !== 'restart';
+}
+
 /** Open: a header with the count and the fold, the rows, the cloud offer. */
 function dlCardHTML(rows) {
-  const moving = rows.some((r) => r.state !== 'failed' && r.state !== 'ready');
+  const moving = rows.some((r) => dlRowMoving(r));
   const failed = rows.some((r) => r.state === 'failed');
-  const ready = rows.some((r) => r.state === 'ready');
+  const ready = rows.some((r) => r.state === 'ready' || r.src === 'restart');
   const n = rows.length;
   /* The setup screen's "set up a cloud model meanwhile" offer moved here with
      the download it was about. Not for an embedding model: nothing waits on it.
      Not beside a ready row alone either: that model landed while the agent was
      already on another one. */
-  const offer = (moving || failed) && rows.some((r) => r.kind !== 'embedding' && r.state !== 'ready');
+  const offer = (moving || failed) && rows.some((r) => r.kind !== 'embedding' && r.state !== 'ready' && r.src !== 'restart');
   const title = moving ? 'Downloading' : failed && ready ? 'Downloads' : failed ? 'Download failed' : 'Download complete';
   const glyph = moving ? ic('download') : failed ? ic('alert') : ic('check');
   return '<section class="dlc" role="region" aria-label="Downloads">'
@@ -13381,7 +13410,7 @@ function dlCardHTML(rows) {
 /** Folded: a round button that is still a live count. Red when one failed. */
 function dlCardBadgeHTML(rows) {
   const failed = rows.some((r) => r.state === 'failed');
-  const moving = rows.some((r) => r.state !== 'failed' && r.state !== 'ready');
+  const moving = rows.some((r) => dlRowMoving(r));
   return '<button class="dlc-badge' + (failed ? ' has-failed' : '') + '" data-act="dlc:unfold" aria-expanded="false"'
     + ' aria-label="Show downloads (' + rows.length + ')" title="'
     + (failed ? 'A download failed' : moving ? 'Downloading' : 'Download complete') + '">'
@@ -13399,6 +13428,13 @@ function renderDlcard() {
      Settings) needs no Switch any more. */
   if (DL.ready && liveBackend() === 'local'
       && (((LIVE_CONFIG && LIVE_CONFIG.localModels) || {}).managed || {}).modelId === DL.ready.id) DL.ready = null;
+  /* ATO-1373: the offer is done with once that model stopped or started
+     again some other way (a new server pid): it reads the projector now. */
+  const vr = VISION.restart;
+  if (vr && !vr.busy) {
+    const st = LLMP.status;
+    if (!modelServingNow(vr.id) || (vr.pid && st && st.daemonRunning && st.daemonPid && st.daemonPid !== vr.pid)) VISION.restart = null;
+  }
   const rows = OB.open ? [] : dlCardRows();
   if (!rows.length) {
     // Nothing downloading or waiting: the card's corner is free for a launch's model.
@@ -13688,6 +13724,9 @@ function dlCardAct(verb) {
     return;
   }
   if (v === 'cancel') { dlCancel(); return; }
+  // ATO-1373: the serving model's projector landed. Restart on a press only; Later leaves it for the next start.
+  if (v === 'visionRestart') { void visionRestart(); return; }
+  if (v === 'visionLater') { VISION.restart = null; render(); return; }
   /* Backlog 18: the ready row. Switch is exactly the start the model did not
      get by itself — obActivateLocal, through the same switch funnel as the
      composer's picker (swxRun), waiting for a running turn to end as it
@@ -14223,6 +14262,36 @@ function visionFetchable(model) {
 function visionFetchLabel(model) {
   const gb = Number(model && model.mmprojSizeGb) || 0;
   return 'Get vision files' + (gb ? ' \u00b7 ' + obGbWord(gb) : '');
+}
+/* ATO-1373: whether `id` is the model the local server is running now. The
+   status poll's word when there is one, else the live config's local pick. */
+function modelServingNow(id) {
+  const st = LLMP.status;
+  if (st && typeof st.daemonRunning === 'boolean') return st.daemonRunning === true && st.activeModel === id;
+  return liveBackend() === 'local' && (((LIVE_CONFIG && LIVE_CONFIG.localModels) || {}).managed || {}).modelId === id;
+}
+/* ATO-1373: a pull of the model that is serving can only have brought its
+   projector (the weights were there to serve). Offer the restart that makes
+   it read images, and no Switch: it is already the current model. True when
+   the offer was made. If the model is not running, nothing: its next start
+   picks the projector up by itself. */
+function visionLanded(id) {
+  if (!id || !modelServingNow(id)) return false;
+  const st = LLMP.status;
+  VISION.restart = {id, pid: st && st.daemonRunning ? st.daemonPid || null : null, busy: false, error: null};
+  return true;
+}
+async function visionRestart() {
+  const r = VISION.restart;
+  if (!r || r.busy) return;
+  const held = await llmTurnsRunning();
+  if (held) { r.error = llmStopRefusal(held); render(); return; }
+  r.busy = true; r.error = null; render();
+  const ok = await llmRestartModel();
+  if (VISION.restart !== r) return;
+  if (ok) { VISION.restart = null; toast('Model restarted', dlCardName({kind: 'weights', id: r.id}) + ' reads images now', 'info'); }
+  else { r.busy = false; r.error = LLMP.msg && /^! /.test(LLMP.msg.text) ? LLMP.msg.text.slice(2) : LLMP.statusErr || 'The restart did not finish. Try again.'; }
+  render();
 }
 /* Its own disk check: modelDiskFit waves a downloaded model through, and a
    projector is up to 2 GB. */
@@ -18392,6 +18461,7 @@ async function selActivate(row) {
 /** How the composer's pull ended. No Switch for a model that lost its projector: it stays a choice in the list. */
 function selPullFinished(id, ev) {
   if (ev.ok && ev.projectorSkipped === true) { bswSnapshot(); toast('Downloaded without vision', projectorSkippedText(), 'bad'); }
+  else if (ev.ok && visionLanded(id)) { bswSnapshot(); render(); }   // ATO-1373: the serving model got its projector
   else if (ev.ok) { DL.ready = {id}; bswSnapshot(); toast('Model downloaded', 'Choose Switch on the download card when you want to use it'); }
   else toast('Download stopped', ev.error || 'The download did not finish', 'bad');
 }
@@ -27478,23 +27548,26 @@ async function llmDaemon(which) {
    `models status` advises, `models stop` then `models start`, in one press.
    The stop refuses while a turn is running on the server, as Stop does. */
 async function llmRestartModel() {
-  if (!BR || LLMP.daemonPhase) return;
+  // true when the model came back up (ATO-1373 reads it); the other callers ignore it.
+  if (!BR || LLMP.daemonPhase) return false;
   const held = await llmTurnsRunning();
-  if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return; }
+  if (held) { LLMP.msg = {text:'! ' + llmStopRefusal(held)}; llmRepaint(); return false; }
   LLMP.daemonPhase = 'stopping'; llmRepaint();
   const stop = await BR.modelsStop();
   if (!stop || stop.ok === false) {
     LLMP.daemonPhase = null;
     LLMP.statusErr = llmFail('models stop failed', stop);
     await llmRefreshStatus();
-    return;
+    return false;
   }
   LLMP.daemonPhase = 'starting'; llmRepaint();
   const res = await BR.modelsStart();
   LLMP.daemonPhase = null;
-  if (!res || res.ok === false) LLMP.statusErr = llmFail('models start failed', res);
+  const ok = !!res && res.ok !== false;
+  if (!ok) LLMP.statusErr = llmFail('models start failed', res);
   else LLMP.msg = {text:'local-llm: model restarted' + (res.stdout && res.stdout.trim() ? ': ' + res.stdout.trim().split('\n').pop() : '')};
   await llmRefreshStatus();
+  return ok;
 }
 async function llmEmbToggle() {
   if (!BR) return null;
@@ -28321,7 +28394,9 @@ async function llmAfterPull(p) {
     return {projector:'failed', activated:false, skipped:true};
   }
   if (p.kind === 'chat') {
-    DL.ready = {id:p.id}; bswSnapshot(); render();
+    // ATO-1373: the serving model got its projector: a Restart model offer, not a Switch.
+    if (!visionLanded(p.id)) DL.ready = {id:p.id};
+    bswSnapshot(); render();
     return {projector: attempted ? 'ok' : 'none', activated:false, skipped:false};
   }
   const row = llmRows('local').find((r) => r.model && r.model.id === p.id);

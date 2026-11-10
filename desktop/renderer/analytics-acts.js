@@ -50,7 +50,7 @@ const ANX_ACTS = (() => {
       tts:{auto:L}, ftoggle:L, fnew:L, frename:L, fdel:L, fpick:L, fput:L, fautosort:L,
       more:{chats:L, tasks:L}, task:L, toastx:L, 'turn':{continue:L}, sessmodel:{apply:L},
       copy:{reply:L, session:L}, agent:{restart:L, update:L}, jump:{appr:L}, diag:{llmlogs:L, check:L, startModel:L},
-      dl:{cancel:L}, dlc:{cloud:L, dismiss:L, fold:L, keep:L, retry:L, switch:L, unfold:L},
+      dl:{cancel:L}, dlc:{cloud:L, dismiss:L, fold:L, keep:L, retry:L, switch:L, unfold:L, visionLater:L, visionRestart:L},
       appr:{y:L, n:L, esc:L, s:L, a:L}, selector:{model:L}, cards:{expand:L, collapse:L},
       room:{chat:L, tasks:L, skills:L}, insp:{steps:L, reasoning:L, world:L}, console:{agent:L, llm:L},
       toggle:{sidebar:L, inspector:L, console:L, files:L},
