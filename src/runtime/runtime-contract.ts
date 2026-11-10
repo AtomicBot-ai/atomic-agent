@@ -14,6 +14,7 @@ import type { SwarmRegistry } from "../channels/swarm/index.js";
 import type { BotFactory } from "../channels/telegram/index.js";
 import type { McpManager } from "../mcp/index.js";
 import type { CompletionResult, StreamChunk } from "../llm/llama-server-client.js";
+import type { PerformanceSample } from "../llm/llama-performance-samples.js";
 import type { SlotManager } from "../llm/slot-manager.js";
 import type { ApprovalGate } from "../approval/approval-gate.js";
 import type { ApprovalLevel } from "../approval/approval-level.js";
@@ -176,6 +177,16 @@ export interface CreateAgentRuntimeOptions {
   };
 }
 
+
+/** What `AgentRuntime.localPerformance` hands the performance route. */
+export interface LocalPerformance {
+  /** The most samples kept. */
+  capacity: number;
+  /** Completed local requests, oldest first. */
+  samples: PerformanceSample[];
+  /** `GET /slots` on the local server, aborted after `timeoutMs`; throws on any failure. */
+  fetchSlots(timeoutMs: number): Promise<unknown>;
+}
 
 /** Where memory's embedding attachment stands after `reconnectMemoryEmbeddings`. */
 export interface MemoryEmbeddingReconnect {
@@ -616,6 +627,14 @@ export interface AgentRuntime {
    * older hosts need not implement it.
    */
   reconnectMemoryEmbeddings?(): Promise<MemoryEmbeddingReconnect>;
+  /**
+   * The local model server's recent per-request timings, from the one
+   * llama-server client the provider uses, and a bounded `/slots` read
+   * of the same server (issue #996). Read by
+   * `GET /api/local-model/performance`. Optional so test doubles and
+   * embedders need not implement it; the route then reports no samples.
+   */
+  localPerformance?(): LocalPerformance;
   /**
    * Register `handler` as the approval sink for `sessionId`. Every
    * `ApprovalRequest` whose `sessionId` matches will be routed to

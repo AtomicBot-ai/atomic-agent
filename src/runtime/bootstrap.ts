@@ -915,6 +915,14 @@ export async function createAgentRuntime(
       await profileManager?.refresh();
     },
     reconnectMemoryEmbeddings: () => memoryEmbeddings.reconnect(),
+    // The same client instance the llama-server provider sends every
+    // local completion through (runtime-inference passes it as
+    // `llamaClient`), so its samples are the turns' own.
+    localPerformance: () => ({
+      capacity: llama.performanceCapacity,
+      samples: llama.performanceSamples(),
+      fetchSlots: (timeoutMs: number) => llama.fetchSlots(timeoutMs),
+    }),
     setApprovalHandlerForSession: (sessionId, handler) =>
       approvalRouter.setForSession(sessionId, handler),
     setAnalyticsEnabled,
