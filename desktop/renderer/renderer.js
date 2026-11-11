@@ -20732,7 +20732,10 @@ function modelMatches(id, tags, query) {
    ============================================================ */
 
 function wizardHTML() {
-  if (WIZ.phase === 'pick_kind') {
+  /* ATO-1281: a step that is not the list needs its row. With none (the
+     wizard was left and opened again while a step still awaited the network)
+     the list is drawn, as the setup wizard's own copy does, not a TypeError. */
+  if (WIZ.phase === 'pick_kind' || !WIZ.row) {
     const taken = new Set(selProviders().map((p) => p.id));
     return selShell('Add a provider',
       '<div class="selbody"><div class="sellist">' + KIND_ROWS.map((k, i) =>
@@ -20972,9 +20975,11 @@ async function wizSubscriptionStep(k) {
   if (!wizSubReady(k)) { render(); return; }
   WIZ.phase = 'verifying'; WIZ.error = null; WIZ.errorDetail = null; WIZ.noFundsNote = null; render();
   const res = await BR.upsertProvider(wizSubscriptionEntry(k));
+  if (wizStepLeft(k)) return;
   if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
   /* Main answers this from the built-in list (subscription-cli-models.ts), never the network. */
   const listed = BR.providerModels ? await BR.providerModels(id, k.kind).catch(() => null) : null;
+  if (wizStepLeft(k)) return;
   const models = listed && listed.ok && Array.isArray(listed.models) ? listed.models : [];
   if (!models.length) return wizActivate(k, id, '', null);
   const model = models.some((m) => m.id === k.defaultModel) ? k.defaultModel : models[0].id;
@@ -20982,6 +20987,18 @@ async function wizSubscriptionStep(k) {
   WIZ.models = models; WIZ.modelPick = model; WIZ.defaultModel = model;
   WIZ.savedId = id; WIZ.savedLabel = wizService(k); WIZ.unverifiedNote = null;
   render();
+}
+
+/* ATO-1281: whether the wizard this step belongs to was left (Cancel, Esc, a
+   click outside) or opened again on another row while the step awaited. A step
+   that outlived its wizard stops: it used to set the next phase on a wizard
+   already closed, or opened afresh with no row, and the redraw threw. The
+   entry it left without a model is dropped, as leaving the wizard does. */
+function wizStepLeft(k) {
+  if (WIZ.row === k && WIZ.phase) return false;
+  WIZ.dropAfterStep = false;
+  if (WIZ.unfinishedId) { const id = WIZ.unfinishedId; WIZ.unfinishedId = null; wizRemoveIfIncomplete(id); }
+  return true;
 }
 
 async function wizNext() {
@@ -21108,6 +21125,7 @@ async function wizNextStep() {
       const r = await BR.providerKeyPresent({id, kind: k.kind, apiKeyEnvVar: k.env, baseUrl: entry.baseUrl});
       if (r && r.ok) has = !!r.present;
     } catch (e) { /* unknown: the check below answers it, as before */ }
+    if (wizStepLeft(k)) return;
     if (has === false) { wizAskKey(k); render(); wizFocusKey(); return; }
   }
 
@@ -21115,13 +21133,14 @@ async function wizNextStep() {
   // step, then Next again) is still this wizard's, not a pre-existing one.
   const existedBefore = WIZ.unfinishedId !== id && !!selProviders().find((p) => p.id === id);
   let res = await BR.upsertProvider(entry);
-  if (res && res.ok === false) { ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
+  if (res && res.ok === false) { if (wizStepLeft(k)) return; ANX.providerFailed('save_failed', OB.open); WIZ.phase = 'configure'; WIZ.error = res.error || 'could not save the provider'; render(); return; }
   // U29: remember an entry this wizard created without a model, so leaving
   // before the model is committed removes it again (see wizDropUnfinished).
   // A different id this pass (Back, then a changed custom URL) leaves the
   // earlier entry orphaned: drop it now.
   if (WIZ.unfinishedId && WIZ.unfinishedId !== id) { const prev = WIZ.unfinishedId; WIZ.unfinishedId = null; wizRemoveIfIncomplete(prev); }
   if (!existedBefore && WIZ_NEEDS_MODEL.has(k.kind)) WIZ.unfinishedId = id;
+  if (wizStepLeft(k)) return;
 
   // The catalogue, to pick a model with. This is a LOOKUP, not a check:
   // openrouter and aimlapi answer it from a list bundled in the binary,
@@ -21139,6 +21158,7 @@ async function wizNextStep() {
     // ATO-306: nor is a refused key, a provider error or a list that failed some other way (wizSetupFailReason).
     ANX.providerFailed(wizSetupFailReason(listed), OB.open, k);
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
+    if (wizStepLeft(k)) return;
     WIZ.phase = 'configure';
     /* r6 UX: the provider's own words are the detail, not the whole
        message. A rejected key used to report `no searchable cloud
@@ -21234,6 +21254,7 @@ async function wizNextStep() {
     : (BR.verifyProviderKey ? await BR.verifyProviderKey(entry, model) : {ok:true, checked:false});
   if (proof && proof.checked && !proof.ok) {
     if (!existedBefore && BR.removeProvider) await BR.removeProvider(id);
+    if (wizStepLeft(k)) return;
     WIZ.phase = 'configure';
     /* Calm (S6, U14): a plain sentence; the provider's own words ("User not
        found") are the Details under it. */
@@ -21256,6 +21277,7 @@ async function wizNextStep() {
     render(); refreshLiveConfig();
     return;
   }
+  if (wizStepLeft(k)) return;
   /* Backlog 40: the provider took the key and turned the request down because
      the account has no funds (AI/ML API's 403 "You've run out of funds", a
      402). The key works: this is neither "didn't accept this key" nor "could
@@ -21293,6 +21315,7 @@ async function wizNextStep() {
   const unverified = proof && !proof.checked ? (proof.error || 'the key could not be checked') : null;
   if (unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, true); } catch (e) { /* the badge is not worth failing the save */ } }
   if (!unverified && BR.unverifiedSet) { try { await BR.unverifiedSet(id, false); } catch (e) { /* idem */ } }
+  if (wizStepLeft(k)) return;
   WIZ.acceptUnchecked = false;
   WIZ.uncheckedFor = null;
   /* The model is a CHOICE, not something we take silently.
