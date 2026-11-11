@@ -29,6 +29,7 @@ import { ChatOrchestrator } from "./chat-orchestrator.js";
 import {
   parseTuiArgs,
   nonInteractiveStdinError,
+  selfUpdateRelaunchArgs,
   TUI_HELP,
 } from "./tui-args.js";
 import {
@@ -1056,14 +1057,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // a seamless restart without a detached-process race for the terminal.
   if (restartRequested) {
     process.stdout.write("restarting atomic-agent…\n");
-    // SEA prepends an extra argv slot, so the real user args start at index 2
-    // (see userArgsFromArgv in cli/index.ts). Re-using process.argv.slice(1)
-    // here re-injects the invoke-path slot and the relaunched SEA process reads
-    // it as the command name ("unknown command: atomic-agent"). Plain node keeps
-    // the script path at index 1, so slice(1) stays correct there.
-    const relaunchArgs = isSea()
-      ? process.argv.slice(2)
-      : process.argv.slice(1);
+    // Relaunch as `tui` with this call's own args, never the process argv:
+    // under `atag handoff` that argv would run the handoff a second time.
+    // See selfUpdateRelaunchArgs for the SEA argv slot and `--send`.
+    const relaunchArgs = selfUpdateRelaunchArgs(process.argv, args, isSea());
     const result = spawnSync(process.execPath, relaunchArgs, {
       stdio: "inherit",
     });
