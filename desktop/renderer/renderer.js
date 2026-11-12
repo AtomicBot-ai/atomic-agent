@@ -1558,6 +1558,9 @@ const VOICE_REASONS = {
   'voice-mic-stale':'macOS is holding a microphone permission for an older build of this app, so it will not start the device. Resetting it makes macOS ask again.',
   'voice-no-mic':'No microphone was found',
   'voice-no-bridge':'Voice input needs the desktop app',
+  // ATO-1049: Windows and Linux dictate with the user's whisper.cpp.
+  'voice-whisper-missing':'Voice input on this computer needs whisper.cpp: install whisper-cli (for example the whisper.cpp release, or brew install whisper-cpp) and reopen the app',
+  'voice-whisper-model-missing':'Voice input needs a whisper speech model: ask the agent to transcribe an audio file once, and it downloads one',
 };
 /* Measured before it shipped, not taken from documentation. A Russian
    dictation fed at real time through two analyzers at once (en-US speech +
@@ -1566,7 +1569,7 @@ const VOICE_REASONS = {
    all-process capture taken in the same window holds 612 rows — none of
    them corespeechd, com.apple.siri.embeddedspeech or any other speech
    daemon — while recording other processes moving hundreds of megabytes. */
-const VOICE_ONDEVICE = 'On-device — the audio never leaves this Mac';
+const VOICE_ONDEVICE = /^mac/i.test(navigator.platform || '') ? 'On-device — the audio never leaves this Mac' : 'On-device — the audio never leaves this computer';
 /* Item 2 (voice input): the one call site for a model download. It is a
    binding rather than a direct BR.voiceInstall() call so the smoke can watch
    where an uninstalled language routes — to the download, never to the
@@ -8402,6 +8405,7 @@ function voiceProbe() {
     VOICE.speechLocales = d.speech || [];
     VOICE.dictationLocales = d.dictation || [];
     VOICE.offMachine = !!d.offMachine;
+    VOICE.batch = !!d.batch;   // whisper.cpp (ATO-1049): the text comes after the take
     if (d.ok) {
       VOICE.available = true; VOICE.code = ''; VOICE.reason = ''; VOICE.detail = '';
       const chosen = (d.chosen || []).filter((id) => VOICE.supported.indexOf(id) >= 0);
@@ -8665,7 +8669,7 @@ function voiceStop() {
       // claimable until the next take starts — see VOICE.lateTake.
       VOICE.lateTake = VOICE.seq;
       voiceSettle();
-    }, 2500);
+    }, VOICE.batch ? 120000 : 2500);
   }).then(() => voiceInsert());
 }
 function voiceSettle() {
@@ -8768,6 +8772,7 @@ function voiceEvent(o) {
       voiceFail(String(o.message || o.code || 'the speech helper failed'));
       return;
     }
+    else if (o.code === 'whisper') toast('Voice input', String(o.message || 'whisper.cpp failed'));
   }
   else if (t === 'done') { voiceSettle(); }
   else if (t === 'closed') {

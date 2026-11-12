@@ -4845,12 +4845,20 @@ async function voiceTest(
   // rather than asserting it in prose. Compared at the end of the sub-suite.
   const agentCfgBefore = JSON.stringify((await configGet()).config);
   try {
-    // Windows and Linux draw no mic button (platform.ts voiceSupported), and
-    // every step below clicks it: without this return the lane threw and the
-    // whole --smoke run stopped there, with every lane after it unrun.
-    if (!voiceSupported(process.platform)) {
-      const none = await js<Mic>("window.__voiceMic()");
-      check("no mic button where voice is not supported", !none.present, `platform=${process.platform}`);
+    // Windows and Linux dictate through whisper.cpp (ATO-1049): the button is
+    // there, enabled only when whisper-cli and a model are found. Every step
+    // below drives the macOS helper's flows (language installs, two
+    // analyzers), so the lane checks the button and its honesty and stops.
+    if (process.platform !== "darwin") {
+      const mic = await js<Mic>("window.__voiceMic()");
+      const v = await js<V>("window.__voice()");
+      const reasons = await js<Record<string, string>>("window.__voiceReasons()");
+      check(
+        "the mic button is there and says why when whisper.cpp is missing",
+        voiceSupported(process.platform) && mic.present
+          && (v.available !== false || (mic.disabled && mic.title === reasons[v.code ?? ""])),
+        `platform=${process.platform} available=${v.available} code=${v.code}`,
+      );
       return;
     }
     // --- the button ------------------------------------------------------
@@ -4871,12 +4879,13 @@ async function voiceTest(
     const sentences = named.map((k) => reasons[k]);
     check(
       "every disabled case has a sentence",
-      /* Nine since the AbortError case was named. The exact count is the
+      /* Nine since the AbortError case was named, eleven since the two
+         whisper.cpp cases (ATO-1049). The exact count is the
          tripwire: a new disabled state must be added here deliberately,
          with a sentence a person can act on, rather than inheriting the
          generic "could not be opened" that sent the operator hunting
          through System Settings for a permission that was already on. */
-      named.length === 9 && sentences.every((s) => typeof s === "string" && s.length > 12)
+      named.length === 11 && sentences.every((s) => typeof s === "string" && s.length > 12)
         && reasons["voice-os-too-old"] === "Voice input needs macOS 26 or later"
         && reasons["voice-helper-missing"] === "Voice input needs the speech helper, which this build was packaged without"
         && reasons["voice-not-macos"] === "Voice input works only on macOS"

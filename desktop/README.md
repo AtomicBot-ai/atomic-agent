@@ -977,8 +977,23 @@ Honestly degraded, and labelled as such in the UI:
   26+, so on anything older the button is disabled and says
   `Voice input needs macOS 26 or later`; the app itself runs from
   macOS 14 (ATO-115: Electron 44 needs 13 and a 12.x Mac crashed at launch
-  on `_OBJC_CLASS_$_SMAppService`, so the floor is 14, not 12). Off macOS it says `Voice input works only on macOS`, and a
-  build without the helper says so too. 43 languages are available
+  on `_OBJC_CLASS_$_SMAppService`, so the floor is 14, not 12). A
+  build without the helper says so too.
+  **Windows and Linux (ATO-1049)** dictate through the user's own
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp): `whisper-cli` (or
+  `whisper-cpp`) on PATH, in the installer folders a GUI app misses, or named
+  by `ATOMIC_AGENT_WHISPER_BIN`, plus a ggml model in
+  `<models dir>/whisper/` (the folder the agent's `audio.transcribe` tool
+  downloads into; `base` is tried first) or `ATOMIC_AGENT_WHISPER_MODEL`.
+  Without either the button is disabled and names what is missing; nothing is
+  downloaded from the app. The renderer records exactly as on a Mac; main
+  keeps the take in memory, writes it once as a 16 kHz WAV into a private
+  temp folder on stop, runs whisper on it and deletes the folder
+  (`main/whisper-dictation.ts`). There is no live text: the words arrive
+  after the take ends, so the stop waits up to two minutes instead of 2.5 s.
+  With two languages chosen whisper detects the language itself. Reading
+  replies aloud uses the system voices through the renderer (`tts.js`), which
+  Chromium already serves on Windows and Linux. 43 languages are available
   on-device: 30 through `SpeechTranscriber`, which punctuates and cases,
   and 13 more — Russian, Arabic, Dutch, Turkish, Thai, Vietnamese, Hebrew,
   Danish, Finnish, Norwegian, Swedish, Malay and Flemish — only through

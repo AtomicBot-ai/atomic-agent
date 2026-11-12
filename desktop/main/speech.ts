@@ -11,12 +11,30 @@
  *
  * The audio is never written to disk and never leaves this process tree: a
  * chunk goes straight into the child's stdin and is dropped.
+ *
+ * Windows and Linux (ATO-1049) take a different branch with the same IPC
+ * contract: the take is held in memory, written once as a WAV into a private
+ * temp folder on stop, transcribed by the user's whisper.cpp and the folder
+ * deleted (whisper-dictation.ts). Still on this computer, no network.
  */
-import { spawn, type ChildProcessByStdio } from "node:child_process";
+import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { app } from "electron";
+import { managedDataDirNow } from "./agent-cli.js";
+import {
+  cleanTranscript,
+  pcmToWav,
+  resolveWhisperBinary,
+  resolveWhisperModel,
+  whisperArgs,
+  whisperLanguage,
+  WHISPER_LOCALES,
+  type LookupEnv,
+} from "./whisper-dictation.js";
 
 /** Why the microphone button is off, when it is. The renderer owns the
  *  sentence each of these prints; main only ever names the case. */
@@ -24,7 +42,11 @@ export type VoiceReason =
   | "voice-not-macos"
   | "voice-os-too-old"
   | "voice-helper-missing"
-  | "voice-helper-failed";
+  | "voice-helper-failed"
+  /** Windows/Linux (ATO-1049): no whisper.cpp binary found. */
+  | "voice-whisper-missing"
+  /** Windows/Linux: whisper.cpp is there, no ggml speech model is. */
+  | "voice-whisper-model-missing";
 
 export interface VoiceProbe {
   ok: boolean;
@@ -41,6 +63,8 @@ export interface VoiceProbe {
   maxReserved: number;
   /** Kept as a forward-compatible field: this route is on-device, always false. */
   offMachine: boolean;
+  /** True on the whisper.cpp route: no partials, the text comes after the take ends. */
+  batch?: boolean;
 }
 
 /** 100 ms of 16 kHz mono s16le is 3200 bytes; anything near 64 KB is a fault. */
@@ -48,6 +72,13 @@ const MAX_CHUNK = 65536;
 /** Five minutes of audio at 32 KB/s. A session past this is a stuck renderer. */
 const MAX_SESSION_BYTES = 5 * 60 * 32_000;
 const PROBE_TIMEOUT_MS = 8000;
+/** whisper.cpp on a CPU takes a while on five minutes of speech. */
+const WHISPER_TIMEOUT_MS = 180_000;
+
+/** What the whisper.cpp lookups read: this process's environment. */
+function whisperLookup(): LookupEnv {
+  return { env: process.env, platform: process.platform, home: homedir() };
+}
 
 export function helperPath(): string {
   return app.isPackaged
@@ -77,6 +108,12 @@ export class VoiceSession {
   private bytes = 0;
   private emit: Emit = () => {};
   private cached: VoiceProbe | null = null;
+  /* The whisper.cpp route (not darwin): the take in memory while armed,
+     the binary and model the probe found, and the running transcription. */
+  private takes: Uint8Array[] | null = null;
+  private whisper: { bin: string; model: string } | null = null;
+  private whisperRun: AbortController | null = null;
+  private takeLocales: string[] = [];
 
   private empty(reason: VoiceReason, detail?: string): VoiceProbe {
     return {
@@ -93,7 +130,7 @@ export class VoiceSession {
    */
   async probe(force = false): Promise<VoiceProbe> {
     if (this.cached && !force) return this.cached;
-    if (process.platform !== "darwin") return (this.cached = this.empty("voice-not-macos", process.platform));
+    if (process.platform !== "darwin") return (this.cached = this.probeWhisper());
     const major = macosMajor();
     if (major > 0 && major < 26) return (this.cached = this.empty("voice-os-too-old", String(major)));
     const path = helperPath();
@@ -135,6 +172,21 @@ export class VoiceSession {
     }
   }
 
+  /** Windows/Linux: whisper.cpp and a model on disk, or the case that is missing. */
+  private probeWhisper(): VoiceProbe {
+    const lookup = whisperLookup();
+    const bin = resolveWhisperBinary(lookup);
+    if (!bin.found) return this.empty("voice-whisper-missing", bin.detail);
+    const model = resolveWhisperModel(managedDataDirNow(), lookup);
+    if (!model.found) return this.empty("voice-whisper-model-missing", model.detail);
+    this.whisper = { bin: bin.path, model: model.path };
+    const all = [...WHISPER_LOCALES];
+    return {
+      ok: true, os: process.platform, supported: all, installed: all,
+      speech: [], dictation: all, maxReserved: 0, offMachine: false, batch: true,
+    };
+  }
+
   /** Start listening. `locales[0]` drives the live text; a second one is
    *  heard in parallel and can win the session (the helper's `replace`). */
   async start(locales: string[], emit: Emit): Promise<{ ok: boolean; error?: string; locales?: string[] }> {
@@ -145,6 +197,14 @@ export class VoiceSession {
     this.kill();
     this.emit = emit;
     this.bytes = 0;
+    if (process.platform !== "darwin") {
+      // No child to feed: the take is kept until stop() hands it to whisper.
+      this.takes = [];
+      this.takeLocales = wanted;
+      this.armed = true;
+      emit({ type: "ready", locales: wanted });
+      return { ok: true, locales: wanted };
+    }
     // Every handler below closes over THIS session's emit, not over
     // `this.emit`. A child killed by the next start() still delivers its
     // `close` afterwards, and reading `this.emit` at fire time would post a
@@ -202,7 +262,7 @@ export class VoiceSession {
    * within the session's byte budget.
    */
   audio(chunk: unknown): void {
-    if (!this.child || !this.armed) return;
+    if ((!this.child && !this.takes) || !this.armed) return;
     if (!(chunk instanceof Uint8Array)) return;
     if (chunk.byteLength === 0 || chunk.byteLength > MAX_CHUNK) return;
     this.bytes += chunk.byteLength;
@@ -211,19 +271,21 @@ export class VoiceSession {
       this.cancel();
       return;
     }
-    this.child.stdin.write(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
+    if (this.takes) { this.takes.push(Uint8Array.from(chunk)); return; }
+    this.child?.stdin.write(Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength));
   }
 
   /** Close stdin and let the helper finalize; its `done` ends the session. */
   stop(): { ok: boolean } {
     this.armed = false;
+    if (this.takes) { void this.finishWhisper(); return { ok: true }; }
     if (this.child) { try { this.child.stdin.end(); } catch { /* already gone */ } }
     return { ok: true };
   }
 
   /** Throw the session away. Nothing is inserted after this. */
   cancel(): { ok: boolean } {
-    const had = !!this.child;
+    const had = !!this.child || !!this.takes || !!this.whisperRun;
     this.kill();
     if (had) this.emit({ type: "closed", cancelled: true });
     return { ok: true };
@@ -268,8 +330,51 @@ export class VoiceSession {
     });
   }
 
+  /**
+   * Windows/Linux: the take as one WAV in a private temp folder, whisper.cpp
+   * on it, the folder removed. Emits `final` (when words were heard) and
+   * `done`, the same events the macOS helper ends a take with; a failure is
+   * an `error` the renderer shows, then `done`. A cancel aborts the run and
+   * nothing is emitted.
+   */
+  private async finishWhisper(): Promise<void> {
+    const takes = this.takes ?? [];
+    this.takes = null;
+    const emit = this.emit;
+    const tool = this.whisper;
+    const ac = new AbortController();
+    this.whisperRun = ac;
+    let dir: string | null = null;
+    try {
+      if (!tool) { emit({ type: "error", code: "whisper", message: "whisper.cpp was not found" }); return; }
+      if (takes.length === 0) return;
+      dir = await mkdtemp(join(tmpdir(), "atomic-voice-"));
+      const wav = join(dir, "take.wav");
+      await writeFile(wav, pcmToWav(takes), { mode: 0o600 });
+      const out = await new Promise<{ ok: boolean; stdout: string; message: string }>((resolve) => {
+        execFile(tool.bin, whisperArgs(tool.model, wav, whisperLanguage(this.takeLocales)),
+          { signal: ac.signal, timeout: WHISPER_TIMEOUT_MS, windowsHide: true, maxBuffer: 8 * 1024 * 1024, encoding: "utf8" },
+          (err, stdout, stderr) => resolve(err
+            ? { ok: false, stdout: "", message: (String(stderr || "").trim().split("\n").pop() || err.message).slice(0, 300) }
+            : { ok: true, stdout, message: "" }));
+      });
+      if (ac.signal.aborted) return;
+      if (!out.ok) { emit({ type: "error", code: "whisper", message: `whisper.cpp failed: ${out.message}` }); return; }
+      const text = cleanTranscript(out.stdout);
+      if (text) emit({ type: "final", text });
+    } catch (err) {
+      if (!ac.signal.aborted) emit({ type: "error", code: "whisper", message: err instanceof Error ? err.message : String(err) });
+    } finally {
+      if (dir) await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      if (this.whisperRun === ac) this.whisperRun = null;
+      if (!ac.signal.aborted) emit({ type: "done" });
+    }
+  }
+
   /** Unconditional teardown — quit, window close, a new session. */
   kill(): void {
+    this.takes = null;
+    if (this.whisperRun) { this.whisperRun.abort(); this.whisperRun = null; }
     this.armed = false;
     const child = this.child;
     this.child = null;
