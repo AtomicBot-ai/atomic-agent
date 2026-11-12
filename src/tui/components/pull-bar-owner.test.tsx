@@ -7,6 +7,7 @@ import {
   EMBEDDING_MODELS_CATALOG,
   LOCAL_MODELS_CATALOG,
 } from "../../local-llm/catalog/models-catalog.js";
+import { modelDisplayName } from "../../local-llm/index.js";
 import type { LocalModelsPullState } from "../local-models/local-models-panel-state.js";
 import { fakeSession } from "../test-fixtures.js";
 import {
@@ -150,7 +151,7 @@ describe("one download, one progress bar", () => {
     );
     const row = strip(lastFrame() ?? "")
       .split("\n")
-      .find((line) => line.includes(CHAT_DEF.id) && line.includes("50%"));
+      .find((line) => line.includes(modelDisplayName(CHAT_DEF)) && line.includes("50%"));
     unmount();
     expect(row).toBeDefined();
     expect(row).toContain("⇣ 50%");
