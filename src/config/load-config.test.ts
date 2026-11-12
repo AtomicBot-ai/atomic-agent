@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -11,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describeLocalModelsValueSources, loadConfig } from "./load-config.js";
+import type { DotenvLoadResult } from "./load-dotenv.js";
 import { resetConfigCache } from "./config-cache.js";
 import { getUserConfigPath, writeUserConfigFileSync } from "./config-file.js";
 import {
@@ -550,5 +552,58 @@ describe("loadConfig", () => {
     process.env.ATOMIC_AGENT_GRAMMARS_DIR = override;
     resetConfigCache();
     expect(loadConfig().paths.grammarsDir).toBe(override);
+  });
+});
+
+/* ATO-1213 review round: the read a running serve does for
+   /api/local-models/* answers changes nothing on disk or in the process. */
+describe("loadConfig({readOnly}) is a pure read", () => {
+  let stateDir: string;
+  const bootDotenv = { path: "/boot/.env", exists: false, loaded: [], error: null } as unknown as DotenvLoadResult;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "atomic-load-ro-"));
+    process.env.ATOMIC_AGENT_STATE_DIR = stateDir;
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    resetConfigCache();
+  });
+
+  afterEach(() => {
+    rmSync(stateDir, { recursive: true, force: true });
+    delete process.env.ATOMIC_AGENT_STATE_DIR;
+    delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
+    resetConfigCache();
+    vi.restoreAllMocks();
+  });
+
+  it("writes no default config.json and no key file when there is none", () => {
+    const config = loadConfig({ readOnly: { dotenv: bootDotenv } });
+    expect(config.log.level).toBe(USER_CONFIG_DEFAULTS.log.level);
+    expect(existsSync(getUserConfigPath(stateDir))).toBe(false);
+    expect(readdirSync(stateDir)).toEqual([]);
+  });
+
+  it("does not migrate an older file on disk", () => {
+    const path = getUserConfigPath(stateDir);
+    const old = JSON.stringify({ version: 1, log: { level: "warn" } });
+    writeFileSync(path, old, "utf8");
+    const config = loadConfig({ readOnly: { dotenv: bootDotenv } });
+    expect(config.log.level).toBe("warn");
+    expect(readFileSync(path, "utf8")).toBe(old);
+  });
+
+  it("does not merge .env into process.env, and reports the dotenv it was given", () => {
+    delete process.env.ATOMIC_LOADCONFIG_TEST_KEY;
+    writeFileSync(join(stateDir, ".env"), "ATOMIC_LOADCONFIG_TEST_KEY=from-file\n", "utf8");
+    const config = loadConfig({ readOnly: { dotenv: bootDotenv } });
+    expect(process.env.ATOMIC_LOADCONFIG_TEST_KEY).toBeUndefined();
+    expect(config.dotenv).toBe(bootDotenv);
+  });
+
+  it("a plain load still does all three (the read-only path is the only one changed)", () => {
+    writeFileSync(join(stateDir, ".env"), "ATOMIC_LOADCONFIG_TEST_KEY=from-file\n", "utf8");
+    loadConfig();
+    expect(existsSync(getUserConfigPath(stateDir))).toBe(true);
+    expect(process.env.ATOMIC_LOADCONFIG_TEST_KEY).toBe("from-file");
   });
 });

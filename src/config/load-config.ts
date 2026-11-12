@@ -5,11 +5,17 @@ import { fileURLToPath } from "node:url";
 
 import {
   ENV_DEFAULTS,
+  USER_CONFIG_DEFAULTS,
   type AtomicAgentConfig,
   type BrowserChannel,
   type LogLevel,
 } from "./config-schema.js";
-import { ensureUserConfigFileSync, getUserConfigPath } from "./config-file.js";
+import {
+  ensureUserConfigFileSync,
+  getUserConfigPath,
+  readUserConfigFileSync,
+} from "./config-file.js";
+import type { DotenvLoadResult } from "./load-dotenv.js";
 import { setCustomLocalModels } from "../local-llm/catalog/models-catalog.js";
 import { setDefaultDownloadConnections } from "../local-llm/downloads/download-settings.js";
 import { setDefaultHuggingFaceEndpoint } from "../local-llm/catalog/huggingface-endpoint.js";
@@ -188,26 +194,44 @@ export function resolveStateDir(): string {
  * come from `<stateDir>/config.json`; everything else stays in env
  * variables.
  */
-export function loadConfig(): AtomicAgentConfig {
+export interface LoadConfigOptions {
+  /**
+   * ATO-1213: a pure read, for a running `serve` answering what the machine
+   * is set to now. No `.env` merge into `process.env` (the given `dotenv`,
+   * the one the process booted with, is reported instead), no write of
+   * `config.json` (no default file, no migration, no notice), no key file
+   * created, and nothing pushed into the process-wide registries (custom
+   * models, backend variants, download settings): the runtime goes on with
+   * what it booted with.
+   */
+  readOnly?: { dotenv: DotenvLoadResult };
+}
+
+export function loadConfig(options: LoadConfigOptions = {}): AtomicAgentConfig {
+  const readOnly = options.readOnly ?? null;
   const stateDir = resolveStateDir();
-  const dotenv = loadDotenvFromStateDir(stateDir);
+  const dotenv = readOnly ? readOnly.dotenv : loadDotenvFromStateDir(stateDir);
   const userConfigFile = getUserConfigPath(stateDir);
-  const user = ensureUserConfigFileSync(userConfigFile);
-  // Publish the operator's own models to the catalog registry, so that
-  // `getLocalModelDef` and `isKnownLocalModelId` resolve them everywhere
-  // a curated id already works.
-  setCustomLocalModels(user.localModels.customModels);
-  // Same push-in pattern: the backend-zip variant preference has to be
-  // visible to `resolveDownloadAsset`, which runs deep inside the
-  // config-free local-llm layer.
-  setConfiguredBackendVariant(user.localModels.managed.backendVariant);
-  // Atomic Core's own build choice, read by `installCoreBackend`.
-  setConfiguredCoreBackendVariant(user.localModels.managed.coreBackendVariant);
-  // And the download fan-out: `downloadFile` is reached from the CLI, the
-  // TUI and the detached pull worker, none of which should have to
-  // thread a config value down to it.
-  setDefaultDownloadConnections(user.localModels.download.connections);
-  setDefaultHuggingFaceEndpoint(user.localModels.download.hfEndpoint);
+  const user = readOnly
+    ? (readUserConfigFileSync(userConfigFile) ?? USER_CONFIG_DEFAULTS)
+    : ensureUserConfigFileSync(userConfigFile);
+  if (!readOnly) {
+    // Publish the operator's own models to the catalog registry, so that
+    // `getLocalModelDef` and `isKnownLocalModelId` resolve them everywhere
+    // a curated id already works.
+    setCustomLocalModels(user.localModels.customModels);
+    // Same push-in pattern: the backend-zip variant preference has to be
+    // visible to `resolveDownloadAsset`, which runs deep inside the
+    // config-free local-llm layer.
+    setConfiguredBackendVariant(user.localModels.managed.backendVariant);
+    // Atomic Core's own build choice, read by `installCoreBackend`.
+    setConfiguredCoreBackendVariant(user.localModels.managed.coreBackendVariant);
+    // And the download fan-out: `downloadFile` is reached from the CLI, the
+    // TUI and the detached pull worker, none of which should have to
+    // thread a config value down to it.
+    setDefaultDownloadConnections(user.localModels.download.connections);
+    setDefaultHuggingFaceEndpoint(user.localModels.download.hfEndpoint);
+  }
   const grammarsDir = resolveAssetDir("ATOMIC_AGENT_GRAMMARS_DIR", "grammars");
 
   const browserChannel: BrowserChannel = readBrowserChannel(
@@ -243,6 +267,7 @@ export function loadConfig(): AtomicAgentConfig {
           user.localModels.embeddings.port,
         ],
         dataDir: localModelsDataDir,
+        readOnly: readOnly !== null,
       }),
       healthPath: "/health",
       completionPath: "/completion",

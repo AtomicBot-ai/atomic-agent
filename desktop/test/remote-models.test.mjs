@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 // Anything that falls through to the CLI here would hit this machine's agent; point it nowhere.
 process.env.ATOMIC_AGENT_BIN = '/nonexistent/atag-for-remote-models-test';
 const require = createRequire(import.meta.url);
-const { useRemoteModels, modelsList, modelsUse, modelsPull, modelsStatus, REMOTE_MODELS_HERE } = require('../out/main/agent-cli.js');
+const { useRemoteModels, modelsList, modelsUse, modelsPull, modelsStatus, modelsListEmbeddings, servedModels, REMOTE_MODELS_HERE } = require('../out/main/agent-cli.js');
 
 /**
  * ATO-1127 (Nadya 26.10): connected to an agent on another computer,
@@ -57,4 +57,34 @@ test('the status comes from the remote agent too', async () => {
   useRemoteModels({ text: async (view) => { asked.push(view); return 'mode: managed\n'; } });
   await modelsStatus();
   assert.deepEqual(asked, ['status']);
+});
+
+// ATO-1213: the remote's embedding models, and no "now" line from this Mac's ports.
+const EMB = 'ID                       | SIZE   | DIM | POOLING | DL  | ACTIVE\n'
+  + 'remote-embed             | 300MB  | 768 | mean    | yes | *\n'
+  + '\nembedding daemon: running (pid 4242) on port 19092, health: ok\n';
+
+test('the embedding models come from the remote agent', async () => {
+  const asked = [];
+  useRemoteModels({ text: async (view) => { asked.push(view); return EMB; } });
+  const res = await modelsListEmbeddings();
+  assert.equal(res.ok, true, res.error);
+  assert.deepEqual(res.models.map((m) => [m.id, m.downloaded, m.active]), [['remote-embed', true, true]]);
+  assert.equal(res.daemon.pid, 4242);
+  assert.deepEqual(asked, ['list-embeddings']);
+});
+
+test('a remote agent too old to list embeddings gives an empty list, not this machine\'s', async () => {
+  useRemoteModels({ text: async () => null });
+  const res = await modelsListEmbeddings();
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.models, []);
+});
+
+test('while remote, nothing on this Mac is probed for the "now" line', async () => {
+  useRemoteModels({ text: async () => LIST });
+  const t0 = Date.now();
+  const res = await servedModels();
+  assert.deepEqual(res, { ok: true, chat: { answered: false, ids: [] }, embedding: { answered: false, ids: [] } });
+  assert.ok(Date.now() - t0 < 200, 'answered without a network probe');
 });
