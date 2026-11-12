@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdirSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { PluginSkillDir } from "../plugins/plugin-runtime.js";
 import { readUserConfigFileSync } from "../config/config-file.js";
@@ -16,6 +17,8 @@ export interface WorkspaceSkill {
   fingerprint: string;
   disabledReasons: string[];
   sources: string[];
+  /** Read from the shared `~/.agents/skills` folder other agents install into (ATO-706). */
+  shared?: true;
 }
 export interface WorkspaceSkills {
   workingDir: string;
@@ -38,6 +41,24 @@ export interface WorkspaceSkillsOptions {
   defaults: RuntimeSkillsConfig;
   /** Skill folders from enabled plugins; they load as user-installed skills named `plugin:skill`. */
   pluginSkills?: () => readonly PluginSkillDir[];
+  /**
+   * Home folder whose `.agents/skills` is read as the shared skills folder.
+   * Omitted: `ATOMIC_AGENT_SHARED_SKILLS_DIR` if set, else the user's home.
+   * `null` turns the shared folder off.
+   */
+  homeDir?: string | null;
+}
+
+/**
+ * Folder that `npx skills` (vercel-labs/skills), Codex, Cline, Pi and Zed
+ * use for skills installed "for all agents". Cloud discovery reads it with
+ * the lowest priority (ATO-706).
+ */
+export function sharedAgentSkillsDir(homeDir?: string | null, env: NodeJS.ProcessEnv = process.env): string | null {
+  if (homeDir === null) return null;
+  if (homeDir !== undefined) return resolve(homeDir, ".agents", "skills");
+  const override = env.ATOMIC_AGENT_SHARED_SKILLS_DIR?.trim();
+  return override ? resolve(override) : resolve(homedir(), ".agents", "skills");
 }
 
 export function workspaceSkillBody(entry: WorkspaceSkill): string {
@@ -70,10 +91,17 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
   const trust = findProjectTrust(config.projectTrust, root);
   let globalRoot = resolve(options.globalDir);
   try { globalRoot = realpathSync(globalRoot); } catch { /* Missing/error diagnostics are handled below. */ }
+  // Skills installed "for all agents" are user-level, like global ones, but every
+  // Atomic and project copy wins over them. Cloud compatibility only, like the
+  // other agents' project folders.
+  const sharedDir = compatibility ? sharedAgentSkillsDir(options.homeDir) : null;
+  let sharedRoot = sharedDir;
+  try { if (sharedRoot) sharedRoot = realpathSync(sharedRoot); } catch { /* Missing/error diagnostics are handled below. */ }
   const byName = new Map<string, WorkspaceSkill[]>();
   const dirs = [options.projectDirName, ...(compatibility ? [".agents/skills", ".claude/skills", ".cursor/skills", ".pi/skills"] : [])];
   const sources = [...dirs.map(dir => ({ dir: resolve(root, dir), source: "project" as const, claude: dir === ".claude/skills" })),
-    { dir: resolve(options.globalDir), source: "global" as const, claude: false }];
+    { dir: resolve(options.globalDir), source: "global" as const, claude: false },
+    ...(sharedDir ? [{ dir: sharedDir, source: "global" as const, claude: false, shared: true as const }] : [])];
   const visited = new Set<string>();
   let bytes = 0;
   let count = 0;
@@ -86,7 +114,9 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") diagnostics.push(`${source.dir}: ${String(error)}`); continue; }
     if (source.source === "project" && !isWithinWorkspace(root, dir)) { diagnostics.push(`${source.dir}: outside workspace`); continue; }
     // Preserve the existing global classification when both roots are identical.
-    if (source.source === "project" && dir === globalRoot) continue;
+    // A session started in the home folder sees ~/.agents/skills as the shared
+    // folder, not as project content waiting for folder trust.
+    if (source.source === "project" && (dir === globalRoot || dir === sharedRoot)) continue;
     if (visited.has(dir)) continue;
     visited.add(dir);
     let names: string[];
@@ -128,7 +158,8 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
           ...(parsed.disableModelInvocation ? ["disable-model-invocation"] : []),
         ];
         const entry: WorkspaceSkill = { record: { manifest: parsed.manifest, manifestPath: file.path, rootDir: dirname(file.path), source: source.source },
-          body: parsed.body, fingerprint: createHash("sha256").update(file.content).digest("hex"), disabledReasons: reasons, sources: [manifestPath] };
+          body: parsed.body, fingerprint: createHash("sha256").update(file.content).digest("hex"), disabledReasons: reasons, sources: [manifestPath],
+          ...("shared" in source ? { shared: true as const } : {}) };
         const copies = byName.get(parsed.manifest.name) ?? [];
         copies.push(entry); byName.set(parsed.manifest.name, copies);
       } catch (error) {
@@ -146,7 +177,7 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
       const name = plugin.rootSkill ? plugin.plugin : `${plugin.plugin}:${parsed.manifest.name}`;
       if (!isSkillEligibleForPlatform(parsed.manifest, process.platform)) continue;
       const existing = byName.get(name);
-      if (existing?.some(e => e.record.source === "global")) {
+      if (existing?.some(e => e.record.source === "global" && !e.shared)) {
         diagnostics.push(`Skill ${name}: another installed or plugin skill already has this name; the plugin copy at ${file.path} is ignored.`);
         continue;
       }
@@ -167,7 +198,8 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
   }
   const entries = [...byName.values()].map(copies => {
     // A global copy wins: a checked-out repository cannot shadow a skill the user installed.
-    const chosen = copies.find(e => e.record.source === "global") ?? copies[0]!;
+    // A copy from the shared folder only fills a name nothing else provides.
+    const chosen = copies.find(e => e.record.source === "global" && !e.shared) ?? copies.find(e => !e.shared) ?? copies[0]!;
     const sources = copies.flatMap(e => e.sources);
     if (copies.some(e => e.fingerprint !== chosen.fingerprint)) diagnostics.push(`Skill ${chosen.record.manifest.name}: using ${chosen.record.manifestPath}; shadowed ${sources.filter(p => p !== chosen.record.manifestPath).join(", ")}`);
     return { ...chosen, sources };
