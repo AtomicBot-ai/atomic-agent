@@ -830,6 +830,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "help.feedback",
+    label: "Talk to the team ($50 credits)…",
+    group: "help",
+    // No chord: a rare verb, and the chord table is crowded.
+    slash: {
+      name: "feedback",
+      description:
+        "15 min call with the team, $50 in OpenRouter credits after it: `/feedback` opens the form · `/feedback never` hides the invite",
+      rank: 48,
+    },
+  },
+  {
+    kind: "action",
     id: "help.quit",
     label: "Quit",
     group: "help",

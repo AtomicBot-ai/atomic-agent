@@ -217,6 +217,16 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toMatch(/usage: \/skill enable/);
   });
 
+  it("/feedback opens the interview form; /feedback never hides the invite (ATO-1467)", () => {
+    expect(dispatchSlashCommand("/feedback").feedbackVerb).toBe("open");
+    expect(dispatchSlashCommand("/feedback never").feedbackVerb).toBe("never");
+    expect(dispatchSlashCommand("/feedback  NEVER ").feedbackVerb).toBe("never");
+    const odd = dispatchSlashCommand("/feedback maybe");
+    expect(odd.feedbackVerb).toBeUndefined();
+    expect(odd.systemMessage).toMatch(/usage: `\/feedback`/);
+    expect(dispatchSlashCommand("/help").systemMessage).toContain("/feedback");
+  });
+
   it("signals triggerIssueReport for /report without a chat line", () => {
     const result = dispatchSlashCommand("/report");
     expect(result.triggerIssueReport).toBe(true);

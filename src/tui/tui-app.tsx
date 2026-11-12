@@ -716,6 +716,11 @@ export interface TuiAppCallbacks {
   onDebugBundleExportRequested?(state: TuiState): void;
   /** `/report` or the help menu: open the issue-report popup. */
   onIssueReportRequested?(): void;
+  /**
+   * `/feedback` or Help › Talk to the team (ATO-1467): open the interview
+   * form (`open`) or hide the rare invite for good (`never`).
+   */
+  onFeedbackRequested?(verb: "open" | "never", origin?: "menu"): void;
   /** A level was chosen: build the report from `state` and write the zip. */
   onIssueReportPickRequested?(level: IssueReportLevel, state: TuiState): void;
   /** The operator confirmed: file the prepared report on GitHub. */
@@ -1374,7 +1379,7 @@ export function TuiApp({
       // `command` is the same door with an argument on it.
       const line = node.command ?? (node.slash ? `/${node.slash.name}` : null);
       if (line !== null) {
-        runSlashCommand(line, state, dispatch, callbacks);
+        runSlashCommand(line, state, dispatch, callbacks, "menu");
         return;
       }
       if (node.kind === "place") {
