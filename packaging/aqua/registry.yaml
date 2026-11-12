@@ -1,0 +1,59 @@
+# aqua registry entry for the Atomic Agent CLI (https://aquaproj.github.io).
+#
+# Works today as a registry of its own, without waiting for aquaproj/aqua-registry. In aqua.yaml:
+#
+#   registries:
+#     - type: standard
+#       ref: v4.x.y            # your pin of the standard registry
+#     - name: atomic-agent
+#       type: github_content
+#       repo_owner: AtomicBot-ai
+#       repo_name: atomic-agent
+#       ref: vX.Y.Z            # a CLI release tag that contains this file
+#       path: packaging/aqua/registry.yaml
+#   packages:
+#     - name: AtomicBot-ai/atomic-agent@vX.Y.Z
+#       registry: atomic-agent
+#
+# The same block is what a pull request to aquaproj/aqua-registry would add (pkgs/AtomicBot-ai/
+# atomic-agent/registry.yaml), unchanged. Asset names come from scripts/bundle-targets.ts and
+# scripts/package-bundle.ts: atomic-agent-<slug>.tar.gz (one top-level <slug>/ directory) and
+# atomic-agent-win32-x64.zip (files at the root), each with a `<asset>.sha256` beside it in
+# sha256sum format. The binary finds grammars/, prebuilds/ and node_modules/ next to its real
+# path, so it runs from aqua's package directory as it is; aqua's proxy execs that path.
+# Only vX.Y.Z tags are CLI releases: desktop-vX.Y.Z tags are the desktop app's.
+packages:
+  - type: github_release
+    repo_owner: AtomicBot-ai
+    repo_name: atomic-agent
+    description: "Local-first AI agent for your terminal, with local or cloud models"
+    version_filter: 'Version matches "^v\\d+\\.\\d+\\.\\d+$"'
+    asset: atomic-agent-{{.OS}}-{{.Arch}}.{{.Format}}
+    format: tar.gz
+    replacements:
+      amd64: x64
+      windows: win32
+    files:
+      - name: atomic-agent
+        src: "{{.OS}}-{{.Arch}}/atomic-agent"
+      - name: atag
+        src: "{{.OS}}-{{.Arch}}/atomic-agent"
+    overrides:
+      - goos: windows
+        format: zip
+        files:
+          - name: atomic-agent
+            src: atomic-agent
+          - name: atag
+            src: atomic-agent
+    supported_envs:
+      - darwin/arm64
+      - linux
+      - windows/amd64
+    checksum:
+      type: github_release
+      asset: "{{.Asset}}.sha256"
+      algorithm: sha256
+      file_format: regexp
+      pattern:
+        checksum: "^([0-9a-f]{64})"
