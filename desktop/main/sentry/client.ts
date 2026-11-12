@@ -4,12 +4,23 @@
  * run. Bounded per app session so a crash loop cannot flood the project.
  */
 
-import { currentRunMode, desktopVersion, installChannelFor, installId, sendingAllowed } from "../analytics/index.js";
-import { authHeader, buildEnvelope, desktopDsn, parseDsn, type ParsedDsn } from "./envelope.js";
+import { join } from "node:path";
+
+import {
+  analyticsStateDir,
+  currentRunMode,
+  desktopVersion,
+  installChannelFor,
+  installId,
+  sendingAllowed,
+} from "../analytics/index.js";
+import { authHeader, buildEnvelope, desktopDsn, fingerprintOf, parseDsn, type ParsedDsn } from "./envelope.js";
+import { SENTRY_RATE_LIMIT_FILE, SentryRateLimiter, sentryGroupingKey } from "./rate-limit.js";
 import { safeMessage, safeTag, safeType, sanitizeStack } from "./scrub.js";
 
 const MAX_PER_SESSION = 30;
 const MAX_PER_SIGNATURE = 3;
+// Per install per rolling hour, across launches: see rate-limit.ts.
 
 let sent = 0;
 const seen = new Map<string, number>();
@@ -18,6 +29,21 @@ let parsed: ParsedDsn | null | undefined;
 function dsn(): ParsedDsn | null {
   if (parsed === undefined) parsed = parseDsn(desktopDsn());
   return parsed;
+}
+
+/**
+ * ATO-1286: at most 10 identical events per install per rolling hour,
+ * across launches. Built on the first report, when analytics has its state
+ * dir; memory-only if it has none.
+ */
+let limiter: SentryRateLimiter | undefined;
+
+function rateLimiter(): SentryRateLimiter {
+  if (!limiter) {
+    const dir = analyticsStateDir();
+    limiter = new SentryRateLimiter(dir ? { storePath: join(dir, SENTRY_RATE_LIMIT_FILE) } : {});
+  }
+  return limiter;
 }
 
 export interface ErrorInput {
@@ -77,6 +103,7 @@ export function reportError(input: ErrorInput): void {
     const signature = `${type}|${tags.source ?? ""}|${tags.kind ?? ""}|${tags.reason ?? ""}|${frames[0]?.filename ?? ""}:${frames[0]?.lineno ?? ""}`;
     const n = seen.get(signature) ?? 0;
     if (sent >= MAX_PER_SESSION || n >= MAX_PER_SIGNATURE) return;
+    if (!rateLimiter().shouldSend(sentryGroupingKey({ fingerprint: fingerprintOf({ type, tags, frames }) }))) return;
     seen.set(signature, n + 1);
     sent += 1;
     const release = desktopVersion() || "unknown";

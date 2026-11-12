@@ -125,6 +125,11 @@ export function installId(): string | null {
   return S.installId;
 }
 
+/** The desktop state dir analytics was set up with; empty before `initAnalytics`. */
+export function analyticsStateDir(): string {
+  return S.stateDir;
+}
+
 export function analyticsEnabled(): boolean {
   return S.enabled;
 }
