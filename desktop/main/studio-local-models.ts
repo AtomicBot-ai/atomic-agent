@@ -103,6 +103,8 @@ export class StudioLocalModels {
   private readonly inFlight = new Map<string, Promise<void>>();
   private engine: LocalEngineStatus | null = null;
   private engineRun: Promise<void> | null = null;
+  /** A status ask from a catalog paint still running (engineStatusSoon), shared by the next paint. */
+  private engineAsk: Promise<LocalEngineStatus | null> | null = null;
   private readonly loads = new Map<string, Promise<void>>();
   /** The artifact this app loaded last, and whether with the vision projector (edit/reference). */
   private loadedHere: { id: string; vision: boolean } | null = null;
@@ -349,23 +351,65 @@ export class StudioLocalModels {
     return engine;
   }
 
-  /** Whether Core's sd.cpp engine is installed, and if not, whether this computer can take it. */
+  /**
+   * Keep a definite answer about the engine. The first one, or one that changes the
+   * state, is pushed as an `engine` event so a page painted without it repaints.
+   */
+  private knowEngine(engine: LocalEngineStatus): LocalEngineStatus {
+    const changed = this.engine?.state !== engine.state;
+    this.engine = engine;
+    if (changed) this.deps.emit({ type: "engine", engine: { ...engine } });
+    return { ...engine };
+  }
+
+  /**
+   * Whether Core's sd.cpp engine is installed, and if not, whether this computer can take it.
+   * Only a definite answer is kept (ATO-1420): when Core's engine catalog did not answer, the
+   * state is not known, the reply says `missing` for now and the next call asks again. A kept
+   * guess would never be asked again, and Download would no longer refuse on a computer that
+   * cannot run local generation.
+   */
   async engineStatus(): Promise<LocalEngineStatus> {
     if (this.engineRun && this.engine) return { ...this.engine };
     const client = await this.deps.ready();
     const status = await client.call<{ install?: { state?: string; backend?: string; tag?: string } }>("/diffusion/status");
     if (status.install?.state === "installed") {
-      this.engine = { state: "ready", message: "The image engine is ready.", backend: status.install.backend ?? null, tag: status.install.tag ?? null, progress: null, error: null };
-      return { ...this.engine };
+      return this.knowEngine({ state: "ready", message: "The image engine is ready.", backend: status.install.backend ?? null, tag: status.install.tag ?? null, progress: null, error: null });
     }
     const catalog = await client.call<{ manifest?: unknown; host_backend_id?: string | null; host_reason?: string | null }>("/engine-builds/sd-cpp/catalog", {}, { timeoutMs: 30_000 }).catch(() => null);
     if (catalog?.manifest && !catalog.host_backend_id) {
-      this.engine = { state: "unsupported", message: `This computer cannot run local image models${catalog.host_reason ? ` (${catalog.host_reason.replace(/\.$/, "")})` : ""}. Use a cloud model instead.`, backend: null, tag: null, progress: null, error: null };
-      return { ...this.engine };
+      return this.knowEngine({ state: "unsupported", message: `This computer cannot run local image models${catalog.host_reason ? ` (${catalog.host_reason.replace(/\.$/, "")})` : ""}. Use a cloud model instead.`, backend: null, tag: null, progress: null, error: null });
     }
     if (this.engine?.state === "failed") return { ...this.engine };
-    this.engine = { state: "missing", message: "The image engine downloads once, the first time you generate locally.", backend: catalog?.host_backend_id ?? null, tag: null, progress: null, error: null };
-    return { ...this.engine };
+    const missing: LocalEngineStatus = { state: "missing", message: "The image engine downloads once, the first time you generate locally.", backend: catalog?.host_backend_id ?? null, tag: null, progress: null, error: null };
+    // Core named a build for this computer: it can take the engine, a definite answer.
+    if (catalog?.manifest && catalog.host_backend_id) return this.knowEngine(missing);
+    return missing;
+  }
+
+  /**
+   * The engine for a page about to paint: the kept answer at once, else Core asked for at
+   * most `waitMs` (ATO-1420). Null when Core is slow or down, so the catalog shows right away;
+   * the ask goes on, and a definite answer that lands later is pushed as an `engine` event.
+   * Asks overlapping in time share one call to Core.
+   */
+  async engineStatusSoon(waitMs: number): Promise<LocalEngineStatus | null> {
+    if (this.engine) return { ...this.engine };
+    if (!this.engineAsk) {
+      this.engineAsk = this.engineStatus()
+        .catch(() => null)
+        .finally(() => { this.engineAsk = null; });
+    }
+    const ask = this.engineAsk;
+    let resolveLate: (value: null) => void = () => {};
+    const late = new Promise<null>((resolve) => { resolveLate = resolve; });
+    const timer = setTimeout(() => resolveLate(null), Math.max(0, waitMs));
+    timer.unref?.();
+    try {
+      return await Promise.race([ask, late]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** Install Core's sd.cpp engine when it is missing; joins an install in flight. */

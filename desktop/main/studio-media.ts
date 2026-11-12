@@ -37,6 +37,8 @@ import { normalizeItem, normalizeJob, toCoreImageRequest, toCoreVideoRequest, ty
 export const OPENROUTER_MEDIA_BASE_URL = "https://openrouter.ai/api/v1";
 /** A lease is let go this long after the last followed job ends. */
 const LEASE_GRACE_MS = 60_000;
+/** How long a catalog paint waits for the image engine's status before it shows without it. */
+export const ENGINE_ASK_ON_PAINT_MS = 1_500;
 
 export interface StudioMediaDeps {
   /** The managed data dir (`localModels.managed.dataDirOverride`, else `<stateDir>/models`), read per call. */
@@ -268,8 +270,10 @@ export class StudioMedia {
       if (m && m.modality === kind && typeof m.modelId === "string") loaded = m.modelId;
     } catch { /* Core down: families are still listed */ }
     /* The engine as last seen, else asked now: the page offers Download and local generation
-       by `engine.state`, and a cached null would hide "this computer cannot run them". */
-    const engine = this.local.state().engine ?? (await this.local.engineStatus().catch(() => null));
+       by `engine.state`, and a cached null would hide "this computer cannot run them".
+       The ask waits a moment only (ATO-1420): with Core slow or down the catalog still shows
+       at once, and the answer repaints the page when it lands (an `engine` event). */
+    const engine = this.local.state().engine ?? (await this.local.engineStatusSoon(ENGINE_ASK_ON_PAINT_MS));
     const extra: LocalSectionExtra = { machine: this.local.profile(), modelsDir: this.local.modelsDir(), engine };
     try {
       const { doc, catalog, error } = await this.local.catalog();
