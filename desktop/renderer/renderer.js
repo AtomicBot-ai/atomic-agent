@@ -3800,6 +3800,11 @@ function apprAsk(m) {
     return q('send a ' + esc(mt[1]) + ' request to ' + apprCode(host));
   }
   if (m.cat === 'email' && (mt = /^e-mail to ([^:]+)/.exec(r))) return q('send an e-mail to ' + esc(mt[1].trim()));
+  // ATO-1355: a fan-out says how many tasks it hands out ("2 tasks to 2 workers on …", fusion-delegate.ts).
+  // Its reason starts with a digit, so the clause rule below skipped it and the count was only under Details.
+  if ((m.cat === 'fusion_fanout' || m.tool === 'fusion.delegate') && (mt = /^(\d+) tasks? to \d+ workers?\b/.exec(r))) {
+    return q('hand ' + plural(Number(mt[1]), 'task') + ' to its workers');
+  }
   // video.generate: "generate a paid 4-second video … with google/veo-3.1-fast (the default), billed …" (src/tools/video/generate.ts).
   if (m.cat === 'paid_generation' && m.tool === 'video.generate') {
     const secs = /paid (\d+)-second video/.exec(r);
