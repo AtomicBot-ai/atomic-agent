@@ -2679,7 +2679,7 @@ export function keyNamesAvailable(): KeyEnvNames {
  * here exactly as it is for the agent.
  */
 /** Preset ids with `local: true` in src/tui/providers/provider-presets.ts. */
-const LOCAL_PRESET_IDS = new Set(["atomic-chat", "lmstudio", "ollama"]);
+const LOCAL_PRESET_IDS = new Set(["atomic-chat", "foundry-local", "lemonade", "lmstudio", "ollama"]);
 
 /**
  * src/tui/local-backend-readiness.ts isKeylessLocalProviderEntry: a server
