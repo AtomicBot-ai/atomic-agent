@@ -54,6 +54,12 @@ export interface FailedTurnFinalizationContext extends TurnCompletionState {
   category: LlmFailureCategory;
   runError: Error;
   creditRefused: boolean;
+  /**
+   * Non-terminal tools that ran in this turn before it failed (ATO-1476),
+   * recorded in the transcript or not. Named in the failure record so a
+   * retry does not take them for undone.
+   */
+  toolsRan?: readonly string[];
 }
 
 export function formatTaskStoppedReply(input: {
@@ -394,11 +400,15 @@ export function finalizeFailedAgentTurn(
   // surface already renders its own line from `loop_failed`, so
   // emitting an `assistant_reply` event here would post the text
   // twice.
+  const toolsRan = context.toolsRan ?? [];
+  const failedRecord = assistantReplyTurn(
+    formatTurnFailedRecord(category, runError.message, toolsRan),
+  );
   state = recordTurn(
     state,
-    assistantReplyTurn(
-      formatTurnFailedRecord(category, runError.message),
-    ),
+    failedRecord.kind === "assistant_reply" && toolsRan.length > 0
+      ? { ...failedRecord, toolsRan: true }
+      : failedRecord,
   );
   state = { ...state, status: "failed", lastError: runError.message };
   deps.onEvent?.({ type: "loop_completed", reason: "failed" });

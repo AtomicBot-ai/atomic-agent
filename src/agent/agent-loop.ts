@@ -18,7 +18,7 @@ import { armApprovalDeadline } from "./turn/approval-deadline.js";
 import { costCeilingNotice, costCeilingReached, recordCompactionSpend, recordStepSpend } from "./turn/turn-spend.js";
 export { formatTaskStoppedReply } from "./turn/turn-finalization.js";
 import { delegationProducedWork, recordDelegation, wouldRefuse as fusionGateWouldRefuse } from "./policies/fusion-orchestrator-mode.js";
-import { observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
+import { isRefusedResult, observeReviewStep, reviewStallSignal, reviewStallToolSet, takeReviewStallNotice, type ReviewStallSignal } from "./review-stall.js";
 import { observeReplanStep, replanToolSet, takeReplanNotice } from "./fusion-replan.js";
 import type { StepToolSet } from "./policies/step-tool-set.js";
 
@@ -226,6 +226,10 @@ export class AgentLoop {
       return !boundaryRuns || turn.legMadeProgress;
     };
     const loopTracker = createTurnLoopTracker();
+    // Non-terminal tools that ran in this turn (ATO-1476): a turn that
+    // fails after one ran says so in its failure record, so "Try again"
+    // never treats the turn as one that changed nothing.
+    const toolsRan: string[] = [];
 
     const {
       surfacedLessonIds, surfacedProcedureIds, surfacedNoteIds,
@@ -574,6 +578,17 @@ export class AgentLoop {
               : {}),
             onEvent: (event) => {
               this.deps.onEvent?.({ type: "llm_event", event });
+              // A tool that ran this turn (ATO-1476), not one the runtime
+              // refused before dispatch: a failure record names it.
+              if (
+                event.type === "tool_call_executed" &&
+                event.durationMs !== undefined &&
+                event.result.tool !== "reply" &&
+                event.result.tool !== "finish" &&
+                !isRefusedResult(event.result)
+              ) {
+                toolsRan.push(event.result.tool);
+              }
               // Every completion the provider bills is priced (ATO-1108),
               // not only the one a step commits: a repair attempt, an
               // answer continuation, and a completion that is then
@@ -1115,7 +1130,7 @@ export class AgentLoop {
           return finalizeFailedAgentTurn({
             state, options, cancelled: false, category: failed.category,
             runError: failed.runError, creditRefused: false,
-            stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+            stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds, toolsRan,
             ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
           }, this.deps, (sessionId) => this.flushSteering(sessionId));
         }
@@ -1130,7 +1145,7 @@ export class AgentLoop {
         return finalizeFailedAgentTurn({
           state, options, cancelled: decision.cancelled, category: decision.category,
           runError: decision.runError, creditRefused: decision.creditRefused,
-          stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds,
+          stepsTaken: turn.stepsTaken, turnIndex, turnStartedAt, surfacedLessonIds, toolsRan,
           ...(this.deps.priceCompletion ? { spendUsd: turn.spendUsd } : {}),
         }, this.deps, (sessionId) => this.flushSteering(sessionId));
 
