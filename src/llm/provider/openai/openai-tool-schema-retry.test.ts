@@ -132,6 +132,11 @@ describe("OpenAiProvider — drop a tool the server cannot use (ATO-1399)", () =
       tool: "plugin.records.lookup",
       status: 500,
     });
+    // ATO-1417: the completion names the tool it went out without, by
+    // its registry name, so the chat can say so.
+    expect(result.droppedTools).toEqual([
+      { name: "plugin.records.lookup", reason: "schema_rejected" },
+    ]);
   });
 
   it("resends a streamed completion once without the named tool", async () => {
@@ -146,6 +151,26 @@ describe("OpenAiProvider — drop a tool the server cannot use (ATO-1399)", () =
     expect(result.content).toBe("ok");
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(names(bodies[1]!)).toEqual(["os__fs__read"]);
+    expect(result.droppedTools).toEqual([
+      { name: "plugin.records.lookup", reason: "schema_rejected" },
+    ]);
+  });
+
+  it("names no dropped tool when every tool went out (ATO-1417)", async () => {
+    const unary = setup([okUnary]);
+    const plain = await unary.provider.complete({
+      prompt: "hi",
+      tools: [GOOD_TOOL, BAD_TOOL],
+    });
+    expect(plain.droppedTools).toBeUndefined();
+    const streamed = setup([okStream]);
+    const live = await drain(
+      streamed.provider.completeStream({
+        prompt: "hi",
+        tools: [GOOD_TOOL, BAD_TOOL],
+      }),
+    );
+    expect(live.droppedTools).toBeUndefined();
   });
 
   it("surfaces the original error when no single tool matches", async () => {

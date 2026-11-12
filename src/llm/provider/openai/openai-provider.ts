@@ -10,6 +10,7 @@ import {
 import type {
   CompletionRequest,
   CompletionResult,
+  DroppedTool,
   StreamChunk,
   StreamFinalResult,
 } from "../completion-types.js";
@@ -290,7 +291,10 @@ export class OpenAiProvider implements LlmProvider {
       const reduced = this.withoutRejectedTool(request, err);
       if (!reduced) throw err;
       try {
-        return await this.completeOnce(reduced);
+        return withDroppedTool(
+          await this.completeOnce(reduced.request),
+          reduced.dropped,
+        );
       } catch (retryErr) {
         if (request.signal?.aborted) throw retryErr;
         // The schema refusal is what the user needs to read, not
@@ -469,14 +473,17 @@ export class OpenAiProvider implements LlmProvider {
 
   /**
    * The request without the one tool a schema error names
-   * (`tool-schema-rejection.ts`), or null when the error is something
-   * else or names no single tool. The warning says which tool went and
-   * why: the turn carries on without it rather than failing outright.
+   * (`tool-schema-rejection.ts`), and that tool, or null when the error
+   * is something else or names no single tool. The warning says which
+   * tool went and why: the turn carries on without it rather than
+   * failing outright. The dropped tool rides the completion
+   * (`CompletionResult.droppedTools`) so the chat can say it too
+   * (ATO-1417).
    */
   private withoutRejectedTool(
     request: CompletionRequest,
     err: unknown,
-  ): CompletionRequest | null {
+  ): { request: CompletionRequest; dropped: DroppedTool } | null {
     if (request.signal?.aborted) return null;
     if (!(err instanceof OpenAiHttpError) || err.status === null) return null;
     const tools = request.tools;
@@ -502,8 +509,11 @@ export class OpenAiProvider implements LlmProvider {
       },
     );
     return {
-      ...request,
-      tools: tools.filter((_, index) => index !== culprit.index),
+      request: {
+        ...request,
+        tools: tools.filter((_, index) => index !== culprit.index),
+      },
+      dropped: { name: tool, reason: "schema_rejected" },
     };
   }
 
@@ -554,7 +564,7 @@ export class OpenAiProvider implements LlmProvider {
     // Whether the one resend without a rejected tool has been spent, and
     // the schema refusal that spent it: if the resend fails before any
     // output, that refusal is the error the caller gets.
-    let toolDropped = false;
+    let toolDropped: DroppedTool | undefined;
     let schemaError: unknown;
     // One completion, one budget. Passed into every open so a reopen
     // draws from the same pot the opens do — the alternative is two
@@ -694,9 +704,9 @@ export class OpenAiProvider implements LlmProvider {
         if (!committed && !toolDropped) {
           const reduced = this.withoutRejectedTool(activeRequest, err);
           if (reduced) {
-            toolDropped = true;
+            toolDropped = reduced.dropped;
             schemaError = err;
-            activeRequest = reduced;
+            activeRequest = reduced.request;
             body = this.buildBody(activeRequest, true, shape);
             continue;
           }
@@ -795,7 +805,7 @@ export class OpenAiProvider implements LlmProvider {
       request,
       this.taggedToolOptions(),
     );
-    return this.withRateLimits(withSentMaxTokens(
+    const safe = withSentMaxTokens(
       applyToolCallTerminationSafety(
         adaptedFinal,
         // A stream the consumer ended itself has no provider terminal
@@ -806,7 +816,10 @@ export class OpenAiProvider implements LlmProvider {
           streamFinal?.earlyStop !== undefined,
       ),
       sentBody,
-    ));
+    );
+    return this.withRateLimits(
+      toolDropped ? withDroppedTool(safe, toolDropped) : safe,
+    );
   }
 
   /**
@@ -1048,6 +1061,19 @@ function withSentMaxTokens(
         ? sentBody.max_completion_tokens
         : null;
   return { ...result, sentMaxTokens: cap };
+}
+
+/**
+ * Record a tool the request went out without (ATO-1417). Appended after
+ * any the completion already names, once per tool name.
+ */
+function withDroppedTool(
+  result: CompletionResult,
+  dropped: DroppedTool,
+): CompletionResult {
+  const already = result.droppedTools ?? [];
+  if (already.some((tool) => tool.name === dropped.name)) return result;
+  return { ...result, droppedTools: [...already, dropped] };
 }
 
 /**

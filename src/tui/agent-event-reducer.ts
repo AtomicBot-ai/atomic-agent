@@ -1,5 +1,6 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
+import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { formatUsageReport } from "../session/usage-meter.js";
 import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.js";
 import {
@@ -1079,6 +1080,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-295: the packer left older history out of the prompt. The
       // loop says so once per cut, so this cannot fill the transcript.
       return appendChatMessage(state, { role: "system", text: HISTORY_TRIMMED_NOTICE });
+    case "tool_disabled":
+      // ATO-1417: the server refused this tool's schema and the provider
+      // resent the request without it, so the model cannot call it. The
+      // loop says so once per tool per turn.
+      return appendChatMessage(state, { role: "system", text: toolDisabledNotice(event.tool) });
     case "profile_clipped": {
       // Issue #407: the clip used to show only as a `[truncated]` inside
       // a prompt nobody reads. The loop fires this once per session, and

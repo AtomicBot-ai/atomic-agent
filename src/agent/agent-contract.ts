@@ -27,6 +27,7 @@ import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
+import type { ToolDisabledEvent } from "./tool-disabled-notice.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
 /** See `AgentLoopDependencies.localEngineState`. */
@@ -945,6 +946,11 @@ export type AgentLoopEvent =
   | ProfileClippedEvent
   /** The packer left older history out of the prompt (ATO-295). */
   | HistoryTrimmedEvent
+  /**
+   * A tool was left out of this turn's requests: the server refused its
+   * JSON schema (ATO-1417). Once per tool per turn.
+   */
+  | ToolDisabledEvent
   | { type: "step_started"; stepIndex: number }
   | {
       type: "step_finished";

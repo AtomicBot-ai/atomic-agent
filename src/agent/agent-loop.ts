@@ -51,6 +51,7 @@ import { getConfig } from "../config/index.js";
 
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
+import { toolDisabledEvents } from "./tool-disabled-notice.js";
 import { CompactPromptLatch } from "../prompt/compact-prompt.js";
 
 /**
@@ -149,6 +150,9 @@ export class AgentLoop {
     const { fusionOrchestratorTurn, toolRole, claimEvidence, linkEvidence, progressNotes, unknownTools } = policies;
     let { fusionState, reviewStall, replan } = policies;
     const turn = createTurnLoopState();
+    // ATO-1417: tools a provider left out of this turn's requests (the
+    // server refused their schema), each said once per turn.
+    const announcedDroppedTools = new Set<string>();
     // ATO-486: a new message on a session whose plan is still open gets
     // one short reminder on the turn's first step, so the model carries
     // the checklist on or says it is dropped. Never on a plan that is
@@ -578,6 +582,13 @@ export class AgentLoop {
               // spend ceiling exists for.
               if (event.type === "llm_completed") {
                 recordStepSpend(turn, event.completion, contextProviderId, this.deps.priceCompletion);
+                for (const disabled of toolDisabledEvents(
+                  event.completion.droppedTools,
+                  announcedDroppedTools,
+                  i,
+                )) {
+                  this.deps.onEvent?.(disabled);
+                }
               }
               if (event.type === "prompt_built") {
                 turn.lastPromptTokens = event.prompt.tokens.total;
