@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { describeServerFault } from "./server-fault.js";
+import { classifyLocalFault, describeServerFault } from "./server-fault.js";
 
 describe("describeServerFault", () => {
   it("names a GPU out-of-memory and counts it", () => {
@@ -104,5 +104,39 @@ describe("only the current daemon's run counts", () => {
     // on every non-managed setup would be worse than a stale count.
     const log = "E error: kIOGPUCommandBufferCallbackErrorOutOfMemory";
     expect(describeServerFault(log)?.occurrences).toBe(1);
+  });
+});
+
+describe("classifyLocalFault (ATO-1279)", () => {
+  const LAUNCH = "[atomic-agent] launch: model qwen3.6-27b (qwen3, 64 layers)";
+
+  it("reads out of memory first, as the restart path does", () => {
+    const log = [
+      LAUNCH,
+      "E error: kIOGPUCommandBufferCallbackErrorOutOfMemory",
+      "GGML_ASSERT(buf != NULL) failed",
+    ].join("\n");
+    expect(classifyLocalFault(log)).toBe("out_of_memory");
+  });
+
+  it("reads an assertion or a fatal signal as a crash", () => {
+    expect(classifyLocalFault([LAUNCH, "/src/ggml.c:1234: GGML_ASSERT(n_tokens > 0) failed"].join("\n"))).toBe(
+      "server_crashed",
+    );
+    expect(classifyLocalFault([LAUNCH, "Segmentation fault (core dumped)"].join("\n"))).toBe("server_crashed");
+    expect(
+      classifyLocalFault([LAUNCH, "terminate called after throwing an instance of 'std::runtime_error'"].join("\n")),
+    ).toBe("server_crashed");
+  });
+
+  it("reads decode failures with no other cause", () => {
+    expect(classifyLocalFault([LAUNCH, "E llama_decode: failed to decode, ret = -1"].join("\n"))).toBe("decode_failed");
+  });
+
+  it("is none for a healthy log, and ignores an earlier run's crash", () => {
+    expect(classifyLocalFault([LAUNCH, "I srv llama_server: model loaded"].join("\n"))).toBe("none");
+    expect(classifyLocalFault("")).toBe("none");
+    const log = [LAUNCH, "Segmentation fault", LAUNCH, "I srv llama_server: model loaded"].join("\n");
+    expect(classifyLocalFault(log)).toBe("none");
   });
 });

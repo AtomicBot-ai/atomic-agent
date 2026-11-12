@@ -40,6 +40,12 @@ export interface TurnLoopState {
   /** Retried a step after an outage and have not yet seen it succeed. */
   awaitingRecovery: boolean;
   /**
+   * The step index already retried after the managed local model, still
+   * running, cut its reply mid-stream (ATO-1279). Once per step: a
+   * second cut on the same step ends the turn.
+   */
+  localStreamCutRetry: { stepIndex: number } | null;
+  /**
    * Restarts of the local model after it ran out of memory with no step
    * completed in between (ATO-334). Bounded by
    * `OUT_OF_MEMORY_MAX_RESTARTS`; a completed step resets it.
@@ -113,6 +119,7 @@ export function createTurnLoopState(): TurnLoopState {
     spendUsd: 0,
     spendPriced: false,
     legMadeProgress: false,
+    localStreamCutRetry: null,
     outageWaitedMs: 0,
     outageAttempts: 0,
     awaitingRecovery: false,

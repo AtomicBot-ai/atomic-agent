@@ -149,6 +149,34 @@ describe("describeLlmFailure", () => {
     });
   });
 
+  describe("the managed engine's fault from its log (ATO-1279)", () => {
+    it("reads it for a managed local-llama failure", () => {
+      const readLocalFault = vi.fn(() => "out_of_memory" as const);
+      const context = describeLlmFailure(
+        { error: new Error("llama-server returned http 500") },
+        { ...deps(config({}), "alive"), readLocalFault },
+      );
+      expect(context).toMatchObject({ providerId: "local-llama", daemonState: "alive", localFault: "out_of_memory" });
+      expect(readLocalFault).toHaveBeenCalledWith("/state/models");
+    });
+
+    it("never reads it for an external server or a cloud link", () => {
+      const readLocalFault = vi.fn(() => "none" as const);
+      describeLlmFailure({ error: new Error("x") }, { ...deps(config({ mode: "external" })), readLocalFault });
+      const cloud = config({ llm: { activeTextProvider: "openrouter", providers: [{ id: "openrouter", kind: "openrouter" }] } });
+      describeLlmFailure({ error: new Error("x") }, { ...deps(cloud), readLocalFault });
+      expect(readLocalFault).not.toHaveBeenCalled();
+    });
+
+    it("a log read that throws reports unknown", () => {
+      const readLocalFault = vi.fn((): "none" => {
+        throw new Error("EACCES");
+      });
+      const context = describeLlmFailure({ error: new Error("x") }, { ...deps(config({})), readLocalFault });
+      expect(context.localFault).toBe("unknown");
+    });
+  });
+
   it("a config read that throws still returns the outage numbers", () => {
     const d = { readConfig: () => { throw new Error("no config"); }, readDaemonPidState: vi.fn() };
     expect(describeLlmFailure({ error: new Error("x"), outage }, d)).toEqual({ outageWaitedMs: 30_000, outageAttempts: 4 });

@@ -36,6 +36,12 @@ export interface LlmFailureContext {
    * Probed for refusals on the managed engine only.
    */
   engineLiveness?: string;
+  /**
+   * The managed engine's fault in its current run, read from its log by
+   * fixed strings (ATO-1279): `out_of_memory` / `server_crashed` /
+   * `decode_failed` / `none` / `unknown`. Sent as `local_fault`.
+   */
+  localFault?: string;
 }
 
 /**
@@ -51,6 +57,13 @@ const KNOWN_PROVIDER_IDS: ReadonlySet<string> = new Set([
 ]);
 const LOCAL_ENGINES: ReadonlySet<string> = new Set(["atomic-core", "llama-server", "external"]);
 const DAEMON_STATES: ReadonlySet<string> = new Set(["alive", "dead", "no_pid", "unknown"]);
+const LOCAL_FAULTS: ReadonlySet<string> = new Set([
+  "out_of_memory",
+  "server_crashed",
+  "decode_failed",
+  "none",
+  "unknown",
+]);
 const ENGINE_ALIVE: ReadonlyMap<string, LocalEngineAlive> = new Map([
   ["alive", "yes"],
   ["dead", "no"],
@@ -163,6 +176,8 @@ function safeCount(value: number): string {
  * A refused connection adds `local_engine_alive` (`yes` / `no` /
  * `unknown`) and `refused_wait_ms` (a fixed bucket), so the ATO-421
  * clusters split into "crashed", "never started" and "external" (ATO-769).
+ * A managed engine's failure adds `local_fault`, a fixed word read from
+ * its log (ATO-1279).
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -183,6 +198,9 @@ export function sanitizeLlmFailureTags(
   }
   if (context.daemonState !== undefined && tags.local_engine !== "external") {
     tags.daemon_state = fromVocabulary(context.daemonState, DAEMON_STATES);
+  }
+  if (context.localFault !== undefined && tags.local_engine !== "external") {
+    tags.local_fault = fromVocabulary(context.localFault, LOCAL_FAULTS);
   }
   if (context.requestUrl !== undefined) {
     tags.request_route = classifyRequestRoute(context.requestUrl);
