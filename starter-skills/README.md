@@ -38,4 +38,5 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
+| `seo-audit/` | "Check my site": polite read-only crawl from the sitemap (robots.txt obeyed, 20-page cap, delay between requests) plus PageSpeed Core Web Vitals, reported as quick wins vs strategic with affected URLs | none (`PAGESPEED_API_KEY` optional, see the skill) |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
