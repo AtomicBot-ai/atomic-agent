@@ -640,6 +640,10 @@ Honestly degraded, and labelled as such in the UI:
   http(s) address (`/sse` paths are SSE, others streamable HTTP), shows what
   it understood with an editable name, and writes the same entry either way
   ([mcp-smart-add.js](renderer/mcp-smart-add.js), ATO-510).
+  Above the box, the built-in server catalog by shelf fills it with a
+  server's config and names the `<your ...>` values to replace
+  ([mcp-catalog.js](renderer/mcp-catalog.js), a copy of
+  `src/mcp/mcp-catalog-data.ts` checked by its test, ATO-1131).
 - **LLM** is the TUI's four panes. Local rows come from `atag models list`
   minus the ids `models list-embeddings` lists (the chat route never picks an
   embedding model, and which models those are is a fact the CLI publishes —
