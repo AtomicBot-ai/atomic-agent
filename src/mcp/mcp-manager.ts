@@ -340,6 +340,7 @@ export class McpManager {
         trust,
         dangerous: this.deps.dangerous,
         trustReadOnlyHint: trustsReadOnlyHintFor(s.config, meta.rawName),
+        ...(s.config.approval !== undefined ? { approval: s.config.approval } : {}),
       });
       // ToolRegistry.register is last-writer-wins. Two servers
       // cannot collide because the qualified name carries the

@@ -635,6 +635,8 @@ Configure MCP servers in `config.json`, and their tools join the same registry a
 
 To offer only some of a server's tools, list their raw names: `"enabledTools": ["get_issue", "list_issues"]` keeps just those, and `"disabledTools": ["delete_repository"]` drops tools on top of that (or on its own, from the full list). Turned-off tools never reach the prompt and cannot be called; a change applies when the server reconnects.
 
+To change how a server's tools ask before a call, set `"approval"` on the server: `"ask"` asks before every call (a stdio tool marked read-only by its server still runs unasked, as by default), `"ask_writes"` lets the tools the server marks read-only run without asking and asks for the rest, and `"auto"` never asks for that server. Leave it out to keep the default (`trust` decides). A saved deny or ask rule still applies to a call the mode lets through.
+
 The TUI MCP panel supports live add / remove without restarting the process. When a stdio server fails to connect, the tail of its stderr is surfaced in the error instead of a bare disconnect message.
 
 </details>

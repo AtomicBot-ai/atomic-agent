@@ -43,6 +43,23 @@ export interface McpServerConfig {
    */
   trust?: McpTrustLevel;
   /**
+   * Per-server approval mode (ATO-1134). Absent: the prompt follows
+   * `trust`, exactly as before. Set, it decides whether this server's
+   * tools ask before a call (`trust` still decides batching):
+   *
+   *  - `ask`: every call asks, except a stdio tool's own
+   *    `readOnlyHint: true` (the default `approval_gated` behaviour,
+   *    also on a `pure_read` server).
+   *  - `ask_writes`: a tool that advertised `readOnlyHint: true` at
+   *    discovery runs without asking, on any transport; every other
+   *    tool asks.
+   *  - `auto`: no prompt for this server's tools.
+   *
+   * A saved deny or ask rule still applies to a call the mode lets
+   * through. See `mcp-approval-mode.ts`.
+   */
+  approval?: McpApprovalMode;
+  /**
    * Optional environment variables for a `stdio` server, overlaid on
    * the allowlisted service variables (PATH, HOME, ...) taken from the
    * agent's environment; per-server entries win on key collision. This
@@ -80,6 +97,15 @@ export interface McpServerConfig {
  * third-party servers.
  */
 export type McpTrustLevel = "approval_gated" | "pure_read";
+
+/** See `McpServerConfig.approval`. */
+export type McpApprovalMode = "ask" | "ask_writes" | "auto";
+
+export const MCP_APPROVAL_MODES: readonly McpApprovalMode[] = [
+  "ask",
+  "ask_writes",
+  "auto",
+];
 
 export type McpTransport =
   McpStdioTransport | McpStreamableHttpTransport | McpSseTransport;

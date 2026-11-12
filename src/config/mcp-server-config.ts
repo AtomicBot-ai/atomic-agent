@@ -4,6 +4,8 @@ import { parseStringArrayOrNull, parseUrl } from "./config-values.js";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
   MCP_SERVER_NAME_RE,
+  MCP_APPROVAL_MODES,
+  type McpApprovalMode,
   type McpServerConfig,
   type McpTransport,
   type McpTrustLevel,
@@ -14,6 +16,15 @@ function parseMcpTrustLevel(raw: unknown, field: string): McpTrustLevel {
   throw new ConfigValidationError(
     field,
     `expected one of approval_gated|pure_read, got ${JSON.stringify(raw)}`,
+  );
+}
+
+function parseMcpApprovalMode(raw: unknown, field: string): McpApprovalMode {
+  const mode = MCP_APPROVAL_MODES.find((m) => m === raw);
+  if (mode !== undefined) return mode;
+  throw new ConfigValidationError(
+    field,
+    `expected one of ${MCP_APPROVAL_MODES.join("|")}, got ${JSON.stringify(raw)}`,
   );
 }
 
@@ -200,6 +211,10 @@ export function parseMcpServers(
       cfg.trust === undefined || cfg.trust === null
         ? undefined
         : parseMcpTrustLevel(cfg.trust, `${field}[${i}].trust`);
+    const approval =
+      cfg.approval === undefined || cfg.approval === null
+        ? undefined
+        : parseMcpApprovalMode(cfg.approval, `${field}[${i}].approval`);
     const env =
       cfg.env === undefined || cfg.env === null
         ? undefined
@@ -218,6 +233,7 @@ export function parseMcpServers(
       transport,
       ...(description ? { description } : {}),
       ...(trust ? { trust } : {}),
+      ...(approval ? { approval } : {}),
       ...(env ? { env } : {}),
       ...(enabledTools ? { enabledTools } : {}),
       ...(disabledTools ? { disabledTools } : {}),
