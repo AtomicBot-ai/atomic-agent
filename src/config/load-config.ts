@@ -702,6 +702,7 @@ export function loadConfig(): AtomicAgentConfig {
       whileBusySubmit: user.tui.whileBusySubmit,
       mouse: user.tui.mouse,
       showSteps: user.tui.showSteps,
+      nextStepSuggestions: user.tui.nextStepSuggestions,
       notify: { ...user.tui.notify },
       onboarding: { ...user.tui.onboarding },
       sessionRail: {

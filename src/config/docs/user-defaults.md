@@ -223,6 +223,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `tui.theme` (default `"auto"`).
 - `tui.whileBusySubmit` (default `"steer"`).
 - `tui.mouse` (default `true`).
+- `tui.nextStepSuggestions` (default `false`).
 - `tui.notify.enabled` (default `true`).
 - `tui.notify.minDurationMs` (default `30000`).
 - `tui.onboarding.completedAt` (default `null`).
