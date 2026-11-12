@@ -114,6 +114,8 @@ export function reduceUiAction(
     }
     case "show_steps_set":
       return { ...state, showSteps: action.on };
+    case "verbose_steps_set":
+      return { ...state, verboseSteps: action.on };
     case "menu_opened":
       // Always reopen at the root with an empty query: a menu that resumes
       // where it was last left makes the same keypress mean different

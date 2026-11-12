@@ -596,6 +596,19 @@ export const MENU: readonly MenuNode[] = [
   },
   {
     kind: "action",
+    id: "run.why",
+    label: "Why: explain the last step",
+    group: "run",
+    slash: {
+      name: "why",
+      description:
+        "the agent's last step in plain words: what it called and with what, what came back, tokens, and its reasoning when the model gave one",
+      // Right after /status (35.5), its sibling.
+      rank: 35.75,
+    },
+  },
+  {
+    kind: "action",
     id: "run.queue",
     label: "Queued messages",
     group: "run",
@@ -689,6 +702,19 @@ export const MENU: readonly MenuNode[] = [
       // Between /collapse (17) and the next integer rank: the palette keeps
       // the three fold commands together.
       rank: 17.5,
+    },
+  },
+  {
+    kind: "action",
+    id: "run.verbose",
+    label: "Verbose steps on/off",
+    group: "run",
+    slash: {
+      name: "verbose",
+      description:
+        "one plain note per step under its tool card: `/verbose` toggles | `/verbose on` | `/verbose off`",
+      // Beside /steps (17.5): both change how much of a turn the chat shows.
+      rank: 17.75,
     },
   },
   {

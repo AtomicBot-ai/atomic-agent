@@ -480,6 +480,16 @@ describe("reduceUiAction finished-turn folds (ATO-963)", () => {
     expect(reduceUiAction(state, { type: "show_steps_set", on: true })?.showSteps).toBe(true);
   });
 
+  it("sets verbose steps, off by default (ATO-34)", () => {
+    const state = createInitialTuiState(SESSION);
+    expect(state.verboseSteps).toBe(false);
+    const on = reduceUiAction(state, { type: "verbose_steps_set", on: true });
+    expect(on?.verboseSteps).toBe(true);
+    expect(
+      reduceUiAction(on!, { type: "verbose_steps_set", on: false })?.verboseSteps,
+    ).toBe(false);
+  });
+
   it("forgets opened turns when the chat is cleared", () => {
     const opened = reduceUiAction(withTurns(), {
       type: "turn_expand_toggled",

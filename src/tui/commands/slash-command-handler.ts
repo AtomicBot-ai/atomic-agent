@@ -149,6 +149,11 @@ export interface SlashDispatchResult {
    */
   readonly showStepsVerb?: "on" | "off" | "toggle";
   /**
+   * `/verbose [on|off]` (ATO-34): one plain note per finished step. Bare
+   * `/verbose` is `toggle`; the caller sets `TuiState.verboseSteps`.
+   */
+  readonly verboseStepsVerb?: "on" | "off" | "toggle";
+  /**
    * `/uninstall`: measure the install and feed the result back as
    * `uninstall_plan_loaded`. Nothing is removed on this path — the
    * dialog it opens is what eventually asks for that.
@@ -175,6 +180,11 @@ export interface SlashDispatchResult {
    * the caller (`submit-handler.ts`) formats it.
    */
   readonly triggerStatusSnapshot?: boolean;
+  /**
+   * `/why` (ATO-34): explain the last step. Built from `TuiState`, so
+   * the caller (`submit-handler.ts`) formats it.
+   */
+  readonly triggerWhySnapshot?: boolean;
   /**
    * `/worker stop|escalate <id>` and `/worker steer <id> <text>`: act on
    * one running fusion worker of the current session (ATO-66, ATO-568).
@@ -297,6 +307,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       return dispatchQueueSub(parsed.args);
     case "status":
       return pureActions([], { triggerStatusSnapshot: true });
+    case "why":
+      return pureActions([], { triggerWhySnapshot: true });
     case "steer":
       return dispatchSteerSub(parsed.args);
     case "worker": {
@@ -412,6 +424,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       ]);
     case "steps":
       return dispatchStepsSub(parsed.args);
+    case "verbose":
+      return dispatchVerboseSub(parsed.args);
     case "session":
       return pureActions([], {
         systemMessage: "use /sessions to switch, /new to start fresh",
@@ -690,6 +704,18 @@ function dispatchStepsSub(rawArgs: string): SlashDispatchResult {
   if (verb === "off") return pureActions([], { showStepsVerb: "off" });
   return pureActions([], {
     systemMessage: `usage: /steps [on|off] (got "${rawArgs.trim()}")`,
+  });
+}
+
+/** `/verbose` toggles the per-step notes; `on` / `off` set them. */
+function dispatchVerboseSub(rawArgs: string): SlashDispatchResult {
+  const verb = rawArgs.trim().toLowerCase();
+  if (verb.length === 0) return pureActions([], { verboseStepsVerb: "toggle" });
+  if (verb === "on" || verb === "off") {
+    return pureActions([], { verboseStepsVerb: verb });
+  }
+  return pureActions([], {
+    systemMessage: `usage: /verbose [on|off] (got "${rawArgs.trim()}")`,
   });
 }
 

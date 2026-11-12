@@ -766,3 +766,56 @@ describe("bare /enhance", () => {
     expect(dispatched.some((a) => a.type === "input_changed")).toBe(false);
   });
 });
+
+describe("/why and /verbose (ATO-34)", () => {
+  function run(input: string, state: TuiState): Array<{ type: string; text?: string; on?: boolean }> {
+    const dispatched: Array<{ type: string; text?: string; on?: boolean }> = [];
+    handleEditorSubmit(
+      input,
+      state,
+      ((a: { type: string; text?: string; on?: boolean }) => dispatched.push(a)) as never,
+      stubCallbacks(),
+    );
+    return dispatched;
+  }
+
+  it("/why prints the last step from the state into the chat", () => {
+    const state: TuiState = {
+      ...createInitialTuiState(fakeSession()),
+      messages: [
+        {
+          id: "m1",
+          role: "assistant",
+          text: "done",
+          timestamp: 0,
+          toolCards: [
+            {
+              id: "c1",
+              stepIndex: 1,
+              tool: "os.fs.read",
+              args: { path: "a.ts" },
+              status: "ok",
+              summary: "hello",
+              truncated: false,
+              startedAt: 0,
+              finishedAt: 5,
+            },
+          ],
+        },
+      ],
+    };
+    const messages = run("/why", state).filter((a) => a.type === "system_message");
+    expect(messages).toHaveLength(1);
+    expect(messages[0]?.text).toContain("Last step: step 2");
+    expect(messages[0]?.text).toContain("os.fs.read");
+  });
+
+  it("/verbose flips the live value and says so", () => {
+    const off = createInitialTuiState(fakeSession());
+    const first = run("/verbose", off);
+    expect(first.find((a) => a.type === "verbose_steps_set")?.on).toBe(true);
+    const second = run("/verbose", { ...off, verboseSteps: true });
+    expect(second.find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
+    expect(run("/verbose off", off).find((a) => a.type === "verbose_steps_set")?.on).toBe(false);
+  });
+});

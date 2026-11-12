@@ -59,6 +59,7 @@ export type MessageFoldState = "none" | "closed" | "open";
 export function estimateMessageHeight(
   message: ChatMessage,
   fold: MessageFoldState = "none",
+  verbose = false,
 ): number {
   const bodyRows = bodyLines(message.text);
   let total = bodyRows + BUBBLE_OVERHEAD_ROWS + MESSAGE_FOOTER_ROWS;
@@ -73,7 +74,7 @@ export function estimateMessageHeight(
     const visibleToolCards =
       message.toolCards?.filter((c) => c.tool !== "reply") ?? [];
     total += visibleToolCards.reduce(
-      (acc, card) => acc + estimateToolCardHeight(card),
+      (acc, card) => acc + estimateToolCardHeight(card, verbose),
       0,
     );
     // The one-line gist under the cards; truncated, never wrapped.
@@ -98,9 +99,19 @@ export function estimatePendingSteerHeight(text: string): number {
   return bodyLines(text) + BUBBLE_OVERHEAD_ROWS;
 }
 
-export function estimateToolCardHeight(card: ToolCardEntry): number {
+/** `/verbose` (ATO-34): the step note is one truncated row under the header. */
+const STEP_NOTE_ROWS = 1;
+
+export function estimateToolCardHeight(
+  card: ToolCardEntry,
+  verbose = false,
+): number {
   const summaryLines = bodyLines(card.summary);
-  return TOOL_CARD_BASE_ROWS + Math.max(0, summaryLines - 1);
+  return (
+    TOOL_CARD_BASE_ROWS +
+    Math.max(0, summaryLines - 1) +
+    (verbose ? STEP_NOTE_ROWS : 0)
+  );
 }
 
 /**
@@ -131,7 +142,7 @@ export function estimateStreamingTailHeight(state: TuiState): number {
     (c) => c.tool !== "reply",
   );
   total += visibleCards.reduce(
-    (acc, card) => acc + estimateToolCardHeight(card),
+    (acc, card) => acc + estimateToolCardHeight(card, state.verboseSteps === true),
     0,
   );
   const visibleCalls = state.streamingToolCalls.filter(
