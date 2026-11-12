@@ -7,9 +7,11 @@ import {
 import type { ScrubbedErrorEvent } from "./error-scrubber.js";
 import {
   buildEnvelope,
+  buildFingerprint,
   buildSentryAuthHeader,
   type ErrorReportDimensions,
 } from "./sentry-envelope.js";
+import { SentryRateLimiter, sentryGroupingKey } from "./sentry-rate-limit.js";
 
 /** Minimal logger surface so this module does not depend on the tracing package. */
 export interface ErrorReportLogger {
@@ -38,6 +40,13 @@ export interface SentryClientOptions {
   dimensions?: ErrorReportDimensions;
   logger?: ErrorReportLogger;
   fetchImpl?: FetchLike;
+  /**
+   * JSON file that carries the per-install rate-limit counter across
+   * restarts (ATO-1286). Omitted: the counter lives in memory only.
+   */
+  rateLimitPath?: string;
+  /** Test seam: a ready limiter (wins over `rateLimitPath`). */
+  rateLimiter?: SentryRateLimiter;
 }
 
 /**
@@ -51,8 +60,14 @@ export interface SentryClientOptions {
 export class SentryClient {
   private readonly fetchImpl: FetchLike;
   private readonly pending = new Set<Promise<void>>();
+  private readonly rateLimiter: SentryRateLimiter;
 
   constructor(private readonly options: SentryClientOptions) {
+    this.rateLimiter =
+      options.rateLimiter ??
+      new SentryRateLimiter(
+        options.rateLimitPath ? { storePath: options.rateLimitPath } : {},
+      );
     this.fetchImpl =
       options.fetchImpl ??
       ((input, init) =>
@@ -61,6 +76,11 @@ export class SentryClient {
 
   capture(event: ScrubbedErrorEvent): void {
     try {
+      // ATO-1286: one install repeating one failure must not flood the
+      // project. Same key Sentry groups on; dropped before any envelope
+      // is built.
+      const key = sentryGroupingKey({ fingerprint: buildFingerprint(event) });
+      if (!this.rateLimiter.shouldSend(key)) return;
       const { body } = buildEnvelope(this.options.dsn, event, {
         installId: this.options.installId,
         release: this.options.release,
@@ -141,6 +161,7 @@ export function createSentryClient(options: {
   dsn?: string;
   logger?: ErrorReportLogger;
   fetchImpl?: FetchLike;
+  rateLimitPath?: string;
 }): SentryClient | null {
   if (!options.enabled) return null;
   // Never open a real connection under the test runner — otherwise the
@@ -162,6 +183,7 @@ export function createSentryClient(options: {
     ...(options.dimensions ? { dimensions: options.dimensions } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    ...(options.rateLimitPath ? { rateLimitPath: options.rateLimitPath } : {}),
   });
 }
 

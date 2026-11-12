@@ -1,0 +1,277 @@
+/**
+ * Send-side limiter for Sentry events (ATO-1286).
+ *
+ * One install stuck on an old build can fire the same failure over and
+ * over (one sent 436 identical `llama-server 500` events in 14 days,
+ * another 163 `ECONNREFUSED 127.0.0.1:8093`). Past the first few copies
+ * they add nothing but quota burn, so at most
+ * {@link SENTRY_RATE_LIMIT_MAX_EVENTS} events with the same grouping key
+ * are sent per install in any rolling {@link SENTRY_RATE_LIMIT_WINDOW_MS};
+ * the rest are dropped before they are built into an envelope.
+ *
+ * The counter lives in memory and, when a `storePath` is given, in a
+ * small JSON file in the state dir, so a restart (the desktop restarts
+ * the agent on every model switch) does not hand a crash loop a fresh
+ * budget. The file holds only key hashes and timestamps — no message,
+ * frame, or other event content — and is written only when an event is
+ * actually sent, so a flood that is being dropped costs no disk writes.
+ * Every file operation is best-effort: a broken or unwritable file
+ * degrades to the in-memory counter, never to an exception.
+ */
+
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
+
+/** At most this many identical events per install per window. */
+export const SENTRY_RATE_LIMIT_MAX_EVENTS = 10;
+/** The rolling window: one hour. */
+export const SENTRY_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+/** Cap on distinct keys kept in the file, so it cannot grow without bound. */
+export const SENTRY_RATE_LIMIT_MAX_KEYS = 500;
+/** File name in the state dir. */
+export const SENTRY_RATE_LIMIT_FILE = "sentry-rate-limit.json";
+
+/** The parts of a Sentry event (wire shape) the grouping key reads. */
+export interface SentryLikeEvent {
+  fingerprint?: readonly string[];
+  message?: string | { formatted?: string; message?: string };
+  exception?: {
+    values?: ReadonlyArray<{
+      type?: string;
+      value?: string;
+      stacktrace?: {
+        frames?: ReadonlyArray<{
+          filename?: string;
+          function?: string;
+          in_app?: boolean;
+        }>;
+      };
+    }>;
+  };
+}
+
+/**
+ * Reduce a message to its shape: the parts that differ between two
+ * copies of the same failure (ports, numbers, paths, URLs, ids) become
+ * placeholders, so `connect ECONNREFUSED 127.0.0.1:8093` and
+ * `connect ECONNREFUSED 127.0.0.1:19091` share one key.
+ */
+export function normalizeMessage(message: string): string {
+  return message
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "<url>")
+    .replace(
+      /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+      "<id>",
+    )
+    .replace(/(?:[a-z]:)?(?:[\\/][^\s\\/'"`:]+){2,}[\\/]?/gi, "<path>")
+    .replace(/\b0x[0-9a-f]+\b/gi, "<n>")
+    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b/gi, "<id>")
+    .replace(/\d+(?:\.\d+)*/g, "<n>")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 200);
+}
+
+/**
+ * The key two events must share to count as "identical": Sentry's own
+ * grouping input. `fingerprint` when the event sets one; otherwise the
+ * exception type + normalized value + innermost in-app frame; otherwise
+ * the normalized message.
+ */
+export function sentryGroupingKey(event: SentryLikeEvent): string {
+  if (event.fingerprint && event.fingerprint.length > 0) {
+    return `fp\u0001${event.fingerprint.join("\u0001")}`;
+  }
+  const exception = event.exception?.values?.at(-1);
+  if (exception && (exception.type || exception.value)) {
+    // Wire order is oldest frame first, so the crash site is the last
+    // in-app frame. Line numbers stay out: they shift between builds.
+    const frames = exception.stacktrace?.frames ?? [];
+    let top = "";
+    for (let i = frames.length - 1; i >= 0; i -= 1) {
+      const frame = frames[i];
+      if (frame && frame.in_app !== false) {
+        top = `${frame.function ?? ""}@${frame.filename ?? ""}`;
+        break;
+      }
+    }
+    return [
+      "ex",
+      exception.type ?? "",
+      normalizeMessage(exception.value ?? ""),
+      top,
+    ].join("\u0001");
+  }
+  const raw =
+    typeof event.message === "string"
+      ? event.message
+      : (event.message?.formatted ?? event.message?.message ?? "");
+  return `msg\u0001${normalizeMessage(raw)}`;
+}
+
+/**
+ * Short, stable, dependency-free hash (cyrb53) so the file stores a
+ * fixed-size token instead of the key's text.
+ */
+export function hashKey(key: string): string {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < key.length; i += 1) {
+    const ch = key.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+
+export interface SentryRateLimiterOptions {
+  maxEvents?: number;
+  windowMs?: number;
+  /** Clock seam; defaults to `Date.now`. */
+  now?: () => number;
+  /** JSON file to share the counter across restarts; omit for memory only. */
+  storePath?: string;
+}
+
+type Counts = Map<string, number[]>;
+
+/**
+ * Per-install sliding-window counter. {@link shouldSend} both checks and
+ * records: it returns `true` (and counts the send) while the key is
+ * under its budget, `false` once the window already holds `maxEvents`
+ * sends of that key.
+ */
+export class SentryRateLimiter {
+  private readonly maxEvents: number;
+  private readonly windowMs: number;
+  private readonly now: () => number;
+  private readonly storePath: string | undefined;
+  private counts: Counts | undefined;
+
+  constructor(options: SentryRateLimiterOptions = {}) {
+    this.maxEvents = options.maxEvents ?? SENTRY_RATE_LIMIT_MAX_EVENTS;
+    this.windowMs = options.windowMs ?? SENTRY_RATE_LIMIT_WINDOW_MS;
+    this.now = options.now ?? (() => Date.now());
+    this.storePath = options.storePath;
+  }
+
+  shouldSend(key: string): boolean {
+    const now = this.now();
+    // Loaded lazily: a session with no errors never touches the file.
+    const counts = (this.counts ??= this.load(now));
+    const id = hashKey(key);
+    const recent = prune(counts.get(id), now, this.windowMs);
+    if (recent.length >= this.maxEvents) {
+      counts.set(id, recent);
+      return false;
+    }
+    recent.push(now);
+    counts.set(id, recent);
+    this.persist(now);
+    return true;
+  }
+
+  private load(now: number): Counts {
+    const counts: Counts = new Map();
+    if (!this.storePath) return counts;
+    mergeInto(counts, readStore(this.storePath), now, this.windowMs);
+    return counts;
+  }
+
+  private persist(now: number): void {
+    if (!this.storePath || !this.counts) return;
+    try {
+      // Another process (terminal and desktop agent share the state
+      // dir) may have counted sends since this one loaded the file;
+      // merge them in so neither overwrites the other's budget.
+      mergeInto(this.counts, readStore(this.storePath), now, this.windowMs);
+      trimKeys(this.counts, SENTRY_RATE_LIMIT_MAX_KEYS);
+      const keys: Record<string, number[]> = {};
+      for (const [id, stamps] of this.counts) {
+        if (stamps.length > 0) keys[id] = stamps.slice(-this.maxEvents);
+      }
+      mkdirSync(dirname(this.storePath), { recursive: true });
+      const tmp = `${this.storePath}.${process.pid}.tmp`;
+      writeFileSync(tmp, JSON.stringify({ v: 1, keys }), "utf8");
+      renameSync(tmp, this.storePath);
+    } catch {
+      // Best-effort: the in-memory counter still applies.
+    }
+  }
+}
+
+/** Timestamps of `stamps` still inside the window, oldest first. */
+function prune(
+  stamps: readonly number[] | undefined,
+  now: number,
+  windowMs: number,
+): number[] {
+  if (!stamps) return [];
+  return stamps.filter((t) => t > now - windowMs && t <= now);
+}
+
+function readStore(path: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (parsed && typeof parsed === "object") {
+      const keys = (parsed as { keys?: unknown }).keys;
+      if (keys && typeof keys === "object") return keys as Record<string, unknown>;
+    }
+  } catch {
+    // Missing or corrupt file: start empty.
+  }
+  return {};
+}
+
+/**
+ * Merge `disk` into `counts`, dropping expired stamps. Each timestamp
+ * keeps the larger of its two multiplicities rather than their sum: the
+ * file already holds this process's own earlier writes, and several
+ * sends inside one millisecond are real sends, not duplicates.
+ */
+function mergeInto(
+  counts: Counts,
+  disk: Record<string, unknown>,
+  now: number,
+  windowMs: number,
+): void {
+  for (const [id, value] of Object.entries(disk)) {
+    if (!Array.isArray(value)) continue;
+    const fromDisk = value.filter(
+      (t): t is number => typeof t === "number" && Number.isFinite(t),
+    );
+    const mine = tally(counts.get(id) ?? []);
+    for (const [t, n] of tally(fromDisk)) {
+      mine.set(t, Math.max(mine.get(t) ?? 0, n));
+    }
+    const merged: number[] = [];
+    for (const [t, n] of mine) {
+      for (let i = 0; i < n; i += 1) merged.push(t);
+    }
+    counts.set(id, prune(merged, now, windowMs).sort((a, b) => a - b));
+  }
+  for (const [id, stamps] of counts) {
+    const live = prune(stamps, now, windowMs);
+    if (live.length === 0) counts.delete(id);
+    else counts.set(id, live);
+  }
+}
+
+function tally(stamps: readonly number[]): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const t of stamps) out.set(t, (out.get(t) ?? 0) + 1);
+  return out;
+}
+
+/** Keep only the `max` keys with the most recent sends. */
+function trimKeys(counts: Counts, max: number): void {
+  if (counts.size <= max) return;
+  const byRecency = [...counts.entries()].sort(
+    (a, b) => (b[1].at(-1) ?? 0) - (a[1].at(-1) ?? 0),
+  );
+  for (const [id] of byRecency.slice(max)) counts.delete(id);
+}

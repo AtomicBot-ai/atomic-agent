@@ -46,6 +46,8 @@ export function buildRuntimeTelemetry(options: {
   logger?: AnalyticsLogger & ErrorReportLogger;
   env?: NodeJS.ProcessEnv;
   factories?: RuntimeTelemetryFactories;
+  /** Sentry's per-install rate-limit file (ATO-1286); memory-only when omitted. */
+  sentryRateLimitPath?: string;
 }): RuntimeTelemetry {
   const factories = options.factories ?? DEFAULT_FACTORIES;
   const enabled = options.enabled && !isAnalyticsKilledByEnv(options.env);
@@ -70,6 +72,9 @@ export function buildRuntimeTelemetry(options: {
       platform: process.platform,
       dimensions: options.dimensions,
       ...logger,
+      ...(options.sentryRateLimitPath
+        ? { rateLimitPath: options.sentryRateLimitPath }
+        : {}),
     }),
   };
 }

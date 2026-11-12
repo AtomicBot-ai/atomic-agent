@@ -24,7 +24,25 @@ export {
 } from "./secret-detector.js";
 export type { KnownSecret } from "./secret-detector.js";
 export type { LlmFailureContext } from "./llm-failure-tags.js";
-export { buildEnvelope, buildSentryAuthHeader } from "./sentry-envelope.js";
+export {
+  buildEnvelope,
+  buildFingerprint,
+  buildSentryAuthHeader,
+} from "./sentry-envelope.js";
+export {
+  SentryRateLimiter,
+  SENTRY_RATE_LIMIT_FILE,
+  SENTRY_RATE_LIMIT_MAX_EVENTS,
+  SENTRY_RATE_LIMIT_MAX_KEYS,
+  SENTRY_RATE_LIMIT_WINDOW_MS,
+  hashKey,
+  normalizeMessage,
+  sentryGroupingKey,
+} from "./sentry-rate-limit.js";
+export type {
+  SentryLikeEvent,
+  SentryRateLimiterOptions,
+} from "./sentry-rate-limit.js";
 export type {
   EnvelopeMeta,
   BuiltEnvelope,
