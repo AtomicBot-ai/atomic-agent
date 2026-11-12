@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { CompletionRequest } from "../completion-types.js";
+import { estimateUsageCostUsd } from "../usage-cost.js";
 import { OpenAiProvider, isDeepSeekHost } from "./openai-provider.js";
 
 const tools: NonNullable<CompletionRequest["tools"]> = [
@@ -436,6 +437,118 @@ describe("OpenAiProvider — cached prompt tokens", () => {
     );
     expect(silent.usage).not.toHaveProperty("cachedTokens");
     expect(silent.cacheHitTokens).toBe(0);
+  });
+});
+
+// ATO-912: the shapes Moonshot's own docs give for a streamed Kimi
+// K3.1 Pro call, priced at its list rates ($2 in, $0.20 hit, $2 5-minute
+// write, $10 out per 1M tokens).
+describe("OpenAiProvider — Moonshot (Kimi) streamed usage", () => {
+  const kimiPricing = { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2 };
+  const frame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
+  const streamOf = (...frames: string[]) =>
+    vi.fn(
+      async () =>
+        new Response(frames.join("") + "data: [DONE]\n\n", {
+          status: 200,
+          headers: { "content-type": "text/event-stream" },
+        }),
+    ) as unknown as typeof fetch;
+  const drain = async (fetchImpl: typeof fetch) => {
+    const stream = provider(fetchImpl, undefined).completeStream({ prompt: "hi" });
+    for (;;) {
+      const next = await stream.next();
+      if (next.done) return next.value;
+    }
+  };
+  const content = (text: string, finish: string | null = null) =>
+    frame({
+      model: "kimi-k3.1-pro",
+      choices: [{ index: 0, delta: { content: text }, finish_reason: finish }],
+    });
+
+  it("reads the final usage chunk with empty choices, hits at the top level", async () => {
+    const result = await drain(
+      streamOf(
+        content("ok"),
+        content("", "stop"),
+        frame({
+          model: "kimi-k3.1-pro",
+          choices: [],
+          usage: {
+            prompt_tokens: 120_000,
+            completion_tokens: 4_000,
+            total_tokens: 124_000,
+            cached_tokens: 100_000,
+            completion_tokens_details: { reasoning_tokens: 3_000 },
+            prompt_tokens_details: { cache_write_tokens: 15_000 },
+          },
+        }),
+      ),
+    );
+    expect(result.usage).toMatchObject({
+      promptTokens: 120_000,
+      completionTokens: 4_000,
+      cachedTokens: 100_000,
+      cacheWriteTokens: 15_000,
+    });
+    // 5k uncached x $2 + 100k hits x $0.20 + 15k writes x $2 + 4k out
+    // x $10. Reasoning is already inside completion_tokens (Moonshot
+    // documents it so) and is not added a second time.
+    expect(estimateUsageCostUsd(result.usage!, kimiPricing)).toBeCloseTo(
+      0.01 + 0.02 + 0.03 + 0.04,
+      9,
+    );
+  });
+
+  it("reads usage Moonshot puts inside the choice of the last chunk", async () => {
+    const result = await drain(
+      streamOf(
+        content("ok"),
+        frame({
+          model: "kimi-k3.1-pro",
+          choices: [
+            {
+              index: 0,
+              delta: {},
+              finish_reason: "stop",
+              usage: {
+                prompt_tokens: 2_000,
+                completion_tokens: 300,
+                total_tokens: 2_300,
+                cached_tokens: 1_500,
+              },
+            },
+          ],
+        }),
+      ),
+    );
+    expect(result.usage).toMatchObject({
+      promptTokens: 2_000,
+      completionTokens: 300,
+      cachedTokens: 1_500,
+    });
+    expect(result.cacheHitTokens).toBe(1_500);
+  });
+
+  it("prefers prompt_tokens_details.cached_tokens when both are sent", async () => {
+    const result = await drain(
+      streamOf(
+        content("ok", "stop"),
+        frame({
+          choices: [],
+          usage: {
+            prompt_tokens: 1_000,
+            completion_tokens: 5,
+            total_tokens: 1_005,
+            cached_tokens: 600,
+            prompt_tokens_details: { cached_tokens: 640, cache_write_tokens: 300 },
+          },
+        }),
+      ),
+    );
+    expect(result.usage?.cachedTokens).toBe(640);
+    expect(result.usage?.cacheWriteTokens).toBe(300);
   });
 });
 
