@@ -167,13 +167,14 @@ const LLM_FUSION_KEYS: Record<keyof UserLlmFusionConfig, true> = {
  * Keys this build knows in a fixed block although they are not in
  * `USER_CONFIG_DEFAULTS`: emitted only when set (`llm` and its blocks), or retired
  * aliases the parse still reads but never writes back (`telemetry`,
- * `agent.approvalRequired`, `discord.ownerUserId`). Without this list
+ * `agent.approvalRequired`, `discord.ownerUserId`), and optional blocks
+ * like `agent.personas` that are only written when set. Without this list
  * they would look like keys from a newer build and be carried forward
  * for ever, or brought back after a caller removed them.
  */
 const KNOWN_KEYS_OUTSIDE_DEFAULTS: Readonly<Record<string, readonly string[]>> = {
   "": ["llm", "telemetry"],
-  agent: ["approvalRequired"],
+  agent: ["approvalRequired", "personas"],
   discord: ["ownerUserId"],
   llm: Object.keys(LLM_KEYS),
   "llm.fallback": Object.keys(LLM_FALLBACK_KEYS),

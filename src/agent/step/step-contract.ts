@@ -167,6 +167,12 @@ export interface StepDependencies {
    */
   compactPromptLatch?: import("../../prompt/compact-prompt.js").CompactPromptLatch;
   /**
+   * Per-session user persona (ATO-54), owned by the loop so the
+   * `### persona` block cannot move mid-session. Absent (tests, one-off
+   * callers): no persona is rendered.
+   */
+  personaLatch?: import("../../prompt/persona-latch.js").PersonaLatch;
+  /**
    * Plan mode, read per call rather than captured once — same contract
    * as `BatchExecutionContext.isPlanMode`. Absent ⇒ off.
    */

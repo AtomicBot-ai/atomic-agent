@@ -273,6 +273,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "keep working until an acceptance list is green: `/goal <criteria; …>` | `/goal check add <cmd>` | `/goal status` | `/goal pause|resume|clear`",
   },
+  // Added with personas (ATO-54).
+  {
+    name: "persona",
+    description:
+      "named instructions for the agent: `/persona` lists them · `/persona use <name|default>` · `/persona bind <name|default>` ties one to this folder; applies from the next session",
+  },
   {
     name: "worker",
     description:

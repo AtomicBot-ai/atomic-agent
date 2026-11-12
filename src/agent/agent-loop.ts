@@ -53,6 +53,7 @@ import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.j
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
 import { toolDisabledEvents } from "./tool-disabled-notice.js";
 import { CompactPromptLatch } from "../prompt/compact-prompt.js";
+import { PersonaLatch } from "../prompt/persona-latch.js";
 
 /**
  * What the user reads when the step loop ran out before the model
@@ -76,6 +77,7 @@ export class AgentLoop {
    * prefix from flipping when a step cannot see the model's window.
    */
   private readonly compactPromptLatch = new CompactPromptLatch();
+  private readonly personaLatch = new PersonaLatch();
 
   constructor(private readonly deps: AgentLoopDependencies) {}
 
@@ -494,6 +496,7 @@ export class AgentLoop {
             prepareWorkspace: this.deps.prepareWorkspace,
             registry: this.deps.registry,
             compactPromptLatch: this.compactPromptLatch,
+            personaLatch: this.personaLatch,
             commitSession: (next) => {
               state = next;
               stepContext.session = next;

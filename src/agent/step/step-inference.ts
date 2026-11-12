@@ -8,6 +8,7 @@ import type { BuildPromptInput } from "../../prompt/build-prompt-types.js";
 import { formatCurrentDate } from "../../prompt/current-date.js";
 import { buildPrompt, resolvePromptContextWindow } from "../../prompt/build-prompt.js";
 import { decideCompactPrompt } from "../../prompt/compact-prompt.js";
+import { resolvePersona } from "../../config/agent/persona-resolve.js";
 import { hashPrefix } from "../../llm/slot-manager.js";
 import { checkProfilePromptAligned } from "../../llm/profile-invariants.js";
 import type { BuiltPrompt } from "../../prompt/build-prompt.js";
@@ -154,17 +155,33 @@ export function prepareStepPrompt(ctx: StepContext, deps: StepDependencies) {
   const compactDecision = deps.compactPromptLatch
     ? deps.compactPromptLatch.resolve(ctx.session.id, compactMode, promptWindow)
     : decideCompactPrompt(compactMode, promptWindow);
+  // The user's persona (ATO-54), latched per session by the loop: a
+  // switch applies to the next session, never to this prefix.
+  const personaResolution = deps.personaLatch?.resolve(ctx.session.id, () => {
+    const agent = getConfig().agent;
+    return resolvePersona(agent.personas, ctx.session.workingDir, agent.personaOverride);
+  });
+  const persona = personaResolution?.persona;
   const promptInput: BuildPromptInput = {
     ...basePromptInput,
     compactPrompt: compactDecision.compact,
     compactPromptWindow: compactDecision.contextWindow,
+    ...(persona !== undefined
+      ? {
+          persona: {
+            name: persona.name,
+            instructions: persona.instructions,
+            ...(persona.style !== undefined ? { style: persona.style } : {}),
+          },
+        }
+      : {}),
   };
-  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision };
+  return { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision, personaResolution };
 }
 
 export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
   if (!ctx.workspace) refreshStepWorkspace(ctx, deps);
-  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision } = prepareStepPrompt(ctx, deps);
+  const { promptInput, thinkingOff, promptCarriesPrefill, serverTemplate, stepDescriptors, stepToolDescriptors, compactDecision, personaResolution } = prepareStepPrompt(ctx, deps);
   const prompt = buildPrompt(promptInput);
   if (prompt.cloudContext) ctx.session = { ...ctx.session, cloudContext: prompt.cloudContext };
   // A grammar (llama-server) fallback link behind a native-tools primary
@@ -206,7 +223,15 @@ export function prepareStepInference(ctx: StepContext, deps: StepDependencies) {
       compact: compactDecision.compact,
       reason: compactDecision.reason,
       stablePrefixTokens: prompt.tokens.stablePrefix,
+      persona: personaResolution?.persona?.name ?? null,
     });
+    if (personaResolution?.unknown) {
+      deps.logger?.warn("persona not defined, running without one", {
+        sessionId: ctx.session.id,
+        persona: personaResolution.requested,
+        source: personaResolution.source,
+      });
+    }
     const promptViolations = checkProfilePromptAligned(
       deps.profile,
       prompt.text,

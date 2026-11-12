@@ -11,6 +11,8 @@ In the composer, Local mode has the backend and model controls: Atomic Chat Core
 
 `/goal <criteria>` keeps a chat working until an acceptance list is met: write the items one per line or split by `;`, and add shell checks that must pass with `/goal check add <cmd>` (or a `check: <cmd>` item). After each round the checks run, then the model judges every item; open items start the next round, up to 10 rounds by default. `/goal status` shows where it stands, `/goal pause`, `/goal resume` and `/goal clear` control it. The goal is saved with the chat and survives a restart.
 
+Personas are named instructions you add to the agent's own: define them under `agent.personas.definitions` in the config file (each has `instructions` and an optional `style`). `/persona` lists them and shows which one a new session in this folder would use, `/persona use <name>` picks one for everywhere, and `/persona bind <name>` ties one to the current folder (the closest bound folder wins over `use`). `default` in place of a name turns it off. The `ATOMIC_AGENT_PERSONA` environment variable wins over both. A chat keeps the persona it started with, so a switch applies from the next session (`/new`).
+
 The keyboard and mouse share the same UI transitions. Terminal size/capabilities affect layout and modified keys. The runtime restores terminal modes when the interface exits.
 
 For engineering work read [TUI ownership/input](../../src/tui/README.md) and [interface contracts](../../src/tui/docs/interface.md). The previous onboarding QA campaign is [historical](../archive/2026-10-06/TESTING.md), not a current development checklist.

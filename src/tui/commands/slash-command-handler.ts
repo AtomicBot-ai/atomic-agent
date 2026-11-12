@@ -13,6 +13,7 @@ import { resolveSlashCommand, SLASH_COMMANDS, type SlashCommandDef } from "./sla
 import { renderToolsOverview, renderToolsSearch } from "./tools-listing.js";
 import { parseModelModeCommand, MODEL_MODE_USAGE, type ModelModeCommand } from "./model-mode-command.js";
 import { parseGoalCommand, type GoalCommand } from "./goal-command.js";
+import { parsePersonaCommand, type PersonaCommand } from "./persona-command.js";
 
 export interface SlashDispatchCallbacks {
   onAbort(): void;
@@ -34,6 +35,8 @@ export interface SlashDispatchResult {
   readonly compactionVerb?: "run" | "show";
   /** `/goal …` (ATO-451): the orchestrator acts on the open chat's goal. */
   readonly goalCommand?: GoalCommand;
+  /** `/persona …` (ATO-54): the submit path writes the config and reports. */
+  readonly personaCommand?: PersonaCommand;
   /**
    * `/enhance <text>`: the draft to rewrite. The buffer is left holding
    * the draft itself, and the caller hands the rewrite back to it.
@@ -356,6 +359,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
         ? pureActions([], { systemMessage: goal.message })
         : pureActions([], { goalCommand: goal });
     }
+    case "persona":
+      return pureActions([], { personaCommand: parsePersonaCommand(parsed.args) });
     case "enhance":
       // Opt-in and never sends: the draft goes back into the composer
       // right away, and the rewrite replaces it there for review.

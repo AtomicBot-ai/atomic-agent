@@ -464,6 +464,16 @@ export const MENU: readonly MenuNode[] = [
     },
   },
   {
+    kind: "action", id: "session.persona", label: "Personas…", group: "session",
+    slash: {
+      name: "persona",
+      description:
+        "named instructions for the agent: `/persona` lists them · `/persona use <name|default>` · `/persona bind <name|default>` ties one to this folder; applies from the next session",
+      // ATO-54: right after /goal, before /worker.
+      rank: 46.3,
+    },
+  },
+  {
     kind: "action",
     id: "session.context",
     label: "Context window",
