@@ -252,6 +252,9 @@ export function runSlashCommand(
   if (result.triggerIssueReport) {
     callbacks.onIssueReportRequested?.();
   }
+  if (result.openUrl) {
+    callbacks.onOpenUrlRequested?.(result.openUrl);
+  }
   if (result.triggerUninstallPlan) {
     callbacks.onUninstallPlanRequested?.();
   }

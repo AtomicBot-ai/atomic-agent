@@ -227,6 +227,23 @@ describe("handleEditorSubmit", () => {
     expect(onIssueReportRequested).toHaveBeenCalledTimes(1);
   });
 
+  it("opens the Discord invite in the browser for /discord (ATO-1465)", () => {
+    const state = createInitialTuiState(fakeSession());
+    const onOpenUrlRequested = vi.fn();
+    const texts: string[] = [];
+    const dispatch = (a: { type: string; text?: string }): void => {
+      if (a.type === "system_message" && a.text) texts.push(a.text);
+    };
+    handleEditorSubmit(
+      "/discord",
+      state,
+      dispatch as never,
+      stubCallbacks({ onOpenUrlRequested }),
+    );
+    expect(onOpenUrlRequested).toHaveBeenCalledWith("https://discord.gg/DCqtG8WZX8");
+    expect(texts.some((t) => t.includes("https://discord.gg/DCqtG8WZX8"))).toBe(true);
+  });
+
   it("invokes onDebugBundleExportRequested for /dump", () => {
     const state = createInitialTuiState(fakeSession());
     const onDebugBundleExportRequested = vi.fn();
