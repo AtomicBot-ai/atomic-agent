@@ -11,17 +11,20 @@ const REFUSAL_MESSAGES: Record<string, string> = {
   turn_compacted: "the last turn is already part of a compacted summary, so it cannot be taken back",
   turn_stopped: "the last turn was stopped, and a stop can cut a tool call short without a trace, so it cannot be taken back; send the question again instead",
   turn_unrecognized: "the last turn is not a single question and answer, so it cannot be taken back",
-  turn_mismatch: "the chat's last question is not the one given (expectText, expectPriorQuestions), so nothing was taken back",
+  turn_mismatch: "the chat's last question is not the one given (expectText, expectPriorQuestions, expectUnanswered), so nothing was taken back",
 };
 
 /**
  * `POST /api/sessions/{id}/rollback-last-turn` (ATO-1298): remove the
  * chat's last question and its answer so a client can ask it again
  * without the model reading the old answer. Body `{}` or
- * `{ expectText?, expectPriorQuestions? }`: the question the client means,
- * by its text and by how many questions come before it (steers not
- * counted). When the stored last question differs in either, `409
- * turn_mismatch` and nothing is removed.
+ * `{ expectText?, expectPriorQuestions?, expectUnanswered? }`: the
+ * question the client means, by its text, by how many questions come
+ * before it (steers not counted) and, with `expectUnanswered: true`, by
+ * the client having seen no answer to it (ATO-1420: a stored reply then
+ * means a different question, however the count lines up). When the
+ * stored last question differs in any, `409 turn_mismatch` and nothing
+ * is removed.
  *
  * Only removes. The answer is `200 { id, text }` with the question's
  * text; the client sends it again through `/v1/chat/completions` like
@@ -41,7 +44,7 @@ export function createRollbackLastTurnHandler(): HttpHandler {
     const options: LastTurnRollbackOptions = {};
     try {
       const body = (await readJsonBody<unknown>(req)) as
-        | { expectText?: unknown; expectPriorQuestions?: unknown }
+        | { expectText?: unknown; expectPriorQuestions?: unknown; expectUnanswered?: unknown }
         | null;
       const text = body?.expectText;
       if (text !== undefined && typeof text !== "string") {
@@ -55,6 +58,12 @@ export function createRollbackLastTurnHandler(): HttpHandler {
         return;
       }
       if (prior !== undefined) options.expectPriorQuestions = prior;
+      const unanswered = body?.expectUnanswered;
+      if (unanswered !== undefined && typeof unanswered !== "boolean") {
+        sendError(res, 400, openaiError("expectUnanswered must be a boolean", "invalid_request_error", "expectUnanswered"));
+        return;
+      }
+      if (unanswered !== undefined) options.expectUnanswered = unanswered;
     } catch (err) {
       sendError(res, 400, openaiError(`Invalid JSON: ${err instanceof Error ? err.message : String(err)}`));
       return;
