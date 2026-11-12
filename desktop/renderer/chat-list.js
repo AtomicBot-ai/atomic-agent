@@ -51,11 +51,14 @@ function chatFailedSinceRead(row, seenAt) {
 function chatMenuItems(opts) {
   const o = opts || {};
   return [
-    o.pinned ? {verb: 'unpin', label: 'Unpin', icon: 'pin'} : {verb: 'pin', label: 'Pin', icon: 'pin'},
+    // ATO-1150: an archived chat is out of the main list, so it offers no pin (Unarchive first).
+    ...(o.archived === true ? [] : [o.pinned ? {verb: 'unpin', label: 'Unpin', icon: 'pin'} : {verb: 'pin', label: 'Pin', icon: 'pin'}]),
     o.unread ? {verb: 'read', label: 'Mark as read', icon: 'check'} : {verb: 'unread', label: 'Mark as unread', icon: 'unread'},
     ...(o.renamable === false ? [] : [{verb: 'rename', label: 'Rename', icon: 'edit'}]),
     // ATO-1034: "Move to folder…" opens the folder list (chat-folders.js), for a stored chat.
     ...(o.folders === true ? [{verb: 'fpick', label: 'Move to folder…', icon: 'folder'}] : []),
+    // ATO-1150: Archive hides a stored chat from the lists; Unarchive brings it back.
+    ...(o.archivable === true ? [o.archived ? {verb: 'unarchive', label: 'Unarchive', icon: 'archive'} : {verb: 'archive', label: 'Archive', icon: 'archive'}] : []),
     {verb: 'delask', label: 'Delete…', icon: 'trash', danger: true},
   ];
 }
@@ -69,4 +72,61 @@ function chatMenuPlace(x, y, w, h, winW, winH) {
   return {left, top};
 }
 
-if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace};
+/* ---------------- ATO-1150: archive and search in the chat list ----------------
+   Archived chats are a list of session ids the window keeps beside the pins
+   (userData/prefs.json `archived`): the agent has no archive flag or route
+   yet, and the session store is not touched. An archived chat is left out of
+   Pinned, the folders and Chats, and drawn only under the "Archived" toggle;
+   its transcript, folder and title stay as they were. */
+
+/** The ids list with `id` in it (`on`) or out of it; a new array, newest archived first. */
+function archiveSet(list, id, on) {
+  const rest = (Array.isArray(list) ? list : []).filter((x) => typeof x === 'string' && x && x !== id);
+  return on && id ? [id].concat(rest) : rest;
+}
+
+/** `rows` split into the ones on the main list and the archived ones, each in the order given. */
+function splitArchived(rows, archivedIds) {
+  const arch = new Set(archivedIds || []);
+  const live = [], archived = [];
+  for (const r of rows || []) if (r && r.id) (arch.has(r.id) ? archived : live).push(r);
+  return {live, archived};
+}
+
+/* The search field's query as the matcher takes it: trimmed, lowercased,
+   inner runs of spaces made one. '' means "no search": the lists as usual. */
+function chatSearchQuery(raw) {
+  return String(raw == null ? '' : raw).trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+const CHAT_SEARCH_MAX = 50;
+/* fuzzy-match.js loads after this file (index.html), so its matcher is looked
+   up at call time; in Node (the tests) it is required. */
+function chatFuzzyFilter() {
+  if (typeof fuzzyFilter === 'function') return fuzzyFilter;
+  if (typeof require === 'function') { try { return require('./fuzzy-match.js').fuzzyFilter; } catch (e) { /* substring below */ } }
+  return null;
+}
+
+/* The chats whose title matches the query, best first (fuzzy-match.js, the
+   ⌘K palette's ranking: exact, prefix, word, substring, then one typo), split
+   into the ones on the main list and the archived ones, at most
+   CHAT_SEARCH_MAX in all. A chat is matched once, by its stored row when it
+   has one. Only titles are searched: the agent has no route to search the
+   text of past chats yet (ATO-1013 item 1). */
+function chatSearch(rawQuery, rows, archivedIds) {
+  const q = chatSearchQuery(rawQuery);
+  if (!q) return {q, live: [], archived: [], total: 0};
+  const seen = new Set(), uniq = [];
+  for (const r of rows || []) if (r && r.id && !seen.has(r.id)) { seen.add(r.id); uniq.push(r); }
+  const title = (r) => String(r.t || '');
+  const fz = chatFuzzyFilter();
+  const hits = fz ? fz(q, uniq, title)
+    : uniq.filter((r) => title(r).toLowerCase().includes(q));
+  const top = hits.slice(0, CHAT_SEARCH_MAX);
+  const out = splitArchived(top, archivedIds);
+  return {q, live: out.live, archived: out.archived, total: hits.length};
+}
+
+if (typeof module !== 'undefined') module.exports = {orderChats, chatUnread, chatFailedSinceRead, chatMenuItems, chatMenuPlace,
+  archiveSet, splitArchived, chatSearchQuery, chatSearch, CHAT_SEARCH_MAX};

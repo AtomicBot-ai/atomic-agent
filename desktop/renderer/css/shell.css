@@ -156,6 +156,21 @@
 .sb-fhead.fdrop-on,.sb-list-head.fdrop-on{background:var(--brand-wash);color:var(--blue)}
 #sidebar.rail .sb-fhead,#sidebar.rail .sb-folders > .sb-list-head,#sidebar.rail [data-list="chats"] > .sb-list-head{display:none}
 #sidebar.rail .sb-folder > .sesrow{padding-left:0}
+/* ATO-1150: the chat search field over the lists (chat-search.js), the same
+   pill as the rows; and the folded "Archived" section under Chats, whose
+   header is a folder header. Neither is drawn in the rail. */
+.sb-search{flex:none;position:relative;display:flex;align-items:center;height:32px;margin-top:8px}
+.sb-search-ic{position:absolute;left:11px;top:8px;display:flex;color:var(--ink-3);pointer-events:none}
+.sb-search-ic svg{width:15px;height:15px}
+#chat-search{flex:1;min-width:0;height:32px;padding:0 30px 0 34px;border:0;border-radius:var(--r-pill);
+  background:var(--well);color:var(--ink);font:500 var(--fs-ui)/18px var(--font-ui);outline:none}
+#chat-search::placeholder{color:var(--ink-3)}
+#chat-search:focus-visible{outline:2px solid var(--brand);outline-offset:-2px}
+.sb-search-x{position:absolute;right:3px;top:3px;width:26px;height:26px;color:var(--ink-2)}
+.sb-search-x svg{width:13px;height:13px}
+[data-list="archived"]{margin-top:10px}
+.sb-archived[data-list="archived"] > .sesrow{padding-left:30px}
+#sidebar.rail .sb-search,#sidebar.rail [data-list="archived"]{display:none}
 
 /* Rows: 34px pills — dot · title · right meta (tasks) or the hover controls
    (chats). The meta rides a data attribute so the row's children stay dot,

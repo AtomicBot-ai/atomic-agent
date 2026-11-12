@@ -269,7 +269,7 @@ contextBridge.exposeInMainWorld("atomic", {
   // ATO-1030: hardware acceleration, as this run has it and as the next launch will.
   gpuGet: () => ipcRenderer.invoke("app:gpuGet"),
   gpuSet: (on: boolean) => ipcRenderer.invoke("app:gpuSet", on),
-  prefsSet: (prefs: { pinned: string[]; seen: Record<string, number> }) =>
+  prefsSet: (prefs: { pinned: string[]; seen: Record<string, number>; archived?: string[] }) =>
     ipcRenderer.invoke("app:prefsSet", prefs),
   // ATO-1034: chat folders (~/.atomic-agent/chat-folders.json, main/chat-folders.ts).
   foldersGet: () => ipcRenderer.invoke("app:foldersGet"),

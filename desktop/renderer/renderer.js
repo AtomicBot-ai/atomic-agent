@@ -1696,6 +1696,8 @@ const P = {
   key:'<circle cx="5.5" cy="10.5" r="3"/><path d="M7.6 8.4 13 3M11 5l1.5 1.5M9.5 6.5 11 8"/>',
   link:'<path d="M6.6 9.4a2.6 2.6 0 0 0 3.7 0l2-2a2.6 2.6 0 1 0-3.7-3.7l-.9.9"/><path d="M9.4 6.6a2.6 2.6 0 0 0-3.7 0l-2 2a2.6 2.6 0 1 0 3.7 3.7l.9-.9"/>',
   folder:'<path d="M2.5 4.5a1 1 0 0 1 1-1h3l1.5 1.5h4.5a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"/>',
+  // ATO-1150: a box with its lid — Archive in the chat row's menu and the Archived section.
+  archive:'<rect x="2.5" y="3" width="11" height="3" rx="1"/><path d="M3.5 6v6.5a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V6M6.5 8.5h3"/>',
   file:'<path d="M4 2.5h5L12 5.5v8H4zM9 2.5v3h3"/>',
   doc:'<path d="M4 2.5h5L12 5.5v8H4zM9 2.5v3h3"/>',
   image:'<rect x="2.5" y="3" width="11" height="10" rx="2"/><circle cx="6" cy="6.5" r="1.2"/><path d="m3 12 3.5-3.5 2.5 2.5 1.5-1.5 3 2.5"/>',
@@ -2056,7 +2058,7 @@ const TASKS = [];
    temporal dead zone and would blank the window). */
 const SIDEBAR_PAGE = 15;                 // rows per list before "Load more"
 const PAGE = {chats:1, tasks:1};         // how many pages each list is showing
-const PREFS = {pinned:[], seen:{}, loaded:false};  // userData/prefs.json, never the agent config
+const PREFS = {pinned:[], seen:{}, archived:[], loaded:false};  // userData/prefs.json, never the agent config (ATO-1150: archived)
 /* ATO-165: the chat row's menu (S.overlay === 'sesmenu'). `id` is the chat it
    acts on; `point` is where a right-click opened it (null: under the row's
    "…" control); `next` is the point handed from openChatMenu to act('sesmenu:'). */
@@ -2364,6 +2366,7 @@ function renderSidebar() {
   const drawer = sidebarDrawerOpen();
   $('#sidebar').classList.toggle('rail', S.sidebar === 'rail' && !drawer);
   $('#sidebar').classList.toggle('drawer', drawer);
+  const searchHeld = chatSearchHold();   // ATO-1150: the search field keeps its focus and caret across the rebuild
   /* Calm (S1): workspace chip, New chat, Chats, then Tasks only when the
      agent holds any, and Settings at the bottom. The Chats header lost its
      plus to the New chat button (one way to do one thing); the Tasks header
@@ -2383,7 +2386,9 @@ function renderSidebar() {
     + sidebarNavHTML()
     // Studio: the Images and Video rows, between New chat and the chats (studio/shell.js).
     + (window.STUDIO ? STUDIO.sidebarHTML(S.room) : '')
+    + chatSearchFieldHTML()   // ATO-1150: filters the chats below by title (chat-search.js)
     + '<div class="sb-lists">'
+      + (chatSearchOn() ? chatSearchListsHTML() : (''
       /* ATO-165: a "Pinned" section above Chats, only while something is
          pinned; its rows are not repeated under Chats. */
       + (ch.pinned > 0
@@ -2399,9 +2404,10 @@ function renderSidebar() {
           + (FOLDERS.state.folders.length ? '' : '<button class="iconbtn sb-add sb-fnew" data-act="fnew:" title="New folder" aria-label="New folder">' + ic('folder') + '</button>')
         + '</div>'
         + (ch.rows.length > ch.pinned ? ch.rows.slice(ch.pinned).map(chatRow).join('')
-           : ch.rows.length || ch.filed ? '' : '<div class="sb-empty">No chats yet</div>')
+           : ch.rows.length || ch.filed || ch.archived.length ? '' : '<div class="sb-empty">No chats yet</div>')
         + (ch.hidden > 0 ? '<button class="loadmore" data-more="chats">Load more · ' + ch.hidden + ' more</button>' : '')
       + '</div>'
+      + archivedSidebarHTML(ch.archived)))
       + (showTasks
         ? '<div class="sb-list" data-list="tasks">'
           + '<div class="sb-list-head micro"><span>Tasks</span>'
@@ -2426,6 +2432,7 @@ function renderSidebar() {
     const lists = $('#sidebar').querySelector('.sb-lists');
     if (lists) lists.scrollTop = keepScroll;
   }
+  chatSearchRestore(searchHeld);
   queuesKeep();   // ATO-135
 }
 
@@ -2492,7 +2499,9 @@ function sidebarTasks() {
 function sidebarChats() {
   const stored = new Set(SESSIONS.map((s) => s.id));
   const pending = [...PENDING_CHATS.values()].filter((p) => !stored.has(p.id)).reverse();
-  const order = orderChats(SESSIONS, pending, PREFS.pinned);
+  // ATO-1150: archived chats leave every list but their own section (chat-search.js).
+  const arch = splitArchived(SESSIONS, PREFS.archived);
+  const order = orderChats(arch.live, pending, PREFS.pinned);
   /* ATO-1034: a chat in a folder is drawn under that folder (all of them, a
      folder is short), a pinned one stays in Pinned; Load more pages the rest.
      `visible` is every row on screen, for nameVisibleSessions. */
@@ -2500,8 +2509,8 @@ function sidebarChats() {
   const all = order.pinned.concat(fg.loose);
   const rows = all.slice(0, SIDEBAR_PAGE * PAGE.chats);
   const filed = fg.groups.reduce((n, g) => n + g.rows.length, 0);
-  const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows));
-  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, visible, filed};
+  const visible = rows.concat(...fg.groups.filter((g) => !g.folder.collapsed).map((g) => g.rows), CHATSEARCH.archOpen ? arch.archived : []);
+  return {rows, hidden: all.length - rows.length, pinned: Math.min(order.pinned.length, rows.length), groups: fg.groups, visible, filed, archived: arch.archived};
 }
 
 /* The dot, in the user's three states. "Running" is NOT S.busy: an approval
@@ -2669,7 +2678,8 @@ function chatMenuHTML() {
   const id = s.id;
   const stored = SESSIONS.some((x) => x.id === id);
   const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
-    renamable: stored, folders: stored});   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file
+    renamable: stored, folders: stored,   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file
+    archivable: stored, archived: PREFS.archived.includes(id)});   // ATO-1150: nor to archive
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
   if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
@@ -7324,6 +7334,7 @@ function act(a) {
                              forgetQueue(v);   // Backlog 26: nothing queued in it is sent anywhere else
                              liveForget(v);    // Item 38: nor is a failed turn kept for it
                              PREFS.pinned = PREFS.pinned.filter((x) => x !== v);
+                             PREFS.archived = archiveSet(PREFS.archived, v, false);   // ATO-1150
                              delete PREFS.seen[v];
                              savePrefs();
                              if (folderForget(FOLDERS.state, v)) saveFolders();   // ATO-1034
@@ -7366,6 +7377,8 @@ function act(a) {
                              if (fid && PREFS.pinned.includes(sid)) { PREFS.pinned = PREFS.pinned.filter((x) => x !== sid); savePrefs(); }
                            }
                            render(); nameVisibleSessions(); return; }
+  // ATO-1150: archive / unarchive, the Archived section's toggle, the search field's clear (chat-search.js).
+  if (chatArchiveAct(k, v, close)) return;
   // item 6: pin / unpin, and the two lists' pagination.
   if (k === 'pin')       { if (!PREFS.pinned.includes(v)) PREFS.pinned.unshift(v); savePrefs(); render(); nameVisibleSessions(); return; }
   if (k === 'unpin')     { PREFS.pinned = PREFS.pinned.filter((x) => x !== v); savePrefs(); render(); nameVisibleSessions(); return; }
@@ -9717,13 +9730,14 @@ async function loadPrefs() {
   if (res && res.ok && res.data) {
     PREFS.pinned = Array.isArray(res.data.pinned) ? res.data.pinned.slice() : [];
     PREFS.seen = res.data.seen && typeof res.data.seen === 'object' ? Object.assign({}, res.data.seen) : {};
+    PREFS.archived = Array.isArray(res.data.archived) ? res.data.archived.slice() : [];   // ATO-1150; absent in an older prefs.json
   }
   PREFS.loaded = true;
   render();
 }
 function savePrefs() {
   if (!BR || !BR.prefsSet) return;
-  BR.prefsSet({pinned:PREFS.pinned.slice(), seen:Object.assign({}, PREFS.seen)}).then((res) => {
+  BR.prefsSet({pinned:PREFS.pinned.slice(), seen:Object.assign({}, PREFS.seen), archived:PREFS.archived.slice()}).then((res) => {
     if (res && res.ok === false) toast('Could not save the sidebar state', res.error || '');
   });
 }

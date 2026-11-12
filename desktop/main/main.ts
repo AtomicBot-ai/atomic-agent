@@ -878,16 +878,22 @@ function noteEngine(answer: unknown, opts: { clears?: boolean; via?: EngineVia }
    file, not a place for one window's view state. So they live in Electron's
    userData as prefs.json, per machine and per viewer, and are honestly empty
    on first run — every historical chat then draws unread until it is opened.
-   Never write this through `atag config set`. */
-type SidebarPrefs = { pinned: string[]; seen: Record<string, number> };
+   Never write this through `atag config set`.
+   ATO-1150: `archived` is the same kind of view state — the chats the viewer
+   archived, hidden from the sidebar's lists. The agent has no archive flag or
+   route, so it lives here too; an older file without it reads as none. */
+type SidebarPrefs = { pinned: string[]; seen: Record<string, number>; archived: string[] };
 const PREFS_PATH = () => join(app.getPath("userData"), "prefs.json");
 
 function coercePrefs(raw: unknown): SidebarPrefs {
-  const out: SidebarPrefs = { pinned: [], seen: {} };
+  const out: SidebarPrefs = { pinned: [], seen: {}, archived: [] };
   if (!raw || typeof raw !== "object") return out;
-  const src = raw as { pinned?: unknown; seen?: unknown };
+  const src = raw as { pinned?: unknown; seen?: unknown; archived?: unknown };
   if (Array.isArray(src.pinned)) {
     for (const id of src.pinned) if (typeof id === "string" && id) out.pinned.push(id);
+  }
+  if (Array.isArray(src.archived)) {
+    for (const id of src.archived) if (typeof id === "string" && id && !out.archived.includes(id)) out.archived.push(id);
   }
   if (src.seen && typeof src.seen === "object") {
     for (const [id, at] of Object.entries(src.seen as Record<string, unknown>)) {
@@ -901,7 +907,7 @@ function readPrefs(): SidebarPrefs {
   try {
     return coercePrefs(JSON.parse(readFileSync(PREFS_PATH(), "utf8")));
   } catch {
-    return { pinned: [], seen: {} };
+    return { pinned: [], seen: {}, archived: [] };
   }
 }
 
