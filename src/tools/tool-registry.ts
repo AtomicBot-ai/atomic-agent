@@ -116,6 +116,17 @@ export interface ToolRegistryOptions {
    * `.env`.
    */
   knownSecrets?: () => readonly KnownSecret[];
+  /**
+   * Runs before every call, with the arguments the tool will get. The
+   * runtime saves what a file tool is about to change here
+   * (`fs-checkpoint-targets.ts`, ATO-1056). It must not throw; a throw
+   * is ignored and the call goes ahead. Absent => nothing runs.
+   */
+  beforeInvoke?: (
+    name: string,
+    args: Record<string, unknown>,
+    ctx: ToolContext,
+  ) => Promise<void>;
 }
 
 export class ToolRegistry {
@@ -124,10 +135,12 @@ export class ToolRegistry {
     | (Pick<ToolOutputSpill, "spill"> & Partial<Pick<ToolOutputSpill, "spilledToolStem">>)
     | undefined;
   private readonly knownSecrets: () => readonly KnownSecret[];
+  private readonly beforeInvoke: ToolRegistryOptions["beforeInvoke"];
 
   constructor(options: ToolRegistryOptions = {}) {
     this.outputSpill = options.outputSpill;
     this.knownSecrets = options.knownSecrets ?? (() => knownSecretsFromEnv());
+    this.beforeInvoke = options.beforeInvoke;
   }
 
   register(definition: ToolDefinition): void {
@@ -178,7 +191,15 @@ export class ToolRegistry {
       // number as "200000", an array as "[\"a.png\"]"). Unwrap those
       // before dispatch; anything that cannot be coerced is passed
       // through untouched so the tool reports its own error.
-      result = await tool.run(coerceToolArgs(name, aliased?.args ?? args), ctx);
+      const callArgs = coerceToolArgs(name, aliased?.args ?? args);
+      if (this.beforeInvoke !== undefined) {
+        try {
+          await this.beforeInvoke(name, callArgs, ctx);
+        } catch {
+          // A hook never stops the call.
+        }
+      }
+      result = await tool.run(callArgs, ctx);
     } catch (err) {
       // Same error object (its class matters to callers), one more line.
       // A message that cannot be set (a getter-only DOMException) is left

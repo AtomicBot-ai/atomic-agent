@@ -16,6 +16,8 @@ import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import type { SessionUsageLedger } from "../../session/usage-meter.js";
 import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
+import { FileCheckpointStore, fileCheckpointsRoot } from "../../tools/os/fs/fs-checkpoint-store.js";
+import { checkpointBeforeInvoke } from "../../tools/os/fs/fs-checkpoint-targets.js";
 import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
@@ -105,6 +107,9 @@ export function createRuntimeToolRegistry(
   const toolRegistry = new ToolRegistry({
     ...(outputSpill ? { outputSpill } : {}),
     knownSecrets: () => runtimeKnownSecrets(getConfig()),
+    // "Roll back here" (ATO-1056): what a file tool is about to change is
+    // saved first, per session, so a chat can be taken back with its files.
+    beforeInvoke: checkpointBeforeInvoke(new FileCheckpointStore(fileCheckpointsRoot(config.paths.stateDir))),
   });
   toolRegistry.register(finishTool);
   toolRegistry.register(replyTool);

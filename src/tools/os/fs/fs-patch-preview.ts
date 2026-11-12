@@ -93,7 +93,8 @@ export async function dryRunFile(
   };
 }
 
-function pickTargetPath(
+/** The path a patched file lands at, before `rootDir` (also read by `fs-checkpoint-targets.ts`). */
+export function pickTargetPath(
   hunkFile: StructuredPatch,
   stripComponents: number,
 ): string {
