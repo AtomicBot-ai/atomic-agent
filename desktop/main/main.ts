@@ -7,7 +7,7 @@
 import "./stdio-guard.js";
 import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKTOP, seedFreshStateDir, shouldSeedFreshStateDir } from "./state-dir-boot.js";
 
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, powerSaveBlocker, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
@@ -117,6 +117,7 @@ import { STARTER_MODEL_ID, starterStillWanted, starterVerdict } from "./starter-
 import { localPickTakenLive, parseRecommendJson, upgradeStillWanted, upgradeVerdict, type UpgradeModel } from "./upgrade-model.js";
 import { cleanRemoteUrl, readRemoteAgent, writeRemoteAgent, type KeyBox } from "./remote-agent.js";
 import { quitsOnLastWindow, readBackgroundPrefs, setStartAtLogin, startsAtLogin, writeBackgroundPrefs, type LoginItemHost } from "./background-mode.js";
+import { blockerWanted, KEEP_AWAKE_MODES, KEEP_AWAKE_POLL_MS, KeepAwakeBlocker, readKeepAwakeMode, writeKeepAwakeMode, type KeepAwakeMode } from "./keep-awake.js";
 import {
   activateProvider,
   agentStarting,
@@ -10618,6 +10619,7 @@ void app.whenReady().then(async () => {
   win.on("closed", () => voice.kill());
   rebuildMenu();
   if (!SMOKE && !FIRST_RUN_PROBE) void syncTray();
+  if (!SMOKE && !FIRST_RUN_PROBE) watchKeepAwake();
   wireIpc(agent);
   wireUpdater();
   watchCoreUpdates();
@@ -10734,6 +10736,12 @@ function rebuildMenu(): void {
       return;
     }
     if (command === "remote:open") { openRemoteConnect(); return; }
+    if (command.startsWith("awake:")) {
+      const mode = command.slice("awake:".length) as KeepAwakeMode;
+      if (KEEP_AWAKE_MODES.includes(mode)) { writeKeepAwakeMode(userData, mode); void syncKeepAwake(); }
+      rebuildMenu();
+      return;
+    }
     if (command === "bg:startAtLogin") {
       // A dev or unpackaged run would register the bare Electron binary, not the app.
       if (!app.isPackaged) { console.error("[desktop] start at login: only a packaged app registers itself"); rebuildMenu(); return; }
@@ -10743,7 +10751,29 @@ function rebuildMenu(): void {
       return;
     }
     send("app:menu", command);
-  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()) });
+  }, { keepRunning: readBackgroundPrefs(userData).keepRunning, startAtLogin: startsAtLogin(loginHost()), keepAwake: readKeepAwakeMode(userData) });
+}
+
+/* ---- ATO-592: Keep Computer Awake (keep-awake.ts) ---- */
+const keepAwakeBlocker = new KeepAwakeBlocker(powerSaveBlocker);
+
+/** Hold or drop the blocker for the mode now and, in While a Task Runs, the agent's running tasks. */
+async function syncKeepAwake(): Promise<void> {
+  const mode = readKeepAwakeMode(app.getPath("userData"));
+  const running = mode === "while-working" && agent && !agent.isRemote ? await agent.runningTaskCount() : null;
+  // Read again: the mode may have changed while the agent answered.
+  const now = readKeepAwakeMode(app.getPath("userData"));
+  keepAwakeBlocker.sync(blockerWanted(now, now === mode ? running : null, agent?.isRemote ?? false));
+}
+
+function watchKeepAwake(): void {
+  void syncKeepAwake();
+  setInterval(() => { void syncKeepAwake(); }, KEEP_AWAKE_POLL_MS).unref();
+  // Woke up: tasks that fell due while the computer slept start now, not at the agent's next tick.
+  powerMonitor.on("resume", () => {
+    if (agent && !agent.isRemote) void agent.wakeTasks();
+    void syncKeepAwake();
+  });
 }
 
 /** The tray icon while Keep Running is on, none while it is off. */
