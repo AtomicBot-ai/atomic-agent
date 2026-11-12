@@ -1046,7 +1046,7 @@ function persistBackendVariantCpu(path: string): void {
         managed: { ...user.localModels.managed, backendVariant: "cpu" },
       },
     };
-    writeUserConfigFileSync(path, next);
+    writeUserConfigFileSync(path, next, { chosen: ["localModels.managed.backendVariant"] });
     resetConfigCache();
     process.stderr.write(
       'recorded backendVariant "cpu" in config.json — set it to "auto" or "vulkan" to try the GPU build again (e.g. after a driver update)\n',
