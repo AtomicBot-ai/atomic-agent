@@ -117,5 +117,15 @@ test('the sidebar wires the projects module: loaded before renderer.js, drawn ab
   assert.match(r, /projectGroups\(PROJECTS\.state, order\.rest, FOLDERS\.state\)/);
   assert.match(r, /folderGroups\(FOLDERS\.state, pg\.rest\)/);
   assert.match(r, /sidebarNavItems\(pane, \{projects: projectsSupported\(\)\}\)/);
-  assert.match(r, /k === 'pnew' \|\| k === 'ptoggle' \|\| k === 'pdelask' \|\| k === 'pdel'/);
+  assert.match(r, /k === 'pnew' \|\| k === 'ptoggle' \|\| k === 'pdelask' \|\| k === 'pdel' \|\| k === 'pedit' \|\| k === 'psave'/);
+  // A new chat New project opened sends its project with the first turn (ATO-42: main files it before the turn).
+  assert.match(r, /BR\.chat\(\[\{role:'user', content:text\}\], session, session \? undefined : projectForNewTurn\(\)\)/);
+  assert.match(r, /S\.overlay === 'pedit'\) html \+= projectEditHTML\(\)/);
+});
+
+test('the Edit project sheet keeps to the store limits and saves name and instructions by id', () => {
+  const src = readFileSync(new URL('../renderer/chat-projects.js', import.meta.url), 'utf8');
+  assert.match(src, /PROJECT_INSTRUCTIONS_MAX = 16000/);
+  assert.match(src, /projectsSave\(\{id: e\.id, name, instructions: e\.instructions\}\)/);
+  assert.match(src, /res && res\.error/, 'the error main returns is shown');
 });

@@ -91,20 +91,21 @@ function projectNameFromDir(dir) {
   return (parts[parts.length - 1] || String(dir || '').trim() || 'Project').slice(0, 80);
 }
 
-/** Whatever the store sent, as {projects: [{id, name, folder}], chats: {sessionId: projectId}}. */
+/** Whatever the store sent, as {projects: [{id, name, folder, instructions}], chats: {sessionId: projectId}},
+    in the store's order (newest first). Ids are main's (`p` + 6..24 of [a-z0-9]). */
 function projectsCoerce(raw) {
   const out = {projects: [], chats: {}};
   const r = raw && typeof raw === 'object' ? raw : {};
   const list = Array.isArray(raw) ? raw : Array.isArray(r.projects) ? r.projects : [];
   const ids = new Set();
   for (const p of list) {
-    // Ids go into data-act attributes (and the remove question's button): plain characters only.
-    if (!p || typeof p.id !== 'string' || !/^[\w.:-]{1,80}$/.test(p.id) || ids.has(p.id)) continue;
+    // Ids go into data-act attributes (and the remove question's button): main's shape only.
+    if (!p || typeof p.id !== 'string' || !/^p[a-z0-9]{6,24}$/.test(p.id) || ids.has(p.id)) continue;
     const folder = typeof p.folder === 'string' ? p.folder : '';
     if (!projectPathKey(folder)) continue;
     const name = typeof p.name === 'string' && p.name.trim() ? p.name.trim() : projectNameFromDir(folder);
     ids.add(p.id);
-    out.projects.push({id: p.id, name, folder});
+    out.projects.push({id: p.id, name, folder, instructions: typeof p.instructions === 'string' ? p.instructions : ''});
   }
   const chats = r.chats && typeof r.chats === 'object' && !Array.isArray(r.chats) ? r.chats : {};
   for (const sid of Object.keys(chats)) if (typeof chats[sid] === 'string' && ids.has(chats[sid])) out.chats[sid] = chats[sid];

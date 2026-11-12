@@ -10,16 +10,21 @@
    - "New project" (a sidebar row, and the plus on the Projects heading) opens
      the system folder picker the workspace chip uses (app:chooseWorkspace,
      for new chats only: the chat on screen keeps its folder), saves a project
-     named after that folder, and opens a new chat there. The chat's id is
-     known once its first turn starts; it is then assigned to the project.
+     named after that folder, and opens a new chat there. That chat's first
+     turn carries the project's id (BR.chat's third argument): main records
+     the chat in the project before the turn starts.
    - The sidebar shows each project with its chats, folding like a chat
      folder. A chat filed in an ATO-1034 chat folder stays in that folder.
+   - Edit (the pencil on a project's header): its name and its instructions,
+     which main hands the agent with every turn of the project's chats.
    - Removing a project leaves its chats (under Chats) and the folder on disk.
 
    Without the store (an older main, or ATO-42 not in this build) nothing here
    is drawn: no row, no heading. */
 
-const PROJECTS = {state: {projects: [], chats: {}}, loaded: false, collapsed: new Set(), newFor: null};
+const PROJECTS = {state: {projects: [], chats: {}}, loaded: false, collapsed: new Set(), newFor: null, edit: null};
+const PROJECT_INSTRUCTIONS_MAX = 16000;
+const PROJECT_NAME_MAX = 80;
 const PROJECTS_COLLAPSED_KEY = 'atomic.projects.collapsed';
 
 try {
@@ -69,25 +74,15 @@ function projectFromSave(res) {
   return projectsCoerce([p]).projects[0] || null;
 }
 
-function projectAssign(sid, pid) {
-  const api = projectsApi();
-  if (!api || typeof api.projectsAssign !== 'function' || !sid) return;
-  PROJECTS.state.chats[sid] = pid;
-  api.projectsAssign({sessionId: sid, projectId: pid}).then((res) => {
-    if (res && res.ok === false) toast('Could not add the chat to the project', res.error || '', 'bad');
-  }, () => {});
-}
-
-/* Called from sidebarChats on every draw: the new chat a "New project" opened
-   got its id (its first turn started), so it joins the project. Opening a chat
-   that was already there first means the person went elsewhere: dropped. */
-function projectsNoteNewChat() {
+/* The project a brand-new chat's first turn opens in (BR.chat's third
+   argument), or undefined. Only the empty chat New project opened: a plain New
+   chat or opening another chat since gives that chat a new transcript
+   (S.log), so the mark is dropped. Read once. */
+function projectForNewTurn() {
   const n = PROJECTS.newFor;
-  if (!n || typeof S === 'undefined' || !S.agentSession) return;
   PROJECTS.newFor = null;
-  if (n.known.has(S.agentSession)) return;
-  if (!PROJECTS.state.projects.some((p) => p.id === n.id)) return;
-  projectAssign(S.agentSession, n.id);
+  if (!n || typeof S === 'undefined' || S.agentSession || S.log !== n.log) return undefined;
+  return PROJECTS.state.projects.some((p) => p.id === n.id) ? n.id : undefined;
 }
 
 /** New project: pick a folder, keep it as a project, open a new chat in it. */
@@ -107,13 +102,11 @@ function projectCreate() {
       try { saved = await api.projectsSave({name: projectNameFromDir(dir), folder: dir}); } catch (e) { saved = {ok: false, error: String(e && e.message || e)}; }
       p = projectFromSave(saved);
       if (!p) { toast('Could not create the project', (saved && saved.error) || '', 'bad'); return; }
-      PROJECTS.state.projects.push(p);
+      PROJECTS.state.projects.unshift(p);   // the store lists newest first
     }
     PROJECTS.collapsed.delete(p.id);
     act('session:new');
-    const known = new Set((typeof SESSIONS !== 'undefined' ? SESSIONS : []).map((s) => s.id));
-    if (typeof PENDING_CHATS !== 'undefined') for (const id of PENDING_CHATS.keys()) known.add(id);
-    PROJECTS.newFor = {id: p.id, known};
+    PROJECTS.newFor = {id: p.id, log: S.log};
     render();
   });
 }
@@ -131,6 +124,76 @@ function projectRemove(id) {
   }, () => {});
 }
 
+/* Edit project: a sheet with the name and the instructions. What is typed is
+   kept in PROJECTS.edit as it is typed (the listener below), and drawn into
+   the fields only when the sheet itself changes (saving, an error), so a
+   repaint never throws typing away. */
+function projectEditOpen(id) {
+  const p = PROJECTS.state.projects.find((x) => x.id === id);
+  if (!p) return;
+  const instructions = p.instructions || '';
+  PROJECTS.edit = {id, name: p.name, instructions, shownName: p.name, shownInstructions: instructions, error: null, saving: false};
+  S.overlay = 'pedit';
+  render();
+  const f = typeof document !== 'undefined' && document.getElementById('pedit-name');
+  if (f) f.focus();
+}
+
+function projectEditRedraw(patch) {
+  const e = PROJECTS.edit;
+  if (!e) return;
+  Object.assign(e, patch, {shownName: e.name, shownInstructions: e.instructions});
+  S.overlay = 'pedit';
+  render();
+}
+
+async function projectEditSave() {
+  const e = PROJECTS.edit, api = projectsApi();
+  if (!e || !api || e.saving) return;
+  const name = String(e.name || '').replace(/\s*[\r\n]+\s*/g, ' ').trim();
+  if (!name) { projectEditRedraw({error: 'A project name cannot be empty'}); return; }
+  if ([...name].length > PROJECT_NAME_MAX) { projectEditRedraw({error: 'A project name is at most ' + PROJECT_NAME_MAX + ' characters'}); return; }
+  if (e.instructions.length > PROJECT_INSTRUCTIONS_MAX) { projectEditRedraw({error: 'Instructions are at most ' + PROJECT_INSTRUCTIONS_MAX + ' characters'}); return; }
+  projectEditRedraw({saving: true, error: null});
+  let res = null;
+  try { res = await api.projectsSave({id: e.id, name, instructions: e.instructions}); } catch (err) { res = {ok: false, error: String(err && err.message || err)}; }
+  if (PROJECTS.edit !== e) return;   // closed meanwhile
+  const p = projectFromSave(res);
+  if (!p) { projectEditRedraw({saving: false, error: (res && res.error) || 'The project was not saved'}); return; }
+  const i = PROJECTS.state.projects.findIndex((x) => x.id === p.id);
+  if (i >= 0) PROJECTS.state.projects[i] = p;
+  PROJECTS.edit = null;
+  if (S.overlay === 'pedit') S.overlay = null;
+  render();
+}
+
+/** The Edit project sheet (S.overlay === 'pedit'), on the overlay layer. */
+function projectEditHTML() {
+  const e = PROJECTS.edit;
+  if (!e) return '';
+  const p = PROJECTS.state.projects.find((x) => x.id === e.id);
+  const body = '<label class="sd-cap" for="pedit-name">Name</label>'
+    + '<input id="pedit-name" class="tk-inp" maxlength="' + PROJECT_NAME_MAX + '" value="' + esc(e.shownName) + '"' + (e.saving ? ' disabled' : '') + '>'
+    + (p ? '<p class="sd-cap mono" title="' + esc(p.folder) + '">' + esc(p.folder) + '</p>' : '')
+    + '<label class="sd-cap" for="pedit-instr">Instructions for every chat in this project</label>'
+    + '<textarea id="pedit-instr" class="tk-inp sd-json" rows="8" maxlength="' + PROJECT_INSTRUCTIONS_MAX + '"'
+      + ' placeholder="For example: answer in English, run the tests before you say it works."' + (e.saving ? ' disabled' : '') + '>' + esc(e.shownInstructions) + '</textarea>'
+    + (e.error ? '<div class="tk-notice tk-notice--red">' + ic('alert') + '<span class="grow">' + esc(e.error) + '</span></div>' : '');
+  return sheet('Edit project', body,
+    '<span class="grow"></span><button class="btn btn-s sm" data-act="close">Cancel</button>'
+    + '<button class="btn btn-p sm" data-act="psave:"' + (e.saving ? ' disabled' : '') + '>' + (e.saving ? '<span class="tk-spin"></span>' : '') + 'Save</button>',
+    'sheet-project');
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('input', (ev) => {
+    const e = PROJECTS.edit, t = ev.target;
+    if (!e || !t) return;
+    if (t.id === 'pedit-name') e.name = t.value;
+    else if (t.id === 'pedit-instr') e.instructions = t.value;
+  });
+}
+
 /** The act verbs this file owns (renderer.js act() hands them over). */
 function projectAct(k, v) {
   if (k === 'pnew') { projectCreate(); return true; }
@@ -142,6 +205,8 @@ function projectAct(k, v) {
     render(); return true;
   }
   if (k === 'pdel') { projectRemove(v); return true; }
+  if (k === 'pedit') { projectEditOpen(v); return true; }
+  if (k === 'psave') { projectEditSave(); return true; }
   return false;
 }
 
@@ -160,6 +225,7 @@ function projectsSidebarHTML(groups) {
           + '<span class="sb-fic">' + ic('folder') + '</span>'
           + '<span class="sb-fname">' + esc(p.name) + '</span>'
           + (g.rows.length ? '<span class="ct tnum">' + g.rows.length + '</span>' : '')
+          + '<span class="sesmore iconbtn" data-act="pedit:' + esc(p.id) + '" title="Edit project" aria-label="Edit project" role="button">' + ic('edit') + '</span>'
           + '<span class="sesmore iconbtn" data-act="pdelask:' + esc(p.id) + '" title="Remove project" aria-label="Remove project" role="button">' + ic('x') + '</span>'
         + '</button>'
         + (shut ? '' : g.rows.length ? g.rows.map(chatRow).join('') : '<div class="sb-empty sb-fempty">No chats yet</div>')

@@ -1261,7 +1261,7 @@ if (typeof document !== 'undefined') {
     const t = e.target instanceof Element ? e.target : null;
     if (!t || t.closest('[data-act="toggle:sidebar"]')) return;
     const inside = !!t.closest('#sidebar');
-    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-more], input, textarea')) return;
+    if (inside && t.closest('.wschip, [data-sesmenu], [data-fmenu], [data-ftoggle], [data-act^="fnew:"], [data-act^="ptoggle:"], [data-act^="pdelask:"], [data-act^="pedit:"], [data-more], input, textarea')) return;
     if (!inside || t.closest('#sidebar [data-ses], #sidebar [data-task], #sidebar [data-act]')) setTimeout(closeSidebarDrawer, 0);
   }, true);
   document.addEventListener('keydown', (e) => {
@@ -2499,7 +2499,6 @@ function sidebarChats() {
      `visible` is every row on screen, for nameVisibleSessions. */
   /* ATO-1146: chats in a project are drawn under it (chat-projects.js); a chat
      a chat folder holds stays in that folder (chat-list.js projectGroups). */
-  projectsNoteNewChat();
   const pg = projectGroups(PROJECTS.state, order.rest, FOLDERS.state);
   const fg = folderGroups(FOLDERS.state, pg.rest);
   const all = order.pinned.concat(fg.loose);
@@ -5219,6 +5218,7 @@ function overlaysHTML() {
   if (S.overlay === 'fmenu' || S.overlay === 'fpick') html += folderMenuHTML();   // ATO-1034 (chat-folders.js)
   if (S.overlay === 'rename') html += renameHTML();   // ATO-455 (chat-rename.js)
   if (S.overlay === 'handoff') html += handoffSheetHTML();   // ATO-1156 (handoff.js)
+  if (S.overlay === 'pedit') html += projectEditHTML();   // ATO-1146 (chat-projects.js)
   if (SEL.open) html += selectorHTML();
   if (S.overlay === 'sessions') html += sessionSheet();
   if (S.overlay === 'shortcuts') html += shortcutsSheet();
@@ -7355,7 +7355,7 @@ function act(a) {
                            f.collapsed = !f.collapsed; saveFolders(); render(); nameVisibleSessions(); return; }
   if (k === 'fnew')      { close(); folderCreate(v || null); return; }
   // ATO-1146: projects (chat-projects.js): New project, fold, remove.
-  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel') { close(); projectAct(k, v); return; }
+  if (k === 'pnew' || k === 'ptoggle' || k === 'pdelask' || k === 'pdel' || k === 'pedit' || k === 'psave') { close(); projectAct(k, v); return; }
   if (k === 'fautosort') { FOLDERS.state.autoSort = !FOLDERS.state.autoSort; saveFolders(); foldersAfterSessions(); render(); return; }
   if (k === 'frename')   { close(); render(); renameStart(v, 'folder'); return; }
   if (k === 'fdel')      { close(); const f = folderById(FOLDERS.state, v);
@@ -9794,7 +9794,8 @@ function startLiveTurn(text) {
   // Backlog 25: read once. The person can open another chat before the
   // agent answers, and the turn still runs in the session it was sent with.
   const session = S.agentSession || undefined;
-  BR.chat([{role:'user', content:text}], session).then((res) => {
+  // ATO-1146: a new chat New project opened says its project, so main files it there before the turn.
+  BR.chat([{role:'user', content:text}], session, session ? undefined : projectForNewTurn()).then((res) => {
     if (!res || !res.ok) {
       S.busy = false; clearInterval(ticker);
       S.log.push({id:nid(), k:'system', text:'could not start the turn: ' + esc((res && res.error) || 'unknown error')});
