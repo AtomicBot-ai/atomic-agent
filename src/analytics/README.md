@@ -18,3 +18,10 @@ A file written before the desktop flag existed has only `appInstalledSent`; it r
 `first_message_sent` and `model_configured` are split the same way (ATO-1262): `firstMessageSent` / `modelConfiguredSent` for the terminal and `firstMessageSentDesktop` / `modelConfiguredSentDesktop` for the desktop. The store takes the process's surface at construction (`runtime-observability.ts`), so callers need not pass it. A file from before the split reads as "terminal reported, desktop not", so on a machine where the desktop already sent its first message on an older build, it sends `first_message_sent` and `model_configured` once more after the upgrade.
 
 Writes merge the file's current flags first (a flag only goes from `false` to `true`) and keep keys this build does not know, because both surfaces may have the file open at once. Older builds rewrite the file with only the keys they know, so an older terminal can drop `appInstalledSentDesktop`; the desktop then reports once more.
+
+## Team and CI tags
+
+Two tags mark runs that are not a person at a keyboard. Neither one stops events; `ATOMIC_AGENT_ANALYTICS=off` (or `DO_NOT_TRACK=1`) is the only way to send nothing.
+
+- `test_run: true` on the event and `atomic_team: true` on the person: our own machines and test runs, from `ATOMIC_AGENT_TEAM=1` or a `~/.atomic-agent-team` file ([read-team-run-marker.ts](read-team-run-marker.ts), ATO-1247). Left out of the metrics.
+- `automation: true` on the event and on the person: the process runs on a CI server, detected from the usual CI variables (`CI`, `GITHUB_ACTIONS`, `GITLAB_CI`, `JENKINS_URL`, ...; [read-ci-environment.ts](read-ci-environment.ts), ATO-272). Counted as use (decision 12.10.2026: only our own runs are left out), tagged so a dashboard can split it. Only the boolean is sent, never the CI system's name or job ids.
