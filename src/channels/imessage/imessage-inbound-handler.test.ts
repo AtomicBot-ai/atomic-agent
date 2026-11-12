@@ -70,6 +70,7 @@ describe("handleImessageMessage", () => {
     await handleImessageMessage(msg(), t.ctx);
     expect(t.runTurn).toHaveBeenCalledTimes(1);
     expect(t.runTurn.mock.calls[0]![1]).toBe("hello");
+    expect(t.runTurn.mock.calls[0]![2]).toMatchObject({ origin: "imessage" });
     expect(t.sent).toEqual([{ target: { kind: "handle", handle: OWNER }, text: "hi from the agent" }]);
     expect(t.ensure).toHaveBeenCalledWith("s-1", 42, { kind: "handle", handle: OWNER });
     // No phone number lands in persisted session metadata.

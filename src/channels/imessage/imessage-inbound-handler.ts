@@ -184,7 +184,7 @@ async function dispatchToRuntime(
     if (event.type === "loop_failed") failure = `${event.category}: ${event.error.message}`;
   };
   try {
-    await ctx.runtime.runTurn(session, text, { signal: controller.signal, eventHook });
+    await ctx.runtime.runTurn(session, text, { origin: "imessage", signal: controller.signal, eventHook });
   } catch (err) {
     failure = err instanceof Error ? err.message : String(err);
   } finally {

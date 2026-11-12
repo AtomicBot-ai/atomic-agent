@@ -14,6 +14,7 @@ export type TurnOrigin =
   | "scheduler"
   | "telegram"
   | "discord"
+  | "imessage"
   /**
    * A fusion worker turn, submitted by the orchestrator turn on the
    * parent session — not a person sending a message. Treated like
