@@ -38,4 +38,5 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
+| `seo-rank-report/` | Weekly Telegram report of Google positions for a keyword list, with week-over-week moves; history in local SQLite (`scripts/rank_history.py`) | `python3`; data from Google Search Console (Composio or signed-in browser), or the user's own DataForSEO key / Ahrefs or SE Ranking MCP |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
