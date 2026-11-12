@@ -132,6 +132,25 @@ describe("PROVIDER_PRESETS", () => {
     expect(cloudPresetForUrl("not a url")).toBeUndefined();
   });
 
+  it("offers Lemonade and Foundry Local as keyless local servers", () => {
+    // ATO-626. Lemonade (AMD) listens on a fixed default port; Foundry
+    // Local picks its port at start, so it asks for the URL and has no
+    // cloud host pattern to match.
+    const lemonade = findProviderPreset("lemonade");
+    expect(lemonade?.local).toBe(true);
+    expect(lemonade?.baseUrl).toBe("http://localhost:13305");
+    expect(lemonade?.envVar).toBe("LEMONADE_API_KEY");
+    expect(lemonade?.perAccountEndpoint).toBeUndefined();
+    const foundry = findProviderPreset("foundry-local");
+    expect(foundry?.local).toBe(true);
+    expect(foundry?.baseUrl).toBe("http://localhost:5273");
+    expect(foundry?.perAccountEndpoint?.hint).toMatch(/foundry server status/);
+    expect(foundry?.perAccountEndpoint?.hostPattern).toBeUndefined();
+    // Local presets never classify a URL as a cloud service.
+    expect(cloudPresetForUrl("http://localhost:13305")).toBeUndefined();
+    expect(cloudPresetForUrl("http://localhost:5273")).toBeUndefined();
+  });
+
   it("marks LM Studio as local", () => {
     expect(findProviderPreset("lmstudio")?.local).toBe(true);
   });

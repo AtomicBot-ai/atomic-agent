@@ -200,6 +200,22 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     note: "open-weight models, function calling",
   },
   {
+    id: "foundry-local",
+    label: "Foundry Local",
+    // Microsoft's on-device server (Windows, macOS; NPU/GPU/CPU through
+    // ONNX Runtime). It serves `/v1/models` and `/v1/chat/completions`
+    // with no key, but picks a new port each time it starts unless told
+    // otherwise (`foundry server start --port <n>`), so the URL is asked
+    // for. 5273 is the port Microsoft's own examples show.
+    baseUrl: "http://localhost:5273",
+    envVar: "FOUNDRY_LOCAL_API_KEY",
+    local: true,
+    note: "Microsoft's on-device server; no API key needed",
+    perAccountEndpoint: {
+      hint: "Use the URL `foundry server status` prints; the port changes on every start",
+    },
+  },
+  {
     id: "groq",
     label: "Groq",
     baseUrl: "https://api.groq.com/openai",
@@ -220,6 +236,19 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
     envVar: "LMSTUDIO_API_KEY",
     local: true,
     note: "the server LM Studio runs on your machine; no API key needed",
+  },
+  {
+    id: "lemonade",
+    label: "Lemonade (local)",
+    // AMD's local server (llama.cpp, ROCm, Vulkan, Ryzen AI NPU). Default
+    // port 13305 since its 2026 releases (older ones used 8000); it serves
+    // the OpenAI API under both `/v1` and `/api/v1`. A key is checked only
+    // when the server was started with LEMONADE_API_KEY, the same variable
+    // this preset reads.
+    baseUrl: "http://localhost:13305",
+    envVar: "LEMONADE_API_KEY",
+    local: true,
+    note: "the server Lemonade runs on your machine (AMD GPUs and NPUs); no API key needed",
   },
   {
     id: "mistral",
