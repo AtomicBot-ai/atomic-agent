@@ -40,6 +40,17 @@ Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working f
 
 A page on a blocked host is never captured. A capture is discarded, never saved, when the page or any of its frames is on a blocked host by the time the pixels are taken (a racing redirect, a blocked iframe).
 
+## Site tools (WebMCP)
+
+`browser.site_tools { action: "list" | "call", name?, arguments?, timeoutMs? }` (`site-tools.ts`, ATO-521): tools the open page declares for agents through WebMCP (`document.modelContext.registerTool`, from the W3C Web Machine Learning draft, or the older `navigator.modelContext` with `provideContext` / `registerTool` / `unregisterTool` / `clearContext`). One agent tool covers every site's tools.
+
+- An init script (`site-tools-in-page.ts`) records the tools a page registers, before the page's own scripts run. A browser with its own `modelContext` keeps working (the methods are wrapped and still called); a browser without one gets a small stand-in, so a site written for WebMCP works today. In the agent's own browser it is installed on every page; in your own Chrome only on the agent's tabs. A page opened before the script was installed is asked with the browser's own `getTools` / `executeTool`, then Chrome's testing API (`navigator.modelContextTesting`).
+- Main frame only: an iframe (an ad, a widget) cannot offer tools.
+- Limits (`site-tools-sanitize.ts`): 32 tools shown (64 read), names `[A-Za-z0-9_.:-]` up to 64 characters, schema JSON up to 8000 characters, description up to 1000, arguments up to 16000 characters of JSON, answer up to 20000 characters, timeout 30 s by default (1–120 s). Tools that break a limit are listed as skipped with the reason.
+- `list` is a page read: a blocked page, or one framing a blocked site, is refused; in your own Chrome a site not opened this session asks first (`gate-page-read.ts`).
+- `call` re-reads the list, checks the arguments against the declared schema (required keys, top-level types, enums, `additionalProperties: false`), then asks as `browser_site_tool` (level 4 beside `browser_commit`; "allow in this chat" covers that one site, `src/approval/site-grants.ts`; never "always"). In your own Chrome it asks as `browser_secret`, every time. The site's `readOnlyHint` is shown, never trusted: every call asks. An answer is thrown away when the page moved to a blocked site.
+- Descriptions, schemas and answers are the site's own text and are framed as outside data, like a page (`untrustedOutput`).
+
 ## Page views
 
 `browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):

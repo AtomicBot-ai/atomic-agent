@@ -30,6 +30,7 @@ const ALL_CATEGORIES: readonly ApprovalCategory[] = [
   "browser_commit",
   "browser_secret",
   "browser_offsite",
+  "browser_site_tool",
   "trust_config",
   "state_secret",
   "email",
@@ -120,6 +121,8 @@ describe("approval ladder", () => {
       browser_secret: 5,
       // Navigation outside a non-empty allow-list: the `http` rung.
       browser_offsite: 3,
+      // A site's own WebMCP tool: the same rung as a submit.
+      browser_site_tool: 4,
       trust_config: 5,
       // The read-side twin of trust_config (ATO-877).
       state_secret: 5,

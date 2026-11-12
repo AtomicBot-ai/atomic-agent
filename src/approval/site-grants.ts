@@ -4,11 +4,12 @@
  * "Allow in this chat" on a form submit at site A used to grant the
  * whole `browser_commit` category, so every later submit, delete or
  * post on any other site ran unasked, including one a prompt-injected
- * page steered the agent to. For the two browser categories whose
+ * page steered the agent to. For the browser categories whose
  * requests name the site they act on (`affectedResources: [host]`),
  * a session grant now covers that one host only: a grant on
  * `example.com` does not cover `mail.example.com`, `example.org` or
- * any other host, and those ask again.
+ * any other host, and those ask again. A site's own WebMCP tool
+ * (`browser_site_tool`, ATO-521) is granted the same way.
  *
  * Hosts match exactly (case and trailing dots aside), so a subdomain is
  * a separate site. A request of these categories that names no single
@@ -21,6 +22,7 @@ import type { ApprovalCategory } from "./approval-level.js";
 const SITE_SCOPED: ReadonlySet<ApprovalCategory> = new Set<ApprovalCategory>([
   "browser_commit",
   "browser_offsite",
+  "browser_site_tool",
 ]);
 
 export function isSiteScopedCategory(category: ApprovalCategory): boolean {

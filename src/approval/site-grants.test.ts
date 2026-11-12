@@ -121,6 +121,25 @@ describe("per-site browser grants", () => {
     expect(canGrantAlways(request)).toBe(false);
   });
 
+  it("a site's own WebMCP tool is granted per site too, apart from submits (ATO-521)", async () => {
+    const { gate, prompts } = grantingGate();
+    const siteTool = (host: string) => ({
+      sessionId: "s",
+      tool: "browser.site_tools",
+      category: "browser_site_tool" as const,
+      reason: "site tool",
+      affectedResources: [host],
+    });
+    await gate.request(siteTool("shop.example"));
+    await gate.request(siteTool("shop.example"));
+    expect(prompts).toHaveLength(1);
+    await gate.request(siteTool("evil.example"));
+    expect(prompts).toHaveLength(2);
+    await gate.request(click("shop.example"));
+    expect(prompts).toHaveLength(3);
+    expect(canGrantAlways({ approvalId: "x", workdir: "/tmp/p", ...siteTool("shop.example") })).toBe(false);
+  });
+
   it("siteGrantHost needs exactly one host", () => {
     expect(siteGrantHost({ category: "browser_commit", affectedResources: ["a.example", "b.example"] })).toBeNull();
     expect(siteGrantHost({ category: "browser_commit", affectedResources: [""] })).toBeNull();

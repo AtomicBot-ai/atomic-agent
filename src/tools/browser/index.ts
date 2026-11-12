@@ -9,6 +9,7 @@ import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
 import { buildBrowserScreenshotTool } from "./screenshot.js";
+import { buildBrowserSiteToolsTool } from "./site-tools.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
@@ -27,6 +28,10 @@ export type {
   ScrollInput,
   ScrollResult,
   SearchInput,
+  SiteToolCallInput,
+  SiteToolCallResult,
+  SiteToolsListInput,
+  SiteToolsListing,
   TabInfo,
   TabsInput,
   TypeInput,
@@ -111,6 +116,7 @@ export {
   buildBrowserScreenshotTool,
 } from "./screenshot.js";
 export type { BrowserScreenshotDeps } from "./screenshot.js";
+export { BROWSER_SITE_TOOLS_TOOL, buildBrowserSiteToolsTool } from "./site-tools.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
@@ -135,5 +141,6 @@ export function buildBrowserTools(
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
+    buildBrowserSiteToolsTool(backend, dangerous, policy),
   ];
 }
