@@ -76,7 +76,7 @@ export async function liveBrowser() {
  * throwaway HOME that has no login keychain, and a Chrome started there can
  * block on its keychain lookup when it first reads cookies, so navigation
  * hangs until page.goto times out (the likely cause of L18's 30 s timeout on
- * the MBP, 12.11: the page request never reached the trap's profile history).
+ * the MBP, 12.11: Chrome's profile kept no trace of the page's URL).
  * Playwright adds the same flag on macOS for the same reason. The product's
  * own launch is unchanged; this only exists in the test tier.
  */
