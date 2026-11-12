@@ -17,13 +17,22 @@
  * platform's yml must be there, every file a yml names must be there next to
  * it, and the Windows yml must list both arches.
  *
+ * When the folder holds a `SHA256SUMS.txt` ("<sha256>  <name>" lines, the
+ * format the desktop release page uses), every file it lists must be in the
+ * folder with that hash, and every feed file must be listed (ATO-685).
+ * `--require-sums` makes a missing `SHA256SUMS.txt` a problem too; the
+ * desktop-feed workflow passes it. A `.zip` or `.exe` without its `.blockmap`
+ * is a warning only: the update still works, as a full download.
+ *
  * Usage (desktop/; no dependencies, so it runs without `npm ci`):
- *   node scripts/feed-files.mjs <folder> [--channel stable]
+ *   node scripts/feed-files.mjs <folder> [--channel stable] [--require-sums] [--json]
  *
  * It prints the files to upload, installers first and the `.yml` files last,
- * as two `gh release upload` lines. Exit 1 with the list of problems when the
- * folder is not a complete feed.
+ * as two `gh release upload` lines (with `--json`: one JSON object
+ * `{ uploadFirst, uploadLast, warnings }` for a workflow to read). Exit 1 with
+ * the list of problems when the folder is not a complete feed.
  */
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -97,31 +106,92 @@ export function checkFeed(files, read, channel = "stable") {
     problems.push(`the update files carry different versions: ${[...versions].map(([f, v]) => `${f}=${v}`).join(", ")}`);
   }
 
+  const warnings = [];
+  for (const name of installers) {
+    if (/\.(zip|exe)$/.test(name) && !present.has(`${name}.blockmap`)) {
+      warnings.push(`${name} has no .blockmap: updates download the whole file`);
+    }
+  }
+  if (present.has(SUMS)) installers.add(SUMS);
+
   return {
     problems,
+    warnings,
     uploadFirst: [...installers].sort(),
     uploadLast: Object.values(ymls).filter((y) => present.has(y)),
   };
 }
 
+export const SUMS = "SHA256SUMS.txt";
+
+/** "<sha256>  <name>" lines (sha256sum's format, `*` for binary mode allowed) to a Map name -> hash. */
+export function parseSums(text) {
+  const sums = new Map();
+  const bad = [];
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const m = /^([0-9a-fA-F]{64})\s+\*?(\S.*?)\s*$/.exec(line);
+    if (m) sums.set(m[2], m[1].toLowerCase());
+    else bad.push(line);
+  }
+  return { sums, bad };
+}
+
+/**
+ * Check a folder's SHA256SUMS.txt against its files (ATO-685). `feedFiles` are
+ * the files the feed uploads (checkFeed's uploadFirst + uploadLast, without
+ * the sums file itself); `hash(name)` returns a file's sha256 in hex.
+ */
+export function checkSums(files, sumsText, feedFiles, hash) {
+  const present = new Set(files);
+  const problems = [];
+  const { sums, bad } = parseSums(sumsText);
+  for (const line of bad) problems.push(`${SUMS}: not a "<sha256>  <name>" line: ${line}`);
+  for (const [name, digest] of sums) {
+    if (!present.has(name)) problems.push(`${SUMS}: lists ${name}, which is not in the folder`);
+    else if (hash(name) !== digest) problems.push(`${SUMS}: ${name} does not match its sha256`);
+  }
+  for (const name of feedFiles) {
+    if (name === SUMS || name.endsWith(".yml") || name.endsWith(".blockmap")) continue;
+    if (!sums.has(name)) problems.push(`${SUMS}: does not list ${name}`);
+  }
+  return problems;
+}
+
 function main(argv) {
   let channel = "stable";
+  let requireSums = false;
+  let json = false;
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--channel") channel = argv[++i] ?? "";
+    else if (argv[i] === "--require-sums") requireSums = true;
+    else if (argv[i] === "--json") json = true;
     else rest.push(argv[i]);
   }
   if (rest.length !== 1) {
-    console.error("usage: node scripts/feed-files.mjs <folder> [--channel stable]");
+    console.error("usage: node scripts/feed-files.mjs <folder> [--channel stable] [--require-sums] [--json]");
     return 2;
   }
   const dir = resolve(rest[0]);
   const files = readdirSync(dir);
-  const { problems, uploadFirst, uploadLast } = checkFeed(files, (name) => readFileSync(join(dir, name), "utf8"), channel);
+  const read = (name) => readFileSync(join(dir, name), "utf8");
+  const { problems, warnings, uploadFirst, uploadLast } = checkFeed(files, read, channel);
+  if (files.includes(SUMS)) {
+    const hash = (name) => createHash("sha256").update(readFileSync(join(dir, name))).digest("hex");
+    problems.push(...checkSums(files, read(SUMS), [...uploadFirst, ...uploadLast], hash));
+  } else if (requireSums) {
+    problems.push(`${SUMS} is missing`);
+  }
+  for (const w of warnings) console.error(`feed-files: warning: ${w}`);
   if (problems.length > 0) {
     console.error(`feed-files: ${dir} is not a complete ${channel} feed:`);
     for (const p of problems) console.error(`  - ${p}`);
     return 1;
+  }
+  if (json) {
+    console.log(JSON.stringify({ uploadFirst, uploadLast, warnings }));
+    return 0;
   }
   const quote = (names) => names.map((n) => JSON.stringify(n)).join(" ");
   console.log(`# ${dir}: complete ${channel} feed. Installers first, the .yml files last:`);
