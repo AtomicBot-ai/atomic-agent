@@ -31,6 +31,8 @@ Read README.md and ../runtime/docs/lifecycle.md for session/stream/steering chan
 
 Step labels in history (ATO-1382): `GET /api/sessions/{id}` adds `done_line` to every `assistant_tool_call` row, built from the stored name and args with the same `describeToolCall` the live `tool_progress.done_line` uses, so a reopened chat reads its steps exactly as they read while the turn ran. It is computed per answer and never stored.
 
+[Export route](route-session-export.ts) (ATO-1054): `GET /api/sessions/{id}/export?format=markdown|html|docx[&tools=0]` answers `{ id, format, filename, mimeType, encoding, content }` (`utf8` text, or `base64` for DOCX), built by [exportChat](../session/chat-export-render.ts). PDF is printed by the client from the `html` format. `400` for another format, `404` for an unknown id.
+
 [Rename route](route-session-title.ts): `PATCH /api/sessions/{id}` with `{ title }` (trimmed, 1-120 characters, one line; `400` otherwise, `404` for an unknown id) stores the operator's title through `SessionStore.renameSession`. The title is stamped as user-set, so the session namer never replaces it and a turn already running cannot write an older copy back over it.
 
 `usage` on `/v1/chat/completions` (the body, the extensions-only `usage` frame) reports the tokens every LLM call of the turn reported, summed by the runtime's turn usage meter (`RunTurnResult.usage`; a local llama-server counts by its timings), and zeros when none did. A streaming request with `stream_options.include_usage: true` gets OpenAI's extra chunk before `data: [DONE]`: empty `choices` and the turn's `usage`; every chunk before it then carries `usage: null`, as OpenAI's do ([builders](openai-chunks.ts)).
