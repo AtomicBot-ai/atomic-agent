@@ -3,6 +3,8 @@ import {
   ApprovalDeniedError,
   requireApproval,
 } from "../../approval/dangerous-tool.js";
+import { resolve as resolvePath } from "node:path";
+import { isInside } from "../../approval/fanout-scope.js";
 import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -148,6 +150,30 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * written and `resume` is refused.
    */
   runCheckpoints?: FusionRunStore;
+  /**
+   * The agent's own state directory (`config.paths.stateDir`, usually
+   * `~/.atomic-agent`). A fan-out whose write scope lies inside it is
+   * refused before the operator is asked (ATO-1267): workers have no
+   * business there, and one yes would cover every file the agent keeps
+   * for itself. Absent (tests, embedders), no such check.
+   */
+  agentStateDir?: string;
+}
+
+/**
+ * The scope directories that sit inside the agent's state directory,
+ * or the state directory itself. A scope that merely contains it (the
+ * home directory, say) is not refused here: the per-file trust-surface
+ * guard already keeps config.json, .env, rules, hooks and plugins out
+ * of any fan-out grant.
+ */
+export function scopeInsideStateDir(
+  writeScope: readonly string[],
+  stateDir: string | undefined,
+): string[] {
+  if (stateDir === undefined || stateDir.length === 0) return [];
+  const root = resolvePath(stateDir);
+  return writeScope.filter((dir) => isInside(root, resolvePath(dir)));
 }
 
 function error(
@@ -447,6 +473,16 @@ export function buildFusionDelegateTool(
       // operator is asked here instead, once, with the task list and the
       // directory in front of them.
       const writeScope = resolveFanoutScope(parsed.tasks, ctx.workingDir);
+      // Never into the agent's own state directory (ATO-1267).
+      const intoState = scopeInsideStateDir(writeScope, deps.agentStateDir);
+      if (intoState.length > 0) {
+        return error(
+          `fusion.delegate did not run: the tasks would write in the agent's own state directory (${intoState.join(", ")}). ` +
+            "Workers cannot write there. Name a project directory for the work instead; " +
+            "if the user really wants a change to the agent's own files, tell them, since only they can make it.",
+          { field: "tasks", reason: "agent-state-dir", scope: intoState },
+        );
+      }
       // A turn is one job. An orchestrator that reviews and re-delegates
       // runs five fan-outs to build one library, and asking the same
       // question five times is attrition, not consent. The operator's
