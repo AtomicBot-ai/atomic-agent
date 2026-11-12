@@ -5,6 +5,7 @@ import {
   assertLinuxArm64Glibc,
   detectGlibcVersion,
 } from "./linux-arm64-backend-variant.js";
+import { detectLinuxX64BackendAsset } from "./linux-x64-backend-variant.js";
 import {
   resolvePlatformAsset,
   WINDOWS_ARM64_BACKEND_ASSET,
@@ -32,10 +33,11 @@ export const WINDOWS_BACKEND_ASSETS = {
 /**
  * Operator-facing values for `localModels.managed.backendVariant`.
  * `"auto"` keeps the nvidia-smi driven detection; the rest pin one of
- * the Windows zips outright (no probe). Meaningful on win32 x64 only —
- * macOS, Linux x64, Linux arm64 and Windows arm64 each publish a single
- * asset, so the preference has nothing to choose between and is ignored
- * there.
+ * the Windows zips outright (no probe). Meaningful on win32 x64 only.
+ * macOS, Linux arm64 and Windows arm64 each publish a single asset, so the
+ * preference has nothing to choose between and is ignored there; Linux x64
+ * (ATO-619) picks its build by detection alone
+ * (`linux-x64-backend-variant.ts`), so the preference is ignored there too.
  */
 export const BACKEND_VARIANT_PREFERENCES = [
   "auto",
@@ -352,9 +354,10 @@ export function resetWindowsBackendAssetCache(): void {
 
 /**
  * Resolve the platform asset for an actual download. Identical to
- * `resolvePlatformAsset` everywhere but Windows, where it swaps the
- * default Vulkan `assetName` for the CUDA build when a compatible
- * NVIDIA driver is present (see `selectWindowsBackendAsset`).
+ * `resolvePlatformAsset` everywhere but Windows x64 and Linux x64, where
+ * it swaps the default Vulkan `assetName` for the CUDA build when a
+ * compatible NVIDIA driver is present (see `selectWindowsBackendAsset`;
+ * on Linux also ROCm, see `selectLinuxX64BackendAsset`).
  * `binaryName` is unchanged within a platform, so install paths and
  * `isBackendDownloaded` stay stable.
  *
@@ -381,6 +384,10 @@ export function resolveDownloadAsset(
     return base;
   }
   if (base.platform === "win32" && base.arch === "arm64") return base;
+  // ATO-619: CUDA or ROCm when the machine can run it, as Atomic Core picks.
+  if (base.platform === "linux" && base.arch === "x64") {
+    return { ...base, assetName: detectLinuxX64BackendAsset() };
+  }
   if (base.platform !== "win32") return base;
   return { ...base, assetName: detectWindowsBackendAsset() };
 }

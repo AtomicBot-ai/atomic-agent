@@ -3,16 +3,20 @@ import {
   accessSync,
   chmodSync,
   constants,
+  copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import JSZip from "jszip";
 
@@ -50,7 +54,8 @@ function findFileByName(root: string, name: string): string | null {
       const full = join(cur, entry);
       let st;
       try {
-        st = statSync(full);
+        // lstat: a symlink (ATO-619) is never walked into.
+        st = lstatSync(full);
       } catch {
         continue;
       }
@@ -76,7 +81,10 @@ function moveContentsFlat(from: string, to: string): void {
     const entries = readdirSync(dir);
     for (const entry of entries) {
       const src = join(dir, entry);
-      const st = statSync(src);
+      // lstat, not stat: a library symlink (`libcudart.so.12` ->
+      // `libcudart.so.12.4.127`) moves as a link, and stat would throw
+      // once its target had already been moved (ATO-619).
+      const st = lstatSync(src);
       if (st.isDirectory()) {
         walk(src);
         continue;
@@ -87,7 +95,12 @@ function moveContentsFlat(from: string, to: string): void {
         renameSync(src, dst);
       } catch {
         // Cross-device or other rename failure — fall back to copy+unlink.
-        writeFileSync(dst, readFileSync(src));
+        if (st.isSymbolicLink()) {
+          rmSync(dst, { force: true });
+          symlinkSync(readlinkSync(src), dst);
+        } else {
+          writeFileSync(dst, readFileSync(src));
+        }
         try {
           rmSync(src, { force: true });
         } catch {
@@ -116,6 +129,34 @@ function topLevelWrapper(
   const firstSep = rel.search(/[/\\]/);
   if (firstSep < 0) return null;
   return join(backendRoot, rel.slice(0, firstSep));
+}
+
+/** `S_IFLNK` in a zip entry's Unix mode: the entry's content is a link target. */
+function isZipSymlink(unixPermissions: number | string | null | undefined): boolean {
+  return typeof unixPermissions === "number" && (unixPermissions & 0o170000) === 0o120000;
+}
+
+/**
+ * Recreate one symlink entry of the archive. The stable turboquant Linux
+ * zips (ATO-619) store their shared-library chains as links
+ * (`libcudart.so.12` -> `libcudart.so.12.4.127`); written as plain files
+ * they would hold the target's name and the loader would reject them. A
+ * target that is absolute or leaves the staging dir is refused. Where a
+ * link cannot be made (Windows without the privilege), the target file is
+ * copied instead.
+ */
+function writeZipSymlink(stagingDir: string, out: string, target: string): void {
+  const root = resolve(stagingDir);
+  const resolved = resolve(dirname(out), target);
+  if (isAbsolute(target) || (resolved !== root && !resolved.startsWith(root + sep))) {
+    throw new Error(`backend archive has a symlink leaving the install dir: ${relative(root, out)} -> ${target}`);
+  }
+  rmSync(out, { force: true });
+  try {
+    symlinkSync(target, out);
+  } catch {
+    copyFileSync(resolved, out);
+  }
 }
 
 /**
@@ -168,12 +209,19 @@ export async function extractBackendArchive(
   //   * `llama-server` (flat)
   //   * `release-root/llama-server` (single top folder)
   //   * `build/bin/llama-server` (nested)
+  // Symlink entries are made after every file, so the copy fallback in
+  // `writeZipSymlink` finds its target on disk.
+  const links: Array<{ out: string; target: string }> = [];
   for (const entry of Object.values(zip.files)) {
     if (entry.dir) continue;
     const rel = normalizeZipPath(entry.name);
     if (!rel || rel.endsWith("/")) continue;
     const out = join(stagingDir, rel);
     mkdirSync(dirname(out), { recursive: true });
+    if (isZipSymlink(entry.unixPermissions)) {
+      links.push({ out, target: await entry.async("string") });
+      continue;
+    }
     const buf = await entry.async("nodebuffer");
     writeFileSync(out, buf);
     try {
@@ -182,6 +230,7 @@ export async function extractBackendArchive(
       /* Windows may ignore chmod */
     }
   }
+  for (const { out, target } of links) writeZipSymlink(stagingDir, out, target);
 
   const foundBin = findFileByName(stagingDir, binaryName);
   if (!foundBin) {

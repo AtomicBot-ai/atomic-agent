@@ -8,6 +8,7 @@ const execSyncMock = vi.hoisted(() => vi.fn());
 vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
 
 import { LINUX_ARM64_BACKEND_ASSET } from "./linux-arm64-backend-variant.js";
+import { resetLinuxX64BackendAssetCache } from "./linux-x64-backend-variant.js";
 import {
   UnsupportedGlibcError,
   WINDOWS_ARM64_BACKEND_ASSET,
@@ -268,23 +269,38 @@ describe("isWindowsGpuBackendAsset", () => {
 describe("resolveDownloadAsset", () => {
   beforeEach(() => {
     resetWindowsBackendAssetCache();
+    resetLinuxX64BackendAssetCache();
     setConfiguredBackendVariant("auto");
     execSyncMock.mockReset();
   });
 
   afterEach(() => {
     resetWindowsBackendAssetCache();
+    resetLinuxX64BackendAssetCache();
     setConfiguredBackendVariant("auto");
   });
 
-  it("leaves macOS/Linux assets untouched (no nvidia-smi probe)", () => {
+  it("leaves the macOS asset untouched (no nvidia-smi probe)", () => {
     expect(resolveDownloadAsset("darwin", "arm64").assetName).toBe(
       "llama-turboquant-macos-arm64.zip",
     );
+    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps Vulkan on Linux x64 without an NVIDIA driver (ATO-619)", () => {
+    execSyncMock.mockImplementation(() => {
+      throw new Error("not found");
+    });
     expect(resolveDownloadAsset("linux", "x64").assetName).toBe(
       "llama-turboquant-linux-x64-vulkan.zip",
     );
-    expect(execSyncMock).not.toHaveBeenCalled();
+  });
+
+  it("picks the Linux x64 CUDA build when the driver supports it (ATO-619)", () => {
+    execSyncMock.mockReturnValue(Buffer.from("550.54.14, 8.9\n"));
+    const asset = resolveDownloadAsset("linux", "x64");
+    expect(asset.assetName).toBe("llama-turboquant-linux-x64-cuda-12.4.zip");
+    expect(asset.binaryName).toBe("llama-server");
   });
 
   it("selects the CUDA build on Windows when the driver supports it", () => {
@@ -438,6 +454,9 @@ describe("resolveDownloadAsset", () => {
     expect(resolveDownloadAsset("darwin", "arm64").assetName).toBe(
       "llama-turboquant-macos-arm64.zip",
     );
+    execSyncMock.mockImplementation(() => {
+      throw new Error("not found");
+    });
     expect(resolveDownloadAsset("linux", "x64").assetName).toBe(
       "llama-turboquant-linux-x64-vulkan.zip",
     );
