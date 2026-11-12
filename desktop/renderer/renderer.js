@@ -14821,7 +14821,7 @@ function obWizardHTML() {
         + ic('chevL') + 'Back</button><span class="grow"></span>'
         + '<button class="btn btn-s" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
         + (wizSubNeedsLogin(k) && !verifying
-          ? '<button class="btn btn-p" data-act="wiz:subLogin">' + esc(wizSubLoginButton(k)) + ic('arrowR') + '</button></div>'
+          ? '<button class="btn btn-p" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + ic('arrowR') + '</button></div>'
           : '<button class="btn btn-p" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
             + (verifying ? 'Adding…' : esc(wizSubButton(k)) + ic('arrowR')) + '</button></div>')
       + '</div>';
@@ -20790,7 +20790,7 @@ function wizardHTML() {
       '<button class="btn btn-g xs" data-act="wiz:back"' + (verifying ? ' disabled' : '') + '>Back</button><span class="grow"></span>'
         + '<button class="btn btn-s xs" data-act="wiz:subRecheck"' + (verifying ? ' disabled' : '') + '>Check again</button>'
         + (wizSubNeedsLogin(k) && !verifying
-          ? '<button class="btn btn-p xs" data-act="wiz:subLogin">' + esc(wizSubLoginButton(k)) + '</button>'
+          ? '<button class="btn btn-p xs" data-act="wiz:subLogin"' + (WIZ_SUB_POLL.opening ? ' disabled' : '') + '>' + esc(wizSubLoginButton(k)) + '</button>'
           : '<button class="btn btn-p xs" data-act="wiz:next"' + (verifying || !wizSubReady(k) ? ' disabled' : '') + '>'
             + (verifying ? '<span class="tk-spin"></span>Adding\u2026' : esc(wizSubButton(k))) + '</button>'),
       lead);
@@ -20988,7 +20988,7 @@ function wizSubNeedsLogin(k) { const st = wizSubStatus(k); return !!(st && st.in
 /* The sign-in poll. After the click the step asks main every few seconds
    (files only, nothing is run) and moves on once the CLI is signed in; it
    stops when the step is left, after ten minutes, or on success. */
-const WIZ_SUB_POLL = {cli: null, timer: null, until: 0, opened: false, failed: false, startedAt: 0};
+const WIZ_SUB_POLL = {cli: null, timer: null, until: 0, opened: false, failed: false, startedAt: 0, opening: false};
 const WIZ_SUB_POLL_MS = 3000;
 function wizSubPollStop() {
   if (WIZ_SUB_POLL.timer) clearInterval(WIZ_SUB_POLL.timer);
@@ -21024,18 +21024,25 @@ function wizSubCopy(k) {
 }
 async function wizSubLogin(k) {
   if (!k || !k.subscriptionCli || !BR || !BR.subscriptionLogin) return;
+  /* A second click while the terminal is still opening would open a second
+     one and start a second poll. */
+  if (WIZ_SUB_POLL.opening) return;
+  WIZ_SUB_POLL.opening = true;
+  render();
   const cli = k.subscriptionCli;
   ANX.subscriptionLoginClicked(cli, OB.open);
   wizSubPollStop();
   Object.assign(WIZ_SUB_POLL, {cli, opened: false, failed: false, startedAt: Date.now()});
   WIZ.error = null;
-  const res = await Promise.resolve(BR.subscriptionLogin(cli)).catch(() => null);
+  let res = null;
+  try { res = await Promise.resolve(BR.subscriptionLogin(cli)).catch(() => null); } finally { WIZ_SUB_POLL.opening = false; }
   const opened = !!(res && res.ok);
   WIZ_SUB_POLL.opened = opened; WIZ_SUB_POLL.failed = !opened;
   ANX.subscriptionTerminalOpened(cli, OB.open, opened, opened ? res.terminal : (res && res.reason));
   /* Poll even when the terminal did not open: the person may run the
      fallback command themselves. */
   WIZ_SUB_POLL.until = Date.now() + 10 * 60 * 1000;
+  wizSubPollStop();
   WIZ_SUB_POLL.timer = setInterval(wizSubPollTick, WIZ_SUB_POLL_MS);
   render();
 }

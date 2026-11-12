@@ -139,6 +139,8 @@ function loadLogin(statusSeq, loginResult) {
   const acts = [];
   const copied = [];
   const intervals = [];
+  const cleared = [];
+  const logins = [];
   let i = 0;
   const ctx = createContext({
     THIS_MACHINE: 'this Mac',
@@ -149,7 +151,7 @@ function loadLogin(statusSeq, loginResult) {
     act: (a) => acts.push(a),
     copyText: (t) => { copied.push(t); return Promise.resolve(true); },
     setInterval: (fn) => { intervals.push(fn); return intervals.length; },
-    clearInterval: () => {},
+    clearInterval: (h) => { cleared.push(h); },
     Date,
     ANX: {
       subscriptionLoginClicked: (cli, ob) => events.push(['clicked', cli, ob]),
@@ -159,7 +161,7 @@ function loadLogin(statusSeq, loginResult) {
     BR: {
       providerKeyPresent: () => Promise.resolve({ ok: true, present: false }),
       subscriptionStatus: (cli) => Promise.resolve({ ok: true, status: { cli, ...statusSeq[Math.min(i++, statusSeq.length - 1)] } }),
-      subscriptionLogin: () => Promise.resolve(loginResult),
+      subscriptionLogin: () => { logins.push(1); return Promise.resolve(loginResult); },
     },
   });
   runInContext(slice('const KIND_ROWS = [', '];') + '];'
@@ -168,7 +170,7 @@ function loadLogin(statusSeq, loginResult) {
     + ';this.rows = KIND_ROWS; this.lines = wizSubscriptionLines; this.needsLogin = wizSubNeedsLogin; this.loginButton = wizSubLoginButton;'
     + 'this.login = wizSubLogin; this.copy = wizSubCopy; this.lineHTML = wizSubLineHTML; this.esc = (s) => String(s);', ctx);
   ctx.esc = (s) => String(s);
-  return { ctx, events, acts, copied, intervals };
+  return { ctx, events, acts, copied, intervals, cleared, logins };
 }
 
 test('ATO-845: signed out, the main button says Sign in with the plan, and Copy is the fallback', async () => {
@@ -224,4 +226,20 @@ test('ATO-845: the step draws Sign in for signed out and the old button otherwis
   assert.equal((renderer.match(/data-act="wiz:subLogin"/g) || []).length, 2);
   assert.match(renderer, /a === 'wiz:subRecheck' \|\| a === 'wiz:subLogin' \|\| a === 'wiz:subCopy'/);
   assert.match(renderer, /if \(a === 'wiz:subLogin'\) \{ wizSubLogin\(WIZ\.row\); return; \}/);
+});
+
+test('ATO-845: a double click opens one terminal and leaves one poll running', async () => {
+  const out = { installed: true, binPath: null, signedIn: false };
+  const { ctx, intervals, cleared, logins } = loadLogin([out], { ok: true, terminal: 'terminal_app' });
+  const codex = ctx.rows[4];
+  ctx.WIZ.row = codex;
+  ctx.lines(codex); await tick();
+  await Promise.all([ctx.login(codex), ctx.login(codex)]);
+  assert.equal(logins.length, 1, 'one terminal');
+  assert.equal(intervals.length, 1, 'one poll');
+  // A later click (the first terminal was closed) replaces the poll, never stacks one.
+  await ctx.login(codex);
+  assert.equal(logins.length, 2);
+  assert.equal(intervals.length, 2);
+  assert.ok(cleared.includes(1), 'the first poll was cleared');
 });
