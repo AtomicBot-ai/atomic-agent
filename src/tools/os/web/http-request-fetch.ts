@@ -2,6 +2,7 @@ import {
   runCommand as defaultRunCommand,
   type CommandResult,
 } from "../../../sandbox/command-runner.js";
+import { writeCurlHeaderFile } from "./curl-header-file.js";
 import { CurlUnavailableError, isCurlMissingError } from "./ensure-curl.js";
 import { parseRetryAfterValueMs } from "./retry-after-header.js";
 import { explainCurlStderr, runCurl } from "./run-curl.js";
@@ -281,11 +282,16 @@ async function sendGuardedRequestOnce(
     const pinnedIps = await assertHostAllowed(currentUrl, {
       lookup: opts.lookup,
     });
+    // Headers can carry `Authorization` and API keys: they reach curl
+    // through an owner-only file, not argv, which `ps` shows to every
+    // account on the machine (ATO-1177). The file path is also all the
+    // `command` echoed back to the model shows.
+    const headerFile = await writeCurlHeaderFile(args.headers);
     const curlArgs = buildPinnedCurlArgs({
       url: currentUrl,
       pinnedIps,
       method,
-      headers: args.headers,
+      headerArgs: headerFile.args,
       body,
       timeoutMs: args.timeoutMs,
     });
@@ -310,6 +316,8 @@ async function sendGuardedRequestOnce(
     } catch (err) {
       if (isCurlMissingError(err)) throw new CurlUnavailableError();
       throw err;
+    } finally {
+      await headerFile.cleanup();
     }
 
     if (result.exitCode !== 0) {
@@ -386,7 +394,8 @@ interface BuildPinnedCurlArgs {
   url: URL;
   pinnedIps: readonly string[];
   method: HttpMethod;
-  headers: Record<string, string>;
+  /** `-H @<file>` from `writeCurlHeaderFile`; header values never sit in argv. */
+  headerArgs: readonly string[];
   body: string | undefined;
   timeoutMs: number;
 }
@@ -410,9 +419,7 @@ function buildPinnedCurlArgs(input: BuildPinnedCurlArgs): string[] {
     formatResolveEntry(host, port, input.pinnedIps),
   ];
   if (input.method !== "GET") argv.push("-X", input.method);
-  for (const [key, value] of Object.entries(input.headers)) {
-    argv.push("-H", `${key}: ${value}`);
-  }
+  argv.push(...input.headerArgs);
   if (input.body !== undefined) {
     argv.push("--data-binary", "@-");
   }
