@@ -63,6 +63,8 @@ import {
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
+import { normalizeToolSchemaBooleans } from "./tool-schema-booleans.js";
+import { findToolBehindSchemaError } from "./tool-schema-rejection.js";
 import {
   isImageRejection,
   markModelCannotSee,
@@ -280,6 +282,27 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    try {
+      return await this.completeOnce(request);
+    } catch (err) {
+      // One resend without the tool whose schema the server could not
+      // use (ATO-1399); a second refusal goes back as the server wrote it.
+      const reduced = this.withoutRejectedTool(request, err);
+      if (!reduced) throw err;
+      try {
+        return await this.completeOnce(reduced);
+      } catch (retryErr) {
+        if (request.signal?.aborted) throw retryErr;
+        // The schema refusal is what the user needs to read, not
+        // whatever the reduced request then ran into.
+        throw err;
+      }
+    }
+  }
+
+  private async completeOnce(
+    request: CompletionRequest,
+  ): Promise<CompletionResult> {
     const model = this.defaultChatModel;
     if (!model) {
       throw new Error(
@@ -444,6 +467,46 @@ export class OpenAiProvider implements LlmProvider {
     return true;
   }
 
+  /**
+   * The request without the one tool a schema error names
+   * (`tool-schema-rejection.ts`), or null when the error is something
+   * else or names no single tool. The warning says which tool went and
+   * why: the turn carries on without it rather than failing outright.
+   */
+  private withoutRejectedTool(
+    request: CompletionRequest,
+    err: unknown,
+  ): CompletionRequest | null {
+    if (request.signal?.aborted) return null;
+    if (!(err instanceof OpenAiHttpError) || err.status === null) return null;
+    const tools = request.tools;
+    if (!tools || tools.length === 0) return null;
+    const text = [err.message, err.body?.message ?? ""].join("\n");
+    const culprit = findToolBehindSchemaError(
+      text,
+      normalizeToolSchemaBooleans(tools),
+      tools,
+    );
+    if (!culprit) return null;
+    const tool = this.toolCallAdapter.nameUnescape(culprit.name);
+    this.http.logger?.warn(
+      `llm: "${this.id}" could not use the JSON schema of tool "${tool}" (at ${culprit.pointer}); resending this request without that tool`,
+      {
+        provider: this.id,
+        model: this.defaultChatModel,
+        sessionId: request.sessionId ?? null,
+        status: err.status,
+        tool,
+        pointer: culprit.pointer,
+        detail: err.message.slice(0, 240),
+      },
+    );
+    return {
+      ...request,
+      tools: tools.filter((_, index) => index !== culprit.index),
+    };
+  }
+
   private markFlat(request: CompletionRequest, err: unknown): void {
     this.flatSessions.add(sessionKey(request));
     this.http.logger?.warn(
@@ -468,7 +531,10 @@ export class OpenAiProvider implements LlmProvider {
       );
     }
     let shape = this.shapeFor(request);
-    let body = this.buildBody(request, true, shape);
+    // The request the body is built from: the caller's, until a schema
+    // error names a tool to leave out (`withoutRejectedTool`).
+    let activeRequest = request;
+    let body = this.buildBody(activeRequest, true, shape);
     const path = `${this.chatPathPrefix}/chat/completions`;
     let accumulated = "";
     let accumulatedReasoning = "";
@@ -485,6 +551,11 @@ export class OpenAiProvider implements LlmProvider {
     let committed = false;
     // Whether the one resend for a named temperature has been spent.
     let temperatureRetried = false;
+    // Whether the one resend without a rejected tool has been spent, and
+    // the schema refusal that spent it: if the resend fails before any
+    // output, that refusal is the error the caller gets.
+    let toolDropped = false;
+    let schemaError: unknown;
     // One completion, one budget. Passed into every open so a reopen
     // draws from the same pot the opens do — the alternative is two
     // nested loops of `OPENAI_MAX_ATTEMPTS` and 9 requests per turn.
@@ -617,6 +688,19 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
+        // The server could not use one tool's JSON schema (ATO-1399): a
+        // 4xx/5xx from the open, before any output, so the same request
+        // goes out once more without that tool.
+        if (!committed && !toolDropped) {
+          const reduced = this.withoutRejectedTool(activeRequest, err);
+          if (reduced) {
+            toolDropped = true;
+            schemaError = err;
+            activeRequest = reduced;
+            body = this.buildBody(activeRequest, true, shape);
+            continue;
+          }
+        }
         // The service named the one temperature it takes, or refused the
         // field: resend once with the lesson. Same window as the flat resend below — a 400 comes
         // from the open, before any output — and only once per
@@ -627,7 +711,7 @@ export class OpenAiProvider implements LlmProvider {
           this.learnTemperature(request, err, body)
         ) {
           temperatureRetried = true;
-          body = this.buildBody(request, true, shape);
+          body = this.buildBody(activeRequest, true, shape);
           continue;
         }
         // The service refused the message layout, before any byte of
@@ -638,14 +722,17 @@ export class OpenAiProvider implements LlmProvider {
         if (!committed && this.shouldFallBackToFlat(request, shape, err)) {
           this.markFlat(request, err);
           shape = "flat";
-          body = this.buildBody(request, true, shape);
+          body = this.buildBody(activeRequest, true, shape);
           continue;
         }
         // An error event inside the stream (OpenRouter's `504 Upstream
         // idle timeout` after output) becomes the typed HTTP error the
         // loop classifies, carrying the generation id for the trace.
-        if (err instanceof OpenAiSseError) throw this.httpErrorFromSse(err, path);
-        if (!canReopenStream(err, committed, budget)) throw err;
+        const original = !committed ? schemaError : undefined;
+        if (err instanceof OpenAiSseError) {
+          throw original ?? this.httpErrorFromSse(err, path);
+        }
+        if (!canReopenStream(err, committed, budget)) throw original ?? err;
         // Nothing to release here: the dead attempt's transport went
         // through the block above on the way out, and on this path it is
         // a no-op either way. The only way to reach this line with a

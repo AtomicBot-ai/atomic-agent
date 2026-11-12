@@ -22,6 +22,7 @@ import {
   LOCAL_BAD_REQUEST_SENTENCE,
   localBadRequestKind,
 } from "./local-bad-request.js";
+import { isToolSchemaErrorText } from "./tool-schema-rejection.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -252,6 +253,14 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
   }
   if (err.status === 429) {
     return `${who} is rate-limiting this key (429). Tried ${OPENAI_MAX_ATTEMPTS} times — wait a minute and retry.`;
+  }
+  if (isToolSchemaErrorText(err.message)) {
+    // Not retried and not "server trouble": the server could not use a
+    // tool's JSON schema and no single tool could be left out (ATO-1399).
+    return (
+      `${who} could not use the JSON schema of one of the agent's tools (${err.status}). ` +
+      `Turn off the MCP server or plugin that added the tool, or update the model server.`
+    );
   }
   if (err.status >= 500) {
     return `${who} is having server trouble (${err.status}). Tried ${OPENAI_MAX_ATTEMPTS} times — this is on the provider, not your setup.`;
@@ -953,6 +962,10 @@ function isRetryableOpenAiError(err: unknown): boolean {
   // up, and three fast retries only multiply the refusals (42 per
   // worker, once).
   if (isCreditExhausted(err)) return false;
+  // A server that cannot use a tool's JSON Schema (llama.cpp, LM Studio)
+  // answers it with a 500, and the same body gets the same 500. The
+  // provider drops the tool and resends instead (ATO-1399).
+  if (isToolSchemaErrorText(err.message)) return false;
   return err.status >= 500 || err.status === 429 || err.status === 408;
 }
 
