@@ -64,11 +64,17 @@ export interface FallbackSeamDeps extends LinkAttemptDeps {
     result: CompletionResult,
     providerId: string,
   ) => void;
-  /** Fold a streamed completion's usage into the meter (same `providerId` contract). */
+  /**
+   * Fold a streamed completion's usage into the meter (same `providerId`
+   * contract). `streamMs` is the time from the stream's first chunk to
+   * its end: the completion's generation time when the provider reports
+   * none of its own (ATO-1186, `generationMsFor`).
+   */
   recordStreamUsage: (
     sessionId: string | undefined,
     result: CompletionResult,
     providerId: string,
+    streamMs?: number,
   ) => void;
 }
 
@@ -167,6 +173,8 @@ export function createFallbackStreamer(
               params.signal,
             );
       const { primed, transport, providerId } = opened;
+      // The stream is primed to its first chunk: generation is under way.
+      const firstChunkAt = Date.now();
       let result: CompletionResult;
       try {
         result = yield* stampServedTransport(
@@ -180,7 +188,7 @@ export function createFallbackStreamer(
         attachFailingLink(err, providerId);
         throw err;
       }
-      deps.recordStreamUsage(params.sessionId, result, providerId);
+      deps.recordStreamUsage(params.sessionId, result, providerId, Date.now() - firstChunkAt);
       return { ...result, servedTransport: transport,
         ...(params.modelModePolicy ? { servedModelMode: resolveModelMode(params.modelModePolicy, providerId) } : {}) };
     }
