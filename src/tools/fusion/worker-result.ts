@@ -17,6 +17,7 @@ import {
   FUSION_WORKER_OPERATOR_ONLY_MARKER,
 } from "./worker-tool-policy.js";
 import type { JudgeSummary } from "./judge.js";
+import { classifyWorkerFailure } from "./failure-breaker.js";
 
 /**
  * The note on a task a worker could not finish because a step needs the
@@ -637,7 +638,7 @@ export const WORKER_HINT_CONTEXT =
 export const WORKER_HINT_SATURATED =
   "the local server was saturated: fewer parallel workers";
 export const WORKER_HINT_QUOTA =
-  "provider credit/quota exhausted — retrying will not help";
+  "provider credit/quota exhausted — retrying will not help: top up the provider's credit, or switch the workers to another provider or a local model";
 /**
  * The client's watchdog proved the server answers nothing at all —
  * either no connection was made (`first-token-unreachable`) or one was
@@ -959,7 +960,7 @@ function renderStatusTable(
       ...(r.replacedInputs ?? []).map((input) =>
         oneLine(describeReplacedInput(input), TABLE_DETAIL_CHARS),
       ),
-      ...(r.error ? [`error: ${oneLine(r.error, TABLE_DETAIL_CHARS)}`] : []),
+      ...(r.error ? tableErrorParts(r, r.error) : []),
       ...(r.checks
         ? [describeChecks(r.checks, TABLE_DETAIL_CHARS, r.error)]
         : []),
@@ -972,6 +973,27 @@ function renderStatusTable(
     ...lines,
     ...(clock === null ? [] : [clock]),
   ].join("\n");
+}
+
+/**
+ * A row's error, for the status table.
+ *
+ * Clipped to `TABLE_DETAIL_CHARS` like the rest of the row, except for
+ * a blocker (out of credit, CLI missing, key refused): there the
+ * provider's own sentence is the whole content of the row and names
+ * what to do, and a row once read `"openrouter" is out of credit: This
+ * request would exceed your available credits given y` (ATO-309). A
+ * blocker stops the fan-out, so there is one such row per delegation,
+ * and it carries its hint beside it.
+ */
+function tableErrorParts(r: WorkerTaskResult, error: string): string[] {
+  if (classifyWorkerFailure(r)?.blocker !== true) {
+    return [`error: ${oneLine(error, TABLE_DETAIL_CHARS)}`];
+  }
+  return [
+    `error: ${oneLine(error, ERROR_HEAD_CHARS)}`,
+    ...(r.hint ? [`hint: ${r.hint}`] : []),
+  ];
 }
 
 function oneLine(text: string, cap: number): string {

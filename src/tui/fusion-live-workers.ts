@@ -11,6 +11,14 @@ export interface FusionLiveWorker {
   readonly tool: string | null;
   readonly done: boolean;
   /**
+   * How a finished leg ended, when it did not simply finish. A worker
+   * whose provider refused it (out of credit, ATO-309) read `done ·
+   * 1m12s` on this row while its task had failed: `done` says the leg
+   * is over, this says whether it worked. Absent or `null` while
+   * running and for a leg that finished.
+   */
+  readonly outcome?: "failed" | "cancelled" | null;
+  /**
    * When this leg was first seen, and when it ended.
    *
    * A fan-out is the longest thing the app does and the readout said
@@ -81,6 +89,10 @@ export function reduceFusionLiveWorkers(
     model: event.model ?? previous?.model ?? null,
     tool: done ? null : (event.tool ?? previous?.tool ?? null),
     done,
+    outcome:
+      event.phase === "failed" || event.phase === "cancelled"
+        ? event.phase
+        : null,
     // First sight starts the clock. A leg that reappears keeps its
     // original start, or the elapsed time would restart on every tool
     // call and the readout would always say a few seconds.
@@ -360,7 +372,9 @@ export function formatFusionLiveWorker(
   expectation: FanoutExpectation | number | null = null,
 ): string {
   const model = worker.model ?? "local";
-  const what = worker.done ? "done" : (worker.tool ?? "working");
+  const what = worker.done
+    ? (worker.outcome ?? "done")
+    : (worker.tool ?? "working");
   const elapsedMs = (worker.finishedAt ?? now) - worker.startedAt;
   const elapsed = formatElapsed(elapsedMs);
   const measured = asExpectation(expectation);

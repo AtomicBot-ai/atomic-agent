@@ -56,6 +56,29 @@ describe("the live fan-out readout", () => {
     expect(s[0]?.done).toBe(true);
   });
 
+  // ATO-309: a worker refused by its provider (out of credit) read
+  // "done · 1m12s" on the live row while its task had failed.
+  it.each(["failed", "cancelled"])(
+    "says %s, not done, on the row of a leg that ended that way",
+    (phase) => {
+      let s = reduceFusionLiveWorkers([], ev({ phase: "started" }), 1_000);
+      s = reduceFusionLiveWorkers(s, ev({ phase }), 73_000);
+      expect(s[0]?.outcome).toBe(phase);
+      expect(formatFusionLiveWorker(s[0]!, 99_000)).toBe(
+        `worker 1 · qwen-3.5-4b — ${phase} · 1m12s`,
+      );
+    },
+  );
+
+  it("keeps done for a leg that finished", () => {
+    let s = reduceFusionLiveWorkers([], ev({ phase: "started" }), 1_000);
+    s = reduceFusionLiveWorkers(s, ev({ phase: "finished" }), 31_000);
+    expect(s[0]?.outcome).toBeNull();
+    expect(formatFusionLiveWorker(s[0]!, 99_000)).toBe(
+      "worker 1 · qwen-3.5-4b — done · 30s",
+    );
+  });
+
   it("ignores the orchestrator's own bracket lines", () => {
     expect(
       reduceFusionLiveWorkers([], ev({ role: "orchestrator" })),
