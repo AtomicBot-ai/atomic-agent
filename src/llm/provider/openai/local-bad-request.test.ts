@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { localBadRequestKind } from "./local-bad-request.js";
 import { OpenAiHttpError, humanizeOpenAiHttpError } from "./openai-http.js";
 import { parseProviderErrorBody } from "./parse-provider-error-body.js";
+import { isRequestSizeRejection } from "../../reliability/request-size-rejection.js";
 
 function http(status: number, url: string, rawBody: string, withBody = true): OpenAiHttpError {
   return new OpenAiHttpError(
@@ -76,5 +77,43 @@ describe("humanizeOpenAiHttpError: a typed 400 from a server on this machine (AT
     expect(
       humanizeOpenAiHttpError(http(400, "https://api.example.com/v1/chat/completions", INVALID_BODY)),
     ).toBe('"ollama" rejected the request (400). Unknown role: tool');
+  });
+});
+
+describe("Ollama's context overflow (ATO-1276)", () => {
+  const OLLAMA_URL = "http://localhost:11434/v1/chat/completions";
+  const PLAIN_STRING_BODY = JSON.stringify({ error: "prompt too long; exceeded max context length by 1873 tokens" });
+  const API_ERROR_BODY = JSON.stringify({
+    error: { message: "the input length exceeds the context length", type: "api_error", param: null, code: null },
+  });
+  const INVALID_TYPED_BODY = JSON.stringify({
+    error: { message: "input exceeds maximum context length (4096 tokens)", type: "invalid_request_error" },
+  });
+
+  it("reads a plain-string or untyped body that says the context is full", () => {
+    expect(localBadRequestKind(400, undefined, PLAIN_STRING_BODY)).toBe("context_exceeded");
+    expect(localBadRequestKind(400, "api_error", API_ERROR_BODY)).toBe("context_exceeded");
+    expect(localBadRequestKind(400, "invalid_request_error", INVALID_TYPED_BODY)).toBe("context_exceeded");
+    expect(localBadRequestKind(400, undefined, "400 exceed_context_size")).toBe("context_exceeded");
+  });
+
+  it("keeps an untyped 400 that names no context reason unclassified", () => {
+    expect(localBadRequestKind(400, undefined, JSON.stringify({ error: "model is required" }))).toBeNull();
+    expect(localBadRequestKind(400, undefined, "the reply is too long for the screen")).toBeNull();
+    expect(localBadRequestKind(500, undefined, PLAIN_STRING_BODY)).toBeNull();
+  });
+
+  it("says the conversation outgrew the window for each body shape", () => {
+    for (const body of [PLAIN_STRING_BODY, API_ERROR_BODY, INVALID_TYPED_BODY]) {
+      const text = humanizeOpenAiHttpError(http(400, OLLAMA_URL, body));
+      expect(text).toContain("The local Ollama server at localhost:11434 turned the request down (400).");
+      expect(text).toContain("no longer fits in the local model's context window");
+    }
+  });
+
+  it("is a size rejection, so the overflow compaction runs", () => {
+    for (const body of [PLAIN_STRING_BODY, API_ERROR_BODY, INVALID_TYPED_BODY]) {
+      expect(isRequestSizeRejection(http(400, OLLAMA_URL, body))).toBe(true);
+    }
   });
 });

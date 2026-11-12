@@ -112,6 +112,40 @@ describe("runtime provider/context/fallback/reload phases", () => {
     expect(context.resolveCatalogContextWindow("local")).toBe(8192);
   });
 
+  it("an Ollama route learns its real window once per model and the budget uses it (ATO-1276)", async () => {
+    config = { ...config, llm: { ...resolveLlmConfig(config), activeTextProvider: "ollama", providers: [
+      ...resolveLlmConfig(config).providers,
+      { id: "ollama", kind: "openai-compatible", baseUrl: "http://localhost:11434", defaultChatModel: "qwen3:8b" },
+    ] } };
+    const readOllamaWindow = vi.fn(async () => 4096);
+    const context = createRuntimeModelContext(config, providers, { readOllamaWindow });
+    await context.primeLocalContextWindow();
+    expect(readOllamaWindow).toHaveBeenCalledWith("http://localhost:11434", "qwen3:8b");
+    expect(context.resolveCatalogContextWindow()).toBe(4096);
+    expect(context.resolveCatalogContextWindow("ollama")).toBe(4096);
+    await context.primeLocalContextWindow("ollama");
+    expect(readOllamaWindow).toHaveBeenCalledTimes(1);
+    // A smaller window the server later refused at still wins.
+    context.observeContextWindow(3000, "ollama");
+    expect(context.resolveCatalogContextWindow()).toBe(3000);
+  });
+
+  it("an Ollama probe that fails leaves the window unknown and never touches other providers", async () => {
+    config = { ...config, llm: { ...resolveLlmConfig(config), activeTextProvider: "ollama", providers: [
+      ...resolveLlmConfig(config).providers,
+      { id: "ollama", kind: "openai-compatible", baseUrl: "http://localhost:11434/v1", defaultChatModel: "llama3.1" },
+    ] } };
+    const readOllamaWindow = vi.fn(async (): Promise<number | null> => { throw new Error("down"); });
+    const context = createRuntimeModelContext(config, providers, { readOllamaWindow });
+    await expect(context.primeLocalContextWindow()).resolves.toBeUndefined();
+    expect(context.resolveCatalogContextWindow()).toBeNull();
+    readOllamaWindow.mockClear();
+    await context.primeLocalContextWindow("cloud");
+    await context.primeLocalContextWindow("local");
+    expect(context.resolveCatalogContextWindow("cloud")).toBeNull();
+    expect(readOllamaWindow).not.toHaveBeenCalled();
+  });
+
   it("vision wiring follows live providers while retaining the original boot enable snapshot", async () => {
     const context = createRuntimeModelContext(config, providers);
     expect(context.visionOnLiveRoute()).toBe(false);
