@@ -1,6 +1,6 @@
 ---
 name: code-graph
-description: Answer questions about how a codebase is wired, such as who calls a function, what a module depends on, where a feature like payments or login lives, and how two parts connect, with file and line for every link. Use when the user asks "who calls X", "where do we handle Y", "how does A reach B", wants a map or diagram of part of the code, or runs /code-graph.
+description: Map code with file and line: who calls X, where payments or login live. Use for /code-graph.
 version: 1.0.0
 requires_tools:
   - os.fs.code_map
