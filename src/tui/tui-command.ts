@@ -64,7 +64,7 @@ import {
   currentTerminalLaunchInput,
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
-import { openUrlInBrowser } from "./open-url.js";
+import { openLocalHtmlInBrowser, openUrlInBrowser } from "./open-url.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
@@ -530,6 +530,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
         onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
+        onOpenLocalFileRequested: (path) => openLocalFileFromChat(path, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
         onPersistLlamaUrl: (nextUrl) =>
@@ -1159,6 +1160,22 @@ function openUrlFromChat(
       type: "system_message",
       variant: "warn",
       text: `could not open ${url}: ${result.reason}`,
+    });
+  })();
+}
+
+/** `openUrlFromChat` for a local `.html` page's chip (ATO-1139). */
+function openLocalFileFromChat(
+  path: string,
+  bus: ReturnType<typeof makeTuiEventBus>,
+): void {
+  void (async () => {
+    const result = await openLocalHtmlInBrowser(path);
+    if (result.ok) return;
+    bus.emit({
+      type: "system_message",
+      variant: "warn",
+      text: `could not open ${path}: ${result.reason}`,
     });
   })();
 }

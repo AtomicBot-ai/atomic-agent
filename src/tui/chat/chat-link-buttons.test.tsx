@@ -9,8 +9,10 @@ import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
 import {
   ChatLinkButtons,
+  extractLocalHtmlFiles,
   extractMessageUrls,
   linkChipLabel,
+  localFileChipLabel,
 } from "./chat-link-buttons.js";
 
 const SESSION: TuiSessionInfo = fakeSession({
@@ -79,6 +81,9 @@ function callbacksWith(opened: string[]): TuiAppCallbacks {
     onQuit: () => {},
     onMessageSubmitted: () => {},
     onOpenUrlRequested: (url) => opened.push(url),
+    // Local pages land in the same list, tagged, so one assertion can
+    // tell which callback a click reached.
+    onOpenLocalFileRequested: (path) => opened.push(`local:${path}`),
   };
 }
 
@@ -234,6 +239,116 @@ describe("ChatLinkButtons", () => {
     );
     await clickChip(app, "[open b.io]", opened);
     expect(opened).toEqual(["https://b.io"]);
+    app.unmount();
+  });
+});
+
+/** Files the fake disk holds for the local-page tests (ATO-1139). */
+const ON_DISK = new Set([
+  "/tmp/links/canvas/dashboard.html",
+  "/tmp/links/report.htm",
+  "/srv/page.html",
+]);
+const fakeIsFile = (path: string): boolean => ON_DISK.has(path);
+
+describe("extractLocalHtmlFiles", () => {
+  it("finds absolute, relative and file:// pages that exist", () => {
+    expect(
+      extractLocalHtmlFiles(
+        "Wrote canvas/dashboard.html, also file:///srv/page.html and `./report.htm`.",
+        "/tmp/links",
+        fakeIsFile,
+      ),
+    ).toEqual([
+      "/tmp/links/canvas/dashboard.html",
+      "/srv/page.html",
+      "/tmp/links/report.htm",
+    ]);
+  });
+
+  it("skips pages that are not on disk and web URLs", () => {
+    expect(
+      extractLocalHtmlFiles(
+        "see /nope/missing.html and https://example.com/index.html",
+        "/tmp/links",
+        fakeIsFile,
+      ),
+    ).toEqual([]);
+  });
+
+  it("dedupes one page spelled two ways", () => {
+    expect(
+      extractLocalHtmlFiles(
+        "/srv/page.html (file:///srv/page.html)",
+        "/tmp/links",
+        fakeIsFile,
+      ),
+    ).toEqual(["/srv/page.html"]);
+  });
+
+  it("ignores files that are not html", () => {
+    expect(
+      extractLocalHtmlFiles("notes at /srv/page.md", "/tmp/links", () => true),
+    ).toEqual([]);
+  });
+});
+
+describe("localFileChipLabel", () => {
+  it("says only what it does when the message has one page", () => {
+    expect(localFileChipLabel("/srv/page.html", false)).toBe("open in browser");
+  });
+
+  it("names the file when there are several", () => {
+    expect(localFileChipLabel("/srv/page.html", true)).toBe(
+      "open page.html in browser",
+    );
+  });
+});
+
+describe("ChatLinkButtons local pages", () => {
+  it("renders [open in browser] for an html file the message names", () => {
+    const app = mount(
+      <ChatLinkButtons
+        text="Done: canvas/dashboard.html"
+        isFile={fakeIsFile}
+      />,
+    );
+    expect(app.frame()).toContain("[open in browser]");
+    app.unmount();
+  });
+
+  it("renders no chip for a page that is not on disk", () => {
+    const app = mount(
+      <ChatLinkButtons text="Done: canvas/other.html" isFile={fakeIsFile} />,
+    );
+    expect(app.frame()).not.toContain("[open");
+    app.unmount();
+  });
+
+  it("puts the page before web links under the same cap", () => {
+    const app = mount(
+      <ChatLinkButtons
+        text="https://a.io https://b.io https://c.io and /srv/page.html"
+        isFile={fakeIsFile}
+      />,
+    );
+    const frame = app.frame();
+    expect(frame).toContain("[open in browser]");
+    expect(frame).toContain("[open a.io]");
+    expect(frame).toContain("[open b.io]");
+    expect(frame).not.toContain("[open c.io]");
+    expect(frame).toContain("+1 more");
+    app.unmount();
+  });
+
+  it("sends the absolute path to the local-file callback", async () => {
+    const opened: string[] = [];
+    const app = mount(
+      <ChatLinkButtons text="Done: canvas/dashboard.html" isFile={fakeIsFile} />,
+      { opened },
+    );
+    await clickChip(app, "[open in browser]", opened);
+    expect(opened).toEqual(["local:/tmp/links/canvas/dashboard.html"]);
     app.unmount();
   });
 });

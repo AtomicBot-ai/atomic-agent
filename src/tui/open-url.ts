@@ -1,3 +1,5 @@
+import { statSync } from "node:fs";
+import { posix, win32 } from "node:path";
 import type { TerminalLaunch } from "./build-terminal-launch.js";
 import {
   openTerminalWindow,
@@ -95,6 +97,82 @@ export async function openUrlInBrowser(
   const launch = buildOpenUrlCommand(url, options.platform ?? process.platform);
   if (launch === null) {
     return { ok: false, reason: `not an http(s) URL: ${url}` };
+  }
+  return await openTerminalWindow(launch, {
+    ...(options.spawn ? { spawn: options.spawn } : {}),
+    ...(options.settleMs !== undefined ? { settleMs: options.settleMs } : {}),
+  });
+}
+
+/** The only local files the `[open in browser]` chip opens. */
+const LOCAL_HTML = /\.html?$/i;
+
+/**
+ * Resolves "open this local page in the default browser" (ATO-1139)
+ * into a launch, the local-file twin of {@link buildOpenUrlCommand}.
+ * Kept apart from it on purpose: that one refuses `file:` so a web chip
+ * can never reach the OS file handlers, and this one opens exactly one
+ * kind of file — an absolute `.html` / `.htm` path — and nothing else.
+ *
+ * On win32 the path travels inside the same verbatim `start "" "…"`
+ * line as a URL does; a path holding `"` or `%` (cmd would read the
+ * latter as a variable) is refused rather than quoted around.
+ */
+export function buildOpenLocalHtmlCommand(
+  filePath: string,
+  platform: NodeJS.Platform,
+): TerminalLaunch | null {
+  if (!LOCAL_HTML.test(filePath)) return null;
+  const absolute =
+    platform === "win32" ? win32.isAbsolute(filePath) : posix.isAbsolute(filePath);
+  if (!absolute) return null;
+  switch (platform) {
+    case "darwin":
+      return { cmd: "open", args: [filePath], label: "default browser" };
+    case "win32":
+      if (/["%\r\n]/.test(filePath)) return null;
+      return {
+        cmd: "cmd.exe",
+        args: ["/c", `start "" "${filePath}"`],
+        label: "default browser",
+        windowsVerbatimArguments: true,
+      };
+    default:
+      return { cmd: "xdg-open", args: [filePath], label: "default browser" };
+  }
+}
+
+export interface OpenLocalHtmlOptions extends OpenUrlOptions {
+  /** Defaults to a `stat` of the real disk; injectable for the tests. */
+  readonly isFile?: (path: string) => boolean;
+}
+
+function isRegularFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Opens a local `.html` page the agent wrote in the default browser.
+ * The file is checked again at click time: the chip was drawn when the
+ * message rendered, and the page may have been moved since.
+ */
+export async function openLocalHtmlInBrowser(
+  filePath: string,
+  options: OpenLocalHtmlOptions = {},
+): Promise<OpenUrlResult> {
+  const launch = buildOpenLocalHtmlCommand(
+    filePath,
+    options.platform ?? process.platform,
+  );
+  if (launch === null) {
+    return { ok: false, reason: `not a local .html page: ${filePath}` };
+  }
+  if (!(options.isFile ?? isRegularFile)(filePath)) {
+    return { ok: false, reason: `file not found: ${filePath}` };
   }
   return await openTerminalWindow(launch, {
     ...(options.spawn ? { spawn: options.spawn } : {}),
