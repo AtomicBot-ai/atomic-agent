@@ -121,11 +121,11 @@ function constLine(name) {
   return source.slice(at + 1, source.indexOf("\n", at + 1) + 1);
 }
 
-function windowWith({ log, answer, busy = false, draft = "", voice = "idle", sid = "ses-1" }) {
+function windowWith({ log, answer, busy = false, draft = "", voice = "idle", sid = "ses-1", liveRows = null }) {
   const calls = { rollback: [], resend: [], submit: [], toasts: [], opened: [] };
   const entry = { value: draft, focus() {}, setSelectionRange() {} };
   const c = vm.createContext({
-    S: { log, busy, pending: null, draft, agentSession: sid, stick: false },
+    S: { log, busy, pending: null, draft, agentSession: sid, stick: false, history: [] },
     RUNNING: new Map(),
     VOICE: { state: voice },
     ATT: { items: [] },
@@ -140,12 +140,15 @@ function windowWith({ log, answer, busy = false, draft = "", voice = "idle", sid
     ctxDraftChanged() {},
     openSession: async (id) => { calls.opened.push(id); },
     resendUser: (id) => calls.resend.push(id),
+    // A turn running on screen keeps its own rows through a clear.
+    liveClearedLog: () => (liveRows ? liveRows.slice() : []),
     calls,
     entry,
   });
   vm.runInContext(
-    constLine("ROLLBACK") + block("function rollbackStashBack(") + block("function rollbackNoteCleared(") + block("function priorQuestions(") + block("function rollbackRefusalText(") + block("async function regenerateReply(")
+    constLine("ROLLBACK") + block("function rollbackStashBack(") + block("function rollbackNoteCleared(") + block("function clearTranscriptNow(") + block("function rollbackOnSessionOpened(") + block("function priorQuestions(") + block("function rollbackRefusalText(") + block("async function regenerateReply(")
       + "globalThis.regenerateReply = regenerateReply; globalThis.ROLLBACK = ROLLBACK; globalThis.rollbackNoteCleared = rollbackNoteCleared;"
+      + "globalThis.clearTranscriptNow = clearTranscriptNow; globalThis.rollbackOnSessionOpened = rollbackOnSessionOpened;"
       + "globalThis.submit = () => calls.submit.push(S.draft);",
     c,
   );
@@ -290,13 +293,11 @@ function agentChat() {
   return { turns, answer };
 }
 
-test("after Clear Transcript, a failed repeat never takes back the earlier real answer (ATO-1420)", async () => {
+test("after Clear Transcript, the hidden question still counts toward the position (ATO-1420)", async () => {
   const agent = agentChat();
   const w = windowWith({ log: [{ id: "q0", k: "user", text: "Hi" }, { id: "a0", k: "assistant", text: "Hello" }], answer: agent.answer });
-  // Clear Transcript, as the 'clear' action runs it.
-  const before = w.S.log;
-  w.S.log = [];
-  w.rollbackNoteCleared(before, w.S.log, w.S.agentSession);
+  w.clearTranscriptNow();   // the 'clear' action's own step
+  assert.equal(w.S.log.length, 0);
   w.S.log.push(
     { id: "q1", k: "user", text: "continue" }, { id: "a1", k: "assistant", text: "real answer" },
     { id: "q2", k: "user", text: "continue" }, { id: "f2", k: "system", text: "turn failed" },
@@ -309,7 +310,7 @@ test("after Clear Transcript, a failed repeat never takes back the earlier real 
   assert.equal(w.S.log.length, 4, "nothing removed on screen");
 });
 
-test("a failed repeat with a wrong count is still refused for its missing answer (ATO-1420)", async () => {
+test("a failed repeat with a wrong count is refused only for its missing answer (ATO-1420)", async () => {
   const agent = agentChat();
   // The cleared question is not known to the window (say, cleared before the chat was saved).
   const w = windowWith({
@@ -325,14 +326,14 @@ test("a failed repeat with a wrong count is still refused for its missing answer
   assert.equal(w.calls.unanswered, true);
   assert.equal(agent.turns.length, 4, "the real answer stays");
   assert.deepEqual(w.calls.resend, ["q2"]);
+  // The same count without the flag is the bug: the agent's check alone takes the real answer back.
+  assert.equal(agent.answer("continue", 1, false).ok, true, "only expectUnanswered saved it");
 });
 
 test("after Clear Transcript, Regenerate on the last answered question takes it back (ATO-1420)", async () => {
   const agent = agentChat();
   const w = windowWith({ log: [{ id: "q0", k: "user", text: "Hi" }, { id: "a0", k: "assistant", text: "Hello" }], answer: agent.answer });
-  const before = w.S.log;
-  w.S.log = [];
-  w.rollbackNoteCleared(before, w.S.log, w.S.agentSession);
+  w.clearTranscriptNow();
   w.S.log.push({ id: "q1", k: "user", text: "continue" }, { id: "a1", k: "assistant", text: "real answer" });
   await w.regenerateReply("q1", false);
   assert.equal(w.calls.prior, 1);
@@ -348,4 +349,41 @@ test("the cleared count belongs to its chat", () => {
   assert.deepEqual({ ...w.ROLLBACK.cleared }, { sid: "ses-1", n: 2 });
   w.rollbackNoteCleared([{ k: "user", text: "d" }], [], "ses-2");
   assert.deepEqual({ ...w.ROLLBACK.cleared }, { sid: "ses-2", n: 1 });
+});
+
+test("a turn running on screen keeps its rows through Clear, and only the hidden questions count (ATO-1420)", () => {
+  const live = [{ id: "q2", k: "user", text: "still going" }];
+  const w = windowWith({ log: [{ id: "q1", k: "user", text: "a" }, { id: "a1", k: "assistant", text: "b" }, ...live], liveRows: live, answer: { ok: false, supported: true } });
+  w.clearTranscriptNow();
+  assert.deepEqual([...w.S.log].map((x) => x.id), ["q2"]);
+  assert.deepEqual({ ...w.ROLLBACK.cleared }, { sid: "ses-1", n: 1 });
+  assert.equal(w.priorQuestions(w.S.log[0]), 1);
+});
+
+test("opening a chat draws all of it again, so the cleared count starts over (ATO-1420)", async () => {
+  const agent = agentChat();
+  const w = windowWith({ log: [{ id: "q0", k: "user", text: "Hi" }, { id: "a0", k: "assistant", text: "Hello" }], answer: agent.answer });
+  w.clearTranscriptNow();
+  // The chat is opened again: the stored transcript, "Hi" included, is the log.
+  w.S.log = [
+    { id: "q0", k: "user", text: "Hi" }, { id: "a0", k: "assistant", text: "Hello" },
+    { id: "q1", k: "user", text: "continue" }, { id: "a1", k: "assistant", text: "real answer" },
+  ];
+  w.rollbackOnSessionOpened("ses-1", false, false);
+  assert.deepEqual({ ...w.ROLLBACK.cleared }, { sid: null, n: 0 });
+  await w.regenerateReply("q1", false);
+  assert.equal(w.calls.prior, 1, "Hi is counted once, from the log");
+  assert.deepEqual(w.calls.submit, ["continue"]);
+});
+
+test("a Clear that landed while the chat loaded empties it and counts what it hid (ATO-1420)", () => {
+  const w = windowWith({ log: [{ id: "q0", k: "user", text: "Hi" }, { id: "a0", k: "assistant", text: "Hello" }], answer: { ok: false, supported: true } });
+  w.rollbackOnSessionOpened("ses-1", true, false);
+  assert.equal(w.S.log.length, 0);
+  assert.deepEqual({ ...w.ROLLBACK.cleared }, { sid: "ses-1", n: 1 });
+  const live = [{ id: "q1", k: "user", text: "running" }];
+  const r = windowWith({ log: [{ id: "q0", k: "user", text: "Hi" }, ...live], liveRows: live, answer: { ok: false, supported: true } });
+  r.rollbackOnSessionOpened("ses-1", true, true);
+  assert.deepEqual([...r.S.log].map((x) => x.id), ["q1"], "a running turn's own rows stay");
+  assert.deepEqual({ ...r.ROLLBACK.cleared }, { sid: "ses-1", n: 1 });
 });

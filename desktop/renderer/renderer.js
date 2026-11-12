@@ -3219,6 +3219,25 @@ function rollbackNoteCleared(before, after, sid) {
   const key = sid || null;
   ROLLBACK.cleared = {sid: key, n: (was.sid === key ? was.n : 0) + hidden};
 }
+/* Clear Transcript's own step (act 'clear'): the window empties (a turn
+   running on screen keeps its rows) and the questions it took off screen are
+   noted for priorQuestions, as the agent still has them (ATO-1420). */
+function clearTranscriptNow() {
+  const before = S.log;
+  S.log = liveClearedLog(); S.history = [];
+  rollbackNoteCleared(before, S.log, S.agentSession);
+}
+/* openSession's part of the ATO-1420 count: the whole chat is drawn again, so
+   it starts from 0. A Clear Transcript that landed while the chat loaded
+   (ATO-131) clears it as act 'clear' does (a running turn's own rows stay,
+   `rebuilt`) and notes what it hid. */
+function rollbackOnSessionOpened(sid, clearedWhileLoading, rebuilt) {
+  ROLLBACK.cleared = {sid: null, n: 0};
+  if (!clearedWhileLoading) return;
+  const loaded = S.log;
+  S.log = rebuilt ? liveClearedLog() : [];
+  rollbackNoteCleared(loaded, S.log, sid);
+}
 /** How many questions (steers not counted) come before `m` in the agent's
     chat: the ones in the log, and the ones Clear Transcript hid (ATO-1420). */
 function priorQuestions(m) {
@@ -7050,9 +7069,7 @@ function act(a) {
                            agent keeps this chat and opening it again brings it back. An empty
                            new chat has nothing for the agent to remember, so it says only that. */
                         const kept = !!(S.agentSession || S.busy);
-                        const before = S.log;
-                        S.log = liveClearedLog(); S.history = [];
-                        rollbackNoteCleared(before, S.log, S.agentSession);   // ATO-1420: the agent still has those questions
+                        clearTranscriptNow();   // ATO-1420: notes the questions the agent still has
                         render(); chatToast('Window cleared', kept ? 'The agent still remembers this chat' : ''); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
@@ -20645,13 +20662,9 @@ async function openSession(id) {
     S.streamId = null;
   }
   // ATO-131: cleared while this loaded: as Clear leaves a chat that is open (its running turn's own rows stay).
-  ROLLBACK.cleared = {sid: null, n: 0};   // ATO-1420: the whole chat is drawn again
-  if (OPEN_CLEARED === seq) {
-    OPEN_CLEARED = 0;
-    const loaded = S.log;
-    S.log = rebuilt ? liveClearedLog() : [];
-    rollbackNoteCleared(loaded, S.log, id);
-  }
+  const clearedWhileLoading = OPEN_CLEARED === seq;
+  if (clearedWhileLoading) OPEN_CLEARED = 0;
+  rollbackOnSessionOpened(id, clearedWhileLoading, rebuilt);   // ATO-1420: the whole chat is drawn again
   // item 6: a turn of this session is still running, but its stream is not in
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
