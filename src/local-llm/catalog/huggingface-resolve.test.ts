@@ -190,4 +190,62 @@ describe("buildCustomModelDef", () => {
     expect(def.supportsVision).toBe(true);
     expect(def.mmprojFilename).toBe("mmproj-BF16.gguf");
   });
+
+  describe("rated for this machine (ATO-450)", () => {
+    const machine = {
+      ramGb: 32,
+      gpuBudgetGb: 24,
+      freeDiskGb: 200,
+      cpuOnly: false,
+      bandwidth: { gpuGbPerSec: 200, ramGbPerSec: 200, unified: true },
+    };
+    const tree = [
+      { path: "Qwen3.5-4B-Q8_0.gguf", lfs: { size: 4 * GB } },
+      { path: "Qwen3.5-4B-UD-Q4_K_XL.gguf", lfs: { size: 2.7 * GB } },
+      { path: "Qwen3.5-4B-Q3_K_M.gguf", lfs: { size: 2 * GB } },
+    ];
+
+    it("badges every quant and leads with the one picked for the machine", async () => {
+      stubTree(tree);
+      const resolved = await resolveHuggingFaceGgufChoices(
+        "unsloth/Qwen3.5-4B-GGUF",
+        { machine: async () => machine },
+      );
+      // Q8_0 fits and still answers at ~30 tok/s: the most precise pick.
+      expect(resolved.choices.map((c) => c.filename)).toEqual([
+        "Qwen3.5-4B-Q8_0.gguf",
+        "Qwen3.5-4B-UD-Q4_K_XL.gguf",
+        "Qwen3.5-4B-Q3_K_M.gguf",
+      ]);
+      expect(resolved.choices.map((c) => c.recommended)).toEqual([true, false, false]);
+      for (const choice of resolved.choices) {
+        expect(choice.fit?.label).toBe("Fits well");
+        expect(choice.speed?.label).toMatch(/^~\d+ tok\/s, estimate$/);
+      }
+    });
+
+    it("keeps the plain list when the machine cannot be read", async () => {
+      stubTree(tree);
+      const resolved = await resolveHuggingFaceGgufChoices(
+        "unsloth/Qwen3.5-4B-GGUF",
+        {
+          machine: async () => {
+            throw new Error("no engine");
+          },
+        },
+      );
+      expect(resolved.choices[0]!.filename).toBe("Qwen3.5-4B-UD-Q4_K_XL.gguf");
+      expect(resolved.choices.every((c) => c.fit === undefined)).toBe(true);
+    });
+
+    it("rates a single named file without reordering anything", async () => {
+      stubTree(tree);
+      const resolved = await resolveHuggingFaceGgufChoices(
+        "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/blob/main/Qwen3.5-4B-Q3_K_M.gguf",
+        { machine: async () => machine },
+      );
+      expect(resolved.choices).toHaveLength(1);
+      expect(resolved.choices[0]).toMatchObject({ bits: 3, recommended: false });
+    });
+  });
 });
