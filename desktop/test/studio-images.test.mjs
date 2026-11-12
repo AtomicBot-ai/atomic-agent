@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import vm from 'node:vm';
 const req = createRequire(import.meta.url);
 const L = req('../renderer/studio/images-logic.js');
 const { simgJobOf } = req('../renderer/studio/images-view.js');
@@ -347,4 +348,48 @@ test('the machine is "this Mac" only on macOS; Windows and Linux say "this compu
     const strings = (src.match(/'[^'\n]*'/g) || []).filter((x) => /this Mac|your Mac|Show in Finder/.test(x));
     assert.deepEqual(strings.filter((x) => x !== "'this Mac'" && x !== "'Mac'" && x !== "'Show in Finder'"), [], f);
   }
+});
+
+/* ---------- ATO-1394: the page re-reads the catalog after a local change ---------- */
+
+/** images-logic.js, images-view.js and images.js in one vm context with a stub STUDIO, BR and timers. */
+function loadImagesPage(cat) {
+  const pages = {};
+  const timers = [];
+  let reads = 0;
+  const ctx = {
+    console, Promise, JSON, Object, Array, Map, Set, Math, Number, String,
+    localStorage: { getItem: () => null, setItem: () => undefined },
+    document: { activeElement: null, getElementById: () => null },
+    setTimeout: (fn) => { timers.push(fn); return timers.length; },
+    clearTimeout: (id) => { if (id) timers[id - 1] = null; },
+    STUDIO: { register: (id, page) => { pages[id] = page; }, isStudioFile: () => true },
+  };
+  ctx.window = ctx;
+  ctx.atomic = { platform: 'darwin', studio: { catalog: () => { reads++; return Promise.resolve({ ok: true, data: cat }); }, price: () => Promise.resolve({ ok: false }) } };
+  vm.createContext(ctx);
+  for (const f of ['images-logic.js', 'images-view.js', 'images.js']) {
+    vm.runInContext(readFileSync(new URL('../renderer/studio/' + f, import.meta.url), 'utf8'), ctx, { filename: f });
+  }
+  const flush = () => { const run = timers.splice(0); run.forEach((fn) => fn && fn()); };
+  return { page: pages.images, reads: () => reads, flush };
+}
+const settle = () => new Promise((r) => setImmediate(r));
+
+test('the Images page re-reads the catalog once after a model loads, and not while it is loading', async () => {
+  const P = loadImagesPage(catalog());
+  P.page.onShow();
+  await settle();
+  assert.equal(P.reads(), 1, 'first read on show');
+  P.page.onLocal({ type: 'load', state: 'loading' });
+  P.page.onLocal({ type: 'download', download: { id: 'z-image:q8', state: 'downloading' } });
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), 1, 'a load in progress or a running download reads nothing');
+  P.page.onLocal({ type: 'load', state: 'loaded' });
+  P.page.onLocal({ type: 'download', download: { id: 'z-image:q8', state: 'done' } });
+  P.page.onLocal({ type: 'removed', id: 'z-image:q8' });
+  P.flush();
+  await settle();
+  assert.equal(P.reads(), 2, 'several events in a row make one read');
 });

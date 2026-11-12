@@ -191,6 +191,33 @@
     }, () => { IM.catLoading = false; IM.catErr = {message: 'Could not read the models.'}; paintForm(); });
   }
 
+  /* ATO-1394: the catalog again, quietly, after something changed a local model's state
+     (Generate loaded it, a download finished, it was removed): only the models' facts move;
+     the chosen model, the form and the words stay. Several events in a row make one read. */
+  let refreshT = 0, refreshSeq = 0;
+  function refreshCatalog() {
+    clearTimeout(refreshT);
+    refreshT = setTimeout(() => {
+      const s = br();
+      if (!s || !s.catalog || !IM.catalog || IM.catLoading) return;
+      const seq = ++refreshSeq;
+      Promise.resolve(s.catalog('image')).then((r) => {
+        if (seq !== refreshSeq || IM.catLoading || !r || !r.ok || !r.data) return;
+        IM.catalog = r.data;
+        const m = simgFindModel(IM.catalog, IM.form.modelId, IM.form.provider);
+        if (m) IM.model = m;
+        if (IM.shown) { paintForm(); paintPop(); }
+      }, () => undefined);
+    }, 300);
+  }
+  const LOCAL_CHANGE = new Set(['load', 'download', 'removed']);
+  function onLocal(ev) {
+    if (!ev || !LOCAL_CHANGE.has(ev.type)) return;
+    if (ev.type === 'load' && ev.state === 'loading') return;
+    if (ev.type === 'download' && !(ev.download && ev.download.state === 'done')) return;
+    refreshCatalog();
+  }
+
   let priceT = 0;
   function refreshPrice() {
     clearTimeout(priceT);
@@ -333,6 +360,7 @@
       IM.jobErr = job.error || {code: 'FAILED', message: 'That did not work.'};
       if (!IM.shown && typeof toast === 'function') toast('An image did not finish', IM.jobErr.message, 'bad');
     }
+    if (!job.cloud) refreshCatalog();   // ATO-1394: Generate loaded the model (or a failed load unloaded one)
     if (job.state === 'completed' && !IM.shown && typeof toast === 'function') toast('Images are ready', 'Open Studio › Images to see them');
     if (IM.shown) { paintStage(); paintFoot(); paintGallery(); }
   }
@@ -753,6 +781,7 @@
     },
     onHide() { IM.shown = false; IM.pop = null; IM.picking = null; },
     onEvent,
+    onLocal,
     onKey,
     act: verb,
     focusFile(path) {

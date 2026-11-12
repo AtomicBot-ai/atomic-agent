@@ -441,6 +441,23 @@
       paint(); refreshQuote();
     }
 
+    /* ATO-1394: the catalog again, quietly, after something changed a local model's state
+       (Generate loaded it, a download finished, it was removed): the chosen model and the
+       form stay; the picker and the footer stop saying "Not loaded". One read per burst. */
+    let refreshTimer = null, refreshSeq = 0;
+    function refreshCatalog() {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(async () => {
+        const br = BR();
+        if (!br || !br.catalog || !S.catalog) return;
+        const seq = ++refreshSeq;
+        const res = await Promise.resolve(br.catalog(KIND)).catch(() => null);
+        if (seq !== refreshSeq || !res || !res.ok || !res.data) return;
+        S.catalog = res.data;
+        paint('form'); paint('foot'); if (S.pickerOpen) paint('picker-list');
+      }, 300);
+    }
+
     /* The gallery is read by page; "Load more" (more = true) asks for the next one.
        A fresh first page wins over a "Load more" still on its way. */
     const PAGE = 60;
@@ -720,6 +737,7 @@
       if (S.job && S.job.id !== job.id && running()) return;
       const prev = S.job && S.job.id === job.id ? S.job : null;
       S.job = Object.assign({}, prev || { startedAt: job.createdAtMs || Date.now(), label: job.model }, job);
+      if (!job.cloud && (job.state === 'completed' || job.state === 'failed')) refreshCatalog();   // ATO-1394
       if (job.state === 'completed') {
         const item = (job.outputs || [])[0] || null;
         if (item) showResult(item);
@@ -1345,6 +1363,13 @@
         checkImprove();
       },
       onHide() { S.shown = false; S.pickerOpen = false; S.libraryOpen = false; },
+      /* ATO-1394: a model loaded, downloaded or removed (shell.js forwards BR.studio.onLocal). */
+      onLocal(ev) {
+        if (!ev) return;
+        if (ev.type === 'load' && ev.state !== 'loading') refreshCatalog();
+        else if (ev.type === 'download' && ev.download && ev.download.state === 'done') refreshCatalog();
+        else if (ev.type === 'removed') refreshCatalog();
+      },
       focusFile,
       _state: S,
     };
