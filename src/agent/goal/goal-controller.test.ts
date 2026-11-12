@@ -188,6 +188,40 @@ describe("runGoal", () => {
     expect(out.goal?.status).toBe("budget_limited");
   });
 
+  it("gives each round what is left of one money budget and sums the spend (ATO-1288)", async () => {
+    const budgets: (number | undefined)[] = [];
+    const h = harness({
+      runRound: async (s, _m, options) => {
+        budgets.push(options.taskMaxCostUsd);
+        return { ...replied(s, "worked"), spendUsd: 0.75 };
+      },
+      judgeAnswers: Array(5).fill(verdict("not_met")),
+    });
+    const out = await runGoal(h.deps, {
+      session, message: "start", goal: goal(["a"]), signal, taskMaxCostUsd: 2,
+    });
+    expect(budgets).toEqual([2, 1.25, 0.5]);
+    expect(out.result.spendUsd).toBeCloseTo(2.25);
+    expect(out.goal?.status).toBe("budget_limited");
+    expect(out.goal?.statusReason ?? "").toContain("money budget");
+  });
+
+  it("leaves rounds uncapped when the money budget is 0", async () => {
+    const budgets: (number | undefined)[] = [];
+    const h = harness({
+      runRound: async (s, _m, options) => {
+        budgets.push(options.taskMaxCostUsd);
+        return replied(s, "worked");
+      },
+      judgeAnswers: [verdict("met")],
+    });
+    const out = await runGoal(h.deps, {
+      session, message: "start", goal: goal(["a"]), signal, taskMaxCostUsd: 0,
+    });
+    expect(budgets).toEqual([undefined]);
+    expect(out.result).not.toHaveProperty("spendUsd");
+  });
+
   it("honours a pause or clear requested between rounds", async () => {
     const controls: ("pause" | "clear" | null)[] = [null, "pause"];
     const h = harness({
