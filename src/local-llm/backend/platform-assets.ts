@@ -45,19 +45,28 @@ export class UnsupportedGlibcError extends UnsupportedPlatformError {
 }
 
 /**
- * ATO-252: the Windows on ARM build. One asset, CPU only: the turboquant
- * repo publishes no Vulkan or CUDA build for arm64, so there is no variant
- * to pick (`localModels.managed.backendVariant` is ignored there, see
- * `resolveDownloadAsset`) and no GPU build to fall back from
+ * ATO-252: the Windows on ARM builds. CPU only: the turboquant repo
+ * publishes no Vulkan or CUDA build for arm64, so
+ * `localModels.managed.backendVariant` is ignored there (see
+ * `resolveDownloadAsset`) and there is no GPU build to fall back from
  * (`cpu-backend-fallback.ts`). Same layout as the x64 zips
  * (`build/bin/llama-server.exe`).
+ *
+ * ATO-253: two of them. `WINDOWS_ARM64_BACKEND_ASSET` is compiled with
+ * `-march=armv8.7-a` and dies with an illegal instruction on anything
+ * older than Snapdragon X (8cx Gen 1-3, Surface Pro X, Dev Kit 2023);
+ * `WINDOWS_ARM64_COMPAT_BACKEND_ASSET` (`armv8.2-a+dotprod`) runs on every
+ * Windows on ARM machine. Which one a machine gets is decided in
+ * `windows-arm64-backend-variant.ts`.
  */
 export const WINDOWS_ARM64_BACKEND_ASSET =
   "llama-turboquant-windows-arm64-cpu.zip";
+export const WINDOWS_ARM64_COMPAT_BACKEND_ASSET =
+  "llama-turboquant-windows-arm64-cpu-compat.zip";
 
 /**
  * What a Windows on ARM machine is told when no engine release carries
- * `WINDOWS_ARM64_BACKEND_ASSET` yet: the app itself runs, only local
+ * an arm64 build it can run: the app itself runs, only local
  * models do not. One sentence for the CLI, the TUI and the desktop (which
  * finds it in `models update`'s stderr), so they cannot drift apart.
  */
@@ -77,6 +86,46 @@ export interface PlatformAsset {
   arch: "arm64" | "x64";
   assetName: string;
   binaryName: string;
+  /**
+   * Other archives that also run on this machine, best first, for a
+   * release that lacks `assetName`. Only Windows arm64 sets it (ATO-253).
+   */
+  alternateAssetNames?: readonly string[];
+}
+
+/** `assetName` followed by `alternateAssetNames`: every archive this machine can use, best first. */
+export function acceptableAssetNames(asset: PlatformAsset): string[] {
+  return [asset.assetName, ...(asset.alternateAssetNames ?? [])];
+}
+
+/**
+ * The archive this machine wants, judged without a release in hand:
+ * `installed` when it is one of the archives that run here, otherwise the
+ * best one. Lets a Windows arm64 install of its second-choice build stand
+ * between full release checks, which pick exactly (ATO-253). Everywhere
+ * else this is just `asset.assetName`.
+ */
+export function wantedAssetForInstalled(
+  asset: PlatformAsset,
+  installed: string | undefined,
+): string {
+  return installed !== undefined && acceptableAssetNames(asset).includes(installed)
+    ? installed
+    : asset.assetName;
+}
+
+/**
+ * The best archive of `release` for this machine, or null when it carries
+ * none of `acceptableAssetNames(asset)`.
+ */
+export function pickReleaseAssetName(
+  releaseAssetNames: readonly string[],
+  asset: PlatformAsset,
+): string | null {
+  return (
+    acceptableAssetNames(asset).find((n) => releaseAssetNames.includes(n)) ??
+    null
+  );
 }
 
 export function resolvePlatformAsset(
@@ -120,10 +169,12 @@ export function resolvePlatformAsset(
     };
   }
   if (platform === "win32" && arch === "arm64") {
+    // The build every Windows on ARM CPU runs. `resolveDownloadAsset`
+    // upgrades it to the armv8.7 build only when the CPU proves it can.
     return {
       platform,
       arch,
-      assetName: WINDOWS_ARM64_BACKEND_ASSET,
+      assetName: WINDOWS_ARM64_COMPAT_BACKEND_ASSET,
       binaryName: "llama-server.exe",
     };
   }

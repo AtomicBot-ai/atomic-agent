@@ -73,6 +73,7 @@ import {
   stopChatAndEmbeddingDaemons,
   stopDaemon,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
+  wantedAssetForInstalled,
   type DownloadJobKind,
   type DownloadJobMode,
   type DownloadNotifyChannel,
@@ -480,7 +481,7 @@ function describeComputeBackend(installed: string | undefined): string {
   }
   let want: string;
   try {
-    want = resolveDownloadAsset().assetName;
+    want = wantedAssetForInstalled(resolveDownloadAsset(), installed);
   } catch {
     return installed;
   }

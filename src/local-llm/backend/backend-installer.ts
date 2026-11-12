@@ -14,7 +14,9 @@ import {
   type BackendVersionInfo,
 } from "./backend-version.js";
 import {
+  acceptableAssetNames,
   isWindowsArm64,
+  pickReleaseAssetName,
   resolvePlatformAsset,
   UnsupportedPlatformError,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
@@ -104,8 +106,11 @@ export function resetLatestReleaseCache(): void {
 export async function fetchLatestRelease(opts?: {
   force?: boolean;
 }): Promise<LatestReleaseInfo | null> {
-  const { assetName } = resolveDownloadAsset();
-  const cached = releaseCache.get(assetName);
+  // Windows arm64 accepts either of its two builds (ATO-253); everywhere
+  // else this is the one asset name.
+  const acceptable = acceptableAssetNames(resolveDownloadAsset());
+  const cacheKey = acceptable.join("|");
+  const cached = releaseCache.get(cacheKey);
   if (
     !opts?.force &&
     cached &&
@@ -144,7 +149,7 @@ export async function fetchLatestRelease(opts?: {
   // asset and pick the one with the newest release timestamp, falling
   // back to GitHub's own order when timestamps are missing.
   const candidates = (Array.isArray(data) ? data : []).filter(
-    (r) => !r.draft && (r.assets ?? []).some((a) => a.name === assetName),
+    (r) => !r.draft && (r.assets ?? []).some((a) => acceptable.includes(a.name)),
   );
   if (candidates.length === 0) {
     // A rarely-built platform's newest asset can fall off page 1 of the
@@ -152,7 +157,7 @@ export async function fetchLatestRelease(opts?: {
     // here would fail the check on every single start and, with the
     // pre-staging installer, was the only thing standing between the
     // user and a working binary already on disk.
-    releaseCache.set(assetName, { fetchedAt: Date.now(), release: null });
+    releaseCache.set(cacheKey, { fetchedAt: Date.now(), release: null });
     return null;
   }
   const match = candidates.reduce((best, cur) =>
@@ -163,7 +168,7 @@ export async function fetchLatestRelease(opts?: {
     assets: match.assets ?? [],
     releasedAt: match.published_at ?? match.created_at ?? null,
   };
-  releaseCache.set(assetName, { fetchedAt: Date.now(), release });
+  releaseCache.set(cacheKey, { fetchedAt: Date.now(), release });
   return release;
 }
 
@@ -220,7 +225,7 @@ export async function checkForBackendUpdate(dataDir: string, engine?: ManagedEng
   const variantStale = isInstalledVariantStale(
     dataDir,
     current,
-    resolveDownloadAsset().assetName,
+    wantedAssetFrom(release),
     release.tag,
   );
   return {
@@ -228,6 +233,20 @@ export async function checkForBackendUpdate(dataDir: string, engine?: ManagedEng
     latestTag: release.tag,
     currentTag: current?.tag ?? null,
   };
+}
+
+/**
+ * The archive of `release` this machine would install: the platform
+ * asset, or on Windows arm64 the best of its two builds the release
+ * actually carries (ATO-253), so a release with only one of them is not
+ * flagged as an update forever.
+ */
+function wantedAssetFrom(release: LatestReleaseInfo): string {
+  const wanted = resolveDownloadAsset();
+  return (
+    pickReleaseAssetName(release.assets.map((a) => a.name), wanted) ??
+    wanted.assetName
+  );
 }
 
 /**
@@ -342,7 +361,8 @@ export async function downloadBackend(
   activated?: boolean;
 }> {
   if (opts?.engine === "atomic-core") return installCoreBackend(dataDir, opts);
-  const { assetName, binaryName } = resolveDownloadAsset();
+  const wanted = resolveDownloadAsset();
+  const { binaryName } = wanted;
   // Always hit GitHub for an actual install so we don't grab a stale
   // tag from the snapshot cache.
   const release = await fetchLatestRelease({ force: true });
@@ -351,9 +371,14 @@ export async function downloadBackend(
     // engine build. Say that in words instead of an asset name.
     if (isWindowsArm64()) throw new Error(WINDOWS_ARM64_NO_BACKEND_MESSAGE);
     throw new Error(
-      `No release found containing asset ${assetName} (scanned ${RELEASES_PER_PAGE} releases)`,
+      `No release found containing asset ${wanted.assetName} (scanned ${RELEASES_PER_PAGE} releases)`,
     );
   }
+  // On Windows arm64 the best of its two builds this release carries
+  // (ATO-253); elsewhere the one platform asset.
+  const assetName =
+    pickReleaseAssetName(release.assets.map((a) => a.name), wanted) ??
+    wanted.assetName;
   const asset = release.assets.find((a) => a.name === assetName);
   if (!asset) {
     const known = release.assets.map((a) => a.name).join(", ");

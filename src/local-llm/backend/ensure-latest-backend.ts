@@ -19,6 +19,7 @@ import {
 } from "../server/daemon-lifecycle.js";
 import { hasOtherLiveSessions } from "../server/session-registry.js";
 import { resolveDownloadAsset } from "./windows-backend-variant.js";
+import { wantedAssetForInstalled } from "./platform-assets.js";
 
 export type AutoUpdateBackendResult =
   | { action: "skipped" }
@@ -178,7 +179,7 @@ function standingCheck(
   if (installed.asset !== undefined) {
     let wanted: string;
     try {
-      wanted = resolveDownloadAsset().assetName;
+      wanted = wantedAssetForInstalled(resolveDownloadAsset(), installed.asset);
     } catch {
       return null;
     }

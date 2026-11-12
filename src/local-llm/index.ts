@@ -50,6 +50,7 @@ export {
   resolvePlatformAsset,
   UnsupportedPlatformError,
   WINDOWS_ARM64_NO_BACKEND_MESSAGE,
+  wantedAssetForInstalled,
   type PlatformAsset,
 } from "./backend/platform-assets.js";
 

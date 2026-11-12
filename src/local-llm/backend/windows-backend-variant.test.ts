@@ -5,13 +5,19 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const execSyncMock = vi.hoisted(() => vi.fn());
-vi.mock("node:child_process", () => ({ execSync: execSyncMock }));
+const execFileSyncMock = vi.hoisted(() => vi.fn());
+vi.mock("node:child_process", () => ({
+  execSync: execSyncMock,
+  execFileSync: execFileSyncMock,
+}));
 
 import { LINUX_ARM64_BACKEND_ASSET } from "./linux-arm64-backend-variant.js";
 import {
   UnsupportedGlibcError,
   WINDOWS_ARM64_BACKEND_ASSET,
+  WINDOWS_ARM64_COMPAT_BACKEND_ASSET,
 } from "./platform-assets.js";
+import { resetWindowsArm64CpuCache } from "./windows-arm64-backend-variant.js";
 import {
   WINDOWS_BACKEND_ASSETS,
   isIncompleteWindowsCudaBackend,
@@ -256,6 +262,7 @@ describe("isWindowsGpuBackendAsset", () => {
 
   it("rejects the Windows arm64 build (CPU only, ATO-252)", () => {
     expect(isWindowsGpuBackendAsset(WINDOWS_ARM64_BACKEND_ASSET)).toBe(false);
+    expect(isWindowsGpuBackendAsset(WINDOWS_ARM64_COMPAT_BACKEND_ASSET)).toBe(false);
   });
 
   it("treats a pre-`asset`-field install as a GPU build", () => {
@@ -444,22 +451,63 @@ describe("resolveDownloadAsset", () => {
   });
 
   // ATO-252: the x64 zips the probe and the variants choose between cannot
-  // run on Windows arm64; its one CPU build is the answer every time.
-  it("keeps the arm64 CPU build on Windows arm64, with no nvidia-smi probe", () => {
-    execSyncMock.mockReturnValue(Buffer.from(NVIDIA_SMI_HEADER));
-    const asset = resolveDownloadAsset("win32", "arm64");
-    expect(asset.assetName).toBe(WINDOWS_ARM64_BACKEND_ASSET);
-    expect(asset.binaryName).toBe("llama-server.exe");
-    expect(execSyncMock).not.toHaveBeenCalled();
-  });
-
-  it("ignores every configured variant on Windows arm64", () => {
-    for (const v of ["cpu", "vulkan", "cuda-12.4", "cuda-13.3"] as const) {
-      setConfiguredBackendVariant(v);
-      expect(resolveDownloadAsset("win32", "arm64").assetName).toBe(
-        WINDOWS_ARM64_BACKEND_ASSET,
+  // run on Windows arm64. ATO-253: it picks between its own two CPU builds
+  // from the CPU feature register (`CP 4031`), never from nvidia-smi.
+  describe("on Windows arm64", () => {
+    /** `reg query` printing an ID_AA64ISAR1_EL1 with or without I8MM+BF16. */
+    function stubIsar1(armv87: boolean): void {
+      const value = 0x100001n | (armv87 ? (1n << 44n) | (1n << 52n) : 0n);
+      execFileSyncMock.mockReturnValue(
+        Buffer.from(`    CP 4031    REG_QWORD    0x${value.toString(16)}\r\n`),
       );
     }
-    expect(execSyncMock).not.toHaveBeenCalled();
+
+    beforeEach(() => {
+      resetWindowsArm64CpuCache();
+      execFileSyncMock.mockReset();
+    });
+
+    afterEach(() => {
+      resetWindowsArm64CpuCache();
+    });
+
+    it("takes the fast build on a CPU with I8MM, compat as the alternate", () => {
+      stubIsar1(true);
+      execSyncMock.mockReturnValue(Buffer.from(NVIDIA_SMI_HEADER));
+      const asset = resolveDownloadAsset("win32", "arm64");
+      expect(asset.assetName).toBe(WINDOWS_ARM64_BACKEND_ASSET);
+      expect(asset.alternateAssetNames).toEqual([
+        WINDOWS_ARM64_COMPAT_BACKEND_ASSET,
+      ]);
+      expect(asset.binaryName).toBe("llama-server.exe");
+      expect(execSyncMock).not.toHaveBeenCalled();
+    });
+
+    it("takes only the compat build on a CPU without I8MM", () => {
+      stubIsar1(false);
+      const asset = resolveDownloadAsset("win32", "arm64");
+      expect(asset.assetName).toBe(WINDOWS_ARM64_COMPAT_BACKEND_ASSET);
+      expect(asset.alternateAssetNames).toEqual([]);
+    });
+
+    it("prefers compat when the register cannot be read", () => {
+      execFileSyncMock.mockImplementation(() => {
+        throw new Error("reg: not found");
+      });
+      const asset = resolveDownloadAsset("win32", "arm64");
+      expect(asset.assetName).toBe(WINDOWS_ARM64_COMPAT_BACKEND_ASSET);
+      expect(asset.alternateAssetNames).toEqual([WINDOWS_ARM64_BACKEND_ASSET]);
+    });
+
+    it("ignores every configured variant", () => {
+      stubIsar1(false);
+      for (const v of ["cpu", "vulkan", "cuda-12.4", "cuda-13.3"] as const) {
+        setConfiguredBackendVariant(v);
+        expect(resolveDownloadAsset("win32", "arm64").assetName).toBe(
+          WINDOWS_ARM64_COMPAT_BACKEND_ASSET,
+        );
+      }
+      expect(execSyncMock).not.toHaveBeenCalled();
+    });
   });
 });
