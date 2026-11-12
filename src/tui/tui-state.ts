@@ -354,6 +354,12 @@ export interface SessionPickerEntry {
    * an entry is built.
    */
   pinned: boolean;
+  /**
+   * The desktop chat folder this session is in (ATO-1180,
+   * `<stateDir>/chat-folders.json`), stamped by the rail orchestrator;
+   * absent when it is in none.
+   */
+  folder?: string;
 }
 
 /**

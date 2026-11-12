@@ -615,11 +615,14 @@ function SessionRow({
   // way, and painted on every row — a pin mark that appeared only under
   // the pointer could not show which threads are already pinned.
   const marks = CLOSE_COLUMNS + PIN_COLUMNS;
+  // ATO-1180: the desktop chat folder the thread is in, ahead of its name.
+  const folder =
+    entry.folder !== undefined ? `${truncate(entry.folder, 12)}/ ` : "";
   const preview = truncate(
     entry.preview,
-    Math.max(1, Math.min(previewWidth, groundWidth - 5 - marks)),
+    Math.max(1, Math.min(previewWidth, groundWidth - 5 - marks) - folder.length),
   );
-  const label = `${chevron} ${marker} ${preview}`;
+  const label = `${chevron} ${marker} ${folder}${preview}`;
   // Every cell width is computed here, so nothing may flex. Yoga
   // shrinks text children by default and Ink re-wraps a squeezed
   // `<Text>` rather than clipping it — the trap

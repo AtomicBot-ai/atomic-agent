@@ -1,5 +1,10 @@
 import type { SessionPickerEntry } from "../tui-state.js";
 import {
+  configRailChatFoldersSource,
+  groupRailByFolder,
+  type RailChatFoldersSource,
+} from "./chat-folders.js";
+import {
   persistSessionRailLayout,
   readSessionRailLayout,
 } from "./persist-session-rail.js";
@@ -50,6 +55,12 @@ export type SessionRailEntryLoader = (
  * recency window — is fetched through `loadEntry` before arranging, so
  * a pin is never lost to age. A pin on a deleted session loads nothing
  * and is pruned on the next write.
+ *
+ * Chats the desktop put in a folder (ATO-1180) are grouped after the
+ * arranging: pinned block, then each folder, then the unfiled rest.
+ * `lastRail` is the grouped list, so moves and pins still index what
+ * the operator saw; a row moved across a folder's edge settles back
+ * into its folder, because folders are edited in the desktop only.
  */
 export class SessionRailOrchestrator {
   private lastRail: readonly SessionPickerEntry[] = [];
@@ -58,6 +69,8 @@ export class SessionRailOrchestrator {
     private readonly store: SessionRailLayoutStore,
     private readonly refresh: () => void,
     private readonly loadEntry: SessionRailEntryLoader = () => null,
+    // ATO-1180: the desktop's chat folders, read-only.
+    private readonly readFolders: RailChatFoldersSource = configRailChatFoldersSource(),
   ) {}
 
   /** Apply the remembered layout to the list about to be emitted. */
@@ -71,8 +84,12 @@ export class SessionRailOrchestrator {
       const loaded = this.loadEntry(id);
       if (loaded) missing.push(loaded);
     }
-    const arranged = arrangeSessionRail([...entries, ...missing], layout).map(
-      (entry) => ({ ...entry, pinned: pinned.has(entry.sessionId) }),
+    const arranged = groupRailByFolder(
+      arrangeSessionRail([...entries, ...missing], layout).map((entry) => ({
+        ...entry,
+        pinned: pinned.has(entry.sessionId),
+      })),
+      this.readFolders(),
     );
     this.lastRail = arranged;
     return arranged;
