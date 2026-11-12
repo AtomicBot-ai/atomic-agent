@@ -366,6 +366,27 @@ export function repoPath(file: string): string {
   return `rpm/packages/${file}`;
 }
 
+/**
+ * One architecture's `Packages` index out of dpkg-scanpackages' listing of the whole pool: the
+ * stanzas whose Architecture is `arch` or `all`, in their order. The pool is scanned without
+ * `--arch` because that option only finds files named `*_<arch>.deb`, and electron-builder names
+ * the desktop's debs `Atomic-Agent-<version>-<arch>.deb`, so `--arch` left every desktop package
+ * out of the index while the files sat in the pool (ATO-1403). The Architecture field inside each
+ * package is what apt goes by, so filtering on it works whatever the file is called.
+ */
+export function packagesIndexForArch(index: string, arch: string): string {
+  const stanzas = index
+    .replace(/\r\n/g, "\n")
+    .split(/\n{2,}/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .filter((s) => {
+      const field = /^Architecture:[ \t]*(\S+)[ \t]*$/m.exec(s);
+      return field !== null && (field[1] === arch || field[1] === "all");
+    });
+  return stanzas.length === 0 ? "" : `${stanzas.join("\n\n")}\n\n`;
+}
+
 /** The dnf repository definition users download into /etc/yum.repos.d. */
 export function renderRepoFile(options: {
   baseUrl: string;

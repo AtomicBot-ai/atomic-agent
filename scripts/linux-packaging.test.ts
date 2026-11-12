@@ -17,6 +17,7 @@ import {
   maxGlibc,
   PACKAGE_TARGETS,
   packageAssets,
+  packagesIndexForArch,
   parseProductId,
   parseSha256File,
   parseSha256Sums,
@@ -329,6 +330,36 @@ describe("repository layout", () => {
     );
     expect(repoPath("Atomic-Agent-0.0.6-x86_64.rpm")).toBe("rpm/packages/Atomic-Agent-0.0.6-x86_64.rpm");
     expect(() => repoPath("SHA256SUMS.txt")).toThrow("not a package");
+  });
+
+  it("splits the pool's index by Architecture, desktop debs included whatever their file name", () => {
+    const stanza = (pkg: string, arch: string, file: string): string =>
+      `Package: ${pkg}\nVersion: 1\nArchitecture: ${arch}\nFilename: ${file}\nDescription: x\n  more\n`;
+    const all = [
+      stanza("atomic-agent", "amd64", "pool/main/a/atomic-agent/atomic-agent_0.7.0_amd64.deb"),
+      stanza("atomic-agent", "arm64", "pool/main/a/atomic-agent/atomic-agent_0.7.0_arm64.deb"),
+      stanza("atomic-agent-desktop", "amd64", "pool/main/a/atomic-agent-desktop/Atomic-Agent-0.0.8-amd64.deb"),
+      stanza("atomic-agent-desktop", "arm64", "pool/main/a/atomic-agent-desktop/Atomic-Agent-0.0.8-arm64.deb"),
+      stanza("some-docs", "all", "pool/main/s/some-docs/some-docs_1_all.deb"),
+    ].join("\n");
+    const amd64 = packagesIndexForArch(all, "amd64");
+    expect(amd64.match(/^Package: .*$/gm)).toEqual([
+      "Package: atomic-agent",
+      "Package: atomic-agent-desktop",
+      "Package: some-docs",
+    ]);
+    expect(amd64).toContain("Filename: pool/main/a/atomic-agent-desktop/Atomic-Agent-0.0.8-amd64.deb\n");
+    expect(amd64).not.toContain("arm64");
+    expect(amd64.endsWith("\n\n")).toBe(true);
+    expect(packagesIndexForArch(all, "arm64")).toContain("Atomic-Agent-0.0.8-arm64.deb");
+    expect(packagesIndexForArch(all.replaceAll("\n", "\r\n"), "arm64")).toContain("Package: atomic-agent-desktop");
+    expect(packagesIndexForArch("", "amd64")).toBe("");
+  });
+
+  it("builds the deb index without dpkg-scanpackages' --arch, which skips the desktop's file names", () => {
+    const script = readFileSync(new URL("./linux-repo.ts", import.meta.url), "utf8");
+    expect(script).not.toMatch(/"dpkg-scanpackages",\s*\[[^\]]*"--arch"/);
+    expect(script).toContain("packagesIndexForArch(");
   });
 
   it("writes a .repo that checks the metadata and, when signed, the packages", () => {

@@ -81,6 +81,8 @@ The desktop app is in the same repository as `atomic-agent-desktop` (on Arch `at
 
 Debian, Ubuntu (x86-64, arm64):
 
+> **Not in the apt repository yet.** Until the next release rebuilds the repository, `apt install atomic-agent-desktop` answers "Unable to locate package". For now, download `Atomic-Agent-<version>-amd64.deb` (or `-arm64.deb`) from the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) and install it with `sudo apt install ./Atomic-Agent-<version>-amd64.deb`. The dnf and AUR commands below already work.
+
 ```bash
 curl -fsSL https://atomic-agent-packages.fsn1.your-objectstorage.com/atomic-chat.gpg | sudo tee /usr/share/keyrings/atomic-chat.gpg >/dev/null
 echo "deb [signed-by=/usr/share/keyrings/atomic-chat.gpg] https://atomic-agent-packages.fsn1.your-objectstorage.com/deb stable main" \
