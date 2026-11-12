@@ -38,6 +38,7 @@ import {
   formatOvernightSummary,
   formatProgressLine,
   overnightExitCode,
+  formatTelegramUndelivered,
   replyFromEvent,
 } from "./overnight-progress.js";
 
@@ -351,6 +352,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
         deniedApprovals,
       }),
     );
+    if (final.notify === "telegram") await warnIfReportStuck(runtime, final.id);
     return overnightExitCode(final);
   } finally {
     signals.dispose();
@@ -359,6 +361,44 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
 }
 
 type OvernightRuntime = Awaited<ReturnType<typeof createAgentRuntime>>;
+
+const TELEGRAM_NO_BOT = "no Telegram bot is set up for this agent";
+const TELEGRAM_TURNED_OFF = "Telegram is turned off in this agent's settings";
+
+/** How long a channel still connecting may take to send the report. */
+const TELEGRAM_FLUSH_WAIT_MS = 15_000;
+
+/**
+ * The Telegram report waits in this process's memory until the channel
+ * is up, and this process exits next (ATO-1358). When the desktop app
+ * or the TUI holds the connection the channel never comes up here, and
+ * the report would vanish without a word: say so instead.
+ */
+async function warnIfReportStuck(runtime: OvernightRuntime, taskId: string): Promise<void> {
+  // The report is handed to the channel from the runner's report hook.
+  await new Promise((resolve) => setImmediate(resolve));
+  const channel = runtime.telegramChannel;
+  // Neither of these queues the report: it was dropped at once.
+  if (!channel || !channel.hasToken()) {
+    process.stderr.write(formatTelegramUndelivered(TELEGRAM_NO_BOT, taskId));
+    return;
+  }
+  if (channel.state() === "disabled" && channel.hasPendingTaskReport(taskId)) {
+    process.stderr.write(formatTelegramUndelivered(TELEGRAM_TURNED_OFF, taskId));
+    return;
+  }
+  const deadline = Date.now() + TELEGRAM_FLUSH_WAIT_MS;
+  while (
+    channel.hasPendingTaskReport(taskId) &&
+    channel.state() === "starting" &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (channel.hasPendingTaskReport(taskId)) {
+    process.stderr.write(formatTelegramUndelivered(channel.lastError(), taskId));
+  }
+}
 
 /**
  * Run the task here, or wait for whoever claimed it. Another process's

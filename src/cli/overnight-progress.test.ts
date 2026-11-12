@@ -6,6 +6,7 @@ import {
   formatElapsed,
   formatOvernightSummary,
   formatProgressLine,
+  formatTelegramUndelivered,
   overnightExitCode,
   overnightOutcome,
   replyFromEvent,
@@ -149,5 +150,28 @@ describe("overnight progress", () => {
     const timed = { status: "blocked" as const, stopCause: null, lastError: "time_spent: 480 min of 480 min" };
     expect(overnightOutcome(timed)).toBe("stopped (time_ceiling)");
     expect(overnightExitCode({ status: "blocked", stopCause: null, lastError: "session_not_found: s" })).toBe(1);
+  });
+});
+
+describe("formatTelegramUndelivered (ATO-1358)", () => {
+  it("names the other agent holding Telegram", () => {
+    const line = formatTelegramUndelivered(
+      "channel-locked: already running in another atomic-agent (pid 4242)",
+      "t-9",
+    );
+    expect(line).toContain("telegram report not sent");
+    expect(line).toContain("pid 4242");
+    expect(line).toContain("the desktop app or the TUI");
+    expect(line).toContain("atomic-agent task show t-9");
+    expect(line).not.toContain("channel-locked:");
+  });
+
+  it("falls back to the channel's own error", () => {
+    expect(formatTelegramUndelivered("getMe failed", "t-1")).toContain(
+      "the Telegram channel did not come up (getMe failed)",
+    );
+    expect(formatTelegramUndelivered(null, "t-1")).toContain(
+      "the Telegram channel did not come up.",
+    );
   });
 });

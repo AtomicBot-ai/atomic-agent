@@ -1146,6 +1146,15 @@ export class TelegramChannel {
     };
   }
 
+  /**
+   * Whether a report for `taskId` is still waiting for the channel to
+   * come up. A short-lived process (`overnight`) reads it before it
+   * exits, since the in-memory queue goes with it (ATO-1358).
+   */
+  hasPendingTaskReport(taskId: string): boolean {
+    return this.pendingTaskReports.some((report) => report.taskId === taskId);
+  }
+
   /** FIFO-append with oldest-first eviction at `TASK_REPORT_QUEUE_LIMIT`. */
   private queueTaskReport(report: TaskReport): void {
     this.pendingTaskReports.push(report);
