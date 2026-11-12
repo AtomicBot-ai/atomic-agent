@@ -480,7 +480,7 @@ export function buildFusionDelegateTool(
           `fusion.delegate did not run: the tasks would write in the agent's own state directory (${intoState.join(", ")}). ` +
             "Workers cannot write there. Name a project directory for the work instead; " +
             "if the user really wants a change to the agent's own files, tell them, since only they can make it.",
-          { field: "tasks", reason: "agent-state-dir", scope: intoState },
+          { reason: "agent-state-dir", scope: intoState },
         );
       }
       // A turn is one job. An orchestrator that reviews and re-delegates
