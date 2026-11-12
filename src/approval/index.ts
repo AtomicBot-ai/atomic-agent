@@ -3,6 +3,7 @@ export {
   ApprovalGateError,
   canGrantCategory,
   canGrantShape,
+  describeCategoryGrant,
 } from "./approval-gate.js";
 export type {
   ApprovalDecision,

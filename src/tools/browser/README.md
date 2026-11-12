@@ -13,7 +13,7 @@ Owner: src/tools/browser/
   - `browser_secret` (level 5, never granted): typing into password, one-time-code or payment card fields, or into an element that could not be inspected; clicks that pay (pay, buy now, checkout, place order, purchase…); any commit-like action on a payment page (a known payment host, or a checkout-like path such as `/checkout` or Amazon's `/gp/buy`). The preview shows the text length, never the text.
   - "Subscribe", "buy", "order", "book" and "donate" alone are `browser_commit`, and `browser_secret` only on a payment page: a YouTube or newsletter subscribe is not a payment.
   - Links, tabs, checkboxes, menus, typing without Enter and Enter in a search box do not ask.
-- The session grant for `browser_commit` covers the whole category, like every grantable category; per-site grants are separate work.
+- The session grant ("allow in this chat", `[s]`) for `browser_commit` and `browser_offsite` covers one site: the host the request names (`src/approval/site-grants.ts`, ATO-1181). A grant on `example.com` does not cover `mail.example.com` or any other host; a request that names no host is not offered the grant. "Always allow" is not offered for these two categories, since a saved rule has no site field.
 - A browser call that was not approved stops the browser calls queued after it in the same batch (`agent/dispatch/batch-scheduler.ts`).
 - Classification and previews rely on labels the page supplies, and a page can lie about them. The gate is a safety net, not a guarantee; secrets are never shown in a prompt either way.
 

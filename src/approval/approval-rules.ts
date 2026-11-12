@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isSiteScopedCategory } from "./site-grants.js";
 import { basename, isAbsolute, resolve as resolvePath } from "node:path";
 
 import type { ApprovalRequest } from "./approval-gate.js";
@@ -440,6 +441,10 @@ export function canGrantAlways(request: ApprovalRequest): boolean {
   // A rule cannot say "this one file in home": it would cover any file
   // there, `.zshrc` included, from then on.
   if (request.category === "fs_write_home") return false;
+  // A rule has no site field, so "always" on a browser submit or an
+  // off-site page would cover every site for good; those are granted
+  // per site for the chat only (`site-grants.ts`, ATO-1181).
+  if (isSiteScopedCategory(request.category)) return false;
   if (request.category === "fs_read_outside") return alwaysReadRoot(request) !== undefined;
   return true;
 }
