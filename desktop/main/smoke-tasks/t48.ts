@@ -18,7 +18,7 @@ import { downloadJobRunning, modelIdFromPath, modelsRemoveSafe, probeServer, rem
  *         server" over "Chats run on: Local models / Cloud / Fusion". Where
  *         chats run is the pane's first block now, three cards with a line
  *         each; the setup tabs come under it, in words that are not that
- *         choice's words (Local models · Cloud providers · Custom server).
+ *         choice's words (Local models · Cloud providers · Custom).
  *   Д31 — Cloud with no cloud provider ran the switch, and its refusal landed
  *         in the chat behind Settings. A choice that cannot be made yet opens
  *         what it needs here: Add provider, a provider's key, the Local
@@ -101,8 +101,8 @@ async function layout(js: Js, check: Check): Promise<void> {
     show({ first: r["first"], before: r["before"], title: r["title"], cards }),
   );
   check(
-    "T48 (Д30): the setup tabs say what they set up — Local models · Cloud providers · Custom server — and \"Chats run on\" is gone",
-    show(r["tabs"]) === show(["Local models", "Cloud providers", "Custom server"]) && r["barTitle"] === "Set up models" && r["old"] === false,
+    "T48 (Д30, ATO-1418): the setup tabs say what they set up — Local models · Cloud providers · Custom — and \"Chats run on\" is gone",
+    show(r["tabs"]) === show(["Local models", "Cloud providers", "Custom"]) && r["barTitle"] === "Set up models" && r["old"] === false,
     show({ tabs: r["tabs"], barTitle: r["barTitle"], old: r["old"] }),
   );
 }
