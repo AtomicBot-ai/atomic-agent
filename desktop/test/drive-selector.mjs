@@ -230,7 +230,7 @@ async function main() {
     const localPane = await app.snap(LLM_MODE);
     t.say(`  Settings › LLM opened on: ${JSON.stringify(localPane)}`);
     await shot('03-llm-local');
-    t.check('a local route opens Settings › LLM on Local', /local/i.test(localPane || ''), JSON.stringify(localPane));
+    t.check('a local route opens Settings › LLM on Local', /download a model/i.test(localPane || ''), JSON.stringify(localPane));
     await closeSettings(app);
 
     /* ---------- the CLOUD route: backend + provider + model ---------- */
@@ -319,7 +319,7 @@ async function main() {
       const dlPane = await app.snap(LLM_MODE);
       t.say(`  it landed on: ${JSON.stringify(dlPane)}`);
       t.check('it opens Settings › LLM › Local, where the download happens',
-        /local/i.test(dlPane || ''), JSON.stringify(dlPane));
+        /download a model/i.test(dlPane || ''), JSON.stringify(dlPane));
       await closeSettings(app);
     } else {
       // A labelled model slot is an ordinary Control: it opens the switch.

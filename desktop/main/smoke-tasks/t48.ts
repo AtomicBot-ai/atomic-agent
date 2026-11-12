@@ -96,13 +96,13 @@ async function layout(js: Js, check: Check): Promise<void> {
   const cards = (r["cards"] ?? []) as string[][];
   check(
     "T48 (Д30): where chats run is the pane's first block — three cards, each with a line — and the setup tabs come under it",
-    r["first"] === "llm-section llm-runmode" && r["before"] === true && r["title"] === "Where chats run" && r["refresh"] === true
+    r["first"] === "llm-section llm-runmode" && r["before"] === true && r["title"] === "Where chats run now" && r["refresh"] === true
       && cards.length === 3 && cards.map((c) => c[0]).join("|") === "Local models|Cloud|Fusion" && cards.every((c) => (c[1] ?? "").length > 0),
     show({ first: r["first"], before: r["before"], title: r["title"], cards }),
   );
   check(
-    "T48 (Д30): the setup tabs say what they set up — Local models · Cloud providers · Custom server — and \"Chats run on\" is gone",
-    show(r["tabs"]) === show(["Local models", "Cloud providers", "Custom server"]) && r["barTitle"] === "Set up models" && r["old"] === false,
+    "T48 (ATO-460): the setup tabs say what you do there — Add models: Download a model · Cloud keys · Custom server — none repeats a card above, and \"Chats run on\" is gone",
+    show(r["tabs"]) === show(["Download a model", "Cloud keys", "Custom server"]) && r["barTitle"] === "Add models" && r["old"] === false,
     show({ tabs: r["tabs"], barTitle: r["barTitle"], old: r["old"] }),
   );
 }
