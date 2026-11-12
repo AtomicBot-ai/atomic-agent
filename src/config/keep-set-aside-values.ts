@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 
+import { BACKEND_VARIANT_PREFERENCES } from "../local-llm/backend/windows-backend-variant.js";
 import { TOOL_SEARCH_MODES } from "./agent/agent-parser.js";
 import { COMPACTION_MODES } from "./agent/compaction-config.js";
 import { parseUserConfigFile, type UserConfigFile } from "./config-schema.js";
@@ -17,11 +18,15 @@ import { WHILE_BUSY_SUBMIT_MODES } from "./tui-config.js";
 
 type Tree = Record<string, unknown>;
 
+/** The managed local engines this build runs. */
+const MANAGED_ENGINES: readonly string[] = ["llama-server", "atomic-core"];
+
 /**
  * Enum-like settings a newer build may hold a value for that this build
  * reads as the default or unset, with one notice (ATO-1241; the managed
- * local model fields of ATO-1239 are kept by
- * `keepSetAsideLocalModelValues`).
+ * engine and backend variant of ATO-1239 joined this rule in ATO-1265, so
+ * an engine picked here is no longer overwritten by the newer one; the
+ * managed model id is kept by `keepSetAsideLocalModelValues`).
  */
 export const SET_ASIDE_ENUM_KEYS: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
   ["llm.toolTransport", LLM_TOOL_TRANSPORTS],
@@ -33,6 +38,8 @@ export const SET_ASIDE_ENUM_KEYS: ReadonlyMap<string, readonly string[]> = new M
   ["agent.tools.search", TOOL_SEARCH_MODES],
   ["agent.compaction.mode", COMPACTION_MODES],
   ["tui.whileBusySubmit", WHILE_BUSY_SUBMIT_MODES],
+  ["localModels.managed.engine", MANAGED_ENGINES],
+  ["localModels.managed.backendVariant", BACKEND_VARIANT_PREFERENCES],
 ]);
 
 /**
@@ -41,8 +48,7 @@ export const SET_ASIDE_ENUM_KEYS: ReadonlyMap<string, readonly string[]> = new M
  * a typo.
  */
 export function isSetAsideOnReadKey(key: string): boolean {
-  return key === "localModels.managed.engine" || key === "localModels.managed.backendVariant" ||
-    key.startsWith(`${FUSION_ROLES_KEY}.`) || SET_ASIDE_ENUM_KEYS.has(key);
+  return key.startsWith(`${FUSION_ROLES_KEY}.`) || SET_ASIDE_ENUM_KEYS.has(key);
 }
 
 /** References to a provider (and the leg's model label), set aside with it when its kind is unknown here. */

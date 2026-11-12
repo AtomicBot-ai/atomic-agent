@@ -40,4 +40,34 @@ describe("set-aside values survive a whole-file write (ATO-1239)", () => {
     writeUserConfigFileSync(path, { ...parsed, localModels: { ...parsed.localModels, managed: { ...parsed.localModels.managed, modelId: known } } });
     expect(disk().localModels.managed.modelId).toBe("qwen-3.5-4b");
   });
+
+  /* ATO-1265: the engine and variant were kept unconditionally, so a choice made here was put back to the newer value. */
+  it("an engine chosen here replaces the newer build's engine; the variant nobody touched stays", () => {
+    const parsed = readUserConfigFileSync(path)!;
+    expect(parsed.localModels.managed.engine).toBe("atomic-core");
+    writeUserConfigFileSync(path, { ...parsed, localModels: { ...parsed.localModels, managed: { ...parsed.localModels.managed, engine: "llama-server" } } });
+    const m = disk().localModels.managed;
+    expect(m.engine).toBe("llama-server");
+    expect(m.backendVariant).toBe("future-gpu");
+    expect(m.modelId).toBe("qwen-9.9-from-the-future");
+  });
+
+  it("a backend variant chosen here replaces the newer build's variant; the engine nobody touched stays", () => {
+    const parsed = readUserConfigFileSync(path)!;
+    expect(parsed.localModels.managed.backendVariant).toBe("auto");
+    writeUserConfigFileSync(path, { ...parsed, localModels: { ...parsed.localModels, managed: { ...parsed.localModels.managed, backendVariant: "cpu" } } });
+    const m = disk().localModels.managed;
+    expect(m.backendVariant).toBe("cpu");
+    expect(m.engine).toBe("atomic-core-next");
+  });
+
+  it("after a choice here, a later unrelated write keeps that choice", () => {
+    const parsed = readUserConfigFileSync(path)!;
+    writeUserConfigFileSync(path, { ...parsed, localModels: { ...parsed.localModels, managed: { ...parsed.localModels.managed, engine: "llama-server", backendVariant: "vulkan" } } });
+    const again = readUserConfigFileSync(path)!;
+    writeUserConfigFileSync(path, { ...again, log: { ...again.log, level: "debug" } });
+    const m = disk().localModels.managed;
+    expect(m.engine).toBe("llama-server");
+    expect(m.backendVariant).toBe("vulkan");
+  });
 });
