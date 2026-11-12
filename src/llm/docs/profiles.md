@@ -21,8 +21,10 @@ ReasoningBudgetTokens defaults to 0 (unbounded) since config v78; the grammar bo
 
 Native-tool wire contracts live under provider/. Strict conversion is per tool, does not close an originally open schema, and tracks which top-level optional arguments were widened to null. Do not drop required nullable data. Emitted strict functions force parallel_tool_calls=false. Nested third-party schemas require inspecting both tagged validation and null normalization rather than assuming built-in flat shapes.
 
+On an external engine (Ollama, LM Studio presets) native tools stay the default. After two malformed native replies in a row for a model (a call no tool can run, or tool-call markup left in the text; same check as the contract probe), that provider and model send tool calls through a JSON reply instead: no `tools`, a `response_format` schema with one `anyOf` branch per tool plus a plain answer branch, read back into `tool_calls`. An engine that refuses `response_format` puts the model back on native tools for the rest of the process (ATO-642).
+
 ## Sources and tests
 
 - [Profiles](../model-profile.ts), [template policy](../server-template-policy.ts), [grammar](../grammar/build-grammar.ts), [call branches](../grammar/tool-call-branches.ts), [prelude variants](../grammar/reasoning-prelude.ts).
 - [Profile assertions](../profile-invariants.ts), [profile tests](../profile-invariants.test.ts), [grammar tests](../grammar/build-grammar.test.ts), [stream parser tests](../grammar/stream-parser.test.ts).
-- [Strict schema conversion](../provider/openai/strict-tool-schema.ts), [native adapter tests](../provider/openai/openai-tool-call-adapter.test.ts), [tagged adapter tests](../provider/openai/qwen-tagged-tool-response-adapter.test.ts).
+- [Strict schema conversion](../provider/openai/strict-tool-schema.ts), [native adapter tests](../provider/openai/openai-tool-call-adapter.test.ts), [tagged adapter tests](../provider/openai/qwen-tagged-tool-response-adapter.test.ts), [JSON-reply tool calls](../provider/openai/json-schema-tools.ts) and [when they are used](../provider/openai/json-schema-tool-mode.ts).

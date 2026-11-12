@@ -8,6 +8,7 @@ import {
 } from "../gemini/gemini-provider.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
+import { isExternalEngineEntry } from "../openai/json-schema-tool-mode.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import { resolveCloudModelVision } from "../model-vision.js";
 import {
@@ -148,6 +149,9 @@ export function registerBuiltInProviderKinds(): void {
       promptCache: entry.promptCache,
       messageShape: entry.messageShape,
       ...(chatModel ? modelWireOptions(entry, chatModel) : {}),
+      // Ollama / LM Studio: JSON-reply tool calls for a model whose native
+      // calls the engine breaks (ATO-642); native stays the default.
+      ...(isExternalEngineEntry(entry) ? { jsonSchemaToolFallback: true } : {}),
       logger: ctx.logger,
     });
   });
@@ -184,6 +188,9 @@ export function registerBuiltInProviderKinds(): void {
       promptCache: entry.promptCache,
       messageShape: entry.messageShape,
       ...(chatModel ? modelWireOptions(entry, chatModel) : {}),
+      // Ollama / LM Studio: JSON-reply tool calls for a model whose native
+      // calls the engine breaks (ATO-642); native stays the default.
+      ...(isExternalEngineEntry(entry) ? { jsonSchemaToolFallback: true } : {}),
       logger: ctx.logger,
     });
   });

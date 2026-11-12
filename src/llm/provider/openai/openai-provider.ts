@@ -66,6 +66,13 @@ import {
 } from "./qwen-tagged-tool-response-adapter.js";
 import type { CreditLimitLogger } from "./plan-credit-limit-retry.js";
 import { sendWithStructuredOutputFallback } from "./structured-output-fallback.js";
+import { isStructuredOutputRefusal } from "./structured-output-refusal.js";
+import {
+  applyJsonSchemaToolReply,
+  toJsonSchemaToolRequest,
+  type JsonSchemaToolPlan,
+} from "./json-schema-tools.js";
+import { jsonSchemaToolModes } from "./json-schema-tool-mode.js";
 import { normalizeToolSchemaBooleans } from "./tool-schema-booleans.js";
 import { findToolBehindSchemaError } from "./tool-schema-rejection.js";
 import {
@@ -164,6 +171,15 @@ export interface OpenAiProviderOptions {
    * stderr line rather than recovering silently.
    */
   logger?: CreditLimitLogger;
+  /**
+   * The entry is an external local engine (Ollama, LM Studio) whose
+   * tool-call parser may not know the model's format (ATO-642). Native
+   * tools stay the default; a model whose native calls come back
+   * malformed is switched to tool calls through a JSON reply
+   * (`json-schema-tools.ts`, `json-schema-tool-mode.ts`). Absent, the
+   * client never leaves native tools.
+   */
+  jsonSchemaToolFallback?: boolean;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -186,6 +202,7 @@ export class OpenAiProvider implements LlmProvider {
   private readonly extraBody: Record<string, unknown> | undefined;
   private readonly maxOutputTokens: number | undefined;
   private readonly strictTools: boolean;
+  private readonly jsonSchemaToolFallback: boolean;
   private readonly providerPreferences: Record<string, unknown> | undefined;
   private readonly bodyOptions: OpenAiBodyOptions;
   private readonly reasoningFormat: ReasoningFormat;
@@ -239,6 +256,7 @@ export class OpenAiProvider implements LlmProvider {
     this.extraBody = options.extraBody;
     this.maxOutputTokens = options.maxOutputTokens;
     this.strictTools = options.strictTools ?? false;
+    this.jsonSchemaToolFallback = options.jsonSchemaToolFallback ?? false;
     this.providerPreferences = options.providerPreferences;
     this.messageShape = options.messageShape ?? "native";
     this.bodyOptions = {
@@ -285,6 +303,28 @@ export class OpenAiProvider implements LlmProvider {
   }
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
+    // Tool calls through a JSON reply for a model whose native calls the
+    // engine's parser breaks (ATO-642). An engine that refuses the
+    // `response_format` sends this pair back to native tools for good,
+    // and this same request goes out native below.
+    const plan = this.jsonSchemaToolPlan(request);
+    if (plan) {
+      try {
+        return applyJsonSchemaToolReply(
+          await this.completeOnce(plan.wireRequest, false),
+        );
+      } catch (err) {
+        if (!this.revertJsonSchemaTools(request, err)) throw err;
+      }
+    }
+    const result = await this.completeNative(request);
+    this.noteNativeToolReply(request, result);
+    return result;
+  }
+
+  private async completeNative(
+    request: CompletionRequest,
+  ): Promise<CompletionResult> {
     try {
       return await this.completeOnce(request);
     } catch (err) {
@@ -306,8 +346,16 @@ export class OpenAiProvider implements LlmProvider {
     }
   }
 
+  /**
+   * `structuredFallback: false` sends the body as built: a schema-mode
+   * request must not have its `response_format` quietly dropped on a
+   * refusal (that is the memory sub-calls' fallback), because without it
+   * nothing holds the reply to the call shape. The refusal goes to the
+   * caller instead, which goes back to native tools.
+   */
   private async completeOnce(
     request: CompletionRequest,
+    structuredFallback = true,
   ): Promise<CompletionResult> {
     const model = this.defaultChatModel;
     if (!model) {
@@ -317,27 +365,30 @@ export class OpenAiProvider implements LlmProvider {
     }
     // The body the response actually came from; see `OnOpenAiRequestBody`.
     let sentBody: Record<string, unknown> | undefined;
-    const send = (shape: "native" | "flat") =>
-      // Unary only: sub-calls carry `response_format`, streamed turns never do.
-      sendWithStructuredOutputFallback(
-        {
-          providerId: this.id,
-          model: model,
-          logger: this.http.logger,
-        },
+    const post = (body: Record<string, unknown>) =>
+      openAiPostJson(
+        this.http,
+        `${this.chatPathPrefix}/chat/completions`,
+        body,
         request,
-        (req) => this.buildBody(req, false, shape),
-        (body) =>
-          openAiPostJson(
-            this.http,
-            `${this.chatPathPrefix}/chat/completions`,
-            body,
-            request,
-            (sent) => {
-              sentBody = sent;
-            },
-          ),
+        (sent) => {
+          sentBody = sent;
+        },
       );
+    const send = (shape: "native" | "flat") =>
+      structuredFallback
+        ? // Unary only: sub-calls carry `response_format`, streamed turns never do.
+          sendWithStructuredOutputFallback(
+            {
+              providerId: this.id,
+              model: model,
+              logger: this.http.logger,
+            },
+            request,
+            (req) => this.buildBody(req, false, shape),
+            post,
+          )
+        : post(this.buildBody(request, false, shape));
     // One resend per completion when the service names the only
     // temperature it takes, or refuses the field altogether
     // (`allowed-temperature.ts`); the rebuilt body carries the lesson.
@@ -526,6 +577,74 @@ export class OpenAiProvider implements LlmProvider {
     };
   }
 
+  /**
+   * The schema-mode request for `request`, when this client is an
+   * external engine, the request offers tools and the pair is switched
+   * over (`jsonSchemaToolModes`); otherwise `null` and native tools.
+   */
+  private jsonSchemaToolPlan(
+    request: CompletionRequest,
+  ): JsonSchemaToolPlan | null {
+    const model = this.defaultChatModel;
+    if (!this.jsonSchemaToolFallback || !model) return null;
+    if (!jsonSchemaToolModes.isOn(this.id, model)) return null;
+    return toJsonSchemaToolRequest(request);
+  }
+
+  /**
+   * Whether a failed schema-mode send is the engine refusing
+   * `response_format`. If so, the pair goes back to native tools for the
+   * rest of the process and the caller resends natively.
+   */
+  private revertJsonSchemaTools(
+    request: CompletionRequest,
+    err: unknown,
+  ): boolean {
+    if (request.signal?.aborted || !isStructuredOutputRefusal(err)) {
+      return false;
+    }
+    const model = this.defaultChatModel!;
+    if (jsonSchemaToolModes.markRefused(this.id, model)) {
+      this.http.logger?.warn(
+        `llm: "${this.id}" refused response_format for ${model}; tool calls go back to the native tools payload for the rest of this run`,
+        { provider: this.id, model, status: err.status },
+      );
+    }
+    return true;
+  }
+
+  /**
+   * Count a native-tools reply toward the JSON-reply switch (ATO-642):
+   * only on an external engine, and only for a request that offered
+   * tools. Logs once, on the reply that switches the pair over.
+   */
+  private noteNativeToolReply(
+    request: CompletionRequest,
+    result: CompletionResult,
+  ): void {
+    const model = this.defaultChatModel;
+    if (!this.jsonSchemaToolFallback || !model) return;
+    const tools = request.tools;
+    if (!tools || tools.length === 0) return;
+    const offeredNames = new Set<string>();
+    for (const tool of tools) {
+      const fn = tool.function as { name?: unknown } | undefined;
+      if (typeof fn?.name === "string") offeredNames.add(fn.name);
+    }
+    const switched = jsonSchemaToolModes.noteNativeReply(this.id, model, {
+      ...(result.toolCalls ? { toolCalls: result.toolCalls } : {}),
+      content: result.content,
+      offeredNames,
+      finishReason: result.finishReason ?? null,
+    });
+    if (switched) {
+      this.http.logger?.warn(
+        `llm: "${this.id}" returned malformed native tool calls for ${model}; later tool calls go through a JSON reply (response_format) for the rest of this run`,
+        { provider: this.id, model, sessionId: request.sessionId ?? null },
+      );
+    }
+  }
+
   private markFlat(request: CompletionRequest, err: unknown): void {
     this.flatSessions.add(sessionKey(request));
     this.http.logger?.warn(
@@ -542,6 +661,44 @@ export class OpenAiProvider implements LlmProvider {
 
   async *completeStream(
     request: CompletionRequest,
+  ): AsyncGenerator<StreamChunk, CompletionResult, void> {
+    // See `complete`: tool calls through a JSON reply for a pair whose
+    // native calls break (ATO-642).
+    const plan = this.jsonSchemaToolPlan(request);
+    if (plan) {
+      let result: CompletionResult | undefined;
+      try {
+        result = yield* this.streamChat(plan.wireRequest, true);
+      } catch (err) {
+        if (!(err instanceof JsonSchemaToolsRefused)) throw err;
+        this.revertJsonSchemaTools(request, err.refusal);
+      }
+      if (result) {
+        const adapted = applyJsonSchemaToolReply(result);
+        // The reply text was held back while it streamed, because it is
+        // the JSON envelope. What the caller should read of it (an
+        // answer, or a reply that did not parse) goes out now, once.
+        if (adapted.content.length > 0) {
+          yield { delta: adapted.content, reasoningDelta: "", done: false };
+        }
+        return adapted;
+      }
+    }
+    const result = yield* this.streamChat(request, false);
+    this.noteNativeToolReply(request, result);
+    return result;
+  }
+
+  /**
+   * One streamed completion. `holdContent` keeps the reply text out of
+   * the yielded chunks (reasoning still streams): a schema-mode reply is
+   * JSON the caller must not show, and `completeStream` yields what it
+   * means once the stream is done. In that mode an engine that refuses
+   * `response_format` before any output fails as `JsonSchemaToolsRefused`.
+   */
+  private async *streamChat(
+    request: CompletionRequest,
+    holdContent: boolean,
   ): AsyncGenerator<StreamChunk, CompletionResult, void> {
     const model = this.defaultChatModel;
     if (!model) {
@@ -638,11 +795,18 @@ export class OpenAiProvider implements LlmProvider {
               drained = true;
               break attempts;
             }
-            const chunk = next.value;
-            if (chunk.delta) accumulated += chunk.delta;
-            if (chunk.reasoningDelta)
-              accumulatedReasoning += chunk.reasoningDelta;
-            if (!chunk.done) {
+            const received = next.value;
+            if (received.delta) accumulated += received.delta;
+            if (received.reasoningDelta)
+              accumulatedReasoning += received.reasoningDelta;
+            const chunk =
+              holdContent && received.delta
+                ? { ...received, delta: "" }
+                : received;
+            if (
+              !chunk.done &&
+              (!holdContent || chunk.reasoningDelta.length > 0)
+            ) {
               // Set before the yield, deliberately: a caller that throws
               // into this generator (`generator.throw()`, which is how a
               // consumer reports its own failure into a stream it is
@@ -707,6 +871,9 @@ export class OpenAiProvider implements LlmProvider {
         // stopped. `signal.reason` is abort-shaped by construction.
         if (request.signal?.aborted)
           throw cancellationError(request.signal, err);
+        if (holdContent && !committed && isStructuredOutputRefusal(err)) {
+          throw new JsonSchemaToolsRefused(err);
+        }
         // The server could not use one tool's JSON schema (ATO-1399): a
         // 4xx/5xx from the open, before any output, so the same request
         // goes out once more without that tool.
@@ -1180,4 +1347,18 @@ function applyToolCallTerminationSafety(
     stop: false,
     truncated: true,
   };
+}
+
+/**
+ * A schema-mode stream the engine refused for its `response_format`
+ * before any output (ATO-642); `completeStream` resends it natively.
+ */
+class JsonSchemaToolsRefused extends Error {
+  readonly refusal: OpenAiHttpError;
+
+  constructor(refusal: OpenAiHttpError) {
+    super(refusal.message);
+    this.name = "JsonSchemaToolsRefused";
+    this.refusal = refusal;
+  }
 }

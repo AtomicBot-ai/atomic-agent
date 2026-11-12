@@ -35,6 +35,12 @@ export {
   runProviderContractProbe,
 } from "./run-contract-probe.js";
 export {
+  nativeToolReplyLooksMalformed,
+  toolCallModeAfterProbe,
+  type NativeToolReplyObservation,
+  type ToolCallWireMode,
+} from "./tool-call-mode.js";
+export {
   PROVIDER_VERIFY_TIMEOUT_MS,
   verifyProviderKey,
 } from "./verify-provider-key.js";
