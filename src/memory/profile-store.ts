@@ -7,6 +7,10 @@ import type { AgentMetrics } from "../tracing/agent-metrics.js";
 
 import { applyMigrations } from "./memory-schema.js";
 import {
+  MemoryChangeLog,
+  type MemoryChangeActor,
+} from "./evolution/memory-change-log.js";
+import {
   isNameGroundingStatus,
   isNameProfileKey,
   isProfileFactPromptVisible,
@@ -191,6 +195,7 @@ interface ProfileRow {
  */
 export class ProfileStore {
   private readonly db: Database.Database;
+  private readonly changeLog: MemoryChangeLog;
   private readonly metrics: AgentMetrics | undefined;
   private readonly evictor: ProfileEvictor | null;
   private readonly onEvicted:
@@ -223,6 +228,8 @@ export class ProfileStore {
         ? new ProfileEvictor(this.db, options.maxEntries)
         : null;
     this.onEvicted = options.onEvicted;
+    // ATO-1059: a deleted fact goes into the change journal for an undo.
+    this.changeLog = new MemoryChangeLog(this.db);
     this.insertStmt = this.db.prepare(
       `INSERT INTO profile_facts
          (key, value, pinned, keywords, valid_from, superseded_by,
@@ -453,14 +460,33 @@ export class ProfileStore {
   /**
    * Delete the **active** row for `key`. Historical (superseded)
    * rows are kept on disk — direct chain walks via `history(key)`
-   * still work. Returns `true` when a row was deleted.
+   * still work. Returns `true` when a row was deleted. The deleted
+   * value goes into the change journal (ATO-1059); `by` says who asked.
    */
-  remove(key: string): boolean {
+  remove(key: string, by: MemoryChangeActor = "agent"): boolean {
     const normalisedKey = validateKey(key);
-    const result = this.deleteActiveStmt.run(normalisedKey) as {
-      changes: number;
-    };
-    return result.changes > 0;
+    return this.db.transaction((): boolean => {
+      const before = this.get(normalisedKey);
+      const result = this.deleteActiveStmt.run(normalisedKey) as {
+        changes: number;
+      };
+      if (result.changes === 0) return false;
+      if (before !== null) {
+        this.changeLog.record({
+          kind: "profile",
+          target: before.key,
+          op: "remove",
+          by,
+          before: {
+            key: before.key,
+            value: before.value,
+            pinned: before.pinned,
+            keywords: before.keywords,
+          },
+        });
+      }
+      return true;
+    })();
   }
 
   /**

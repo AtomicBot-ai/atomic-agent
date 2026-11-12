@@ -76,6 +76,11 @@ import {
   createListProfileFactsHandler,
   createProfileFactHistoryHandler,
 } from "./route-memory.js";
+import {
+  createListMemoryChangesHandler,
+  createRestoreMemoryChangeHandler,
+  createRestoreProfileVersionHandler,
+} from "./route-memory-history.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
 /**
@@ -247,6 +252,10 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "GET", path: "/api/memory/profile/{key}/history", handler: createProfileFactHistoryHandler() },
     { method: "PATCH", path: "/api/memory/profile/{key}", handler: createEditProfileFactHandler() },
     { method: "DELETE", path: "/api/memory/profile/{key}", handler: createDeleteProfileFactHandler() },
+    // ATO-1059: what changed in memory, and the undo of one change (route-memory-history.ts).
+    { method: "GET", path: "/api/memory/changes", handler: createListMemoryChangesHandler() },
+    { method: "POST", path: "/api/memory/changes/{id}/restore", handler: createRestoreMemoryChangeHandler() },
+    { method: "POST", path: "/api/memory/profile/{key}/restore", handler: createRestoreProfileVersionHandler() },
     // ATO-859: pairing the Telegram owner from the desktop; the code is in the POST's reply only.
     { method: "POST", path: "/api/telegram/pairing", handler: telegramPairing.start },
     { method: "GET", path: "/api/telegram/pairing", handler: telegramPairing.status },
