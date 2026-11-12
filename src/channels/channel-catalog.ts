@@ -11,6 +11,8 @@
  */
 
 import type { ChannelDefinition } from "./channel.js";
+import { MATRIX_CHANNEL } from "./matrix/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
+  MATRIX_CHANNEL,
 ];

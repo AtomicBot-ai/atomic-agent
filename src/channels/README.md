@@ -16,6 +16,7 @@ This area owns remote chat adapters. Read [AGENTS.md](AGENTS.md) before changing
 - [reconnect-backoff.ts](reconnect-backoff.ts)
 - [telegram-channel.ts](telegram/telegram-channel.ts)
 - [discord-channel.ts](discord/discord-channel.ts)
+- [matrix-channel.ts](matrix/matrix-channel.ts) — Matrix, unencrypted rooms (ATO-632)
 
 ## Ownership and dependencies
 
