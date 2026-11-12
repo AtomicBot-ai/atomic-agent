@@ -95,6 +95,17 @@ describe("PROVIDER_PRESETS", () => {
     }
   });
 
+  it("offers W&B Inference on its documented root with its own key", () => {
+    // CoreWeave Serverless Inference keeps the W&B hostname. Bearer key,
+    // no mandatory header: the team/project header is optional.
+    const preset = findProviderPreset("wandb");
+    expect(preset?.baseUrl).toBe("https://api.inference.wandb.ai");
+    expect(preset?.envVar).toBe("WANDB_API_KEY");
+    expect(preset?.local).toBeUndefined();
+    expect(preset?.listsModelsWithoutKey).toBeUndefined();
+    expect(presetForEntryId("wandb-2")?.id).toBe("wandb");
+  });
+
   it("marks LM Studio as local", () => {
     expect(findProviderPreset("lmstudio")?.local).toBe(true);
   });
