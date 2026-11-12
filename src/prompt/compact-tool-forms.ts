@@ -168,6 +168,10 @@ const FORMS: Record<string, CompactToolForm> = {
   "memory.procedures.recall": {
     summary: "Read a procedure's steps by id from `### procedures`, or search.",
   },
+  "memory.sessions.search": {
+    summary: "Search past chats by their words, then read around a hit.",
+    tier: RARE,
+  },
   "tasks.schedule": { summary: "Schedule a one-shot task.", tier: RARE },
   "tasks.cron": { summary: "Schedule a recurring task.", tier: RARE },
   "tasks.list": { summary: "List tasks.", tier: RARE },

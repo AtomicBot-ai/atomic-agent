@@ -41,7 +41,7 @@ import { registerSkillTools } from "./skill/index.js";
 import { buildToolViewTool } from "./tool-view/index.js";
 import { planUpdateTool } from "./plan/index.js";
 import { buildToolSearchTool } from "./tool-search/index.js";
-import { registerMemoryTools } from "./memory/index.js";
+import { buildSessionsSearchTool, registerMemoryTools } from "./memory/index.js";
 import { registerTaskTools } from "./tasks/index.js";
 import { registerVisionTools } from "./vision/index.js";
 import { registerImageTools } from "./image/index.js";
@@ -298,6 +298,8 @@ beforeAll(() => {
   // Runtime registers it beside the live descriptor list (runtime-tool-catalog).
   registry.register(buildToolSearchTool({ catalog: () => ({ descriptors: DEFAULT_TOOL_DESCRIPTORS, deferred: new Set() }) }));
   registerMemoryTools(registry, memoryOptions(true));
+  // Runtime registers it beside the memory tools, always on (runtime-tool-catalog).
+  registry.register(buildSessionsSearchTool({ source: { searchTranscripts: unexpected, listChatLines: unexpected } }));
   registerTaskTools(registry, taskOptions(true));
   registerVisionTools(registry, { enabled: true, provider: () => undefined, maxImagesPerCall: 1, maxImageBytes: 1024 });
   registerImageTools(registry, { ...dangerous, dataDir: () => directory, openRouterKey: () => undefined });
@@ -333,7 +335,7 @@ describe("whole built-in tool catalog conformance", () => {
       expect(names(DEFAULT_TOOL_DESCRIPTORS)).toContain(name);
       expect(resourceClassFor(name)).toBe("terminal");
     }
-    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(97);
+    expect(DEFAULT_TOOL_DESCRIPTORS).toHaveLength(98);
     expect(new Set(names(DEFAULT_TOOL_DESCRIPTORS)).size).toBe(DEFAULT_TOOL_DESCRIPTORS.length);
     expect(registry.list()).toHaveLength(registry.registrations.length);
     for (const definition of registry.registrations) {

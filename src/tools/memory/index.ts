@@ -24,6 +24,11 @@ export { buildNotesRecallTool } from "./notes-recall.js";
 export { buildNotesForgetTool } from "./notes-forget.js";
 export { buildLessonsRecallTool } from "./lessons-recall.js";
 export { buildProceduresRecallTool } from "./procedures-recall.js";
+export {
+  buildSessionsSearchTool,
+  SESSIONS_SEARCH_TOOL,
+  type SessionsSearchSource,
+} from "./sessions-search.js";
 
 export interface RegisterMemoryToolsOptions {
   profileStore: ProfileStore;

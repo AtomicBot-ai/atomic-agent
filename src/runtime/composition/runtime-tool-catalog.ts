@@ -31,7 +31,7 @@ import { registerSkillTools } from "../../tools/skill/index.js";
 import { buildToolViewTool } from "../../tools/tool-view/index.js";
 import { planUpdateTool } from "../../tools/plan/index.js";
 import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActive } from "../../tools/tool-search/index.js";
-import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
+import { buildSessionsSearchTool, registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
 import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
@@ -126,7 +126,7 @@ export function registerRuntimeCoreTools(input: {
   config: AtomicAgentConfig;
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
-  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines">;
+  sessionStore: Pick<SessionStore, "listRecentWorkingDirs" | "listSummaryPage" | "listChatLines" | "searchTranscripts">;
   logger: StructuredLogger;
   resolveOriginalRequest: (sessionId: string) => string | undefined;
   resolvePreviousReply?: (sessionId: string) => string | undefined;
@@ -238,6 +238,9 @@ export function registerRuntimeCoreTools(input: {
     proceduresEnabled: config.memory.procedures.enabled,
     nameGroundingSource,
   });
+  // ATO-1151: search past chats word for word, then read around a hit.
+  // Read-only and always on; the index is built on the first search.
+  toolRegistry.register(buildSessionsSearchTool({ source: sessionStore }));
 }
 
 export function registerRuntimeVisionTools(input: {

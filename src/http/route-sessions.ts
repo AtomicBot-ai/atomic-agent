@@ -1,6 +1,11 @@
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
 import { readSessionTitle } from "../session/session-title.js";
+import {
+  SESSION_SEARCH_MAX_LIMIT,
+  SESSION_SEARCH_MAX_QUERY_CHARS,
+  SessionSearchUnavailableError,
+} from "../session/session-search.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { openaiError } from "./openai-errors.js";
 import {
@@ -53,6 +58,64 @@ export function createListSessionsHandler(): HttpHandler {
         title: readSessionTitle(s.metadata),
       })),
     });
+  };
+}
+
+/**
+ * `GET /api/sessions/search?q=...` — full-text search over the user
+ * messages and closing replies of stored sessions (ATO-1149). Like the
+ * list, it covers the current working directory unless `scope=all`.
+ * `limit` caps the hits (default 10, max 25; at most 3 per session).
+ *
+ * Each hit names the session (`sessionId`, `title`, `workingDir`,
+ * `updatedAt`), the line it was found on (`line`, an index into the
+ * session's chat lines, and `kind`) and a `snippet` with the matching
+ * words wrapped in `«` and `»`. `pending` counts sessions changed since
+ * they were last indexed that this search did not get to (the index
+ * catches up a batch per search); `0` means the results cover everything.
+ * `503` when the index cannot be created on this database.
+ */
+export function createSearchSessionsHandler(): HttpHandler {
+  return async (req, res, ctx) => {
+    const url = new URL(req.url ?? "/", "http://localhost");
+    const query = (url.searchParams.get("q") ?? "").trim();
+    if (query.length === 0) {
+      sendError(res, 400, openaiError("q must be a non-empty string"));
+      return;
+    }
+    if (query.length > SESSION_SEARCH_MAX_QUERY_CHARS) {
+      sendError(
+        res,
+        400,
+        openaiError(`q must be at most ${SESSION_SEARCH_MAX_QUERY_CHARS} characters`),
+      );
+      return;
+    }
+    const rawLimit = url.searchParams.get("limit");
+    let limit: number | undefined;
+    if (rawLimit !== null) {
+      const parsed = Number.parseInt(rawLimit, 10);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        sendError(res, 400, openaiError("limit must be a positive integer"));
+        return;
+      }
+      limit = Math.min(parsed, SESSION_SEARCH_MAX_LIMIT);
+    }
+    const all = url.searchParams.get("scope") === "all";
+    try {
+      const result = ctx.runtime.sessionStore.searchTranscripts({
+        query,
+        ...(limit === undefined ? {} : { limit }),
+        ...(all ? {} : { workingDir: ctx.runtime.capabilities.workingDir }),
+      });
+      sendJson(res, 200, { query, hits: result.hits, pending: result.pending });
+    } catch (err) {
+      if (err instanceof SessionSearchUnavailableError) {
+        sendError(res, 503, openaiError(err.message));
+        return;
+      }
+      throw err;
+    }
   };
 }
 

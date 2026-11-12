@@ -523,6 +523,17 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
     "memory.procedures.recall",
     obj({ id: numberSchema, query: stringSchema, k: numberSchema }),
   ],
+  [
+    "memory.sessions.search",
+    obj({
+      query: stringSchema,
+      scope: { type: "string", enum: ["all", "project"] },
+      limit: numberSchema,
+      sessionId: stringSchema,
+      line: numberSchema,
+      radius: numberSchema,
+    }),
+  ],
 
   // ── tasks ────────────────────────────────────────────────────────────────
   [
