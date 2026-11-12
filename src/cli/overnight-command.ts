@@ -59,6 +59,8 @@ const HELP = [
   "                    is denied, since nobody is there to answer.",
   "",
   "Check a run with `atomic-agent task show <id>`, stop it with `atomic-agent task cancel <id>`.",
+  "Exit code: 0 finished; 2 stopped at a limit (budget, time, steps, no progress)",
+  "           or out of provider credit; 1 failed or cancelled.",
   "",
   "Examples:",
   '  atomic-agent overnight "migrate the tests to vitest" --budget 5 --dir ~/code/app',
@@ -344,7 +346,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
         deniedApprovals,
       }),
     );
-    return overnightExitCode(final.status);
+    return overnightExitCode(final);
   } finally {
     signals.dispose();
     await runtime.shutdown();

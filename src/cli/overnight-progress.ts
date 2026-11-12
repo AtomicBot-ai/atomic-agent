@@ -5,7 +5,7 @@
  */
 import type { AgentLoopEvent } from "../agent/index.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
-import type { TaskRecord } from "../tasks/index.js";
+import { stopCauseLine, type TaskRecord } from "../tasks/index.js";
 
 const SUMMARY_MAX = 100;
 
@@ -81,10 +81,12 @@ export function formatOvernightSummary(input: OvernightSummaryInput): string {
   const spent = formatUsd(task.spentUsd ?? 0);
   const lines = [
     "",
-    `overnight ${task.status}: ${task.id}`,
+    `overnight ${overnightOutcome(task)}: ${task.id}`,
     `  time:  ${formatElapsed(input.elapsedMs)}`,
     `  spent: ${input.capUsd > 0 ? `${spent} of ${formatUsd(input.capUsd)}` : spent} (estimate; local models count as $0)`,
   ];
+  const cause = limitCause(task);
+  if (cause !== null) lines.push(`  ${stopCauseLine(cause)}`);
   if (input.deniedApprovals > 0) {
     lines.push(
       `  denied ${input.deniedApprovals} action(s) that needed approval; rerun with --no-approval to allow them`,
@@ -115,6 +117,50 @@ export function formatDetachedNotice(taskId: string, logPath: string, dir: strin
   ].join("\n");
 }
 
-export function overnightExitCode(status: TaskRecord["status"]): number {
-  return status === "completed" ? 0 : 1;
+/**
+ * The store calls a run a ceiling ended `completed` and keeps the cause
+ * beside it (ATO-1323). For the person or script reading the result
+ * that is not "done": the work may be unfinished.
+ */
+type OutcomeFields = Pick<TaskRecord, "status" | "stopCause"> & Partial<Pick<TaskRecord, "lastError">>;
+
+/**
+ * The limit that ended the run, if one did: a ceiling the turn hit (or
+ * the provider credit running out), or a resume the runner blocked
+ * because earlier attempts had already used the budget or the time.
+ */
+function limitCause(task: OutcomeFields): string | null {
+  if (task.status === "completed" && typeof task.stopCause === "string" && task.stopCause.length > 0) {
+    return task.stopCause;
+  }
+  if (task.status === "blocked" && typeof task.lastError === "string") {
+    if (task.lastError.startsWith("budget_spent:")) return "cost_ceiling";
+    if (task.lastError.startsWith("time_spent:")) return "time_ceiling";
+  }
+  return null;
+}
+
+function stoppedByLimit(task: OutcomeFields): boolean {
+  return limitCause(task) !== null;
+}
+
+/** `completed`, `stopped (cost_ceiling)`, `failed`, ... */
+export function overnightOutcome(task: OutcomeFields): string {
+  const cause = limitCause(task);
+  return cause !== null ? `stopped (${cause})` : task.status;
+}
+
+/**
+ * Exit code when a limit ended the run: the budget, the time, the steps,
+ * no progress, or the provider credit running out.
+ */
+export const OVERNIGHT_STOPPED_EXIT_CODE = 2;
+
+/**
+ * 0 only when the agent finished on its own; 2 when a limit stopped it
+ * (the run itself worked, the task may not be done); 1 otherwise.
+ */
+export function overnightExitCode(task: OutcomeFields): number {
+  if (stoppedByLimit(task)) return OVERNIGHT_STOPPED_EXIT_CODE;
+  return task.status === "completed" ? 0 : 1;
 }

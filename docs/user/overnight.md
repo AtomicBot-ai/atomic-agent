@@ -22,7 +22,7 @@ atomic-agent overnight "migrate the tests to vitest" --budget 5 --hours 8 --dir 
 
 `atag overnight` is the same command.
 
-In the foreground you get one line per step, for example `[step 12 | 14m | $0.42 of $5.00] read src/app.ts`, and a summary at the end. Ctrl+C cancels the run; a second Ctrl+C quits. The exit code is 0 only when the task completed.
+In the foreground you get one line per step, for example `[step 12 | 14m | $0.42 of $5.00] read src/app.ts`, and a summary at the end. Ctrl+C cancels the run; a second Ctrl+C quits. The summary says `overnight completed` when the agent finished on its own and `overnight stopped (<cause>)` when a limit ended the run. The exit code is 0 when the agent finished, 2 when it stopped at the budget, time or step limit, made no progress, or the provider ran out of credit (including a resume that found the budget or time already used), and 1 when the run failed or was cancelled.
 
 With `--detach`, check on the run with `atomic-agent task show <id>` and stop it with `atomic-agent task cancel <id>`.
 
