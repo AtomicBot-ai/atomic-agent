@@ -24,9 +24,11 @@ import {
  * friends remove tokens before the compressor ever sees the text), so
  * the file never carries anything the summary's source did not. On top
  * of that only an allowlist of tools spills (`SPILL_TOOLS`): commands,
- * listings, searches and diffs. Tools that read the clipboard, mail,
- * HTTP responses or memory never write a file, and neither do file
- * readers, whose source already is a file.
+ * listings, searches, diffs and public web pages (`os.web.fetch`: GET
+ * only, no auth headers, ATO-913). Tools that read the clipboard, mail,
+ * raw HTTP responses (`os.http.request`, which takes custom headers) or
+ * memory never write a file, and neither do file readers, whose source
+ * already is a file.
  *
  * Where: `<tmp>/atomic-agent-tool-outputs/<session>/`. The temp folder is
  * already in every session's read scope, and the session's own folder is
@@ -54,6 +56,8 @@ export const SPILL_TOOLS: ReadonlySet<string> = new Set([
   "os.fs.diff",
   "os.fs.archive.list",
   "os.proc.list",
+  // Public pages read with GET and no auth headers (ATO-913).
+  "os.web.fetch",
 ]);
 
 /** Largest file one result writes; longer output keeps its head and says so. */

@@ -188,6 +188,14 @@ export function buildOsWebFetchTool(
       const text = capped
         ? `${extracted.text.slice(0, args.maxChars)}\n… [truncated]`
         : extracted.text;
+      // ATO-913: in local mode a capped page hands the compressor the
+      // whole extracted text, so the summary is still cut at `maxChars`
+      // while the registry's output spill saves the full page to a file
+      // and leads the summary with its path. Before, a 100-post RSS feed
+      // reached the model as ~25 posts with no way to read the rest.
+      // Cloud mode keeps the cut text: there the registry promotes the
+      // full output, and an explicit `maxChars` must still hold.
+      const spillable = capped && ctx.modelMode !== "cloud";
 
       // HTTP-error status (>= 400) is a real failure signal. Returning
       // `status:"ok"` here masked dead/erroring URLs from the model and
@@ -215,7 +223,9 @@ export function buildOsWebFetchTool(
           status: isHttpError ? "error" : "ok",
           output: isHttpError
             ? `HTTP ${outcome.status} for ${outcome.finalUrl}`
-            : text,
+            : spillable
+              ? extracted.text
+              : text,
           details,
         },
         {

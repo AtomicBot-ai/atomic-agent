@@ -74,6 +74,22 @@ describe("ToolOutputSpill (ATO-663)", () => {
     expect(existsSync(join(base, "s-1"))).toBe(false);
   });
 
+  // ATO-913: a long public page is saved whole, so the model can read
+  // past the 50k-character cut instead of silently losing the rest.
+  it("saves a capped os.web.fetch page", async () => {
+    const page = Array.from({ length: 4000 }, (_, i) => `post ${i + 1}: ${"x".repeat(40)}`).join("\n");
+    const result = compressToolResult(
+      { tool: "os.web.fetch", status: "ok", output: page, details: { truncated: true } },
+      { maxSummaryLength: 50_000, maxTailLines: Number.MAX_SAFE_INTEGER },
+    );
+    expect(result.truncated).toBe(true);
+    const spilled = await spill.spill("os.web.fetch", "s-1", result);
+    const path = spilled.details[FULL_OUTPUT_PATH_DETAIL] as string;
+    expect(readFileSync(path, "utf8")).toBe(page);
+    expect(spilled.summary.split("\n")[0]).toContain(path);
+    expect(spilled.summary).toContain("post 1:");
+  });
+
   it("never writes a tool that is not on the allowlist", async () => {
     for (const tool of ["os.clipboard.read", "os.http.request", "os.email.inbox", "os.fs.read"]) {
       const result = compressToolResult({ tool, status: "ok", output: longLog(100) });
