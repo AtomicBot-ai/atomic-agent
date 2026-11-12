@@ -15,6 +15,7 @@ import { configCommand } from "./config-command.js";
 import { serveCommand } from "./serve-command.js";
 import { traceCommand } from "./trace-command.js";
 import { taskCommand } from "./task-command.js";
+import { ideasCommand } from "./ideas-command.js";
 import { overnightCommand } from "./overnight-command.js";
 import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
@@ -115,6 +116,11 @@ const COMMANDS: CommandDescriptor[] = [
     name: "task",
     summary: "Manage durable tasks (list|show|create|cancel|run)",
     run: taskCommand,
+  },
+  {
+    name: "ideas",
+    summary: "Suggestions from your failed tasks and stopped goals (list|refresh|accept|dismiss)",
+    run: ideasCommand,
   },
   {
     name: "overnight",

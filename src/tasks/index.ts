@@ -82,3 +82,36 @@ export {
   serializeScheduleValue,
   validateSchedule,
 } from "./task-schedule.js";
+export { IdeaStore } from "./idea-store.js";
+export type { IdeaListOptions, IdeaSyncResult } from "./idea-store.js";
+export {
+  IDEA_EXCERPT_MAX_LENGTH,
+  IDEA_STATUSES,
+  IDEA_TITLE_MAX_LENGTH,
+  IDEAS_PER_KIND_MAX,
+  IdeaStateError,
+} from "./idea-types.js";
+export type {
+  IdeaCandidate,
+  IdeaEvidence,
+  IdeaKind,
+  IdeaRecord,
+  IdeaStatus,
+} from "./idea-types.js";
+export {
+  RESUME_GOAL_LOOKBACK_MS,
+  RETRY_TASK_LOOKBACK_MS,
+  buildIdeaCandidates,
+  resumeGoalIdeas,
+  retryTaskIdeas,
+} from "./idea-rules.js";
+export type { GoalIdeaInput, IdeaRuleInput } from "./idea-rules.js";
+export { goalIdeaInputs } from "./idea-goal-source.js";
+export {
+  IDEA_REFRESH_SESSION_SCAN,
+  IDEA_REFRESH_TASK_SCAN,
+  acceptIdea,
+  ideaToJson,
+  refreshIdeas,
+} from "./idea-service.js";
+export type { AcceptedIdea, IdeaRefreshDeps, IdeaTaskFactory } from "./idea-service.js";
