@@ -103,6 +103,7 @@
     "cli-highlight": "^2.1.11",
     "clipboardy": "^5.3.1",
     "cron-parser": "^5.5.0",
+    "defuddle": "^0.19.6",
     "diff": "^9.0.0",
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.12.0",

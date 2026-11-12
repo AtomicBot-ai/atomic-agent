@@ -140,6 +140,53 @@ describe("os.web.fetch tool", () => {
     expect(result.summary).toContain("first paragraph");
   });
 
+  it("runs Defuddle first when web.fetch.extractor is defuddle (ATO-698)", async () => {
+    const seen: string[] = [];
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({
+          body: ARTICLE,
+          status: 200,
+          contentType: "text/html",
+        }),
+      })),
+      lookup: publicLookup,
+      config: {
+        web: {
+          search: USER_CONFIG_DEFAULTS.web.search,
+          fetch: { ...USER_CONFIG_DEFAULTS.web.fetch, extractor: "defuddle" },
+        },
+      },
+      runDefuddle: async ({ url }) => {
+        seen.push(url);
+        return { content: "defuddled body text", title: "Doc" };
+      },
+    });
+    const result = await tool.run({ url: "https://example.com/doc" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(result.details.extractor).toBe("defuddle");
+    expect(result.summary).toContain("defuddled body text");
+    expect(seen).toEqual(["https://example.com/doc"]);
+  });
+
+  it("keeps Readability when the extractor is left at its default", async () => {
+    let defuddleCalls = 0;
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: ARTICLE, status: 200, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+      config: { web: USER_CONFIG_DEFAULTS.web },
+      runDefuddle: async () => {
+        defuddleCalls++;
+        return { content: "should not be used" };
+      },
+    });
+    const result = await tool.run({ url: "https://example.com/doc" }, ctx());
+    expect(result.details.extractor).toBe("readability");
+    expect(defuddleCalls).toBe(0);
+  });
+
   it("follows a redirect and re-validates the next hop", async () => {
     const run = vi.fn(
       makeRunCommand((url) => {

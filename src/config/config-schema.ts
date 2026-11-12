@@ -111,6 +111,7 @@ export {
   type WebSearchProviderName,
   type WebSearchConfig,
   type WebFetchConfig,
+  type WebFetchExtractorName,
 } from "./web-config.js";
 export { parseStringArrayOrNull, parseUrl } from "./config-values.js";
 
@@ -1066,6 +1067,10 @@ export interface UserConfigFile {
 // `notion` skills working. An older file has no field and takes the
 // default. A DEFAULT-BEHAVIOUR CHANGE for a command that relied on any
 // other inherited key; the fix is one line in config.
+// Unversioned, additive: `web.fetch.extractor` (`readability` |
+// `defuddle`, default `readability`, ATO-698). `defuddle` makes
+// `os.web.fetch` run Defuddle before Readability on HTML pages; an older
+// file has no field and keeps Readability.
 // Unversioned, additive: `localModels.drySampler` (default `false`,
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
