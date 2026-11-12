@@ -44,7 +44,7 @@ describe("AnalyticsClient team tag (ATO-1247)", () => {
     const ph = posthog();
     const client = new AnalyticsClient({ installId: "x", platform: "darwin", version: "1.0.0", team: true, posthog: ph });
     client.capture("message_sent", { provider: "p" });
-    const props = ph.capture.mock.calls[0][0].properties;
+    const props = ph.capture.mock.calls[0]![0]!.properties;
     expect(props.test_run).toBe(true);
     expect(props.$set).toEqual({ atomic_team: true });
     expect(props.provider).toBe("p");
@@ -54,7 +54,7 @@ describe("AnalyticsClient team tag (ATO-1247)", () => {
     const ph = posthog();
     const client = new AnalyticsClient({ installId: "x", platform: "darwin", version: "1.0.0", posthog: ph });
     client.capture("message_sent");
-    const props = ph.capture.mock.calls[0][0].properties;
+    const props = ph.capture.mock.calls[0]![0]!.properties;
     expect(props).not.toHaveProperty("test_run");
     expect(props).not.toHaveProperty("$set");
   });
