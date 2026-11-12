@@ -13,8 +13,17 @@ import {
   SubscriptionCliAuthError,
   SubscriptionCliNotInstalledError,
 } from "../provider/subscription-cli/subscription-cli-errors.js";
+import { DailySpendLimitError } from "../reliability/spend-limit-error.js";
+import { classifyFailure } from "../reliability/classify-failure.js";
 
 describe("shouldAdvance", () => {
+  it("advances past a paid link the daily spend ceiling refused, not immediately (ATO-649)", () => {
+    const err = new DailySpendLimitError({ spentUsd: 5.2, limitUsd: 5, providerId: "openrouter" });
+    expect(shouldAdvance(err)).toEqual({ advance: true, immediate: false });
+    expect(classifyFailure(err)).toBe("transport");
+    expect(err.message).toContain("$5.20 of $5.00");
+  });
+
   it("advances immediately on a cloud 429", () => {
     expect(shouldAdvance(new OpenAiHttpError("x", 429, "u"))).toEqual({
       advance: true,

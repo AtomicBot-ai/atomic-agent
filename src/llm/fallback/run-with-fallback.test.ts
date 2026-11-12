@@ -18,6 +18,7 @@ import {
   isRequestSizeRejection,
 } from "../reliability/index.js";
 import { shouldAdvance } from "./should-advance.js";
+import { DailySpendLimitError } from "../reliability/spend-limit-error.js";
 
 function makeChain(
   ids: string[],
@@ -280,6 +281,34 @@ describe("runWithFallback", () => {
         }),
       ).rejects.toBe(missing);
       expect(readFailingLink(missing)).toBe("claude-cli");
+    });
+  });
+
+  describe("the daily spend ceiling (ATO-649)", () => {
+    it("moves an over-budget turn on to the local link", async () => {
+      const chain = makeChain(["openrouter", "local-llama"]);
+      const seen: string[] = [];
+      const out = await runWithFallback(chain, async (id) => {
+        seen.push(id);
+        if (id === "openrouter") {
+          throw new DailySpendLimitError({ spentUsd: 5, limitUsd: 5, providerId: id });
+        }
+        return `answer from ${id}`;
+      });
+      expect(out).toBe("answer from local-llama");
+      expect(seen).toEqual(["openrouter", "local-llama"]);
+    });
+
+    it("ends on the limit's sentence, not a stopped local server's outage", async () => {
+      const chain = makeChain(["openrouter", "local-llama"]);
+      const refusal = new DailySpendLimitError({ spentUsd: 5, limitUsd: 5, providerId: "openrouter" });
+      await expect(
+        runWithFallback(chain, async (id) => {
+          if (id === "openrouter") throw refusal;
+          throw new TypeError("fetch failed");
+        }),
+      ).rejects.toBe(refusal);
+      expect(readFailingLink(refusal)).toBe("openrouter");
     });
   });
 

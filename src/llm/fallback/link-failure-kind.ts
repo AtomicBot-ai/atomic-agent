@@ -9,6 +9,7 @@ import { isSubscriptionCliSetupError } from "../provider/subscription-cli/subscr
 import { TransportError } from "../reliability/llm-failures.js";
 import { isNetworkError } from "../reliability/network-error.js";
 import { readProviderErrorVerdict } from "../reliability/provider-error-verdict.js";
+import { isDailySpendLimitError } from "../reliability/spend-limit-error.js";
 
 /**
  * Three questions the chain asks about a link that failed, beyond
@@ -56,6 +57,17 @@ export function isCredentialRejection(err: unknown): boolean {
  */
 export function isBillingRefusal(err: unknown): boolean {
   return err instanceof OpenAiHttpError && !err.timedOut && isCreditExhausted(err);
+}
+
+/**
+ * Did our own daily spend ceiling refuse the link (ATO-649)? Same
+ * standing as an empty account: the link answered nothing because it
+ * was never asked, waiting changes nothing until the day rolls over or
+ * the limit is raised, and it outranks a later link's outage when the
+ * chain runs out (`runWithFallback`).
+ */
+export function isSpendLimitRefusal(err: unknown): boolean {
+  return isDailySpendLimitError(err);
 }
 
 /**
@@ -128,6 +140,8 @@ export function isCliSetupRefusal(err: unknown): boolean {
 export function isOutageFailure(err: unknown): boolean {
   // An empty account is a "no", even on a 429.
   if (isBillingRefusal(err)) return false;
+  // So is our own spend ceiling (ATO-649).
+  if (isSpendLimitRefusal(err)) return false;
   // So is a CLI that is not installed or signed out, whatever wraps it.
   if (isCliSetupRefusal(err)) return false;
   const status = statusOf(err);

@@ -3,6 +3,7 @@ import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { LlamaServerError } from "../llama-server-client.js";
 import { TransportError } from "../reliability/llm-failures.js";
 import { isRequestSizeRejection } from "../reliability/request-size-rejection.js";
+import { isDailySpendLimitError } from "../reliability/spend-limit-error.js";
 
 /**
  * Fallover decision for a single thrown error.
@@ -59,6 +60,12 @@ const NO: AdvanceDecision = { advance: false, immediate: false };
  * only counts toward the threshold).
  */
 export function shouldAdvance(err: unknown): AdvanceDecision {
+  // The day's spend ceiling refused this paid link before anything was
+  // sent (ATO-649). The link is fine and nothing about it is down; the
+  // next link (a local model, when the chain has one) is exactly where
+  // the turn should go. Not immediate: the breaker has nothing to learn
+  // about the provider from our own ceiling.
+  if (isDailySpendLimitError(err)) return { advance: true, immediate: false };
   // A 400/413 that names the reply cap or the context length is the
   // request being too big for the model, not the link being down. It is
   // deterministic on every link (the local fallback usually has the

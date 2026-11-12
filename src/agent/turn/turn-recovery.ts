@@ -1,4 +1,5 @@
 import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli/subscription-cli-errors.js";
+import { isDailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
@@ -865,6 +866,9 @@ function isWaitableOutage(err: unknown): boolean {
   // a Windows user without `claude` read "no connection" for the whole
   // five-minute wait instead of being told to install it (ATO-117).
   if (isSubscriptionCliSetupError(err)) return false;
+  // The day's spend ceiling (ATO-649): wrapped as a status-less
+  // `TransportError` too, and no amount of waiting lifts it.
+  if (isDailySpendLimitError(err)) return false;
   // Our own clock ran out. Never evidence about the provider, so it is
   // decided before the status split rather than inside it: the shape
   // arrives as `status === null`, which is otherwise the strongest

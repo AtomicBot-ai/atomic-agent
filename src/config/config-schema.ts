@@ -556,8 +556,23 @@ export interface AtomicAgentConfig {
     allowCloudSampling?: boolean;
     costTracking?: {
       enabled: boolean;
+      /**
+       * Add today's spend, all sessions together, to the composer
+       * readout (ATO-649): `$0.31 · today $1.20`. The session's own cost
+       * is shown either way (ATO-569).
+       */
       showInStatusBar: boolean;
       dailyResetHourUtc: number;
+      /**
+       * Daily spend ceiling in USD, all sessions together (ATO-649).
+       * Unset (or not a positive number) means no ceiling. Once today's
+       * priced spend reaches it, paid cloud links are refused before the
+       * request is sent: the fallback chain moves on (to the local model
+       * when `fallback.appendLocal` puts it there), and with nothing left
+       * the turn ends saying the limit is reached. Calls with no known
+       * price do not count toward it. Read live.
+       */
+      dailyLimitUsd?: number;
     };
     /**
      * Cross-provider fallover. `chain` is an ordered list of provider ids

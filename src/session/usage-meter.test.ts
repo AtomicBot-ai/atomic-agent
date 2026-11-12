@@ -6,6 +6,7 @@ import {
   activeLimits,
   forwardWorkerUsage,
   formatLimit,
+  formatDailySpend,
   formatResetTime,
   formatSessionCost,
   formatUsageReport,
@@ -176,6 +177,23 @@ describe("status line", () => {
       limits: [reading({ usedPercent: 83, resetsAt: new Date(2026, 10, 6, 15, 0).getTime() })],
     };
     expect(usageStatusParts(state, NOW)).toEqual(["$0.31", "17% left, resets 15:00"]);
+  });
+
+  it("adds today's spend after the session's when the runtime stamped it (ATO-649)", () => {
+    const today = { day: "2026-11-06", usd: 1.2, pricedCalls: 4, unpricedCalls: 0 };
+    const state: SessionUsageState = { ...EMPTY_SESSION_USAGE, costUsd: 0.31, pricedCalls: 2, today };
+    expect(usageStatusParts(state, NOW)).toEqual(["$0.31", "today $1.20"]);
+    expect(
+      usageStatusParts({ ...state, today: { ...today, limitUsd: 5 } }, NOW),
+    ).toEqual(["$0.31", "today $1.20 of $5.00"]);
+  });
+
+  it("shows no day total it cannot price, but always the ceiling it is held to", () => {
+    const empty = { day: "2026-11-06", usd: 0, pricedCalls: 0, unpricedCalls: 3 };
+    expect(formatDailySpend(undefined)).toBeNull();
+    expect(formatDailySpend(empty)).toBeNull();
+    expect(formatDailySpend({ ...empty, limitUsd: 5 })).toBe("today $0.00+ of $5.00");
+    expect(formatDailySpend({ ...empty, usd: 0.5, pricedCalls: 1 })).toBe("today $0.50+");
   });
 
   it("is honest about spend it cannot price", () => {

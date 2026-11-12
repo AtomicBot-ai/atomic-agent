@@ -63,6 +63,7 @@ import { resolveLlmConfig } from "../llm/provider/index.js";
 
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
 import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.js";
+import { DAILY_SPEND_FILE_NAME, DailySpendStore, dailySpendViewFor } from "../session/daily-spend.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
@@ -403,9 +404,22 @@ export async function createAgentRuntime(
   // ATO-569: what each session has spent and the account limits last
   // seen, for the composer readout. Every change goes out as a
   // session-scoped `usage_updated` event (TUI, HTTP stream frame).
+  // ATO-649: today's spend over every session, persisted so it survives
+  // a restart, for the readout and the `dailyLimitUsd` ceiling. Stamped
+  // on the live event only when the operator asked for it.
+  const dailySpend = new DailySpendStore({
+    path: join(config.paths.stateDir, DAILY_SPEND_FILE_NAME),
+    resetHourUtc: () => getConfig().llm?.costTracking?.dailyResetHourUtc ?? 0,
+  });
   const sessionUsage = new SessionUsageLedger({
-    onChange: (sessionId, usage) =>
-      emitAgentLoopEventFor(sessionId, { type: "usage_updated", sessionId, usage }),
+    onChange: (sessionId, usage) => {
+      const today = dailySpendViewFor(dailySpend, getConfig().llm?.costTracking);
+      emitAgentLoopEventFor(sessionId, {
+        type: "usage_updated",
+        sessionId,
+        usage: today ? { ...usage, today } : usage,
+      });
+    },
   });
 
   const modelContext = createRuntimeModelContext(config, providers);
@@ -440,7 +454,7 @@ export async function createAgentRuntime(
 
   const { prepareLocalLink, llmComplete, llmCompleteStream } = connectRuntimeFallback(options, {
     fallbackChain, resolveActiveLlmSlice, localBackend: connectedLocal.localBackend, profileManager,
-    costAccumulator, turnUsageMeter, sessionUsage, resolveModelPricing, resolveCatalogContextWindow,
+    costAccumulator, turnUsageMeter, sessionUsage, dailySpend, resolveModelPricing, resolveCatalogContextWindow,
   });
   // Smart approval (ATO-465): off unless `agent.smartApproval`, read live.
   installRiskReviewer({

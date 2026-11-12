@@ -13,7 +13,13 @@ import { sanitizeModelAlias } from "../../analytics/index.js";
 import { completionUsageForTurn, type TurnUsageMeter } from "../../analytics/index.js";
 import type { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import type { ResolvedModel } from "../../llm/provider/model-resolver.js";
-import type { SessionUsageLedger } from "../../session/usage-meter.js";
+import { priceCompletion, type SessionUsageLedger } from "../../session/usage-meter.js";
+import {
+  effectiveDailyLimitUsd,
+  isOverDailyLimit,
+  type DailySpendStore,
+} from "../../session/daily-spend.js";
+import { DailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
 import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
 import { LearnedContextWindows } from "../learned-context-windows.js";
@@ -313,6 +319,8 @@ export function connectRuntimeFallback(
     turnUsageMeter: TurnUsageMeter;
     /** Session spend and account limits for the composer readout (ATO-569). */
     sessionUsage?: SessionUsageLedger;
+    /** Today's spend over every session, and the daily ceiling's source (ATO-649). */
+    dailySpend?: DailySpendStore;
     resolveModelPricing: RuntimeModelContext["resolveModelPricing"];
     resolveCatalogContextWindow?: RuntimeModelContext["resolveCatalogContextWindow"];
   },
@@ -326,7 +334,49 @@ export function connectRuntimeFallback(
     turnUsageMeter,
     resolveModelPricing,
     sessionUsage,
+    dailySpend,
   } = deps;
+  // How a link bills: a local server (any kind pointed at this machine)
+  // bills nothing, a subscription CLI bills by the plan, the rest per
+  // token. One reading for the session readout, the day total and the
+  // daily ceiling.
+  const linkBilling = (providerId: string): { local: boolean; plan: boolean } => {
+    const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+    return {
+      local:
+        entry === undefined || entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url),
+      plan: entry?.kind === "subscription-cli",
+    };
+  };
+  // ATO-649: fold a metered completion into today's total. Before the
+  // session record, so the `usage_updated` event that follows carries it.
+  const recordDailySpend = (
+    result: CompletionResult,
+    servedProviderId: string,
+    model: ResolvedModel | undefined,
+  ): void => {
+    if (!dailySpend || !result.usage) return;
+    dailySpend.record(
+      priceCompletion({ usage: result.usage, ...(model ? { model } : {}), ...linkBilling(servedProviderId) }),
+    );
+  };
+  // ATO-649: refuse a paid link once today's spend reached
+  // `costTracking.dailyLimitUsd`, before anything is sent. Thrown from the
+  // seam's per-attempt hook, so the chain advances past the link (to the
+  // local model when it is in the chain). Local and plan links are never
+  // refused: they are not spend. Read live, so a raised limit applies at
+  // once.
+  const enforceDailySpendLimit = (providerId: string): void => {
+    if (!dailySpend) return;
+    const limitUsd = effectiveDailyLimitUsd(getConfig().llm?.costTracking?.dailyLimitUsd);
+    if (limitUsd === null) return;
+    const billing = linkBilling(providerId);
+    if (billing.local || billing.plan) return;
+    const today = dailySpend.today();
+    if (isOverDailyLimit(today, limitUsd)) {
+      throw new DailySpendLimitError({ spentUsd: today.usd, limitUsd, providerId });
+    }
+  };
   // Fold one completion into its session's spend and the account's
   // limit readings (ATO-569). A local link is never priced; a cloud call
   // with no usage block and no limits has nothing to say.
@@ -339,7 +389,7 @@ export function connectRuntimeFallback(
   ): void => {
     if (!sessionUsage || !sessionId) return;
     if (!metered && !result.rateLimits?.length) return;
-    const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === servedProviderId);
+    const billing = linkBilling(servedProviderId);
     sessionUsage.record(sessionId, {
       providerId: servedProviderId,
       modelId: result.modelId,
@@ -347,10 +397,8 @@ export function connectRuntimeFallback(
       ...(model ? { model } : {}),
       // A local server under another kind (LM Studio, Ollama, a
       // llama.cpp behind the OpenAI-compatible entry) bills nothing too.
-      local:
-        metered &&
-        (entry === undefined || entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url)),
-      plan: entry?.kind === "subscription-cli",
+      local: metered && billing.local,
+      plan: billing.plan,
       ...(result.rateLimits ? { rateLimits: result.rateLimits } : {}),
     });
   };
@@ -376,6 +424,7 @@ export function connectRuntimeFallback(
       return;
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    recordDailySpend(result, servedProviderId, model);
     recordSessionUsage(params.sessionId, result, servedProviderId, true, model);
     if (costAccumulator && result.usage) {
       costAccumulator.recordTurn({
@@ -405,6 +454,7 @@ export function connectRuntimeFallback(
       return;
     }
     const model = result.usage ? resolveModelPricing(result.modelId, servedProviderId) : undefined;
+    recordDailySpend(result, servedProviderId, model);
     // ATO-1289: most chat turns stream, so the cost accumulator must see
     // a streamed completion exactly as it sees a unary one (same gate,
     // no session required) — otherwise `costTracking` only ever counts
@@ -457,7 +507,13 @@ export function connectRuntimeFallback(
     // completion has not been sent, so warm it here rather than infer
     // against it. No-op on every other attempt — one boolean after the
     // first call. See `prepareLocalLink` above.
-    prepareLink: prepareLocalLink,
+    // ATO-649: the daily ceiling is checked here too, per attempt and
+    // before the request, so a refusal advances the chain like any
+    // link that said no.
+    prepareLink: async (providerId) => {
+      enforceDailySpendLimit(providerId);
+      await prepareLocalLink(providerId);
+    },
     recordUnaryUsage,
     recordStreamUsage,
   };

@@ -7,6 +7,7 @@ import {
   isBillingRefusal,
   isCliSetupRefusal,
   isCredentialRejection,
+  isSpendLimitRefusal,
 } from "./link-failure-kind.js";
 import type { ProviderFallbackChain } from "./provider-fallback-chain.js";
 import { shouldAdvance } from "./should-advance.js";
@@ -56,6 +57,12 @@ import { shouldAdvance } from "./should-advance.js";
  * the chain runs out after it, its refusal is thrown, with the links
  * that failed before it recorded beside it, rather than a later link's
  * outage. Every billing refusal ends the turn without the outage wait.
+ *
+ * **The same for the day's spend ceiling** (`isSpendLimitRefusal`,
+ * ATO-649): a paid link refused before anything was sent. The chain
+ * advances to the next link, which is how an over-budget turn lands on
+ * the local model; with no link left the turn ends on the limit's
+ * sentence.
  *
  * Every thrown error also carries the id of the link that threw it
  * (`attachFailingLink`), for the hosts that say which link a parked turn
@@ -143,10 +150,15 @@ export async function runWithFallback<T>(
         chain.isPrimary(currentId) &&
         (isCredentialRejection(err) ||
           isBillingRefusal(err) ||
+          isSpendLimitRefusal(err) ||
           isCliSetupRefusal(err))
       ) {
         primaryRefusal = { providerId: currentId, error: err };
-      } else if (routeRefusal === null && serving && isBillingRefusal(err)) {
+      } else if (
+        routeRefusal === null &&
+        serving &&
+        (isBillingRefusal(err) || isSpendLimitRefusal(err))
+      ) {
         routeRefusal = { providerId: currentId, error: err, before: [...failed] };
       }
       failed.push({ providerId: currentId, error: err });

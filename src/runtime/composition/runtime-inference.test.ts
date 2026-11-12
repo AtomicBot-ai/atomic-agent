@@ -1,4 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as configuration from "../../config/index.js";
 import type { AtomicAgentConfig } from "../../config/index.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
@@ -13,6 +16,8 @@ import { CostAccumulator } from "../../llm/provider/cost-accumulator.js";
 import { TurnUsageMeter } from "../../analytics/index.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { OpenAiHttpError } from "../../llm/provider/openai/openai-http.js";
+import { DailySpendStore } from "../../session/daily-spend.js";
+import { DailySpendLimitError } from "../../llm/reliability/spend-limit-error.js";
 import { connectRuntimeFallback, connectRuntimeProviders, createRuntimeModelContext, createRuntimeProviderReloads, type RuntimeProviders } from "./runtime-inference.js";
 
 function completion(modelId = "priced-model"): CompletionResult {
@@ -283,6 +288,63 @@ describe("runtime provider/context/fallback/reload phases", () => {
     let next = await stream.next();
     while (!next.done) next = await stream.next();
     expect(fixture.costAccumulator.snapshot().sessionUsd).toBeCloseTo(0.5);
+  });
+
+  describe("daily spend and its ceiling (ATO-649)", () => {
+    function withDailySpend(limitUsd?: number) {
+      config.llm = {
+        ...(config.llm ?? resolveLlmConfig(config)),
+        costTracking: {
+          enabled: false,
+          showInStatusBar: false,
+          dailyResetHourUtc: 0,
+          ...(limitUsd !== undefined ? { dailyLimitUsd: limitUsd } : {}),
+        },
+      };
+      const dir = mkdtempSync(join(tmpdir(), "daily-spend-"));
+      const dailySpend = new DailySpendStore({ path: join(dir, "daily-spend.json") });
+      const fixture = fallback();
+      return { ...fixture, dailySpend, deps: { ...fixture.deps, dailySpend } };
+    }
+
+    it("adds a priced cloud completion to today's total", async () => {
+      const fixture = withDailySpend();
+      const served = providers.providerRegistry.getProvider("served");
+      if (!served) throw new Error("served fixture missing");
+      vi.spyOn(served, "complete").mockResolvedValue(completion());
+      const wired = connectRuntimeFallback({}, fixture.deps);
+      await wired.llmComplete({ ...params, providerId: "served" });
+      expect(fixture.dailySpend.today().usd).toBeCloseTo(0.00002);
+      expect(fixture.dailySpend.today().pricedCalls).toBe(1);
+    });
+
+    it("refuses every paid link once today's spend reached the limit, before sending", async () => {
+      const fixture = withDailySpend(1);
+      fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+      const cloud = providers.providerRegistry.getProvider("cloud");
+      const served = providers.providerRegistry.getProvider("served");
+      if (!cloud || !served) throw new Error("provider fixtures missing");
+      const cloudCall = vi.spyOn(cloud, "complete").mockResolvedValue(completion());
+      const servedCall = vi.spyOn(served, "complete").mockResolvedValue(completion());
+      const wired = connectRuntimeFallback({}, fixture.deps);
+      await expect(wired.llmComplete(params)).rejects.toBeInstanceOf(DailySpendLimitError);
+      expect(cloudCall).not.toHaveBeenCalled();
+      expect(servedCall).not.toHaveBeenCalled();
+    });
+
+    it("lets paid links through below the limit and with no limit set", async () => {
+      for (const limit of [5, undefined]) {
+        const fixture = withDailySpend(limit);
+        fixture.dailySpend.record({ kind: "priced", usd: 1.2, source: "provider" });
+        const served = providers.providerRegistry.getProvider("served");
+        if (!served) throw new Error("served fixture missing");
+        vi.spyOn(served, "complete").mockResolvedValue(completion());
+        const wired = connectRuntimeFallback({}, fixture.deps);
+        await expect(wired.llmComplete({ ...params, providerId: "served" })).resolves.toMatchObject({
+          content: "answer",
+        });
+      }
+    });
   });
 
   it("a local completion without a usage block still counts its timings toward the turn, unpriced (ATO-276)", async () => {
