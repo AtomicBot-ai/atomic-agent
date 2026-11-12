@@ -117,8 +117,8 @@ export function improveMaxTokens(maxOutputTokens?: number): number {
  * two in step. OpenAI's reasoning models (o1, o3, o4, gpt-5) refuse
  * `temperature` and want `max_completion_tokens`; Kimi K3.1 accepts only
  * temperature 1 (Kimi K2.x takes any value; plain kimi-k3 is unverified and
- * left free). Read after any vendor prefix, so `moonshotai/kimi-k3.1-pro`
- * counts.
+ * left free). New Claude models refuse it too (claudeRejectsTemperature).
+ * Read after any vendor prefix, so `moonshotai/kimi-k3.1-pro` counts.
  */
 export function improveModelParams(model: string): {
   temperature: "omit" | number | null;
@@ -127,7 +127,37 @@ export function improveModelParams(model: string): {
   const bare = model.slice(model.lastIndexOf("/") + 1);
   if (/^(?:o[1-9]|gpt-5)(?![a-z])/i.test(bare)) return { temperature: "omit", capField: "max_completion_tokens" };
   if (/^kimi-k3\.1(?![0-9])/i.test(bare)) return { temperature: 1, capField: "max_tokens" };
+  if (claudeRejectsTemperature(bare)) return { temperature: "omit", capField: "max_tokens" };
   return { temperature: null, capField: "max_tokens" };
+}
+
+/**
+ * A Claude id in Anthropic's naming: family, major and optional minor
+ * (`claude-sonnet-5-5`, `claude-opus-4.8`, Bedrock's
+ * `us.anthropic.claude-haiku-5-5`). Anchored at the start, so a fine-tune
+ * that only names Claude keeps its temperature; the minor is one or two
+ * digits so a date suffix is not read as one. The old naming
+ * (`claude-3-5-sonnet`) does not match. Mirror of CLAUDE_MODEL_RE in the
+ * agent's model-params.ts.
+ */
+const CLAUDE_MODEL_RE =
+  /^(?:[a-z]+\.)?(?:anthropic\.)?claude-(opus|sonnet|haiku|fable|mythos)-(\d+)(?:[-.](\d{1,2}))?(?![0-9])/i;
+
+/**
+ * Whether a Claude model refuses `temperature`: Opus 4.7 and later, the
+ * Sonnet and Haiku 5 generations on, every Fable and Mythos model. The 5.5
+ * models answer any value with a 400 (ATO-1416). Mirror of the agent's
+ * claudeRejectsTemperature (ATO-1397).
+ */
+export function claudeRejectsTemperature(bare: string): boolean {
+  const match = CLAUDE_MODEL_RE.exec(bare);
+  if (!match) return false;
+  const family = match[1]!.toLowerCase();
+  const major = Number(match[2]);
+  const minor = match[3] === undefined ? 0 : Number(match[3]);
+  if (family === "fable" || family === "mythos") return true;
+  if (family === "opus") return major > 4 || (major === 4 && minor >= 7);
+  return major >= 5;
 }
 
 /**
