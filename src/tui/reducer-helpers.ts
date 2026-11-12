@@ -218,6 +218,7 @@ export function startNewRun(state: TuiState): TuiState {
     // Whatever the next turn is — running the plan, or changing it —
     // the offer belongs to the plan that has just been superseded.
     planHandoff: false,
+    nextStepSuggestion: null,
     status: "running",
     currentStep: 0,
     stepStartedAt: null,

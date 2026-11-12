@@ -65,6 +65,7 @@ import { appChromeRows } from "./components/debug-pane.js";
 import {
   composerCollapsedRows,
   ComposerOverlay,
+  ghostSuggestionPlaceholder,
   ComposerSlot,
   maxComposerEditorLines,
 } from "./components/composer-overlay.js";
@@ -2583,7 +2584,9 @@ export function TuiApp({
                           // a fourth control to say it.
                           state.planHandoff
                             ? "Type to change the plan — it stays in plan mode…"
-                            : "Type a message or `/` for commands…"
+                            : state.nextStepSuggestion !== null
+                              ? ghostSuggestionPlaceholder(state.nextStepSuggestion)
+                              : "Type a message or `/` for commands…"
                         }
                         // No rotation while a plan is on offer. `PromptShell`
                         // resolves `rotated ?? placeholder`, so a rotating pool —
@@ -2592,7 +2595,9 @@ export function TuiApp({
                         // The offer is the one moment the field has something
                         // particular to say, so it says it instead of rotating.
                         rotatingPlaceholders={
-                          state.planHandoff ? NO_ROTATION : PROMPT_PLACEHOLDERS
+                          state.planHandoff || state.nextStepSuggestion !== null
+                            ? NO_ROTATION
+                            : PROMPT_PLACEHOLDERS
                         }
                         backend={promptBackend}
                         model={promptLlm.model}

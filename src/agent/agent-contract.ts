@@ -673,6 +673,12 @@ export type AgentLoopEvent =
    */
   | { type: "steer_applied"; text: string; stepIndex: number }
   | { type: "turn_started"; turnIndex: number }
+  /**
+   * A one-line guess at what the user will want next, written after the
+   * turn ended (ATO-995). Surfaces show it greyed in an empty composer;
+   * Tab puts it in the buffer. Never sent to the model by itself.
+   */
+  | { type: "next_step_suggestion"; text: string }
   | {
       type: "turn_finished";
       turnIndex: number;
