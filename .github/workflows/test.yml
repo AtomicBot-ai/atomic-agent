@@ -135,3 +135,24 @@ jobs:
 
       - name: Run tests
         run: node scripts/run-tests.mjs ${{ matrix.scope }}
+
+  # Known security advisories in the packages we ship (ATO-1415). Reads only the lockfile against
+  # the npm advisory database, so it needs no install. Dev-only packages (vitest, esbuild, ...)
+  # are left out: they never reach users. A new high or critical advisory fails the gate; fix it
+  # with a patch-level bump or an `overrides` entry in package.json, the way PR #1079 did.
+  audit:
+    name: npm audit (production dependencies)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "25.7"
+          check-latest: true
+
+      - name: Audit the lockfile
+        run: npm audit --package-lock-only --omit=dev --audit-level=high
