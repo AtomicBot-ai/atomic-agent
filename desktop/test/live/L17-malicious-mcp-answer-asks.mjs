@@ -18,6 +18,15 @@
  * before or after Deny; or the server process outlives the app (the harness
  * sweep catches it by the run's temp path on its command line).
  *
+ * Level: this runs at the live default, approval level 1, where every
+ * command asks. So the new card for `./payload.sh` shows that the MCP
+ * approval was not stretched to cover a command; it does not show any
+ * injection-specific rule. At level 4 an ordinary planted `./payload.sh`
+ * runs with no card by design. What is specific to hostile MCP answers here
+ * is the outside-text framing and the neutralised control tokens, and those
+ * are checked directly. The level-4 version of "a planted command still
+ * asks" (a destructive `rm -f`) is L16.
+ *
  * A server that declares its tool read-only is ATO-1178 and is not played
  * here. The server is the real stdio fixture fixtures/mcp/poisoned-notes-server.mjs
  * (ATO-1375), which answers with whatever the scenario put in its answer file.
