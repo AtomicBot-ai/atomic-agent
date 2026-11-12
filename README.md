@@ -101,6 +101,19 @@ Arch Linux: `yay -S atomic-agent-desktop-bin`, or any other AUR helper.
 
 Installed as a package, the app is updated with the rest of the system (`sudo apt upgrade`, `sudo dnf upgrade` or `yay -Syu`) and its Settings say so instead of offering an in-app update; the AppImage from the [releases page](https://github.com/AtomicBot-ai/atomic-agent/releases) updates itself. `sudo apt remove atomic-agent-desktop`, `sudo dnf remove atomic-agent-desktop` or `sudo pacman -R atomic-agent-desktop-bin` removes the app and leaves your data.
 
+### mise and aqua
+
+[mise](https://mise.jdx.dev) installs the CLI straight from the GitHub releases, on macOS, Linux and Windows. Add it to `mise.toml` (or `~/.config/mise/config.toml` for every project):
+
+```toml
+[tools."github:AtomicBot-ai/atomic-agent"]
+version = "latest"
+matching_regex = "^atomic-agent-"    # the release archive, not the deb or rpm
+version_regex = '^v\d+\.\d+\.\d+$'  # CLI releases only; desktop-v* tags are the desktop app's
+```
+
+then run `mise install`. [aqua](https://aquaproj.github.io) reads the registry entry in [`packaging/aqua/registry.yaml`](packaging/aqua/registry.yaml); its header shows the `aqua.yaml` lines. Both check each download against its `.sha256`. Update with `mise upgrade` or by raising the version in `aqua.yaml`, not with `atomic-agent update`, which would replace the binary behind the tool manager's back.
+
 > [!NOTE]
 > Developer preview. APIs, commands, config, and behavior are still moving, so pin a release if you need a stable integration point. Current builds: macOS (Apple Silicon), Linux x64 / arm64, and Windows x64. Intel Macs are not supported yet; Windows on ARM runs the x64 build under emulation.
 
