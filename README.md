@@ -285,7 +285,7 @@ Atomic Agent drives a full desktop tool surface. Dangerous actions are routed th
 | **Handoff** | When Claude Code or Codex stops in the middle of a task, `atag handoff --from claude-code` (or `codex`) saves its latest session in the current folder as an Atomic Agent chat and opens the TUI with a message to carry on. A long session is shortened to fit a local model's window (the local model's configured context, else 32k tokens). The desktop app has the same thing as **Continue from Claude Code / Codex**. |
 | **Skills** | View and run Markdown skill playbooks (scripts are approval-gated), install more from ClawHub or GitHub skill repos. Ships with 18 starter skills (Docker, GitHub, Notion, Obsidian, PDF, and more; 15 outside macOS, where the Apple ones are skipped), auto-installed on first run. |
 | **Vision** | Optional `vision.describe` for multimodal models with `mmproj`, kept outside the text transcript. |
-| **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. |
+| **MCP** | Connect external MCP servers; their tools, resources, and prompts join the same registry. `atag mcp-server` works the other way round: Claude Code, Codex or Cursor can search Atomic Agent's memory and read its skills (read-only by default). |
 | **Fusion** | One model plans and hands the independent bulk of a job (wide reads, drafts, tests) to a pool of workers via `fusion.delegate`, then checks and merges their results. Usually a cloud orchestrator with local workers; either side can be any configured provider. You can stop, steer or escalate one running worker without stopping the rest, resume a run cut off by a crash with `/fusion resume`, and cap one Fusion turn's spend and time. Models by role, a task tree, a git worktree per worker, a judge, automatic replanning and escalation to a stronger model are options, all off by default. |
 | **Providers** | Local `llama-server` by default; OpenAI-compatible, [OpenRouter](https://openrouter.ai), AI/ML API, and Gemini providers when configured, plus one-click presets for Anthropic, Groq, DeepSeek, Mistral, xAI, Together, Ollama, LM Studio, Atomic Chat and more, with live model catalogs and mid-session switching. Your existing **Claude Code and OpenAI Codex subscriptions** work too, driven through their own signed-in CLIs with no API key. Reasoning-only completions from reasoning models are recovered instead of failing the turn. Model pickers for OpenRouter, AI/ML API, Gemini and the Claude CLI start with Cheap, Balanced and Best. When a cloud provider fails you see the reason instead of a silent move to a local model; on a 429 or 503 the agent tries up to 3 times in total, a `Retry-After` longer than 5 seconds is waited out or handed to the fallback, and with a fallback chain set it says which provider it switched to. `atomic-agent models recommend` names the best local models this machine can run. |
 | **Telegram & Discord** | Remote control from your phone: a session per chat, approval buttons, files both ways, and opt-in scheduled-task reports on Telegram. Run several bots at once from the Swarm tab (`/swarm`), each with its own token and owner. |
@@ -636,6 +636,31 @@ Configure MCP servers in `config.json`, and their tools join the same registry a
 To offer only some of a server's tools, list their raw names: `"enabledTools": ["get_issue", "list_issues"]` keeps just those, and `"disabledTools": ["delete_repository"]` drops tools on top of that (or on its own, from the full list). Turned-off tools never reach the prompt and cannot be called; a change applies when the server reconnects.
 
 The TUI MCP panel supports live add / remove without restarting the process. When a stdio server fails to connect, the tail of its stderr is surfaced in the error instead of a bare disconnect message.
+
+</details>
+
+<details>
+<summary><b>MCP server: use the agent's memory and skills from Claude Code, Codex or Cursor</b></summary>
+
+`atag mcp-server` runs Atomic Agent as an MCP server over stdio. Add it to any MCP client:
+
+```bash
+claude mcp add atomic-agent -- atag mcp-server           # Claude Code
+codex mcp add atomic-agent -- atag mcp-server            # Codex
+```
+
+For Cursor or Claude Desktop, put `{"command": "atag", "args": ["mcp-server"]}` in the client's MCP config.
+
+By default every tool is read-only: `memory_notes_recall`, `memory_lessons_recall`, `memory_procedures_recall`, `memory_profile_list`, `skills_list` and `skill_view`. No model is started; the server reads the same data folder as the terminal and the desktop app.
+
+```bash
+atag mcp-server --allow-write                    # also memory_notes_store and memory_profile_set
+atag mcp-server --allow-exec                     # also os_shell_run, still behind approvals
+atag mcp-server --tool memory_notes_recall       # only this tool (repeatable)
+atag mcp-server --cwd ~/code/project             # working folder for project skills and shell commands
+```
+
+The other client cannot show Atomic Agent's approval prompt, so with `--allow-exec` a command that would ask is refused and the client is told to ask you. Only your approval level and saved "always allow" rules can let a command run; the hardline shell guard still blocks the worst ones.
 
 </details>
 
