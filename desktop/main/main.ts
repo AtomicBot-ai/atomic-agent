@@ -2954,6 +2954,8 @@ function wireIpc(client: AgentClient): void {
     if (!ownDir(stateDir) || typeof name !== "string") return { ok: false, error: "stateDir and name are required" };
     return memoryQuery(stateDir, name, Array.isArray(params) ? params : []);
   });
+  // ATO-582: edits and deletes go through the agent (its FTS and vectors stay in step), never SQL of ours.
+  ipcMain.handle("app:memoryWrite", (_event, op: unknown) => client.memoryWrite(op));
 
   // --- Item 7 part C (LLM / Telegram / Import tabs) ---
   ipcMain.handle("cli:modelsStatus", () => modelsStatus());
