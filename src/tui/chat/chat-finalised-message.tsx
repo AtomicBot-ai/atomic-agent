@@ -123,7 +123,7 @@ export function FinalisedMessage({
             documentation, not a destination. */}
         <Box flexDirection="row">
           <ChatCopyButton text={message.text} />
-          <ChatLinkButtons text={message.text} />
+          <ChatLinkButtons text={message.text} toolCards={message.toolCards} />
         </Box>
         {planHandoff ? (
           <PlanHandoff

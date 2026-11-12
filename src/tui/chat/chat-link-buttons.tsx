@@ -9,6 +9,7 @@ import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { splitUrlSegments } from "../render/linkify-text.js";
 import { theme } from "../theme/theme.js";
+import type { ToolCardEntry } from "../tui-state.js";
 
 interface ChatLinkButtonsProps {
   /**
@@ -17,6 +18,12 @@ interface ChatLinkButtonsProps {
    * text that shows as a link.
    */
   readonly text: string;
+  /**
+   * The message's tool cards. An ok `canvas.render` card carries the
+   * page it wrote in `details.canvas` (ATO-1137) even when the reply
+   * never repeats the path, so its chip comes from here.
+   */
+  readonly toolCards?: readonly ToolCardEntry[];
   /** How long `[opening…]` stays up before the label reverts. */
   readonly revertAfterMs?: number;
   /**
@@ -123,12 +130,53 @@ export function extractLocalHtmlFiles(
   return files;
 }
 
+/** A page the chat can open: its absolute path, and its title if known. */
+export interface LocalPage {
+  readonly path: string;
+  readonly title?: string;
+}
+
+/**
+ * The pages `canvas.render` wrote in this message (ATO-1137 / ATO-1139),
+ * read from its ok cards' `details.canvas = { path, title, … }`. Read
+ * defensively: `details` is untyped, and an older or newer tool shape
+ * simply yields nothing.
+ */
+export function canvasPagesFromToolCards(
+  cards: readonly ToolCardEntry[] | undefined,
+): readonly LocalPage[] {
+  const pages: LocalPage[] = [];
+  for (const card of cards ?? []) {
+    if (card.tool !== "canvas.render" || card.status !== "ok") continue;
+    const canvas = card.details?.["canvas"];
+    if (typeof canvas !== "object" || canvas === null) continue;
+    const { path, title } = canvas as { path?: unknown; title?: unknown };
+    if (typeof path !== "string" || !isAbsolute(path) || !LOCAL_HTML.test(path)) {
+      continue;
+    }
+    pages.push(
+      typeof title === "string" && title.trim().length > 0
+        ? { path, title: title.trim() }
+        : { path },
+    );
+  }
+  return pages;
+}
+
 /**
  * The label of a local page's chip. One page in the message: `[open in
  * browser]`, the message already says which. Several: each chip names
  * its file, ellipsised like a hostname.
  */
-export function localFileChipLabel(path: string, many: boolean): string {
+export function localFileChipLabel(
+  path: string,
+  many: boolean,
+  title?: string,
+): string {
+  // A canvas names itself; its title is the better label when it fits.
+  if (title !== undefined && title.length <= MAX_LABEL_CHARS) {
+    return `open ${title} in browser`;
+  }
   if (!many) return "open in browser";
   const name = basename(path);
   const short =
@@ -181,6 +229,7 @@ export function linkChipLabel(url: string): string {
  */
 export function ChatLinkButtons({
   text,
+  toolCards,
   revertAfterMs = DEFAULT_REVERT_MS,
   isFile = defaultIsFile,
 }: ChatLinkButtonsProps): ReactElement | null {
@@ -188,10 +237,18 @@ export function ChatLinkButtons({
   const workingDir = mouse?.getState().session.workingDir ?? process.cwd();
   // Memoised: a finalised message re-renders on every chat repaint, and
   // the file check is a `stat` per candidate path.
-  const files = useMemo(
-    () => extractLocalHtmlFiles(text, workingDir, isFile),
-    [text, workingDir, isFile],
-  );
+  const files = useMemo((): readonly LocalPage[] => {
+    const pages = [...canvasPagesFromToolCards(toolCards)].filter((page) =>
+      isFile(page.path),
+    );
+    const seen = new Set(pages.map((page) => page.path));
+    for (const path of extractLocalHtmlFiles(text, workingDir, isFile)) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      pages.push({ path });
+    }
+    return pages;
+  }, [text, toolCards, workingDir, isFile]);
   const urls = extractMessageUrls(text);
   if (urls.length === 0 && files.length === 0) return null;
   // Local pages first — an artifact the agent just made is the likelier
@@ -201,11 +258,11 @@ export function ChatLinkButtons({
   const hidden = files.length + urls.length - shownFiles.length - shown.length;
   return (
     <Box flexDirection="row">
-      {shownFiles.map((path) => (
+      {shownFiles.map((page) => (
         <LinkChip
-          key={path}
-          url={path}
-          label={localFileChipLabel(path, files.length > 1)}
+          key={page.path}
+          url={page.path}
+          label={localFileChipLabel(page.path, files.length > 1, page.title)}
           local
           revertAfterMs={revertAfterMs}
         />

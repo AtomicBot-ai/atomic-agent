@@ -7,7 +7,9 @@ import { MouseProvider } from "../mouse/mouse-context.js";
 import { MouseTargetRegistry } from "../mouse/mouse-registry.js";
 import type { TuiAppCallbacks } from "../tui-app.js";
 import { createInitialTuiState, type TuiSessionInfo } from "../tui-state.js";
+import type { ToolCardEntry } from "../tui-state.js";
 import {
+  canvasPagesFromToolCards,
   ChatLinkButtons,
   extractLocalHtmlFiles,
   extractMessageUrls,
@@ -349,6 +351,103 @@ describe("ChatLinkButtons local pages", () => {
     );
     await clickChip(app, "[open in browser]", opened);
     expect(opened).toEqual(["local:/tmp/links/canvas/dashboard.html"]);
+    app.unmount();
+  });
+});
+
+function canvasCard(overrides: Partial<ToolCardEntry> = {}): ToolCardEntry {
+  return {
+    id: "tc-1",
+    stepIndex: 1,
+    tool: "canvas.render",
+    args: {},
+    status: "ok",
+    summary: "Saved canvas",
+    truncated: false,
+    details: {
+      canvas: {
+        path: "/tmp/links/canvas/dashboard.html",
+        title: "Sales",
+        kind: "chart",
+        bytes: 1200,
+      },
+    },
+    startedAt: 0,
+    finishedAt: 1,
+    ...overrides,
+  };
+}
+
+describe("canvasPagesFromToolCards", () => {
+  it("reads the page from an ok canvas.render card", () => {
+    expect(canvasPagesFromToolCards([canvasCard()])).toEqual([
+      { path: "/tmp/links/canvas/dashboard.html", title: "Sales" },
+    ]);
+  });
+
+  it("ignores failed cards, other tools and odd details", () => {
+    expect(
+      canvasPagesFromToolCards([
+        canvasCard({ status: "error" }),
+        canvasCard({ tool: "fs.write" }),
+        canvasCard({ details: { canvas: "oops" } }),
+        canvasCard({ details: { canvas: { path: "rel/page.html" } } }),
+        canvasCard({ details: { canvas: { path: "/w/run.sh" } } }),
+        canvasCard({ details: undefined }),
+      ]),
+    ).toEqual([]);
+    expect(canvasPagesFromToolCards(undefined)).toEqual([]);
+  });
+});
+
+describe("ChatLinkButtons canvas cards", () => {
+  it("offers the canvas page when the reply never names its path", async () => {
+    const opened: string[] = [];
+    const app = mount(
+      <ChatLinkButtons
+        text="Here is your dashboard."
+        toolCards={[canvasCard()]}
+        isFile={fakeIsFile}
+      />,
+      { opened },
+    );
+    await clickChip(app, "[open Sales in browser]", opened);
+    expect(opened).toEqual(["local:/tmp/links/canvas/dashboard.html"]);
+    app.unmount();
+  });
+
+  it("shows one chip when the reply also names the same page", () => {
+    const app = mount(
+      <ChatLinkButtons
+        text="Saved to canvas/dashboard.html"
+        toolCards={[canvasCard()]}
+        isFile={fakeIsFile}
+      />,
+    );
+    const frame = app.frame();
+    expect(frame).toContain("[open Sales in browser]");
+    expect(frame).not.toContain("[open in browser]");
+    app.unmount();
+  });
+
+  it("falls back to the plain label for a long title", () => {
+    const app = mount(
+      <ChatLinkButtons
+        text="Done."
+        toolCards={[
+          canvasCard({
+            details: {
+              canvas: {
+                path: "/srv/page.html",
+                title: "Quarterly revenue by region and product line",
+              },
+            },
+          }),
+        ]}
+        isFile={fakeIsFile}
+      />,
+    );
+    expect(app.frame()).toContain("[open in browser]");
     app.unmount();
   });
 });
