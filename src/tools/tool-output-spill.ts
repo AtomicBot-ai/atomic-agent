@@ -25,7 +25,10 @@ import {
  * the file never carries anything the summary's source did not. On top
  * of that only an allowlist of tools spills (`SPILL_TOOLS`): commands,
  * listings, searches, diffs and public web pages (`os.web.fetch`: GET
- * only, no auth headers, ATO-913). Tools that read the clipboard, mail,
+ * only, no auth headers, ATO-913). A web page is text someone else
+ * wrote: the registry frames it as outside data and neutralises its
+ * chat-template markers before it is spilled, so the file holds the
+ * framed text, and frames an `os.fs.read` of that file again. Tools that read the clipboard, mail,
  * raw HTTP responses (`os.http.request`, which takes custom headers) or
  * memory never write a file, and neither do file readers, whose source
  * already is a file.
@@ -162,6 +165,22 @@ export class ToolOutputSpill {
     }
   }
 
+  /**
+   * The tool stem (`fileStem`) of a file this spill wrote, read from its
+   * name, or `null` when `path` is not a spill file under the base
+   * folder. The registry uses it to frame a later `os.fs.read` of a
+   * saved web page as outside text (ATO-913): the name, not an in-memory
+   * list, so a file from before a restart is recognised too.
+   */
+  spilledToolStem(path: string): string | null {
+    const base = resolve(this.baseDir ?? toolOutputBaseDir());
+    const full = resolve(path);
+    if (!full.startsWith(`${base}${sep}`)) return null;
+    const name = full.slice(full.lastIndexOf(sep) + 1);
+    const match = /^\d{4,}-[0-9a-f]{6}-([A-Za-z0-9_-]+)\.txt$/.exec(name);
+    return match?.[1] ?? null;
+  }
+
   /** Remove one session's folder. Best effort. */
   removeSession(sessionId: string): void {
     this.used.delete(sessionId);
@@ -241,7 +260,8 @@ function countLines(text: string): number {
   return text.endsWith("\n") ? lines - 1 : lines;
 }
 
-function fileStem(tool: string): string {
+/** The part of a spill file's name that names its tool. */
+export function fileStem(tool: string): string {
   return tool.replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 40);
 }
 
