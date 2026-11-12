@@ -548,6 +548,20 @@ describe("context compaction commands", () => {
   });
 });
 
+describe("/edit (ATO-655)", () => {
+  it("leaves bare /edit to the caller and keeps the buffer", () => {
+    const result = dispatchSlashCommand("/edit");
+    expect(result).toMatchObject({ externalEdit: {}, clearBuffer: false, forwardAsMessage: false });
+    expect(result.actions).toEqual([]);
+  });
+
+  it("passes /edit <text> through as the starting text", () => {
+    expect(dispatchSlashCommand("/edit draft a release note").externalEdit).toEqual({
+      text: "draft a release note",
+    });
+  });
+});
+
 describe("/enhance", () => {
   it("keeps the draft in the composer and asks for one rewrite, never sending it", () => {
     const result = dispatchSlashCommand("/enhance fix the login bug");
