@@ -17,6 +17,7 @@ import { CurlUnavailableError } from "./ensure-curl.js";
 import {
   executeGuardedHttpRequest,
   isCurlTransportError,
+  isSensitiveHeaderName,
   type HttpMethod,
   SsrfBlockedError,
 } from "./http-request-fetch.js";
@@ -81,6 +82,8 @@ export function buildOsHttpRequestTool(
             reason: `${args.method} ${args.url}`,
             preview: buildApprovalPreview(args),
             affectedResources: [args.url],
+            // "Allow for this session" covers this origin only (ATO-1182).
+            grantKey: args.urlObj.origin,
           },
           ctx.signal,
         );
@@ -142,6 +145,27 @@ export function buildOsHttpRequestTool(
           });
         }
         throw err;
+      }
+
+      if (guarded.redirectNotFollowed !== undefined) {
+        const target = new URL(guarded.redirectNotFollowed);
+        return compressToolResult({
+          tool: "os.http.request",
+          status: "error",
+          output:
+            `os.http.request: ${guarded.finalUrl} answered HTTP ${guarded.status} with a redirect to ${target.host} (${guarded.redirectNotFollowed}). ` +
+            `The redirect was not followed, so the ${args.method} and its body were not sent there: a request body only goes to the host it was made for (${args.urlObj.host}). ` +
+            `If that host is expected, make a new os.http.request to ${guarded.redirectNotFollowed}; it goes through approval like any other request.`,
+          details: {
+            url: args.url,
+            finalUrl: guarded.finalUrl,
+            method: args.method,
+            status: guarded.status,
+            redirectNotFollowed: guarded.redirectNotFollowed,
+            redirectChain: guarded.redirectChain,
+            command: guarded.command,
+          },
+        }, { maxSummaryLength: 2_000 });
       }
 
       const isHttpError = guarded.status >= 400;
@@ -325,7 +349,7 @@ export function hostAllowed(
 function buildApprovalPreview(args: HttpArgs): string {
   const lines: string[] = [`${args.method} ${args.url}`];
   for (const [k, v] of Object.entries(args.headers)) {
-    lines.push(`${k}: ${v}`);
+    lines.push(`${k}: ${isSensitiveHeaderName(k) ? maskHeaderValue(v) : v}`);
   }
   if (args.body !== undefined) {
     const snippet =
@@ -336,4 +360,17 @@ function buildApprovalPreview(args: HttpArgs): string {
     lines.push(snippet);
   }
   return lines.join("\n");
+}
+
+/**
+ * The value of a credential header as the approval preview shows it: the
+ * scheme word kept (`Bearer ****`, `Basic ****`), everything else masked.
+ * The preview reaches the terminal, the desktop app and Telegram, so a
+ * token in it would be one more copy of the token (ATO-1182).
+ */
+export function maskHeaderValue(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return value;
+  const scheme = /^([A-Za-z][A-Za-z0-9-]{0,19})\s+\S/.exec(trimmed);
+  return scheme ? `${scheme[1]} ****` : "****";
 }

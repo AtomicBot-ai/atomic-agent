@@ -203,7 +203,7 @@ export function ApprovalModal({
                     grant="category"
                     tone="secondary"
                   >
-                    {`allow ${categoryLabel} this session${request.category === "shell" ? RISKY_STILL_ASK : ""} · ctrl+${APPROVAL_CHORDS.grantCategory}`}
+                    {`allow ${categoryLabel}${request.grantKey !== undefined ? ` to ${request.grantKey}` : ""} this session${request.category === "shell" ? RISKY_STILL_ASK : ""} · ctrl+${APPROVAL_CHORDS.grantCategory}`}
                   </ApprovalButton>
                   <Text> </Text>
                 </>

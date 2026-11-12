@@ -149,7 +149,13 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
     lines.push(`  affects: ${request.affectedResources.join(", ")}`);
   }
   const options = ["y = approve once"];
-  if (grantCategory) options.push("s = allow this kind this session");
+  if (grantCategory) {
+    options.push(
+      request.grantKey !== undefined
+        ? `s = allow this kind to ${request.grantKey} this session`
+        : "s = allow this kind this session",
+    );
+  }
   if (grantShape) {
     options.push(`a = allow all ${request.commandShape} this session`);
   }

@@ -22,6 +22,8 @@ export interface ApprovalPrompt {
   affectedResources?: string[];
   /** Command binary (argv[0]) for shell requests; unit of a shape grant. */
   commandShape?: string;
+  /** What a session grant on this request covers; see `ApprovalRequest.grantKey`. */
+  grantKey?: string;
   /** Parsed argv of a simple shell command; see `ApprovalRequest.commandArgv`. */
   commandArgv?: readonly string[];
   /** Every simple command the call would run; see `ApprovalRequest.commandSegments`. */
@@ -175,6 +177,7 @@ export async function requireApproval(
       ...(prompt.commandShape !== undefined
         ? { commandShape: prompt.commandShape }
         : {}),
+      ...(prompt.grantKey !== undefined ? { grantKey: prompt.grantKey } : {}),
       ...(prompt.commandArgv !== undefined
         ? { commandArgv: [...prompt.commandArgv] }
         : {}),

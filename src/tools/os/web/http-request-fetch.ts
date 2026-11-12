@@ -87,6 +87,15 @@ export interface HttpRequestArgs {
 
 export interface GuardedCurlResponse {
   finalUrl: string;
+  /**
+   * Set when the walk stopped at a redirect instead of following it: the
+   * `Location` it pointed to, on another origin, for a hop that would
+   * have carried the request's method and body there (a 307/308 after a
+   * POST). The approval covered the original origin only, so the body
+   * is never sent to a host the person did not see (ATO-1182). `status`
+   * is the redirect status itself.
+   */
+  redirectNotFollowed?: string;
   status: number;
   contentType: string;
   body: string;
@@ -131,6 +140,7 @@ export async function executeGuardedHttpRequest(
   // instead of re-walking redirects the origin has already served.
   const state: RequestWalkState = {
     url: rawUrl,
+    origin: parseHttpUrl(rawUrl).origin,
     method: args.method,
     body: args.body,
     chain: [],
@@ -250,6 +260,12 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 interface RequestWalkState {
   /** Where the next attempt starts: the last hop actually reached. */
   url: string;
+  /**
+   * Origin of the caller's URL, the one the approval was about. A hop on
+   * any other origin gets no credential headers, and a body-carrying hop
+   * is never sent there (see `redirectNotFollowed`).
+   */
+  readonly origin: string;
   /** Method of that hop. A 307/308 keeps a POST; a 301/302/303 drops to GET. */
   method: HttpMethod;
   /** Body of that hop — `undefined` once a redirect has dropped it. */
@@ -285,7 +301,12 @@ async function sendGuardedRequestOnce(
       url: currentUrl,
       pinnedIps,
       method,
-      headers: args.headers,
+      // Credentials the caller set are for the origin it named. curl's own
+      // `-L` drops them on a host change too; a hop elsewhere goes without.
+      headers:
+        currentUrl.origin === state.origin
+          ? args.headers
+          : withoutSensitiveHeaders(args.headers),
       body,
       timeoutMs: args.timeoutMs,
     });
@@ -339,17 +360,40 @@ async function sendGuardedRequestOnce(
           `os.http.request: too many redirects (> ${MAX_REDIRECTS})`,
         );
       }
-      state.redirects += 1;
       // Curl -L semantics: 301/302/303 drop to GET without body; 307/308 keep method+body.
-      if (
+      const dropsToGet =
         parsed.status === 301 ||
         parsed.status === 302 ||
-        parsed.status === 303
+        parsed.status === 303;
+      const nextMethod: HttpMethod = dropsToGet ? "GET" : method;
+      const nextBody = dropsToGet ? undefined : body;
+      const nextUrl = parseHttpUrl(parsed.redirectUrl);
+      // A POST (or any hop with a body) is approved for the origin the
+      // person saw. A 307/308 that would carry it to another origin is
+      // not followed: the model gets the Location back and has to make a
+      // new request there, which goes through approval again.
+      if (
+        nextUrl.origin !== state.origin &&
+        (nextMethod !== "GET" || nextBody !== undefined)
       ) {
-        method = "GET";
-        body = undefined;
+        return {
+          finalUrl: currentUrl.toString(),
+          redirectNotFollowed: nextUrl.toString(),
+          status: parsed.status,
+          contentType: parsed.contentType,
+          body: parsed.body,
+          sizeDownload: parsed.sizeDownload,
+          timeTotal: state.totalTime,
+          truncated: state.truncated,
+          redirectChain: [...chain],
+          retryAfterMs: null,
+          command: lastCommand,
+        };
       }
-      currentUrl = parseHttpUrl(parsed.redirectUrl);
+      state.redirects += 1;
+      method = nextMethod;
+      body = nextBody;
+      currentUrl = nextUrl;
       continue;
     }
 
@@ -366,6 +410,40 @@ async function sendGuardedRequestOnce(
       command: lastCommand,
     };
   }
+}
+
+const SENSITIVE_HEADER_NAMES = new Set([
+  "authorization",
+  "proxy-authorization",
+  "cookie",
+  "set-cookie",
+  "x-api-key",
+  "api-key",
+]);
+
+/**
+ * Whether a request header carries a credential: the well-known ones
+ * plus any name that says so (`X-Auth-Token`, `X-Api-Key`,
+ * `X-Client-Secret`, …). Used to drop them on a cross-origin redirect
+ * and to mask their values in the approval preview (ATO-1182).
+ */
+export function isSensitiveHeaderName(name: string): boolean {
+  const lower = name.trim().toLowerCase();
+  if (SENSITIVE_HEADER_NAMES.has(lower)) return true;
+  return /token|secret|key|auth|passw|cookie|session|credential|signature/.test(
+    lower,
+  );
+}
+
+/** `headers` without the ones `isSensitiveHeaderName` flags. */
+export function withoutSensitiveHeaders(
+  headers: Record<string, string>,
+): Record<string, string> {
+  const kept: Record<string, string> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (!isSensitiveHeaderName(key)) kept[key] = value;
+  }
+  return kept;
 }
 
 export function isCurlTransportError(err: unknown): err is Error & {
