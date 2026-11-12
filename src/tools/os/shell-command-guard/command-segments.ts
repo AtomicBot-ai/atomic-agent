@@ -1,4 +1,5 @@
 import { basenameCommand } from "./normalise.js";
+import { liftSubstitutions } from "./command-substitution.js";
 import { lexShellLine } from "./shell-line-lexer.js";
 
 /**
@@ -17,7 +18,17 @@ import { lexShellLine } from "./shell-line-lexer.js";
  * Case is kept: `git branch -D` and `-d` differ.
  */
 export function splitCommandSegments(line: string): string[][] {
-  const tokens = lexShellLine(line, "posix");
+  // `$(…)` and backticks come out first: the line around them is read
+  // with a placeholder word in their place, and each inner command line
+  // adds its own segments after it (ATO-1263).
+  const lifted = liftSubstitutions(line);
+  if (lifted !== null && lifted.inner.length > 0) {
+    return [
+      ...splitCommandSegments(lifted.outer),
+      ...lifted.inner.flatMap((inner) => splitCommandSegments(inner)),
+    ];
+  }
+  const tokens = lexShellLine(lifted?.outer ?? line, "posix");
   if (tokens === null) return fallbackSegments(line);
   const segments: string[][] = [];
   let current: string[] = [];

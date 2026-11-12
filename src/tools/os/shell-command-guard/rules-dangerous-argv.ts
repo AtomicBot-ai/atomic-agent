@@ -6,6 +6,7 @@ import {
   shortOptionLetters,
   splitCommandSegments,
 } from "./command-segments.js";
+import { isComputedWord } from "./command-substitution.js";
 import { findGitSubcommand } from "./rules-policy.js";
 
 /**
@@ -61,6 +62,7 @@ export function matchDangerousArgv(
   const hit =
     matchGit(segments) ??
     matchFind(segments) ??
+    matchXargsRm(segments) ??
     matchRm(segments) ??
     matchNestedShell(segments) ??
     matchPluginConsent(segments);
@@ -73,15 +75,49 @@ function matchGit(segments: readonly (readonly string[])[]): ArgvCheck | null {
     const sub = findGitSubcommand(args);
     if (!sub) continue;
     const rest = args.slice(sub.index + 1);
-    const hit = checkGitVerb(sub.verb, rest);
+    const hit =
+      checkGitVerb(sub.verb, rest, args.slice(0, sub.index)) ??
+      computedGitArgs(sub.verb, rest);
     if (hit !== null) return hit;
   }
   return null;
 }
 
-function checkGitVerb(verb: string, rest: readonly string[]): ArgvCheck | null {
+/**
+ * Git verbs with a rule below: a flag that only appears when the line
+ * runs (`git push $(echo -f)`, `git reset $MODE`) could turn any of
+ * them destructive, so a computed word among their options asks too.
+ */
+const GIT_VERBS_WITH_RULES: ReadonlySet<string> = new Set([
+  "push",
+  "reset",
+  "clean",
+  "checkout",
+  "switch",
+  "restore",
+  "branch",
+  "stash",
+]);
+
+function computedGitArgs(verb: string, rest: readonly string[]): ArgvCheck | null {
+  if (!GIT_VERBS_WITH_RULES.has(verb)) return null;
+  return optionsBeforeDashDash(rest).some(isComputedWord)
+    ? {
+        id: "dangerous.git_computed_args",
+        reason: "git arguments only known when the command runs",
+      }
+    : null;
+}
+
+function checkGitVerb(
+  verb: string,
+  rest: readonly string[],
+  globals: readonly string[],
+): ArgvCheck | null {
   switch (verb) {
     case "push": {
+      const remote = pushRewritesRemote(rest);
+      if (remote !== null) return remote;
       const kind = pushForceKind(rest);
       if (kind === "force") {
         return { id: "dangerous.git_force_push", reason: "force push" };
@@ -101,14 +137,14 @@ function checkGitVerb(verb: string, rest: readonly string[]): ArgvCheck | null {
         ? { id: "dangerous.git_reset_hard", reason: "hard reset" }
         : null;
     case "clean":
-      return cleanForces(rest)
+      return cleanForces(rest, cleanForceOffInGlobals(globals))
         ? {
             id: "dangerous.git_clean_force",
             reason: "delete untracked files",
           }
         : null;
     case "checkout":
-      return checkoutDiscardsTree(rest)
+      return checkoutDiscardsTree(rest) || checkoutForces(rest)
         ? {
             id: "dangerous.git_discard_worktree",
             reason: "discard all uncommitted changes",
@@ -121,11 +157,29 @@ function checkGitVerb(verb: string, rest: readonly string[]): ArgvCheck | null {
             reason: "discard all uncommitted changes",
           }
         : null;
+    case "switch":
+      return switchDiscards(rest)
+        ? {
+            id: "dangerous.git_discard_worktree",
+            reason: "discard all uncommitted changes",
+          }
+        : null;
     case "branch":
       return branchForceDeletes(rest)
         ? {
             id: "dangerous.git_branch_force_delete",
             reason: "force-delete a branch",
+          }
+        : null;
+    case "stash":
+      return stashDeletes(rest)
+        ? { id: "dangerous.git_stash_drop", reason: "delete stashed changes" }
+        : null;
+    case "config":
+      return configTurnsOffCleanForce(rest)
+        ? {
+            id: "dangerous.git_clean_force",
+            reason: "turn off the safety check of git clean",
           }
         : null;
     default:
@@ -170,12 +224,79 @@ function pushForceKind(rest: readonly string[]): "force" | "lease" | null {
 }
 
 /**
+ * `git push origin :main` (an empty source deletes the branch),
+ * `--delete` / `-d`, `--mirror` (the remote becomes an exact copy:
+ * branches missing here are deleted there, the rest overwritten) and
+ * `--prune` (deletes remote branches with no local twin).
+ */
+function pushRewritesRemote(rest: readonly string[]): ArgvCheck | null {
+  let options = true;
+  for (const word of rest) {
+    if (options && word === "--") {
+      options = false;
+      continue;
+    }
+    if (options && word.startsWith("-")) {
+      if (shortOptionLetters(word, "o")?.includes("d")) {
+        return { id: "dangerous.git_push_delete", reason: "delete a remote branch" };
+      }
+      if (isLongOption(word, "--delete", 4)) {
+        return { id: "dangerous.git_push_delete", reason: "delete a remote branch" };
+      }
+      if (isLongOption(word, "--mirror", 4)) {
+        return {
+          id: "dangerous.git_push_mirror",
+          reason: "overwrite and delete remote branches (mirror push)",
+        };
+      }
+      // `--pr` and `--pro` are ambiguous with `--progress`.
+      if (isLongOption(word, "--prune", 5)) {
+        return {
+          id: "dangerous.git_push_prune",
+          reason: "delete remote branches missing here (prune)",
+        };
+      }
+      continue;
+    }
+    // `:main`, `+:main`: nothing on the left of the colon.
+    if (/^\+?:[^:]/.test(word)) {
+      return { id: "dangerous.git_push_delete", reason: "delete a remote branch" };
+    }
+  }
+  return null;
+}
+
+/** A `-c clean.requireForce=false` (or `no`/`off`/`0`) before `clean`. */
+const CLEAN_FORCE_OFF = /^clean\.requireforce=(?:false|no|off|0)$/i;
+
+function cleanForceOffInGlobals(globals: readonly string[]): boolean {
+  for (let i = 0; i < globals.length; i += 1) {
+    const word = globals[i] ?? "";
+    if (word === "-c" && CLEAN_FORCE_OFF.test(globals[i + 1] ?? "")) return true;
+    if (word.startsWith("-c") && CLEAN_FORCE_OFF.test(word.slice(2))) return true;
+  }
+  return false;
+}
+
+/**
+ * `git config clean.requireForce false`: every later `git clean` in the
+ * repository deletes without `-f`, so it asks the way `clean -f` does.
+ */
+function configTurnsOffCleanForce(rest: readonly string[]): boolean {
+  const words = rest.filter((w) => !w.startsWith("-"));
+  const key = words.findIndex((w) => w.toLowerCase() === "clean.requireforce");
+  if (key === -1) return false;
+  return /^(?:false|no|off|0)$/i.test(words[key + 1] ?? "");
+}
+
+/**
  * `git clean` deletes only with `-f`/`--force` (bundled too: `-fdx`,
- * `-xdf`); `-n`/`--dry-run` anywhere makes it a listing. `-e` takes a
+ * `-xdf`), or with no flag at all once `clean.requireForce` is off for
+ * the call; `-n`/`--dry-run` anywhere makes it a listing. `-e` takes a
  * value.
  */
-function cleanForces(rest: readonly string[]): boolean {
-  let force = false;
+function cleanForces(rest: readonly string[], forceImplied = false): boolean {
+  let force = forceImplied;
   let dryRun = false;
   for (const word of optionsBeforeDashDash(rest)) {
     const letters = shortOptionLetters(word, "e");
@@ -202,6 +323,41 @@ function checkoutDiscardsTree(rest: readonly string[]): boolean {
   return positionalWords(rest, (word) => CHECKOUT_VALUE_OPTIONS.has(word)).some(
     isWholeTree,
   );
+}
+
+/**
+ * `git checkout -f <branch>` / `--force`: switches and throws away every
+ * local change on the way. `-b` / `-B` take a value.
+ */
+function checkoutForces(rest: readonly string[]): boolean {
+  return optionsBeforeDashDash(rest).some(
+    (word) =>
+      shortOptionLetters(word, "bB")?.includes("f") === true ||
+      isLongOption(word, "--force", 4),
+  );
+}
+
+/**
+ * `git switch --discard-changes`, `-f` / `--force` (its alias). `-c` /
+ * `-C` take a value.
+ */
+function switchDiscards(rest: readonly string[]): boolean {
+  return optionsBeforeDashDash(rest).some(
+    (word) =>
+      shortOptionLetters(word, "cC")?.includes("f") === true ||
+      isLongOption(word, "--force", 4) ||
+      isLongOption(word, "--discard-changes", 4),
+  );
+}
+
+/**
+ * `git stash drop` and `git stash clear` delete stashed work for good
+ * (it only lingers as an unreachable commit until gc). `pop`, `apply`,
+ * `list`, `push` keep it.
+ */
+function stashDeletes(rest: readonly string[]): boolean {
+  const sub = rest.find((word) => !word.startsWith("-"));
+  return sub === "drop" || sub === "clear";
 }
 
 /**
@@ -300,6 +456,42 @@ function matchFind(segments: readonly (readonly string[])[]): ArgvCheck | null {
           };
         }
       }
+    }
+  }
+  return null;
+}
+
+/**
+ * Options of `xargs` whose value is the next word when it is not
+ * attached (`-n 1`, `-I {}`). `-i`, `-e`, `-l` only take an attached
+ * one and are left out.
+ */
+const XARGS_VALUE_OPTIONS: ReadonlySet<string> = new Set([
+  "-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a",
+  "--max-args", "--max-lines", "--max-procs", "--delimiter",
+  "--arg-file", "--max-chars", "--replace", "--eof",
+]);
+
+/**
+ * `find … | xargs rm`, `ls | xargs -n1 unlink`: removes every file the
+ * list on stdin names, however long it is, even without `-r` or `-f`.
+ */
+function matchXargsRm(
+  segments: readonly (readonly string[])[],
+): ArgvCheck | null {
+  for (const args of invocationsOf(segments, "xargs")) {
+    for (let i = 0; i < args.length; i += 1) {
+      const word = args[i] ?? "";
+      if (word === "--") {
+        i += 1;
+      } else if (word.startsWith("-")) {
+        if (XARGS_VALUE_OPTIONS.has(word)) i += 1;
+        continue;
+      }
+      if (FIND_EXEC_REMOVERS.has(programName(args[i] ?? ""))) {
+        return { id: "dangerous.xargs_rm", reason: "remove every file a list names" };
+      }
+      break;
     }
   }
   return null;
