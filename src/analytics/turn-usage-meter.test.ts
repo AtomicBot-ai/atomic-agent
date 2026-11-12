@@ -305,3 +305,49 @@ describe("TurnUsageMeter — served provider", () => {
     expect(meter.snapshot(S)).toEqual({});
   });
 });
+
+describe("TurnUsageMeter — local prefill and generation time (ATO-1026)", () => {
+  const S = "s-timing";
+  const local = (promptMs: number, predictedMs: number, predictedTokens: number) => ({
+    timing: { promptMs, predictedMs, promptTokens: 100, predictedTokens },
+  });
+
+  it("sums a local llama-server's timings over the turn and reports the speed", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.recordTiming(S, local(1200.4, 2000, 40));
+    meter.recordTiming(S, local(300, 3000, 60));
+    expect(meter.snapshot(S)).toEqual({ prefillMs: 1500, genMs: 5000, genTokensPerS: 20 });
+  });
+
+  it("leaves cloud and subscription completions out: a usage block or zero times", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    meter.recordTiming(S, local(0, 0, 50));
+    meter.recordTiming(S, {
+      usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15 },
+      timing: { promptMs: 0, predictedMs: 9000, promptTokens: 10, predictedTokens: 5 },
+    });
+    expect(meter.snapshot(S)).toEqual({});
+  });
+
+  it("reports times without a speed when nothing was generated, and ignores a session with no turn", () => {
+    const meter = new TurnUsageMeter();
+    meter.recordTiming("no-turn", local(100, 100, 10));
+    expect(meter.snapshot("no-turn")).toEqual({});
+    meter.begin(S);
+    meter.recordTiming(S, local(800, 0, 0));
+    expect(meter.snapshot(S)).toEqual({ prefillMs: 800, genMs: 0 });
+  });
+
+  it("keeps the timing figures beside the token counts", () => {
+    const meter = new TurnUsageMeter();
+    meter.begin(S);
+    const result = local(500, 1000, 25);
+    meter.recordTiming(S, result);
+    meter.record({ sessionId: S, usage: completionUsageForTurn(result)! });
+    expect(meter.snapshot(S)).toMatchObject({
+      promptTokens: 100, completionTokens: 25, prefillMs: 500, genMs: 1000, genTokensPerS: 25,
+    });
+  });
+});
