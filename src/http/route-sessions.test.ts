@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { CompletionResult } from "../llm/llama-server-client.js";
 
+import { describeToolCall } from "../tools/describe-tool-call.js";
+
 import { startTestHarness, type Harness } from "./test-harness.js";
 import { MAX_PARKED_STEERS } from "./undelivered-steers.js";
 
@@ -57,6 +59,34 @@ describe("/api/sessions", () => {
     };
     expect(body.id).toBe(session.id);
     expect(Array.isArray(body.turns)).toBe(true);
+  });
+
+  it("labels each tool call in the history the way the live stream did (ATO-1382)", async () => {
+    const session = harness.runtime.createSession();
+    harness.runtime.sessionStore.save({
+      ...session,
+      turns: [
+        { kind: "user", text: "open an issue", at: 1 },
+        { kind: "assistant_tool_call", tool: "mcp.github.create_issue", args: { title: "x" }, at: 2 },
+        { kind: "tool_result", tool: "mcp.github.create_issue", status: "ok", summary: "ok", at: 3 },
+        { kind: "assistant_reply", text: "done", at: 4 },
+      ],
+    });
+    const response = await fetch(`${harness.baseUrl}/api/sessions/${session.id}`);
+    const body = (await response.json()) as {
+      turns: Array<{ kind: string; done_line?: string }>;
+    };
+    const expected = describeToolCall({
+      name: "mcp.github.create_issue",
+      args: { title: "x" },
+      ok: true,
+    }).line;
+    expect(body.turns[1]?.done_line).toBe(expected);
+    expect(body.turns[0]?.done_line).toBeUndefined();
+    expect(body.turns[2]?.done_line).toBeUndefined();
+    // Built for the answer only; the stored row stays as it was.
+    const stored = harness.runtime.sessionStore.load(session.id);
+    expect(stored?.turns[1]).not.toHaveProperty("done_line");
   });
 
   it("returns 404 for an unknown session id", async () => {
