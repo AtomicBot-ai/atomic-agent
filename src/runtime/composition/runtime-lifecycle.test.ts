@@ -67,6 +67,20 @@ describe("runtime lifecycle ownership", () => {
     expect(events).toEqual(order);
   });
 
+  it("a crashed shutdown (memory guard) stops task runs as crashed, a normal one does not (ATO-1419)", async () => {
+    const seen: Array<{ crashed?: boolean } | undefined> = [];
+    for (const options of [{ crashed: true }, undefined]) {
+      const { resources } = fixture([]);
+      const lifecycle = createRuntimeLifecycle({
+        ...resources,
+        taskRunner: { stop: async (_grace, stopOptions) => { seen.push(stopOptions); return 0; } },
+      });
+      await lifecycle.shutdown(options);
+    }
+    expect(seen[0]).toEqual({ crashed: true });
+    expect(seen[1]?.crashed).toBeFalsy();
+  });
+
   it("aborts an in-flight prompt enhance on shutdown", async () => {
     const events: string[] = [];
     const { resources } = fixture(events);
