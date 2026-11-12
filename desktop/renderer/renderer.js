@@ -1334,6 +1334,8 @@ const SKP = {
   view:'skills', // Item 09: 'skills' (the rows, under `filter`) | 'tools' (the agent's built-in tools) — the segment beside the filters
   toolsLoading:false, toolsError:null, // Item 09: the Built-in tools list's own GET /api/capabilities read
 };
+/* ATO-1102: "Test skill" on the skill card: the open card's probe, the one run in flight, the last answer per skill. */
+const SKE = {probeName:null, probe:null, seq:0, runningName:null, cancelling:false, outcomes:{}};
 const SKP_FILTERS = ['all','enabled','disabled']; // skills-filter.ts FILTER_ORDER
 const SKP_FILTER_LABELS = {all:'All', enabled:'Enabled', disabled:'Disabled'}; // Д43: the tabs, each with its count
 const SKP_MAX_ROWS = 14, SKP_HUB_ROWS = 12, SKP_DETAIL_LINES = 32; // skills-panel.tsx / skills-hub-list.tsx / skills-detail.tsx
@@ -24822,6 +24824,7 @@ function skpDetailHTML() {
     + '</div>'
     + '<div class="set-titlerow"><h3 class="set-dtitle mono">' + esc(name) + '</h3>' + (row ? skpSourceChip(row.source) + '<span class="mono set-meta">v' + esc(row.version) + '</span>' : '') + '</div>'
     + (row && row.description ? '<p class="set-desc">' + esc(row.description) + '</p>' : '')
+    + skillEvalHTML({name, probe:SKE.probeName === name ? SKE.probe : null, runningName:SKE.runningName, cancelling:SKE.cancelling, outcome:SKE.outcomes[name] || null}, esc)
     + (row && SK.workingDir ? '<p class="set-cap mono">' + esc(row.rootDir || '') + '</p>'
       + '<p class="set-cap">' + esc((row.disabledReasons || []).join(', ') || 'Available to the model') + '</p>'
       + '<div class="acts">' + ['workspace', 'global'].map(scope => {
@@ -24997,6 +25000,7 @@ function skpCardSourceHTML(c) {
 async function skpOpenDetail(name) {
   if (!BR) return;
   SKP.mode = 'detail'; SKP.detailName = name; SKP.detailBody = null; SKP.lastError = null; render();
+  skeProbe(name);
   // GET /api/skills/{name} is the registry's filtered view: a disabled skill
   // answers 404, and the body then comes from `atag skill show` (the TUI's
   // openDetail reads the manifest path from listAll() for the same reason).
@@ -25013,6 +25017,28 @@ async function skpOpenDetail(name) {
   if (seq !== SKP.detailSeq || key !== skillContextKey() || SKP.detailName !== name || SKP.mode !== 'detail') return;
   if (err !== null) { SKP.msg = {text:'failed to open ' + name + ': ' + err}; SKP.mode = 'list'; SKP.detailSource = null; render(); return; }
   SKP.detailBody = body; SKP.detailSource = source; render();
+}
+/* ATO-1102: may this skill be tested here (main/skill-eval-ipc.ts)? Until it answers yes the card shows no button. */
+async function skeProbe(name) {
+  if (!BR || !BR.skillEvalProbe) return;
+  const seq = ++SKE.seq; SKE.probeName = name; SKE.probe = null;
+  const res = await BR.skillEvalProbe(name).catch(() => null);
+  if (seq !== SKE.seq) return;
+  SKE.probe = res && res.ok ? res : null;
+  if (SKP.mode === 'detail' && SKP.detailName === name && skillsVisible()) render();
+}
+async function skeRun(name) {
+  if (!BR || !BR.skillEvalRun || SKE.runningName) return;
+  SKE.runningName = name; SKE.cancelling = false; delete SKE.outcomes[name]; render();
+  const res = await BR.skillEvalRun(name).catch((e) => ({ok:false, error:String(e)}));
+  SKE.runningName = null; SKE.cancelling = false;
+  SKE.outcomes[name] = res || {ok:false, error:'The test did not finish.'};
+  if (skillsVisible() && !skpTyping()) render();
+}
+function skeCancel() {
+  if (!BR || !BR.skillEvalCancel || !SKE.runningName || SKE.cancelling) return;
+  SKE.cancelling = true; render();
+  BR.skillEvalCancel().catch(() => {});
 }
 async function skpToggle(name, scope) {
   if (!BR || SKP.busy) return;
@@ -25208,6 +25234,8 @@ function skillsAct(what) {
   if (verb === 'remove') { const name = sel(); if (name) skpRequestRemove(name); return; }
   if (verb === 'removeConfirm') { skpConfirmRemove(); return; }
   if (verb === 'removeCancel') { SKP.removeConfirm = null; render(); return; }
+  if (verb === 'test') { const name = sel(); if (name) skeRun(name); return; } // ATO-1102
+  if (verb === 'testCancel') { skeCancel(); return; }
   if (verb === 'refresh') {
     if (SKP.mode === 'list' && SKP.view === 'tools') { skpToolsRefresh(); render(); return; } // Item 09: the list on screen is the agent's tools
     if (SKP.mode === 'detail' && SKP.detailName) { refreshSkillList(); skpOpenDetail(SKP.detailName); return; }
