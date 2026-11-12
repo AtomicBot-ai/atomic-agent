@@ -166,14 +166,14 @@ describe("the fallover notice for the errors the chain actually sees", () => {
     expect(classifyFalloverReason(describeReason(err))).toBe("billing");
     expect(falloverCause(err)).toBe("other");
     const text = notice(err);
-    expect(text).not.toMatch(/top it up|will not clear by itself/);
+    expect(text).not.toMatch(/top it up|out of credit/i);
     expect(text).toContain("until gemini recovers");
   });
 
   it("still tells the operator to top up for OpenAI's insufficient_quota", () => {
     const err = providerError(429, OPENAI_INSUFFICIENT_QUOTA_429, "openai");
     expect(falloverCause(err)).toBe("billing");
-    expect(notice(err)).toMatch(/top it up/);
+    expect(notice(err)).toContain("openai is out of credit");
   });
 
   it("does not send the operator to the key for a moderation 403", () => {
@@ -181,14 +181,14 @@ describe("the fallover notice for the errors the chain actually sees", () => {
     expect(falloverCause(err)).toBe("other");
     const text = notice(err);
     expect(text).not.toContain(".env");
-    expect(text).not.toMatch(/refused the credentials/);
+    expect(text).not.toMatch(/did not accept the API key/);
   });
 
   it("still sends the operator to the key for a plain 401 or 403", () => {
     for (const status of [401, 403]) {
       const err = providerError(status, "", "openrouter");
       expect(falloverCause(err)).toBe("auth");
-      expect(notice(err)).toContain(".env");
+      expect(notice(err)).toContain("gemini did not accept the API key");
     }
   });
 
@@ -207,7 +207,7 @@ describe("the fallover notice for the errors the chain actually sees", () => {
   ])("still tells the operator to top up for %s's empty-account 400", (label, body) => {
     const err = providerError(400, body, label);
     expect(falloverCause(err)).toBeUndefined();
-    expect(notice(err)).toMatch(/top it up/);
+    expect(notice(err)).toContain("is out of credit. Top it up");
   });
 
   it("does not explain away an account flagged for abuse as moderation", () => {
@@ -217,14 +217,14 @@ describe("the fallover notice for the errors the chain actually sees", () => {
       "openrouter",
     );
     expect(falloverCause(err)).toBe("auth");
-    expect(notice(err)).toContain(".env");
+    expect(notice(err)).toContain("did not accept the API key");
   });
 
   it("falls back to the text for an error the runtime cannot read", () => {
     expect(falloverCause(new Error("socket hang up"))).toBeUndefined();
     expect(
       formatProviderFalloverNotice("openrouter", "local-llama", '"openrouter" rejected the request (402).', undefined),
-    ).toMatch(/top it up/);
+    ).toContain("openrouter is out of credit");
   });
 });
 
@@ -240,25 +240,42 @@ describe("formatProviderFalloverNotice", () => {
     expect(text).toContain("socket hang up");
   });
 
-  it("says a credit refusal will not clear by itself, and how to act", () => {
+  it("says in plain words that a credit refusal needs a top-up", () => {
     const text = formatProviderFalloverNotice(
       "openrouter",
       "local-llama",
       '"openrouter" rejected the request (402).',
     );
-    expect(text).toMatch(/will not clear by itself/);
-    expect(text).toContain("maxOutputTokens");
-    expect(text).toContain("every answer comes from local-llama");
+    expect(text.split("\n")[1]).toBe(
+      "openrouter is out of credit. Top it up, until then answers come from local-llama.",
+    );
   });
 
-  it("points an auth refusal at the key file", () => {
+  it("says in plain words that the key was not accepted", () => {
     const text = formatProviderFalloverNotice(
       "openrouter",
       "local-llama",
       "401 unauthorized",
     );
-    expect(text).toMatch(/will not clear by itself/);
-    expect(text).toContain(".env");
+    expect(text.split("\n")[1]).toBe(
+      "openrouter did not accept the API key. Until you fix it, answers come from local-llama.",
+    );
+  });
+
+  /* The notice is for the person in the chat: no file paths or config
+     field names, whatever the cause. */
+  it.each([
+    ['"openrouter" rejected the request (402).', undefined],
+    ["401 unauthorized", undefined],
+    ["503", undefined],
+    ["anything", "billing"],
+    ["anything", "auth"],
+    ["anything", "other"],
+  ] as const)("never names files or settings for %j (%s)", (reason, cause) => {
+    const text = formatProviderFalloverNotice("openrouter", "local-llama", reason, cause);
+    expect(text).not.toContain(".env");
+    expect(text).not.toContain("stateDir");
+    expect(text).not.toContain("maxOutputTokens");
   });
 
   it("keeps a transient failure short — the chain's own probe handles it", () => {
@@ -268,7 +285,7 @@ describe("formatProviderFalloverNotice", () => {
       "503",
     );
     expect(text).toMatch(/until openrouter recovers/);
-    expect(text).not.toMatch(/will not clear by itself/);
+    expect(text).not.toMatch(/out of credit|did not accept/);
   });
 });
 
