@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { catalogForProvider } from "./catalog-for-provider.js";
+import { catalogForProvider, modelsDevEntryForProvider } from "./catalog-for-provider.js";
 import { resolveModel } from "./model-resolver.js";
 import type { LlmProviderConfigEntry } from "./registry/provider-types.js";
 
@@ -80,5 +80,20 @@ describe("resolveModel with a provider catalog", () => {
     );
 
     expect(resolved.pricing).toBeUndefined();
+  });
+});
+
+// ATO-647: models.dev is a separate, per-model source; it does not
+// widen the bundled catalog that vision and strict-tool checks read.
+describe("modelsDevEntryForProvider", () => {
+  const moonshot = entry("openai-compatible", { id: "moonshot", baseUrl: "https://api.moonshot.ai" });
+
+  it("answers for a preset the bundled catalogs do not cover", () => {
+    expect(catalogForProvider(moonshot).size).toBe(0);
+    expect(modelsDevEntryForProvider(moonshot, "kimi-k3.1-pro")?.pricing?.input).toBe(2);
+  });
+
+  it("has nothing for the aggregators, which carry their own catalog", () => {
+    expect(modelsDevEntryForProvider(entry("openrouter"), "moonshotai/kimi-k3.1-pro")).toBeUndefined();
   });
 });
