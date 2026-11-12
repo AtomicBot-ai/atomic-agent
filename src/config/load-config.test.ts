@@ -585,7 +585,8 @@ describe("loadConfig({readOnly}) is a pure read", () => {
 
   it("does not migrate an older file on disk", () => {
     const path = getUserConfigPath(stateDir);
-    const old = JSON.stringify({ version: 1, log: { level: "warn" } });
+    // Version 5: the oldest file the schema still migrates (older ones are refused).
+    const old = JSON.stringify({ version: 5, log: { level: "warn" } });
     writeFileSync(path, old, "utf8");
     const config = loadConfig({ readOnly: { dotenv: bootDotenv } });
     expect(config.log.level).toBe("warn");
