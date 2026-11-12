@@ -145,6 +145,16 @@ describe("dispatchSlashCommand", () => {
     expect(result.triggerSessionPicker).toBe(false);
   });
 
+  it("asks for a worktree session for /new worktree only", () => {
+    for (const buffer of ["/new worktree", "/new --worktree", "/new WORKTREE"]) {
+      const result = dispatchSlashCommand(buffer);
+      expect(result.triggerSessionNew).toBe(true);
+      expect(result.sessionNewWorktree).toBe(true);
+    }
+    expect(dispatchSlashCommand("/new").sessionNewWorktree).toBeUndefined();
+    expect(dispatchSlashCommand("/new something").sessionNewWorktree).toBeUndefined();
+  });
+
   it("signals triggerNewWindow for /window and its alias", () => {
     // `/new` restarts the session in place; `/window` is the OS-level
     // sibling of Ctrl+N — the two must never be confused.

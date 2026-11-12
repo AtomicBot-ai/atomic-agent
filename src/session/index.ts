@@ -17,6 +17,28 @@ export {
 export type { TurnOwner, TurnOwnerProbe } from "./turn-owner.js";
 export { parseTurnProgress, serializeTurnProgress } from "./turn-progress.js";
 export type { TurnProgress, TurnResumeOptions } from "./turn-progress.js";
+export {
+  bindSessionWorktree,
+  createSessionWorktree,
+  findRepoRoot,
+  isWorktreeBranchMerged,
+  listSessionWorktreeMarkers,
+  NOT_GIT_MESSAGE,
+  removeSessionWorktree,
+  SessionWorktreeError,
+  unbindSessionWorktree,
+  worktreeRemovalPreflight,
+} from "./session-worktree.js";
+export type {
+  RemovalPreflight,
+  SessionGitExec,
+  SessionWorktreeBinding,
+  SessionWorktreeErrorCode,
+  SessionWorktreeMarker,
+  SessionWorktreeOptions,
+} from "./session-worktree.js";
+export { cleanupIdleSessionWorktrees, DEFAULT_WORKTREE_IDLE_MS } from "./session-worktree-cleanup.js";
+export type { WorktreeCleanupOptions, WorktreeCleanupResult } from "./session-worktree-cleanup.js";
 export { LIVE_SESSION_STATUSES, pruneSessions } from "./session-retention.js";
 export type {
   PruneSessionsOptions,

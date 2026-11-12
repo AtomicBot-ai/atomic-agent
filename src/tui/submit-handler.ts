@@ -345,7 +345,10 @@ export function runSlashCommand(
     callbacks.onQuit();
   }
   if (result.triggerSessionPicker) callbacks.onSessionPickerRequested?.();
-  if (result.triggerSessionNew) callbacks.onSessionNewRequested?.();
+  if (result.triggerSessionNew) {
+    if (result.sessionNewWorktree) callbacks.onSessionNewRequested?.({ worktree: true });
+    else callbacks.onSessionNewRequested?.();
+  }
   if (result.triggerMemoryDump) callbacks.onMemoryDumpRequested?.();
   if (result.triggerSkillCatalogDump) callbacks.onSkillCatalogRequested?.();
   if (result.persistLlamaUrl) {
