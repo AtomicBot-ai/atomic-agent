@@ -117,6 +117,12 @@ function readBoundedPositiveInt(
   return Math.min(max, Math.max(min, parsed));
 }
 
+/** `ATOMIC_AGENT_PERSONA` (ATO-54): a persona name above every file setting. */
+function readPersonaOverride(): { personaOverride?: string } {
+  const name = readEnv("ATOMIC_AGENT_PERSONA")?.trim();
+  return name ? { personaOverride: name } : {};
+}
+
 function readBool(key: string, fallback: boolean): boolean {
   const raw = readEnv(key);
   if (!raw) return fallback;
@@ -335,6 +341,8 @@ export function loadConfig(): AtomicAgentConfig {
       worldSnapshotMaxTokens: user.agent.worldSnapshotMaxTokens,
       prompt: user.agent.prompt,
       ...(user.agent.tools ? { tools: user.agent.tools } : {}),
+      ...(user.agent.personas ? { personas: user.agent.personas } : {}),
+      ...readPersonaOverride(),
       loadedToolsCap: readBoundedPositiveInt(
         "ATOMIC_AGENT_LOADED_TOOLS_CAP",
         ENV_DEFAULTS.LOADED_TOOLS_CAP,

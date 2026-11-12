@@ -244,6 +244,7 @@ export function buildPrompt(input: BuildPromptInput): BuiltPrompt {
     ...(input.systemPersona !== undefined
       ? { systemPersona: input.systemPersona }
       : {}),
+    ...(input.persona !== undefined ? { persona: input.persona } : {}),
     ...(input.toolTransport !== undefined
       ? { toolTransport: input.toolTransport }
       : {}),

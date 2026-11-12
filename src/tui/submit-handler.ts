@@ -5,6 +5,7 @@ import {
 } from "./commands/slash-command-handler.js";
 import { runRunModeVerb } from "./commands/run-mode-verb.js";
 import { runModelModeCommand } from "./commands/model-mode-command.js";
+import { runPersonaCommand } from "./commands/persona-command.js";
 import {
   parseSlashCommand,
   slashPrefix,
@@ -313,6 +314,7 @@ export function runSlashCommand(
     runModelModeCommand(result.modelModeCommand, dispatch);
     callbacks.onSkillsRefreshRequested?.();
   }
+  if (result.personaCommand) runPersonaCommand(result.personaCommand, dispatch);
   if (result.fusionWorkerAction !== undefined) {
     const worker = result.fusionWorkerAction;
     if (state.session.sessionId === null || callbacks.onFusionWorkerAction === undefined) {

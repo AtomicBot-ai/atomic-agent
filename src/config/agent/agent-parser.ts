@@ -1,5 +1,6 @@
 import { parseCompactionConfig } from "./compaction-config.js";
 import { parsePromptConfig } from "./prompt-config.js";
+import { parsePersonasConfig } from "./persona-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
 import type { AgentToolsConfig, ReadScope, ToolSearchMode, UserAgentConfig } from "./agent-types.js";
 import { ConfigValidationError } from "../config-validation-error.js";
@@ -204,6 +205,11 @@ export function parseAgentConfig(
     ),
     prompt: parsePromptConfig(agent.prompt, readDefaults().prompt),
     tools: parseAgentToolsConfig(agent.tools, readDefaults().tools),
+    // Optional block (ATO-54): absent stays absent so the defaults and
+    // every file written without it are unchanged.
+    ...(agent.personas !== undefined && agent.personas !== null
+      ? { personas: parsePersonasConfig(agent.personas) }
+      : {}),
   };
 }
 

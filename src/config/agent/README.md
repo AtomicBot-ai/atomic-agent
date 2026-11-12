@@ -12,3 +12,5 @@ No runtime resources or approval decisions are owned here. Dispatch guards belon
 Checks: `npx vitest run src/config/agent src/config/config-schema.test.ts src/config/agent-execution-config.test.ts`; `npm run lint`; `npm run typecheck:tests`; `npm run imports:check`. Include the affected prompt/approval/task seams when changing policy behavior.
 
 [Compaction configuration](compaction-config.ts) owns defaults and validation for `agent.compaction`. See the [runtime contract](../../runtime/docs/compaction.md) for thresholds, summary budgets and failure behavior.
+
+[Persona configuration](persona-config.ts) owns validation for the optional `agent.personas` block (ATO-54); [persona-resolve](persona-resolve.ts) picks a session's persona from the `ATOMIC_AGENT_PERSONA` override, the closest project binding and `active`. The prompt side is [persona-block](../../prompt/persona-block.ts), latched per session by [persona-latch](../../prompt/persona-latch.ts).

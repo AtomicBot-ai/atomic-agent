@@ -63,6 +63,8 @@ describe("config shape map (ATO-764)", () => {
     expect(knownConfigKeys("").has("llm")).toBe(true);
     expect(knownConfigKeys("").has("telemetry")).toBe(true);
     expect(knownConfigKeys("agent").has("approvalRequired")).toBe(true);
+    // Written only when set (ATO-54): known, so removing it sticks.
+    expect(knownConfigKeys("agent").has("personas")).toBe(true);
     expect(knownConfigKeys("discord").has("ownerUserId")).toBe(true);
     expect(knownConfigKeys("memory").has("profile")).toBe(true);
     expect(knownConfigKeys("memory").has("futureKey")).toBe(false);
