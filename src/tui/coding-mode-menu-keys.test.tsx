@@ -8,6 +8,8 @@ import { makeTuiEventBus, TuiApp, type TuiAppCallbacks } from "./tui-app.js";
 const SESSION = fakeSession({ workingDir: "/tmp/mode-keys" });
 
 const UP = "\u001b[A";
+const DOWN = "\u001b[B";
+const ESC = "\u001b";
 
 const strip = (value: string): string =>
   value
@@ -107,6 +109,46 @@ describe("keys while the /mode menu is open", () => {
     // Had ↑ reached the composer, the buffer would have held the recalled
     // prompt and this would send "earlier promptx".
     expect(app.submitted).toEqual(["x"]);
+    app.unmount();
+  });
+
+  it("↓ and Enter stay in the menu too", async () => {
+    const app = mount();
+    await settle();
+    seedHistory(app.bus, ["older prompt", "earlier prompt"]);
+    await settle();
+    await openModeMenu(app);
+
+    app.stdin.write(DOWN);
+    await settle();
+    app.stdin.write(DOWN);
+    await settle();
+    app.stdin.write("\r");
+    await settle();
+
+    expect(app.frame()).not.toContain(codingModeLook("plan").detail);
+    expect(app.submitted).toEqual([]);
+    app.unmount();
+  });
+
+  it("Esc only closes the menu; the composer does not open the main menu", async () => {
+    const app = mount();
+    await settle();
+    await openModeMenu(app);
+
+    // A lone Esc is held ~20 ms by Ink; settle() waits past that.
+    app.stdin.write(ESC);
+    await settle();
+    expect(app.frame()).not.toContain(codingModeLook("plan").detail);
+
+    // Had the composer also seen that Esc on an empty box, it would have
+    // opened the main menu, and this typing would land there instead of
+    // being sent as a prompt.
+    app.stdin.write("y");
+    await settle();
+    app.stdin.write("\r");
+    await settle();
+    expect(app.submitted).toEqual(["y"]);
     app.unmount();
   });
 });
