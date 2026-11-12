@@ -616,6 +616,20 @@
   line-height:0;box-shadow:inset 0 0 0 1px var(--line-hair)}
 .chat-vid:empty{width:320px;height:180px}
 .chat-vid-player{display:block;width:100%;max-height:360px;background:#000}
+/* ATO-1136: a page the reply runs in a sandboxed frame (chat-artifact.js puts the one <iframe> in) */
+.replyfiles-arts{display:flex;flex-direction:column;gap:8px;min-width:0}
+.chat-art{display:flex;flex-direction:column;min-width:0;border-radius:var(--r-well);overflow:hidden;
+  background:var(--well);box-shadow:inset 0 0 0 1px var(--line-hair)}
+.mdblock .chat-art{margin:0 8px 8px}
+.chat-art-bar{display:flex;align-items:center;gap:6px;min-width:0;padding:6px 10px;color:var(--ink-2);font-size:12px}
+.chat-art-bar svg{flex:none}
+.chat-art-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-art-file{flex:none}
+.chat-art-box{line-height:0;min-height:80px;background:var(--paper)}
+.chat-art-frame{display:block;width:100%;border:0;background:transparent}
+@media (prefers-reduced-motion:no-preference){
+  .chat-art.loading .chat-art-box{animation:chat-img-wait 1.2s ease-in-out infinite}
+}
 @media (prefers-reduced-motion:no-preference){
   .chat-img.loading{animation:chat-img-wait 1.2s ease-in-out infinite}
 }

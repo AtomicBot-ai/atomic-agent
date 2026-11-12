@@ -94,3 +94,20 @@ test("renderer.js morphs the transcript column and index.html loads the morph fi
   const html = readFileSync(new URL("../renderer/index.html", import.meta.url), "utf8");
   assert.ok(html.indexOf('src="dom-morph.js"') > 0 && html.indexOf('src="dom-morph.js"') < html.indexOf('src="renderer.js"'));
 });
+
+// ATO-1136: an artifact's box holds an <iframe> put in after the paint; taking it out would reload the page.
+test("a box marked data-morph-keep keeps what was put in it while its key is the same", () => {
+  const box = (key) => h("div", { class: "chat-art-box", "data-chat-art": key, "data-morph-keep": "art:" + key });
+  const col = frag(h("div", { class: "turn" }, box("id:a")));
+  const kept = col.kids[0].kids[0];
+  const frame = kept.appendChild(h("iframe", { sandbox: "allow-scripts" }));
+  kept.setAttribute("data-hyd", "1");
+  morphChildren(col, frag(h("div", { class: "turn" }, box("id:a"))));
+  assert.equal(col.kids[0].kids[0], kept);
+  assert.equal(kept.kids[0], frame, "the frame is not taken out");
+  assert.equal(kept.getAttribute("data-hyd"), "1");
+  // Another key is another artifact: morphed as usual, its old content goes.
+  morphChildren(col, frag(h("div", { class: "turn" }, box("id:b"))));
+  assert.equal(col.kids[0].kids[0].kids.length, 0);
+  assert.equal(col.kids[0].kids[0].getAttribute("data-chat-art"), "id:b");
+});
