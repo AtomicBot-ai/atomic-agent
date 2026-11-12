@@ -1,3 +1,4 @@
+import type { ChatExportWire } from "./chat-export.js";
 import { execFile, execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
@@ -1164,6 +1165,9 @@ export class AgentClient extends EventEmitter {
   /** `DELETE /api/sessions/{id}` — purge one session row (idempotent on 0.5.4). Harness-only today: the smoke removes the task fixtures' empty sessions. */
   deleteSession = (id: string) => this.request<unknown>("DELETE", `/api/sessions/${encodeURIComponent(id)}`);
   /** ATO-455: `PATCH /api/sessions/{id}` `{title}` — the operator's name for a chat; the agent's namer never replaces it. 404 "no route" on an agent from before it. */
+  /** ATO-1054: `GET /api/sessions/{id}/export?format=` — the chat as a document (main/chat-export.ts). 404 on an agent from before it. */
+  exportSession = (id: string, format: "markdown" | "html" | "docx") =>
+    this.json<ChatExportWire>(`/api/sessions/${encodeURIComponent(id)}/export?format=${format}`);
   renameSession = (id: string, title: string) =>
     this.request<{ id: string; title: string | null }>("PATCH", `/api/sessions/${encodeURIComponent(id)}`, { title });
 

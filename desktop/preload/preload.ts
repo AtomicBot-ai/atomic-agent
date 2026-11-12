@@ -101,6 +101,8 @@ contextBridge.exposeInMainWorld("atomic", {
   deleteSession: (id: string) => ipcRenderer.invoke("agent:deleteSession", id),
   // ATO-455: PATCH /api/sessions/{id} — rename a chat
   renameSession: (id: string, title: string) => ipcRenderer.invoke("agent:renameSession", id, title),
+  // ATO-1054: save one chat as Markdown / PDF / Word / HTML (asks where in a save dialog)
+  exportSession: (id: string) => ipcRenderer.invoke("agent:exportSession", id),
   codingMode: (mode?: string) => ipcRenderer.invoke("agent:codingMode", mode),
 
   /** One turn of the agent loop, streamed back over `onChat`. */

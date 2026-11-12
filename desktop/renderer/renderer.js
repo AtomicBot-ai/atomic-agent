@@ -2669,7 +2669,7 @@ function chatMenuHTML() {
   const id = s.id;
   const stored = SESSIONS.some((x) => x.id === id);
   const items = chatMenuItems({pinned: PREFS.pinned.includes(id), unread: chatUnread(s, PREFS.seen[id]),
-    renamable: stored, folders: stored});   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file
+    renamable: stored, folders: stored, exportable: stored});   // ATO-455: a stand-in has nothing stored to rename; ATO-1034: nor to file; ATO-1054: nor to export
   const h = items.length * 34 + 12 + 9;   // rows, the card's padding, the rule above Delete…
   let x = 60, y = 60;
   if (SESMENU.point) { x = SESMENU.point.x; y = SESMENU.point.y; }
@@ -7343,6 +7343,7 @@ function act(a) {
                            return; }
   // ATO-455: the row menu's Rename opens the inline box over the row's name (chat-rename.js).
   if (k === 'rename')    { close(); renameStart(v, 'row'); return; }
+  if (k === 'export')    { close(); render(); chatExport(v); return; }   // ATO-1054 (chat-export.js)
   /* ATO-1034: folders (chat-folders.js). Folder ids never hold a colon, so
      `fput:<folder>:<chat>` splits at its first one; an empty folder is "no folder". */
   if (k === 'ftoggle')   { const f = folderById(FOLDERS.state, v); if (!f) return;
