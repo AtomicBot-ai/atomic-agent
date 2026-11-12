@@ -669,6 +669,24 @@ export interface AgentRuntime {
     reasonCode: string;
   }): void;
   /**
+   * The interview invite's view of analytics (ATO-1467): the anonymous
+   * shared install id and the whole days since install, or `null` while
+   * analytics is off (by config or the environment). Optional so test
+   * doubles and older hosts need not implement it.
+   */
+  interviewInviteIdentity?(): {
+    installId: string;
+    daysSinceInstall: number | undefined;
+  } | null;
+  /**
+   * Send `interview_invite_shown` / `_clicked` / `_dismissed` with fixed
+   * words only (`via`, `reason`). A no-op while analytics is off.
+   */
+  reportInterviewInvite?(
+    kind: "shown" | "clicked" | "dismissed",
+    props: { via?: string; reason?: string },
+  ): void;
+  /**
    * Register what restarts the managed local model with a smaller context
    * window after it ran out of memory (ATO-334), or `null` to clear it.
    * The process that owns the model registers one (the TUI); with none, a

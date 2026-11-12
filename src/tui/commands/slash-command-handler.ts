@@ -65,6 +65,11 @@ export interface SlashDispatchResult {
   readonly triggerDebugBundleDump: boolean;
   /** When true the caller should open the issue-report popup (`/report`). */
   readonly triggerIssueReport: boolean;
+  /**
+   * `/feedback` (ATO-1467): `open` opens the interview form, `never`
+   * hides the rare invite for good. The caller owns both.
+   */
+  readonly feedbackVerb?: "open" | "never";
   /** When true the caller should forward the raw buffer as a normal message. */
   readonly forwardAsMessage: boolean;
   /** When set, caller should probe this URL, persist on success, then refresh UI. */
@@ -273,6 +278,8 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
       // The popup is the feedback; a system line here would be noise
       // behind a modal.
       return pureActions([], { triggerIssueReport: true });
+    case "feedback":
+      return dispatchFeedbackSub(parsed.args);
     case "dump":
       return pureActions([], {
         triggerDebugBundleDump: true,
@@ -605,6 +612,17 @@ function dispatchModeSub(args: string): SlashDispatchResult {
 
 export const ENHANCE_USAGE =
   "Usage: /enhance <your prompt>, or type a prompt and pick Enhance prompt from the menu. Rewrites it in the composer for you to review; nothing is sent.";
+
+export const FEEDBACK_USAGE =
+  "usage: `/feedback` opens the form for a 15 min call with the team · `/feedback never` hides the invite for good";
+
+/** `/feedback` and `/feedback never`; anything else prints the usage. */
+function dispatchFeedbackSub(args: string): SlashDispatchResult {
+  const verb = args.trim().toLowerCase();
+  if (verb === "") return pureActions([], { feedbackVerb: "open" });
+  if (verb === "never") return pureActions([], { feedbackVerb: "never" });
+  return pureActions([], { systemMessage: FEEDBACK_USAGE });
+}
 
 function pureActions(
   actions: readonly TuiAction[],

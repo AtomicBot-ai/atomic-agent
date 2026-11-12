@@ -283,6 +283,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
   },
+  // The interview invite's permanent entry (ATO-1467).
+  {
+    name: "feedback",
+    description:
+      "15 min call with the team, $50 in OpenRouter credits after it: `/feedback` opens the form · `/feedback never` hides the invite",
+  },
   {
     name: "uninstall",
     description:

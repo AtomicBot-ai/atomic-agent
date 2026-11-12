@@ -226,6 +226,8 @@ export function runSlashCommand(
   state: TuiState,
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
+  /** `menu` when the operator menu ran the command (only `/feedback` reads it). */
+  origin?: "menu",
 ): void {
   const result: SlashDispatchResult = dispatchSlashCommand(raw, skillSlashCommands(state.skillsPanel));
   if (result.skillInvocation || result.pluginCommandInvocation) {
@@ -251,6 +253,9 @@ export function runSlashCommand(
   }
   if (result.triggerIssueReport) {
     callbacks.onIssueReportRequested?.();
+  }
+  if (result.feedbackVerb) {
+    callbacks.onFeedbackRequested?.(result.feedbackVerb, origin);
   }
   if (result.triggerUninstallPlan) {
     callbacks.onUninstallPlanRequested?.();

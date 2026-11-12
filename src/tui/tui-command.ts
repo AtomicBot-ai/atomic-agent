@@ -65,6 +65,7 @@ import {
   openAgentTerminalWindow,
 } from "./open-terminal-window.js";
 import { openUrlInBrowser } from "./open-url.js";
+import { createInterviewInviteController } from "./interview-invite/interview-invite-controller.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
@@ -448,6 +449,22 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // the React tree; null outside a herdr pane.
   const herdrReporter = createHerdrReporter();
 
+  // The interview invite (ATO-1467): `/feedback` always, and a rare quiet
+  // line at session start. A warning shown this launch (a `.env` that
+  // could not be read, any warn line) keeps the rare line away.
+  let sawStartupError = Boolean(config.dotenv.error);
+  bus.subscribe((action) => {
+    if (action.type === "system_message" && action.variant === "warn") sawStartupError = true;
+  });
+  const interviewInvite = createInterviewInviteController({
+    runtime,
+    stateDir: config.paths.stateDir,
+    emitLine: (text) => bus.emit({ type: "system_message", text }),
+    openUrl: (url) => openUrlInBrowser(url),
+    isBusy: () => runtime.turnController.busySessionIds().length > 0,
+    sawError: () => sawStartupError,
+  });
+
   // `--onboarding`'s stamp reset, deferred to here from the decision
   // above: the runtime is up and the next line mounts the flow.
   if (parsed.onboarding) persistOnboardingState(ONBOARDING_RERUN_RESET);
@@ -750,6 +767,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onDebugBundleExportRequested: (state) =>
           orchestrator.exportDebugBundle(state),
         onIssueReportRequested: () => orchestrator.issueReport.open(),
+        onFeedbackRequested: (verb, origin) => void interviewInvite.runFeedback(verb, origin),
         onIssueReportPickRequested: (level, state) =>
           void orchestrator.issueReport.pick(level, state),
         onIssueReportSendRequested: () => void orchestrator.issueReport.send(),
@@ -979,6 +997,13 @@ export async function tuiCommand(args: string[]): Promise<number> {
     firstRun: onboarding !== null || needsOnboarding(),
   });
   if (spotlightHint) bus.emit({ type: "system_message", text: spotlightHint });
+  // Last of the startup lines, and only when nothing above it was a
+  // first-run screen or a model hint (one quiet line, not a pile).
+  if (!spotlightHint) {
+    void interviewInvite.maybeShowAtStart({
+      onboarding: onboarding !== null || needsOnboarding(),
+    });
+  }
 
   // If the user is in managed mode and the backend + model are ready
   // on disk, start the daemon immediately so there is no extra

@@ -74,3 +74,44 @@ export type {
 export { TurnUsageMeter, completionUsageForTurn } from "./turn-usage-meter.js";
 export type { TurnUsageSnapshot } from "./turn-usage-meter.js";
 export { sanitizeModelAlias } from "./sanitize-model-alias.js";
+export {
+  buildInterviewFormUrl,
+  emptyInterviewInviteState,
+  INTERVIEW_FORM_URL,
+  INTERVIEW_INVITE_EVENTS,
+  INTERVIEW_INVITE_FILE,
+  INTERVIEW_INVITE_FLAG,
+  interviewInviteBlockedBy,
+  INVITE_COOLDOWN_DAYS,
+  INVITE_MAX_SHOWS,
+  INVITE_MIN_DAYS_AFTER_INSTALL,
+  mayShareInstallId,
+  mergeInterviewInviteStates,
+  parseFeatureFlagReply,
+  parseInterviewInviteState,
+  recordInviteNever,
+  recordInviteShown,
+  shouldShowInterviewInvite,
+  TERMINAL_INVITE_LINE,
+} from "./interview-invite.js";
+export type {
+  InterviewInviteBlock,
+  InterviewInviteContext,
+  InterviewInviteDismissReason,
+  InterviewInviteEventKind,
+  InterviewInviteSource,
+  InterviewInviteState,
+  InterviewInviteVia,
+} from "./interview-invite.js";
+export {
+  interviewInvitePath,
+  readInterviewInviteState,
+  updateInterviewInviteState,
+} from "./interview-invite-store.js";
+export {
+  cachedFeatureFlag,
+  FEATURE_FLAG_TIMEOUT_MS,
+  fetchFeatureFlag,
+  resetFeatureFlagCache,
+} from "./fetch-feature-flag.js";
+export type { FetchFeatureFlagOptions } from "./fetch-feature-flag.js";
