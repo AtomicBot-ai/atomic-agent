@@ -283,6 +283,12 @@ const V0_2_2_SLASH_COMMANDS = [
     description:
       "a fusion run cut off by a restart: `/fusion` lists them · `/fusion resume [id]` continues from the unfinished wave · `/fusion discard [id]` drops it",
   },
+  // Added with the external editor (ATO-655).
+  {
+    name: "edit",
+    description:
+      "open the prompt in your $VISUAL / $EDITOR; save and close to put it back in the composer, nothing is sent",
+  },
   {
     name: "uninstall",
     description:

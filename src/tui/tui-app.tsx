@@ -320,6 +320,12 @@ export interface TuiAppCallbacks {
   onPromptEnhanceRequested?(draft: string): void;
   /** Idle Esc: stop a running `/enhance` (no-op when none is running). */
   onPromptEnhanceCancel?(): void;
+  /**
+   * `/edit` (ATO-655): hand the terminal to `$VISUAL` / `$EDITOR` on
+   * `draft` and return what was saved. Synchronous on purpose: the editor
+   * owns the terminal until it exits, so nothing else may run meanwhile.
+   */
+  onExternalEditorRequested?(draft: string): import("./editor/index.js").ExternalEditResult;
   /** Ask the orchestrator to dump the current user profile into the chat log. */
   onMemoryDumpRequested?(): void;
   /** Ask the orchestrator to print the skill catalog into the chat log (`/skills`). */

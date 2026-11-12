@@ -45,6 +45,12 @@ export interface SlashDispatchResult {
    * can see the composer, so it decides; the buffer is never cleared.
    */
   readonly enhanceCurrentDraft?: boolean;
+  /**
+   * `/edit` (ATO-655): open the composer draft, or `text` when given, in
+   * the operator's `$VISUAL` / `$EDITOR`. Only the caller can see the
+   * composer and hand the terminal over, so it does the rest.
+   */
+  readonly externalEdit?: { readonly text?: string };
   /** When true the editor buffer should be cleared after dispatch. */
   readonly clearBuffer: boolean;
   /** When true the caller should invoke `onAbort`. */
@@ -365,6 +371,12 @@ export function dispatchSlashCommand(buffer: string, skills: readonly SlashComma
             enhancePromptText: parsed.args,
             clearBuffer: false,
           });
+    case "edit":
+      // The buffer is the caller's to replace with what the editor saved.
+      return pureActions([], {
+        externalEdit: parsed.args === "" ? {} : { text: parsed.args },
+        clearBuffer: false,
+      });
     case "context":
       return pureActions([{ type: "context_panel_toggled" }]);
     case "usage":

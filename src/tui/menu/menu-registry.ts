@@ -454,6 +454,18 @@ export const MENU: readonly MenuNode[] = [
     slash: { name: "enhance", description: "rewrite a prompt into a clearer one in the composer; nothing is sent", rank: 45 },
   },
   {
+    kind: "action", id: "session.edit", label: "Edit prompt in $EDITOR", group: "session",
+    // Upper case like `L` / `M` / `R`: every free lower-case key is worth
+    // more to a daily verb, and `e` already opens Reasoning.
+    chord: "E",
+    slash: {
+      name: "edit",
+      description: "open the prompt in your $VISUAL / $EDITOR; save and close to put it back in the composer, nothing is sent",
+      // After /fusion and before /uninstall, which stays last.
+      rank: 47.5,
+    },
+  },
+  {
     kind: "action", id: "session.goal", label: "Goal mode…", group: "session",
     slash: {
       name: "goal",
