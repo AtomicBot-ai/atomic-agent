@@ -18,6 +18,7 @@ import type {
   ApprovalRequest,
 } from "../../approval/approval-gate.js";
 import { describeAlwaysRule } from "../../approval/approval-rules.js";
+import { formatRiskLine } from "../../approval/risk-review.js";
 import type { StructuredLogger } from "../../tracing/structured-logger.js";
 import type { DiscordApi, DiscordComponentRow } from "./discord-api.js";
 import { scrubDiscordError } from "./discord-channel-types.js";
@@ -223,6 +224,10 @@ export function formatPrompt(request: ApprovalRequest): string {
     `**Approval needed** — \`${request.tool}\` (${request.category})`,
     request.reason,
   ];
+  // Smart approval's verdict (ATO-1268). The reason is the model's words,
+  // so it is escaped: no markdown and no mention can come out of it.
+  const riskLine = formatRiskLine(request);
+  if (riskLine !== null) lines.push(escapeDiscordText(riskLine));
   if (request.preview) {
     // Fence the preview: a shell command full of backticks or
     // underscores would otherwise be mangled by Discord's markdown.
@@ -233,4 +238,15 @@ export function formatPrompt(request: ApprovalRequest): string {
     lines.push(`Affects: ${request.affectedResources.slice(0, 5).join(", ")}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * `text` as literal Discord text: markdown characters are backslashed and
+ * `@` gets a zero-width space after it, so `@everyone` or `<@123>` in a
+ * model's words neither formats nor pings anyone.
+ */
+export function escapeDiscordText(text: string): string {
+  return text
+    .replace(/([\\*_~`|>#\[\]()<-])/g, "\\$1")
+    .replace(/@/g, "@\u200b");
 }
