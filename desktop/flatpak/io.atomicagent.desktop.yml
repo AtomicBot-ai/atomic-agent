@@ -1,0 +1,88 @@
+# Flatpak manifest for the Atomic Agent desktop app (ATO-687).
+#
+# It repackages the published .deb of a desktop-vX.Y.Z release (the same
+# files the download page links), so nothing is built from source here and
+# the app inside is byte for byte the one the .deb installs. Electron runs
+# through zypak (org.electronjs.Electron2.BaseApp), which gives Chromium its
+# sandbox inside Flatpak; chrome-sandbox from the .deb is not used.
+#
+# Build and run locally (needs flatpak and flatpak-builder):
+#   flatpak install -y flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 \
+#     org.electronjs.Electron2.BaseApp//25.08
+#   flatpak-builder --user --install --force-clean build-dir io.atomicagent.desktop.yml
+#   flatpak run io.atomicagent.desktop
+#
+# A new release: node flatpak/bump.mjs <version> (from desktop/) (rewrites the .deb urls and sha256
+# below from the release's SHA256SUMS.txt and adds a <release> to the
+# metainfo). Not published anywhere: a Flathub submission is a separate,
+# manual step (desktop/README.md "Flatpak").
+app-id: io.atomicagent.desktop
+runtime: org.freedesktop.Platform
+runtime-version: "25.08"
+sdk: org.freedesktop.Sdk
+base: org.electronjs.Electron2.BaseApp
+base-version: "25.08"
+command: atomic-agent-desktop
+separate-locales: false
+
+finish-args:
+  - --share=ipc
+  - --share=network
+  - --socket=x11
+  - --socket=pulseaudio
+  - --device=dri
+  # Notifications, and the Secret Service that Electron safeStorage keeps the
+  # API keys in (libsecret).
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # The agent works on the user's files and keeps its state in ~/.atomic-agent,
+  # shared with the terminal app. Without home access the agent could not read
+  # or write project files and would not see the terminal's state. Narrowing
+  # this (portals, a fixed folder) is a product decision, not made here.
+  - --filesystem=home
+  - --env=ELECTRON_TRASH=gio
+
+modules:
+  - name: atomic-agent-desktop
+    buildsystem: simple
+    sources:
+      - type: file
+        only-arches: [x86_64]
+        dest-filename: atomic-agent-desktop.deb
+        url: https://github.com/AtomicBot-ai/atomic-agent/releases/download/desktop-v0.0.8/Atomic-Agent-0.0.8-amd64.deb
+        sha256: ac412bb4bf82e4614be5020877f820870691491237022cc3536c83f09ef4a4fe
+      - type: file
+        only-arches: [aarch64]
+        dest-filename: atomic-agent-desktop.deb
+        url: https://github.com/AtomicBot-ai/atomic-agent/releases/download/desktop-v0.0.8/Atomic-Agent-0.0.8-arm64.deb
+        sha256: de6605e9be2262d9302a067613ba5ae49febce29b747434c05b8694be13e65bf
+      - type: file
+        path: io.atomicagent.desktop.desktop
+      - type: file
+        path: io.atomicagent.desktop.metainfo.xml
+      - type: script
+        dest-filename: atomic-agent-desktop.sh
+        commands:
+          - exec zypak-wrapper /app/atomic-agent/atomic-agent-desktop "$@"
+    build-commands:
+      - ar x atomic-agent-desktop.deb
+      - tar -xf data.tar.*
+      # The .deb installs into "/opt/Atomic Agent" (sanitized productName).
+      - mv "opt/Atomic Agent" /app/atomic-agent
+      # zypak provides the sandbox; a setuid helper cannot work in Flatpak.
+      - rm -f /app/atomic-agent/chrome-sandbox
+      - install -Dm755 atomic-agent-desktop.sh /app/bin/atomic-agent-desktop
+      - |
+        for icon in usr/share/icons/hicolor/*/apps/atomic-agent-desktop.png; do
+          size=$(basename "$(dirname "$(dirname "$icon")")")
+          install -Dm644 "$icon" "/app/share/icons/hicolor/$size/apps/io.atomicagent.desktop.png"
+        done
+        test -n "$(ls /app/share/icons/hicolor/*/apps/io.atomicagent.desktop.png)"
+      # The window class Electron reports is whatever the .deb's own desktop
+      # file says; reuse it so the dock matches the window to this entry.
+      - |
+        wm=$(sed -n 's/^StartupWMClass=//p' usr/share/applications/atomic-agent-desktop.desktop | head -n 1)
+        if [ -n "$wm" ]; then sed -i "s/^StartupWMClass=.*/StartupWMClass=$wm/" io.atomicagent.desktop.desktop; fi
+        install -Dm644 io.atomicagent.desktop.desktop /app/share/applications/io.atomicagent.desktop.desktop
+      - install -Dm644 io.atomicagent.desktop.metainfo.xml /app/share/metainfo/io.atomicagent.desktop.metainfo.xml
