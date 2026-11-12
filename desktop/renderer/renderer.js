@@ -2836,7 +2836,7 @@ function item(m) {
   if (m.k === 'assistant' && stoppedSentence(m)) return stoppedRowHTML(m);
   // 0.6.7 item 10: a reply nothing has reached yet has "Working…" over it.
   if (m.k === 'assistant') return workingRowHTML(m) + '<div class="turn"><div></div>'
-    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + replyFilesStrip(m) + attachStrip(m) + replyDot(m) + msgActs(m)
+    + '<div class="tk-asst"><div class="prose' + (m.placeholder ? ' tk-ph' : '') + '">' + renderProse(m.text) + '</div>' + replyFilesStrip(m) + changedFilesCardHTML(m.changed, {esc, ic}) + attachStrip(m) + replyDot(m) + msgActs(m)
     /* Item 1 (plan hand-off): INSIDE the content column, before its two closing
        divs — appended after them the bar would leave `.turn` and lose the
        two-column grid alignment this branch exists to keep. It hangs off the
@@ -4914,7 +4914,7 @@ function renderInspector() {
   el.classList.toggle('hide', !S.inspector);
   // Not rebuilt, so not remembered either: the panel shown again starts at the top.
   if (!S.inspector || INSP_NARROW.matches) { INSP_VIEW.tab = null; return; }
-  const tabs = [['steps','Steps'],['reasoning','Reasoning'],['world','World']];
+  const tabs = [['steps','Steps'],['reasoning','Reasoning'],['results','Results'],['world','World']];
   let body = '';
   if (S.inspTab === 'steps') {
     const tools = S.log.filter((m) => m.k === 'tool');
@@ -4939,6 +4939,9 @@ function renderInspector() {
     body = r.length ? inspOrderHTML(r.length, {esc}) + inspOrdered(r).map((m) => '<div class="insp-rs" data-rs="' + esc(m.id) + '"><div class="insp-lbl">Step ' + m.steps + '</div>'
         + '<pre class="tk-out">' + esc(m.text) + '</pre></div>').join('')
       : '<p class="cap">Reasoning appears here as the turn runs.</p>';
+  } else if (S.inspTab === 'results') {
+    // ATO-1187: every file of the latest turn, changed ones with +/- (changed-files.js).
+    body = resultsPaneHTML(S.log, {esc, ic});
   } else if (S.inspTab === 'world') {
     const caps = LIVE_CAPS || {};
     const tools = Array.isArray(caps.tools) ? caps.tools.map((t) => t.name).join(' · ') : '';
@@ -10965,6 +10968,9 @@ function onChatEvent(ev) {
     const card = toolResultCard(p, ev.turnId);
     if (!card) return;   // reply / finish draw no card
     toolSettle(card, p, ev.at || Date.now());
+    // ATO-1187: a write/edit's lines added/removed go on the turn's "Changed files" card (changed-files.js).
+    const changedFile = changedFileOfFrame(p);
+    if (changedFile && item) item.changed = changedFilesAdd(item.changed, changedFile);
     render();
     return;
   }
@@ -22915,7 +22921,8 @@ async function refreshAttachments(cwd) {
 /** The attachment footer: his sentence per file, then the chips. */
 function attachStrip(m) {
   // ATO-408: a file the reply delivers is drawn by replyFilesStrip, once.
-  const own = m.replyFiles || [];
+  // ATO-1187: and one on the "Changed files" card is not said again here.
+  const own = (m.replyFiles || []).concat(changedFilesPaths(m.changed));
   const files = (m.attach || []).filter((f) => !own.includes(f.path));
   if (!files.length) return '';
   const shown = files.slice(0, ATTACH_MAX_LINES);
