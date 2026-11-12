@@ -48,6 +48,12 @@ export async function runContextCompaction(
   const emit = (event: CompactionEvent) => {
     try { deps.emit(event); } catch { /* Observers cannot roll back a saved checkpoint. */ }
   };
+  // The summary calls were billed whatever happens to the checkpoint.
+  const reportSpend = () => {
+    const usd = tally.costUsd;
+    if (usd === undefined || !Number.isFinite(usd) || usd <= 0) return;
+    try { options.onSpend?.(usd); } catch { /* Spend accounting must not fail a compaction. */ }
+  };
   let modelFailure: { timedOut: boolean; message: string } | undefined;
   let fellBack = false;
   emit({ type: "compaction_started", sessionId: state.id, reason: plan.reason, tokensBefore: plan.tokensBefore });
@@ -128,6 +134,7 @@ export async function runContextCompaction(
       ...(costUsd !== undefined ? { costUsd } : {}),
       ...(fellBack && modelFailure ? { message: `The model summary failed (${modelFailure.message.replace(/[.!?]+$/, "")}); an extractive summary was used instead.` } : {}),
     };
+    reportSpend();
     emit({ type: "compaction_completed", sessionId: state.id, result, usage, calls, contextUsage: next.contextUsage });
     return { state: next, result, ...(modelFailure?.timedOut ? { timedOut: true } : {}) };
   } catch (error) {
@@ -141,6 +148,7 @@ export async function runContextCompaction(
       tokensBefore: plan.tokensBefore, ...(tally.costUsd !== undefined ? { costUsd: tally.costUsd } : {}),
       message,
     };
+    reportSpend();
     emit({ type: "compaction_failed", sessionId: state.id, result, usage: tally.usage, calls: tally.calls });
     return { state, result, ...(failure?.timedOut ? { timedOut: true } : {}) };
   }
