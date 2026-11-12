@@ -76,6 +76,33 @@ describe("runCoreImageJob", () => {
     expect(call.mock.calls.some(([path]) => path === "/diffusion/jobs/abc/cancel")).toBe(true);
   });
 
+  it("ATO-425: an Esc during the submit still learns the job id and cancels it", async () => {
+    const controller = new AbortController();
+    let release!: (v: unknown) => void;
+    const call = vi.fn(async (path: string, _body?: unknown, opts?: { signal?: AbortSignal }) => {
+      if (path === "/diffusion/jobs") {
+        expect(opts?.signal).toBeUndefined();   // the submit is never cut off mid-way
+        return new Promise((r) => { release = r; });
+      }
+      return { cancelled: true };
+    });
+    const running = runCoreImageJob({ call } as unknown as CoreControlClient, request, { pollMs: 1, signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();          // Esc while Core is still answering the submit
+    release({ jobId: "late" });  // ...and Core had made the job
+    await expect(running).rejects.toThrow();
+    expect(call.mock.calls.some(([path]) => path === "/diffusion/jobs/late/cancel")).toBe(true);
+    expect(call.mock.calls.filter(([path]) => path === "/diffusion/jobs/late")).toHaveLength(0);
+  });
+
+  it("does not submit at all when already aborted", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const { client, call } = fakeCore([job({})]);
+    await expect(runCoreImageJob(client, request, { signal: controller.signal })).rejects.toThrow();
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it("cancels and says so when the job outlives its timeout", async () => {
     const { client, call } = fakeCore([job({})]);
     await expect(runCoreImageJob(client, request, { pollMs: 1, timeoutMs: 10 })).rejects.toMatchObject({ code: "TIMEOUT" });

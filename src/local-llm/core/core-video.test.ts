@@ -66,6 +66,21 @@ describe("runCoreVideoJob", () => {
     await expect(runCoreVideoJob(client, request, { pollMs: 1 })).rejects.toMatchObject({ code: "NO_OUTPUT" });
   });
 
+  it("ATO-425: an Esc during the submit still learns the clip's job id and cancels it", async () => {
+    const controller = new AbortController();
+    let release!: (v: unknown) => void;
+    const call = vi.fn(async (path: string, _body?: unknown, opts?: { signal?: AbortSignal }) => {
+      if (path === "/diffusion/video/jobs") { expect(opts?.signal).toBeUndefined(); return new Promise((r) => { release = r; }); }
+      return { cancelled: true };
+    });
+    const running = runCoreVideoJob({ call } as unknown as CoreControlClient, request, { pollMs: 1, signal: controller.signal });
+    await Promise.resolve();
+    controller.abort();
+    release({ jobId: "late" });
+    await expect(running).rejects.toThrow();
+    expect(call.mock.calls.some(([path]) => path === "/diffusion/video/jobs/late/cancel")).toBe(true);
+  });
+
   it("cancels the video job in Core when the call is aborted", async () => {
     const controller = new AbortController();
     const { client, call } = fakeCore([job({})]);

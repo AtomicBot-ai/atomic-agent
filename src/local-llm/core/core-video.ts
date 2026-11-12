@@ -182,15 +182,23 @@ export async function runCoreVideoJob(client: CoreControlClient, request: CoreVi
   const timeoutMs = opts.timeoutMs ?? CORE_VIDEO_TIMEOUT_MS;
   const pollMs = opts.pollMs ?? POLL_MS;
   const sig = opts.signal ? { signal: opts.signal } : {};
+  // The submit is not aborted: Esc mid-submit would lose the id of a job
+  // Core already made, and nothing could cancel it (ATO-425). Core answers
+  // at once; an Esc that came meanwhile cancels the job right after.
+  opts.signal?.throwIfAborted();
   let jobId: string;
   try {
-    const answer = await client.call<{ jobId?: unknown }>("/diffusion/video/jobs", request, { ...sig, timeoutMs: 60_000 });
+    const answer = await client.call<{ jobId?: unknown }>("/diffusion/video/jobs", request, { timeoutMs: 60_000 });
     if (typeof answer.jobId !== "string" || answer.jobId.length === 0) throw new CoreVideoError("Atomic Core did not return a video job id.", "BAD_ANSWER");
     jobId = answer.jobId;
   } catch (err) { throw toVideoError(err); }
 
   const path = `/diffusion/video/jobs/${encodeURIComponent(jobId)}`;
   const cancel = () => client.call(`${path}/cancel`, {}, { timeoutMs: 5_000 }).catch(() => {});
+  if (opts.signal?.aborted) {
+    await cancel();
+    opts.signal.throwIfAborted();
+  }
   const deadline = Date.now() + timeoutMs;
   let misses = 0;
   try {

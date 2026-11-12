@@ -194,18 +194,28 @@ export interface RunCoreImageJobOptions {
  * Submit one job and wait for it to settle. The submit is never retried:
  * a cloud provider would bill twice. Abort (Esc) and the timeout cancel
  * the job in Core. A completed job with no files is a failure.
+ *
+ * The submit itself is not aborted (ATO-425): Core may already have made
+ * the job when Esc lands, and an aborted request never learns its id, so
+ * nothing could cancel a job that goes on to bill. Core answers a submit
+ * at once, so Esc waits that moment for the id, then cancels the job.
  */
 export async function runCoreImageJob(client: CoreControlClient, request: CoreImageRequest, opts: RunCoreImageJobOptions = {}): Promise<CoreImageJob> {
   const cloud = request.target !== undefined;
   const timeoutMs = opts.timeoutMs ?? (cloud ? CORE_IMAGE_TIMEOUT_MS.cloud : CORE_IMAGE_TIMEOUT_MS.local);
+  opts.signal?.throwIfAborted();
   let jobId: string;
   try {
-    const answer = await client.call<{ jobId?: unknown }>("/diffusion/jobs", request, { ...(opts.signal ? { signal: opts.signal } : {}), timeoutMs: 60_000 });
+    const answer = await client.call<{ jobId?: unknown }>("/diffusion/jobs", request, { timeoutMs: 60_000 });
     if (typeof answer.jobId !== "string" || answer.jobId.length === 0) throw new CoreImageError("Atomic Core did not return an image job id.", "BAD_ANSWER");
     jobId = answer.jobId;
   } catch (err) { throw toImageError(err, cloud); }
 
   const cancel = () => client.call(`/diffusion/jobs/${encodeURIComponent(jobId)}/cancel`, {}, { timeoutMs: 5_000 }).catch(() => {});
+  if (opts.signal?.aborted) {
+    await cancel();
+    opts.signal.throwIfAborted();
+  }
   const deadline = Date.now() + timeoutMs;
   let misses = 0;
   try {

@@ -406,7 +406,7 @@ export async function createAgentRuntime(
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
   registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
-  registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics });
+  registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
 
   const mcpCatalog = await connectRuntimeMcpCatalog({
