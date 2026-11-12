@@ -617,7 +617,8 @@ export interface SchedulerTickSample {
 
 export interface WebhookReceivedSample {
   webhookName: string;
-  status: "accepted" | "rejected";
+  /** `ignored`: genuine but starts no task (filtered event, ping, repeat). */
+  status: "accepted" | "rejected" | "ignored";
 }
 
 /**
