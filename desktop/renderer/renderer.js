@@ -2145,10 +2145,17 @@ function providerSwitchedLine(p) {
   if (typeof p.from !== 'string' || typeof p.to !== 'string' || !p.from || !p.to) return '';
   return p.from + ' failed, switched to ' + p.to + (typeof p.to_model === 'string' && p.to_model ? ' (' + p.to_model + ')' : '') + '.';
 }
+/** ATO-1417: the transcript line for a `tool_disabled` frame (the server refused the tool's schema), '' when it names no tool. */
+function toolDisabledLine(p) {
+  if (!p || typeof p !== 'object') return '';
+  if (typeof p.notice === 'string' && p.notice.trim()) return p.notice.trim();
+  if (typeof p.tool !== 'string' || !p.tool.trim()) return '';
+  return 'Tool ' + p.tool.trim() + ' is disabled for this turn: the model server did not accept its schema.';
+}
 /* Item 38: the frames that draw into a turn's rows (onChatEvent); the others
    are bookkeeping and go on as they always did. */
 const LIVE_DRAWS = new Set(['reasoning_progress', 'tool_progress', 'tool_result', 'tool_update', 'delta', 'progress_note', 'reply_attachments', 'fusion_worker',
-  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched',
+  'steer_applied', 'finish', 'provider_waiting', 'provider_recovered', 'provider_switched', 'tool_disabled',
   // ATO-259 / ATO-295: context maintenance inside the turn (context-compaction.js).
   'compaction_started', 'compaction_progress', 'compaction_completed', 'compaction_failed', 'history_trimmed']);
 /* ATO-259: the compaction row of the turn on screen (`rowId`, spinning until
@@ -10599,6 +10606,17 @@ function onChatEvent(ev) {
     const line = providerSwitchedLine(p);
     if (line && item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(line)});
     if (line && !LIVE_REPLAY) appSay(line);
+    render();
+    return;
+  }
+  /* ATO-1417: the model server refused one tool's JSON schema (LM Studio and
+     llama.cpp do this for some MCP schemas), and the agent resent the request
+     without it, so the model cannot use that tool this turn. The agent words
+     it and sends it once per tool per turn; one line in the transcript,
+     before the reply. An agent without this frame never sends it. */
+  if (ev.kind === 'tool_disabled') {
+    const line = toolDisabledLine(ev.payload || {});
+    if (line && item) S.log.splice(S.log.indexOf(item), 0, {id:nid(), k:'system', note:true, text: esc(line)});
     render();
     return;
   }
