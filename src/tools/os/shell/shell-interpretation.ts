@@ -192,6 +192,27 @@ export function quotePosixArg(token: string): string {
 }
 
 /**
+ * Characters a POSIX shell still expands or treats specially inside
+ * double quotes (`!` for interactive history expansion). A token free
+ * of these reads back unchanged from `"..."`.
+ */
+const POSIX_DOUBLE_QUOTE_UNSAFE_RE = /[$`\\"!]/;
+
+/**
+ * `quotePosixArg` for display (ATO-905): a token whose only reason for
+ * the `'\''` dance is an embedded `'` goes in double quotes instead, so
+ * `bash -c "echo 'ux tour' > f.txt"` stays readable. A shell still
+ * reads the result back as the same token; every other token is quoted
+ * exactly as `quotePosixArg` does.
+ */
+export function quotePosixArgReadable(token: string): string {
+  if (token.includes("'") && !POSIX_DOUBLE_QUOTE_UNSAFE_RE.test(token)) {
+    return `"${token}"`;
+  }
+  return quotePosixArg(token);
+}
+
+/**
  * The command as the approval prompt shows it (ATO-433). A plain
  * `join(" ")` dropped the argv boundaries, so `bash` with
  * `["-c", "echo 'ux tour' > f.txt"]` read `bash -c echo 'ux tour' >
@@ -213,7 +234,8 @@ export function formatShellPreview(
   useShell: boolean,
 ): string {
   if (useShell) return subshellLine(cmd, execArgs);
-  const quote = process.platform === "win32" ? quoteCmdArg : quotePosixArg;
+  const quote =
+    process.platform === "win32" ? quoteCmdArg : quotePosixArgReadable;
   return [cmd, ...execArgs].map(quote).join(" ");
 }
 
