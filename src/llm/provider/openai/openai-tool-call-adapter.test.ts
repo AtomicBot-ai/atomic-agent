@@ -7,8 +7,12 @@ import {
   descriptorsToOpenAiTools,
   strictOpenAiWidenedArgs,
   openAiToolCallsToBatch,
+  openAiWireToCanonical,
+  withStrictNullArgumentDrop,
+  openAiToolCallAdapter,
   ToolCallArgumentsParseError,
 } from "./openai-tool-call-adapter.js";
+import type { ToolDescriptor } from "../../../prompt/stable-prefix.js";
 
 describe("OpenAiToolCallAdapter", () => {
   it("round-trips dotted tool names via __ escape", () => {
@@ -613,5 +617,120 @@ describe("OpenAiToolCallAdapter", () => {
       }
       expect(nested).toEqual([]);
     });
+  });
+});
+
+// ATO-1365: `nameEscape` is not injective, so the wire name alone cannot
+// say which tool was meant. The request's own descriptor list does.
+describe("wire names that escape alike", () => {
+  const tool = (name: string): ToolDescriptor => ({
+    name,
+    tier: "frequent",
+    summary: `${name} summary`,
+    argsSchema: "",
+  });
+  // The underscore pair is part of the MCP server's own tool name.
+  const underscored = tool("mcp.srv.foo__bar");
+  const dotted = tool("mcp.srv.foo.bar");
+  const wireNamesOf = (descriptors: readonly ToolDescriptor[]): string[] =>
+    descriptorsToOpenAiTools(descriptors).map(
+      (t) => (t.function as { name: string }).name,
+    );
+
+  it("offers both tools under distinct wire names, whatever the order", () => {
+    for (const descriptors of [
+      [underscored, dotted],
+      [dotted, underscored],
+    ]) {
+      const names = wireNamesOf(descriptors);
+      expect(names).toContain("mcp__srv__foo__bar");
+      expect(names).toContain("mcp__srv__foo__bar_2");
+      expect(new Set(names).size).toBe(names.length);
+      const map = openAiWireToCanonical(descriptors);
+      // The dotted tool keeps the spelling it always had.
+      expect(map.get("mcp__srv__foo__bar")).toBe("mcp.srv.foo.bar");
+      expect(map.get("mcp__srv__foo__bar_2")).toBe("mcp.srv.foo__bar");
+    }
+  });
+
+  it("routes a call to the underscored tool's wire name to that tool, not its dotted sibling", () => {
+    const descriptors = [underscored, dotted];
+    const wireToCanonical = openAiWireToCanonical(descriptors);
+    const wire = [...wireToCanonical].find(
+      ([, canonical]) => canonical === "mcp.srv.foo__bar",
+    )?.[0];
+    expect(wire).toBeDefined();
+    expect(wireNamesOf(descriptors)).toContain(wire);
+    const batch = openAiToolCallsToBatch(
+      [{ function: { name: wire!, arguments: "{}" } }],
+      undefined,
+      { wireToCanonical },
+    );
+    expect(batch.calls[0]?.tool).toBe("mcp.srv.foo__bar");
+    const sibling = openAiToolCallsToBatch(
+      [{ function: { name: "mcp__srv__foo__bar", arguments: "{}" } }],
+      undefined,
+      { wireToCanonical },
+    );
+    expect(sibling.calls[0]?.tool).toBe("mcp.srv.foo.bar");
+  });
+
+  it("decodes an underscored tool through the map even with no sibling present", () => {
+    const descriptors = [underscored];
+    expect(wireNamesOf(descriptors)).toContain("mcp__srv__foo__bar");
+    const batch = openAiToolCallsToBatch(
+      [{ function: { name: "mcp__srv__foo__bar", arguments: "{}" } }],
+      undefined,
+      { wireToCanonical: openAiWireToCanonical(descriptors) },
+    );
+    // `nameUnescape` alone would say `mcp.srv.foo.bar`, a tool that
+    // does not exist.
+    expect(batch.calls[0]?.tool).toBe("mcp.srv.foo__bar");
+  });
+
+  it("keeps a qualified name written as is, and a name the request did not offer still unescapes", () => {
+    const wireToCanonical = openAiWireToCanonical([underscored, dotted]);
+    const batch = openAiToolCallsToBatch(
+      [
+        { function: { name: "mcp.srv.foo__bar", arguments: "{}" } },
+        { function: { name: "os__fs__read", arguments: "{}" } },
+      ],
+      undefined,
+      { wireToCanonical },
+    );
+    expect(batch.calls.map((c) => c.tool)).toEqual([
+      "mcp.srv.foo__bar",
+      "os.fs.read",
+    ]);
+  });
+
+  it("a suffix never takes a spelling another tool would claim naturally", () => {
+    const names = wireNamesOf([
+      underscored,
+      dotted,
+      tool("mcp.srv.foo.bar_2"),
+    ]);
+    expect(names).toContain("mcp__srv__foo__bar");
+    expect(names).toContain("mcp__srv__foo__bar_2");
+    expect(names).toContain("mcp__srv__foo__bar_3");
+    expect(new Set(names).size).toBe(names.length);
+    const map = openAiWireToCanonical([
+      underscored,
+      dotted,
+      tool("mcp.srv.foo.bar_2"),
+    ]);
+    expect(map.get("mcp__srv__foo__bar_2")).toBe("mcp.srv.foo.bar_2");
+    expect(map.get("mcp__srv__foo__bar_3")).toBe("mcp.srv.foo__bar");
+  });
+
+  it("the strict null-drop wrapper still passes the map through", () => {
+    const descriptors = [underscored, dotted];
+    const wrapped = withStrictNullArgumentDrop(openAiToolCallAdapter);
+    const batch = wrapped.toolCallsToBatch(
+      [{ function: { name: "mcp__srv__foo__bar_2", arguments: "{}" } }],
+      undefined,
+      { wireToCanonical: openAiWireToCanonical(descriptors) },
+    );
+    expect(batch.calls[0]?.tool).toBe("mcp.srv.foo__bar");
   });
 });

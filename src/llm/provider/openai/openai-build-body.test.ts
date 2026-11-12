@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import { buildOpenAiChatBody } from "./openai-build-body.js";
 import { estimateTokens } from "../../../prompt/token-budget.js";
+import {
+  descriptorsToOpenAiTools,
+  openAiSuffixedWireNames,
+} from "./openai-tool-call-adapter.js";
+import type { ToolDescriptor } from "../../../prompt/stable-prefix.js";
 
 describe("buildOpenAiChatBody", () => {
   it("forwards responseFormat as response_format with type=json_schema and strict=true by default", () => {
@@ -821,5 +826,46 @@ describe("buildOpenAiChatBody: reasoning DeepSeek requires back (ATO-1397)", () 
     const sent = assistant(build())?.reasoning_content as string;
     expect(sent.length).toBeGreaterThan(0);
     expect(long.endsWith(sent)).toBe(true);
+  });
+});
+
+// ATO-1365: a past call is written under the wire name THIS request
+// offers for that tool. The plain escape of `mcp.srv.foo__bar` is the
+// dotted sibling's wire name, and a model copying it would run the sibling.
+describe("buildOpenAiChatBody — history names of tools that escape alike", () => {
+  const tool = (name: string): ToolDescriptor => ({ name, tier: "frequent", summary: name, argsSchema: "" });
+  const descriptors = [tool("mcp.srv.foo__bar"), tool("mcp.srv.foo.bar")];
+  const tools = descriptorsToOpenAiTools(descriptors);
+  const toolWireNames = openAiSuffixedWireNames(descriptors);
+  const messages = {
+    system: "### system\nprefix",
+    droppedSummary: null,
+    turns: [
+      { kind: "user" as const, text: "go" },
+      { kind: "assistant_tool_call" as const, tool: "mcp.srv.foo__bar", args: {} },
+      { kind: "tool_result" as const, tool: "mcp.srv.foo__bar", status: "ok" as const, body: "1", truncated: false },
+      { kind: "assistant_tool_call" as const, tool: "mcp.srv.foo.bar", args: {} },
+      { kind: "tool_result" as const, tool: "mcp.srv.foo.bar", status: "ok" as const, body: "2", truncated: false },
+    ],
+    tail: "### respond\nRespond now.\n",
+  };
+  const historyNames = (body: Record<string, unknown>): string[] =>
+    (body.messages as Array<{ tool_calls?: Array<{ function: { name: string } }> }>)
+      .flatMap((m) => m.tool_calls ?? [])
+      .map((c) => c.function.name);
+
+  it("names each past call by the wire name the request offers for it", () => {
+    const offered = tools.map((t) => (t.function as { name: string }).name);
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools, toolWireNames }, "m", true);
+    const names = historyNames(body);
+    expect(names).toEqual(["mcp__srv__foo__bar_2", "mcp__srv__foo__bar"]);
+    for (const name of names) expect(offered).toContain(name);
+    // The map steers the history only; it never reaches the wire.
+    expect(body).not.toHaveProperty("toolWireNames");
+  });
+
+  it("falls back to the adapter escape for a request that carries no renames", () => {
+    const body = buildOpenAiChatBody({ prompt: "flat", messages, tools }, "m", true);
+    expect(historyNames(body)).toEqual(["mcp__srv__foo__bar", "mcp__srv__foo__bar"]);
   });
 });

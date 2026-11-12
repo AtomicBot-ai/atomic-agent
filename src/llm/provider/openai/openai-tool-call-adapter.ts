@@ -107,6 +107,66 @@ interface BuiltFunctions {
    * maps to an empty set.
    */
   widenedArgs: ReadonlyMap<string, ReadonlySet<string>>;
+  /**
+   * Wire function name -> the qualified name it was emitted for, plus
+   * every qualified name mapped to itself where that spelling is not
+   * also somebody's wire name. See `assignWireNames`.
+   */
+  wireToCanonical: ReadonlyMap<string, string>;
+  /**
+   * Qualified name -> wire name, only for the names that did NOT get
+   * their plain `nameEscape` (a collision suffix). Empty in the common
+   * case; the history's `tool_calls` read it so a past call is written
+   * under the name the request offers for that tool.
+   */
+  suffixedWireNames: ReadonlyMap<string, string>;
+}
+
+/**
+ * The function name each descriptor goes out under, chosen so that two
+ * distinct tools never share one (ATO-1365).
+ *
+ * `nameEscape` is not injective: `mcp.srv.foo__bar` (an MCP server's own
+ * tool name with an underscore pair in it) and `mcp.srv.foo.bar` both
+ * escape to `mcp__srv__foo__bar`, and `nameUnescape` reads that back as
+ * the second one. Decoding textually therefore ran the sibling tool when
+ * the model called the first.
+ *
+ * Names that round-trip through `nameUnescape` claim their plain escape
+ * first, so the common dotted tool keeps the spelling it always had and
+ * the outcome does not depend on descriptor order. A name that does not
+ * round-trip takes its plain escape only if it is still free, otherwise
+ * the first free `_2`, `_3`… suffix. A suffix never takes a spelling any
+ * other descriptor would naturally claim.
+ */
+function assignWireNames(
+  names: readonly string[],
+): Map<string, string> {
+  const unique = [...new Set(names)];
+  const natural = new Set(unique.map(nameEscape));
+  const taken = new Set<string>();
+  const wireOf = new Map<string, string>();
+  const roundTrips = (name: string): boolean =>
+    nameUnescape(nameEscape(name)) === name;
+  for (const name of unique) {
+    if (!roundTrips(name)) continue;
+    const wire = nameEscape(name);
+    wireOf.set(name, wire);
+    taken.add(wire);
+  }
+  for (const name of unique) {
+    if (roundTrips(name)) continue;
+    let wire = nameEscape(name);
+    if (taken.has(wire)) {
+      const base = wire;
+      for (let n = 2; taken.has(wire) || natural.has(wire); n += 1) {
+        wire = `${base}_${n}`;
+      }
+    }
+    wireOf.set(name, wire);
+    taken.add(wire);
+  }
+  return wireOf;
 }
 
 /**
@@ -124,8 +184,22 @@ function buildFunctions(
   const widenedArgs = new Map<string, ReadonlySet<string>>();
   const out: Record<string, unknown>[] = [];
   const all = [...descriptors, ...replyFinishDescriptors()];
+  const wireOf = assignWireNames(all.map((d) => d.name));
+  const wireToCanonical = new Map<string, string>();
+  for (const [name, wire] of wireOf) wireToCanonical.set(wire, name);
+  // A qualified name the model writes as is (the text-JSON fallback, a
+  // local server that accepts dots) is itself, unless that exact string
+  // is another tool's wire name: then the wire reading wins, since that
+  // is the spelling the request offered.
+  for (const name of wireOf.keys()) {
+    if (!wireToCanonical.has(name)) wireToCanonical.set(name, name);
+  }
+  const suffixedWireNames = new Map<string, string>();
+  for (const [name, wire] of wireOf) {
+    if (wire !== nameEscape(name)) suffixedWireNames.set(name, wire);
+  }
   for (const d of all) {
-    const escaped = nameEscape(d.name);
+    const escaped = wireOf.get(d.name)!;
     if (seen.has(escaped)) continue;
     seen.add(escaped);
     const parameters = descriptorToJsonSchema(d);
@@ -140,7 +214,7 @@ function buildFunctions(
       },
     });
   }
-  return { tools: out, widenedArgs };
+  return { tools: out, widenedArgs, wireToCanonical, suffixedWireNames };
 }
 
 /**
@@ -223,6 +297,48 @@ export function strictOpenAiWidenedArgs(
 ): ReadonlyMap<string, ReadonlySet<string>> {
   if (!options?.strict) return EMPTY_WIDENED;
   return buildFunctionsMemo(descriptors, options).widenedArgs;
+}
+
+/**
+ * For the same descriptors `descriptorsToOpenAiTools` was called with:
+ * each emitted function name mapped back to the qualified tool name it
+ * stands for. `openAiToolCallsToBatch` decodes through this before it
+ * falls back to `nameUnescape`, which cannot tell `foo__bar` from
+ * `foo.bar` (ATO-1365). Independent of `strict`; the option is accepted
+ * only so the call shares the memo slot with the request build.
+ */
+export function openAiWireToCanonical(
+  descriptors: readonly ToolDescriptor[],
+  options?: ToolDefinitionOptions,
+): ReadonlyMap<string, string> {
+  return buildFunctionsMemo(descriptors, options).wireToCanonical;
+}
+
+/**
+ * For the same descriptors: each qualified name whose wire name is not
+ * its plain `nameEscape`, mapped to the wire name it was offered under.
+ * Empty unless two tools escaped alike. Rides on the request as
+ * `toolWireNames` so the history's `tool_calls` name a past call the way
+ * this request offers it, not as its sibling (ATO-1365).
+ */
+export function openAiSuffixedWireNames(
+  descriptors: readonly ToolDescriptor[],
+  options?: ToolDefinitionOptions,
+): ReadonlyMap<string, string> {
+  return buildFunctionsMemo(descriptors, options).suffixedWireNames;
+}
+
+/**
+ * The qualified tool name a provider function name refers to: the
+ * request's own mapping when there is one, the textual unescape
+ * otherwise (a name the request did not offer, or a caller that has no
+ * descriptor list).
+ */
+export function decodeToolName(
+  providerName: string,
+  wireToCanonical?: ReadonlyMap<string, string>,
+): string {
+  return wireToCanonical?.get(providerName) ?? nameUnescape(providerName);
 }
 
 const EMPTY_WIDENED: ReadonlyMap<string, ReadonlySet<string>> = new Map<
@@ -343,7 +459,7 @@ export function openAiToolCallsToBatch(
       }
     : undefined;
   for (const tc of toolCalls) {
-    const name = nameUnescape(tc.function.name);
+    const name = decodeToolName(tc.function.name, options?.wireToCanonical);
     let args: Record<string, unknown>;
     try {
       args = parseArguments(tc.function.arguments, noteRepair);
@@ -388,12 +504,18 @@ export function withStrictNullArgumentDrop(
   return {
     ...adapter,
     toolCallsToBatch: (toolCalls, reasoningText, options) => {
-      // Only the repair flag goes through: this wrapper already drops
-      // every top-level null, so the strict map stays unused as before.
+      // Only the repair flag and the name map go through: this wrapper
+      // already drops every top-level null, so the strict map stays
+      // unused as before.
+      const wireToCanonical = options?.wireToCanonical;
+      const forwarded: ToolBatchOptions = {
+        ...(options?.repairJson ? { repairJson: true } : {}),
+        ...(wireToCanonical ? { wireToCanonical } : {}),
+      };
       const batch = adapter.toolCallsToBatch(
         toolCalls,
         reasoningText,
-        options?.repairJson ? { repairJson: true } : undefined,
+        Object.keys(forwarded).length > 0 ? forwarded : undefined,
       );
       return {
         ...batch,
@@ -411,5 +533,7 @@ export const openAiToolCallAdapter: ToolCallAdapter = {
   nameUnescape,
   descriptorsToTools: descriptorsToOpenAiTools,
   strictWidenedArgs: strictOpenAiWidenedArgs,
+  wireToCanonical: openAiWireToCanonical,
+  suffixedWireNames: openAiSuffixedWireNames,
   toolCallsToBatch: openAiToolCallsToBatch,
 };

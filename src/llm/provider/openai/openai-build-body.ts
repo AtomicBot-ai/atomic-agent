@@ -74,6 +74,22 @@ export interface OpenAiBodyOptions {
   reasoningRequired?: boolean;
 }
 
+/**
+ * The escape for the history's `tool_calls`: the request's own wire
+ * name where the adapter had to rename a tool, the adapter's escape
+ * everywhere else. Without it a past call to `mcp.srv.foo__bar` would be
+ * written as `mcp__srv__foo__bar`, which this request offers for
+ * `mcp.srv.foo.bar`, and a model copying it would run the sibling
+ * (ATO-1365).
+ */
+function historyNameEscape(
+  escape: (qualifiedName: string) => string,
+  toolWireNames: ReadonlyMap<string, string> | undefined,
+): (qualifiedName: string) => string {
+  if (!toolWireNames || toolWireNames.size === 0) return escape;
+  return (name) => toolWireNames.get(name) ?? escape(name);
+}
+
 /** The wire layout `buildOpenAiChatBody` chose for a request. */
 export function resolveMessageShape(
   request: Pick<CompletionRequest, "messages" | "tools">,
@@ -142,7 +158,10 @@ function assembleOpenAiChatBody(
   // flat text — which `messages` was built beside, from the same packed
   // conversation, so both say the same thing.
   const nativeOptions: NativeMessageOptions = {
-    nameEscape: options.nameEscape ?? nameEscape,
+    nameEscape: historyNameEscape(
+      options.nameEscape ?? nameEscape,
+      filtered.toolWireNames,
+    ),
     // A local server renders the template, which reads the
     // reasoning back where the model expects it (ATO-887).
     ...(options.templateKwargs ? { preserveReasoning: true } : {}),
