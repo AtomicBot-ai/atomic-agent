@@ -61,7 +61,7 @@ const ANX_ACTS = (() => {
       menu:set(menuIds),
       scope:L, taskfilter:set(taskFilters), skillstab:L, memtab:L,
       // composer selector and the add-provider wizard
-      sel:{add:L, browseLocal:L, closeAdd:L, savePreset:L, cancelPull:L},
+      sel:{add:L, browseLocal:L, closeAdd:L, savePreset:L, cancelPull:L, vision:L},
       wiz:{back:L, next:L, cancel:L, model:L, useDefault:L, saveUnchecked:L},
       // Settings › Privacy and General
       privacy:{analytics:L, refresh:L, readscope:set(readScopes)}, notify:{toggle:L}, names:{toggle:L},
@@ -84,7 +84,7 @@ const ANX_ACTS = (() => {
       llm:{mode:Object.assign(set(llmModes), {next:L, prev:L}), add:L, autoUpdate:L, back:L, backend:L,
         cancel:L, cancelPull:L, configure:L, confirm:L, daemon:L, device:L, edit:L, embToggle:L,
         embedding:L, enter:L, external:{cancel:L, save:L, edit:L}, filter:L, logs:L, logsRefresh:L,
-        pricing:L, refresh:L, remove:L, removeAt:L, restartModel:L, row:L, select:L, steer:{y:L, n:L}, tune:L,
+        pricing:L, refresh:L, remove:L, removeAt:L, restartModel:L, row:L, visionAt:L, select:L, steer:{y:L, n:L}, tune:L,
         fb:{add:L, local:L, move:L, pick:L, pickCancel:L, remove:L, select:L},
         hf:{add:L, back:L, cancel:L, clear:L, close:L, look:L, mirror:L, row:L}},
       telegram:{advanced:L, clearOwner:L, clearToken:L, enable:L, disable:L, pair:L, pairCancel:L,
