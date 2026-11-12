@@ -17,7 +17,8 @@ function slice(start, end) {
 }
 
 function grouping(providers, mode = 'cloud') {
-  const ctx = createContext({ LLMP: { mode } });
+  // URL: a vm context has none, and llmKeylessLocal reads hosts through it.
+  const ctx = createContext({ LLMP: { mode }, URL });
   runInContext('const PROVIDERS = ' + JSON.stringify(providers) + '; function llmProviders() { return PROVIDERS; }\n'
     + slice('const PRESETS = [', '\nPRESETS.filter(')
     + slice('function llmCloudProviders()', 'function llmActiveTextId()')
@@ -69,7 +70,9 @@ test('the tabs read Local models, Cloud providers, Custom; the Custom pane names
   assert.match(ext, /Atomic Chat, Ollama, LM Studio or any server you run yourself/);
   assert.match(ext, /'Your own llama\.cpp server'/);
   // No word "cloud" in what the Custom pane says; its code may name the shared llmCloud* helpers and row kinds.
-  const words = (ext.match(/'[^']*'/g) || []).filter((w) => !/^'cloud[A-Z]/.test(w)).join(' ');
+  // Comments out first: an apostrophe in one ("the wizard's") would pair the quotes wrongly.
+  const code = ext.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const words = (code.match(/'[^']*'/g) || []).filter((w) => !/^'cloud[A-Z]/.test(w)).join(' ');
   assert.doesNotMatch(words, /cloud/i);
 });
 
