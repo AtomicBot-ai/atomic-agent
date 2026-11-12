@@ -40,6 +40,15 @@ Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working f
 
 A page on a blocked host is never captured. A capture is discarded, never saved, when the page or any of its frames is on a blocked host by the time the pixels are taken (a racing redirect, a blocked iframe).
 
+## Page debugging
+
+`browser.debug { action: "console" | "network", errorsOnly?, limit?, clear? }` (`debug.ts`, ATO-701): for "why does my site not load". `console` lists console messages and uncaught page errors; `network` lists finished requests with their status and failed ones with the reason (`errorsOnly`: HTTP 4xx/5xx and failures). Newest last, at most `limit` (default 50, at most 200); `clear` empties that list after reading.
+
+- Recorded by `PlaywrightBackend` from the attach on, from the context's `console`, `weberror`, `response` and `requestfailed` events (`watch-page-debug.ts`). In the user's own Chrome only the agent's own tabs are recorded.
+- Bounded (`page-debug-log.ts`): the last 200 entries of each kind, plus the last 100 errors in a ring of their own so ordinary traffic does not push a failure out.
+- Redacted on the way in: text through the secret detector (`../../error-reporting/secret-detector.ts`) and clipped; URLs lose user info, the values of query parameters whose name says secret (`token`, `api_key`, `sig`, `code`...) and any fragment with parameters. Headers and bodies are never kept.
+- On the way out, entries from a page on a blocked host, or in the user's own Chrome from a site not opened this session, are left out (counted, not shown). The text is the site's own, so the result is framed as page content.
+
 ## Page views
 
 `browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):
