@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { buildCommandEnv } from "../sandbox/command-env.js";
 import { readWorkspaceFile, isWithinWorkspace } from "../skills/workspace-files.js";
 
 export interface ProjectInstruction { path: string; scope: string; body: string; priority: number }
@@ -66,7 +67,8 @@ function isSensitive(relPath: string): boolean {
 const maxListed = 5;
 
 export function runGitInWorkspace(root: string, args: string[], input?: string): GitResult {
-  const env = { ...process.env };
+  // Without provider keys (ATO-175): the workspace's own git config can name commands git runs.
+  const env = buildCommandEnv(process.env);
   for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"]) delete env[key];
   return spawnSync("git", ["--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", ...args],
     { cwd: root, env, encoding: "utf8", timeout: 5000, maxBuffer: 1024 * 1024, windowsHide: true, ...(input !== undefined ? { input } : {}) });
