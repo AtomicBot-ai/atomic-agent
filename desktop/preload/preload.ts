@@ -299,6 +299,8 @@ contextBridge.exposeInMainWorld("atomic", {
     ipcRenderer.invoke("agent:telegramPairing", { op, replaceOwner: replaceOwner === true }),
   // ATO-758: the live channel's state and another poller of the same bot.
   telegramChannel: () => ipcRenderer.invoke("agent:telegramChannel"),
+  /** ATO-1094: the next-step suggestion stored after a chat's last turn (`{supported, text}`). */
+  nextStep: (sessionId: string) => ipcRenderer.invoke("agent:nextStep", sessionId),
   taskCreate: (input: { message: string; kind: string; expression: string; tz?: string }) =>
     ipcRenderer.invoke("cli:taskCreate", input),
   taskPreview: (form: Record<string, string>, now?: number) =>

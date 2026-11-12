@@ -1462,6 +1462,34 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-1094: the next-step suggestion the agent stored after this chat's last
+   * turn (ATO-1093), `GET /api/sessions/{id}/next-step` answering
+   * `{ sessionId, suggestion: string | null }`. `supported: false` on an agent
+   * without the route (its "No route for GET" 404), so the window stops asking;
+   * `text: null` when there is none yet, the chat is unknown, or the agent is
+   * not up. Never throws.
+   */
+  async nextStep(id: string): Promise<{ supported: true; text: string | null } | { supported: false }> {
+    try {
+      const res = await fetch(`${this.base()}/api/sessions/${encodeURIComponent(id)}/next-step`, {
+        headers: this.headers(),
+        signal: AbortSignal.timeout(5_000),
+      });
+      const body = (await res.json().catch(() => null)) as
+        | { suggestion?: unknown; error?: { message?: unknown } }
+        | null;
+      if (!res.ok) {
+        const msg = body && body.error && typeof body.error.message === "string" ? body.error.message : "";
+        return res.status === 404 && /^No route for /.test(msg) ? { supported: false } : { supported: true, text: null };
+      }
+      const text = body && typeof body.suggestion === "string" ? body.suggestion.trim() : "";
+      return { supported: true, text: text || null };
+    } catch {
+      return { supported: true, text: null };
+    }
+  }
+
+  /**
    * ATO-731: move one chat to another folder (`POST /api/sessions/{id}/working-dir`),
    * no restart. `supported: false` on an agent without the route; `busy` while
    * that chat runs a turn. With no stored chat yet (`id` null or unknown) only
