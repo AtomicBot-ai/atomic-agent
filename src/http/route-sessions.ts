@@ -1,6 +1,7 @@
 import { MAX_PENDING_STEERS } from "../runtime/steering-inbox.js";
 import type { SessionState } from "../session/session-state.js";
 import { readSessionTitle } from "../session/session-title.js";
+import { readSessionNextStep } from "../session/session-next-step.js";
 import { describeToolCall } from "../tools/describe-tool-call.js";
 import { openaiError } from "./openai-errors.js";
 import {
@@ -17,6 +18,9 @@ import {
  * transcript by default — callers fetch the full state via
  * `/api/sessions/{id}` when they need it. `title` is the generated
  * session name (`agent.nameSessions`), `null` until one is stored.
+ * `nextStep` is the suggested next message after the last answered turn
+ * (`agent.suggestNextStep`, ATO-1093): `null` when none is stored, the
+ * setting is off, a turn is running, or a later turn made it stale.
  */
 export function createListSessionsHandler(): HttpHandler {
   return async (req, res, ctx) => {
@@ -51,6 +55,7 @@ export function createListSessionsHandler(): HttpHandler {
         updatedAt: s.updatedAt,
         lastError: s.lastError,
         title: readSessionTitle(s.metadata),
+        nextStep: readSessionNextStep(s),
       })),
     });
   };
@@ -64,7 +69,7 @@ export function createListSessionsHandler(): HttpHandler {
  * the call in words as the live stream's `tool_progress.done_line` reads
  * once done ("Used github: create issue"). Built here from the stored
  * name and args, never stored, so a reopened chat labels its steps the
- * way they read while the turn ran.
+ * way they read while the turn ran. `nextStep` is as on the list rows.
  */
 export function createGetSessionHandler(): HttpHandler {
   return async (_req, res, ctx) => {
@@ -78,7 +83,11 @@ export function createGetSessionHandler(): HttpHandler {
       sendError(res, 404, openaiError(`session not found: ${id}`));
       return;
     }
-    sendJson(res, 200, withToolCallDoneLines(state));
+    // `nextStep`: the same fresh-only read the list rows carry (ATO-1093).
+    sendJson(res, 200, {
+      ...withToolCallDoneLines(state),
+      nextStep: readSessionNextStep(state),
+    });
   };
 }
 

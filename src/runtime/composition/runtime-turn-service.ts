@@ -1,7 +1,7 @@
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { getConfig } from "../../config/index.js";
 import type { AgentLoop } from "../../agent/agent-loop.js";
-import type { RunTurnResult } from "../../agent/agent-contract.js";
+import type { AgentLoopEvent, RunTurnResult } from "../../agent/agent-contract.js";
 import type { LlmStreamParams } from "../../agent/step/step-contract.js";
 import type { CompletionResult } from "../../llm/llama-server-client.js";
 import type { ReasoningEffort } from "../../llm/provider/completion-types.js";
@@ -31,6 +31,7 @@ import type { RuntimeProviders } from "./runtime-inference.js";
 import { captureModelModePolicy, resolveModelMode, type ModelModePolicy } from "../../llm/model-mode.js";
 import type { GoalSpec, GoalState } from "../../agent/goal/index.js";
 import { createRuntimeGoalRunner } from "./runtime-goal.js";
+import { createNextStepSuggester } from "./runtime-next-step.js";
 import { answerChannelForOrigin, type AnswerChannel } from "../../prompt/answer-style.js";
 
 export function prepareRuntimeTurnState() {
@@ -100,6 +101,12 @@ export interface RuntimeTurnDependencies {
     sessionUsage?: SessionUsageLedger;
   };
   state: RuntimeTurnState;
+  /**
+   * Session-scoped event sink for events that land after the turn ended
+   * (bootstrap's `emitAgentLoopEventFor`): the next-step suggestion
+   * (ATO-1093). Omitted (tests, embedders): the suggestion is only stored.
+   */
+  emitEvent?: (sessionId: string, event: AgentLoopEvent) => void;
   lifecycle: { isShutdown(): boolean };
   logger: StructuredLogger;
 }
@@ -271,6 +278,21 @@ export function createRuntimeTurnService(
       pendingSessionNamings.delete(abort);
     }
   };
+
+  // Next-step suggestion (ATO-1093): the namer's path, off unless
+  // `agent.suggestNextStep` turns it on. Shares the namer's teardown set.
+  const nextStep = createNextStepSuggester({
+    getConfig,
+    sessionStore,
+    llmComplete,
+    slotManager,
+    resolveTransport: () => resolveActiveLlmSlice().transport,
+    standingOverrideFor: (id) => fallbackChain.standingOverrideFor(id),
+    pending: pendingSessionNamings,
+    isShutdown: () => lifecycle.isShutdown(),
+    ...(deps.emitEvent ? { emitEvent: deps.emitEvent } : {}),
+    logger,
+  });
 
   /**
    * Mark the session's row `running` for the turn about to run, so the
@@ -552,6 +574,10 @@ export function createRuntimeTurnService(
           shouldNameSession(finished)
         ) {
           void nameSession(finished);
+        }
+        // Same contract as naming: fire-and-forget, never after a budget stop.
+        if (!stoppedForMoney(result.stopCause)) {
+          nextStep.maybeSuggest(finished, runOptions.origin);
         }
         // `finish` ended the whole session: its kept jobs go with it.
         if (finished.status === "completed") shellJobs.endSession(session.id);

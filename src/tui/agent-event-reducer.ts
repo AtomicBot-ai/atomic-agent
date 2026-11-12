@@ -542,6 +542,10 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       return pending?.sessionId === state.session.sessionId && pending?.text === event.text
         ? next : appendUserMessage(next, event.text);
     }
+    case "next_step_suggestion":
+      // Drawn by the composer ghost row (ATO-1095); listed here so the
+      // exhaustiveness check below holds until that lands.
+      return state;
     case "steer_applied":
       // A message the operator sent mid-turn, folded into the prompt of
       // the step named here. It renders INLINE in the running turn: same

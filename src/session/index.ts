@@ -141,6 +141,15 @@ export {
   SESSION_TITLE_USER_SET_AT_KEY,
 } from "./session-title.js";
 export {
+  NEXT_STEP_TIMEOUT_MS,
+  SESSION_NEXT_STEP_METADATA_KEY,
+  generateNextStep,
+  readSessionNextStep,
+  shouldSuggestNextStep,
+  turnInFlight,
+  type SessionNextStep,
+} from "./session-next-step.js";
+export {
   SESSION_USER_TITLE_MAX_CHARS,
   readUserTitleSetAt,
   validateUserSessionTitle,

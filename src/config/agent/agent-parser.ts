@@ -1,7 +1,7 @@
 import { parseCompactionConfig } from "./compaction-config.js";
 import { parsePromptConfig } from "./prompt-config.js";
 import type { ApprovalLevel } from "../../approval/approval-level.js";
-import type { AgentToolsConfig, ReadScope, ToolSearchMode, UserAgentConfig } from "./agent-types.js";
+import type { AgentToolsConfig, NextStepMode, ReadScope, ToolSearchMode, UserAgentConfig } from "./agent-types.js";
 import { ConfigValidationError } from "../config-validation-error.js";
 import {
   coerceIntLike,
@@ -204,7 +204,33 @@ export function parseAgentConfig(
     ),
     prompt: parsePromptConfig(agent.prompt, readDefaults().prompt),
     tools: parseAgentToolsConfig(agent.tools, readDefaults().tools),
+    // Written only when the file sets it: absent reads as `off`, and an
+    // older file parses to exactly what it parsed to before (ATO-1093).
+    ...(agent.suggestNextStep === undefined || agent.suggestNextStep === null
+      ? {}
+      : { suggestNextStep: parseNextStepMode(agent.suggestNextStep) }),
   };
+}
+
+export const NEXT_STEP_MODES: readonly NextStepMode[] = ["off", "local", "on"];
+
+/**
+ * `agent.suggestNextStep`: `off` | `local` | `on`. A boolean is read as
+ * the obvious mode (`true` = `on`, `false` = `off`) because a settings
+ * toggle is the natural thing to send; a word a newer build knows reads
+ * as `off` with a notice, like `agent.tools.search`.
+ */
+export function parseNextStepMode(raw: unknown): NextStepMode {
+  if (raw === true || raw === "true") return "on";
+  if (raw === false || raw === "false") return "off";
+  if (isSetAsideString(raw, NEXT_STEP_MODES, "agent.suggestNextStep", "off")) return "off";
+  if (typeof raw === "string" && (NEXT_STEP_MODES as readonly string[]).includes(raw)) {
+    return raw as NextStepMode;
+  }
+  throw new ConfigValidationError(
+    "agent.suggestNextStep",
+    `expected ${NEXT_STEP_MODES.join("|")}, got ${JSON.stringify(raw)}`,
+  );
 }
 
 /**

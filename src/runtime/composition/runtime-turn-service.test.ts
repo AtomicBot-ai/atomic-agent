@@ -394,6 +394,26 @@ describe("runtime turn ownership recipes", () => {
     expect(fixture.state.pendingSessionNamings.size).toBe(0);
   });
 
+  it("suggests a next step after an answered turn only when the setting is on (ATO-1093)", async () => {
+    const calls = vi.fn(async () => completion("Add tests for the parser"));
+    fixture.deps.execution.llmComplete = calls;
+    const emitted: Array<[string, unknown]> = [];
+    fixture.deps.emitEvent = (id, event) => { emitted.push([id, event]); };
+    let service = createRuntimeTurnService(fixture.config, fixture.deps);
+    await service.executeTurn(session("off"), "request");
+    await flushNaming();
+    expect(calls).not.toHaveBeenCalled();
+
+    fixture.config.agent.suggestNextStep = "on";
+    service = createRuntimeTurnService(fixture.config, fixture.deps);
+    const output = await service.executeTurn(session("on"), "request");
+    await flushNaming(); await flushNaming();
+    expect(calls).toHaveBeenCalledTimes(1);
+    expect(fixture.rows.get(output.session.id)?.metadata?.nextStep).toMatchObject({ text: "Add tests for the parser" });
+    expect(emitted).toEqual([["on", { type: "next_step_suggestion", text: "Add tests for the parser" }]]);
+    expect(fixture.state.pendingSessionNamings.size).toBe(0);
+  });
+
   it("makes no naming call after a turn that stopped for money (ATO-1350)", async () => {
     vi.useFakeTimers(); fixture.config.agent.nameSessions = true;
     const naming = vi.fn(async () => completion("Generated title"));

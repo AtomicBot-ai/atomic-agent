@@ -46,6 +46,25 @@ describe("/api/sessions", () => {
     expect(byId.get(unnamed.id)?.title).toBeNull();
   });
 
+  it("carries a fresh next-step suggestion on list rows and the full state (ATO-1093)", async () => {
+    const fresh = harness.runtime.createSession({
+      metadata: { nextStep: { text: "Add tests for the parser", afterTurn: 0, at: 1 } },
+    });
+    const stale = harness.runtime.createSession({
+      metadata: { nextStep: { text: "Old idea", afterTurn: 4, at: 1 } },
+    });
+    const list = (await (await fetch(`${harness.baseUrl}/api/sessions`)).json()) as {
+      sessions: Array<{ id: string; nextStep: string | null }>;
+    };
+    const byId = new Map(list.sessions.map((s) => [s.id, s]));
+    expect(byId.get(fresh.id)?.nextStep).toBe("Add tests for the parser");
+    expect(byId.get(stale.id)?.nextStep).toBeNull();
+    const full = (await (await fetch(`${harness.baseUrl}/api/sessions/${fresh.id}`)).json()) as {
+      nextStep: string | null;
+    };
+    expect(full.nextStep).toBe("Add tests for the parser");
+  });
+
   it("returns the full session state for a known id", async () => {
     const session = harness.runtime.createSession();
     const response = await fetch(
