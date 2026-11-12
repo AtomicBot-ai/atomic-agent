@@ -214,28 +214,39 @@ async function memoryPoll(js: Js, check: Check, agent: StandIn): Promise<void> {
     const keep = {settings: S.settings, pane: S.settingsPane, overlay: S.overlay, rows: MEM.rows, at: MEM.lastRefreshedAt, auto: MEM.auto, mode: MEM.mode,
       channel: MEM.channel, err: MEM.lastError, hint: MEM.channelHint, cursor: MEM.cursor, search: MEM.search};
     const reads = () => MEM.seq;
+    /* ATO-1414: a read on its way lands first (10 s at most). memAutoRefresh
+       rightly starts no read while one is loading, and on a loaded machine a
+       read took longer than the 150 ms each step used to give it: the next
+       step's trigger then counted 0 reads and failed in full runs only. */
+    const landed = async () => { for (const until = Date.now() + 10000; MEM.loading && Date.now() < until;) await tick(50); };
     try {
       Object.assign(MEM, {auto: true, mode: 'list', channel: 'profile', search: ''});
       S.overlay = null; S.settings = 1; S.settingsPane = 'memory'; render(); await tick(200);
       const visible = memoryVisible();
       // Shown again with rows already read: it reads again at once.
+      await landed();
       let n = reads(); MEM.lastRefreshedAt = Date.now() - 60000; memoryTabEntered(); await tick(150);
       const entered = reads() - n;
       // A read on its way lands first: a tick starts no other.
+      await landed();
       n = reads(); MEM.loading = true; MEM.loadingAt = Date.now(); memAutoRefresh(); await tick(100);
       const inFlight = reads() - n;
       n = reads(); MEM.loading = false; memAutoRefresh(); await tick(150);
       const landed = reads() - n;
       // The window back to the front reads again; paused, it does not.
+      await landed();
       n = reads(); window.dispatchEvent(new Event('focus')); await tick(150);
       const focus = reads() - n;
+      await landed();
       n = reads(); MEM.auto = false; window.dispatchEvent(new Event('focus')); await tick(150);
       const paused = reads() - n; MEM.auto = true;
+      await landed();
       n = reads(); document.dispatchEvent(new Event('visibilitychange')); await tick(150);
       const shown = document.hidden ? 1 : reads() - n;
-      // And the 5 s poll itself: a read, and the time it landed (a little slack for a busy machine).
+      // And the 5 s poll itself: a read, and the time it landed (ATO-1414: 15 s, slack for a loaded machine; it ends as soon as both are seen).
+      await landed();
       n = reads(); const before = MEM.lastRefreshedAt;
-      for (const until = Date.now() + 7000; Date.now() < until && !(reads() > n && MEM.lastRefreshedAt !== before);) await tick(200);
+      for (const until = Date.now() + 15000; Date.now() < until && !(reads() > n && MEM.lastRefreshedAt !== before);) await tick(200);
       return {visible, entered, inFlight, landed, focus, paused, shown, ticked: reads() - n, tickMoved: MEM.lastRefreshedAt !== before};
     } finally {
       MEM.seq++; MEM.loading = false;
@@ -278,6 +289,18 @@ async function jumpToRequest(js: Js, check: Check): Promise<void> {
       const jump = strip ? strip.querySelector('.ss-jump') : null;
       return {words: !!strip, jump: !!jump && !jump.hidden && jump.offsetParent !== null, card: !!document.getElementById('apprcard')};
     };
+    /* ATO-1414: the strip once it shows what the check expects, or as it is
+       after 3 s. Jump is synced on the scroll's animation frame and by an
+       IntersectionObserver, and on a loaded machine neither had run by the
+       time frame()'s 300 ms fallback fired. */
+    const lookFor = async (jump) => {
+      for (const until = Date.now() + 3000; Date.now() < until;) {
+        const l = look();
+        if (l.words && l.jump === jump) return l;
+        await frame();
+      }
+      return look();
+    };
     try {
       const card = {id: nid(), k: 'approval', approvalId: ${q(`${PREFIX}approval`)}, tool: 'os.shell.run', cat: 'shell', kind: 'shell',
         reason: 'smoke t107', preview: 'df -h /', sessionId: ${q(`${PREFIX}chat`)}, at: 'now'};
@@ -288,17 +311,17 @@ async function jumpToRequest(js: Js, check: Check): Promise<void> {
       S.log = [{id: nid(), k: 'user', text: 'smoke t107: check free disk space'}, card].concat(filler);
       S.pending = card; S.stick = true;
       render(); await frame();
-      const atEnd = look();
+      const atEnd = await lookFor(true);
       const sc = document.getElementById('scroller');
       const c = document.getElementById('apprcard');
       scrollTo(sc.scrollTop + c.getBoundingClientRect().top - sc.getBoundingClientRect().top - 16); await frame();
-      const onCard = look();
+      const onCard = await lookFor(false);
       scrollTo(sc.scrollHeight); await frame();
-      const back = look();
+      const back = await lookFor(true);
       // A chat short enough to show the card whole: no Jump from the first paint.
       S.log = [{id: nid(), k: 'user', text: 'smoke t107: check free disk space'}, card];
       render(); await frame();
-      return {atEnd, onCard, back, fits: look()};
+      return {atEnd, onCard, back, fits: await lookFor(false)};
     } finally {
       S.log = keep.log; S.pending = keep.pending; S.sessionId = keep.sessionId; S.agentSession = keep.agentSession; S.room = keep.room;
       S.stick = keep.stick; S.settings = keep.settings; S.overlay = keep.overlay; S.draft = keep.draft;
