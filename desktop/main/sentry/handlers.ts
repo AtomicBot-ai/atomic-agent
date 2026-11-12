@@ -17,7 +17,7 @@ import { app, type BrowserWindow } from "electron";
 import { noteSessionTrouble, windowCrashed } from "../analytics/index.js";
 import { reportError } from "./client.js";
 import type { AgentMemorySample } from "../agent-memory-sample.js";
-import { agentExitStatus, agentRssBucket, freeMemoryBucket, lastErrorCategory, shareBucket, uptimeBucket } from "./exit-reason.js";
+import { agentExitStatus, agentRssBucket, freeMemoryBucket, lastErrorCategory, lastErrorFacts, linesBucket, shareBucket, uptimeBucket } from "./exit-reason.js";
 
 /** Main process and app-wide events. Call once, early. */
 export function wireProcessErrorReporting(): void {
@@ -99,8 +99,11 @@ export function reportAgentExit(
   /** ATO-424: the machine at the exit — free memory in bytes, and whether the app was already quitting. */
   /* ATO-1111: and the agent's own last memory sample (agent-memory-sample.ts), sent as buckets:
      a growing agent (big rss, heap near its ceiling) reads apart from a small machine. */
-  machine: { freeMemBytes?: number | null; quitting?: boolean; agentMemory?: AgentMemorySample | null } = {},
+  machine: { freeMemBytes?: number | null; quitting?: boolean; agentMemory?: AgentMemorySample | null; linesSinceStart?: number | null } = {},
 ): void {
+  // ATO-1285: what the last lines say, as code / class / file words only (exit-reason.ts lastErrorFacts).
+  const facts = lastErrorFacts(lastLines);
+  const lines = linesBucket(machine.linesSinceStart);
   const sentinel = typeof detail.sentinelAlive === "boolean" ? (detail.sentinelAlive ? "yes" : "no") : undefined;
   // ATO-1111: 0xC000009A reads insufficient_resources; the memory guard's clean exit reads memory_guard.
   const status = agentExitStatus(detail.exitCode);
@@ -127,6 +130,10 @@ export function reportAgentExit(
       exit_code: detail.exitCode ?? undefined,
       reason: detail.signal ?? undefined,
       last_error: lastErrorCategory(lastLines),
+      ...(facts.err_code ? { err_code: facts.err_code } : {}),
+      ...(facts.err_type ? { err_type: facts.err_type } : {}),
+      ...(facts.err_file ? { err_file: facts.err_file } : {}),
+      ...(lines ? { agent_lines: lines } : {}),
       uptime: uptimeBucket(detail.uptimeMs) ?? undefined,
       ...(sentinel ? { sentinel_alive: sentinel } : {}),
     },

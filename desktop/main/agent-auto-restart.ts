@@ -7,7 +7,9 @@
  * again by itself: up to three attempts within five minutes, after pauses of
  * 1 s, 5 s and 20 s. The count of attempts is forgotten after ten minutes of
  * normal running. After the third failed attempt it stops trying and the
- * window offers a Restart agent button instead.
+ * window offers a Restart agent button instead, with Collect logs beside it
+ * and the cause when the agent's last lines named one (ATO-1285). An agent
+ * that dies while it boots counts too.
  *
  * A deliberate stop (quit, a folder change, a model switch, Restart Agent
  * Runtime) cancels an attempt that is waiting and forgets the count: it is
@@ -37,8 +39,11 @@ export type AutoRestartNotice =
   | { kind: "scheduled"; attempt: number; delayMs: number }
   /** The attempt brought the agent back. */
   | { kind: "restarted"; attempt: number }
-  /** The attempts ran out: the window offers the button. */
-  | { kind: "gave_up"; attempts: number }
+  /**
+   * The attempts ran out: the window offers Restart agent and Collect logs.
+   * ATO-1285: `cause` is the agent's last error in plain words, when it named one.
+   */
+  | { kind: "gave_up"; attempts: number; cause?: string | null }
   /** The count was forgotten: ten minutes of normal running, or a deliberate stop. */
   | { kind: "reset" };
 
@@ -48,6 +53,8 @@ export interface AutoRestartDeps {
   /** Starts the agent for attempt `attempt` (from 1) and answers the status it ended in. */
   start: (attempt: number) => Promise<{ state?: string } | null | undefined>;
   notify: (notice: AutoRestartNotice) => void;
+  /** ATO-1285: the last exit's cause in plain words, for the card shown when the attempts run out. */
+  cause?: () => string | null;
   now?: () => number;
   setTimer?: (fn: () => void, ms: number) => Timer;
   clearTimer?: (timer: Timer) => void;
@@ -61,6 +68,8 @@ export class AgentAutoRestart {
   /** Moves at every cancel: an attempt that began before it says nothing and schedules nothing. */
   private epoch = 0;
   private armed = true;
+  /** An attempt's start is under way: an exit now is judged by `fire`, not counted again by `exited`. */
+  private firing = false;
   private readonly now: () => number;
   private readonly setTimer: (fn: () => void, ms: number) => Timer;
   private readonly clearTimer: (timer: Timer) => void;
@@ -98,12 +107,16 @@ export class AgentAutoRestart {
   }
 
   /**
-   * AgentClient's `unexpected-exit`. Only an agent that was running counts:
-   * one that died while it booted is the start's own failure, which an
-   * attempt judges from the status its start ends in.
+   * AgentClient's `unexpected-exit`. An agent that was running counts, and
+   * (ATO-1285) so does one that died while it booted: before, a crash at
+   * start-up left "agent stopped" with no button, and the person relaunched
+   * the app into the same crash again and again. An exit while one of our
+   * own attempts is starting is that attempt's failure, which `fire` judges
+   * from the status the start ends in, so it is not counted twice.
    */
   exited(phase: string | undefined): "scheduled" | "gave_up" | "ignored" {
-    if (!this.armed || phase !== "running" || this.timer !== null) return "ignored";
+    if (!this.armed || (phase !== "running" && phase !== "starting") || this.timer !== null) return "ignored";
+    if (this.firing) return "ignored";
     return this.next();
   }
 
@@ -136,7 +149,8 @@ export class AgentAutoRestart {
     const now = this.now();
     this.attempts = this.attempts.filter((at) => now - at < AUTO_RESTART_WINDOW_MS);
     if (this.attempts.length >= AUTO_RESTART_DELAYS_MS.length) {
-      this.deps.notify({ kind: "gave_up", attempts: this.attempts.length });
+      const cause = this.deps.cause?.() ?? null;
+      this.deps.notify({ kind: "gave_up", attempts: this.attempts.length, ...(cause ? { cause } : {}) });
       return "gave_up";
     }
     const delayMs = AUTO_RESTART_DELAYS_MS[this.attempts.length]!;
@@ -152,10 +166,13 @@ export class AgentAutoRestart {
     this.timer = null;
     if (epoch !== this.epoch) return;
     let status: { state?: string } | null | undefined = null;
+    this.firing = true;
     try {
       status = await this.deps.start(attempt);
     } catch {
       status = null;
+    } finally {
+      this.firing = false;
     }
     // A stop came while it started: that stop's caller starts what it wants.
     if (epoch !== this.epoch) return;

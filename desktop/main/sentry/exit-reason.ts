@@ -11,7 +11,10 @@
  */
 
 export const LAST_ERROR_CATEGORIES = [
-  "oom", "port_in_use", "econnrefused", "sqlite", "telegram_conflict", "permission", "missing_file", "none", "other",
+  "oom", "port_in_use", "econnrefused", "sqlite", "telegram_conflict", "permission", "missing_file",
+  // ATO-1285: most 0.0.7 exits were "other" or "none"; the start-up failures seen in agent.log files.
+  "native_module", "file_locked", "config_invalid", "network", "disk_full", "node_runtime", "uncaught",
+  "none", "other",
 ] as const;
 export type LastErrorCategory = (typeof LAST_ERROR_CATEGORIES)[number];
 
@@ -19,7 +22,7 @@ export type LastErrorCategory = (typeof LAST_ERROR_CATEGORIES)[number];
 export const LAST_LINES = 12;
 
 /** One line's category, or null when it names none of them. Order matters: the more telling cause first. */
-function categoryOf(line: string): Exclude<LastErrorCategory, "none" | "other"> | null {
+function categoryOf(line: string): Exclude<LastErrorCategory, "none" | "other" | "uncaught"> | null {
   if (/out of memory|ENOMEM|heap limit|allocation failed/i.test(line)) return "oom";
   if (/EADDRINUSE|address already in use/i.test(line)) return "port_in_use";
   if (/terminated by other getUpdates|telegram\b.*\b(409|conflict)\b/i.test(line)) return "telegram_conflict";
@@ -27,7 +30,98 @@ function categoryOf(line: string): Exclude<LastErrorCategory, "none" | "other"> 
   if (/EACCES|EPERM|permission denied|operation not permitted/i.test(line)) return "permission";
   if (/ENOENT|no such file or directory|cannot find module/i.test(line)) return "missing_file";
   if (/ECONNREFUSED/i.test(line)) return "econnrefused";
+  // ATO-1285: a native addon (better-sqlite3, the speech helper) that does not load on this machine.
+  if (/NODE_MODULE_VERSION|ERR_DLOPEN_FAILED|was compiled against a different Node|not a valid Win32 application|specified module could not be found|invalid ELF header|\.node\b.*(cannot open|failed)/i.test(line)) return "native_module";
+  if (/EBUSY|resource busy or locked|being used by another process/i.test(line)) return "file_locked";
+  if (/ENOSPC|no space left on device|disk is full/i.test(line)) return "disk_full";
+  if (/invalid config|config(uration)? (is )?invalid|could not (read|parse) (the )?config|Unexpected token .* in JSON|JSON\.parse|SyntaxError: .*JSON|YAMLException|ZodError/i.test(line)) return "config_invalid";
+  if (/ENOTFOUND|ETIMEDOUT|EAI_AGAIN|ECONNRESET|ENETUNREACH|getaddrinfo|certificate|UNABLE_TO_VERIFY_LEAF_SIGNATURE|SELF_SIGNED_CERT/i.test(line)) return "network";
+  if (/ERR_REQUIRE_ESM|ERR_UNKNOWN_FILE_EXTENSION|ERR_UNSUPPORTED|requires Node(\.js)? |Node\.js v\d+.* is not supported|SyntaxError: Unexpected token/i.test(line)) return "node_runtime";
   return null;
+}
+
+/**
+ * ATO-1285: a crash that named no cause above — an uncaught exception, a
+ * failed serve, or a bare stack trace. Checked only after every line was
+ * read for a telling cause, since a trace's frames come after its message.
+ */
+function looksLikeCrash(line: string): boolean {
+  return /uncaught|unhandled (promise )?rejection|serve failed:|^\S*\s*at .+:\d+(:\d+)?\)?\s*$/i.test(line);
+}
+
+/** A Node / system error code in a line: `ENOENT`, `ERR_DLOPEN_FAILED`, `SQLITE_BUSY`. Codes only, never text around them. */
+const ERR_CODE_RE = /\b(E[A-Z]{3,15}|ERR_[A-Z0-9_]{3,48}|SQLITE_[A-Z_]{2,32})\b/g;
+/** An error class name: `TypeError`, `SqliteError`, `ZodError`. */
+const ERR_TYPE_RE = /\b([A-Z][A-Za-z0-9]{1,48}(?:Error|Exception))\b/g;
+/** A stack frame's file: the last path segment of `at fn (…/serve-command.js:162:7)`, kept only when it is a code file. */
+const FRAME_FILE_RE = /\bat\b.*?([\w.@-]{1,80}\.(?:m?js|cjs|ts|node)):(\d{1,6})(?::\d+)?\)?\s*$/;
+
+/** The newest match of `re` across `lines`, newest line first. */
+function newestMatch(lines: readonly string[], re: RegExp, pick: (m: RegExpExecArray) => string): string | null {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i] ?? "";
+    let last: string | null = null;
+    re.lastIndex = 0;
+    if (re.global) {
+      let m: RegExpExecArray | null;
+      while ((m = re.exec(line)) !== null) last = pick(m);
+    } else {
+      const m = re.exec(line);
+      if (m) last = pick(m);
+    }
+    if (last) return last;
+  }
+  return null;
+}
+
+/**
+ * ATO-1285 — what the agent's last lines say went wrong, as tag-shaped words
+ * only: an error code, an error class name and the code file of the first
+ * stack frame it printed. No message text, no path, no number other than a
+ * line in our own code, so nothing a person typed or a folder name can get
+ * into a report. Null fields are left out of the report.
+ */
+export function lastErrorFacts(lines: readonly string[]): { err_code: string | null; err_type: string | null; err_file: string | null } {
+  const recent = lines.slice(Math.max(0, lines.length - LAST_LINES)).filter((l) => typeof l === "string" && l.trim());
+  const code = newestMatch(recent, ERR_CODE_RE, (m) => m[1]!);
+  const type = newestMatch(recent, ERR_TYPE_RE, (m) => m[1]!);
+  // The first frame printed is where it was thrown: read oldest first.
+  let file: string | null = null;
+  for (const line of recent) {
+    const m = FRAME_FILE_RE.exec(line);
+    if (m) { file = `${m[1]}:${m[2]}`; break; }
+  }
+  return { err_code: code, err_type: type, err_file: file };
+}
+
+/** ATO-1285: how many lines the agent wrote before it exited, as a bucket. "0" tells a silent death from a filtered one. */
+export function linesBucket(n: number | null | undefined): "0" | "1_5" | "6_50" | "gt_50" | null {
+  if (typeof n !== "number" || !Number.isFinite(n) || n < 0) return null;
+  if (n === 0) return "0";
+  if (n <= 5) return "1_5";
+  if (n <= 50) return "6_50";
+  return "gt_50";
+}
+
+/** ATO-1285: a category in plain words, for the card the window shows once the restarts ran out. Null for none / other. */
+export function lastErrorSentence(category: LastErrorCategory): string | null {
+  switch (category) {
+    case "oom": return "The computer ran out of memory.";
+    case "port_in_use": return "Another program is using the agent's network port.";
+    case "econnrefused": return "The agent could not reach a service it needs.";
+    case "sqlite": return "The agent's database could not be opened.";
+    case "telegram_conflict": return "Another copy of the agent is connected to the same Telegram bot.";
+    case "permission": return "The agent was not allowed to open a file or folder it needs.";
+    case "missing_file": return "A file the agent needs is missing.";
+    case "native_module": return "Part of the agent does not load on this computer.";
+    case "file_locked": return "A file the agent needs is locked by another program (often antivirus or a second copy of the app).";
+    case "config_invalid": return "The agent's settings file could not be read.";
+    case "network": return "A network error stopped the agent while it started.";
+    case "disk_full": return "The disk is full.";
+    case "node_runtime": return "The agent's runtime does not match this install.";
+    case "uncaught": return "The agent hit an internal error.";
+    default: return null;
+  }
 }
 
 /**
@@ -42,6 +136,7 @@ export function lastErrorCategory(lines: readonly string[]): LastErrorCategory {
     const c = categoryOf(recent[i]!);
     if (c) return c;
   }
+  if (recent.some(looksLikeCrash)) return "uncaught";
   return "other";
 }
 

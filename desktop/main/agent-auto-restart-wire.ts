@@ -18,12 +18,15 @@ export interface AutoRestartHost {
   say: (line: string) => void;
   /** Off in a smoke run, whose checks end agents on purpose. */
   armed: boolean;
+  /** ATO-1285: the exiting agent's last error in plain words, or null. */
+  cause?: () => string | null;
 }
 
 export function wireAgentAutoRestart(client: AgentClient, host: AutoRestartHost): AgentAutoRestart {
   const tagAttempt = (n: number) => setSourceTags("agent-exit", { auto_restart_attempt: n });
   tagAttempt(0);
   const restarter = new AgentAutoRestart({
+    ...(host.cause ? { cause: host.cause } : {}),
     start: (attempt) => {
       // The agent this attempt brings up reports its exit as started by it.
       tagAttempt(attempt);
@@ -37,7 +40,7 @@ export function wireAgentAutoRestart(client: AgentClient, host: AutoRestartHost)
       } else if (notice.kind === "restarted") {
         host.say(`[desktop] the agent is running again after an automatic restart (attempt ${notice.attempt})`);
       } else if (notice.kind === "gave_up") {
-        host.say(`[desktop] the agent exited unexpectedly again after ${notice.attempts} automatic restarts; not restarting it until asked`);
+        host.say(`[desktop] the agent exited unexpectedly again after ${notice.attempts} automatic restarts; not restarting it until asked${notice.cause ? ` (${notice.cause})` : ""}`);
       }
       host.send("agent:autoRestart", notice);
     },
