@@ -484,6 +484,15 @@ export interface WorkerRunnerDeps {
   /** `LlamaServerClient.probeHealth`, the question the check above asks. */
   probeLocalHealth?: () => Promise<LocalHealthAnswer>;
   /**
+   * The probe for one local leg's own server (ATO-1318), or `undefined`
+   * when nothing can ask that server; then the check is skipped for it.
+   * When set it replaces `probeLocalHealth`, which only ever asks the
+   * main local server.
+   */
+  probeLocalHealthFor?: (
+    providerId: string,
+  ) => (() => Promise<LocalHealthAnswer>) | undefined;
+  /**
    * One completion on the escalation provider (ATO-942). Absent, nothing
    * is ever escalated, manual or automatic.
    */
@@ -726,12 +735,15 @@ async function runOneTask(
     options.localLeg === true &&
     deps.localLegHealth !== undefined &&
     !(await deps.localLegHealth.readyForDispatch(
-      deps.probeLocalHealth,
+      deps.probeLocalHealthFor !== undefined
+        ? deps.probeLocalHealthFor(options.providerId)
+        : deps.probeLocalHealth,
       undefined,
       options.signal,
+      options.providerId,
     ))
   ) {
-    const cause = deps.localLegHealth.cause();
+    const cause = deps.localLegHealth.cause(options.providerId);
     const refused: WorkerTaskResult = {
       ...collector.finish({
         id: task.id,
@@ -1662,7 +1674,10 @@ async function runOneTask(
   // its hand-back or the operator — may have left the server wedged
   // (ATO-917); the next local dispatch asks the server first.
   if (options.localLeg === true && localCut) {
-    deps.localLegHealth?.noteCut(`task ${task.id} was ${localCutCause}`);
+    deps.localLegHealth?.noteCut(
+      `task ${task.id} was ${localCutCause}`,
+      options.providerId,
+    );
   }
 
   // How long the server took to say anything. The one number that tells
