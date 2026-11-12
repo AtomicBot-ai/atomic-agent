@@ -26,8 +26,8 @@ import {
   type ProviderErrorBody,
 } from "./parse-provider-error-body.js";
 import {
-  LOCAL_BAD_REQUEST_ADVICE,
   LOCAL_BAD_REQUEST_SENTENCE,
+  localBadRequestAdvice,
   localBadRequestKind,
 } from "./local-bad-request.js";
 import { isToolSchemaErrorText } from "./tool-schema-rejection.js";
@@ -351,24 +351,25 @@ function localServerNotFoundSentence(url: string, status: 404 | 405): string {
 
 /**
  * A 400 from a server on this machine whose body says why (ATO-707,
- * ATO-737): the conversation outgrew the context window, or the server
- * would not accept something in the request. Plain words and what to
- * do, instead of "rejected the request (400)". Keeps "(400)" so the
- * desktop still reads it as the provider having replied. A context
- * overflow leaves the server's own words out: the agent loop appends
- * the size excerpt for that one (`isRequestSizeRejection`). Null for a
- * 400 whose body names neither reason.
+ * ATO-737, ATO-1209): the conversation outgrew the context window, the
+ * server takes no tool calls, or it would not accept something else in
+ * the request. Plain words and what to do, instead of "rejected the
+ * request (400)". Keeps "(400)" so the desktop still reads it as the
+ * provider having replied. A context overflow leaves the server's own
+ * words out: the agent loop appends the size excerpt for that one
+ * (`isRequestSizeRejection`). Null for a 400 whose body names no reason.
  */
 function localBadRequestSentence(err: OpenAiHttpError): string | null {
   const raw = err.message.replace(/^openai provider \d+:\s*/, "");
   const type = err.body?.type ?? parseProviderErrorBody(raw).type;
-  const kind = localBadRequestKind(err.status, type, err.body?.text ?? raw);
+  const text = err.body?.text ?? raw;
+  const kind = localBadRequestKind(err.status, type, text);
   if (kind === null) return null;
   const program = localServerProgram(err.url);
   const server = program === null ? "The local server" : `The local ${program} server`;
   const head =
     `${server} at ${hostOf(err.url)} turned the request down (400). ` +
-    `${LOCAL_BAD_REQUEST_SENTENCE[kind]} ${LOCAL_BAD_REQUEST_ADVICE[kind]}`;
+    `${LOCAL_BAD_REQUEST_SENTENCE[kind]} ${localBadRequestAdvice(kind, text)}`;
   if (kind === "context_exceeded") return head;
   const own = providerReason(err);
   return own ? `${head} The server said: ${own}` : head;

@@ -69,6 +69,7 @@ export {
   LOCAL_SERVER_NOT_FOUND_MESSAGE,
   LOCAL_SERVER_RECHECK_COMMAND,
   LOCAL_SERVER_RECHECK_HINT,
+  LOCAL_TOOLS_UNSUPPORTED_CODE,
   classifyLocalServerError,
   isUnreportedLocalServerFailure,
   localServerErrorLines,

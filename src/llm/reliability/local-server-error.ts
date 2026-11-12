@@ -2,8 +2,8 @@ import { LlamaServerError } from "../llama-server-client.js";
 import { llamaLegacyPortNote } from "../llama-default-port-note.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import {
-  LOCAL_BAD_REQUEST_ADVICE,
   LOCAL_BAD_REQUEST_SENTENCE,
+  localBadRequestAdvice,
   localBadRequestKind,
   type LocalBadRequestKind,
 } from "../provider/openai/local-bad-request.js";
@@ -32,6 +32,9 @@ import {
  *    server, or no model is loaded behind the route.
  *  - `local_context_exceeded`: a local server answered 400 because the
  *    conversation outgrew the model's context window.
+ *  - `local_tools_unsupported`: a local server answered 400 saying it
+ *    does not take tool calls (llama-server without `--jinja`, an Ollama
+ *    model without tool support), typed body or not (ATO-1209).
  *  - `local_request_invalid`: a local server answered 400 with
  *    `invalid_request_error` for anything else.
  *  - `atomic_chat_key_required`: the `atomic-chat` provider answered
@@ -51,6 +54,7 @@ export const LOCAL_SERVER_NOT_FOUND_CODE = "local_server_not_found";
  */
 export const LOCAL_PROVIDER_NOT_FOUND_CODE = "local_provider_not_found";
 export const LOCAL_CONTEXT_EXCEEDED_CODE = "local_context_exceeded";
+export const LOCAL_TOOLS_UNSUPPORTED_CODE = "local_tools_unsupported";
 export const LOCAL_REQUEST_INVALID_CODE = "local_request_invalid";
 export const ATOMIC_CHAT_KEY_REQUIRED_CODE = "atomic_chat_key_required";
 
@@ -58,6 +62,7 @@ export type LocalServerErrorCode =
   | typeof LOCAL_SERVER_NOT_FOUND_CODE
   | typeof LOCAL_PROVIDER_NOT_FOUND_CODE
   | typeof LOCAL_CONTEXT_EXCEEDED_CODE
+  | typeof LOCAL_TOOLS_UNSUPPORTED_CODE
   | typeof LOCAL_REQUEST_INVALID_CODE
   | typeof ATOMIC_CHAT_KEY_REQUIRED_CODE
   | typeof LOCAL_PORT_TAKEN_CODE;
@@ -96,6 +101,7 @@ const MAX_CAUSE_DEPTH = 5;
 
 const BAD_REQUEST_CODE: Readonly<Record<LocalBadRequestKind, LocalServerErrorCode>> = {
   context_exceeded: LOCAL_CONTEXT_EXCEEDED_CODE,
+  tools_unsupported: LOCAL_TOOLS_UNSUPPORTED_CODE,
   invalid_request: LOCAL_REQUEST_INVALID_CODE,
 };
 
@@ -108,9 +114,9 @@ const BAD_REQUEST_CODE: Readonly<Record<LocalBadRequestKind, LocalServerErrorCod
  *
  *  - `LlamaServerError` is the llama.cpp route by definition. A 404/405
  *    is `local_server_not_found`; a 400 whose body names its reason is
- *    one of the two 400 codes.
+ *    one of the three 400 codes.
  *  - `OpenAiHttpError` counts only for a URL on this machine, and only
- *    for a typed 400. Its 404/405 already has a sentence of its own
+ *    for a 400 that names its reason. Its 404/405 already has a sentence of its own
  *    (ATO-871), and the Reconnect check probes the llama.cpp address,
  *    not an OpenAI-compatible provider's, so it gets no code here.
  *
@@ -212,7 +218,7 @@ function badRequest(
     status: 400,
     url,
     message: LOCAL_BAD_REQUEST_SENTENCE[kind],
-    advice: LOCAL_BAD_REQUEST_ADVICE[kind],
+    advice: localBadRequestAdvice(kind, text),
   };
 }
 

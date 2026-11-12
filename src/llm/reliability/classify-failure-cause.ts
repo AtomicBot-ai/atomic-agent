@@ -19,6 +19,7 @@ import {
   ATOMIC_CHAT_KEY_REQUIRED_CODE,
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_REQUEST_INVALID_CODE,
+  LOCAL_TOOLS_UNSUPPORTED_CODE,
   classifyLocalServerError,
 } from "./local-server-error.js";
 import { LOCAL_PORT_TAKEN_CODE } from "./local-port-taken.js";
@@ -100,6 +101,8 @@ function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (local !== null) {
     if (local.code === LOCAL_CONTEXT_EXCEEDED_CODE) return "context_too_long";
     if (local.code === LOCAL_REQUEST_INVALID_CODE) return "request_rejected";
+    // ATO-1209: the server will not take tools; a request it refused, like any other.
+    if (local.code === LOCAL_TOOLS_UNSUPPORTED_CODE) return "request_rejected";
     // ATO-1274: a key to paste, the same button as any refused key.
     if (local.code === ATOMIC_CHAT_KEY_REQUIRED_CODE) return "auth_rejected";
     if (local.code === LOCAL_PORT_TAKEN_CODE) return "local_port_taken";

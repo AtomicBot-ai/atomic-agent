@@ -148,6 +148,21 @@ const SAMPLES: ReadonlyArray<
     "request_rejected",
     "switch-model",
   ],
+  [
+    "llama-server started without --jinja refusing tools (ATO-1209)",
+    stepFailure(
+      new LlamaServerError(
+        "llama-server returned http 400: tools param requires --jinja flag",
+        400,
+        LLAMA,
+        false,
+        undefined,
+        { body: { type: "invalid_request_error" } },
+      ),
+    ),
+    "request_rejected",
+    "switch-model",
+  ],
   ["a 429 rate limit", stepFailure(http(429, "slow down")), "rate_limited", "retry"],
   ["an empty completion", new ModelError("empty", "model returned empty content"), "empty_response", "retry"],
   [

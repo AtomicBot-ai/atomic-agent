@@ -42,6 +42,36 @@ describe("localBadRequestKind", () => {
     expect(localBadRequestKind(413, "exceed_context_size_error")).toBeNull();
     expect(localBadRequestKind(null, "invalid_request_error")).toBeNull();
   });
+
+  it("reads a server that takes no tool calls, typed body or not (ATO-1209)", () => {
+    // llama-server started without --jinja: a typed invalid_request_error.
+    expect(localBadRequestKind(400, "invalid_request_error", "tools param requires --jinja flag")).toBe(
+      "tools_unsupported",
+    );
+    expect(localBadRequestKind(400, "invalid_request_error", "tool_choice param requires --jinja flag")).toBe(
+      "tools_unsupported",
+    );
+    // Ollama: a plain string `error`, so no type at all.
+    expect(
+      localBadRequestKind(400, undefined, '{"error":"registry.ollama.ai/library/gemma2:2b does not support tools"}'),
+    ).toBe("tools_unsupported");
+    expect(localBadRequestKind(400, undefined, "tool(s) not supported")).toBe("tools_unsupported");
+    expect(localBadRequestKind(400, undefined, "Tools are not supported by this model")).toBe("tools_unsupported");
+    // A full context still wins, and other statuses stay untouched.
+    expect(localBadRequestKind(400, "exceed_context_size_error", "tools param requires --jinja flag")).toBe(
+      "context_exceeded",
+    );
+    expect(localBadRequestKind(500, undefined, "does not support tools")).toBeNull();
+  });
+
+  it("leaves other bare 400s and near-miss wording alone", () => {
+    expect(localBadRequestKind(400, undefined, "")).toBeNull();
+    expect(localBadRequestKind(400, undefined, "Unknown role: tool")).toBeNull();
+    // The native message shape refused: the provider falls back from it on its own.
+    expect(localBadRequestKind(400, undefined, "tool_calls is not supported")).toBeNull();
+    expect(localBadRequestKind(400, undefined, "image input is not supported for this model")).toBeNull();
+    expect(localBadRequestKind(400, "invalid_request_error", "Unknown role: tool")).toBe("invalid_request");
+  });
 });
 
 describe("humanizeOpenAiHttpError: a typed 400 from a server on this machine (ATO-707, ATO-737)", () => {
@@ -68,6 +98,32 @@ describe("humanizeOpenAiHttpError: a typed 400 from a server on this machine (AT
     );
     expect(text).toContain("The local Atomic Chat server at 127.0.0.1:1337 turned the request down (400).");
     expect(text).toContain("context window");
+  });
+
+  it("says llama-server takes no tool calls without --jinja, and what to do (ATO-1209)", () => {
+    const body = JSON.stringify({
+      error: { code: 400, message: "tools param requires --jinja flag", type: "invalid_request_error" },
+    });
+    const text = humanizeOpenAiHttpError(http(400, "http://127.0.0.1:9931/v1/chat/completions", body));
+    expect(text).toBe(
+      "The local server at 127.0.0.1:9931 turned the request down (400). " +
+        "This local server doesn't accept tool calls. " +
+        "Start llama-server with --jinja, or pick a model that supports tools. " +
+        "The server said: tools param requires --jinja flag",
+    );
+  });
+
+  it("reads Ollama's plain string error about tools, though it has no type (ATO-1209)", () => {
+    const body = JSON.stringify({ error: "registry.ollama.ai/library/gemma2:2b does not support tools" });
+    for (const withBody of [true, false]) {
+      const text = humanizeOpenAiHttpError(http(400, "http://localhost:11434/v1/chat/completions", body, withBody));
+      expect(text).toContain("The local Ollama server at localhost:11434 turned the request down (400).");
+      expect(text).toContain("This local server doesn't accept tool calls.");
+      expect(text).toContain("Pick a model that supports tools, or turn on tool calling in the server.");
+      // Ollama is not llama-server: no --jinja advice (the server's own
+      // words are quoted after "The server said:", and name no flag).
+      expect(text).not.toContain("--jinja");
+    }
   });
 
   it("keeps the old wording for an untyped local 400 and for a cloud 400", () => {
