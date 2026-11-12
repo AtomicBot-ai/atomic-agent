@@ -3880,6 +3880,7 @@ function apprCard(m) {
      05.10: their keys, ⌘↩ and ⌘. (Ctrl off macOS), are named on the
      buttons of the card they answer (S.pending); Abort run is a button only. */
   const why = apprWhy(m);
+  const risk = apprRiskLine(m);   // ATO-1268, plain text
   const res = apprResource(m);
   const typed = !!(m.approvalId && m.sessionId && m.sessionId === S.agentSession);
   const pv = String(m.preview || '').trim();
@@ -3898,6 +3899,7 @@ function apprCard(m) {
     + '<div class="apprhead"><span class="apprico">' + ic(isTrust ? 'lock' : 'shield') + '</span>'
       + '<div class="apprmain"><div class="ttl">' + apprAsk(m) + '</div>'
       + (why ? '<div class="apprwhy">' + why + '</div>' : '')
+      + (risk ? '<div class="apprrisk' + (m.riskLevel === 'high' ? ' high' : '') + '">' + esc(risk) + '</div>' : '')
       + (res ? '<div class="apprres">' + res + '</div>' : '')
     + '</div></div>'
     + '<div class="apprbtns">'
@@ -11694,6 +11696,8 @@ function onApprovalEvent(payload) {
     // ATO-1142: the agent can save an allow rule for this request, and the words it uses for it.
     canAlways: payload.canAlways === true,
     alwaysLabel: typeof payload.alwaysLabel === 'string' ? payload.alwaysLabel : '',
+    // ATO-1268: smart approval's verdict (riskNote / riskLevel / riskReason), absent from an older agent.
+    ...apprRiskFields(payload),
     affectsBase: cut >= 0 ? String(first).slice(cut + 1) : String(first),
     affectsDir: cut >= 0 ? String(first).slice(0, cut + 1) : '',
     sessionGrants: false,

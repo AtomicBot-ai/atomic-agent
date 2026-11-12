@@ -366,6 +366,9 @@
 .appr .ttl{font-size:var(--fs-lead);line-height:1.4;font-weight:600;letter-spacing:-.01em;color:var(--ink);overflow-wrap:anywhere}
 .appr .ttl code,.apprwhy code{padding:1px 6px;border-radius:var(--r-kbd);background:var(--hover);font:500 .9em/1.4 var(--font-mono);color:var(--ink)}
 .apprwhy{font-size:var(--fs-cap);line-height:1.5;color:var(--ink-2);overflow-wrap:anywhere}
+/* ATO-1268: smart approval's verdict, "Risk check: medium. …"; high in the critical red */
+.apprrisk{font-size:var(--fs-cap);line-height:1.5;font-weight:500;color:var(--amber-text);overflow-wrap:anywhere}
+.apprrisk.high{color:var(--critical)}
 .apprres{padding-top:4px}
 .pathchip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:2px 6px;max-width:100%;min-height:24px;padding:2px 10px 2px 8px;
   border-radius:var(--r-pill);background:var(--hover);color:var(--ink-2);font-size:var(--fs-label);line-height:1.4}
