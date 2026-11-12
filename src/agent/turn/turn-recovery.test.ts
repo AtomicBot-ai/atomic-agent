@@ -48,6 +48,7 @@ describe("turn recovery decisions and shared state", () => {
     first.reason = "cancelled";
     expect(Object.keys(second)).toHaveLength(22);
     expect(second.truncationRetry).toBeNull();
+    expect(second.localStreamCutRetry).toBeNull();
     expect(second.reason).toBe("max_steps");
     expect(second.lastBoundaryIndex).toBe(-1);
   });
