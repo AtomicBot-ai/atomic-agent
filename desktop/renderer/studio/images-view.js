@@ -32,16 +32,20 @@ function simgvTop(IM) {
 function simgvSource(IM, slot, label, sub) {
   const s = slot === 'mask' ? IM.form.mask : IM.form.source;
   const picking = IM.picking === slot;
+  // ATO-807: in Inpaint the mask can be painted on the source itself (studio/mask-painter.js).
+  const paint = slot === 'mask' && IM.form.mode === 'inpaint' && !!IM.form.source;
   if (s) {
     return '<div class="st-drop filled" data-drop="' + slot + '">'
       + '<div class="st-src" data-pic="' + esc(s.key) + '"></div>'
-      + '<div class="st-dropt"><div class="dt">' + esc(s.name || 'Image') + '</div><div class="ds">' + esc(s.note || '') + '</div></div>'
+      + '<div class="st-dropt"><div class="dt">' + esc(s.name || 'Image') + '</div><div class="ds">' + esc(s.note || '') + '</div>'
+        + (paint ? '<div class="st-droplinks"><button class="st-link" ' + SIMGV_A('paintmask') + '>' + (s.painted ? 'Keep painting' : 'Paint instead') + '</button></div>' : '') + '</div>'
       + '<button class="iconbtn st-x" ' + SIMGV_A('clear:' + slot) + ' title="Remove" aria-label="Remove">' + ic('x') + '</button></div>';
   }
   return '<div class="st-drop' + (picking ? ' picking' : '') + '" data-drop="' + slot + '">'
     + '<div class="st-di">' + ic('upload') + '</div>'
     + '<div class="st-dropt"><div class="dt">' + esc(label) + '</div><div class="ds">' + esc(sub) + '</div>'
-      + '<div class="st-droplinks"><button class="st-link" ' + SIMGV_A('pick:' + slot) + '>Choose file</button>'
+      + '<div class="st-droplinks">' + (paint ? '<button class="st-link" ' + SIMGV_A('paintmask') + '>Paint on the picture</button>' : '')
+      + '<button class="st-link" ' + SIMGV_A('pick:' + slot) + '>Choose file</button>'
       + '<button class="st-link" ' + SIMGV_A('fromlib:' + slot) + '>' + (picking ? 'Click a picture below' : 'Pick from gallery') + '</button></div></div></div>';
 }
 
@@ -171,7 +175,9 @@ function simgvForm(IM) {
   if (f.mode === 'reference') parts.push(simgvRefs(IM, model));
   if (f.mode === 'inpaint' || f.mode === 'extend') {
     parts.push('<div><div class="st-lbl">Mask <span class="r">white = redraw</span></div>'
-      + simgvSource(IM, 'mask', 'Add a mask', 'Same size as the source. White areas get redrawn.') + '</div>');
+      + (f.mode === 'inpaint'
+        ? simgvSource(IM, 'mask', 'Mark what to change', f.source ? 'Paint over it with a brush, or add a mask file (white = redraw).' : 'Add the source picture first, then paint over what to change.')
+        : simgvSource(IM, 'mask', 'Add a mask', 'Same size as the source. White areas get redrawn.')) + '</div>');
   }
   if (f.mode !== 'upscale') parts.push(simgvAspects(IM, model));
   parts.push(simgvCountRow(IM, model));
