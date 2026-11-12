@@ -134,6 +134,16 @@ export interface ApprovalResponsePayload {
    * other fails the request and the approval stays pending.
    */
   grant?: "session" | "shape" | "always";
+  /**
+   * With `grant: "session"`, the site the host showed the grant for:
+   * echo the request's `grantHost` (ATO-1474). The agent records the
+   * site from its own pending request, never from this field; a value
+   * that is not the request's own site (another host, a request whose
+   * grant is not per site, or a non-session grant) fails the request
+   * and the approval stays pending. Absent behaves as before: the
+   * session grant takes the request's own scope.
+   */
+  grantHost?: string;
 }
 
 export interface GetSessionPayload {
@@ -185,6 +195,15 @@ export interface ApprovalRequestPayload {
    * reads as `false`.
    */
   canSession?: boolean;
+  /**
+   * When `canSession` and the session grant covers one site rather than
+   * the whole category (ATO-1474): the host of a browser submit or
+   * off-site request (`shop.example`), or the origin of an HTTP request
+   * (`https://api.example.com`). A host labels the choice with it ("Allow
+   * on shop.example in this chat") and may echo it back as the
+   * response's `grantHost`. Absent means the grant covers the category.
+   */
+  grantHost?: string;
   /** Whether `grant: "shape"` may be offered (the TUI's `[a]`). */
   canShape?: boolean;
   /** Whether `grant: "always"` may be offered ("Allow always"). */
