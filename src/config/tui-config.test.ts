@@ -49,7 +49,7 @@ describe("TUI configuration ownership", () => {
     const second = createTuiDefaults();
     expect(first).toEqual(USER_CONFIG_DEFAULTS.tui);
     expect(Object.keys(first)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "showSteps", "notify", "sessionRail", "onboarding",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "notify", "sessionRail", "onboarding",
     ]);
     expect(Object.keys(first.onboarding)).toEqual([
       "completedAt", "importOfferedAt", "introSeenAt", "localSetupSeenAt",
@@ -178,7 +178,7 @@ describe("TUI configuration ownership", () => {
     });
     expect(events).toEqual([
       "raw-theme", "defaults-initial", "raw-busy", "defaults-busy", "raw-mouse",
-      "defaults-busy", "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
+      "defaults-busy", "defaults-busy", "raw-onboarding", "defaults-onboarding", "raw-rail", "raw-notify", "defaults-notify",
     ]);
     expect(parsed.theme).toBe("initial-theme");
     expect(parsed.whileBusySubmit).toBe("queue");
@@ -187,7 +187,7 @@ describe("TUI configuration ownership", () => {
     expect(parsed.sessionRail.order).toEqual(["a"]);
     expect(parsed.notify).toEqual({ enabled: false, minDurationMs: 0 });
     expect(Object.keys(parsed)).toEqual([
-      "theme", "whileBusySubmit", "mouse", "showSteps", "onboarding", "sessionRail", "notify",
+      "theme", "whileBusySubmit", "mouse", "showSteps", "nextStepSuggestions", "onboarding", "sessionRail", "notify",
     ]);
   });
 
@@ -199,6 +199,17 @@ describe("TUI configuration ownership", () => {
     expect(thrownError(() => parseTuiConfig({ showSteps: "sometimes" }, () => defaults)))
       .toBeInstanceOf(ConfigValidationError);
     expect(parseUserConfigFile({ tui: { showSteps: true } }).tui.showSteps).toBe(true);
+  });
+
+  it("reads tui.nextStepSuggestions as off when absent and refuses a non-boolean (ATO-1096)", () => {
+    const defaults = createTuiDefaults();
+    expect(defaults.nextStepSuggestions).toBe(false);
+    expect(parseTuiConfig({}, () => defaults).nextStepSuggestions).toBe(false);
+    expect(parseTuiConfig({ nextStepSuggestions: true }, () => defaults).nextStepSuggestions).toBe(true);
+    expect(thrownError(() => parseTuiConfig({ nextStepSuggestions: "maybe" }, () => defaults)))
+      .toBeInstanceOf(ConfigValidationError);
+    expect(parseUserConfigFile({ tui: { nextStepSuggestions: true } }).tui.nextStepSuggestions).toBe(true);
+    expect(parseUserConfigFile({}).tui.nextStepSuggestions).toBe(false);
   });
 
   it("preserves field failure order and validates notify fields even when disabled", () => {

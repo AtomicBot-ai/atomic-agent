@@ -4614,6 +4614,7 @@ function afterChat(keep, hadFocus, caret) {
   syncLoader();
   e.value = S.draft;
   autosize(e);
+  nextStepPaint(e);   // ATO-1094: the grey next-step suggestion, when there is one
   /* r5 item 6: "clicking new chat puts keyboard focus straight in the prompt
      input" — the user's words. The flag is raised by session:new and consumed
      here, after the render that rebuilt this textarea. The carry leg below is
@@ -6271,6 +6272,7 @@ function generalPane() {
           label: 'Anonymous usage analytics', title: 'Turn analytics ' + (on ? 'off' : 'on')})
       + '</div>'
       + nameChatsRowHTML()
+      + nextStepRowHTML()   // ATO-1096 (next-step.js)
       // ATO-328: the Exa key for web search, the field the chat card offers too (exa-key.js).
       + exaKeySettingsRowHTML(exaKeyState('settings'), {esc, ic})
       // ATO-229: automatic update checks, the version, Check now (app-update.js).
@@ -7200,6 +7202,7 @@ function act(a) {
   if (a === 'privacy:analytics') { close(); privacyToggle(); return; }
   if (a === 'notify:toggle') { close(); tpNotifyToggle(); return; }
   if (a === 'names:toggle') { close(); nameChatsSet(!nameChatsOn()); return; }
+  if (a === 'nextstep:toggle') { close(); nextStepSet(!nextStepOn()); return; }
   // ATO-464: Settings › General › Always show steps (turn-summary.js).
   if (a === 'steps:always') { close(); stepsAlwaysSet(!STEPS.always); render(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
@@ -8258,6 +8261,7 @@ document.addEventListener('input', (e) => {
   if (typeof fzpInput === 'function' && fzpInput(e)) return;
   if (e.target.id === 'entry') {
     S.draft = e.target.value; autosize(e.target);
+    nextStepTyped(e.target);   // ATO-1094: typing puts the suggestion away
     // Lane B — item 3: the draft's estimate moves the projected chip only
     // (a 150 ms chip-only repaint — a render() here would reset the
     // textarea from S.draft in afterChat() and move the caret).
@@ -9401,6 +9405,7 @@ document.addEventListener('keydown', (e) => {
     if (k === 'Escape') { e.preventDefault(); S.slash = false; render(); return; }
   }
 
+  if (nextStepKey(e)) return;   // ATO-1094: Tab takes the grey suggestion, Escape puts it away (next-step.js)
   if (k === 'Enter' && !e.shiftKey && !e.altKey && e.target.id === 'entry') { e.preventDefault(); submit(); return; }
 
   if (k === 'Escape') {
@@ -10706,6 +10711,7 @@ function onChatEvent(ev) {
       FIRST_TURNS.delete(ev.turnId);   // item 27: a turn that ended before its stream named a session
       if (sid) notePendingEnded(sid);  // item 27: its stand-in waits for the agent to store the turn
       if (ev.kind === 'error' && sid) ATTN.add(sid);
+      nextStepTurnEnded(sid, ev.kind);   // ATO-1094: retire the old suggestion; a finished turn asks for a new one
       const endedSince = (LIVE_TURNS.get(ev.turnId) || {}).startedAt || 0;   // B01: closeChatApprovals, read before liveTurnEnded drops it
       const endedTools = turnToolNames(LIVE_TURNS.get(ev.turnId));          // ATO-203: and the calls it made
       liveTurnEnded(ev, sid);          // item 38: a failed or stopped turn is kept for its chat
