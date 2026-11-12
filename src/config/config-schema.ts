@@ -127,6 +127,16 @@ export {
   type WebhookConfig,
 } from "./webhook-config.js";
 
+import {
+  parseFileTriggerMap,
+  type FileTriggerConfig,
+} from "./file-trigger-config.js";
+
+export {
+  parseFileTriggerMap,
+  type FileTriggerConfig,
+} from "./file-trigger-config.js";
+
 export {
   parseSessionRailConfig,
   type SessionRailConfig,
@@ -380,6 +390,11 @@ export interface AtomicAgentConfig {
    * reaching back into the user config file.
    */
   webhooks: Record<string, WebhookConfig>;
+  /**
+   * File and log-line triggers (ATO-441). Mirrors
+   * `UserConfigFile.fileTriggers`; the scheduler leader watches them.
+   */
+  fileTriggers: Record<string, FileTriggerConfig>;
   /**
    * Multimodal (vision) input configuration. The runtime registers the
    * `vision.describe` tool only when (a) `vision.enabled` is true AND
@@ -651,6 +666,12 @@ export interface UserConfigFile {
    * transparently upgraded with `webhooks: {}`.
    */
   webhooks: Record<string, WebhookConfig>;
+  /**
+   * Keyed map of file triggers (ATO-441): a file appearing or a log line
+   * matching wakes the agent with a task. Additive and unversioned: a
+   * file without the block reads `{}`.
+   */
+  fileTriggers: Record<string, FileTriggerConfig>;
   /**
    * Multimodal (vision) input. Added in config v6; older files are
    * transparently upgraded with the `USER_CONFIG_DEFAULTS.vision`
@@ -1286,6 +1307,7 @@ export const USER_CONFIG_DEFAULTS: UserConfigFile = {
   tracing: createTracingDefaults(),
   memory: createMemoryDefaults(),
   webhooks: {},
+  fileTriggers: {},
   vision: createVisionDefaults(),
   skills: createSkillsDefaults(),
   tui: createTuiDefaults(),
@@ -1555,6 +1577,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
   const memory = (obj.memory as Record<string, unknown> | undefined) ?? {};
   const preparedMemory = prepareMemoryInputs(memory);
   const webhooks = parseWebhookMap(obj.webhooks ?? {}, "webhooks");
+  const fileTriggers = parseFileTriggerMap(obj.fileTriggers ?? {}, "fileTriggers");
   const vision = (obj.vision as Record<string, unknown> | undefined) ?? {};
   const skills = (obj.skills as Record<string, unknown> | undefined) ?? {};
   const telegram = (obj.telegram as Record<string, unknown> | undefined) ?? {};
@@ -1653,6 +1676,7 @@ export function parseUserConfigFile(raw: unknown): UserConfigFile {
       () => USER_CONFIG_DEFAULTS.memory,
     ),
     webhooks,
+    fileTriggers,
     vision: parseVisionConfig(vision, () => USER_CONFIG_DEFAULTS.vision),
     skills: parseSkillsConfig(skills, () => USER_CONFIG_DEFAULTS.skills),
     tui: parseTuiConfig(tui, () => USER_CONFIG_DEFAULTS.tui),

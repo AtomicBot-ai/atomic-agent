@@ -691,6 +691,7 @@ export function loadConfig(): AtomicAgentConfig {
       },
     },
     webhooks: user.webhooks,
+    fileTriggers: user.fileTriggers,
     vision: {
       enabled: user.vision.enabled,
       autoDetect: user.vision.autoDetect,

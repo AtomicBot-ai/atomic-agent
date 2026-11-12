@@ -21,6 +21,7 @@ export type {
   WebSearchProviderName,
   TuiNotifyConfig,
   WebhookConfig,
+  FileTriggerConfig,
   WhileBusySubmitMode,
 } from "./config-schema.js";
 export {

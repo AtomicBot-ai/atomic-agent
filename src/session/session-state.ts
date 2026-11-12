@@ -182,7 +182,7 @@ export interface SessionState {
    * Free-form session metadata. Reserved keys (set by the runtime, not
    * the agent — agents may read but must not overwrite them):
    *
-   *   - `wakeReason: { source: "user" | "scheduler" | "webhook" | "agent",
+   *   - `wakeReason: { source: "user" | "scheduler" | "webhook" | "agent" | "file",
    *                    taskId?: string, webhookName?: string, at: number }`
    *     Stamped by `TaskRunner.runOne` right before `runTurn` and
    *     survives restarts. Audit-only in this milestone — not rendered
