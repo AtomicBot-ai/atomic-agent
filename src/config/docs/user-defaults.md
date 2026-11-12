@@ -26,6 +26,7 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `localModels.managed.autoUpdate` (default `true`).
 - `localModels.managed.stopOnExit` (default `true`).
 - `localModels.managed.autoRestart` (default `true`).
+- `localModels.managed.promptDiskCache` (default `false`).
 - `localModels.managed.device` (default `"auto"`).
 - `localModels.managed.backendVariant` (default `"auto"`).
 - `localModels.managed.coreBackendVariant` (default `"auto"`).
