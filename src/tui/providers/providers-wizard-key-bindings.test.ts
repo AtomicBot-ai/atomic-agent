@@ -635,6 +635,35 @@ describe("handleProvidersWizardKey", () => {
     expect(wizard.phase).toBe("api_key");
   });
 
+  it("asks Foundry Local for its URL, then skips the key screen", () => {
+    // ATO-626: a keyless local server on a port of its own choosing walks
+    // URL -> model, never the key screen.
+    let wizard = createProvidersWizardState("add");
+    const foundryIdx = presetRowIndex("foundry-local");
+    for (let i = 0; i < foundryIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("foundry-local");
+    expect(wizard.phase).toBe("base_url");
+    wizard = { ...wizard, baseUrlLine: "http://localhost:61234" };
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.phase).toBe("chat_model_line");
+    expect(wizard.baseUrlLine).toBe("http://localhost:61234");
+  });
+
+  it("takes Lemonade straight to the model choice, like the other local servers", () => {
+    let wizard = createProvidersWizardState("add");
+    const lemonadeIdx = presetRowIndex("lemonade");
+    for (let i = 0; i < lemonadeIdx; i += 1) {
+      wizard = next(wizard, "", emptyKey({ downArrow: true }));
+    }
+    wizard = next(wizard, "", emptyKey({ return: true }));
+    expect(wizard.presetId).toBe("lemonade");
+    expect(wizard.baseUrlLine).toBe("http://localhost:13305");
+    expect(wizard.phase).toBe("chat_model_line");
+  });
+
   it("a fixed-endpoint preset never shows the URL screen", () => {
     // Groq (keyed): service -> key -> models, base_url is never reached.
     let wizard = createProvidersWizardState("add");
