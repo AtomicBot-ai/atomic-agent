@@ -4741,6 +4741,10 @@ function renderInspector() {
   const prev = el.querySelector('.inspbody');
   const keep = prev && INSP_VIEW.tab === S.inspTab && INSP_VIEW.log === S.log
     ? inspScrollKeep({scrollTop:prev.scrollTop, scrollHeight:prev.scrollHeight, clientHeight:prev.clientHeight}, inspNewestOnTop()) : null;
+  /* ATO-1336: a reader inside the Reasoning list is held by the block at the
+     top edge, not by the distance from the end: a rebuild may paint text a
+     stream frame had not drawn, and it lands below them (insp-order.js). */
+  const anchor = keep && typeof keep.fromEnd === 'number' && S.inspTab === 'reasoning' ? inspReadAnchor(prev) : null;
   el.innerHTML = '<div class="insphead">' + segControl(tabs, S.inspTab, 'insp:') + '</div>'
     // Calm (S1): no session-id footer. The id is one palette row away
     // ("Show session id", ⌃ ⌘ C) for the person who needs to copy it.
@@ -4748,6 +4752,8 @@ function renderInspector() {
   INSP_VIEW.tab = S.inspTab; INSP_VIEW.log = S.log;
   const now = keep === null ? null : el.querySelector('.inspbody');
   if (now) now.scrollTop = inspScrollTo(keep, now);
+  const held = now && anchor ? inspAnchorScroll(now, anchor) : null;
+  if (held !== null) now.scrollTop = held;
 }
 
 /** ATO-1249: the tab on screen lists newest first (World is not a list). */

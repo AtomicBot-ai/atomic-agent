@@ -75,6 +75,41 @@ function inspGrowScroll(prev, grown, wellAbove) {
   return atEnd || wellAbove ? prev.scrollTop + grown : null;
 }
 
+/**
+ * ATO-1336. Newest first, `inspScrollKeep` keeps a reader's distance from the
+ * end. That is right for rows coming in above, but a rebuild can also paint
+ * text a stream frame had not drawn yet, and that text lands at the end of the
+ * running block, below a reader inside it: kept from the end, the reader shifts
+ * by that text. So a reader in the Reasoning list is pinned to the block at the
+ * panel's top edge instead. `body` is the panel before the rebuild; returns
+ * {rs, off}: the block's `data-rs` and how far its top sat above the panel's
+ * top edge, or null when no block reaches that edge.
+ */
+function inspReadAnchor(body) {
+  if (!body || typeof body.querySelectorAll !== 'function') return null;
+  const edge = body.getBoundingClientRect().top;
+  for (const node of body.querySelectorAll('.insp-rs')) {
+    const r = node.getBoundingClientRect();
+    if (r.bottom > edge) return node.dataset && node.dataset.rs ? {rs: node.dataset.rs, off: edge - r.top} : null;
+  }
+  return null;
+}
+
+/**
+ * After the rebuild: the scrollTop that puts `anchor`'s block back where it
+ * was. `body` is the rebuilt panel, already scrolled by `inspScrollTo`; null
+ * when the block is gone (the fallback stands).
+ */
+function inspAnchorScroll(body, anchor) {
+  if (!body || !anchor || typeof body.querySelectorAll !== 'function') return null;
+  for (const node of body.querySelectorAll('.insp-rs')) {
+    if (!node.dataset || node.dataset.rs !== anchor.rs) continue;
+    const top = node.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    return Math.max(0, body.scrollTop + top + anchor.off);
+  }
+  return null;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = {INSP_ORDER_KEY, INSP_ORDER, inspOrderSet, inspOrdered, inspOrderHTML, inspScrollKeep, inspScrollTo, inspGrowScroll};
+  module.exports = {INSP_ORDER_KEY, INSP_ORDER, inspOrderSet, inspOrdered, inspOrderHTML, inspScrollKeep, inspScrollTo, inspGrowScroll, inspReadAnchor, inspAnchorScroll};
 }
