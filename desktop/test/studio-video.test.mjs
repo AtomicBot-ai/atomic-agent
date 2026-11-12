@@ -467,3 +467,40 @@ test('the model kept for a place is the latest one used there, a restored one in
   await move('cloud');
   assert.equal(S.form.modelId, veo.id, 'the restored model is the one the cloud comes back to');
 });
+
+test('the Video picker lists only the place the chat runs in, and Restore keeps the model from the other place (ATO-1307)', async () => {
+  let place = 'cloud';
+  const cat = { cloud: { models: [veo], keyMissing: false }, local: { models: [wan] } };
+  const studio = {
+    catalog: async () => ({ ok: true, data: cat }),
+    gallery: async () => ({ ok: true, data: { items: [], total: 0, hasMore: false } }),
+    job: async () => ({ ok: false }),
+  };
+  let page;
+  const ctx = { console, setTimeout, clearTimeout, localStorage: { getItem: () => null, setItem() {} },
+    atomic: { studio }, STUDIO: { pages: {}, register: (_k, p) => { page = p; }, chatPlace: () => place } };
+  ctx.window = ctx;
+  vm.createContext(ctx);
+  vm.runInContext(SRC, ctx, { filename: 'video.js' });
+  const list = { innerHTML: '' };
+  const on = {};
+  const root = { innerHTML: '', addEventListener: (t, fn) => { on[t] = fn; }, contains: () => true, querySelector: (q) => (q === '.studio-video-plist' ? list : null) };
+  page.render(root);
+  await new Promise((r) => setTimeout(r, 20));
+  const S = page._state;
+  S.pickerOpen = true;
+  on.input({ target: { matches: (q) => q === '[data-vfield="pickerq"]', value: '' } });
+  assert.match(list.innerHTML, /Veo 3\.1 Fast/);
+  assert.doesNotMatch(list.innerHTML, /Wan 2\.2/);
+  assert.match(list.innerHTML, /Studio follows your chat\. To use a model on this Mac, switch the chat to local\./);
+  // A clip made locally: its prompt comes back, the cloud model stays.
+  const click = (act) => on.click({ target: { closest: (q) => (q === '[data-vact]' ? { disabled: false, getAttribute: (n) => (n === 'data-vact' ? act : null) } : null) }, preventDefault() {} });
+  S.pickerOpen = false;
+  S.result = { id: 'c1', path: '/v/c1.mp4', prompt: 'a fox runs', model: { id: wan.id, name: wan.name }, recipe: { prompt: 'a fox runs' } };
+  click('restore');
+  assert.equal(S.form.prompt, 'a fox runs');
+  assert.equal(S.form.modelId, veo.id);
+  assert.match(S.notice, /That clip was made on this Mac\. Studio follows your chat/);
+  assert.equal(V.followLine('local'), 'Studio follows your chat. To use a cloud model, switch the chat to the cloud.');
+  assert.equal(V.followLine(null), '');
+});

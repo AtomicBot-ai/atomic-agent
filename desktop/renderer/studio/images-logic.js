@@ -74,6 +74,23 @@ function simgDefaultModel(catalog, place) {
     || all[0] || null;
 }
 
+/** The picker's line under its one group (ATO-1307): Studio follows the chat, and how to reach the other place. */
+function simgFollowLine(place) {
+  if (place === 'cloud') return 'Studio follows your chat. To use a model on ' + simgMachine() + ', switch the chat to local.';
+  if (place === 'local') return 'Studio follows your chat. To use a cloud model, switch the chat to the cloud.';
+  return '';
+}
+
+/** Why "Restore these settings" kept the current model (ATO-1307): the picture was made in the other place. */
+function simgRestoreNote(item, place) {
+  const r = simgRecipeToForm(item);
+  if (!place || !r.provider) return '';
+  const from = r.provider === 'local' ? 'local' : 'cloud';
+  if (from === place) return '';
+  return (from === 'local' ? 'That picture was made on ' + simgMachine() : 'That picture was made in the cloud')
+    + '. Studio follows your chat, so the current model stays.';
+}
+
 /** The model to open on: the first of `wants` ({modelId, provider}, remembered choices in order)
     still listed and, with a place, from that place; else simgDefaultModel(catalog, place). */
 function simgPickModel(catalog, place, wants) {
@@ -102,7 +119,7 @@ function simgModeTabs(model, catalog) {
     if (!ok) {
       const localCan = locals.some((m) => (m.modes || []).includes(id));
       need = model.group === 'cloud' && localCan ? 'local' : 'model';
-      why = need === 'local' ? 'Needs a model on ' + simgMachine() : model.name + ' cannot do this';
+      why = need === 'local' ? 'Needs a model on ' + simgMachine() + '. Switch the chat to local to use it' : model.name + ' cannot do this';
     }
     return {id, label, ok, why, need};
   });
@@ -115,7 +132,7 @@ const simgList = (xs, conj) => (xs.length === 1 ? xs[0] : xs.slice(0, -1).join('
 function simgModeNote(tabs, model) {
   const out = [];
   const off = tabs.filter((t) => !t.ok && t.need === 'local').map((t) => t.label);
-  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on ' + simgMachine() + '.');
+  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on ' + simgMachine() + ': switch the chat to local to use ' + (off.length === 1 ? 'it' : 'them') + '.');
   const cannot = model ? tabs.filter((t) => !t.ok && t.need === 'model').map((t) => SIMG_MODE_VERB[t.id]) : [];
   if (cannot.length) out.push(model.name + ' cannot ' + simgList(cannot, 'or') + '.');
   return out.join(' ');
@@ -124,14 +141,16 @@ function simgModeNote(tabs, model) {
 /** The hint line's words after a click on one greyed mode. */
 function simgModeWhy(tab, model) {
   if (!tab || tab.ok) return '';
-  if (tab.need === 'local') return tab.label + ' needs a model on ' + simgMachine() + '.';
+  if (tab.need === 'local') return tab.label + ' needs a model on ' + simgMachine() + ': switch the chat to local to use it.';
   if (tab.need === 'model' && model) return model.name + ' cannot ' + SIMG_MODE_VERB[tab.id] + '.';
   return 'Pick a model first.';
 }
 
-/** Whether another model in the catalog runs one of these modes (the hint's "Pick one" link). */
-function simgOtherCan(catalog, model, modes) {
+/** Whether another model in the catalog runs one of these modes (the hint's "Pick one" link).
+    With a place (ATO-1307) only that place's models count: the picker lists no others. */
+function simgOtherCan(catalog, model, modes, place) {
   return simgModels(catalog).some((m) => !(model && m.id === model.id && m.provider === model.provider)
+    && (!place || simgPlaceOf(m) === place)
     && modes.some((id) => (m.modes || []).includes(id)));
 }
 
@@ -427,7 +446,7 @@ function simgPinnedList(items, more) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
+  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgPlaceOf, simgDefaultModel, simgPickModel, simgFollowLine, simgRestoreNote, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};

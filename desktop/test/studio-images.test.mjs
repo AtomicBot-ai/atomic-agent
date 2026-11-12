@@ -39,8 +39,8 @@ test('a cloud model greys the modes only local models run, with that reason', ()
   assert.equal(by.create.ok, true);
   assert.equal(by.edit.ok, true);
   assert.equal(by.transform.ok, false);
-  assert.equal(by.transform.why, 'Needs a model on this Mac');
-  assert.equal(L.simgModeNote(tabs), 'Transform, Inpaint, Extend and Upscale need a model on this Mac.');
+  assert.equal(by.transform.why, 'Needs a model on this Mac. Switch the chat to local to use it');
+  assert.equal(L.simgModeNote(tabs), 'Transform, Inpaint, Extend and Upscale need a model on this Mac: switch the chat to local to use them.');
 });
 
 test('a mode no model in the catalog runs says the chosen model cannot do it', () => {
@@ -55,8 +55,8 @@ test('the hint line also names the modes the chosen model cannot do (ATO-832)', 
   const cat = catalog([cloudModel({name: 'Nano Banana 2.1'})], [localModel({modes: ['create', 'transform']})]);
   const m = model(cat, 'google/nano-banana');
   const tabs = L.simgModeTabs(m, cat);
-  assert.equal(L.simgModeNote(tabs, m), 'Transform needs a model on this Mac. Nano Banana 2.1 cannot inpaint, extend or upscale.');
-  assert.equal(L.simgModeNote(L.simgModeTabs(model(catalog(), 'google/nano-banana'), catalog()), m), 'Transform, Inpaint, Extend and Upscale need a model on this Mac.');
+  assert.equal(L.simgModeNote(tabs, m), 'Transform needs a model on this Mac: switch the chat to local to use it. Nano Banana 2.1 cannot inpaint, extend or upscale.');
+  assert.equal(L.simgModeNote(L.simgModeTabs(model(catalog(), 'google/nano-banana'), catalog()), m), 'Transform, Inpaint, Extend and Upscale need a model on this Mac: switch the chat to local to use them.');
 });
 
 test('a click on a greyed mode gets its own reason, and a link only when another model can (ATO-832)', () => {
@@ -64,7 +64,7 @@ test('a click on a greyed mode gets its own reason, and a link only when another
   const m = model(cat, 'google/nano-banana');
   const by = Object.fromEntries(L.simgModeTabs(m, cat).map((t) => [t.id, t]));
   assert.equal(L.simgModeWhy(by.inpaint, m), 'Nano Banana 2.1 cannot inpaint.');
-  assert.equal(L.simgModeWhy(by.transform, m), 'Transform needs a model on this Mac.');
+  assert.equal(L.simgModeWhy(by.transform, m), 'Transform needs a model on this Mac: switch the chat to local to use it.');
   assert.equal(L.simgModeWhy(by.create, m), '');
   assert.equal(L.simgOtherCan(cat, m, ['inpaint']), false);
   assert.equal(L.simgOtherCan(cat, m, ['transform']), true);
@@ -335,8 +335,8 @@ test('the machine is "this Mac" only on macOS; Windows and Linux say "this compu
       assert.equal(L.simgModelMeta({group: 'local', local: {developer: 'Tongyi'}}), 'Tongyi · On this computer');
       const cat = catalog();
       const tabs = L.simgModeTabs(model(cat, 'google/nano-banana'), cat);
-      assert.equal(tabs.find((t) => t.id === 'transform').why, 'Needs a model on this computer');
-      assert.equal(L.simgModeNote(tabs), 'Transform, Inpaint, Extend and Upscale need a model on this computer.');
+      assert.equal(tabs.find((t) => t.id === 'transform').why, 'Needs a model on this computer. Switch the chat to local to use it');
+      assert.equal(L.simgModeNote(tabs), 'Transform, Inpaint, Extend and Upscale need a model on this computer: switch the chat to local to use them.');
     }
     globalThis.atomic = {platform: 'darwin'};
     assert.equal(L.simgModelMeta({group: 'local', local: {}}), 'On this Mac');
@@ -413,4 +413,39 @@ test('the default and the remembered model come from where the chat runs (ATO-13
   // Settings not read yet: the remembered one wherever it runs.
   assert.equal(L.simgPickModel(cat, null, [{modelId: 'flux', provider: 'local'}]).id, 'flux');
   assert.equal(L.simgPickModel(cat, null, [null]).id, 'google/nano-banana');
+});
+
+test('the picker and the hints keep to the place the chat runs in (ATO-1307)', () => {
+  const V = req('../renderer/studio/images-view.js');
+  globalThis.esc = (x) => String(x).replace(/[&<>"']/g, (c) => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+  globalThis.ic = () => '';
+  const lent = Object.keys(L).filter((k) => !(k in globalThis));
+  for (const k of lent) globalThis[k] = L[k];   // images-view.js reads images-logic.js's names as globals, as in the window
+  try {
+    const cat = catalog();
+    const IM = (place) => ({pop: 'model', modelQ: '', catalog: cat, model: model(cat, 'google/nano-banana'), place});
+    const cloudOnly = V.simgvPop(IM('cloud'));
+    assert.match(cloudOnly, /Nano Banana/);
+    assert.doesNotMatch(cloudOnly, /Z-Image Turbo/);
+    assert.match(cloudOnly, /Studio follows your chat\. To use a model on this Mac, switch the chat to local\./);
+    const localOnly = V.simgvPop(IM('local'));
+    assert.match(localOnly, /Z-Image Turbo/);
+    assert.doesNotMatch(localOnly, /Nano Banana/);
+    assert.match(localOnly, /To use a cloud model, switch the chat to the cloud\./);
+    const both = V.simgvPop(IM(null));
+    assert.match(both, /Nano Banana/);
+    assert.match(both, /Z-Image Turbo/);
+    assert.doesNotMatch(both, /Studio follows your chat/);
+  } finally { delete globalThis.esc; delete globalThis.ic; for (const k of lent) delete globalThis[k]; }
+  // "Pick one" counts only the models the picker shows.
+  const cat = catalog();
+  const m = model(cat, 'google/nano-banana');
+  assert.equal(L.simgOtherCan(cat, m, ['transform']), true);
+  assert.equal(L.simgOtherCan(cat, m, ['transform'], 'cloud'), false);
+  // Restore keeps the model when the picture came from the other place.
+  const fromLocal = {recipe: {target: {provider: 'local', model: 'flux'}}};
+  assert.equal(L.simgRestoreNote(fromLocal, 'cloud'), 'That picture was made on this Mac. Studio follows your chat, so the current model stays.');
+  assert.equal(L.simgRestoreNote(fromLocal, 'local'), '');
+  assert.equal(L.simgRestoreNote({model: {id: 'google/nano-banana', provider: 'openrouter'}}, 'local'), 'That picture was made in the cloud. Studio follows your chat, so the current model stays.');
+  assert.equal(L.simgRestoreNote(fromLocal, null), '');
 });

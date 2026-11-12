@@ -153,7 +153,7 @@ function simgvForm(IM) {
   const whyTab = tabs.find((t) => t.id === IM.modeWhy && !t.ok);
   const offIds = whyTab ? [whyTab.id] : tabs.filter((t) => !t.ok && t.need !== 'pick').map((t) => t.id);
   const note = whyTab ? simgModeWhy(whyTab, model) : simgModeNote(tabs, model);
-  const pick = note && model && simgOtherCan(IM.catalog, model, offIds)
+  const pick = note && model && simgOtherCan(IM.catalog, model, offIds, IM.place)
     ? ' <button class="st-link" ' + SIMGV_A('pop:model') + '>' + (whyTab ? 'Pick a model that can' : 'Pick one') + '</button>.' : '';
   const parts = [];
   parts.push('<div><label class="st-lbl" for="sti-prompt">Prompt' + (f.mode === 'upscale' ? ' <span class="r">optional</span>' : '') + '</label>'
@@ -226,12 +226,18 @@ function simgvPop(IM) {
   };
   const cloud = all.filter((m) => m.group === 'cloud'), local = all.filter((m) => m.group === 'local');
   const err = (sec) => sec && sec.error ? '<div class="st-pop-err">' + esc(sec.error.message) + '</div>' : '';
+  /* ATO-1307: Studio works where the chat does, so only that place's group is listed (the
+     verb still takes any model: the live drive picks one by its id). No place yet: both. */
+  const place = IM.place;
+  const cloudG = '<div class="st-pop-g">' + ic('cloud') + 'Cloud · OpenRouter</div>' + err(IM.catalog && IM.catalog.cloud)
+    + (cloud.length ? cloud.map(row).join('') : '<div class="st-pop-none">No cloud models' + (q ? ' match' : '') + '</div>');
+  const localG = '<div class="st-pop-g">' + ic('cpu') + esc('On ' + simgMachine()) + ' · free, private</div>' + err(IM.catalog && IM.catalog.local)
+    + (local.length ? local.map(row).join('') : '<div class="st-pop-none">No local models' + (q ? ' match' : ' yet') + '</div>');
+  const follow = simgFollowLine(place);
   return '<div class="st-pop" role="dialog" aria-label="Image models">'
     + '<label class="st-pop-s">' + ic('search') + '<input id="sti-mq" placeholder="Search image models" value="' + esc(IM.modelQ || '') + '" autocomplete="off"></label>'
-    + '<div class="st-pop-g">' + ic('cloud') + 'Cloud · OpenRouter</div>' + err(IM.catalog && IM.catalog.cloud)
-    + (cloud.length ? cloud.map(row).join('') : '<div class="st-pop-none">No cloud models' + (q ? ' match' : '') + '</div>')
-    + '<div class="st-pop-g">' + ic('cpu') + esc('On ' + simgMachine()) + ' · free, private</div>' + err(IM.catalog && IM.catalog.local)
-    + (local.length ? local.map(row).join('') : '<div class="st-pop-none">No local models' + (q ? ' match' : ' yet') + '</div>')
+    + (place === 'local' ? '' : cloudG) + (place === 'cloud' ? '' : localG)
+    + (follow ? '<div class="st-pop-none st-pop-follow">' + ic('info') + esc(follow) + '</div>' : '')
     + '</div>';
 }
 
@@ -432,4 +438,4 @@ function simgvPage(IM) {
     + '</div>';
 }
 
-if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine, simgvLocalHint};
+if (typeof module !== 'undefined') module.exports = {simgJobOf, simgRateLimited, simgAltModel, simgRateLimitLine, simgvLocalHint, simgvPop};
