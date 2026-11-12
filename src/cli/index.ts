@@ -20,6 +20,7 @@ import { memoryCommand } from "./memory-command.js";
 import { modelsCommand } from "./models-command.js";
 import { importCommand } from "./import-command.js";
 import { handoffCommand } from "./handoff-command.js";
+import { shareCommand } from "./share-command.js";
 import { uninstallCommand } from "./uninstall-command.js";
 import { updateCommand } from "./update-command.js";
 import { doctorCommand } from "./doctor-command.js";
@@ -143,6 +144,12 @@ const COMMANDS: CommandDescriptor[] = [
     summary:
       "Continue a Claude Code or Codex session here (e.g. after its usage limit)",
     run: (args) => handoffCommand(args, { openTui: tuiCommand }),
+  },
+  {
+    name: "share",
+    summary:
+      "Save a chat as one redacted HTML/Markdown file for a colleague (--gist asks, then uploads a secret gist)",
+    run: (args) => shareCommand(args),
   },
   {
     name: "doctor",
