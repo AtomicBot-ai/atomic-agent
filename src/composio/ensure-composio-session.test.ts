@@ -55,6 +55,7 @@ describe("ensureComposioSession", () => {
       userId: out.userId,
       sessionId: "trs_new",
       mcpUrl: FRESH.mcpUrl,
+      sessionPins: null,
     });
   });
 
@@ -115,5 +116,89 @@ describe("ensureComposioSession", () => {
     });
     expect(createSession).toHaveBeenCalledOnce();
     expect(out.userId).not.toBe("   ");
+  });
+
+  it("reuses a pinned session whose stamp matches the current pins", async () => {
+    const createSession = vi.fn();
+    const out = await ensureComposioSession({
+      apiKey: "ak",
+      cache: {
+        userId: "u",
+        sessionId: "trs_pinned",
+        mcpUrl: "https://example.test/mcp",
+        sessionPins: "trs_pinned#gmail=ca_work",
+      },
+      connectedAccounts: { gmail: ["ca_work"] },
+      persist: vi.fn(),
+      createSession,
+    });
+    expect(createSession).not.toHaveBeenCalled();
+    expect(out.created).toBe(false);
+  });
+
+  it("creates a new session when the default account changed", async () => {
+    const createSession = vi.fn(async () => FRESH);
+    const persist = vi.fn();
+    await ensureComposioSession({
+      apiKey: "ak",
+      cache: {
+        userId: "u",
+        sessionId: "trs_pinned",
+        mcpUrl: "https://example.test/mcp",
+        sessionPins: "trs_pinned#gmail=ca_work",
+      },
+      connectedAccounts: { gmail: ["ca_home"] },
+      persist,
+      createSession,
+    });
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({ connectedAccounts: { gmail: ["ca_home"] } }),
+    );
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionPins: "trs_new#gmail=ca_home" }),
+    );
+  });
+
+  it("does not trust a stamp left over from a different session id", async () => {
+    // Another writer (an older build, the desktop key check) swapped the
+    // session id but kept the stamp: that session was made unpinned.
+    const createSession = vi.fn(async () => FRESH);
+    await ensureComposioSession({
+      apiKey: "ak",
+      cache: {
+        userId: "u",
+        sessionId: "trs_other",
+        mcpUrl: "https://example.test/mcp",
+        sessionPins: "trs_pinned#gmail=ca_work",
+      },
+      connectedAccounts: { gmail: ["ca_work"] },
+      persist: vi.fn(),
+      createSession,
+    });
+    expect(createSession).toHaveBeenCalledOnce();
+  });
+
+  it("drops a pinned session once every default is cleared", async () => {
+    const createSession = vi.fn(async () => FRESH);
+    const persist = vi.fn();
+    await ensureComposioSession({
+      apiKey: "ak",
+      cache: {
+        userId: "u",
+        sessionId: "trs_pinned",
+        mcpUrl: "https://example.test/mcp",
+        sessionPins: "trs_pinned#gmail=ca_work",
+      },
+      connectedAccounts: {},
+      persist,
+      createSession,
+    });
+    expect(createSession).toHaveBeenCalledOnce();
+    expect(createSession).toHaveBeenCalledWith(
+      expect.not.objectContaining({ connectedAccounts: expect.anything() }),
+    );
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionPins: null }),
+    );
   });
 });

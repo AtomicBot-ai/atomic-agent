@@ -16,6 +16,8 @@ const CACHED: ComposioConfig = {
   userId: "user-1",
   sessionId: "trs_cached",
   mcpUrl: "https://backend.composio.dev/tool_router/trs_cached/mcp",
+  accounts: [],
+  sessionPins: null,
 };
 
 function logger() {
@@ -138,7 +140,66 @@ describe("resolveComposioServerConfig", () => {
       userId: "user-1",
       sessionId: "trs_new",
       mcpUrl: "https://example.test/tool_router/trs_new/mcp",
+      sessionPins: null,
     });
     expect(log.info).toHaveBeenCalled();
+  });
+
+  it("pins default accounts and replaces a cached session made without them", async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            session_id: "trs_pinned",
+            mcp: { url: "https://example.test/tool_router/trs_pinned/mcp" },
+          }),
+          { status: 201 },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const cfg = await resolveComposioServerConfig({
+      composio: {
+        ...CACHED,
+        accounts: [
+          { toolkit: "gmail", alias: "home", connectedAccountId: "ca_home", isDefault: false },
+          { toolkit: "gmail", alias: "work", connectedAccountId: "ca_work", isDefault: true },
+        ],
+      },
+      userConfigFile: "/tmp/config.json",
+      env: { COMPOSIO_API_KEY: "ak_live" },
+    });
+    // The cached trs_cached session carries no pins, so it is not reused.
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1];
+    expect(JSON.parse(init.body as string).connected_accounts).toEqual({
+      gmail: ["ca_work"],
+    });
+    expect(cfg?.transport).toMatchObject({
+      url: "https://example.test/tool_router/trs_pinned/mcp",
+    });
+    expect(persistMock).toHaveBeenCalledWith(
+      "/tmp/config.json",
+      expect.objectContaining({
+        sessionId: "trs_pinned",
+        sessionPins: "trs_pinned#gmail=ca_work",
+      }),
+    );
+  });
+
+  it("keeps the cached session when named accounts exist but none is default", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const cfg = await resolveComposioServerConfig({
+      composio: {
+        ...CACHED,
+        accounts: [
+          { toolkit: "gmail", alias: "work", connectedAccountId: "ca_work", isDefault: false },
+        ],
+      },
+      userConfigFile: "/tmp/config.json",
+      env: { COMPOSIO_API_KEY: "ak_live" },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(cfg?.transport).toMatchObject({ url: CACHED.mcpUrl });
   });
 });
