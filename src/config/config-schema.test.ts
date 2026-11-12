@@ -1641,6 +1641,7 @@ describe("parseUserConfigFile", () => {
         envPassthrough: ["GITHUB_TOKEN", "NOTION_API_KEY"],
       },
       screen: { enabled: false, point: true },
+      lsp: { enabled: false },
     });
   });
 

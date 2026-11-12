@@ -10,7 +10,12 @@ import {
   refuseInputReplacement,
 } from "./fs-input-guard.js";
 import { refuseMaskedSecretWrite } from "./fs-masked-secret-guard.js";
-import { PARSE_CHECK_MAX_CHARS, withParseWarning } from "./fs-parse-check.js";
+import {
+  displayPath,
+  PARSE_CHECK_MAX_CHARS,
+  withParseWarning,
+} from "./fs-parse-check.js";
+import { joinWarnings, type LspDiagnostics } from "./lsp/index.js";
 import {
   NO_REPLACE_NOTE,
   countLines,
@@ -187,6 +192,8 @@ export function buildOsFsWriteTool(
         mode,
         content,
         ctx.workingDir,
+        prior,
+        options.lspDiagnostics,
       );
       const linesAfter = countLines(content);
       // The path is echoed in `output` (not just `details`) so a model
@@ -272,6 +279,8 @@ async function parseWarningAfterWrite(
   mode: "append" | "replace",
   content: string,
   workingDir: string,
+  prior: PriorFile | null,
+  lsp: Pick<LspDiagnostics, "diagnoseChange"> | undefined,
 ): Promise<string | null> {
   try {
     let written = content;
@@ -279,12 +288,24 @@ async function parseWarningAfterWrite(
       if ((await stat(target)).size > PARSE_CHECK_MAX_CHARS) return null;
       written = await readFile(target, "utf8");
     }
-    return checkChangedFile({
+    const parse = checkChangedFile({
       absolute: target,
       workingDir,
       change: "write",
       after: written,
     });
+    // Language-server errors are judged against the file as it was, so
+    // rewriting a file that already had errors reports only new ones.
+    const before = prior?.content?.toString("utf8");
+    const fromLsp =
+      (await lsp?.diagnoseChange({
+        absolute: target,
+        display: displayPath(target, workingDir),
+        change: "write",
+        after: written,
+        ...(before === undefined ? {} : { before }),
+      })) ?? null;
+    return joinWarnings(parse, fromLsp);
   } catch {
     return null;
   }

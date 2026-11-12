@@ -11,6 +11,7 @@ import {
 } from "./fs-approval-scope.js";
 import type { DeclaredInputsRegistry } from "./fs-declared-inputs.js";
 import type { FileRestoreStore } from "./fs-restore-store.js";
+import type { LspDiagnostics } from "./lsp/index.js";
 
 /**
  * `DangerousToolOptions` plus the injected trust-config surface every
@@ -55,6 +56,13 @@ export interface FsDangerousToolOptions extends DangerousToolOptions {
    * replaces. Omitted declares nothing.
    */
   declaredInputs?: Pick<DeclaredInputsRegistry, "inputsOf">;
+  /**
+   * Language-server diagnostics after a write, edit or patch (ATO-503,
+   * `lsp/`): the errors the change added, appended to the parse
+   * warning. Built by `registerOsTools` only when `tools.lsp.enabled`;
+   * omitted (the default, embedders, tests) says nothing.
+   */
+  lspDiagnostics?: Pick<LspDiagnostics, "diagnoseChange">;
 }
 
 /**

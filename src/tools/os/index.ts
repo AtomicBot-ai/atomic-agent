@@ -34,6 +34,7 @@ import { buildOsFsPatchTool } from "./fs/fs-patch.js";
 import { buildOsFsRestoreTool } from "./fs/fs-restore.js";
 import { buildOsFsMoveTool } from "./fs/fs-move.js";
 import { FileRestoreStore } from "./fs/fs-restore-store.js";
+import { createLspDiagnostics } from "./fs/lsp/index.js";
 import type { DeclaredInputsRegistry } from "./fs/fs-declared-inputs.js";
 import { osFsWatchTool } from "./fs/fs-watch.js";
 import {
@@ -234,6 +235,11 @@ export function registerOsTools(
     ...(options.declaredInputs === undefined
       ? {}
       : { declaredInputs: options.declaredInputs }),
+    // Opt-in (ATO-503): nothing starts until the first edit of a
+    // TypeScript/JavaScript/Python file inside a git repository.
+    ...(options.config.tools.lsp?.enabled === true
+      ? { lspDiagnostics: createLspDiagnostics({ enabled: true }) }
+      : {}),
   };
   registry.register(osFsReadTool);
   registry.register(buildOsFsWriteTool(fsMutation));
