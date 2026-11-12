@@ -55,25 +55,25 @@ test("an ok canvas.render reads the page it wrote and the reply draws one box fo
   previews["/w/canvas-rev.html"] = { ok: true, kind: "html", text: "<p>v1</p>", truncated: false };
   const item = {};
   const frame = { tool: "canvas.render", canvas: { path: "/w/canvas-rev.html", title: "Revenue", kind: "chart", chart: "line", bytes: 9 } };
-  assert.equal(A.chatArtifactCanvas(item, frame), true);
-  assert.equal(A.chatArtifactCanvas(item, { tool: "os.fs.write" }), false, "no canvas on the frame");
-  assert.deepEqual(item.artifacts, [{ key: "file:/w/canvas-rev.html", title: "Revenue", path: "/w/canvas-rev.html" }]);
-  await until(() => A.CHAT_ART.get("file:/w/canvas-rev.html").state === "ok");
+  assert.equal(A.chatArtifactCanvas(item, frame, "s1", [item]), true);
+  assert.equal(A.chatArtifactCanvas(item, { tool: "os.fs.write" }, "s1", [item]), false, "no canvas on the frame");
+  assert.deepEqual(item.artifacts, [{ key: "canvas:s1:revenue", title: "Revenue", path: "/w/canvas-rev.html", paths: ["/w/canvas-rev.html"] }]);
+  await until(() => A.CHAT_ART.get("canvas:s1:revenue").state === "ok");
   const [box] = A.chatArtifactEventSlots(item);
   assert.match(box, /class="chat-art"/);
-  assert.match(box, /data-chat-art="file:\/w\/canvas-rev.html"/);
-  assert.match(box, /data-morph-keep="art:file:\/w\/canvas-rev.html"/);
+  assert.match(box, /data-chat-art="canvas:s1:revenue"/);
+  assert.match(box, /data-morph-keep="art:canvas:s1:revenue"/);
   assert.match(box, /Revenue/);
   assert.match(box, /data-file="\/w\/canvas-rev.html"/, "the file's chip opens the preview, Cmd-click the browser");
   // The page's text never goes into the window's markup: only main has it.
   assert.doesNotMatch(box, /v1/);
   assert.equal(puts.at(-1), "<p>v1</p>");
   // The same frame again (a replayed frame) adds nothing.
-  A.chatArtifactCanvas(item, frame);
+  A.chatArtifactCanvas(item, frame, "s1", [item]);
   assert.equal(item.artifacts.length, 1);
   // A canvas main cannot read (out of the roots, another machine's path) is not drawn.
-  A.chatArtifactCanvas(item, { canvas: { path: "/remote/canvas-x.html", title: "X" } });
-  await until(() => A.CHAT_ART.get("file:/remote/canvas-x.html").state === "fail");
+  A.chatArtifactCanvas(item, { canvas: { path: "/remote/canvas-x.html", title: "X" } }, "s1", [item]);
+  await until(() => A.CHAT_ART.get("canvas:s1:x").state === "fail");
   assert.equal(A.chatArtifactEventSlots(item).length, 1);
 });
 
@@ -120,7 +120,7 @@ test("a reply's .html file is read through main's preview and drawn; anything el
   // The file a canvas.render already drew is not drawn twice when the reply attaches it too.
   previews["/w/d3.html"] = { ok: true, kind: "html", text: "<p>c</p>", truncated: false };
   const m = {};
-  A.chatArtifactCanvas(m, { canvas: { path: "/w/d3.html", title: "D3" } });
+  A.chatArtifactCanvas(m, { canvas: { path: "/w/d3.html", title: "D3" } }, "s1", [m]);
   assert.equal(A.chatArtifactFileSlotHTML("/w/d3.html", undefined, m), "");
 });
 
@@ -144,6 +144,56 @@ test("a closed ```html block has Preview; it opens a box under the block and clo
   assert.equal(A.chatArtifactCodeSlot(pre), "");
 });
 
+// ATO-1138 (the safe part of ATO-1140): canvas.render gives no id and always writes a new file.
+test("a canvas with a title already in the chat loads in the earlier frame; the new reply adds no second one", async () => {
+  previews["/w/canvas-sales-1.html"] = { ok: true, kind: "html", text: "<p>bar</p>", truncated: false };
+  previews["/w/canvas-sales-2.html"] = { ok: true, kind: "html", text: "<p>line</p>", truncated: false };
+  const first = {}, second = {};
+  const log = [first, second];
+  A.chatArtifactCanvas(first, { canvas: { path: "/w/canvas-sales-1.html", title: "Sales" } }, "s2", log);
+  await until(() => A.CHAT_ART.get("canvas:s2:sales").state === "ok");
+  const url1 = A.CHAT_ART.get("canvas:s2:sales").url;
+  A.chatArtifactCanvas(second, { canvas: { path: "/w/canvas-sales-2.html", title: "sales" } }, "s2", log);
+  await until(() => A.CHAT_ART.get("canvas:s2:sales").url !== url1);
+  assert.equal(puts.at(-1), "<p>line</p>");
+  assert.ok(drops.includes(url1), "the old page is dropped in main");
+  assert.equal(second.artifacts, undefined, "no second canvas in the new reply");
+  assert.equal(first.artifacts.length, 1);
+  assert.deepEqual(first.artifacts[0].paths, ["/w/canvas-sales-1.html", "/w/canvas-sales-2.html"]);
+  assert.equal(A.chatArtifactEventSlots(first).length, 1);
+  // Either reply attaching either file draws nothing more.
+  assert.equal(A.chatArtifactFileSlotHTML("/w/canvas-sales-2.html", undefined, second), "");
+  assert.equal(A.chatArtifactFileSlotHTML("/w/canvas-sales-1.html", undefined, first), "");
+  // Another chat with the same title is another canvas.
+  const other = {};
+  A.chatArtifactCanvas(other, { canvas: { path: "/w/canvas-sales-1.html", title: "Sales" } }, "s3", [other]);
+  assert.equal(other.artifacts[0].key, "canvas:s3:sales");
+  // A newer page that cannot be read keeps the one shown.
+  A.chatArtifactCanvas(second, { canvas: { path: "/w/canvas-sales-gone.html", title: "Sales" } }, "s2", log);
+  await tick(); await tick();
+  assert.equal(A.CHAT_ART.get("canvas:s2:sales").state, "ok");
+  assert.equal(puts.at(-1), "<p>line</p>");
+});
+
+test("a ```chart block's Preview draws its JSON with the window's own templates, no script", async () => {
+  globalThis.dashboardFromJson = require("../renderer/dashboard-templates.js").dashboardFromJson;
+  try {
+    const pre = '<pre class="mdpre" data-lang="chart"><code>{"type":"bar","title":"Q","labels":["a"],"values":[1]}\n</code></pre>';
+    const key = A.chatArtifactCodeKey(pre);
+    assert.match(key, /^code:c/);
+    assert.match(A.chatArtifactCodeKey('<pre class="mdpre" data-lang="html"><code>x</code></pre>'), /^code:h/);
+    assert.match(A.chatArtifactCodeButton(pre, "chart"), />Preview</);
+    assert.equal(A.chatArtifactCodeButton(pre, "json"), "");
+    A.chatArtifactToggleCode(key, '{"type":"bar","title":"Q","labels":["a"],"values":[1]}');
+    await until(() => A.CHAT_ART.get(key).state === "ok");
+    assert.match(puts.at(-1), /<svg viewBox/);
+    assert.match(puts.at(-1), /<h1>Q<\/h1>/);
+    assert.doesNotMatch(puts.at(-1), /<script/i);
+    assert.match(A.chatArtifactCodeSlot(pre), /Chart/);
+    A.chatArtifactToggleCode(key, "");
+  } finally { delete globalThis.dashboardFromJson; }
+});
+
 test("only a frame of ours can set its height, and only with a size message", () => {
   const win = {};
   const node = { contentWindow: win, style: {} };
@@ -159,7 +209,7 @@ test("only a frame of ours can set its height, and only with a size message", ()
 test("renderer.js hooks: canvas.render's tool_result, the reply's boxes, Preview on a code block", () => {
   const src = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
   const tr = src.slice(src.indexOf("if (ev.kind === 'tool_result') {"), src.indexOf("if (ev.kind === 'tool_update') {"));
-  assert.match(tr, /toolSettle\(card, p, ev\.at \|\| Date\.now\(\)\);\s*\/\/[^\n]*\n\s*if \(p\.canvas && item && typeof chatArtifactCanvas === 'function'\) chatArtifactCanvas\(item, p, card\);\s*render\(\);/);
+  assert.match(tr, /toolSettle\(card, p, ev\.at \|\| Date\.now\(\)\);\s*\/\/[^\n]*\n\s*if \(p\.canvas && item && typeof chatArtifactCanvas === 'function'\) chatArtifactCanvas\(item, p, S\.sessionId, S\.log\);\s*render\(\);/);
   const strip = src.slice(src.indexOf("\nfunction replyFilesStrip("), src.indexOf("\nfunction chatPicHTML("));
   assert.match(strip, /chatArtifactEventSlots\(m, esc\)/);
   assert.match(strip, /chatArtifactFileSlotHTML\(p, esc, m\)/);
