@@ -696,6 +696,20 @@ export function registerRuntimeFusionAndReadScope(input: {
       // Asked before a local worker is sent after one was cut off
       // (ATO-917): a server that stopped answering fails the task now.
       probeLocalHealth: () => llama.probeHealth(),
+      // Per local server (ATO-1318): this client only ever asks the main
+      // local server (`localModels.url`), so it is the probe for a leg on
+      // that server alone. A second local server has no probe here and
+      // its leg is not checked, rather than checked against the wrong one.
+      probeLocalHealthFor: (providerId) => {
+        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+        if (entry === undefined || entry.kind !== "llama-server") return undefined;
+        const main = getConfig().localModels.url;
+        const same = (a: string, b: string): boolean =>
+          a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+        return entry.url === undefined || same(entry.url, main)
+          ? () => llama.probeHealth()
+          : undefined;
+      },
       // The turn's $ / time caps (ATO-947), reset at each fusion turn's
       // start by the loop; read only when a cap is configured.
       ...(turnBudget === undefined ? {} : { turnBudget }),
