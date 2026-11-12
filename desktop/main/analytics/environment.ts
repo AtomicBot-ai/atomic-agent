@@ -6,7 +6,8 @@
  * under plain node.
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { resolveRunMode, type RunModeConfig } from "../run-mode.js";
@@ -74,6 +75,25 @@ export function doNotTrackIn(env: NodeJS.ProcessEnv = process.env): boolean {
   const raw = env.DO_NOT_TRACK;
   if (typeof raw !== "string") return false;
   return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
+}
+
+/**
+ * ATO-1247: our own machine or test run, the same rule as the agent's
+ * src/analytics/read-team-run-marker.ts (the desktop build cannot import
+ * from src/): `ATOMIC_AGENT_TEAM=1` (true / yes / on) in the environment, or
+ * a file `~/.atomic-agent-team`. Events are still sent, tagged `test_run`
+ * and with the person property `atomic_team`, so PostHog can leave them
+ * out. The agent this app spawns inherits the environment and reads the
+ * same file, so its events are tagged too.
+ */
+export function teamRunIn(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): boolean {
+  const raw = env.ATOMIC_AGENT_TEAM;
+  if (typeof raw === "string" && ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase())) return true;
+  try {
+    return existsSync(join(home, ".atomic-agent-team"));
+  } catch {
+    return false;
+  }
 }
 
 /** What the spawned agent must know about the shell's own gate (core.ts keeps it current). */

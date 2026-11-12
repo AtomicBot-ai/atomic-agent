@@ -15,7 +15,7 @@ import { validateEvent, type Props } from "./validate.js";
 import { daysSince, DesktopFlagsStore, resolveInstallId, seedDesktopFlags, sharedIdPath } from "./identity.js";
 import {
   analyticsEnabledFor, desktopVersion, doNotTrackIn, explicitAnalyticsEnabled, inheritedOptOut, installChannelFor, isTestRun,
-  readConfigFile, runModeIn, setAgentGate,
+  readConfigFile, runModeIn, setAgentGate, teamRunIn,
 } from "./environment.js";
 import { writeAnalyticsSwitch } from "./opt-out.js";
 import { PostHogTransport, type QueuedEvent } from "./transport.js";
@@ -56,9 +56,12 @@ const S: State = {
 
 const enabledListeners: Array<(on: boolean) => void> = [];
 
+const TEAM_RUN = teamRunIn();
 const transport = new PostHogTransport({
   canSend: () => S.enabled && !S.testRun,
   distinctId: () => installId(),
+  // ATO-1247: read once; a marker file made while the app runs counts from the next launch.
+  team: () => TEAM_RUN,
   echo: process.env.ATOMIC_DESKTOP_ANALYTICS_LOG === "1"
     ? (e: QueuedEvent) => process.stderr.write(`[analytics] ${e.event} ${JSON.stringify(e.properties)}\n`)
     : undefined,
