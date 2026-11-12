@@ -7,11 +7,17 @@ import { buildStablePrefix } from "../prompt/stable-prefix.js";
 import type { ModelProfile } from "../llm/model-profile.js";
 import type { ToolCallTransport } from "../llm/provider/completion-types.js";
 import { hashPrefix } from "../llm/slot-manager.js";
+import { applyToolSearch } from "../tools/tool-search/index.js";
 
 import type { TraceEvent } from "../tracing/index.js";
 import { iterateTraceFile } from "../cli/trace-file-io.js";
 
 export interface ReplayContext {
+  /**
+   * The full catalog, before search mode (`tool.search` included). The
+   * replay derives what the prompt described from it with
+   * `applyToolSearch`, the way the runtime does.
+   */
   toolDescriptors: readonly ToolDescriptor[];
   capabilities: CapabilitiesSummary;
   skillCatalog: readonly SkillCatalogEntry[];
@@ -51,6 +57,16 @@ export interface ReplayContext {
    * `skillCatalogDropped` say: pass the catalog as the session saw it.
    */
   compact?: boolean;
+  /**
+   * Whether the traced session ran in tool search mode (ATO-558,
+   * `agent.tools.search`): `tool.search` in the catalog, the rest as
+   * one-liners. The runtime mounts `tool.search` only then, and traces
+   * do not record the mode, so when omitted the replay builds the prefix
+   * with and without it and a recorded hash is clean when it matches
+   * either (ATO-1335). Before this a replay of a session with search mode
+   * off always carried the search-mode wording and reported drift.
+   */
+  toolSearch?: boolean;
 }
 
 export interface ReplayStepReport {
@@ -67,6 +83,8 @@ export interface ReplayStepReport {
   matchedTransport: ToolCallTransport | null;
   /** Whether the matched variant was the compact scaffold; `null` on drift. */
   matchedCompact: boolean | null;
+  /** Whether the matched variant was in tool search mode; `null` on drift. */
+  matchedToolSearch: boolean | null;
   drift: boolean;
   tokens: {
     recordedStablePrefix: number;
@@ -98,9 +116,13 @@ export async function replaySession(options: {
   context: ReplayContext;
 }): Promise<ReplayReport> {
   const { path, context } = options;
-  const prefixFor = (transport: ToolCallTransport, compact: boolean): string =>
+  const prefixFor = (
+    transport: ToolCallTransport,
+    compact: boolean,
+    toolSearch: boolean,
+  ): string =>
     buildStablePrefix({
-      toolDescriptors: context.toolDescriptors,
+      toolDescriptors: applyToolSearch(context.toolDescriptors, toolSearch),
       capabilities: context.capabilities,
       skillCatalog: context.skillCatalog,
       ...(context.skillCatalogDropped !== undefined
@@ -115,19 +137,25 @@ export async function replaySession(options: {
     });
   // Candidate order matters only for the no-match `currentHash` fallback:
   // the first entry (pinned transport, else `"grammar"`; pinned compact,
-  // else the full scaffold) supplies it.
+  // else the full scaffold; pinned search mode, else search mode off)
+  // supplies it.
   const transports: readonly ToolCallTransport[] =
     context.toolTransport !== undefined
       ? [context.toolTransport]
       : ["grammar", "native_tools"];
   const compactVariants: readonly boolean[] =
     context.compact !== undefined ? [context.compact] : [false, true];
-  const candidates = compactVariants.flatMap((compact) =>
-    transports.map((transport) => ({
-      transport,
-      compact,
-      hash: hashPrefix(prefixFor(transport, compact)),
-    })),
+  const toolSearchVariants: readonly boolean[] =
+    context.toolSearch !== undefined ? [context.toolSearch] : [false, true];
+  const candidates = toolSearchVariants.flatMap((toolSearch) =>
+    compactVariants.flatMap((compact) =>
+      transports.map((transport) => ({
+        transport,
+        compact,
+        toolSearch,
+        hash: hashPrefix(prefixFor(transport, compact, toolSearch)),
+      })),
+    ),
   );
 
   let sessionId = "";
@@ -151,6 +179,7 @@ export async function replaySession(options: {
       currentHash: matched !== null ? matched.hash : candidates[0]!.hash,
       matchedTransport: matched !== null ? matched.transport : null,
       matchedCompact: matched !== null ? matched.compact : null,
+      matchedToolSearch: matched !== null ? matched.toolSearch : null,
       drift: matched === null,
       tokens: {
         recordedStablePrefix: recorded.tokens.stablePrefix,
