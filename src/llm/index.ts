@@ -29,12 +29,17 @@ export { SlotManager, hashPrefix, DEFAULT_SLOT_COUNT } from "./slot-manager.js";
 export type { SlotAssignment } from "./slot-manager.js";
 export {
   detectModelProfile,
+  detectModelProfileWithMatch,
   extractTotalSlots,
   GEMMA4_THINK_PROFILE,
   PLAIN_INSTRUCT_PROFILE,
   QWEN_THINK_PROFILE,
 } from "./model-profile.js";
-export type { ModelProfile, ReasoningStyle } from "./model-profile.js";
+export type {
+  ModelProfile,
+  ModelProfileMatch,
+  ReasoningStyle,
+} from "./model-profile.js";
 export { ModelProfileManager } from "./model-profile-manager.js";
 export type {
   ModelProfileManagerOptions,
@@ -70,6 +75,13 @@ export {
   LOCAL_ENGINE_START_HINT,
   LocalEngineDownError,
   isLocalEngineDown,
+  ATOMIC_CHAT_NOT_RUNNING_CODE,
+  ATOMIC_CHAT_NOT_RUNNING_MESSAGE,
+  AtomicChatNotRunningError,
+  isAtomicChatNotRunning,
+  LOCAL_PORT_TAKEN_CODE,
+  LocalPortTakenError,
+  findLocalPortTaken,
   LOCAL_OUT_OF_MEMORY_CODE,
   LocalOutOfMemoryError,
   isLocalOutOfMemory,
@@ -80,6 +92,7 @@ export {
   FABRICATED_TRANSCRIPT_MIN_LINES,
   formatTruncatedMessage,
   isRequestSizeRejection,
+  isExpectedProviderLimit,
 } from "./reliability/index.js";
 export type {
   DetectModelFailureOptions,

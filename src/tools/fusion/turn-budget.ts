@@ -1,3 +1,5 @@
+import type { BreakerTrip } from "./failure-breaker.js";
+
 /**
  * The per-turn caps of a fusion run (ATO-947): money and wall-clock time.
  *
@@ -37,6 +39,26 @@ interface TurnState {
   orchestratorBaseUsd: number;
   /** Task id → how many times it was run this turn (ATO-941's replans). */
   attempts: Map<string, number>;
+  /** Delegations started this turn, and the tasks they carried (ATO-1406). */
+  rounds: number;
+  tasks: number;
+  /** Every failure breaker that tripped this turn (ATO-1406). */
+  trips: BreakerTrip[];
+}
+
+/**
+ * The turn's count caps (ATO-1406): delegations ("rounds") and tasks.
+ * Counted, not priced, because a subscription leg has no bill to read —
+ * its limit is requests. `undefined`: that cap is off.
+ */
+export interface TurnCountLimits {
+  rounds?: number;
+  tasks?: number;
+}
+
+export interface TurnCountStop {
+  kind: "rounds" | "tasks";
+  message: string;
 }
 
 export class FusionTurnBudget {
@@ -55,6 +77,9 @@ export class FusionTurnBudget {
       workerUsd: 0,
       orchestratorBaseUsd,
       attempts: new Map(),
+      rounds: 0,
+      tasks: 0,
+      trips: [],
     });
   }
 
@@ -68,6 +93,9 @@ export class FusionTurnBudget {
         workerUsd: 0,
         orchestratorBaseUsd: 0,
         attempts: new Map(),
+        rounds: 0,
+        tasks: 0,
+        trips: [],
       };
       this.turns.set(sessionId, state);
     }
@@ -89,6 +117,57 @@ export class FusionTurnBudget {
 
   attempts(sessionId: string, taskId: string): number {
     return this.turns.get(sessionId)?.attempts.get(taskId) ?? 0;
+  }
+
+  /** What this turn's delegations so far ran: rounds and tasks. */
+  counts(sessionId: string): { rounds: number; tasks: number } {
+    const state = this.turns.get(sessionId);
+    return { rounds: state?.rounds ?? 0, tasks: state?.tasks ?? 0 };
+  }
+
+  /**
+   * Whether a new delegation of `taskCount` tasks would pass a count
+   * cap; the words that say so when it would. Checked before it starts.
+   */
+  checkCounts(
+    sessionId: string,
+    limits: TurnCountLimits,
+    taskCount: number,
+  ): TurnCountStop | undefined {
+    const { rounds, tasks } = this.counts(sessionId);
+    if (limits.rounds !== undefined && rounds + 1 > limits.rounds) {
+      return {
+        kind: "rounds",
+        message:
+          `this turn already ran ${rounds} delegation${rounds === 1 ? "" : "s"}, ` +
+          `the most llm.runMode.fusion.maxRoundsPerTurn allows (${limits.rounds})`,
+      };
+    }
+    if (limits.tasks !== undefined && tasks + taskCount > limits.tasks) {
+      return {
+        kind: "tasks",
+        message:
+          `${taskCount} more task${taskCount === 1 ? "" : "s"} would take this turn to ${tasks + taskCount}, ` +
+          `over the ${limits.tasks} llm.runMode.fusion.maxTasksPerTurn allows (${tasks} already ran)`,
+      };
+    }
+    return undefined;
+  }
+
+  /** Count a delegation that is starting, with its tasks. */
+  noteRound(sessionId: string, taskCount: number): void {
+    const state = this.turn(sessionId);
+    state.rounds += 1;
+    state.tasks += Math.max(0, taskCount);
+  }
+
+  /** Remember a failure breaker that tripped this turn. */
+  noteTrip(sessionId: string, trip: BreakerTrip): void {
+    this.turn(sessionId).trips.push(trip);
+  }
+
+  trips(sessionId: string): readonly BreakerTrip[] {
+    return this.turns.get(sessionId)?.trips ?? [];
   }
 
   workerSpend(sessionId: string): number {
@@ -141,6 +220,10 @@ export class FusionTurnBudget {
     return undefined;
   }
 }
+
+/** What the orchestrator is told when a count cap refuses a delegation. */
+export const TURN_COUNT_INSTRUCTION =
+  "Do not re-send the work and do not do it yourself. Reply to the person now, in plain words: say how many rounds and tasks already ran, what is done and what is not, and that they can say how to continue (or raise the cap).";
 
 /** What the orchestrator is told to do once a cap stopped the work. */
 export const TURN_BUDGET_INSTRUCTION =

@@ -56,11 +56,19 @@ describe("PluginsOrchestrator", () => {
     const rec = readPluginState(stateDir).plugins.demo;
     expect(rec).toMatchObject({ enabled: false, runsCodeAccepted: true, disabledParts: ["mcp:gh"] });
     expect(actions.filter((a) => a.type === "plugins_action_settled").map((a) => a.message)).toEqual([
-      "demo off. Its MCP servers stop with the next agent start.",
-      "demo mcp:gh off. Takes effect with the next agent start.",
+      "demo off. Its running MCP servers stop now.",
+      "demo mcp:gh off. Stops now.",
       "demo may run its local MCP servers, hooks and scripts and receive your keys. Servers start with the next agent start.",
     ]);
     expect(actions.at(-1)?.type).toBe("plugins_synced");
+  });
+
+  it("says stopping code stops the plugin's servers now, not at the next start (ATO-1407)", async () => {
+    const { actions, orch } = make();
+    await orch.setCodeAllowed("demo", false);
+    const msg = actions.filter((a) => a.type === "plugins_action_settled").map((a) => a.message).at(-1);
+    expect(msg).toBe("demo's code is off: its hooks, scripts, local MCP servers and servers that read your keys stop now.");
+    expect(msg).not.toMatch(/restart/i);
   });
 
   it("removes a plugin and reports an unknown one as an error", async () => {

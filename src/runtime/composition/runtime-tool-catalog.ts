@@ -7,11 +7,14 @@ import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { SessionStore } from "../../session/session-store.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
 import type { LlamaServerClient } from "../../llm/llama-server-client.js";
+import { renewTransportPool } from "../../llm/transport-deadlines.js";
 import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
 import { visionCapableAlternatives } from "../../llm/provider/model-vision.js";
 import { resolveModelPricingFor } from "../resolve-model-pricing.js";
+import type { SessionUsageLedger } from "../../session/usage-meter.js";
+import { isLocalServerUrl } from "../../llm/provider/openai/local-server-url.js";
 import { ToolRegistry } from "../../tools/tool-registry.js";
 import { knownSecretsFromEnv, type KnownSecret } from "../../error-reporting/secret-detector.js";
 import { isSecretEnvName } from "../../sandbox/command-env.js";
@@ -31,7 +34,7 @@ import { applyToolSearch, buildToolSearchTool, deferredToolNames, toolSearchActi
 import { registerMemoryTools, type RegisterMemoryToolsOptions } from "../../tools/memory/index.js";
 import { sessionGroundingSource, verifyProfileNameFacts } from "../../memory/name-grounding.js";
 import { registerVisionTools, type RegisterVisionToolsOptions } from "../../tools/vision/index.js";
-import { openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
+import { IMAGE_GENERATE_TOOL, openRouterImageKey, registerImageTools } from "../../tools/image/index.js";
 import { registerVideoTools, VIDEO_GENERATE_TOOL } from "../../tools/video/index.js";
 import { captureImageGenerated, captureVideoGenerated } from "../../analytics/analytics-events.js";
 import type { AnalyticsClient } from "../../analytics/analytics-client.js";
@@ -41,6 +44,7 @@ import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpReso
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
+import { createPluginMcpLiveStop } from "../../plugins/plugin-mcp-live.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
@@ -271,13 +275,20 @@ export function registerRuntimeImageTools(input: {
   toolRegistry: ToolRegistry;
   dangerous: DangerousToolOptions;
   getAnalytics: () => AnalyticsClient | null;
+  /** Absent: no progress lines (the Core download on the first picture goes unannounced). */
+  emitAgentLoopEventFor?: FusionDelegateDeps["emitEvent"];
 }): void {
-  const { toolRegistry, dangerous, getAnalytics } = input;
+  const { toolRegistry, dangerous, getAnalytics, emitAgentLoopEventFor } = input;
   registerImageTools(toolRegistry, {
     ...dangerous,
     dataDir: () => getConfig().paths.localModelsDataDir,
     openRouterKey: () => openRouterImageKey(getConfig()),
     report: (event) => captureImageGenerated(getAnalytics(), event),
+    ...(emitAgentLoopEventFor ? {
+      onProgress: (sessionId: string, update: { fraction: number; elapsedMs: number; label: string }) => emitAgentLoopEventFor(sessionId, {
+        type: "tool_progress", tool: IMAGE_GENERATE_TOOL, fraction: update.fraction, elapsedMs: update.elapsedMs, label: update.label,
+      }),
+    } : {}),
   });
 }
 
@@ -378,8 +389,9 @@ export async function connectRuntimeMcpCatalog(input: {
     ...(config.mcp?.servers ?? []),
     ...(composioServerConfig ? [composioServerConfig] : []),
   ];
-  const pluginMcp = safePluginMcpServers(config.paths.stateDir, new Set(ownServers.map(s => s.name)), logger);
-  const mcpServerConfigs = [...ownServers, ...pluginMcp];
+  const ownServerNames = new Set(ownServers.map(s => s.name));
+  const pluginMcp = safePluginMcpServers(config.paths.stateDir, ownServerNames, logger);
+  const mcpServerConfigs = [...ownServers, ...pluginMcp.servers];
   const mcpEnabled = mcpServerConfigs.length > 0;
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
@@ -618,7 +630,25 @@ export async function connectRuntimeMcpCatalog(input: {
     };
     return refreshMcp;
   };
-  return { mcpManager, getGrammar: () => grammar, effectiveToolDescriptors, createRefreshMcp };
+  /**
+   * Stop a plugin's running MCP servers the moment its state no longer
+   * allows them (code stopped, plugin or server off, plugin removed;
+   * ATO-1407), from this process or another (the CLI the desktop runs).
+   * Returns the unwatch; a no-op when no plugin server was started.
+   */
+  const watchPluginMcp = (refreshMcp: () => Promise<void>): (() => void) => {
+    if (pluginMcp.servers.length === 0) return () => {};
+    return createPluginMcpLiveStop({
+      stateDir: config.paths.stateDir,
+      manager: mcpManager,
+      started: pluginMcp.servers,
+      owners: pluginMcp.owners,
+      takenNames: ownServerNames,
+      refresh: refreshMcp,
+      logger,
+    }).watch();
+  };
+  return { mcpManager, getGrammar: () => grammar, effectiveToolDescriptors, createRefreshMcp, watchPluginMcp };
 }
 
 export function registerRuntimeFusionAndReadScope(input: {
@@ -642,6 +672,8 @@ export function registerRuntimeFusionAndReadScope(input: {
   workingDir: string;
   logger: StructuredLogger;
   turnBudget?: FusionDelegateDeps["turnBudget"];
+  /** The composer's `$` readout: escalation and judge calls land here (ATO-1388). */
+  sessionUsage?: Pick<SessionUsageLedger, "record">;
   liveWorkers?: FusionDelegateDeps["liveWorkers"];
   steerWorker?: FusionDelegateDeps["steerWorker"];
   orchestratorTurnSpendUsd?: FusionDelegateDeps["orchestratorTurnSpendUsd"];
@@ -650,7 +682,7 @@ export function registerRuntimeFusionAndReadScope(input: {
   const { config, toolRegistry, runTurn, createEphemeralSession, resolveOriginalRequest, declaredInputs,
     prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode, providerRegistry,
     llama, approvals, dangerous, slotManager, workingDir, logger, turnBudget,
-    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints } = input;
+    orchestratorTurnSpendUsd, liveWorkers, steerWorker, runCheckpoints, sessionUsage } = input;
 
 
   // The orchestrator's fan-out. Registered UNCONDITIONALLY: the tool
@@ -682,6 +714,9 @@ export function registerRuntimeFusionAndReadScope(input: {
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
       localTokensPerSecond: () => llama.measuredTokensPerSecond(),
+      // A local worker sent after one was cut off, on a server that still
+      // answers, goes out on fresh connections (ATO-1357).
+      renewLocalTransport: () => renewTransportPool(),
       probeSlotOccupancy: async () => {
         try {
           return readSlotOccupancy(await llama.fetchSlots());
@@ -692,6 +727,20 @@ export function registerRuntimeFusionAndReadScope(input: {
       // Asked before a local worker is sent after one was cut off
       // (ATO-917): a server that stopped answering fails the task now.
       probeLocalHealth: () => llama.probeHealth(),
+      // Per local server (ATO-1318): this client only ever asks the main
+      // local server (`localModels.url`), so it is the probe for a leg on
+      // that server alone. A second local server has no probe here and
+      // its leg is not checked, rather than checked against the wrong one.
+      probeLocalHealthFor: (providerId) => {
+        const entry = resolveLlmConfig(getConfig()).providers.find((p) => p.id === providerId);
+        if (entry === undefined || entry.kind !== "llama-server") return undefined;
+        const main = getConfig().localModels.url;
+        const same = (a: string, b: string): boolean =>
+          a.trim().replace(/\/+$/, "") === b.trim().replace(/\/+$/, "");
+        return entry.url === undefined || same(entry.url, main)
+          ? () => llama.probeHealth()
+          : undefined;
+      },
       // The turn's $ / time caps (ATO-947), reset at each fusion turn's
       // start by the loop; read only when a cap is configured.
       ...(turnBudget === undefined ? {} : { turnBudget }),
@@ -701,7 +750,7 @@ export function registerRuntimeFusionAndReadScope(input: {
       // Escalation (ATO-942): one completion pinned to the configured
       // escalation provider — never the fallback chain, so it cannot
       // land on a model the operator did not pick for it.
-      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal }) => {
+      escalationComplete: async ({ providerId, prompt, maxOutputTokens, signal, sessionId }) => {
         const provider = providerRegistry.getProvider(providerId);
         if (provider === undefined) {
           throw new Error(`escalation provider ${providerId} is not configured`);
@@ -711,6 +760,29 @@ export function registerRuntimeFusionAndReadScope(input: {
           maxOutputTokens,
           signal,
         });
+        // These calls go straight to the provider, past the seam that
+        // feeds the session's readout, so they are counted here on the
+        // session that delegated (ATO-1388). Priced like any other call:
+        // no known price stays "unpriced", a local server stays local.
+        if (sessionUsage !== undefined && sessionId !== undefined) {
+          try {
+            const resolved = resolveLlmConfig(getConfig());
+            const entry = resolved.providers.find((p) => p.id === providerId);
+            const model = resolveModelPricingFor(resolved, result.modelId, providerId);
+            sessionUsage.record(sessionId, {
+              providerId,
+              modelId: result.modelId,
+              ...(result.usage === undefined ? {} : { usage: result.usage }),
+              ...(model === undefined ? {} : { model }),
+              local:
+                entry !== undefined &&
+                (entry.kind === "llama-server" || isLocalServerUrl(entry.baseUrl ?? entry.url)),
+              plan: entry?.kind === "subscription-cli",
+            });
+          } catch {
+            // The readout never takes an escalation down.
+          }
+        }
         return {
           content: result.content,
           ...(result.usage === undefined ? {} : { usage: result.usage }),
@@ -734,6 +806,8 @@ export function registerRuntimeFusionAndReadScope(input: {
       // throwaway nobody is listening to.
       emitEvent: emitAgentLoopEventFor,
       workingDir,
+      // Fan-outs never write in the agent's own state directory (ATO-1267).
+      agentStateDir: config.paths.stateDir,
       outputCharCap: config.agent.batchToolResultCharCap,
       // A contract's declared `checks` run through the verify family,
       // each on a throwaway copy of the workspace, so a fan-out is judged
@@ -772,13 +846,17 @@ export function registerRuntimeFusionAndReadScope(input: {
   });
 }
 
-function safePluginMcpServers(stateDir: string, taken: ReadonlySet<string>, logger: StructuredLogger): McpServerConfig[] {
+function safePluginMcpServers(
+  stateDir: string,
+  taken: ReadonlySet<string>,
+  logger: StructuredLogger,
+): { servers: McpServerConfig[]; owners: Record<string, string> } {
   try {
-    const { servers, skipped } = loadPluginMcpServers(stateDir, taken);
+    const { servers, skipped, owners } = loadPluginMcpServers(stateDir, taken);
     for (const s of skipped) logger.warn("plugin MCP server skipped", { plugin: s.plugin, server: s.server, reason: s.reason });
-    return servers;
+    return { servers, owners };
   } catch (err) {
     logger.warn("plugin MCP servers unavailable", { error: err instanceof Error ? err.message : String(err) });
-    return [];
+    return { servers: [], owners: {} };
   }
 }

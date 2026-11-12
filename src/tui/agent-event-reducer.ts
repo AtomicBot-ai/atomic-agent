@@ -1,10 +1,12 @@
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import { HISTORY_TRIMMED_NOTICE } from "../agent/history-trim-warning.js";
+import { toolDisabledNotice } from "../agent/tool-disabled-notice.js";
 import { formatUsageReport } from "../session/usage-meter.js";
 import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.js";
 import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   classifyLocalServerError,
+  isAtomicChatNotRunning,
   isLocalEngineDown,
   isLocalOutOfMemory,
 } from "../llm/reliability/index.js";
@@ -18,6 +20,7 @@ import {
 } from "./detached-turns.js";
 import {
   formatAgentErrorForChat,
+  formatAtomicChatNotRunningForChat,
   formatLocalEngineDownForChat,
   formatLocalServerErrorForChat,
 } from "./chat/format-agent-error-for-chat.js";
@@ -52,6 +55,7 @@ import {
   upsertReasoning,
 } from "./reducer-helpers.js";
 import {
+  discardDeadAttempt,
   parkProviderOutage,
   retryProviderOutage,
 } from "./provider-outage-state.js";
@@ -775,6 +779,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         ? event.error.message
         : engineDown
         ? formatLocalEngineDownForChat()
+        : isAtomicChatNotRunning(event.error)
+        ? formatAtomicChatNotRunningForChat()
         : badRequest !== null
           ? formatLocalServerErrorForChat(badRequest, event.error.message)
           : formatAgentErrorForChat(
@@ -1039,6 +1045,15 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         color: "yellow",
       });
     }
+    case "reply_time_limit_retried":
+      // A feed line and no outage state: the provider is answering. The
+      // retry streams from the start, so the lost reply is dropped here.
+      return appendFeed(discardDeadAttempt(state, event.stepIndex), {
+        kind: "runtime_info",
+        stepIndex: event.stepIndex,
+        line: `» the provider's time limit ended this reply and none of it was kept. Asking for a shorter one (${event.attempt}/${event.budget})`,
+        color: "yellow",
+      });
     case "empty_completion_recovered":
       // Same reason as above, and more so: an empty completion produces
       // literally nothing, so without this line the feed shows a step
@@ -1069,6 +1084,11 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
       // ATO-295: the packer left older history out of the prompt. The
       // loop says so once per cut, so this cannot fill the transcript.
       return appendChatMessage(state, { role: "system", text: HISTORY_TRIMMED_NOTICE });
+    case "tool_disabled":
+      // ATO-1417: the server refused this tool's schema and the provider
+      // resent the request without it, so the model cannot call it. The
+      // loop says so once per tool per turn.
+      return appendChatMessage(state, { role: "system", text: toolDisabledNotice(event.tool) });
     case "profile_clipped": {
       // Issue #407: the clip used to show only as a `[truncated]` inside
       // a prompt nobody reads. The loop fires this once per session, and

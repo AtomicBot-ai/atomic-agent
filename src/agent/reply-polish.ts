@@ -13,13 +13,15 @@
  *     ("I hope this helps!", "Надеюсь, это поможет!"), at the very start
  *     or end only, and only when something else is left;
  *   - drops a first paragraph that only repeats the user's question;
- *   - drops a paragraph that repeats the one right before it (exactly or
- *     up to whitespace), and a reply whose second half repeats its first;
+ *   - small models only: drops a paragraph that repeats the one right
+ *     before it (exactly or up to whitespace), and a reply whose second
+ *     half repeats its first; a cloud model repeats only when asked to;
  *   - small models only: a line repeated three or more times in a row is
  *     kept once (a decoding loop, not content);
  *   - collapses runs of blank lines to one;
  *   - shortens a long absolute path under the home folder to `~/...`
- *     when it is plain prose (not code, not a link target);
+ *     when it is plain prose (not code, not a link target), unless the
+ *     user's message asks for the full or absolute path;
  *   - Telegram only: turns a markdown table into a list, since the chat
  *     has no tables and a pipe grid wraps into noise on a phone.
  *
@@ -82,7 +84,9 @@ interface Segment {
   text: string;
 }
 
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
+// Any indent: a fence nested under a list item (`1. ` then a deeper
+// bullet) sits four or more spaces in, and is still code.
+const FENCE_OPEN = /^[ \t]*(`{3,}|~{3,})/;
 
 /**
  * Split into prose and fenced-code segments, line by line. An unclosed
@@ -108,7 +112,7 @@ export function splitFences(text: string): Segment[] {
     }
     const marker = open[1]!;
     const ch = marker[0]!;
-    const close = new RegExp(`^ {0,3}${ch === "`" ? "`" : "~"}{${marker.length},}\\s*$`);
+    const close = new RegExp(`^[ \\t]*${ch === "`" ? "`" : "~"}{${marker.length},}\\s*$`);
     const body: string[] = [line];
     let j = i + 1;
     let closed = false;
@@ -178,14 +182,14 @@ function polish(input: string, options: PolishReplyOptions): string {
     let body = seg.text;
     if (options.smallModel === true) body = collapseRepeatedLines(body);
     if (options.channel === "telegram") body = tablesToLists(body);
-    body = shortenHomePaths(body, options.homeDir ?? safeHomedir());
+    if (!asksForFullPath(options.userMessage)) body = shortenHomePaths(body, options.homeDir ?? safeHomedir());
     body = collapseBlankLines(body);
     return { kind: "prose", text: body };
   });
 
   if (options.userMessage) segments = dropEchoedQuestion(segments, options.userMessage);
   segments = dropFillerAtEdges(segments);
-  segments = dropRepeatedParagraphs(segments);
+  if (options.smallModel === true) segments = dropRepeatedParagraphs(segments);
 
   let out = segments
     .map((s) => s.text)
@@ -235,14 +239,29 @@ function closeOpenMarkup(text: string): string {
   const base = text.trimEnd();
   if (fixed.startsWith(base)) {
     const suffix = fixed.slice(base.length);
-    return /^(?:`+|\*\*|~~)+$/.test(suffix) ? fixed : text;
+    if (!/^(?:`+|\*\*|~~)+$/.test(suffix)) return text;
+    // `x**2` or `a~~b`: a marker inside a word is maths or a name, not
+    // an opener, so closing it would add stray stars.
+    for (const marker of ["**", "~~"]) {
+      if (suffix.includes(marker) && openerInsideWord(base, marker)) return text;
+    }
+    return fixed;
   }
   const kept = fixed.trimEnd();
   if (kept.length > 0 && base.startsWith(kept)) {
+    // Only a spaced-off opener ("Done **"). `src/**` and `: *` end in a
+    // glob, which is content and stays.
     const removed = base.slice(kept.length);
-    return /^[\s*~`]+$/.test(removed) ? kept : text;
+    return /^\s+(?:\*\*|~~|`+)+$/.test(removed) ? kept : text;
   }
   return text;
+}
+
+/** The last `marker` in `text` sits between two word characters. */
+function openerInsideWord(text: string, marker: string): boolean {
+  const at = text.lastIndexOf(marker);
+  if (at <= 0) return false;
+  return /[\p{L}\p{N}_]/u.test(text[at - 1]!);
 }
 
 // --- paragraphs ------------------------------------------------------------
@@ -454,6 +473,14 @@ function dropEchoedQuestion(segments: Segment[], userMessage: string): Segment[]
 }
 
 // --- home paths ------------------------------------------------------------
+
+/** The user asked for the path as it is: "full path", "абсолютный путь". */
+const FULL_PATH_ASK =
+  /\b(?:full|absolute|complete|whole|exact)\s+(?:file\s+)?path|\bpath\s+in\s+full\b|(?:полн|абсолютн|цельн|точн)\S*\s+(?:\S+\s+)?пут|пут\S*\s+(?:целиком|полностью)/iu;
+
+function asksForFullPath(userMessage: string | null | undefined): boolean {
+  return typeof userMessage === "string" && FULL_PATH_ASK.test(userMessage);
+}
 
 /** Paths shorter than this are left alone: they already read fine. */
 const LONG_PATH = 40;

@@ -286,3 +286,96 @@ describe("isNativeShapeRejection", () => {
     expect(isNativeShapeRejection("role")).toBe(false);
   });
 });
+
+describe("buildNativeMessages: reasoning the service requires back (ATO-1397)", () => {
+  const words = (count: number, tag: string): string =>
+    Array.from({ length: count }, (_, i) => `${tag}${i}`).join(" ");
+  const result: PromptMessages["turns"][number] = {
+    kind: "tool_result",
+    tool: "os.fs.read",
+    status: "ok",
+    body: "hello",
+    truncated: false,
+  };
+
+  it("hands every call's reasoning back whole, past the local cap", () => {
+    const older = words(3000, "old");
+    const newer = words(3000, "new");
+    const messages = buildNativeMessages(
+      prompt({
+        turns: [
+          { kind: "user", text: "go" },
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a" }, reasoning: older },
+          result,
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "b" }, reasoning: newer },
+          result,
+        ],
+      }),
+      { ...options, preserveReasoning: true, reasoningRequired: true },
+    );
+    const assistants = messages.filter((m) => m.role === "assistant");
+    expect(estimateTokens(older + newer)).toBeGreaterThan(PRESERVED_REASONING_TOKEN_BUDGET);
+    expect(assistants.map((m) => m.reasoning_content)).toEqual([older, newer]);
+  });
+
+  it("gives a call without reasoning an empty field", () => {
+    const messages = buildNativeMessages(
+      prompt({
+        turns: [
+          { kind: "user", text: "earlier" },
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a" } },
+          result,
+          { kind: "assistant_reply", text: "done" },
+          { kind: "user", text: "now" },
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "b" }, reasoning: "need b" },
+          result,
+        ],
+      }),
+      { ...options, reasoningRequired: true },
+    );
+    const calls = messages.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
+    expect(calls.map((m) => m.reasoning_content)).toEqual(["", "need b"]);
+    // A plain reply is not a tool-call message and keeps its old shape.
+    expect(messages.find((m) => m.role === "assistant" && m.content === "done")).not.toHaveProperty(
+      "reasoning_content",
+    );
+  });
+
+  it("keeps the field on answered calls on the first step of a follow-up turn", () => {
+    // The new turn has no calls yet, so no turn carries reasoning at all.
+    const messages = buildNativeMessages(
+      prompt({
+        turns: [
+          { kind: "user", text: "read a" },
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a" } },
+          result,
+          { kind: "assistant_reply", text: "read it" },
+          { kind: "user", text: "now b" },
+        ],
+      }),
+      { ...options, reasoningRequired: true },
+    );
+    const calls = messages.filter((m) => m.role === "assistant" && m.tool_calls !== undefined);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.reasoning_content).toBe("");
+  });
+
+  it("holds the reasoning to reasoningBudget, newest first, and leaves the rest empty", () => {
+    const older = words(600, "old");
+    const newer = words(600, "new");
+    const messages = buildNativeMessages(
+      prompt({
+        turns: [
+          { kind: "user", text: "go" },
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "a" }, reasoning: older },
+          result,
+          { kind: "assistant_tool_call", tool: "os.fs.read", args: { path: "b" }, reasoning: newer },
+          result,
+        ],
+      }),
+      { ...options, reasoningRequired: true, reasoningBudget: estimateTokens(newer) },
+    );
+    const calls = messages.filter((m) => m.role === "assistant");
+    expect(calls.map((m) => m.reasoning_content)).toEqual(["", newer]);
+  });
+});

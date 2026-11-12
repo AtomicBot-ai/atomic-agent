@@ -522,13 +522,17 @@ describe("queuedWorkerHint", () => {
     ).toBe(workerHintNoFirstToken(WAIT));
   });
 
-  it("points at the daemon when every slot was idle", () => {
+  it("points at the agent's connection, not the daemon, when every slot was idle (ATO-1357)", () => {
     expect(
       queuedWorkerHint({ ranAlone: false, width: 2, occupancy: { total: 2, busy: 0 }, waitMs: WAIT }),
     ).toBe(WORKER_HINT_IDLE_SERVER);
+    // Alone too: the table answered, so the server is up and the request
+    // is not with it. Restarting the daemon was the wrong advice.
     expect(
       queuedWorkerHint({ ranAlone: true, width: 1, occupancy: { total: 2, busy: 0 }, waitMs: WAIT }),
-    ).toBe(WORKER_HINT_UNSERVED);
+    ).toBe(WORKER_HINT_IDLE_SERVER);
+    expect(WORKER_HINT_IDLE_SERVER).toContain("restart the agent rather than the server");
+    expect(WORKER_HINT_IDLE_SERVER).not.toMatch(/restart (?:it|the daemon)/);
   });
 
   it("claims nothing from an unreadable table, and keeps the solo field answer when nothing probed", () => {

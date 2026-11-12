@@ -135,3 +135,41 @@ export function describeServerFault(logText: string): ServerFault | null {
   }
   return null;
 }
+
+/**
+ * Why the managed model failed a request, as one fixed word for an error
+ * report (ATO-1279). Read from the current run's log by fixed strings
+ * only; the log text itself never leaves this function, since it can
+ * quote the conversation.
+ *
+ *  - `out_of_memory`: the patterns `describeServerFault` reads as memory.
+ *  - `server_crashed`: an assertion, a fatal signal or an uncaught
+ *    exception in llama.cpp.
+ *  - `decode_failed`: decode failures with neither of the above.
+ *  - `none`: nothing recognised.
+ */
+export type LocalFaultTag = "out_of_memory" | "server_crashed" | "decode_failed" | "none";
+
+/** Signatures of a llama.cpp process that died, matched case-insensitively. */
+const CRASH_NEEDLES: readonly string[] = [
+  "ggml_assert",
+  "assertion failed",
+  "segmentation fault",
+  "sigsegv",
+  "sigabrt",
+  "sigbus",
+  "illegal instruction",
+  "terminate called",
+  "core dumped",
+  "exception_access_violation",
+  "unhandled exception",
+];
+
+export function classifyLocalFault(logText: string): LocalFaultTag {
+  const fault = describeServerFault(logText);
+  if (fault?.kind === "out_of_memory") return "out_of_memory";
+  const scoped = currentRunLog(logText).toLowerCase();
+  if (CRASH_NEEDLES.some((needle) => scoped.includes(needle))) return "server_crashed";
+  if (fault?.kind === "decode_failed") return "decode_failed";
+  return "none";
+}

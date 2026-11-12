@@ -542,7 +542,15 @@ export function createRuntimeTurnService(
         // turn is already saved and already returned, and an unnamed
         // session simply keeps showing its prompt — which is what every
         // session showed before. It must never delay or fail a reply.
-        if (getConfig().agent.nameSessions && shouldNameSession(finished)) {
+        // Not after a budget stop (ATO-1350): the naming call is billed
+        // too, and a run that promised to stop at its cap must not make
+        // one more paid call. The session stays unnamed until a later
+        // turn answers within its budget.
+        if (
+          getConfig().agent.nameSessions &&
+          !stoppedForMoney(result.stopCause) &&
+          shouldNameSession(finished)
+        ) {
           void nameSession(finished);
         }
         // `finish` ended the whole session: its kept jobs go with it.
@@ -634,13 +642,15 @@ export function createRuntimeTurnService(
           goal,
           ...(runOptions.signal ? { signal: runOptions.signal } : {}),
           ...(runOptions.taskMaxDurationMs === undefined ? {} : { taskMaxDurationMs: runOptions.taskMaxDurationMs }),
+          ...(runOptions.taskMaxCostUsd === undefined ? {} : { taskMaxCostUsd: runOptions.taskMaxCostUsd }),
           ...(onGoalProgress ? { onGoalProgress } : {}),
         },
         // Each round is an ordinary turn: queued, approved and saved alike.
-        (roundSession, message, remainingMs) =>
+        (roundSession, message, remainingMs, remainingUsd) =>
           runTurn(roundSession, message, {
             ...turnOptions,
             ...(remainingMs === undefined ? {} : { taskMaxDurationMs: remainingMs }),
+            ...(remainingUsd === undefined ? {} : { taskMaxCostUsd: remainingUsd }),
           }),
       );
     }
@@ -736,6 +746,15 @@ export function createRuntimeTurnService(
   };
 
   return { executeTurn, steer, runTurn, controlGoal: goals.control };
+}
+
+/**
+ * Whether a turn ended because money ran out: its own budget, or the
+ * provider account's credit (ATO-1350). No further paid side call
+ * (the session namer) follows such a turn.
+ */
+export function stoppedForMoney(stopCause: RunTurnResult["stopCause"]): boolean {
+  return stopCause === "cost_ceiling" || stopCause === "credit_exhausted";
 }
 
 /**

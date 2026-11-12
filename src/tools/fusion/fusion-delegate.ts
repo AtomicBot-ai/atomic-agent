@@ -3,6 +3,8 @@ import {
   ApprovalDeniedError,
   requireApproval,
 } from "../../approval/dangerous-tool.js";
+import { resolve as resolvePath } from "node:path";
+import { isInside } from "../../approval/fanout-scope.js";
 import { resolveFanoutScope } from "./fanout-paths.js";
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { CompressedToolResult } from "../../compressor/result-compressor.js";
@@ -72,10 +74,19 @@ import { estimateUsageCostUsd } from "../../llm/provider/usage-cost.js";
 import {
   FusionTurnBudget,
   TURN_BUDGET_INSTRUCTION,
+  TURN_COUNT_INSTRUCTION,
   formatUsd,
   type TurnBudgetLimits,
   type TurnBudgetStop,
+  type TurnCountLimits,
 } from "./turn-budget.js";
+import {
+  FAILURE_BREAKER_INSTRUCTION,
+  FanoutFailureBreaker,
+  describeTrip,
+  refusalFromTrips,
+  type BreakerTrip,
+} from "./failure-breaker.js";
 import {
   delegateOutcome,
   fanoutSpend,
@@ -148,6 +159,30 @@ export interface FusionDelegateDeps extends WorkerRunnerDeps {
    * written and `resume` is refused.
    */
   runCheckpoints?: FusionRunStore;
+  /**
+   * The agent's own state directory (`config.paths.stateDir`, usually
+   * `~/.atomic-agent`). A fan-out whose write scope lies inside it is
+   * refused before the operator is asked (ATO-1267): workers have no
+   * business there, and one yes would cover every file the agent keeps
+   * for itself. Absent (tests, embedders), no such check.
+   */
+  agentStateDir?: string;
+}
+
+/**
+ * The scope directories that sit inside the agent's state directory,
+ * or the state directory itself. A scope that merely contains it (the
+ * home directory, say) is not refused here: the per-file trust-surface
+ * guard already keeps config.json, .env, rules, hooks and plugins out
+ * of any fan-out grant.
+ */
+export function scopeInsideStateDir(
+  writeScope: readonly string[],
+  stateDir: string | undefined,
+): string[] {
+  if (stateDir === undefined || stateDir.length === 0) return [];
+  const root = resolvePath(stateDir);
+  return writeScope.filter((dir) => isInside(root, resolvePath(dir)));
 }
 
 function error(
@@ -343,6 +378,46 @@ export function buildFusionDelegateTool(
           },
         );
       }
+      // The turn's memory of earlier rounds (ATO-1406). Only with the
+      // runtime's per-turn state: the tool's own fallback has no turn
+      // boundary, and counts carried across turns would refuse forever.
+      const tracksTurn = deps.turnBudget !== undefined;
+      if (tracksTurn) {
+        const priorTrip = refusalFromTrips(
+          turnBudget.trips(ctx.sessionId),
+          workerProviderId,
+          [...roleLegs.keys()],
+        );
+        if (priorTrip !== undefined) {
+          return error(
+            `fusion.delegate did not run: earlier this turn ${describeTrip(priorTrip)}. Running the workers again would fail the same way. ${FAILURE_BREAKER_INSTRUCTION}`,
+            {
+              reason: "failure-breaker",
+              blocker: priorTrip.blocker,
+              signature: priorTrip.signature,
+            },
+          );
+        }
+        const countLimits: TurnCountLimits = {
+          ...(mode.maxRoundsPerTurn === undefined
+            ? {}
+            : { rounds: mode.maxRoundsPerTurn }),
+          ...(mode.maxTasksPerTurn === undefined
+            ? {}
+            : { tasks: mode.maxTasksPerTurn }),
+        };
+        const countStop = turnBudget.checkCounts(
+          ctx.sessionId,
+          countLimits,
+          parsed.tasks.length,
+        );
+        if (countStop !== undefined) {
+          return error(
+            `fusion.delegate did not run: ${countStop.message}. ${TURN_COUNT_INSTRUCTION}`,
+            { reason: "turn-count", kind: countStop.kind },
+          );
+        }
+      }
 
       // Before the pool is measured: warming replays the probes a cloud
       // boot deferred, and it is the `/props` round trip inside it that
@@ -447,6 +522,16 @@ export function buildFusionDelegateTool(
       // operator is asked here instead, once, with the task list and the
       // directory in front of them.
       const writeScope = resolveFanoutScope(parsed.tasks, ctx.workingDir);
+      // Never into the agent's own state directory (ATO-1267).
+      const intoState = scopeInsideStateDir(writeScope, deps.agentStateDir);
+      if (intoState.length > 0) {
+        return error(
+          `fusion.delegate did not run: the tasks would write in the agent's own state directory (${intoState.join(", ")}). ` +
+            "Workers cannot write there. Name a project directory for the work instead; " +
+            "if the user really wants a change to the agent's own files, tell them, since only they can make it.",
+          { reason: "agent-state-dir", scope: intoState },
+        );
+      }
       // A turn is one job. An orchestrator that reviews and re-delegates
       // runs five fan-outs to build one library, and asking the same
       // question five times is attrition, not consent. The operator's
@@ -474,7 +559,10 @@ export function buildFusionDelegateTool(
           const asksPerson =
             declinedInScope &&
             deps.approvalRequired &&
-            (deps.approvals.wouldPrompt?.(ctx.sessionId, "fusion_fanout") ??
+            (deps.approvals.wouldPrompt?.(ctx.sessionId, "fusion_fanout", {
+              tool: FUSION_DELEGATE_TOOL,
+              affectedResources: [...writeScope],
+            }) ??
               false);
           await requireApproval(
             {
@@ -489,7 +577,7 @@ export function buildFusionDelegateTool(
                 roleLegs.size === 0
                   ? ""
                   : ` and ${[...roleLegs.values()].map((l) => l.model).join(", ")}`
-              }`,
+              }${tracksTurn ? describeTurnCounts(turnBudget.counts(ctx.sessionId), parsed.tasks.length, mode) : ""}`,
               preview: describeFanoutPreview(parsed.tasks, writeScope),
               affectedResources: [...writeScope],
             },
@@ -616,7 +704,6 @@ export function buildFusionDelegateTool(
               },
             }
           : {};
-      const budgetOptions = budgetOptionsFor(workerPricing);
       // Escalation (ATO-942): only to the configured target, priced with
       // the same resolver as the workers, and counted in the turn's cap.
       const escalationTarget = mode.escalation ?? null;
@@ -649,6 +736,14 @@ export function buildFusionDelegateTool(
       const runSignal = capped
         ? AbortSignal.any([ctx.signal, budgetAbort.signal])
         : ctx.signal;
+      // Escalation and judge calls name the delegating session, so they
+      // count in its spend readout like the workers' own calls (ATO-1388).
+      const sideComplete: FusionDelegateDeps["escalationComplete"] =
+        deps.escalationComplete === undefined
+          ? undefined
+          : (call) => deps.escalationComplete!({ ...call, sessionId: ctx.sessionId });
+      const workerDeps: FusionDelegateDeps =
+        sideComplete === undefined ? deps : { ...deps, escalationComplete: sideComplete };
 
       // The judge's acceptance lists (ATO-944), built before any work so
       // every brief carries its own, read-only. Off: no list, no suffix.
@@ -711,7 +806,48 @@ export function buildFusionDelegateTool(
                 }
               },
             };
-      const checkpointOptions = checkpointOptionsFor(workerPricing);
+      // One failure breaker per leg (ATO-1406): a run of identical
+      // failures, or one blocker, stops new starts on that leg; workers
+      // already running finish. Fed by every finished row, consulted
+      // with the turn's caps before each task starts.
+      const breakers = new Map<string, FanoutFailureBreaker>();
+      const breakerFor = (providerId: string): FanoutFailureBreaker => {
+        let breaker = breakers.get(providerId);
+        if (breaker === undefined) {
+          breaker = new FanoutFailureBreaker(providerId);
+          breakers.set(providerId, breaker);
+        }
+        return breaker;
+      };
+      const guardOptionsFor = (
+        providerId: string,
+        pricing: WorkerPricing | undefined,
+      ): Pick<
+        Parameters<typeof runWorkerTasks>[1],
+        | "shouldStart"
+        | "shouldStartTask"
+        | "onWorkerUsage"
+        | "onWorkerTool"
+        | "onTaskFinished"
+      > => {
+        const budget: Pick<
+          Parameters<typeof runWorkerTasks>[1],
+          "shouldStart" | "onWorkerUsage"
+        > = budgetOptionsFor(pricing);
+        const checkpoint = checkpointOptionsFor(pricing);
+        const breaker = breakerFor(providerId);
+        return {
+          ...budget,
+          ...checkpoint,
+          // The breaker only gates new tasks; the budget's own check
+          // still governs escalations and cuts (ATO-1406).
+          shouldStartTask: () => breaker.stopReason(),
+          onTaskFinished: (result: WorkerTaskResult): void => {
+            breaker.observe(result);
+            checkpoint.onTaskFinished?.(result);
+          },
+        };
+      };
       // The task tree (ATO-940): off unless configured, and then the wave
       // runs and a judge's retry read proposals.
       const tree =
@@ -719,6 +855,8 @@ export function buildFusionDelegateTool(
           ? undefined
           : new TaskTreeState(mode.taskTree, workerModel);
       tree?.addRoots(parsed.tasks, parsed.contract);
+      // A split's subtasks count on their root in the checkpoint (ATO-1320).
+      if (tree !== undefined) run?.useParents((id) => tree.parentOf(id));
       // One of the orchestrator's own tasks whose worker proposed a split.
       const awaitsExpansion = (row: WorkerTaskResult): boolean =>
         tree !== undefined &&
@@ -782,9 +920,10 @@ export function buildFusionDelegateTool(
         allowSplit: boolean,
       ): Promise<WorkerTaskResult[]> =>
         runWorkerTasks(
-          ctx.modelMode === "cloud"
-            ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true }
-            : deps,
+          // Workers run in the parent's folder in every model mode, so a
+          // live folder switch reaches them too (#1121). Only cloud
+          // workers inherit the parent's workspace.
+          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -805,7 +944,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...budgetOptions,
+            ...guardOptionsFor(workerProviderId, workerPricing),
             ...escalationOptions,
             ...(briefSuffix === undefined ? {} : { briefSuffix }),
             ...(workerPricing === undefined ? {} : { workerPricing }),
@@ -813,7 +952,6 @@ export function buildFusionDelegateTool(
             ...(allowSplit && canProposeSplit !== undefined
               ? { canProposeSplit }
               : {}),
-            ...checkpointOptions,
           },
         );
       // A role model's leg (ATO-943): its own provider, label, price and
@@ -845,9 +983,7 @@ export function buildFusionDelegateTool(
         );
         const onlyRole = roles.size === 1 ? [...roles][0] : "-";
         return runWorkerTasks(
-          ctx.modelMode === "cloud"
-            ? { ...deps, workingDir: ctx.workingDir, inheritWorkspace: true }
-            : deps,
+          { ...workerDeps, workingDir: ctx.workingDir, ...(ctx.modelMode === "cloud" ? { inheritWorkspace: true } : {}) },
           {
             ...(originalRequest === undefined ? {} : { originalRequest }),
             ...(contract === undefined ? {} : { contract }),
@@ -877,7 +1013,7 @@ export function buildFusionDelegateTool(
               : { workerMaxOutputTokens: mode.workerMaxOutputTokens }),
             writeScope,
             signal: runSignal,
-            ...budgetOptionsFor(pricing),
+            ...guardOptionsFor(leg.providerId, pricing),
             ...(escalationTarget?.providerId === leg.providerId
               ? {}
               : escalationOptions),
@@ -887,7 +1023,6 @@ export function buildFusionDelegateTool(
             ...(allowSplit && canProposeSplit !== undefined
               ? { canProposeSplit }
               : {}),
-            ...checkpointOptionsFor(pricing),
           },
         );
       };
@@ -1007,6 +1142,15 @@ export function buildFusionDelegateTool(
                 r,
               ]),
         );
+        // Workers are about to start: this round counts toward the
+        // turn's caps (ATO-1406), with only the tasks it will run — a
+        // resume's finished ones are not counted twice.
+        if (tracksTurn) {
+          turnBudget.noteRound(
+            ctx.sessionId,
+            parsed.tasks.filter((t) => !finished.has(t.id)).length,
+          );
+        }
         for (const [waveIndex, wave] of plan.waves.entries()) {
           waveWarnings.push(
             ...dependencyWarnings(wave, plan.dependencies, finished),
@@ -1091,6 +1235,19 @@ export function buildFusionDelegateTool(
             turnBudget.noteAttempt(ctx.sessionId, r.id);
           }
         }
+      }
+      // What the failure breakers saw (ATO-1406): remembered for the
+      // rest of the turn, so the next round on a broken leg is refused.
+      const trips: BreakerTrip[] = [...breakers.values()]
+        .map((b) => b.tripped())
+        .filter((t): t is BreakerTrip => t !== undefined);
+      // One trip per error per round: two legs stopping on the same
+      // repeat are one round's evidence, not two.
+      const seen = new Set<string>();
+      for (const trip of trips) {
+        if (seen.has(trip.signature)) continue;
+        seen.add(trip.signature);
+        turnBudget.noteTrip(ctx.sessionId, trip);
       }
       // Rows a cap cut short say so, so a cancelled worker is not read
       // as the operator's doing.
@@ -1211,7 +1368,7 @@ export function buildFusionDelegateTool(
               workingDir: ctx.workingDir,
               target: judgeTarget,
               pricing: judgePricing,
-              complete: deps.escalationComplete!,
+              complete: sideComplete!,
               signal: ctx.signal,
             });
             if (verdict.costUsd !== null && verdict.costUsd > 0) {
@@ -1298,7 +1455,10 @@ export function buildFusionDelegateTool(
         resume?.needsConfirmation.map((r) => r.id) ?? [],
       );
       const replan =
-        autoReplan > 0 && stoppedBy === undefined && !ctx.signal.aborted
+        autoReplan > 0 &&
+        stoppedBy === undefined &&
+        trips.length === 0 &&
+        !ctx.signal.aborted
           ? describeReplan(
               results.filter((r) => !awaitingYes.has(r.id)),
               (id) => turnBudget.attempts(ctx.sessionId, id),
@@ -1419,6 +1579,10 @@ export function buildFusionDelegateTool(
         budgetStopped === undefined
           ? ""
           : `\n\nStopped: ${budgetStopped.message}. ${TURN_BUDGET_INSTRUCTION}`;
+      const breakerNote =
+        trips.length === 0
+          ? ""
+          : `\n\nStopped: ${trips.map(describeTrip).join("; ")}. ${FAILURE_BREAKER_INSTRUCTION}`;
       return compressToolResult(
         {
           tool: FUSION_DELEGATE_TOOL,
@@ -1439,7 +1603,7 @@ export function buildFusionDelegateTool(
             roleSpendUsd > 0
               ? `\n\nRole models cost ${formatUsd(roleSpendUsd)} this fan-out.`
               : ""
-          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}`,
+          }${treeNote}${replan === undefined ? "" : renderReplanBlock(replan)}${renderMergeBlock(merges)}${resumeNote}${budgetNote}${breakerNote}`,
           details: {
             tasks: results,
             outcome,
@@ -1489,6 +1653,26 @@ export function buildFusionDelegateTool(
       );
     },
   };
+}
+
+/**
+ * What this round adds to the turn, for the fan-out's approval line
+ * (ATO-1406): the round number and the tasks so far, each against its
+ * cap when one is on. A subscription leg has no price to show, so the
+ * count is what the person weighs before saying yes.
+ */
+export function describeTurnCounts(
+  before: { rounds: number; tasks: number },
+  taskCount: number,
+  mode: Pick<ResolvedRunMode, "maxRoundsPerTurn" | "maxTasksPerTurn">,
+): string {
+  const round = before.rounds + 1;
+  const tasks = before.tasks + taskCount;
+  const roundCap =
+    mode.maxRoundsPerTurn === undefined ? "" : ` of at most ${mode.maxRoundsPerTurn}`;
+  const taskCap =
+    mode.maxTasksPerTurn === undefined ? "" : ` of at most ${mode.maxTasksPerTurn}`;
+  return ` (round ${round}${roundCap} this turn, ${tasks} task${tasks === 1 ? "" : "s"}${taskCap} in all)`;
 }
 
 /**

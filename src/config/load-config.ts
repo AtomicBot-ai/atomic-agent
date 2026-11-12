@@ -21,10 +21,80 @@ import { resolveLocalLlamaApiKey } from "../local-llm/server/managed-api-key.js"
 import { loadDotenvFromStateDir } from "./load-dotenv.js";
 import { resolveLlmProviderApiKey } from "./resolve-llm-api-key.js";
 import type { UserLlmFileConfig } from "./llm-config.js";
+import { emitConfigNoticeOnce } from "./config-primitives.js";
+import type {
+  LocalModelsValueSource,
+  LocalModelsValueSources,
+  RuntimeLocalModelsConfig,
+  UserLocalModelsConfig,
+} from "./local-models/local-models-types.js";
 
 function readEnv(key: string): string | undefined {
   const value = process.env[key];
   return value && value.length > 0 ? value : undefined;
+}
+
+/** Env override of `localModels.completionMaxTokens` (wins over the file, ATO-922). */
+export const COMPLETION_MAX_TOKENS_ENV = "ATOMIC_AGENT_LLAMA_MAX_TOKENS";
+/** Env override of `localModels.requestTimeoutMs` (wins over the file, ATO-922). */
+export const REQUEST_TIMEOUT_ENV = "ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS";
+
+/**
+ * Which layer set the local completion cap and request timeout
+ * (ATO-922). The env var winning over `config.json` is intended (an
+ * operator override, pinned in `thinking-reply-cap.ts` and the config
+ * tests); what was wrong is that it won silently. So: the source is
+ * recorded here for the start-up log line, and when the env var beats
+ * a different file value a one-time notice names both.
+ */
+function localModelsValueSources(
+  file: Pick<UserLocalModelsConfig, "completionMaxTokens" | "requestTimeoutMs">,
+): LocalModelsValueSources {
+  const capEnv = readEnv(COMPLETION_MAX_TOKENS_ENV);
+  const capFromEnv =
+    capEnv !== undefined && Number.isFinite(Number.parseInt(capEnv, 10));
+  const timeoutEnv = readEnv(REQUEST_TIMEOUT_ENV);
+  const timeoutFromEnv =
+    timeoutEnv !== undefined && Number.isFinite(Number.parseInt(timeoutEnv, 10));
+  if (capFromEnv) {
+    const value = readBoundedPositiveInt(COMPLETION_MAX_TOKENS_ENV, file.completionMaxTokens, 64, 131_072);
+    if (value !== file.completionMaxTokens) {
+      emitConfigNoticeOnce(
+        `[atomic-agent] ${COMPLETION_MAX_TOKENS_ENV}=${value} overrides localModels.completionMaxTokens ${file.completionMaxTokens} from config.json`,
+      );
+    }
+  }
+  if (timeoutFromEnv) {
+    const value = readInt(REQUEST_TIMEOUT_ENV, file.requestTimeoutMs);
+    if (value !== file.requestTimeoutMs) {
+      emitConfigNoticeOnce(
+        `[atomic-agent] ${REQUEST_TIMEOUT_ENV}=${value} overrides localModels.requestTimeoutMs ${file.requestTimeoutMs} from config.json`,
+      );
+    }
+  }
+  return {
+    completionMaxTokens: capFromEnv ? "env" : "config",
+    requestTimeoutMs: timeoutFromEnv ? "env" : "config",
+  };
+}
+
+/**
+ * The start-up log lines naming where the local completion cap and
+ * request timeout came from (ATO-922), e.g. `local completion cap 16384
+ * from env ATOMIC_AGENT_LLAMA_MAX_TOKENS`. Empty for a hand-built
+ * runtime config without `valueSources`.
+ */
+export function describeLocalModelsValueSources(
+  local: Pick<RuntimeLocalModelsConfig, "completionMaxTokens" | "requestTimeoutMs" | "valueSources">,
+): string[] {
+  const sources = local.valueSources;
+  if (sources === undefined) return [];
+  const from = (source: LocalModelsValueSource, env: string, key: string): string =>
+    source === "env" ? `from env ${env}` : `from config localModels.${key}`;
+  return [
+    `local completion cap ${local.completionMaxTokens} ${from(sources.completionMaxTokens, COMPLETION_MAX_TOKENS_ENV, "completionMaxTokens")}`,
+    `local request timeout ${local.requestTimeoutMs} ms ${from(sources.requestTimeoutMs, REQUEST_TIMEOUT_ENV, "requestTimeoutMs")}`,
+  ];
 }
 
 function readInt(key: string, fallback: number): number {
@@ -177,7 +247,7 @@ export function loadConfig(): AtomicAgentConfig {
       healthPath: "/health",
       completionPath: "/completion",
       completionMaxTokens: readBoundedPositiveInt(
-        "ATOMIC_AGENT_LLAMA_MAX_TOKENS",
+        COMPLETION_MAX_TOKENS_ENV,
         user.localModels.completionMaxTokens,
         64,
         131_072,
@@ -186,9 +256,11 @@ export function loadConfig(): AtomicAgentConfig {
         "ATOMIC_AGENT_LLAMA_HEALTH_TIMEOUT_MS",
         ENV_DEFAULTS.HEALTH_TIMEOUT_MS,
       ),
+      // ATO-922: the file value is the default now; the env var stays
+      // an operator override on top of it, like the completion cap.
       requestTimeoutMs: readInt(
-        "ATOMIC_AGENT_LLAMA_REQUEST_TIMEOUT_MS",
-        ENV_DEFAULTS.REQUEST_TIMEOUT_MS,
+        REQUEST_TIMEOUT_ENV,
+        user.localModels.requestTimeoutMs,
       ),
       firstTokenTimeoutMs: readInt(
         "ATOMIC_AGENT_LLAMA_FIRST_TOKEN_TIMEOUT_MS",
@@ -223,6 +295,7 @@ export function loadConfig(): AtomicAgentConfig {
       thinking: user.localModels.thinking,
       reasoningBudgetTokens: user.localModels.reasoningBudgetTokens,
       drySampler: user.localModels.drySampler,
+      valueSources: localModelsValueSources(user.localModels),
       managed: { ...user.localModels.managed },
       embeddings: { ...user.localModels.embeddings },
       download: { ...user.localModels.download },

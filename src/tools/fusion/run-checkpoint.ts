@@ -342,6 +342,8 @@ export class FusionRunStore {
 /** One run's checkpoint as the fan-out writes it. */
 export class FusionRunRecorder {
   private ended = false;
+  /** The task tree's parent links (ATO-1320); absent without a tree. */
+  private parentOf: ((taskId: string) => string | undefined) | undefined;
 
   constructor(
     private readonly store: FusionRunStore,
@@ -358,13 +360,36 @@ export class FusionRunRecorder {
   }
 
   /**
+   * How a subtask of a split finds the top-level task it belongs to
+   * (ATO-1320). Only the orchestrator's own tasks have a row here; a
+   * child's spend and side effects count on its root, found through
+   * the tree's parent links rather than by cutting the id at `/`,
+   * since a root's own id may contain one.
+   */
+  useParents(parentOf: (taskId: string) => string | undefined): void {
+    this.parentOf = parentOf;
+  }
+
+  /** The checkpoint row `taskId` counts on: its own, or its root's. */
+  private rowFor(taskId: string): FusionRunCheckpoint["tasks"][number] | undefined {
+    let id: string | undefined = taskId;
+    for (let hops = 0; id !== undefined && hops < 64; hops += 1) {
+      const current: string = id;
+      const task = this.checkpoint.tasks.find((t) => t.id === current);
+      if (task !== undefined) return task;
+      id = this.parentOf?.(current);
+    }
+    return undefined;
+  }
+
+  /**
    * A worker started `tool`. Written only when it is the task's first
    * side-effecting call: a worker killed right after it is still known
    * not to be safe to repeat.
    */
   noteTool(taskId: string, tool: string): void {
     if (this.ended || !toolHasSideEffects(tool)) return;
-    const task = this.checkpoint.tasks.find((t) => t.id === taskId);
+    const task = this.rowFor(taskId);
     if (task === undefined || task.sideEffectTools.includes(tool)) return;
     const first = !task.sideEffects;
     task.sideEffects = true;
@@ -375,7 +400,8 @@ export class FusionRunRecorder {
   /** A task finished: its row and its spend are written at once. */
   recordTask(result: WorkerTaskResult, costUsd = 0): void {
     if (this.ended) return;
-    const task = this.checkpoint.tasks.find((t) => t.id === result.id);
+    const own = this.checkpoint.tasks.find((t) => t.id === result.id);
+    const task = own ?? this.rowFor(result.id);
     if (task === undefined) return;
     // The finished row's own tool counts also decide, for a worker whose
     // tool events were not seen (a test harness, an embedder).
@@ -386,6 +412,13 @@ export class FusionRunRecorder {
       }
     }
     const spend = Number.isFinite(costUsd) && costUsd > 0 ? costUsd : 0;
+    if (own === undefined) {
+      // A subtask of a split (ATO-1320): its spend and side effects
+      // count on its root, whose own row is written when the split closes.
+      this.checkpoint.spentUsd += spend;
+      this.flush();
+      return;
+    }
     task.result = {
       status: result.status,
       reply: result.reply.slice(0, CHECKPOINT_REPLY_CHARS),

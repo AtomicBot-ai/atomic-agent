@@ -282,8 +282,11 @@ export {
   type EmbeddingMemoryVerdict,
 } from "./server/embedding-memory-gate.js";
 export {
+  explainManagedEngineLiveness,
   readManagedEngineLiveness,
   type ManagedEngineLiveness,
+  type ManagedEngineLivenessReason,
+  type ManagedEngineLivenessReport,
 } from "./server/engine-liveness.js";
 export {
   classifyPrefixReuse,
@@ -322,7 +325,13 @@ export {
   type DedicatedGpuAutoContext,
 } from "./server/context-growth.js";
 export { readLogTail, type LogTailResult } from "./server/log-tail.js";
-export { describeServerFault, type ServerFault, type ServerFaultKind } from "./server/server-fault.js";
+export {
+  classifyLocalFault,
+  describeServerFault,
+  type LocalFaultTag,
+  type ServerFault,
+  type ServerFaultKind,
+} from "./server/server-fault.js";
 export {
   assertPortFree,
   fetchServedModelIds,

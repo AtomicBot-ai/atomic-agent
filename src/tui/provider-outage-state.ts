@@ -17,6 +17,20 @@ import type { TuiState } from "./tui-state.js";
 
 type ProviderOutage = NonNullable<TuiState["providerOutage"]>;
 
+/** Drop what a failed attempt left streaming for a step about to be replayed. */
+export function discardDeadAttempt(state: TuiState, stepIndex: number): TuiState {
+  const last = state.reasoning.at(-1);
+  return {
+    ...state,
+    reasoning:
+      last && last.stepIndex === stepIndex
+        ? state.reasoning.slice(0, -1)
+        : state.reasoning,
+    streamingAssistantText: null,
+    streamingToolCalls: [],
+  };
+}
+
 /** Park the turn: the backoff sleep has begun. */
 export function parkProviderOutage(
   state: TuiState,
@@ -65,16 +79,8 @@ export function retryProviderOutage(
 ): TuiState {
   const outage = state.providerOutage;
   if (!outage || outage.givenUp) return state;
-  const last = state.reasoning.at(-1);
-  const reasoning =
-    last && last.stepIndex === stepIndex
-      ? state.reasoning.slice(0, -1)
-      : state.reasoning;
   return {
-    ...state,
+    ...discardDeadAttempt(state, stepIndex),
     providerOutage: { ...outage, phase: "retrying", sinceTs: now },
-    reasoning,
-    streamingAssistantText: null,
-    streamingToolCalls: [],
   };
 }

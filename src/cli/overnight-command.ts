@@ -38,6 +38,7 @@ import {
   formatOvernightSummary,
   formatProgressLine,
   overnightExitCode,
+  formatTelegramUndelivered,
   replyFromEvent,
 } from "./overnight-progress.js";
 
@@ -59,6 +60,8 @@ const HELP = [
   "                    is denied, since nobody is there to answer.",
   "",
   "Check a run with `atomic-agent task show <id>`, stop it with `atomic-agent task cancel <id>`.",
+  "Exit code: 0 finished; 2 stopped at a limit (budget, time, steps, no progress)",
+  "           or out of provider credit; 1 failed or cancelled.",
   "",
   "Examples:",
   '  atomic-agent overnight "migrate the tests to vitest" --budget 5 --dir ~/code/app',
@@ -159,6 +162,7 @@ export function overnightTaskInput(
   taskId: string,
   sessionId: string,
   config: { agent: { task: { maxSteps: number; maxCostUsd: number } } },
+  approvalLevel?: number,
 ): TaskCreateInput {
   const capUsd = args.budgetUsd ?? config.agent.task.maxCostUsd;
   return {
@@ -172,6 +176,9 @@ export function overnightTaskInput(
     maxDurationMs: args.durationMs,
     ...(capUsd > 0 ? { maxCostUsd: capUsd } : {}),
     ...(args.notify ? { notify: args.notify } : {}),
+    // Nobody is there to answer, so what this run denies or allows is
+    // fixed when it starts: a resume elsewhere must keep it (ATO-1324).
+    ...(approvalLevel !== undefined ? { approvalLevel } : {}),
   };
 }
 
@@ -279,12 +286,13 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
   let spentBeforeUsd = 0;
   let resolveApproval: ((approvalId: string) => void) | null = null;
 
+  const approvalLevel = resolveBootApprovalLevel(args.noApproval, config.agent.approvalLevel);
   const runtime = await createAgentRuntime({
     // Tools resolve paths against the session's working dir, and a
     // session takes the runtime's: this is what makes --dir the run's
     // folder rather than a hint in the prompt.
     workingDir: args.dir,
-    approvalLevel: resolveBootApprovalLevel(args.noApproval, config.agent.approvalLevel),
+    approvalLevel,
     handlers: {
       onAgentEvent: (event, eventSessionId) => {
         if (sessionId === null || eventSessionId !== sessionId) return;
@@ -327,7 +335,7 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
     const session = runtime.createSession({ metadata: { overnight: true } });
     sessionId = session.id;
     const created = runtime.taskStore.create(
-      overnightTaskInput(args, taskId, session.id, config),
+      overnightTaskInput(args, taskId, session.id, config, approvalLevel),
     );
     spentBeforeUsd = runtime.taskStore.get(created.id)?.spentUsd ?? 0;
     process.stderr.write(
@@ -344,7 +352,8 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
         deniedApprovals,
       }),
     );
-    return overnightExitCode(final.status);
+    if (final.notify === "telegram") await warnIfReportStuck(runtime, final.id);
+    return overnightExitCode(final);
   } finally {
     signals.dispose();
     await runtime.shutdown();
@@ -352,6 +361,44 @@ async function runForeground(args: OvernightArgs, taskId: string): Promise<numbe
 }
 
 type OvernightRuntime = Awaited<ReturnType<typeof createAgentRuntime>>;
+
+const TELEGRAM_NO_BOT = "no Telegram bot is set up for this agent";
+const TELEGRAM_TURNED_OFF = "Telegram is turned off in this agent's settings";
+
+/** How long a channel still connecting may take to send the report. */
+const TELEGRAM_FLUSH_WAIT_MS = 15_000;
+
+/**
+ * The Telegram report waits in this process's memory until the channel
+ * is up, and this process exits next (ATO-1358). When the desktop app
+ * or the TUI holds the connection the channel never comes up here, and
+ * the report would vanish without a word: say so instead.
+ */
+async function warnIfReportStuck(runtime: OvernightRuntime, taskId: string): Promise<void> {
+  // The report is handed to the channel from the runner's report hook.
+  await new Promise((resolve) => setImmediate(resolve));
+  const channel = runtime.telegramChannel;
+  // Neither of these queues the report: it was dropped at once.
+  if (!channel || !channel.hasToken()) {
+    process.stderr.write(formatTelegramUndelivered(TELEGRAM_NO_BOT, taskId));
+    return;
+  }
+  if (channel.state() === "disabled" && channel.hasPendingTaskReport(taskId)) {
+    process.stderr.write(formatTelegramUndelivered(TELEGRAM_TURNED_OFF, taskId));
+    return;
+  }
+  const deadline = Date.now() + TELEGRAM_FLUSH_WAIT_MS;
+  while (
+    channel.hasPendingTaskReport(taskId) &&
+    channel.state() === "starting" &&
+    Date.now() < deadline
+  ) {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (channel.hasPendingTaskReport(taskId)) {
+    process.stderr.write(formatTelegramUndelivered(channel.lastError(), taskId));
+  }
+}
 
 /**
  * Run the task here, or wait for whoever claimed it. Another process's

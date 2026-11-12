@@ -113,7 +113,9 @@ describe("ToolRegistry.invoke masks secrets in every tool's output", () => {
       "a web page",
     );
     const out = await registry.invoke("page", {}, ctx());
-    expect(out.summary).toBe(`${untrustedContentNote("a web page")}\nleaked [redacted:openrouter-key]`);
+    expect(out.summary.startsWith(`${untrustedContentNote("a web page")}\n<<<UNTRUSTED `)).toBe(true);
+    expect(out.summary).toContain("\nleaked [redacted:openrouter-key]\n<<<END UNTRUSTED ");
+    expect(out.summary).not.toContain(OPENROUTER);
   });
 
   it("masks the exact values it is told the agent owns", async () => {

@@ -319,6 +319,13 @@ export function reduceUiAction(
       return {
         ...state,
         messages: [],
+        // The session keeps what the screen drops: `[try again]` still
+        // has to count those questions (ATO-1420).
+        clearedQuestions:
+          (state.clearedQuestions ?? 0) +
+          state.messages.filter(
+            (message) => message.role === "user" && message.steered !== true,
+          ).length,
         pendingSteers: [],
         reasoning: [],
         feed: [],
@@ -333,6 +340,19 @@ export function reduceUiAction(
         // no longer exist.
         contextUsage: EMPTY_CONTEXT_USAGE,
       };
+    case "chat_messages_truncated": {
+      const cut = state.messages.findIndex(
+        (message) => message.id === action.fromMessageId,
+      );
+      if (cut < 0) return state;
+      // The removed turn's gauge reading went with it, like `/clear`.
+      return {
+        ...state,
+        messages: state.messages.slice(0, cut),
+        lastRunStatus: null,
+        contextUsage: EMPTY_CONTEXT_USAGE,
+      };
+    }
     case "session_picker_opened":
       return {
         ...state,
@@ -508,6 +528,8 @@ export function reduceUiAction(
         plan: action.plan ?? null,
         sessionUsage: action.sessionUsage ?? null,
         messages: [...action.messages],
+        // Rebuilt from the session: nothing of it is hidden any more.
+        clearedQuestions: 0,
         reasoning: [],
         feed: [],
         logs: [],

@@ -35,6 +35,13 @@ export type {
   SessionSummaryPageOptions,
 } from "./session-summary-page.js";
 export { normalizeSessionState } from "./normalize-session-state.js";
+export { planLastTurnRollback, truncateSessionAt } from "./session-truncate.js";
+export type {
+  LastTurnRollbackOptions,
+  LastTurnRollbackPlan,
+  LastTurnRollbackRefusal,
+  TruncateSessionResult,
+} from "./session-truncate.js";
 export {
   createEmptySessionState,
   appendFact,

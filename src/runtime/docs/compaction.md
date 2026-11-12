@@ -46,6 +46,11 @@ checkpoint has `model: null` and the optional `kind: "extractive"`; one made fro
 rolling summary has `kind: "rolling"`. Loading rejects
 unsupported versions, invalid boundaries and cuts through tool/result pairs;
 `compactionWarning` carries the diagnostic. Transcript records are never rewritten.
+In storage, the records a checkpoint covers move once to the
+`session_turn_archive` table and the row's payload keeps only the rest, with an
+`archivedTurns` count (`src/session/turn-archive.ts`). `SessionStore.load`
+puts them back, so the in-memory transcript and every index into it are
+unchanged; only the per-write serialization stops growing with the session.
 The optional `SessionState.rollingSummary` (see Rolling summary) is never part of
 the prompt; loading drops it silently when stale.
 

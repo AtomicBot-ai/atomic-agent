@@ -214,6 +214,46 @@ describe("os.web.fetch tool", () => {
     expect(result.details.truncated).toBe(true);
   });
 
+  // ATO-913: a capped page in local mode carries the whole text for the
+  // registry's spill file, while the model-facing summary stays capped.
+  it("keeps the full text behind a capped local summary", async () => {
+    const paragraphs = Array.from({ length: 2000 }, (_, i) => `<p>post ${i + 1} ${"word ".repeat(18)}</p>`).join("");
+    const big = `<html><body><article><h1>feed</h1>${paragraphs}</article></body></html>`;
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: big, status: 200, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+    });
+    const result = await tool.run(
+      { url: "https://example.com/feed" },
+      { ...ctx(), modelMode: "local" },
+    );
+    expect(result.status).toBe("ok");
+    expect(result.truncated).toBe(true);
+    expect(result.details.truncated).toBe(true);
+    expect(result.summary.length).toBeLessThanOrEqual(50_000);
+    expect(result.summary).not.toContain("post 2000 ");
+    expect(result.fullOutput!.length).toBeGreaterThan(100_000);
+    expect(result.fullOutput).toContain("post 2000 ");
+  });
+
+  it("keeps an explicit maxChars cap in cloud mode", async () => {
+    const big = `<html><body><article><h1>t</h1><p>${"word ".repeat(5000)}</p></article></body></html>`;
+    const tool = buildOsWebFetchTool({
+      runCommand: makeRunCommand(() => ({
+        stdout: curlStdout({ body: big, status: 200, contentType: "text/html" }),
+      })),
+      lookup: publicLookup,
+    });
+    const result = await tool.run(
+      { url: "https://example.com/big", maxChars: 200 },
+      { ...ctx(), modelMode: "cloud" },
+    );
+    expect(result.details.truncated).toBe(true);
+    expect(result.fullOutput!.length).toBeLessThan(300);
+  });
+
   it("rejects an empty url", async () => {
     const tool = buildOsWebFetchTool({ lookup: publicLookup });
     await expect(tool.run({ url: "" }, ctx())).rejects.toThrow();

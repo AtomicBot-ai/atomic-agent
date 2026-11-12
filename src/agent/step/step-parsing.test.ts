@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { GEMMA4_THINK_PROFILE, PLAIN_INSTRUCT_PROFILE, QWEN_THINK_PROFILE } from "../../llm/model-profile.js";
 import { DEFAULT_REASONING_BUDGET_TOKENS } from "../../llm/reasoning-budget.js";
-import { REPAIR_MAX_TOKENS, repairReplyCap } from "./step-parsing.js";
+import type { CompletionResult } from "../../llm/llama-server-client.js";
+import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
+import { REPAIR_MAX_TOKENS, repairReplyCap, tryParseToolCalls } from "./step-parsing.js";
 
 describe("repair completion cap", () => {
   it("keeps the 1024 anti-loop guard for a model without thinking", () => {
@@ -32,5 +34,29 @@ describe("repair completion cap", () => {
   it("leaves native_tools on the step's cap", () => {
     expect(repairReplyCap("native_tools", 20_000)).toBe(20_000);
     expect(repairReplyCap("native_tools", 20_000, { profile: QWEN_THINK_PROFILE, budgetTokens: 1500 })).toBe(20_000);
+  });
+});
+
+// ATO-1365: a native call is decoded against the tools the request
+// offered, not by textual unescape, so `mcp.srv.foo__bar` never runs as
+// its dotted sibling `mcp.srv.foo.bar`.
+describe("native tool-call names", () => {
+  const tool = (name: string): ToolDescriptor => ({ name, tier: "frequent", summary: name, argsSchema: "" });
+  const descriptors = [tool("mcp.srv.foo__bar"), tool("mcp.srv.foo.bar")];
+  const native = (name: string): CompletionResult =>
+    ({ content: "", reasoningContent: "", toolCalls: [{ id: "c1", type: "function", function: { name, arguments: "{}" } }] }) as unknown as CompletionResult;
+  const deps = { toolTransport: "native_tools" as const, toolCallAdapter: null };
+
+  it("resolves each wire name to the tool it was offered for", () => {
+    const first = tryParseToolCalls(native("mcp__srv__foo__bar_2"), PLAIN_INSTRUCT_PROFILE, deps, descriptors, false);
+    expect(first.ok && first.batch.calls[0]?.tool).toBe("mcp.srv.foo__bar");
+    const second = tryParseToolCalls(native("mcp__srv__foo__bar"), PLAIN_INSTRUCT_PROFILE, deps, descriptors, false);
+    expect(second.ok && second.batch.calls[0]?.tool).toBe("mcp.srv.foo.bar");
+  });
+
+  it("resolves an escaped name copied into content the same way", () => {
+    const content = ({ content: '[{"tool":"mcp__srv__foo__bar_2","args":{}}]', reasoningContent: "" }) as unknown as CompletionResult;
+    const parsed = tryParseToolCalls(content, PLAIN_INSTRUCT_PROFILE, deps, descriptors, false);
+    expect(parsed.ok && parsed.batch.calls[0]?.tool).toBe("mcp.srv.foo__bar");
   });
 });

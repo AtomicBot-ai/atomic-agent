@@ -24,6 +24,7 @@ import { createRuntimeLifecycle } from "./composition/runtime-lifecycle.js";
 import { join, resolve } from "node:path";
 
 import { getConfig } from "../config/index.js";
+import { describeLocalModelsValueSources } from "../config/load-config.js";
 import type { SessionState } from "../session/session-state.js";
 import type { CompletionResult } from "../llm/provider/completion-types.js";
 import { estimateTokens } from "../prompt/token-budget.js";
@@ -61,7 +62,7 @@ import {
 import { resolveLlmConfig } from "../llm/provider/index.js";
 
 import { CostAccumulator } from "../llm/provider/cost-accumulator.js";
-import { SessionUsageLedger } from "../session/usage-meter.js";
+import { SessionUsageLedger, forwardWorkerUsage } from "../session/usage-meter.js";
 
 import { ProviderFallbackChain } from "../llm/fallback/index.js";
 import { createFallbackChainResolver } from "./fallback-chain-resolver.js";
@@ -111,6 +112,10 @@ export async function createAgentRuntime(
 
   const observability = createRuntimeObservability(config, options);
   const { logger, metrics, analyticsStateStore } = observability;
+  // ATO-922: an env override used to beat `config.json` without a trace.
+  for (const line of describeLocalModelsValueSources(config.localModels)) {
+    logger.info(line);
+  }
 
   // Read the current reporter lazily so a hot-toggle is reflected without
   // re-installing the process-global handlers.
@@ -405,8 +410,11 @@ export async function createAgentRuntime(
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
+  // ATO-1276: an Ollama route learns its real window (`/api/show`) now,
+  // before the first turn sizes a prompt. Silent and non-blocking.
+  void modelContext.primeLocalContextWindow();
   registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
-  registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics });
+  registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
   registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
 
   const mcpCatalog = await connectRuntimeMcpCatalog({
@@ -558,6 +566,9 @@ export async function createAgentRuntime(
       );
     },
     forgetDeclinedApprovals: (sessionId: string) => approvals.forgetDeclined(sessionId),
+    denyPendingApprovals: (sessionId: string, reason: string) => {
+      approvals.denyPendingForSession(sessionId, reason);
+    },
     slotManager,
     grammar: getGrammar(),
     persistContext: (state: SessionState) => {
@@ -723,6 +734,7 @@ export async function createAgentRuntime(
   let telegramChannelForShutdown: TelegramChannel | null = null;
   let discordChannelForShutdown: DiscordChannel | null = null;
   let swarmForShutdown: SwarmRegistry | null = null;
+  let stopPluginMcpWatch: (() => void) | null = null;
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
   // In-flight `/enhance` passes; shutdown aborts them beside naming.
@@ -736,6 +748,7 @@ export async function createAgentRuntime(
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },
     get discordChannelForShutdown() { return discordChannelForShutdown; },
     get swarmForShutdown() { return swarmForShutdown; },
+    get pluginMcpWatch() { return stopPluginMcpWatch; },
     get consolidatorJob() { return consolidatorJob; },
     get taskStore() { return taskStore; },
     get analytics() { return observability.getAnalytics(); },
@@ -745,12 +758,18 @@ export async function createAgentRuntime(
   const refreshSkills = skillCatalogState.createRefreshSkills(options);
 
   const refreshMcp = mcpCatalog.createRefreshMcp();
+  // "Stop its code" (and plugin off / removed) stops that plugin's live
+  // MCP servers now, not at the next start (ATO-1407).
+  stopPluginMcpWatch = mcpCatalog.watchPluginMcp(refreshMcp);
 
   const { reloadLlmProviders, reloadLlmProvider } = createRuntimeProviderReloads(
     logger, localProfile, connectedLocal, providerRegistry,
   );
 
-  const { createSession, createEphemeralSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  const { createSession, createEphemeralSession: createWorkerSession } = createRuntimeSessionFactories(workingDir, sessionStore, ensureRecorder);
+  // A fusion worker's calls count on the session that spawned it, so the
+  // composer's `$` readout includes what the workers spent (ATO-1388).
+  const createEphemeralSession: typeof createWorkerSession = forwardWorkerUsage(createWorkerSession, sessionUsage);
   const previewPrompt = createRuntimePromptPreview(config, promptPreviewDeps);
 
   const { executeTurn, steer, runTurn, controlGoal } = createRuntimeTurnService(config, {
@@ -764,6 +783,7 @@ export async function createAgentRuntime(
   const taskRunner = createRuntimeTaskRunner({
     config, taskStore, runTurn, sessionStore, createSession, toolRegistry,
     resolveTelegram: () => telegramChannelForShutdown, logger, metrics,
+    approvalLevel: () => approvals.getLevel(),
   });
 
   registerRuntimeFusionAndReadScope({
@@ -771,6 +791,7 @@ export async function createAgentRuntime(
     declaredInputs, prepareLocalLink, emitAgentLoopEventFor, resolveCurrentRunMode,
     providerRegistry, llama, approvals, dangerous, slotManager, workingDir, logger,
     turnBudget: fusionTurnBudget,
+    sessionUsage,
     liveWorkers: fusionLiveWorkers,
     runCheckpoints: fusionRuns,
     steerWorker: (sessionId, text) => steeringInbox.push(sessionId, text),

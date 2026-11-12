@@ -19,6 +19,7 @@ import {
   type LocalEngineFailedContext,
 } from "../../analytics/index.js";
 import { getAppVersion } from "../../version.js";
+import { SENTRY_RATE_LIMIT_FILE } from "../../error-reporting/index.js";
 
 export function createRuntimeObservability(
   config: AtomicAgentConfig,
@@ -86,6 +87,8 @@ export function createRuntimeObservability(
       dimensions: analyticsDimensions,
       version: getAppVersion(),
       logger,
+      // ATO-1286: the "10 identical per hour" budget survives restarts.
+      sentryRateLimitPath: resolve(config.paths.stateDir, SENTRY_RATE_LIMIT_FILE),
     });
   let { analytics, errorReporter } = buildTelemetry(config.analytics.enabled);
   // Not awaited: delivery is confirmed in the background, and only then

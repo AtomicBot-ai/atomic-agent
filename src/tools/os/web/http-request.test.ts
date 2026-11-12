@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, it, expect } from "vitest";
 import { ApprovalGate } from "../../../approval/approval-gate.js";
 import type {
@@ -7,9 +8,11 @@ import type {
 import type { AtomicAgentConfig } from "../../../config/index.js";
 import { createHttpDefaults } from "../../../config/http-config.js";
 import type { ToolContext } from "../../tool-registry.js";
+import type { ApprovalRequest } from "../../../approval/approval-gate.js";
 import {
   buildOsHttpRequestTool,
   hostAllowed,
+  maskHeaderValue,
   parseCurlOutput,
 } from "./http-request.js";
 import type { HostLookup } from "./web-fetch-ssrf-guard.js";
@@ -68,8 +71,35 @@ function denyAll(): ApprovalGate {
   return gate;
 }
 
+/**
+ * Headers reach curl as `-H @<owner-only file>` (ATO-1177). The file only
+ * exists while curl runs, so expand it here into the `-H "Name: value"`
+ * pairs curl reads from it; `rawArgs` keeps the real argv, which is what
+ * `ps` shows.
+ */
+function expandHeaderFiles(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const next = args[i + 1];
+    if (args[i] === "-H" && next?.startsWith("@") && next !== "@-") {
+      for (const line of readFileSync(next.slice(1), "utf8").split("\n")) {
+        if (line.length > 0) out.push("-H", line);
+      }
+      i++;
+      continue;
+    }
+    out.push(args[i]!);
+  }
+  return out;
+}
+
 function fakeRun(
-  capture: { cmd?: string; args?: string[]; opts?: CommandOptions },
+  capture: {
+    cmd?: string;
+    args?: string[];
+    rawArgs?: string[];
+    opts?: CommandOptions;
+  },
   result: Partial<CommandResult> = {},
 ) {
   return async (
@@ -78,7 +108,8 @@ function fakeRun(
     opts: CommandOptions,
   ): Promise<CommandResult> => {
     capture.cmd = cmd;
-    capture.args = args;
+    capture.rawArgs = args;
+    capture.args = expandHeaderFiles(args);
     capture.opts = opts;
     return makeCommandResult(result);
   };
@@ -360,8 +391,12 @@ describe("os.http.request", () => {
   });
 
   it("passes custom headers through to curl and does not override them", async () => {
-    const capture: { cmd?: string; args?: string[]; opts?: CommandOptions } =
-      {};
+    const capture: {
+      cmd?: string;
+      args?: string[];
+      rawArgs?: string[];
+      opts?: CommandOptions;
+    } = {};
     const tool = buildOsHttpRequestTool({
       lookup: publicLookup,
       approvals: approveAll(),
@@ -385,6 +420,9 @@ describe("os.http.request", () => {
     );
     expect(capture.args).toContain("Content-Type: text/plain");
     expect(capture.args).toContain("Authorization: Bearer XYZ");
+    // ...but only through the header file: argv, which every local
+    // account can read in `ps`, never carries the value (ATO-1177).
+    expect(capture.rawArgs!.join(" ")).not.toContain("XYZ");
     const ctOccurrences = capture.args!.filter((a) =>
       a.toLowerCase().startsWith("content-type:"),
     );
@@ -748,5 +786,122 @@ describe("os.http.request", () => {
     expect(result.status).toBe("error");
     expect(result.details.blocked).toBe(true);
     expect(calls).toHaveLength(1);
+  });
+
+  it("narrows the session grant to the target origin (ATO-1182)", async () => {
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req);
+        gate.resolve({ approvalId: req.approvalId, approved: true, grant: "category" });
+      },
+    });
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: gate,
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "writes" }),
+      runCommand: fakeRun({}, { stdout: "ok\n" + meta(200, "text/plain", 2) }),
+    });
+    const post = (url: string) =>
+      tool.run({ url, method: "POST", body: "{}" }, makeCtx());
+
+    await post("https://a.example/one");
+    expect(asked).toHaveLength(1);
+    expect(asked[0]!.grantKey).toBe("https://a.example");
+    // Same origin, other path: covered by the session grant.
+    await post("https://a.example/two");
+    expect(asked).toHaveLength(1);
+    // Another host asks again.
+    await post("https://b.example/one");
+    expect(asked).toHaveLength(2);
+    expect(asked[1]!.grantKey).toBe("https://b.example");
+  });
+
+  it("masks credential header values in the approval preview (ATO-1182)", async () => {
+    const asked: ApprovalRequest[] = [];
+    const gate: ApprovalGate = new ApprovalGate({
+      emit: (req) => {
+        asked.push(req);
+        gate.reject(req.approvalId, "no");
+      },
+    });
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: gate,
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "writes" }),
+      runCommand: fakeRun({}),
+    });
+    await expect(
+      tool.run(
+        {
+          url: "https://api.example.com/v1",
+          method: "POST",
+          body: "{}",
+          headers: {
+            Authorization: "Bearer sk-live-abcdef123456",
+            "Proxy-Authorization": "Basic dXNlcjpwYXNz",
+            Cookie: "sid=s3cr3t",
+            "X-Api-Key": "key-123456",
+            "X-Auth-Token": "tok-987",
+            "X-Request-Id": "req-1",
+          },
+        },
+        makeCtx(),
+      ),
+    ).rejects.toMatchObject({ name: "ApprovalDeniedError" });
+    const preview = asked[0]!.preview ?? "";
+    expect(preview).toContain("Authorization: Bearer ****");
+    expect(preview).toContain("Proxy-Authorization: Basic ****");
+    expect(preview).toContain("Cookie: ****");
+    expect(preview).toContain("X-Api-Key: ****");
+    expect(preview).toContain("X-Auth-Token: ****");
+    // Ordinary headers stay readable.
+    expect(preview).toContain("X-Request-Id: req-1");
+    for (const secret of ["sk-live-abcdef123456", "dXNlcjpwYXNz", "s3cr3t", "key-123456", "tok-987"]) {
+      expect(preview).not.toContain(secret);
+    }
+  });
+
+  it("maskHeaderValue keeps a known scheme word only", () => {
+    expect(maskHeaderValue("Bearer abc.def")).toBe("Bearer ****");
+    expect(maskHeaderValue("token abc")).toBe("token ****");
+    expect(maskHeaderValue("Basic dXNlcjpwYXNz")).toBe("Basic ****");
+    expect(maskHeaderValue("abc123")).toBe("****");
+    expect(maskHeaderValue("")).toBe("");
+    // An unknown first word is part of the secret, not a scheme.
+    expect(maskHeaderValue("abc123 def456")).toBe("****");
+    expect(maskHeaderValue("sk-live-1 extra")).toBe("****");
+  });
+
+  it("reports a cross-origin 307 after a POST instead of following it (ATO-1182)", async () => {
+    const calls: string[][] = [];
+    const runCommand = async (
+      _cmd: string,
+      args: string[],
+      _opts: CommandOptions,
+    ): Promise<CommandResult> => {
+      calls.push(args);
+      return makeCommandResult({
+        stdout: "\n" + meta(307, "text/plain", 0, 0.01, "https://evil.example/collect"),
+      });
+    };
+    const tool = buildOsHttpRequestTool({
+      lookup: publicLookup,
+      approvals: approveAll(),
+      approvalRequired: true,
+      config: makeHttpConfig({ approvalMode: "writes" }),
+      runCommand,
+    });
+    const result = await tool.run(
+      { url: "https://api.example.com/submit", method: "POST", body: "data" },
+      makeCtx(),
+    );
+    expect(calls).toHaveLength(1);
+    expect(result.status).toBe("error");
+    expect(result.details.redirectNotFollowed).toBe("https://evil.example/collect");
+    expect(result.summary).toContain("evil.example");
+    expect(result.summary).toContain("not followed");
   });
 });

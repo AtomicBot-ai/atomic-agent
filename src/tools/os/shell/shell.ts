@@ -12,13 +12,18 @@ import { withToolchainEnv } from "../../../sandbox/command-toolchain-env.js";
 import { quoteCmdArg } from "../../../sandbox/shell-invocation.js";
 import {
   requireApproval,
+  savedRuleDenies,
   savedRuleOverridesScope,
   type DangerousToolOptions,
 } from "../../../approval/dangerous-tool.js";
 import { resolveUserPath } from "../expand-home.js";
 import { expandShellGlobArgs } from "./expand-shell-glob-args.js";
 import { nodeCheckMultiFileNotice } from "./node-check-notice.js";
-import { shellCommandArgv, shellRuleSegments } from "./shell-command-argv.js";
+import {
+  shellCommandArgv,
+  shellRuleSegments,
+  shellRunsUnreadableScript,
+} from "./shell-command-argv.js";
 import {
   checkBrowserBypassArgv,
   checkBrowserBypassLine,
@@ -252,6 +257,17 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
     // policy hands it back as a step for the operator (ATO-1223).
     const dangerous = isDangerousGuardRule(guardVerdict.rule);
     const commandSegments = shellRuleSegments(cmd, execArgs, useShell);
+    const commandUnreadable = shellRunsUnreadableScript(cmd, execArgs, useShell);
+    const ruleCheck = {
+      sessionId: ctx.sessionId,
+      tool: "os.shell.run",
+      category: "shell" as const,
+      commandSegments,
+      ...(commandUnreadable ? { commandUnreadable } : {}),
+      affectedResources: [cwd],
+      targetPaths,
+      workdir: ctx.workingDir,
+    };
     const scopedByFanout =
       !dangerous &&
       (options.approvals.fanoutScopes?.allows(ctx.sessionId, [cwd]) ??
@@ -264,16 +280,19 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           targetPaths,
         }) ?? false
       ) &&
-      !savedRuleOverridesScope(options.approvals, {
-        sessionId: ctx.sessionId,
-        tool: "os.shell.run",
-        category: "shell",
-        commandSegments,
-        affectedResources: [cwd],
-        targetPaths,
-        workdir: ctx.workingDir,
-      });
-    if (guardVerdict.action === "approval_required" && !scopedByFanout) {
+      !savedRuleOverridesScope(options.approvals, ruleCheck);
+    // A command the guard deems safe (`echo`, `ls`) runs without asking,
+    // but a saved deny rule still stops it: it goes to the gate, which
+    // refuses it on the rule before any level, grant or prompt
+    // (ATO-1332). Ask and allow rules keep to the gated path.
+    const deniedBySavedRule =
+      guardVerdict.action === "allow" &&
+      options.approvalRequired &&
+      savedRuleDenies(options.approvals, ruleCheck);
+    if (
+      (guardVerdict.action === "approval_required" && !scopedByFanout) ||
+      deniedBySavedRule
+    ) {
       // Shape grant unit: the bare binary name (lowercased), so `[a]`
       // and "Allow in this chat" cover exactly the argv[0] that would
       // run: `git`, not `./git` or a compound line that starts with
@@ -313,6 +332,7 @@ export function buildOsShellTool(options: OsShellToolOptions): ToolDefinition {
           ...(commandShape !== undefined ? { commandShape } : {}),
           ...(commandArgv !== undefined ? { commandArgv } : {}),
           commandSegments,
+          ...(commandUnreadable ? { commandUnreadable } : {}),
           workdir: ctx.workingDir,
           targetPaths,
         },

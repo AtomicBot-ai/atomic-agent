@@ -23,6 +23,29 @@ export const TASK_BUDGET_COLUMNS = [
 ] as const;
 
 /**
+ * The approval level a task was started under (ATO-1324): the same kind
+ * of nullable column older binaries ignore, added on its own so a
+ * failure to add it never turns the budgets off. Returns why it is
+ * missing, or `null` when it is there.
+ */
+export function ensureApprovalLevelColumn(db: Database.Database): string | null {
+  try {
+    const present = (db.prepare(`PRAGMA table_info(tasks)`).all() as Array<{ name: string }>)
+      .some((column) => column.name === "approval_level");
+    if (present) return null;
+    try {
+      db.exec(`ALTER TABLE tasks ADD COLUMN approval_level INTEGER`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (!/duplicate column/i.test(message)) throw err;
+    }
+    return null;
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err);
+  }
+}
+
+/**
  * Give `tasks` its budget columns. Returns why they are missing (the
  * write lock was not granted, the file is read-only), or `null` when all
  * are there. Without them the store keeps working, but refuses to
@@ -71,6 +94,33 @@ export function validateMaxDurationMs(raw: number | null | undefined): number | 
     );
   }
   return raw;
+}
+
+/** `approval_level`: an integer 1..5, or `null` for "any process may run it". */
+export function validateApprovalLevel(raw: number | null | undefined): number | null {
+  if (raw === undefined || raw === null) return null;
+  if (!Number.isInteger(raw) || raw < 1 || raw > 5) {
+    throw new TaskValidationError(
+      "approvalLevel",
+      `approvalLevel must be an integer from 1 to 5, got ${JSON.stringify(raw)}`,
+    );
+  }
+  return raw;
+}
+
+/**
+ * Whether a process at `processLevel` may claim `task` (ATO-1324). A
+ * task that recorded the level it was started under runs only at that
+ * level: an interrupted overnight run that denied what needed approval
+ * must not be resumed by a process that would approve it, nor by one
+ * that would ask a person who is not there.
+ */
+export function approvalLevelAllows(
+  task: Pick<TaskRecord, "approvalLevel">,
+  processLevel: number | undefined,
+): boolean {
+  const wanted = task.approvalLevel ?? null;
+  return wanted === null || processLevel === undefined || processLevel === wanted;
 }
 
 /**

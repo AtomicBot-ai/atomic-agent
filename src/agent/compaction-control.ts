@@ -15,6 +15,12 @@ export interface CompactionStepOptions {
   providerId?: string;
   ephemeral?: boolean;
   requested?: "overflow";
+  /**
+   * Called once per compaction attempt with what its model calls cost,
+   * whether the checkpoint was saved or not. The loop adds it to the
+   * task's spend so a budget counts summaries too (ATO-1322).
+   */
+  onSpend?: (usd: number) => void;
 }
 
 /** Runtime owns subcalls and durability; the loop supplies an exact, pure prompt input. */

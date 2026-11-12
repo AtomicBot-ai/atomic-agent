@@ -92,12 +92,16 @@ export function formatTaskReportMessage(
           minText: RESULT_MIN_CHARS,
         }
       : null;
-  const hasRun = report.summary != null || report.stopCause != null;
+  // A task blocked before its turn because earlier attempts used up its
+  // budget is a "needs you", not only an error line (ATO-1288).
+  const usedUp = report.status === "blocked" ? usedUpBudgetCause(report.errorMessage) : null;
+  const stopCause = report.stopCause ?? usedUp;
+  const hasRun = report.summary != null || stopCause != null;
   const card = hasRun
     ? buildTaskReportCard({
         status: report.status,
         summary: report.summary ?? null,
-        stopCause: report.stopCause ?? null,
+        stopCause: stopCause ?? null,
       })
     : null;
   if (card === null && errorLine !== null) {
@@ -203,6 +207,17 @@ export function formatTaskReportDigest(
   return out;
 }
 
+/**
+ * The ceiling a `budget_spent:` / `time_spent:` block names
+ * (`TaskRunner.runOne`), or `null` for any other error.
+ */
+function usedUpBudgetCause(message: string | null): string | null {
+  if (message === null) return null;
+  if (message.startsWith("budget_spent:")) return "cost_ceiling";
+  if (message.startsWith("time_spent:")) return "time_ceiling";
+  return null;
+}
+
 function metaLine(report: TaskReport): string {
   const parts = [`Attempt ${report.attempts}/${report.maxAttempts}`];
   if (report.durationMs !== null) {
@@ -210,7 +225,14 @@ function metaLine(report: TaskReport): string {
   }
   if (report.stepCount != null) parts.push(`${report.stepCount} steps`);
   if (report.stopCause != null) parts.push(`stop: ${report.stopCause}`);
-  if (report.spendUsd != null) parts.push(`spend ~${formatSpend(report.spendUsd)}`);
+  // The task's spend over all its attempts against its cap, which is
+  // what the cap governs (ATO-1288); this run's own spend otherwise.
+  if (report.spentUsd != null) {
+    const spent = `spent ~${formatSpend(report.spentUsd)}`;
+    parts.push(report.maxCostUsd != null ? `${spent} of ${formatSpend(report.maxCostUsd)}` : spent);
+  } else if (report.spendUsd != null) {
+    parts.push(`spend ~${formatSpend(report.spendUsd)}`);
+  }
   return parts.join(" · ");
 }
 

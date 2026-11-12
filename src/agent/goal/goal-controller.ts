@@ -25,7 +25,7 @@ export interface GoalControllerDeps {
   runRound(
     session: SessionState,
     message: string,
-    options: { taskMaxDurationMs?: number },
+    options: { taskMaxDurationMs?: number; taskMaxCostUsd?: number },
   ): Promise<RunTurnResult>;
   /** Run the goal's shell checks in the session's folder. */
   runChecks(
@@ -54,6 +54,11 @@ export interface GoalRunInput {
   signal: AbortSignal;
   /** Wall-clock budget for all rounds together; absent, rounds alone limit. */
   taskMaxDurationMs?: number;
+  /**
+   * Money budget for all rounds together, in USD (ATO-1288). Each round
+   * gets what the earlier ones left; absent or `0`, no cap.
+   */
+  taskMaxCostUsd?: number;
 }
 
 export interface GoalRunOutcome {
@@ -75,6 +80,11 @@ export async function runGoal(
   let session = input.session;
   let message = input.message;
   let last: RunTurnResult | undefined;
+  const costCap = input.taskMaxCostUsd !== undefined && Number.isFinite(input.taskMaxCostUsd) && input.taskMaxCostUsd > 0
+    ? input.taskMaxCostUsd
+    : undefined;
+  // What the rounds spent together; `undefined` until one reports spend.
+  let spentUsd: number | undefined;
 
   const commit = (next: GoalState): GoalState => {
     goal = next;
@@ -84,12 +94,12 @@ export async function runGoal(
   };
   const stop = (status: GoalState["status"], reason: string): GoalRunOutcome => {
     commit(setGoalStatus(goal, status, now(), reason));
-    return finish(last, session, goal);
+    return finish(last, session, goal, spentUsd);
   };
 
   for (;;) {
     const control = deps.pendingControl?.(session.id) ?? null;
-    if (control === "clear") return finish(last, session, null);
+    if (control === "clear") return finish(last, session, null, spentUsd);
     if (control === "pause") return stop("paused", "paused by you");
     if (input.signal.aborted) return stop("paused", "the turn was stopped");
     if (goal.roundsUsed >= goal.maxRounds) {
@@ -99,10 +109,18 @@ export async function runGoal(
     if (remaining !== undefined && remaining <= 0) {
       return stop("budget_limited", "the time limit for this run ran out");
     }
+    const costLeft = costCap === undefined ? undefined : costCap - (spentUsd ?? 0);
+    if (costLeft !== undefined && costLeft <= 0) {
+      return stop("budget_limited", "the money budget for this run ran out");
+    }
 
     commit({ ...goal, roundsUsed: goal.roundsUsed + 1, updatedAt: now() });
-    last = await deps.runRound(session, message, remaining === undefined ? {} : { taskMaxDurationMs: remaining });
+    last = await deps.runRound(session, message, {
+      ...(remaining === undefined ? {} : { taskMaxDurationMs: remaining }),
+      ...(costLeft === undefined ? {} : { taskMaxCostUsd: costLeft }),
+    });
     session = last.session;
+    if (last.spendUsd !== undefined) spentUsd = (spentUsd ?? 0) + last.spendUsd;
 
     const abnormal = abnormalEnding(last);
     if (abnormal) return stop(abnormal.status, abnormal.reason);
@@ -223,6 +241,7 @@ function finish(
   last: RunTurnResult | undefined,
   session: SessionState,
   goal: GoalState | null,
+  spentUsd: number | undefined,
 ): GoalRunOutcome {
   // Stopped before the first round ran: an empty result on the input session.
   const result: RunTurnResult = last ?? { session, reason: "cancelled", stepCount: 0 };
@@ -233,7 +252,14 @@ function finish(
     metadata: withGoalState(result.session.metadata, goal),
   };
   return {
-    result: { ...result, session: finalSession, ...(goal === null ? {} : { goal }) },
+    // The money of every round, not only the last one: a task's budget
+    // and its report read this figure.
+    result: {
+      ...result,
+      session: finalSession,
+      ...(goal === null ? {} : { goal }),
+      ...(spentUsd === undefined ? {} : { spendUsd: spentUsd }),
+    },
     goal,
   };
 }

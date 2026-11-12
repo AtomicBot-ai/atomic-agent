@@ -104,8 +104,24 @@ export function persistUserLocalModelsConfig(partial: {
   };
   const draft = { ...prev, localModels: nextLocalModels };
   const validated = parseUserConfigFile(syncLocalLlamaProviderUrl(draft));
-  writeUserConfigFileSync(path, validated);
+  writeUserConfigFileSync(path, validated, { chosen: chosenLocalModelsKeys(partial) });
   resetConfigCache();
+}
+
+/**
+ * The keys a `persistUserLocalModelsConfig` call sets on purpose. A value
+ * equal to what this build read in place of a newer build's (the default
+ * engine over `atomic-core-next`) is still a choice and must be written
+ * (ATO-1265).
+ */
+function chosenLocalModelsKeys(partial: Parameters<typeof persistUserLocalModelsConfig>[0]): string[] {
+  const keys: string[] = [];
+  if (partial.url !== undefined) keys.push("localModels.url");
+  if (partial.mode !== undefined) keys.push("localModels.mode");
+  for (const block of ["managed", "embeddings"] as const) {
+    for (const [k, v] of Object.entries(partial[block] ?? {})) if (v !== undefined) keys.push(`localModels.${block}.${k}`);
+  }
+  return keys;
 }
 
 /**

@@ -48,6 +48,14 @@ describe("polishReply: safety", () => {
 });
 
 describe("polishReply: code is never rewritten", () => {
+  it("treats a fence indented four or more spaces as code", () => {
+    const reply =
+      "1. Step one\n    - run:\n\n      ```sh\n      cd /Users/me/projects/atomic/src/agent/deep/folder\n      ```\n\nDone.";
+    expect(polishReply(reply, tui)).toBe(reply);
+    const segs = splitFences(reply);
+    expect(segs.some((s) => s.kind === "code" && s.text.includes("cd /Users/me/projects"))).toBe(true);
+  });
+
   it("keeps blank lines, repeats and filler inside a fenced block", () => {
     const reply = [
       "Here is the script:",
@@ -100,6 +108,16 @@ describe("polishReply: open markup", () => {
 
   it("drops a dangling opener with nothing after it", () => {
     expect(polishReply("Done **", tui)).toBe("Done");
+  });
+
+  it("keeps a glob or a star at the very end", () => {
+    expect(polishReply("Matches everything under src/**", tui)).toBe("Matches everything under src/**");
+    expect(polishReply("The pattern is: *", tui)).toBe("The pattern is: *");
+  });
+
+  it("does not close a marker inside a word, like x**2", () => {
+    expect(polishReply("The area is x**2", tui)).toBe("The area is x**2");
+    expect(polishReply("In Python, write 2**10", tui)).toBe("In Python, write 2**10");
   });
 
   it("does not close a lone star, which is as likely a glob", () => {
@@ -205,11 +223,11 @@ describe("polishReply: echoed question", () => {
 
 describe("polishReply: repeats", () => {
   it("drops a paragraph repeated right after itself", () => {
-    expect(polishReply("Para A.\n\nPara A.\n\nPara B.", tui)).toBe("Para A.\n\nPara B.");
+    expect(polishReply("Para A.\n\nPara A.\n\nPara B.", small)).toBe("Para A.\n\nPara B.");
   });
 
   it("treats whitespace-only differences as the same paragraph", () => {
-    expect(polishReply("The  build\npasses.\n\nThe build passes.", tui)).toBe("The  build\npasses.");
+    expect(polishReply("The  build\npasses.\n\nThe build passes.", small)).toBe("The  build\npasses.");
   });
 
   it("keeps a paragraph repeated with something between", () => {
@@ -218,12 +236,18 @@ describe("polishReply: repeats", () => {
   });
 
   it("drops a second half that restates the whole answer", () => {
-    expect(polishReply("First.\n\nSecond.\n\nFirst.\n\nSecond.", tui)).toBe("First.\n\nSecond.");
+    expect(polishReply("First.\n\nSecond.\n\nFirst.\n\nSecond.", small)).toBe("First.\n\nSecond.");
   });
 
   it("drops the whole answer restated around a code block", () => {
     const once = "Use this:\n```\nnpm ci\n```";
-    expect(polishReply(`${once}\n${once}`, tui)).toBe(once);
+    expect(polishReply(`${once}\n${once}`, small)).toBe(once);
+  });
+
+  it("keeps repeated paragraphs for a cloud model, which repeats only when asked", () => {
+    expect(polishReply("Para A.\n\nPara A.\n\nPara B.", tui)).toBe("Para A.\n\nPara A.\n\nPara B.");
+    const halves = "First.\n\nSecond.\n\nFirst.\n\nSecond.";
+    expect(polishReply(halves, tui)).toBe(halves);
   });
 
   it("keeps two identical code blocks with no prose between", () => {
@@ -276,6 +300,13 @@ describe("polishReply: home paths", () => {
     expect(polishReply("(see /Users/me/projects/atomic/docs/architecture.md)", tui)).toBe(
       "(see ~/projects/atomic/docs/architecture.md)",
     );
+  });
+
+  it("keeps the full path when the user asked for it", () => {
+    const reply = "Saved to /Users/me/projects/atomic/src/agent/reply-polish.ts now";
+    expect(polishReply(reply, { ...tui, userMessage: "What is the full path of the polish file?" })).toBe(reply);
+    expect(polishReply(reply, { ...tui, userMessage: "give me the absolute path" })).toBe(reply);
+    expect(polishReply(reply, { ...tui, userMessage: "Напиши полный путь к файлу" })).toBe(reply);
   });
 
   it("leaves a short path alone", () => {

@@ -131,9 +131,42 @@ describe("formatShellPreview", () => {
       const args = ["-c", "echo 'ux tour' > f.txt", "", "$HOME", "a b", "plain/path.txt"];
       const preview = formatShellPreview("bash", args, false);
       expect(preview).toBe(
-        "bash -c 'echo '\\''ux tour'\\'' > f.txt' '' '$HOME' 'a b' plain/path.txt",
+        "bash -c \"echo 'ux tour' > f.txt\" '' '$HOME' 'a b' plain/path.txt",
       );
       // What a shell makes of the preview is the argv that runs.
+      const out = execFileSync("sh", [
+        "-c",
+        `printf '%s\\0' ${preview}`,
+      ]).toString("utf8");
+      expect(out.split("\0").slice(0, -1)).toEqual(["bash", ...args]);
+    },
+  );
+
+  // ATO-905: single quotes alone go in double quotes; anything a shell
+  // expands inside double quotes keeps the single-quote form.
+  it.skipIf(process.platform === "win32")(
+    "uses double quotes only when they read back the same token",
+    () => {
+      const args = [
+        "-c",
+        "echo 'ux tour' > ~/Desktop/tour-note.txt",
+        "it's $HOME",
+        "say 'hi' `date`",
+        "a 'b' \\ c",
+        "quote 'x' \"y\"",
+        "bang 'x'!",
+        "multi\nline 'x'",
+      ];
+      const preview = formatShellPreview("bash", args, false);
+      expect(preview).toBe(
+        "bash -c \"echo 'ux tour' > ~/Desktop/tour-note.txt\" " +
+          "'it'\\''s $HOME' " +
+          "'say '\\''hi'\\'' `date`' " +
+          "'a '\\''b'\\'' \\ c' " +
+          "'quote '\\''x'\\'' \"y\"' " +
+          "'bang '\\''x'\\''!' " +
+          "\"multi\nline 'x'\"",
+      );
       const out = execFileSync("sh", [
         "-c",
         `printf '%s\\0' ${preview}`,

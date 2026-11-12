@@ -1578,6 +1578,113 @@ describe("AgentLoop end-to-end with mock LLM", () => {
     expect(waits[0]?.reason).not.toContain("Tried");
   });
 
+  it("does not count a slow compaction as a long reply (ATO-1398)", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const controller = new AbortController();
+    const events: string[] = [];
+    let compactions = 0;
+    const loop = new AgentLoop({
+      registry: buildDefaultToolRegistry(),
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async () => {
+        throw new OpenAiHttpError(
+          "openai provider 504: A Timeout Occurred",
+          504,
+          "https://api.fake.test/v1/chat/completions",
+          false,
+          null,
+          "fake",
+          undefined,
+          { streamError: "A Timeout Occurred" },
+        );
+      },
+      compaction: {
+        open() {},
+        close() {},
+        beforeStep: (input) => {
+          compactions += 1;
+          if (compactions === 1) now += 70_000;
+          return Promise.resolve(input.session);
+        },
+      },
+      onEvent: (event) => {
+        events.push(event.type);
+        if (event.type === "provider_waiting") controller.abort();
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    try {
+      await loop
+        .runTurn(createEmptySessionState({ id: "s-slow-compaction", workingDir }), {
+          userMessage: "build a big page",
+          maxSteps: 5,
+          taskMaxSteps: 5,
+          signal: controller.signal,
+        })
+        .catch(() => undefined);
+      expect(events).toContain("provider_waiting");
+      expect(events).not.toContain("reply_time_limit_retried");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("asks for a shorter reply when a time limit ended a long one (ATO-1398)", async () => {
+    let now = 1_000_000;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const registry = buildDefaultToolRegistry();
+    const requests: string[] = [];
+    let calls = 0;
+    const loop = new AgentLoop({
+      registry,
+      slotManager: new SlotManager(2),
+      grammar: 'root ::= "ok"',
+      llmComplete: async (request) => {
+        calls += 1;
+        requests.push(JSON.stringify(request));
+        if (calls === 1) {
+          now += 340_000;
+          throw new OpenAiHttpError(
+            "openai provider 504: A Timeout Occurred",
+            504,
+            "https://api.fake.test/v1/chat/completions",
+            false,
+            null,
+            "fake",
+            undefined,
+            { streamError: "A Timeout Occurred" },
+          );
+        }
+        return makeCompletion(
+          JSON.stringify({ tool: "reply", args: { text: "recovered" } }),
+        );
+      },
+      toolDescriptors: TOOLS,
+      capabilities: CAPS,
+      skillCatalog: SKILLS,
+    });
+    try {
+      const result = await loop.runTurn(
+        createEmptySessionState({ id: "s-mid-reply-timeout", workingDir }),
+        {
+          userMessage: "build a big page",
+          maxSteps: 5,
+          taskMaxSteps: 5,
+          signal: new AbortController().signal,
+        },
+      );
+      expect(result.reason).toBe("reply");
+      expect(requests[0]).not.toContain("write it in parts");
+      expect(requests[1]).toContain("write it in parts");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it("does not wait out our own request deadline (issue #490)", async () => {
     // A first-token timeout is `status === null` — there is no HTTP
     // response to carry a status — so it used to classify as an outage

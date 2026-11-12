@@ -3,7 +3,9 @@ import { getReasoningTurnFraming } from "../llm/model-profile.js";
 import { thinkingDisabledOnBuiltPrompt } from "../llm/server-template-policy.js";
 import { extendCloudContext, cloudContextEntries, renderCloudTurn } from "../session/cloud-context.js";
 import { projectSessionConversation } from "../session/session-compaction.js";
-import { macroTurnBoundaries } from "../session/conversation-turn.js";
+import { findCurrentMacroTurnStart, macroTurnBoundaries, type ConversationTurn } from "../session/conversation-turn.js";
+import type { CloudContextEntry } from "../session/cloud-context.js";
+import type { PromptTurn } from "../llm/provider/completion-types.js";
 import type { BuildPromptInput, BuiltPrompt } from "./build-prompt-types.js";
 import { cloudContextSections } from "./cloud-context-sections.js";
 import { defaultBudget, estimateTokens } from "./token-budget.js";
@@ -49,7 +51,7 @@ export function buildCloudPrompt(input: BuildPromptInput, stablePrefix: string):
   const total = estimateTokens(text) + schemaTokens + entries.length * 12 + 32;
   return {
     text, stablePrefix, tail, cloudContext, modelMode: input.modelMode,
-    messages: { system: stablePrefix, turns: entries.map((entry) => entry.turn), tail: "", droppedSummary: null,
+    messages: { system: stablePrefix, turns: withCurrentReasoning(entries, input.session.turns), tail: "", droppedSummary: null,
       ...(projection.summary ? { contextSummary: projection.summary } : {}) },
     tokens: { stablePrefix: estimateTokens(stablePrefix), loadedSkills: prefixTokens("skill:"),
       loadedTools: prefixTokens("tool:"), sessionFacts: sectionTokens("session-facts"),
@@ -66,4 +68,29 @@ export function buildCloudPrompt(input: BuildPromptInput, stablePrefix: string):
     compactionBudget: { cap, activeTokens: historyTokens + summaryTokens, activePairs: costs.length }, pairCosts: costs,
     contextBudget: { window, replyReserve },
   };
+}
+
+/**
+ * The journal stores calls without their reasoning (it is persisted and
+ * append-only); the current, un-replied macro-turn's reasoning is put back
+ * on the outgoing copy from the transcript. Only a provider that hands
+ * reasoning back reads it (a template-rendering server, ATO-887; DeepSeek's
+ * thinking mode, which refuses a tool history without it, ATO-1397); every
+ * other body, and the text form, are unchanged. Answered turns get none,
+ * like the local path's `packedConversationTurns`.
+ */
+function withCurrentReasoning(
+  entries: readonly CloudContextEntry[],
+  turns: readonly ConversationTurn[],
+): PromptTurn[] {
+  const currentStart = findCurrentMacroTurnStart(turns);
+  return entries.map((entry): PromptTurn => {
+    const turn = entry.turn;
+    if (turn.kind !== "assistant_tool_call" || !entry.id.startsWith("turn:")) return turn;
+    const index = Number(entry.id.slice("turn:".length));
+    if (!Number.isInteger(index) || index < currentStart) return turn;
+    const source = turns[index];
+    if (!source || source.kind !== "assistant_tool_call" || !source.reasoning) return turn;
+    return { ...turn, reasoning: source.reasoning };
+  });
 }

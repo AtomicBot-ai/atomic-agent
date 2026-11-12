@@ -206,6 +206,77 @@ describe("ApprovalGate", () => {
     expect(gate.sessionGrants().categories).toEqual([]);
   });
 
+  it("a keyed category grant covers only that key: POST to another host still asks (ATO-1182)", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({
+            approvalId: req.approvalId,
+            approved: true,
+            grant: "category",
+          }),
+        );
+      },
+    });
+    const http = (origin: string) =>
+      ({
+        sessionId: "s",
+        tool: "os.http.request",
+        category: "http",
+        reason: `POST ${origin}/x`,
+        grantKey: origin,
+      }) as const;
+
+    await gate.request(http("https://a.example"));
+    expect(emitted).toBe(1);
+    // Not a whole-category grant.
+    expect(gate.sessionGrants("s").categories).toEqual([]);
+
+    // Same origin: silent.
+    const again = await gate.request(http("https://a.example"));
+    expect(again.approved).toBe(true);
+    expect(again.reason).toBe("auto-approved (session grant: https://a.example)");
+    expect(emitted).toBe(1);
+
+    // Another origin (another host, or the same host on another port): asks.
+    await gate.request(http("https://b.example"));
+    expect(emitted).toBe(2);
+    await gate.request(http("https://a.example:8443"));
+    expect(emitted).toBe(3);
+
+    // Another session never rides the grant.
+    await gate.request({ ...http("https://a.example"), sessionId: "other" });
+    expect(emitted).toBe(4);
+  });
+
+  it("a whole-category grant does not answer a keyed request (ATO-1182)", async () => {
+    let emitted = 0;
+    const gate = new ApprovalGate({
+      emit: (req) => {
+        emitted += 1;
+        setImmediate(() =>
+          gate.resolve({
+            approvalId: req.approvalId,
+            approved: true,
+            grant: "category",
+          }),
+        );
+      },
+    });
+    await gate.request({ sessionId: "s", tool: "t", category: "http", reason: "r" });
+    expect(gate.sessionGrants("s").categories).toEqual(["http"]);
+    await gate.request({
+      sessionId: "s",
+      tool: "os.http.request",
+      category: "http",
+      reason: "r",
+      grantKey: "https://a.example",
+    });
+    expect(emitted).toBe(2);
+  });
+
   it("s grants the category for the session: same category goes silent, others still ask", async () => {
     let emitted = 0;
     const gate = new ApprovalGate({

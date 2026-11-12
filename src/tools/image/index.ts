@@ -1,7 +1,9 @@
 import type { ToolRegistry } from "../tool-registry.js";
 import { buildImageGenerateTool, type ImageGenerateToolOptions } from "./generate.js";
 
-export { buildImageGenerateTool, cloudAspectRatio, cloudBatches, IMAGE_COUNT_MAX, IMAGE_GENERATE_TOOL } from "./generate.js";
+export { buildImageGenerateTool, cloudAspectRatio, cloudBatches, IMAGE_COUNT_MAX, IMAGE_GENERATE_TOOL, IMAGE_PARALLEL_JOBS } from "./generate.js";
+export { coreDownloadProgress } from "./core-download-progress.js";
+export type { MediaProgressUpdate } from "./core-download-progress.js";
 export type { ImageGenerateToolOptions } from "./generate.js";
 export { openRouterImageKey } from "./openrouter-key.js";
 

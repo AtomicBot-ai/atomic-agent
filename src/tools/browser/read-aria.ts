@@ -1,5 +1,6 @@
 import { compressToolResult } from "../../compressor/result-compressor.js";
 import type { ToolDefinition } from "../tool-registry.js";
+import { BROWSER_PAGE_SOURCE } from "../untrusted-tool-output.js";
 import type { BrowserBackend } from "./browser-backend.js";
 import type { DangerousToolOptions } from "../../approval/dangerous-tool.js";
 import {
@@ -31,6 +32,8 @@ export function buildBrowserReadAriaTool(
     description:
       "Capture an ARIA snapshot of the active page with stable `ref` identifiers. `mode`: full | interactive | diff | region (with `ref`).",
     readonly: true,
+    // The page title is the site's own text (ATO-1378).
+    untrustedOutput: BROWSER_PAGE_SOURCE,
     async run(rawArgs, ctx) {
       const depth =
         typeof rawArgs.depth === "number" && Number.isFinite(rawArgs.depth)

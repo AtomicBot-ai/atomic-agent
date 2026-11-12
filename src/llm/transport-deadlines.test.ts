@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import http from "node:http";
 import net from "node:net";
 import {
   Agent,
@@ -11,6 +12,7 @@ import type { AtomicAgentConfig } from "../config/index.js";
 import {
   installTransportDeadlines,
   proxyConfigured,
+  renewTransportPool,
   resetTransportDeadlines,
   transportDeadlinesFor,
   OPENAI_DEFAULT_REQUEST_TIMEOUT_MS,
@@ -253,5 +255,109 @@ describe("the transport ceiling on a server that answers nothing", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+/**
+ * ATO-1357 / issue #490: after a cut-off local worker, no later request
+ * reached the server until the agent restarted. Whatever wedged the
+ * process's pool, `renewTransportPool` is the transport half of that
+ * restart: new requests go out on new sockets at once, and a request
+ * still running on the old pool is not cut.
+ */
+describe("renewTransportPool", () => {
+  const original = getGlobalDispatcher();
+
+  afterEach(() => {
+    setGlobalDispatcher(original);
+    resetTransportDeadlines();
+  });
+
+  /** Holds `/hang` open until told; answers anything else at once. */
+  async function recordingServer(): Promise<{
+    base: string;
+    seen: string[];
+    release: () => void;
+    close: () => Promise<void>;
+  }> {
+    const seen: string[] = [];
+    const held: http.ServerResponse[] = [];
+    const server = http.createServer((req, res) => {
+      seen.push(req.url ?? "");
+      if (req.url === "/hang") {
+        held.push(res);
+        return;
+      }
+      res.end("ok");
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    const address = server.address();
+    const port = typeof address === "object" && address ? address.port : 0;
+    return {
+      base: `http://127.0.0.1:${port}`,
+      seen,
+      release: () => {
+        for (const res of held.splice(0)) res.end("late");
+      },
+      close: () =>
+        new Promise<void>((resolve) => {
+          server.closeAllConnections();
+          server.close(() => resolve());
+        }),
+    };
+  }
+
+  const tick = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  it("gets a new request to the server at once when the old pool can send nothing", async () => {
+    const server = await recordingServer();
+    const stuck = new AbortController();
+    try {
+      // A pool that can send nothing more: one connection, held by a
+      // request the server never answers. The second request queues
+      // inside the client and never reaches the server — the field's
+      // "nothing in the llama-server log".
+      setGlobalDispatcher(new Agent({ connections: 1 }));
+      const hung = fetch(`${server.base}/hang`, { signal: stuck.signal });
+      hung.catch(() => undefined);
+      await tick(100);
+      const queued = fetch(`${server.base}/queued`, { signal: stuck.signal });
+      queued.catch(() => undefined);
+      await tick(200);
+      expect(server.seen).toEqual(["/hang"]);
+
+      expect(renewTransportPool()).toBe(true);
+      const fresh = await fetch(`${server.base}/after-renew`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      expect(fresh.status).toBe(200);
+      expect(await fresh.text()).toBe("ok");
+      expect(server.seen).toContain("/after-renew");
+
+      // Graceful, not destroy: the request still running on the old
+      // pool was not cut, and ends the way it would have.
+      server.release();
+      const late = await hung;
+      expect(await late.text()).toBe("late");
+    } finally {
+      stuck.abort();
+      await server.close();
+    }
+  });
+
+  it("keeps the installed deadlines on the fresh pool", () => {
+    const installed = installTransportDeadlines(
+      configWith({ firstTokenTimeoutMs: 3 * 60 * 60_000 }),
+    );
+    const before = getGlobalDispatcher();
+    expect(renewTransportPool()).toBe(true);
+    const after = getGlobalDispatcher();
+    expect(after).not.toBe(before);
+    expect(after).toBeInstanceOf(Agent);
+    // A later install with the same numbers is a no-op: the renewal did
+    // not forget what was installed, so it cannot narrow the ceiling.
+    expect(installTransportDeadlines(configWith({}))).toEqual(installed);
+    expect(getGlobalDispatcher()).toBe(after);
   });
 });

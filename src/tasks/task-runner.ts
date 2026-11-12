@@ -26,7 +26,7 @@ import {
   type TaskRunSummaryCollector,
 } from "./task-run-summary.js";
 import { isRecurring, resolveScheduledFor } from "./task-schedule.js";
-import { formatRunTime, remainingCostUsd, remainingDurationMs } from "./task-budget.js";
+import { approvalLevelAllows, formatRunTime, remainingCostUsd, remainingDurationMs } from "./task-budget.js";
 import { formatUsd } from "../llm/provider/usage-cost.js";
 import { startTaskSnapshots, type TaskSnapshotSink } from "./task-snapshot.js";
 import {
@@ -149,6 +149,12 @@ export interface TaskRunnerOptions {
   snapshotSink?: TaskSnapshotSink;
   snapshotCadence?: { everySteps: number; everyMs: number } | null;
   logger?: StructuredLogger;
+  /**
+   * This process's live approval level (ATO-1324). A task that recorded
+   * another level than this one is blocked with `approval_level_mismatch:`
+   * instead of run. Omitted (tests, hosts without a gate): no check.
+   */
+  approvalLevel?: () => number;
   metrics?: AgentMetrics;
   /**
    * Test seam for the inter-attempt sleep. Production uses the real
@@ -388,6 +394,24 @@ export class TaskRunner {
         message:
           `budget_spent: ${formatUsd(claimed.spentUsd ?? 0)} of ` +
           `${formatUsd(claimed.maxCostUsd ?? 0)} already spent by earlier attempts`,
+      });
+      this.recordTerminal(blocked);
+      this.maybeReport(blocked, null);
+      return blocked;
+    }
+
+    // Started under another approval level (an interrupted overnight
+    // run, ATO-1324): resuming it here would allow what it denied, or
+    // wait for a person who is not there. Blocked with a plain reason
+    // rather than left pending, where it would sit at the head of the
+    // due queue forever and hold up every other task.
+    const processLevel = this.options.approvalLevel?.();
+    if (!approvalLevelAllows(claimed, processLevel)) {
+      const blocked = this.options.store.markBlocked(claimed.id, {
+        category: "tool",
+        message:
+          `approval_level_mismatch: started at approval level ${claimed.approvalLevel}, ` +
+          `this agent runs at ${processLevel}; start it again with \`atomic-agent overnight\``,
       });
       this.recordTerminal(blocked);
       this.maybeReport(blocked, null);

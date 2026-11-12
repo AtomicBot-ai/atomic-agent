@@ -2,10 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CoreControlClient } from "../../local-llm/core/core-client.js";
+import { CoreRequestError, type CoreControlClient } from "../../local-llm/core/core-client.js";
 import type { withImageCore } from "../../local-llm/core/core-image.js";
 import type { ToolContext } from "../tool-registry.js";
-import { buildImageGenerateTool, cloudAspectRatio, cloudBatches, type ImageGenerateToolOptions } from "./generate.js";
+import { CoreImageError } from "../../local-llm/core/core-image.js";
+import { coreDownloadProgress } from "./core-download-progress.js";
+import { buildImageGenerateTool, cloudAspectRatio, cloudBatches, IMAGE_PARALLEL_JOBS, runWhenFree, settleLimited, type ImageGenerateToolOptions } from "./generate.js";
 import { openRouterImageKey } from "./openrouter-key.js";
 
 let dir: string;
@@ -182,6 +184,83 @@ describe("image.generate", () => {
     expect(result.status).toBe("error");
     expect(result.summary).toMatch(/refused this prompt/);
     expect(report).toHaveBeenCalledWith(expect.objectContaining({ success: false, errorCode: "REMOTE_CONTENT_BLOCKED", model: "google/gemini-nano-banana-2.1" }));
+  });
+});
+
+describe("ATO-425: generation tails", () => {
+  it("runs at most two cloud jobs of one call at a time, and every picture still comes", async () => {
+    let running = 0, most = 0, jobs = 0;
+    const pending = new Map<string, number>();
+    const call = vi.fn(async (path: string) => {
+      if (path === "/diffusion/jobs") { running++; most = Math.max(most, running); const id = `j${++jobs}`; pending.set(id, 2); return { jobId: id }; }
+      if (path.startsWith("/diffusion/jobs/")) {
+        const id = path.split("/")[3]!;
+        const left = (pending.get(id) ?? 0) - 1;
+        pending.set(id, left);
+        if (left > 0) return { job: { id, state: "generating", outputs: [] } };
+        running--;
+        return { job: { id, state: "completed", outputs: [{ id: `${id}-00`, path: produced, width: 1, height: 1, sizeBytes: 4 }] } };
+      }
+      if (path.startsWith("/media/providers/")) return { models: [{ id: "google/gemini-nano-banana-2.1", default: true }] };
+      return {};
+    });
+    const withCore = (async (_d: string, fn: (c: CoreControlClient, f: string) => Promise<unknown>) => fn({ call } as unknown as CoreControlClient, "/d")) as typeof withImageCore;
+    const { built } = tool({ withCore });
+    const result = await built.run({ prompt: "a fox", count: 4 }, ctx());
+    expect(result.status).toBe("ok");
+    expect((result.details as { paths: string[] }).paths).toHaveLength(4);
+    expect(most).toBeLessThanOrEqual(IMAGE_PARALLEL_JOBS);
+  });
+
+  it("sends a request Core turned away as busy again, instead of answering short", async () => {
+    let busy = 1;
+    const call = vi.fn(async (path: string) => {
+      if (path === "/diffusion/jobs") {
+        if (busy-- > 0) throw new CoreRequestError(409, "4 cloud generations are already running", "JOB_BUSY");
+        return { jobId: "j" };
+      }
+      if (path.startsWith("/diffusion/jobs/")) return { job: { id: "j", state: "completed", outputs: [{ id: "j-00", path: produced, width: 1, height: 1, sizeBytes: 4 }] } };
+      if (path.startsWith("/media/")) return { models: [] };
+      return {};
+    });
+    const withCore = (async (_d: string, fn: (c: CoreControlClient, f: string) => Promise<unknown>) => fn({ call } as unknown as CoreControlClient, "/d")) as typeof withImageCore;
+    const { built } = tool({ withCore, busyRetryMs: 1 });
+    const result = await built.run({ prompt: "a fox" }, ctx());
+    expect(result.status).toBe("ok");
+    expect(call.mock.calls.filter(([p]) => p === "/diffusion/jobs")).toHaveLength(2);
+  });
+
+  it("retries only JOB_BUSY, a bounded number of times", async () => {
+    const signal = new AbortController().signal;
+    const other = vi.fn(async () => { throw new CoreImageError("no", "REMOTE_QUOTA"); });
+    await expect(runWhenFree(other, signal, 1)).rejects.toMatchObject({ code: "REMOTE_QUOTA" });
+    expect(other).toHaveBeenCalledTimes(1);
+    const busy = vi.fn(async () => { throw new CoreImageError("busy", "JOB_BUSY"); });
+    await expect(runWhenFree(busy, signal, 1, 3)).rejects.toMatchObject({ code: "JOB_BUSY" });
+    expect(busy).toHaveBeenCalledTimes(4);
+  });
+
+  it("settleLimited keeps the order and the failures", async () => {
+    const out = await settleLimited([1, 2, 3], 2, async (n) => { if (n === 2) throw new Error("two"); return n * 10; });
+    expect(out.map((r) => r.status)).toEqual(["fulfilled", "rejected", "fulfilled"]);
+    expect((out[2] as PromiseFulfilledResult<number>).value).toBe(30);
+  });
+
+  it("says the first picture is downloading the engine, how far it got, and when it is done", () => {
+    let t = 0;
+    const lines: string[] = [];
+    const hooks = coreDownloadProgress((u) => lines.push(u.label), { now: () => t, everyMs: 5_000 });
+    hooks.onCoreInstall!();
+    t = 1_000; hooks.onCoreProgress!(10, 10 * 1_048_576, 100 * 1_048_576);   // too soon: skipped
+    t = 6_000; hooks.onCoreProgress!(45, 45 * 1_048_576, 100 * 1_048_576);
+    t = 6_500; hooks.onCoreProgress!(100, 100 * 1_048_576, 100 * 1_048_576);  // the end always shows
+    t = 7_000; hooks.onCoreProgress!(100, 100 * 1_048_576, 100 * 1_048_576);  // once
+    expect(lines).toEqual([
+      expect.stringMatching(/downloading the Atomic Chat engine once/),
+      "downloading the Atomic Chat engine · 45% · 45 of 100 MB",
+      "Atomic Chat engine downloaded, starting it",
+    ]);
+    expect(coreDownloadProgress(undefined)).toEqual({});
   });
 });
 

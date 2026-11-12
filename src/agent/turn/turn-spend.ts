@@ -55,6 +55,20 @@ export function recordStepSpend(
   turn.spendPriced = true;
 }
 
+/**
+ * Add what a context compaction's summary calls cost (ATO-1322). They
+ * are side calls, not step completions, so `recordStepSpend` never sees
+ * them; without this a long run that compacts spends past its budget.
+ */
+export function recordCompactionSpend(
+  turn: Pick<TurnLoopState, "spendUsd" | "spendPriced">,
+  usd: number,
+): void {
+  if (!Number.isFinite(usd) || usd <= 0) return;
+  turn.spendUsd += usd;
+  turn.spendPriced = true;
+}
+
 /** Whether the spend has reached a ceiling that is set. */
 export function costCeilingReached(spendUsd: number, ceilingUsd: number): boolean {
   return ceilingUsd > 0 && spendUsd >= ceilingUsd;

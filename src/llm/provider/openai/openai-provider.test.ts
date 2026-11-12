@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { CompletionRequest } from "../completion-types.js";
-import { OpenAiProvider } from "./openai-provider.js";
+import { OpenAiProvider, isDeepSeekHost } from "./openai-provider.js";
 
 const tools: NonNullable<CompletionRequest["tools"]> = [
   {
@@ -375,6 +375,32 @@ describe("OpenAiProvider — cached prompt tokens", () => {
     expect(result.cacheHitTokens).toBe(900);
   });
 
+  // ATO-912: Kimi's usage carries cache writes beside the hits.
+  it("reads Kimi's prompt_tokens_details.cache_write_tokens", async () => {
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            model: "kimi-k3.1-pro",
+            choices: [{ message: { role: "assistant", content: "ok" }, finish_reason: "stop" }],
+            usage: {
+              prompt_tokens: 1000,
+              completion_tokens: 5,
+              total_tokens: 1005,
+              cached_tokens: 600,
+              prompt_tokens_details: { cached_tokens: 600, cache_write_tokens: 300 },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+    );
+    const result = await provider(fetchImpl as unknown as typeof fetch, undefined).complete({
+      prompt: "hi",
+    });
+    expect(result.usage?.cachedTokens).toBe(600);
+    expect(result.usage?.cacheWriteTokens).toBe(300);
+  });
+
   it("reads it on the streamed path, and leaves it absent when the service says nothing", async () => {
     const frame = (obj: Record<string, unknown>) => `data: ${JSON.stringify(obj)}\n\n`;
     const streamWith = (usage: Record<string, unknown>) =>
@@ -569,6 +595,27 @@ describe("OpenAiProvider — message shape on the wire", () => {
     await shaped(gpt.fetchImpl, { defaultChatModel: "openai/gpt-4.1" }).complete({ prompt: "flat", messages, tools });
     expect(JSON.stringify(gpt.bodies[0])).not.toContain("ephemeral");
   });
+
+  it("hands a call's reasoning back to DeepSeek's own API, and only there (ATO-1397)", async () => {
+    const thinking = {
+      ...messages,
+      turns: messages.turns.map((turn) =>
+        turn.kind === "assistant_tool_call" ? { ...turn, reasoning: "need a" } : turn,
+      ),
+    };
+    const assistant = (body: Record<string, unknown> | undefined) =>
+      (body?.messages as Array<Record<string, unknown>>).find((m) => m.role === "assistant");
+
+    const deepseek = capturing([okReply]);
+    await shaped(deepseek.fetchImpl, { baseUrl: "https://api.deepseek.com", defaultChatModel: "deepseek-v4-flash" })
+      .complete({ prompt: "flat", messages: thinking, tools, sessionId: "s" });
+    expect(assistant(deepseek.bodies[0])?.reasoning_content).toBe("need a");
+
+    const other = capturing([okReply]);
+    await shaped(other.fetchImpl, { defaultChatModel: "deepseek-v4-flash" })
+      .complete({ prompt: "flat", messages: thinking, tools, sessionId: "s" });
+    expect(assistant(other.bodies[0])).not.toHaveProperty("reasoning_content");
+  });
 });
 
 describe("OpenAiProvider without defaultChatModel", () => {
@@ -648,5 +695,16 @@ describe("OpenAiProvider template thinking switch", () => {
 
   it("does not send it for a request that did not ask", async () => {
     expect(await sentBody("openai-compatible", "http://localhost:1234", { prompt: "turn" })).not.toHaveProperty("chat_template_kwargs");
+  });
+});
+
+describe("isDeepSeekHost (ATO-1397)", () => {
+  it("is DeepSeek's own API only", () => {
+    expect(isDeepSeekHost("https://api.deepseek.com")).toBe(true);
+    expect(isDeepSeekHost("https://api.deepseek.com/v1")).toBe(true);
+    expect(isDeepSeekHost("https://openrouter.ai/api")).toBe(false);
+    expect(isDeepSeekHost("https://deepseek.example.com")).toBe(false);
+    expect(isDeepSeekHost("not a url")).toBe(false);
+    expect(isDeepSeekHost(undefined)).toBe(false);
   });
 });

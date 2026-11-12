@@ -1,3 +1,4 @@
+import { trustsReadOnlyHintFor } from "../mcp/mcp-tool-adapter.js";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -23,13 +24,25 @@ describe("buildComposioServerConfig", () => {
   });
 
   it("stays at the fail-closed approval_gated trust level", () => {
-    // Discovery still flows without prompting: the adapter skips the
-    // gate for tools the server annotates readOnlyHint, which is how
-    // Composio tags COMPOSIO_SEARCH_TOOLS / GET_TOOL_SCHEMAS. Loosening
-    // trust here would also un-gate MULTI_EXECUTE and MANAGE_CONNECTIONS.
+    // Loosening trust here would also un-gate MULTI_EXECUTE and
+    // MANAGE_CONNECTIONS.
     expect(
       buildComposioServerConfig({ session: SESSION, apiKey: "ak" }).trust,
     ).toBe("approval_gated");
+  });
+
+  it("trusts readOnlyHint only for the two discovery tools (ATO-1178)", () => {
+    // Composio is remote, so its readOnlyHint counts only for tools
+    // named here; that keeps discovery silent and everything else asks.
+    const cfg = buildComposioServerConfig({ session: SESSION, apiKey: "ak" });
+    expect(cfg.trustedReadOnlyTools).toEqual([
+      "COMPOSIO_SEARCH_TOOLS",
+      "COMPOSIO_GET_TOOL_SCHEMAS",
+    ]);
+    expect(trustsReadOnlyHintFor(cfg, "COMPOSIO_SEARCH_TOOLS")).toBe(true);
+    expect(trustsReadOnlyHintFor(cfg, "COMPOSIO_MULTI_EXECUTE_TOOL")).toBe(
+      false,
+    );
   });
 
   it("uses a server name the MCP namespace accepts", () => {

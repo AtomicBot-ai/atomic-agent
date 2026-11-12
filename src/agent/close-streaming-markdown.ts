@@ -23,7 +23,7 @@
  * (`reply-polish.ts`) reuses it, keeping only plain closer fixes.
  */
 
-const FENCE = /^ {0,3}(```|~~~)/gm;
+const FENCE = /^[ \t]*(```|~~~)/gm;
 
 export function closeStreamingMarkdown(text: string): string {
   if (text.length === 0) return text;

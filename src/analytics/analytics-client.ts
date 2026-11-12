@@ -5,6 +5,7 @@ import {
   POSTHOG_PLACEHOLDER_KEY,
   POSTHOG_PROJECT_KEY,
 } from "./posthog-config.js";
+import { isTeamRun } from "./read-team-run-marker.js";
 import { isAnalyticsKilledByEnv } from "./read-analytics-kill-switch.js";
 import type { AnalyticsDimensions } from "./resolve-analytics-dimensions.js";
 
@@ -42,6 +43,12 @@ export interface AnalyticsClientOptions {
    */
   dimensions?: AnalyticsDimensions;
   logger?: AnalyticsLogger;
+  /**
+   * ATO-1247: this is our own machine or test run (see isTeamRun). Every
+   * event then carries `test_run: true` and sets the person property
+   * `atomic_team: true`, so PostHog can leave it out of the metrics.
+   */
+  team?: boolean;
   /** Test seam — inject a fake PostHog implementation. */
   posthog?: PostHogLike;
 }
@@ -69,6 +76,7 @@ export class AnalyticsClient {
   private readonly platform: string;
   private readonly version: string;
   private readonly globals: Record<string, string>;
+  private readonly team: boolean;
   private readonly logger?: AnalyticsLogger;
 
   constructor(options: AnalyticsClientOptions) {
@@ -76,6 +84,7 @@ export class AnalyticsClient {
     this.platform = options.platform;
     this.version = options.version;
     this.globals = globalProperties(options.dimensions);
+    this.team = options.team === true;
     if (options.logger) this.logger = options.logger;
     this.posthog =
       options.posthog ??
@@ -160,6 +169,8 @@ export class AnalyticsClient {
         // a truthy `$ip` override — a `null`/falsy value is ignored and the
         // request IP is used instead, so the sentinel MUST be a real string.
         $ip: IP_PLACEHOLDER,
+        // ATO-1247: our own runs, tagged on the event and on the person.
+        ...(this.team ? { test_run: true, $set: { atomic_team: true } } : {}),
       },
       disableGeoip: true,
     };
@@ -193,6 +204,8 @@ export function createAnalyticsClient(options: {
   posthog?: PostHogLike;
   /** Test seam for the kill-switch env (defaults to `process.env`). */
   env?: NodeJS.ProcessEnv;
+  /** Test seam for the team marker (defaults to isTeamRun()). */
+  team?: boolean;
 }): AnalyticsClient | null {
   if (!options.enabled) return null;
   if (isAnalyticsKilledByEnv(options.env)) return null;
@@ -207,6 +220,7 @@ export function createAnalyticsClient(options: {
     installId: options.installId,
     platform: options.platform,
     version: options.version,
+    team: options.team ?? isTeamRun(options.env),
     ...(options.dimensions ? { dimensions: options.dimensions } : {}),
     ...(options.logger ? { logger: options.logger } : {}),
     ...(options.posthog ? { posthog: options.posthog } : {}),

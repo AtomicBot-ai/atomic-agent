@@ -2679,8 +2679,6 @@
     "src/tui/reduce-ui-actions.test.ts",
     "src/tui/reduce-ui-actions.ts",
     "src/tui/reducer-helpers.ts",
-    "src/tui/render/chat-line-builder.test.tsx",
-    "src/tui/render/chat-line-builder.ts",
     "src/tui/render/close-streaming-markdown.test.ts",
     "src/tui/render/close-streaming-markdown.ts",
     "src/tui/render/linkify-text.test.tsx",
@@ -2886,7 +2884,7 @@
     "src/update/run-app-update.ts",
     "src/version.ts"
   ],
-  "testTsx": 112,
+  "testTsx": 111,
   "diagnostics": [
     {
       "path": "src/agent/agent-loop-fusion-seams.test.ts",
@@ -5822,14 +5820,6 @@
       "message": "Property 'localBackendConfigured' is missing in type '{ sessionId: string; workingDir: string; llamaUrl: string; browserChannel: string; browserHeadless: true; approvalLevel: number; maxSteps: number; completionMaxTokens: number; skillCount: number; }' but required in type 'TuiSessionInfo'.",
       "anchor": "SESSION",
       "line": 8,
-      "count": 1
-    },
-    {
-      "path": "src/tui/render/chat-line-builder.test.tsx",
-      "code": 2739,
-      "message": "Type '{ sessionId: string; workingDir: string; llamaUrl: string; browserChannel: string; browserHeadless: false; approvalLevel: number; maxSteps: number; skillCount: number; }' is missing the following properties from type 'TuiSessionInfo': completionMaxTokens, localBackendConfigured",
-      "anchor": "SESSION",
-      "line": 12,
       "count": 1
     },
     {

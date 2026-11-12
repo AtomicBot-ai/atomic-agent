@@ -19,8 +19,10 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `wttr-weather/` | Weather lookup via `wttr.in` | none |
 | `currency/` | Exchange rates & conversion via the Frankfurter API | none |
 | `skill-creator/` | Author or edit `SKILL.md` files | none |
+| `code-graph/` | Who calls what, where a feature lives, how two parts connect, with `path:line` per link (built on `os.fs.code_map`) | none |
 | `verify-work/` | Run what you just wrote and prove it works before reporting | none |
 | `github/` | GitHub repos / issues / PRs / Actions via the `gh` CLI | `gh` installed + `gh auth login` |
+| `audit/` | `/audit`: security review in two passes, only findings that survive a refutation pass are reported | none |
 | `apple-calendar/` | Read Calendar via `icalBuddy`, create events via AppleScript | macOS + `brew install ical-buddy` + Calendar permission |
 | `obsidian/` | Read / search / write notes in an Obsidian vault | `OBSIDIAN_VAULT_PATH` env var (default `~/Documents/Obsidian Vault`) |
 | `apple-notes/` | Manage Apple Notes via the `memo` CLI | macOS + `brew install antoniorodr/memo/memo` + Automation permission |
@@ -32,6 +34,8 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `xlsx/` | Create / edit Excel workbooks (reads via `os.fs.read_document`) | `python3` + `openpyxl` |
 | `exa-web-search/` | Key-less web search via the hosted Exa MCP endpoint over HTTP (browser fallback) | none |
 | `pandoc/` | Convert documents between formats (md/docx/html/pdf/epub) | `brew install pandoc` (+ TeX engine for PDF) |
+| `plain-writing/` | Rewrite text and landing pages without AI tells (long dashes, stock phrases, template layouts), meaning kept | none |
 | `ffmpeg/` | Audio / video transform: convert, trim, extract, resize, GIF | `brew install ffmpeg` |
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
+| `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |

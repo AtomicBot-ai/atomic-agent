@@ -138,6 +138,31 @@ describe("step batch lifecycle owner seams", () => {
     expect(policy.progressNote?.args.text).toBe("new note");
   });
 
+  // ATO-1365: the repair parse decodes wire names against the list the
+  // request was BUILT from (`stepDescriptors`), not the full catalog.
+  it("parses the repaired native batch against the descriptors the request was built from", () => {
+    const { ctx, deps } = fixture();
+    deps.toolTransport = "native_tools";
+    register(deps, "mcp.srv.foo__bar");
+    register(deps, "mcp.srv.foo.bar");
+    const tool = (name: string) => ({ name, tier: "frequent" as const, summary: name, argsSchema: "" });
+    // Offered on the wire: both tools, so the underscored one went out
+    // as `mcp__srv__foo__bar_2`. The full catalog alone has no collision.
+    const prepared = {
+      stepDescriptors: [tool("mcp.srv.foo__bar"), tool("mcp.srv.foo.bar")],
+      stepToolDescriptors: [tool("mcp.srv.foo__bar")],
+      thinkingOff: false,
+    } as unknown as ReturnType<typeof prepareStepInference>;
+    const policy = createStepBatchPolicy(ctx, deps, () => false);
+    const completion: CompletionResult = {
+      ...result([]), content: "",
+      toolCalls: [{ id: "c1", type: "function", function: { name: "mcp__srv__foo__bar_2", arguments: "{}" } }],
+    };
+    const parsingArgs = { ctx, deps, prepared, completion, assumesOpenReasoning: () => false, policy };
+    const parsed = finishStepBatchRepair(parsingArgs, completion, { toolTransport: "native_tools", toolCallAdapter: null });
+    expect(parsed.batch.calls.map((call) => call.tool)).toEqual(["mcp.srv.foo__bar"]);
+  });
+
   it("holds an unsupported check claim once, preserves the refused call and merges the next-step notice", () => {
     const { ctx, deps, events } = fixture();
     register(deps, "reply");
