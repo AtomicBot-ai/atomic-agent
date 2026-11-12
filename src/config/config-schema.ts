@@ -1070,6 +1070,11 @@ export interface UserConfigFile {
 // ATO-332). `true` adds llama.cpp's DRY anti-repeat sampler fields to
 // every `/completion` request, window 256 tokens (`src/llm/dry-sampler.ts`); only llama.cpp
 // engines receive them. An older file has no field and reads as off.
+// Unversioned, additive: `localModels.strictToolArgs` (default `false`,
+// ATO-633). `true` generates a per-tool args rule from each tool's JSON
+// Schema into the request grammar (`src/llm/grammar/strict-tool-args.ts`),
+// so a local model cannot sample an unknown or a missing required key.
+// An older file has no field and reads as off.
 // Unversioned, additive: `tools.screen.enabled` (default `false`,
 // ATO-525). Turns on the macOS `os.screen.*` tools; an older file has no
 // field and keeps them off.

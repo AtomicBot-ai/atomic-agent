@@ -523,6 +523,10 @@ export function parseUserLocalModelsConfig(
       localModels.drySampler ?? readDefaults().drySampler,
       "localModels.drySampler",
     ),
+    strictToolArgs: parseBool(
+      localModels.strictToolArgs ?? readDefaults().strictToolArgs,
+      "localModels.strictToolArgs",
+    ),
     managed,
     embeddings: embeddingsDaemon,
     download,

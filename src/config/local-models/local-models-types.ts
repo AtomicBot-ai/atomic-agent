@@ -270,6 +270,11 @@ export interface RuntimeLocalModelsConfig {
    */
   drySampler?: boolean;
   /**
+   * Mirrors `UserConfigFile.localModels.strictToolArgs`. Optional so a
+   * hand-built runtime config that predates the field reads as off.
+   */
+  strictToolArgs?: boolean;
+  /**
    * Where `completionMaxTokens` and `requestTimeoutMs` came from
    * (ATO-922): the env override or `config.json`. Logged at start so a
    * file value the env silently beat is visible. Optional so a
@@ -361,6 +366,16 @@ export interface UserLocalModelsConfig {
    * an older file has no field and reads as off.
    */
   drySampler: boolean;
+  /**
+   * Hold a local model's tool ARGUMENTS to each tool's JSON Schema on
+   * the grammar path, not only its tool names (ATO-633): a key the
+   * schema does not know, a missing required key or a value outside an
+   * `enum` cannot be sampled. Applies to the tools on the generic call
+   * branch; a tool whose schema does not convert stays on the any-object
+   * path (`src/llm/grammar/strict-tool-args.ts`). Default `false`,
+   * unversioned and additive: an older file has no field and reads as off.
+   */
+  strictToolArgs: boolean;
   managed: UserManagedLocalLlmConfig;
   /**
    * Memory-v2 phase 1B. Optional second managed daemon for

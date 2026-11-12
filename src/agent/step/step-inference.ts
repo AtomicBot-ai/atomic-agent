@@ -19,6 +19,8 @@ import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { refusedToolNames } from "../policies/fusion-orchestrator-mode.js";
 import { withoutReasoningPrelude, withUnboundedReasoningPrelude } from "../../llm/grammar/reasoning-prelude.js";
 import { buildGrammarForTools } from "../../llm/grammar/build-grammar.js";
+import { applyStrictToolArgs } from "../../llm/grammar/strict-tool-args.js";
+import { getDefaultArgsJsonSchema } from "../../prompt/default-tool-args-schemas.js";
 import type { PromptMessages, ToolCallTransport } from "../../llm/provider/completion-types.js";
 import { openAiToolCallAdapter } from "../../llm/provider/openai/openai-tool-call-adapter.js";
 import { hasStrictFunctionTools } from "../../llm/provider/adapters/tool-call-adapter.js";
@@ -505,9 +507,11 @@ export function stepGrammarToolNames(
  * marker, so the completion starts on the call); unbounded on the forced
  * final step — a `reply` / `finish` is never cut mid-thought; the base
  * grammar's configured bound (`localModels.reasoningBudgetTokens`)
- * otherwise. Then the tool names (`stepGrammarToolNames`). An
- * unrestricted, non-final step under `thinking: on|auto` sends the base
- * grammar byte-identical.
+ * otherwise. Then the tool names (`stepGrammarToolNames`). Last, with
+ * `localModels.strictToolArgs` on (ATO-633, default off), each admitted
+ * tool's args are held to its JSON Schema (`strict-tool-args.ts`). An
+ * unrestricted, non-final step under `thinking: on|auto` with the flag
+ * off sends the base grammar byte-identical.
  */
 export function resolveStepGrammar(
   ctx: Pick<
@@ -517,6 +521,7 @@ export function resolveStepGrammar(
   deps: Pick<StepDependencies, "registry" | "isFusionOrchestrator" | "grammar">,
   descriptors: readonly ToolDescriptor[],
   thinkingOff: boolean,
+  strictToolArgs: boolean = getConfig().localModels.strictToolArgs === true,
 ): string {
   const base = thinkingOff
     ? withoutReasoningPrelude(deps.grammar)
@@ -524,7 +529,17 @@ export function resolveStepGrammar(
       ? withUnboundedReasoningPrelude(deps.grammar)
       : deps.grammar;
   const names = stepGrammarToolNames(ctx, deps, descriptors);
-  return names === null ? base : buildGrammarForTools(base, names);
+  const narrowed = names === null ? base : buildGrammarForTools(base, names);
+  if (!strictToolArgs) return narrowed;
+  // The descriptor's own schema first (an MCP tool's `inputSchema`),
+  // else the built-in one, as the native-tools adapter reads them.
+  return applyStrictToolArgs(
+    narrowed,
+    descriptors.map((d) => ({
+      name: d.name,
+      schema: d.argsJsonSchema ?? getDefaultArgsJsonSchema(d.name),
+    })),
+  );
 }
 
 
