@@ -122,6 +122,10 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
   ],
   ["browser.screenshot", obj({ ref: stringSchema, fullPage: booleanSchema })],
   [
+    "browser.extract",
+    obj({ schema: { type: "object" }, instruction: stringSchema }, ["schema"]),
+  ],
+  [
     "browser.scroll",
     obj(
       {

@@ -40,6 +40,15 @@ Saved under `<tmp>/atomic-agent-browser-shots/<session>/` (outside the working f
 
 A page on a blocked host is never captured. A capture is discarded, never saved, when the page or any of its frames is on a blocked host by the time the pixels are taken (a racing redirect, a blocked iframe).
 
+## Extracting data
+
+`browser.extract { schema, instruction? }` (`extract.ts`, `extract-request.ts`, ATO-699): structured data out of the active page in one call ("every plan's name and price") instead of a read / scroll chain. The page's full ARIA snapshot (cut to half of the window, 8k–200k chars; 48k when the window is unknown) and the caller's JSON Schema go to one side model call on the step's provider, outside the main slot:
+
+- a grammar (llama-server) link gets GBNF built from the schema (`../../llm/grammar/json-schema-gbnf.ts`): object keys in declared order, required ones always, no others; arrays, enums, consts, unions; parts it does not shape fall back to any JSON;
+- a native-tools link gets one `emit_extracted_data` function whose parameters are the schema (a non-object root rides under `data`).
+
+The answer is validated against the full schema (`validateJsonSchemaValue`); a mismatch is an error that shows what came back. The page goes through the same check as `read_aria` (`gate-page-read.ts`), sits in an untrusted block in the side call's prompt, and the result is framed as page content. The model is bound by bootstrap after the tools are registered (`BrowserExtractModelRef`); without it the tool says to use `read_aria`.
+
 ## Page views
 
 `browser.read_aria` takes `mode` (`aria-view.ts`, `compact-aria.ts`, ATO-956):

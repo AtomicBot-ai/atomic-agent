@@ -488,9 +488,11 @@ describe("strict-tool conformance over every registered tool", () => {
     // path → task map, and each `checks` entry is a `verify.run` spec
     // whose keys belong to that tool — closing it would leave the model
     // unable to write a check at all. `parseDelegateArgs` validates the
-    // shape at run time, as it always did. Each is the tool's actual
+    // shape at run time, as it always did. `browser.extract` takes the
+    // caller's own JSON Schema as `schema`. Each is the tool's actual
     // payload, so none can be closed.
     expect(refused).toEqual([
+      "browser__extract",
       "os__http__request",
       "mcp__prompt__get",
       "verify__run",

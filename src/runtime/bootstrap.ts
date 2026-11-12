@@ -48,6 +48,7 @@ import type { DangerousToolOptions } from "../approval/dangerous-tool.js";
 
 import { PlaywrightBackend } from "../tools/browser/playwright-backend.js";
 import type { BrowserBackend } from "../tools/browser/browser-backend.js";
+import type { BrowserExtractModelRef } from "../tools/browser/extract-request.js";
 import { DeclaredInputsRegistry, ShellJobRegistry } from "../tools/os/index.js";
 import { ToolOutputSpill } from "../tools/index.js";
 import {
@@ -332,7 +333,10 @@ export async function createAgentRuntime(
   toolOutputSpill.sweepStale();
   installRuntimeSessionDelete(sessionStore, dropRecorder, shellJobs, toolOutputSpill);
 
-  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill);
+  // `browser.extract` calls the model (ATO-699); the completer is built
+  // further down, so the tool reads it through this ref per call.
+  const browserExtract: BrowserExtractModelRef = {};
+  const toolRegistry = createRuntimeToolRegistry(config, browserBackend, dangerous, toolOutputSpill, browserExtract);
 
   // What the operator asked for, per session, for the turn now running
   // on it — quoted into every fusion worker's brief (`worker-prompt.ts`)
@@ -449,6 +453,12 @@ export async function createAgentRuntime(
     sideCallSlotId: () => slotManager.sideCallSlotId(),
     userRequest: (sessionId) => turnRequests.get(sessionId), logger,
   });
+  browserExtract.current = {
+    complete: (params) => llmComplete(params),
+    transport: (providerId) => resolveActiveLlmSlice(providerId).transport,
+    slotId: () => slotManager.sideCallSlotId(),
+    serverTemplate: () => getConfig().localModels.useServerTemplate !== "off",
+  };
   const { taskStore, webhookSessionStore } = createRuntimeTaskStores({ config, logger });
   const { reflectionRunner, memoryContextProvider } = createRuntimeMemoryServices({
     config, profileStore, notesStore, linkStore, lessonStore, procedureStore, voteStore, embeddingClient,

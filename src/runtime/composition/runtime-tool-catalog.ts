@@ -21,7 +21,7 @@ import { isSecretEnvName } from "../../sandbox/command-env.js";
 import type { ToolOutputSpill } from "../../tools/tool-output-spill.js";
 import { finishTool } from "../../tools/finish.js";
 import { replyTool } from "../../tools/conversation/index.js";
-import { buildBrowserTools, UserSiteApprovals } from "../../tools/browser/index.js";
+import { buildBrowserTools, UserSiteApprovals, type BrowserExtractModelRef } from "../../tools/browser/index.js";
 import type { BrowserBackend } from "../../tools/browser/browser-backend.js";
 import { registerOsScreenTools, registerOsTools, type DeclaredInputsRegistry, type ShellJobRegistry, type WebSearchKeyHelp } from "../../tools/os/index.js";
 import { registerVerifyTools, runChecks } from "../../tools/verify/index.js";
@@ -99,6 +99,8 @@ export function createRuntimeToolRegistry(
   browserBackend: BrowserBackend,
   dangerous: DangerousToolOptions,
   outputSpill?: ToolOutputSpill,
+  /** The model `browser.extract` calls; bootstrap fills it in once the completer exists. */
+  browserExtract: BrowserExtractModelRef = {},
 ) {
 
 
@@ -115,7 +117,7 @@ export function createRuntimeToolRegistry(
       userProfile: config.browser.connect === "user-chrome",
       ...(config.browser.connect === "user-chrome" ? { userSites: new UserSiteApprovals() } : {}),
     };
-    for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy)) {
+    for (const tool of buildBrowserTools(browserBackend, dangerous, domainPolicy, browserExtract)) {
       toolRegistry.register(tool);
     }
   }
