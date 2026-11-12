@@ -3,7 +3,8 @@ import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, u
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { createProjectInstructionsCache, cursorRuleAlwaysApplies, DEFAULT_INSTRUCTION_BYTES, instructionByteBudget, instructionImports, loadProjectInstructions, runGitInWorkspace } from "./project-instructions.js";
+import { cursorRuleAlwaysApplies, DEFAULT_INSTRUCTION_BYTES, instructionByteBudget, instructionImports, loadProjectInstructions, runGitInWorkspace } from "./project-instructions.js";
+import { createProjectInstructionsCache } from "./project-instructions-cache.js";
 
 describe("cloud project instructions", () => {
   let base: string;
@@ -171,12 +172,20 @@ describe("cloud project instructions", () => {
   });
 
   it("never imports common credential files", () => {
-    const secrets = [".aws/credentials", "credentials.json", "prod.tfvars", ".docker/config.json", "vault.kdbx", ".pypirc", ".git-credentials"];
+    const secrets = [".aws/credentials", "credentials.json", "prod.tfvars", ".docker/config.json", "vault.kdbx", ".pypirc", ".git-credentials",
+      // ATO-312: direnv, Kubernetes, SSH, `secrets.*` and service-account keys.
+      ".envrc", ".kube/config", ".ssh/config", ".ssh/known_hosts", "secrets.yaml", "config/secrets.json", "deploy/service-account.json",
+      "firebase-serviceAccountKey.json", "gcp_service_account_prod.json", "kubeconfig", "infra/terraform.tfstate"];
     for (const path of secrets) put(path, "SECRET");
     put("CLAUDE.md", secrets.map(path => `@${path}`).join(" "));
     const result = loadProjectInstructions(root);
     expect(result.instructions.map(r => r.body).join("\n")).not.toContain("SECRET");
-    expect(result.diagnostics.join("\n")).toMatch(/sensitive instruction import: .*and 2 more/);
+    expect(result.instructions).toHaveLength(1);
+    expect(result.diagnostics.join("\n")).toMatch(/sensitive instruction import: .*and 13 more/);
+    // Ordinary data and docs that merely mention the words still import.
+    put("docs/secrets-policy.md", "POLICY"); put("data/accounts.json", "ACCOUNTS"); put("ssh-notes.md", "NOTES");
+    put("CLAUDE.md", "@docs/secrets-policy.md @data/accounts.json @ssh-notes.md");
+    expect(loadProjectInstructions(root).instructions.map(r => r.body).sort()).toEqual(["@docs/secrets-policy.md @data/accounts.json @ssh-notes.md", "ACCOUNTS", "NOTES", "POLICY"]);
   });
 
   it("defaults to a small budget and scales it to a share of a known context window", () => {

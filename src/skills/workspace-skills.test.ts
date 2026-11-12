@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getConfig, resetConfigCache } from "../config/index.js";
@@ -198,6 +198,27 @@ describe("session workspace skills and live policy", () => {
     expect(load(a, false).entries.find(e => e.record.manifest.name === "native")?.disabledReasons).toEqual(["not trusted in this folder yet"]);
     recordProjectTrust(a, "declined", { skills: ["example"], instructions: [] });
     expect(() => trusted.assertAvailable("example")).toThrow(/declined in this folder/);
+  });
+
+  it("reuses one scan across skill calls until a watched path changes (ATO-312)", () => {
+    const path = put(join(a, ".agents/skills"), "example"); trust(a, "example");
+    const c = getConfig();
+    // Backdate what the scan looks at: a file changed within two seconds of a scan never lets it be reused.
+    const past = Date.now() / 1000 - 60;
+    for (const p of [path, dirname(path), dirname(dirname(path)), c.paths.userConfigFile, c.paths.globalSkillsDir]) if (existsSync(p)) utimesSync(p, past, past);
+    let lists = 0;
+    const skills = loadWorkspaceSkills(a, { globalDir: c.paths.globalSkillsDir, projectDirName: c.paths.projectSkillsDirName, configFile: c.paths.userConfigFile,
+      defaults: c.skills, pluginSkills: () => { lists++; return []; } });
+    const perScan = lists;
+    for (let i = 0; i < 3; i++) expect(skills.assertAvailable("example").record.manifestPath).toBe(path);
+    // A reused scan only compares the plugin list (one call each); a rescan would list plugins again.
+    expect(lists).toBe(perScan + 3);
+    setSkillDisabled("example", true, a);
+    expect(() => skills.assertAvailable("example")).toThrow(/disabled in workspace/);
+    expect(lists).toBe(perScan + 3 + 1 + perScan);
+    // An edited manifest is noticed too.
+    setSkillDisabled("example", false, a); put(join(a, ".agents/skills"), "example", "edited body");
+    expect(() => skills.assertAvailable("example")).toThrow(/changed/);
   });
 
   it("degrades a missing workspace to a diagnostic instead of throwing", () => {

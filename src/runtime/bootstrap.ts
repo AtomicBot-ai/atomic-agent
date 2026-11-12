@@ -812,7 +812,7 @@ export async function createAgentRuntime(
       const session = typeof input === "string" ? sessionStore.load(input) : input;
       if (!session) throw new SessionNotFoundError(String(input));
       const mode = promptPreviewDeps.resolveModelMode(session.id);
-      return mode.mode === "cloud" ? promptPreviewDeps.prepareWorkspace(session, true) : null;
+      return mode.mode === "cloud" ? promptPreviewDeps.prepareWorkspace(session, true, undefined, { contextWindow: promptPreviewDeps.resolveCatalogContextWindow(session.id) }) : null;
     },
     config,
     loop,

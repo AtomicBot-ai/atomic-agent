@@ -11,10 +11,10 @@ import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
 import type { ProfileStore } from "../../memory/profile-store.js";
 import { SessionNotFoundError } from "../session-not-found-error.js";
 import type { ResolvedModelMode } from "../../llm/model-mode.js";
-import { reconcileCloudSkills } from "../../session/workspace-context.js";
+import { reconcileCloudSkills, type WorkspacePrepareOptions } from "../../session/workspace-context.js";
 
 export interface RuntimePromptPreviewDependencies {
-  prepareWorkspace?: (session: SessionState, cloud: boolean) => import("../../session/workspace-context.js").SessionWorkspace;
+  prepareWorkspace?: (session: SessionState, cloud: boolean, signal?: AbortSignal, options?: WorkspacePrepareOptions) => import("../../session/workspace-context.js").SessionWorkspace;
   workingDir: string;
   sessionStore: Pick<SessionStore, "load">;
   profileStore: Pick<ProfileStore, "listForPrompt">;
@@ -66,7 +66,9 @@ export function createRuntimePromptPreview(config: AtomicAgentConfig, deps: Runt
 export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: RuntimePromptPreviewDependencies, session: SessionState, userMessage?: string): BuildPromptInput {
     const transport = deps.resolveToolTransport(session.id);
     const modelMode = deps.resolveModelMode?.(session.id);
-    const workspace = modelMode?.mode === "cloud" ? deps.prepareWorkspace?.(session, true) : undefined;
+    const contextWindow = deps.resolveCatalogContextWindow(session.id);
+    // The same window the step passes, so the preview budgets instructions as the real turn does (ATO-312).
+    const workspace = modelMode?.mode === "cloud" ? deps.prepareWorkspace?.(session, true, undefined, { contextWindow }) : undefined;
     if (workspace) session = reconcileCloudSkills(session, workspace);
     const descriptors = deps.effectiveToolDescriptors();
     return {
@@ -85,7 +87,7 @@ export function buildRuntimePromptInput(config: AtomicAgentConfig, deps: Runtime
       profile: deps.getLiveProfile(),
       toolTransport: transport,
       suppressReasoningPrefill: transport === "native_tools",
-      contextWindow: deps.resolveCatalogContextWindow(session.id),
+      contextWindow,
       ...(deps.profileWindowApplies ? { profileWindowApplies: deps.profileWindowApplies(session.id) } : {}),
       ...(config.memory.profile.enabled
         ? { profileFacts: deps.profileStore.listForPrompt() }

@@ -29,3 +29,27 @@ export function readWorkspaceFile(root: string, path: string, maxBytes = 1024 * 
     return { path: actual, content };
   } finally { closeSync(fd); }
 }
+
+export interface StatSnapshot {
+  /** Stat signature of every path, in order; a missing path is "-". */
+  signature: string;
+  /** Latest modification time among the paths, in ms; 0 when none exist. */
+  newest: number;
+}
+
+/**
+ * What a cache compares to decide whether files it read are unchanged:
+ * mtime, ctime and size per path (following symlinks), without reading contents.
+ */
+export function statSnapshot(paths: readonly string[]): StatSnapshot {
+  let newest = 0;
+  const signature = paths.map(path => {
+    try {
+      const info = statSync(path, { throwIfNoEntry: false });
+      if (!info) return "-";
+      newest = Math.max(newest, info.mtimeMs);
+      return `${info.mtimeMs}:${info.ctimeMs}:${info.size}`;
+    } catch (error) { return `!${(error as NodeJS.ErrnoException).code ?? ""}`; }
+  }).join("|");
+  return { signature, newest };
+}
