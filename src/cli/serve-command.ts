@@ -2,6 +2,7 @@ import { resolveBootApprovalLevel } from "../approval/approval-level.js";
 import { getConfig } from "../config/index.js";
 import { createAgentRuntime } from "../runtime/bootstrap.js";
 import { createStderrSink } from "../tracing/structured-logger.js";
+import { PrometheusRegistry } from "../tracing/prometheus-registry.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 
 import { HELP, lanUrls, parseArgs, serveAuthWarning } from "./serve-args.js";
@@ -48,6 +49,9 @@ export async function serveCommand(args: string[]): Promise<number> {
 
   const approvalBus = new ApprovalBus();
   const completionRegistry = new CompletionRegistry();
+  // ATO-646: what `GET /metrics` reports, folded in memory from the
+  // runtime's metric samples.
+  const metricsRegistry = new PrometheusRegistry();
 
   let runtime: AgentRuntime | null = null;
   let handle: HttpServerHandle | null = null;
@@ -82,6 +86,7 @@ export async function serveCommand(args: string[]): Promise<number> {
         // factory's parameter makes that a compile error now, and
         // `serve-command.test.ts` reads what is passed here.
         logSinks: [createStderrSink()],
+        metricSinks: [metricsRegistry.sink],
         onApprovalRequest: (request) => {
           // ATO-1111: drop mirrored prompts whose turn was aborted, so a
           // window that never reconnects /api/events does not keep them.
@@ -96,7 +101,7 @@ export async function serveCommand(args: string[]): Promise<number> {
       host: parsed.host,
       port: parsed.port,
       apiKey: parsed.apiKey,
-      routes: buildRouteTable(),
+      routes: buildRouteTable({ metricsRegistry }),
       approvalBus,
       completionRegistry,
     });

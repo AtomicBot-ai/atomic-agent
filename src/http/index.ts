@@ -18,6 +18,7 @@ export type {
 } from "./http-server.js";
 
 export { buildRouteTable } from "./route-table.js";
+export type { RouteTableOptions } from "./route-table.js";
 
 export { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 export type {
