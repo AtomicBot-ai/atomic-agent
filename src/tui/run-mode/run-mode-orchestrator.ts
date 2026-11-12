@@ -10,7 +10,9 @@ import type { ResolvedLlmConfig } from "../../llm/provider/registry/provider-typ
 import {
   describeRunMode,
   describeRunModeDegradation,
+  describeSubscriptionCliWorker,
   resolveRunMode,
+  type SubscriptionCliWorkerNotice,
   type ResolvedRunMode,
 } from "../../llm/run-mode/index.js";
 import type { AgentRuntime } from "../../runtime/bootstrap.js";
@@ -84,6 +86,7 @@ export class RunModeOrchestrator {
 
     let leg: string | null;
     let fusion: RunModeChangeOptions["fusion"] = opts.fusion;
+    let workerNotice: SubscriptionCliWorkerNotice | null = null;
     if (mode === "fusion") {
       // Cloud orchestrator is the DEFAULT, not the rule. An explicit pin
       // wins whatever its kind — a local orchestrator driving cloud
@@ -120,6 +123,15 @@ export class RunModeOrchestrator {
             requested: mode,
           }),
         );
+        return;
+      }
+      // A subscription CLI on the worker leg (ATO-1431): warn, or refuse
+      // when `SUBSCRIPTION_CLI_WORKER_POLICY` says so.
+      workerNotice = describeSubscriptionCliWorker(
+        resolved.providers.find((p) => p.id === workerLeg),
+      );
+      if (workerNotice?.policy === "refuse") {
+        this.refuse(workerNotice.line);
         return;
       }
       // Pin BOTH legs. Leaving either to the resolver's "first entry of
@@ -197,6 +209,13 @@ export class RunModeOrchestrator {
       type: "runtime_info",
       line: `run mode: ${describeRunMode(now)}`,
     });
+    if (workerNotice !== null) {
+      this.deps.bus.emit({ type: "composer_notice", text: workerNotice.line });
+      this.deps.bus.emit({
+        type: "runtime_info",
+        line: `fusion: ${workerNotice.line}`,
+      });
+    }
     // Only on the way IN. Re-applying fusion to change the orchestrator
     // is not a moment that needs the mode explained again.
     if (now.effective === "fusion" && rm.effective !== "fusion") {

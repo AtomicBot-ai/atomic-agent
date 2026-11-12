@@ -181,7 +181,10 @@ function isLocalKind(entry: LlmProviderConfigEntry | undefined): boolean {
  * needs no changes of its own.
  *
  * A `subscription-cli` provider counts as cloud: it is not a
- * llama-server and cannot host workers.
+ * llama-server. It may still be picked as the worker leg; what that
+ * costs (every task spends the subscription limit, and a CLI that does
+ * not stream shows no live progress) is said at switch time by
+ * `describeSubscriptionCliWorker`, not decided here.
  */
 export function resolveRunMode(
   resolved: ResolvedLlmConfig,
