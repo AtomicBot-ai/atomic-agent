@@ -75,7 +75,7 @@ function harness(extra: Partial<WorkerRunnerDeps>): WorkerRunnerDeps & {
 describe("fresh connections for the local leg after a cut-off worker (ATO-1357)", () => {
   it("renews the pool before the next worker is sent, when the server still answers", async () => {
     const health = new LocalLegHealth();
-    health.noteCut("task t9 was timed out");
+    health.noteCut("task t9 was timed out", BASE.providerId);
     const deps = harness({ localLegHealth: health, probeLocalHealth: async () => "answered" });
     let renewals = 0;
     deps.renewLocalTransport = () => {
@@ -93,7 +93,7 @@ describe("fresh connections for the local leg after a cut-off worker (ATO-1357)"
     // Before the request, not after it: the point is that the worker's
     // first completion goes out on a fresh socket.
     expect(deps.order).toEqual(["renew", "turn"]);
-    expect(health.isSuspect()).toBe(false);
+    expect(health.isSuspect(BASE.providerId)).toBe(false);
     const line = deps.infos.find((entry) => entry.message.includes("fresh connections"));
     expect(line?.context).toMatchObject({ taskId: "t0", renewed: true });
     // The dispatch line ties the client's session-keyed trace to the task.
@@ -117,7 +117,7 @@ describe("fresh connections for the local leg after a cut-off worker (ATO-1357)"
 
   it("does not renew for a server that stopped answering: that worker is refused instead", async () => {
     const health = new LocalLegHealth();
-    health.noteCut("task t9 was cancelled");
+    health.noteCut("task t9 was cancelled", BASE.providerId);
     const deps = harness({
       localLegHealth: health,
       probeLocalHealth: async () => "unanswered",
@@ -140,7 +140,7 @@ describe("fresh connections for the local leg after a cut-off worker (ATO-1357)"
 
   it("never touches the pool for a cloud leg", async () => {
     const health = new LocalLegHealth();
-    health.noteCut("x");
+    health.noteCut("x", BASE.providerId);
     const deps = harness({ localLegHealth: health, probeLocalHealth: async () => "answered" });
     let renewals = 0;
     deps.renewLocalTransport = () => {
