@@ -1491,6 +1491,41 @@ export class AgentClient extends EventEmitter {
   }
 
   /**
+   * ATO-875: `POST /api/complete` — one plain request to the agent's current
+   * model, no tools, no chat kept. The agent routes it the way a chat step
+   * goes (local / Core, cloud key, subscription, Fusion's base model).
+   * `supported: false` on an agent from before the route (404 "No route for",
+   * or 501 from a runtime without it) or when it cannot be reached, so the
+   * caller falls back. A timeout is an answer (504). Never throws.
+   */
+  async plainComplete(
+    body: { prompt: string; system?: string; max_tokens?: number },
+    timeoutMs = 70_000,
+  ): Promise<{ supported: false } | { supported: true; ok: true; text: string } | { supported: true; ok: false; status: number; error: string }> {
+    try {
+      const res = await fetch(`${this.base()}/api/complete`, {
+        method: "POST",
+        headers: this.headers(),
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      const text = await res.text();
+      if ((res.status === 404 && /No route for/.test(text)) || res.status === 501) return { supported: false };
+      let parsed: { text?: unknown; error?: { message?: unknown } } | null = null;
+      try { parsed = JSON.parse(text) as typeof parsed; } catch { /* not JSON */ }
+      if (res.ok && typeof parsed?.text === "string") return { supported: true, ok: true, text: parsed.text };
+      const message = typeof parsed?.error?.message === "string" ? parsed.error.message : `HTTP ${res.status}`;
+      return { supported: true, ok: false, status: res.status, error: message };
+    } catch (err) {
+      // A slow model is an answer, not an old agent: asking it again directly would wait twice.
+      if (err && typeof err === "object" && (err as { name?: unknown }).name === "TimeoutError") {
+        return { supported: true, ok: false, status: 504, error: "timed out" };
+      }
+      return { supported: false };
+    }
+  }
+
+  /**
    * ATO-1250: `GET /api/project-trust` — the agent's one-time question about
    * a folder's own skills and instruction files (ATO-298). An agent from
    * before the route answers "No route for", reported as unsupported so the

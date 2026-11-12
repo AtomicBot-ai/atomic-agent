@@ -48,7 +48,7 @@ async function answer(fn: () => Promise<unknown>, cloud = false): Promise<Answer
 const bad = (message: string): Answer => ({ ok: false, error: { code: "INVALID_REQUEST", message } });
 const isCloud = (req: unknown): boolean => (req as { provider?: unknown } | null)?.provider !== "local";
 
-export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal"> & { window: () => BrowserWindow | null }): StudioMedia {
+export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal"> & { window: () => BrowserWindow | null; plainComplete?: ImproveDeps["viaAgent"] }): StudioMedia {
   const push = (channel: string, payload: unknown) => {
     const w = opts.window();
     if (w && !w.isDestroyed()) w.webContents.send(channel, payload);
@@ -67,6 +67,8 @@ export function wireStudioIpc(opts: Omit<StudioMediaDeps, "emitJob" | "emitLocal
     readConfig: readWholeConfig,
     localPaused: () => opts.gpu?.state().chat === "yielded",
     localKey: (url) => localLlamaKeyFor(url) ?? readCoreModelKey(managedDataDir(null), url),
+    // ATO-875: the agent's POST /api/complete first; an older agent falls back to the direct request.
+    ...(opts.plainComplete ? { viaAgent: opts.plainComplete } : {}),
   };
   ipcMain.handle("studio:improveReady", () => answer(() => improveReady(improve)));
   // CONTRACT.md: every call resolves. A hand-edited config the route cannot read must not reject.

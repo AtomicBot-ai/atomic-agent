@@ -224,7 +224,18 @@ export interface ImproveDeps {
   localKey?: (url: string) => string | null;
   request?: typeof fetch;
   timeoutMs?: number;
+  /**
+   * ATO-875: the agent's own `POST /api/complete` (agent-client.ts
+   * plainComplete), tried first so the agent routes the call. An agent from
+   * before the route answers `supported: false` and the direct request below runs.
+   */
+  viaAgent?: (body: { prompt: string; system: string; max_tokens: number }) => Promise<AgentCompleteAnswer>;
 }
+
+export type AgentCompleteAnswer =
+  | { supported: false }
+  | { supported: true; ok: true; text: string }
+  | { supported: true; ok: false; status: number; error: string };
 
 export type ImproveAnswer =
   | { ok: true; data: { prompt: string } }
@@ -257,6 +268,11 @@ export async function improvePrompt(deps: ImproveDeps, kind: unknown, prompt: un
   if (!route.ok) return fail("NO_CHAT_MODEL", route.why);
   const { url, model, entry, local } = route.target;
 
+  if (deps.viaAgent) {
+    const viaAgent = await improveViaAgent(deps.viaAgent, k, text, entry.maxOutputTokens);
+    if (viaAgent) return viaAgent;
+  }
+
   const headers: Record<string, string> = { "content-type": "application/json", ...(entry.headers ?? {}) };
   const key = entry.kind === "llama-server" ? (deps.localKey?.(url) ?? null) : resolveKeyValue(entry);
   if (key && !apiKeyCharsOk(key)) return fail("NO_CHAT_MODEL", "The chat model's API key has a character keys do not have. Check it in Settings.");
@@ -288,4 +304,26 @@ export async function improvePrompt(deps: ImproveDeps, kind: unknown, prompt: un
   const improved = improvedPromptOf(body);
   if (!improved) return fail("IMPROVE_FAILED", improveReplyOnlyThought(body) ? IMPROVE_ALL_THINKING : "The chat model gave no prompt back. Try again.");
   return { ok: true, data: { prompt: improved } };
+}
+
+/**
+ * ATO-875: one rewrite through the agent's `POST /api/complete`; `null` when
+ * the agent has no such route (or is not reachable), so the caller asks the
+ * provider directly as before. The answer gets the same cleanup.
+ */
+export async function improveViaAgent(
+  viaAgent: NonNullable<ImproveDeps["viaAgent"]>,
+  kind: ImproveKind,
+  text: string,
+  maxOutputTokens?: number,
+): Promise<ImproveAnswer | null> {
+  const answer = await viaAgent({ prompt: text, system: instructions(kind), max_tokens: improveMaxTokens(maxOutputTokens) })
+    .catch((): AgentCompleteAnswer => ({ supported: false }));
+  if (!answer.supported) return null;
+  if (!answer.ok) {
+    if (answer.status === 504) return fail("IMPROVE_FAILED", "The chat model did not answer in time. Try again.");
+    return fail("IMPROVE_FAILED", answer.error ? `The chat model could not improve the prompt: ${answer.error}` : "The chat model gave no prompt back. Try again.");
+  }
+  const improved = improvedPromptOf({ choices: [{ message: { content: answer.text } }] });
+  return improved ? { ok: true, data: { prompt: improved } } : fail("IMPROVE_FAILED", "The chat model gave no prompt back. Try again.");
 }
