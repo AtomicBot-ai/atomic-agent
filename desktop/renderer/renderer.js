@@ -26668,10 +26668,10 @@ function llmRunModeHTML(status, tone) {
   ];
   const fusionShown = mode === 'fusion' || rm.stored === 'fusion';
   return '<section class="llm-section llm-runmode">'
-    + '<div class="tk-sh llm-sh llm-rm-head"><span class="llm-sh-t">Where chats run</span><span class="grow"></span>'
+    + '<div class="tk-sh llm-sh llm-rm-head"><span class="llm-sh-t">Where chats run now</span><span class="grow"></span>'
       + (tone === 'busy' ? '<span class="llm-status is-busy"><span class="tk-spin"></span><span>' + esc(status) + '</span></span>' : '')
       + '<button class="iconbtn sm" data-act="llm:refresh" title="Refresh (r)" aria-label="Refresh">' + ic('refresh') + '</button></div>'
-    + '<div class="llm-rm-grid" role="group" aria-label="Where chats run">'
+    + '<div class="llm-rm-grid" role="group" aria-label="Where chats run now">'
     + MODES.map(([id, label, what, icon]) => {
         const on = id === mode;
         /* Д31: a choice that cannot be made yet says what it needs and opens

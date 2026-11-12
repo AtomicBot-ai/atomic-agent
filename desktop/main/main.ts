@@ -7982,7 +7982,7 @@ async function settingsTestPartC(
     + " return {modes: [...box.querySelectorAll('.llm-bar .llmmode')].map((b) => b.textContent.trim()), on: [...box.querySelectorAll('.llm-bar .llmmode.on')].map((b) => b.textContent.trim()), kv,"
     + " effects: [...box.querySelectorAll('[data-llm-row^=\"local-text:\"]')].map((r) => { const e = r.querySelector('.llm-effect'); return [e ? e.textContent.trim() : '', e ? e.title : '', r.hasAttribute('data-pull-local')]; })}; })()",
   );
-  const localCopy = ["Where chats run", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
+  const localCopy = ["Where chats run now", "Local models", "Embedding models", "Add from Hugging Face", "Advanced"];
   const localMissing: string[] = localCopy.filter((c) => !localBody.includes(c));
   if (!same(localView.modes, ["Local models", "Cloud providers", "Custom server"]) || !same(localView.on, ["Local models"])) localMissing.push(`mode strip ${JSON.stringify(localView.modes)} on=${JSON.stringify(localView.on)}`);
   if (!same(localView.kv.map(([k]) => k), ["current", "tools", "provider embeddings", "local daemon"])) localMissing.push(`route card labels ${JSON.stringify(localView.kv.map(([k]) => k))}`);
