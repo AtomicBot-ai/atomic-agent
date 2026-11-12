@@ -155,6 +155,10 @@ button.set-search:hover{border-color:var(--bd)}
 .set-note{display:block;margin-top:2px;font-size:var(--fs-cap);line-height:1.45;color:var(--ink-2)}
 .set-softnote{background:var(--well);box-shadow:none;color:var(--ink-2)}
 .set-softnote > svg{color:var(--ink-3)}
+/* ATO-1102: the "Test skill" block on a skill card */
+.set-skeval{padding:10px 12px;border-radius:8px;margin:10px 0}
+.set-skeval .acts{align-items:center;gap:8px;margin:0}
+.set-skeval p{margin:6px 0 0}
 
 /* Empty and loading states */
 .set-empty{padding:40px 20px 28px}

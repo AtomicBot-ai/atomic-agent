@@ -37,6 +37,7 @@ import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
+import { wireSkillEvalIpc } from "./skill-eval-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
 import { wireWindowSnapshotIpc } from "./window-snapshot-ipc.js";
 import { wireOvernightIpc } from "./overnight-ipc.js";
@@ -2802,6 +2803,8 @@ function wireIpc(client: AgentClient): void {
   wireAgentLiveIpc(client);
   // ATO-954: Settings › Plugins, through `atag plugin` (plugins-ipc.ts).
   wirePluginsIpc();
+  // ATO-1102: "Test skill" on a skill card, through `atag skill eval` (skill-eval-ipc.ts).
+  wireSkillEvalIpc({ cwd: () => client.status.workingDir });
   // ATO-404/405: the composer's attachments, saved into <stateDir>/inbox/desktop.
   wireAttachmentIpc({ window: () => win, stateDir: DESKTOP_STATE_DIR });
   // ATO-532: a snapshot of another app's window, attached like a pasted image (view-only).

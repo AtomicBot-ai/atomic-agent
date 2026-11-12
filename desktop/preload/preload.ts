@@ -325,6 +325,10 @@ contextBridge.exposeInMainWorld("atomic", {
   pluginSet: (name: string, op: "enable" | "disable" | "allow-code" | "deny-code", part?: string) =>
     ipcRenderer.invoke("cli:pluginSet", { name, op, part }),
   pluginRemove: (name: string) => ipcRenderer.invoke("cli:pluginRemove", name),
+  /** ATO-1102: "Test skill" on a skill card (main/skill-eval-ipc.ts). */
+  skillEvalProbe: (name: string) => ipcRenderer.invoke("cli:skillEvalProbe", name),
+  skillEvalRun: (name: string) => ipcRenderer.invoke("cli:skillEvalRun", name),
+  skillEvalCancel: () => ipcRenderer.invoke("cli:skillEvalCancel"),
   skillBrowse: (query?: string) => ipcRenderer.invoke("cli:skillBrowse", query ?? ""),
   /** Д45: the hub's last answer for the query, kept by main; `{ok:false}` when there is none. */
   skillBrowseCached: (query?: string) => ipcRenderer.invoke("cli:skillBrowseCached", query ?? ""),
