@@ -7,6 +7,7 @@ import type { ApprovalGate } from "../../approval/approval-gate.js";
 import type { SessionStore } from "../../session/session-store.js";
 import type { SkillRegistry } from "../../skills/skill-registry.js";
 import type { LlamaServerClient } from "../../llm/llama-server-client.js";
+import { renewTransportPool } from "../../llm/transport-deadlines.js";
 import type { ProviderRegistry } from "../../llm/provider/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import type { ResolvedRunMode } from "../../llm/run-mode/index.js";
@@ -713,6 +714,9 @@ export function registerRuntimeFusionAndReadScope(input: {
       // so the speed a worker's time limit is sized from is the speed
       // its own completions run at.
       localTokensPerSecond: () => llama.measuredTokensPerSecond(),
+      // A local worker sent after one was cut off, on a server that still
+      // answers, goes out on fresh connections (ATO-1357).
+      renewLocalTransport: () => renewTransportPool(),
       probeSlotOccupancy: async () => {
         try {
           return readSlotOccupancy(await llama.fetchSlots());
