@@ -58,11 +58,15 @@ export interface SkillEvalVariantSummary {
   errors: number;
   /** Runs in which the skill was loaded. */
   skillLoadedRuns: number;
+  /** Mean of every `judge` check score (1..5) in these runs; null when none was scored. */
+  judgeScoreMean: number | null;
 }
 
 /** `with` minus `without`. Positive accuracy = the skill helps; positive tokens/cost/time = it costs more. */
 export interface SkillEvalDelta {
   accuracy: number;
+  /** Null unless both sides have judge scores. */
+  judgeScoreMean: number | null;
   wallMsMean: number;
   totalTokens: number | null;
   costUsd: number | null;
@@ -93,6 +97,8 @@ export interface SkillEvalResult {
   finishedAt: string;
   agentVersion: string;
   model: { provider: string | null; model: string | null };
+  /** The judge that graded `judge` checks; null when no task has one. */
+  judge: { model: string; url: string } | null;
   options: {
     repeat: number;
     variants: SkillEvalVariant[];
@@ -122,6 +128,7 @@ export function summarizeRuns(runs: readonly SkillEvalRunRecord[]): SkillEvalVar
     costUsd: sumReported(runs.map((r) => r.costUsd)),
     errors: runs.filter((r) => r.end === "error" || r.end === "timeout" || r.end === "failed").length,
     skillLoadedRuns: runs.filter((r) => r.skillLoaded).length,
+    judgeScoreMean: mean(runs.flatMap((r) => r.checks.flatMap((c) => (c.score === undefined ? [] : [c.score])))),
   };
 }
 
@@ -146,6 +153,7 @@ export function buildSummary(
 function deltaOf(a: SkillEvalVariantSummary, b: SkillEvalVariantSummary): SkillEvalDelta {
   return {
     accuracy: a.accuracy - b.accuracy,
+    judgeScoreMean: a.judgeScoreMean === null || b.judgeScoreMean === null ? null : a.judgeScoreMean - b.judgeScoreMean,
     wallMsMean: a.wallMsMean - b.wallMsMean,
     totalTokens: a.totalTokens === null || b.totalTokens === null ? null : a.totalTokens - b.totalTokens,
     costUsd: a.costUsd === null || b.costUsd === null ? null : a.costUsd - b.costUsd,
@@ -156,4 +164,8 @@ function sumReported(values: ReadonlyArray<number | null>): number | null {
   let total: number | null = null;
   for (const v of values) if (v !== null) total = (total ?? 0) + v;
   return total;
+}
+
+function mean(values: readonly number[]): number | null {
+  return values.length === 0 ? null : values.reduce((sum, v) => sum + v, 0) / values.length;
 }

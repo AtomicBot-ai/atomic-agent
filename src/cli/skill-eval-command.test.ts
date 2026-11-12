@@ -28,7 +28,17 @@ describe("parseSkillEvalArgs", () => {
       noApproval: true,
       json: true,
       keepWorkdir: true,
+      judgeUrl: null,
+      judgeModel: null,
     });
+  });
+
+  it("reads the judge flags", () => {
+    expect(parseSkillEvalArgs(["pdf", "--tasks", "t.yaml", "--judge-url", "http://127.0.0.1:8080", "--judge-model", "qwen"])).toMatchObject({
+      judgeUrl: "http://127.0.0.1:8080",
+      judgeModel: "qwen",
+    });
+    expect(parseSkillEvalArgs(["pdf", "--tasks", "t.yaml", "--judge-url"])).toEqual({ error: "--judge-url requires a value" });
   });
 
   it("defaults to both variants, one attempt", () => {
@@ -64,6 +74,26 @@ describe("skillEvalCommand", () => {
     expect(await skillEvalCommand(["pdf"])).toBe(2);
     expect(stderr).toContain("missing --tasks");
     expect(stderr).toContain("usage: atomic-agent skill eval");
+  });
+
+  it("exits 2 before booting when judge checks have no usable judge", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "skill-eval-cli-"));
+    const saved = { url: process.env.ATOMIC_AGENT_JUDGE_URL, or: process.env.OPENROUTER_API_KEY, key: process.env.ATOMIC_AGENT_JUDGE_API_KEY };
+    delete process.env.ATOMIC_AGENT_JUDGE_URL;
+    delete process.env.OPENROUTER_API_KEY;
+    delete process.env.ATOMIC_AGENT_JUDGE_API_KEY;
+    try {
+      const file = join(dir, "tasks.yaml");
+      writeFileSync(file, "tasks:\n  - { id: a, prompt: x, check: { type: judge, rubric: r } }\n");
+      expect(await skillEvalCommand(["pdf", "--tasks", file, "--judge-url", "https://judge.example/v1"])).toBe(2);
+      expect(stderr).toContain("has judge checks, but the judge at https://judge.example/v1 needs an API key");
+    } finally {
+      for (const [name, value] of [["ATOMIC_AGENT_JUDGE_URL", saved.url], ["OPENROUTER_API_KEY", saved.or], ["ATOMIC_AGENT_JUDGE_API_KEY", saved.key]] as const) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("exits 2 when the tasks file names another skill", async () => {
@@ -209,7 +239,7 @@ describe("formatSkillEvalSummary", () => {
       schema: SKILL_EVAL_RESULT_SCHEMA, runId: "r", complete: true,
       skill: { name: "demo", version: "1", source: "global" },
       tasks: { file: "/t.yaml", sha256: "", count: 1 },
-      startedAt: "", finishedAt: "", agentVersion: "0", model: { provider: "local-llama", model: "m" },
+      startedAt: "", finishedAt: "", agentVersion: "0", model: { provider: "local-llama", model: "m" }, judge: null,
       options: { repeat: 1, variants: ["with", "without"], maxSteps: null, approvalLevel: 2 },
       runs, summary: buildSummary(runs, ["t"]),
     };

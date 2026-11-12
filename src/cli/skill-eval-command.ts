@@ -9,11 +9,15 @@ import { createAgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentRuntime } from "../runtime/bootstrap.js";
 import type { AgentLoopEvent } from "../agent/agent-contract.js";
 import {
+  createSkillEvalJudge,
   loadTaskSet,
+  resolveJudgeConfig,
+  taskSetUsesJudge,
   runSkillEval,
   saveSkillEvalResult,
   SKILL_EVAL_VARIANTS,
   type SkillEvalDriver,
+  type SkillEvalJudge,
   type SkillEvalDriverRun,
   type SkillEvalResult,
   type SkillEvalVariant,
@@ -21,7 +25,7 @@ import {
 import { getAppVersion } from "../version.js";
 
 export const SKILL_EVAL_USAGE =
-  "usage: atomic-agent skill eval <skill> --tasks <tasks.yaml> [--repeat <n>] [--only with|without] [--max-steps <n>] [--no-approval] [--json] [--keep-workdir]\n";
+  "usage: atomic-agent skill eval <skill> --tasks <tasks.yaml> [--repeat <n>] [--only with|without] [--max-steps <n>] [--no-approval] [--json] [--keep-workdir] [--judge-url <url>] [--judge-model <id>]\n";
 
 export interface SkillEvalArgs {
   skill: string;
@@ -32,6 +36,9 @@ export interface SkillEvalArgs {
   noApproval: boolean;
   json: boolean;
   keepWorkdir: boolean;
+  /** `--judge-url` / `--judge-model`; null falls back to ATOMIC_AGENT_JUDGE_URL / _MODEL. */
+  judgeUrl: string | null;
+  judgeModel: string | null;
 }
 
 export function parseSkillEvalArgs(args: string[]): SkillEvalArgs | { error: string } {
@@ -43,6 +50,8 @@ export function parseSkillEvalArgs(args: string[]): SkillEvalArgs | { error: str
   let noApproval = false;
   let json = false;
   let keepWorkdir = false;
+  let judgeUrl: string | null = null;
+  let judgeModel: string | null = null;
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i]!;
     const value = (): string | null => {
@@ -72,6 +81,14 @@ export function parseSkillEvalArgs(args: string[]): SkillEvalArgs | { error: str
         variants = [v];
         break;
       }
+      case "--judge-url":
+      case "--judge-model": {
+        const v = value();
+        if (v === null) return { error: `${arg} requires a value` };
+        if (arg === "--judge-url") judgeUrl = v;
+        else judgeModel = v;
+        break;
+      }
       case "--no-approval":
         noApproval = true;
         break;
@@ -89,7 +106,7 @@ export function parseSkillEvalArgs(args: string[]): SkillEvalArgs | { error: str
   }
   if (skill === null) return { error: "missing <skill>" };
   if (tasksFile === null) return { error: "missing --tasks <tasks.yaml>" };
-  return { skill, tasksFile, repeat, variants, maxSteps, noApproval, json, keepWorkdir };
+  return { skill, tasksFile, repeat, variants, maxSteps, noApproval, json, keepWorkdir, judgeUrl, judgeModel };
 }
 
 /**
@@ -118,6 +135,16 @@ export async function skillEvalCommand(args: string[]): Promise<number> {
     return 2;
   }
   const config = getConfig();
+  // After getConfig: it loads <stateDir>/.env, where a judge key may live.
+  let judge: SkillEvalJudge | null = null;
+  if (taskSetUsesJudge(taskSet)) {
+    const judgeConfig = resolveJudgeConfig({ url: parsed.judgeUrl, model: parsed.judgeModel });
+    if ("error" in judgeConfig) {
+      process.stderr.write(`${taskSet.sourcePath} has judge checks, but ${judgeConfig.error}\n`);
+      return 2;
+    }
+    judge = createSkillEvalJudge(judgeConfig);
+  }
   const approvalLevel = resolveBootApprovalLevel(parsed.noApproval, config.agent.approvalLevel);
   const workRoot = await mkdtemp(join(tmpdir(), "atomic-skill-eval-"));
   const counters = { approvalsDenied: 0 };
@@ -168,6 +195,7 @@ export async function skillEvalCommand(args: string[]): Promise<number> {
       approvalLevel,
       agentVersion: getAppVersion(),
       model: activeModel(config),
+      judge,
       signal: controller.signal,
       onProgress: (event) => {
         if (event.type !== "run_finished") return;
@@ -282,6 +310,7 @@ export function formatSkillEvalSummary(result: SkillEvalResult): string {
         `${(s.wallMsMean / 1000).toFixed(1)}s`.padEnd(11),
         (s.totalTokens === null ? "-" : String(s.totalTokens)).padEnd(11),
         s.costUsd === null ? "-" : `$${s.costUsd.toFixed(4)}`,
+        ...(s.judgeScoreMean === null ? [] : [` judge ${s.judgeScoreMean.toFixed(1)}/5`]),
       ].join(" "),
     );
   }
@@ -289,7 +318,8 @@ export function formatSkillEvalSummary(result: SkillEvalResult): string {
   if (d) {
     lines.push(
       `difference: accuracy ${signed(Math.round(d.accuracy * 100))} pts, time ${signed(Number((d.wallMsMean / 1000).toFixed(1)))}s, ` +
-        `tokens ${d.totalTokens === null ? "-" : signed(d.totalTokens)}, cost ${d.costUsd === null ? "-" : `${d.costUsd < 0 ? "-" : "+"}$${Math.abs(d.costUsd).toFixed(4)}`}`,
+        `tokens ${d.totalTokens === null ? "-" : signed(d.totalTokens)}, cost ${d.costUsd === null ? "-" : `${d.costUsd < 0 ? "-" : "+"}$${Math.abs(d.costUsd).toFixed(4)}`}` +
+        (d.judgeScoreMean === null ? "" : `, judge ${signed(Number(d.judgeScoreMean.toFixed(1)))}`),
     );
   }
   if (!result.complete) lines.push("stopped early: not every planned run finished");

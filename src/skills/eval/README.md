@@ -8,7 +8,8 @@ Owner: src/skills/eval/
 ## Entry points
 
 - [task-set.ts](task-set.ts): reads and validates a tasks file.
-- [checks.ts](checks.ts): the `exact`, `regex` and `command` checks.
+- [checks.ts](checks.ts): the `exact`, `regex`, `command` and `judge` checks.
+- [judge.ts](judge.ts): the judge model behind `judge` checks (ATO-1101).
 - [run-skill-eval.ts](run-skill-eval.ts): plans and runs the with/without runs through a driver (`SkillEvalDriver`), so tests need no model.
 - [eval-result.ts](eval-result.ts): the result document and its summary.
 - [run-store.ts](run-store.ts): saves and reads results under `<stateDir>/skill-evals/`.
@@ -39,6 +40,13 @@ tasks:
       - type: regex
         pattern: "title\\.txt"
         flags: i
+  - id: summary
+    prompt: Summarize report.pdf in three sentences.
+    check:
+      type: judge
+      rubric: Mentions revenue growth and the new office; no invented numbers.
+      reference: Revenue grew 12%; a Berlin office opened.   # optional
+      minScore: 4                                            # optional, 1..5, default 4
 ```
 
 Checks:
@@ -47,7 +55,20 @@ Checks:
 - `regex`: `new RegExp(pattern, flags)` matches the raw reply.
 - `command`: a shell command run in the run's working folder after the agent finished; exit code 0 passes. The reply is on stdin and in the file named by `SKILL_EVAL_ANSWER_FILE`. The environment is filtered like `os.shell.run`, so provider keys do not reach it. A tasks file is code: only run tasks files you trust.
 
+- `judge`: a judge model grades the reply against `rubric` (and `reference`, when given) on a 1..5 scale: 1 wrong, 3 partly right, 5 fully right. Passes at `minScore` or above; output the judge cannot be read as a score never passes. For answers no pattern can check.
+
 A run that timed out or crashed fails without running its checks.
+
+### The judge
+
+The judge is an OpenAI-compatible endpoint of its own, not the agent's active model, so the model under test never grades itself and grading never touches the person's memory. It uses the same settings, prompt and 1..5 scale as the eval harness judge (`eval/harness/judge-client.ts`):
+
+- `--judge-url <url>` or `ATOMIC_AGENT_JUDGE_URL` (default `https://openrouter.ai/api/v1`; a local llama-server such as `http://127.0.0.1:8080` works and needs no key),
+- `--judge-model <id>` or `ATOMIC_AGENT_JUDGE_MODEL` (default `openai/gpt-4o-mini`),
+- the key from `OPENROUTER_API_KEY` or `ATOMIC_AGENT_JUDGE_API_KEY` (the agent's `.env` is read first),
+- `ATOMIC_AGENT_JUDGE_TIMEOUT_MS` (default 60000).
+
+A tasks file with `judge` checks and no usable judge (a hosted URL without a key) stops before anything runs, exit 2. Judge calls are eval overhead: their tokens and cost are not counted in the runs.
 
 ## How a run works
 
@@ -74,12 +95,13 @@ Options: `--repeat <n>` runs everything n times; `--only with|without` runs one 
   "startedAt": "…", "finishedAt": "…",
   "agentVersion": "0.7.1",
   "model": { "provider": "local-llama", "model": "qwen3.5-9b" },
+  "judge": { "model": "openai/gpt-4o-mini", "url": "https://openrouter.ai/api/v1" },   // null when no task has a judge check
   "options": { "repeat": 1, "variants": ["with", "without"], "maxSteps": null, "approvalLevel": 2 },
   "runs": [
     {
       "taskId": "page-count", "variant": "with", "attempt": 1,
       "passed": true,
-      "checks": [{ "type": "exact", "passed": true, "detail": "matched" }],
+      "checks": [{ "type": "exact", "passed": true, "detail": "matched" }],   // a judge check also has "score": 1..5
       "end": "reply",                // reply | finish | max_steps | cancelled | failed | timeout | error
       "reply": "3", "error": null,
       "wallMs": 41250, "steps": 4,
@@ -92,9 +114,9 @@ Options: `--repeat <n>` runs everything n times; `--only with|without` runs one 
   "summary": {
     "with":    { "runs": 4, "passed": 3, "accuracy": 0.75, "wallMsTotal": 160000, "wallMsMean": 40000,
                  "promptTokens": 70000, "completionTokens": 1600, "totalTokens": 71600, "costUsd": 0,
-                 "errors": 0, "skillLoadedRuns": 4 },
+                 "errors": 0, "skillLoadedRuns": 4, "judgeScoreMean": 4.5 },   // null without judge scores
     "without": { "…": "same fields" },
-    "delta":   { "accuracy": 0.25, "wallMsMean": -5000, "totalTokens": 9000, "costUsd": 0 },
+    "delta":   { "accuracy": 0.25, "judgeScoreMean": 1.0, "wallMsMean": -5000, "totalTokens": 9000, "costUsd": 0 },
     "perTask": [{ "taskId": "page-count", "with": { "…": "same fields" }, "without": { "…": "same fields" } }]
   }
 }

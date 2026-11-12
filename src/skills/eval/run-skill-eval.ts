@@ -10,6 +10,7 @@ import {
   type SkillEvalRunRecord,
   type SkillEvalVariant,
 } from "./eval-result.js";
+import type { SkillEvalJudge } from "./judge.js";
 import { makeRunId } from "./run-store.js";
 import type { SkillEvalTask, SkillEvalTaskSet } from "./task-set.js";
 
@@ -64,6 +65,8 @@ export interface RunSkillEvalOptions {
   approvalLevel: number;
   agentVersion: string;
   model: { provider: string | null; model: string | null };
+  /** Grades `judge` checks (ATO-1101); null or absent, a `judge` check fails as "no judge configured". */
+  judge?: SkillEvalJudge | null;
   /** Stops the eval between runs and cancels the run in flight. */
   signal?: AbortSignal;
   onProgress?: (event: SkillEvalProgress) => void;
@@ -111,7 +114,7 @@ export async function runSkillEval(options: RunSkillEvalOptions): Promise<SkillE
     }
     const answer = outcome.reply ?? "";
     const ranToEnd = outcome.end !== "error" && outcome.end !== "timeout";
-    const checks = ranToEnd ? await runChecks(task.checks, { answer, workingDir: options.workRoot }) : [];
+    const checks = ranToEnd ? await runChecks(task.checks, { answer, workingDir: options.workRoot, prompt: task.prompt, judge: options.judge ?? null }) : [];
     const record: SkillEvalRunRecord = {
       taskId: task.id,
       variant: step.variant,
@@ -143,6 +146,7 @@ export async function runSkillEval(options: RunSkillEvalOptions): Promise<SkillE
     finishedAt: now().toISOString(),
     agentVersion: options.agentVersion,
     model: options.model,
+    judge: options.judge ? { model: options.judge.model, url: options.judge.baseUrl } : null,
     options: {
       repeat: options.repeat,
       variants: [...options.variants],

@@ -179,4 +179,34 @@ describe("runSkillEval", () => {
     expect(result.summary.with).toMatchObject({ totalTokens: null, costUsd: null });
     expect(result.summary.delta).toMatchObject({ totalTokens: null, costUsd: null });
   });
+
+  it("grades judge checks with the given judge and averages the scores per variant", async () => {
+    const judged = parseTaskSet(
+      "tasks:\n  - { id: j, prompt: explain, check: { type: judge, rubric: clear, minScore: 3 } }\n",
+      join(dir, "tasks.yaml"),
+    );
+    const prompts: string[] = [];
+    const judge = {
+      model: "judge-model",
+      baseUrl: "http://127.0.0.1:1",
+      async score(input: { prompt: string; reply: string }) {
+        prompts.push(input.prompt);
+        return { score: input.reply === "good" ? 5 : 2, reason: "", parseFallback: false };
+      },
+    };
+    const driver = fakeDriver((variant) => ({ reply: variant === "with" ? "good" : "meh" }));
+    const result = await runSkillEval({ ...baseOptions, repeat: 2, taskSet: judged, driver, workRoot, judge });
+    expect(prompts).toEqual(["explain", "explain", "explain", "explain"]);
+    expect(result.judge).toEqual({ model: "judge-model", url: "http://127.0.0.1:1" });
+    expect(result.summary.with).toMatchObject({ passed: 2, judgeScoreMean: 5 });
+    expect(result.summary.without).toMatchObject({ passed: 0, judgeScoreMean: 2 });
+    expect(result.summary.delta!.judgeScoreMean).toBe(3);
+  });
+
+  it("records no judge and no judge score when no task has a judge check", async () => {
+    const result = await runSkillEval({ ...baseOptions, taskSet, driver: fakeDriver(() => ({})), workRoot });
+    expect(result.judge).toBeNull();
+    expect(result.summary.with!.judgeScoreMean).toBeNull();
+    expect(result.summary.delta!.judgeScoreMean).toBeNull();
+  });
 });
