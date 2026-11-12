@@ -24023,19 +24023,46 @@ function skpHintsHTML() {
    name up to its last dot), families and names sorted; the unprefixed ones
    (reply, finish), each its own family there, lead together with no heading.
    null until the capabilities have been read. */
+/* ATO-528, step A (no switches yet: turning a group off needs the agent's
+   core, see the plan in Linear): the families are gathered into groups a
+   person recognises, each with one line of what it lets the agent do. The
+   internal name stays on every row, small and in mono. The unprefixed tools
+   (reply, finish) still lead with no heading; a family no group claims goes
+   under Other. Order is the list's order. */
+const TOOL_GROUPS = [
+  {id:'files', label:'Files', what:'Reads, writes and searches files in your folders.', match:/^os\.fs(\.|$)/},
+  {id:'terminal', label:'Terminal', what:'Runs commands and programs on ' + THIS_MACHINE + '.', match:/^os\.(shell|proc)(\.|$)/},
+  {id:'browser', label:'Browser', what:'Opens web pages and works in them, in its own browser.', match:/^browser(\.|$)/},
+  {id:'web', label:'Web', what:'Searches the internet and fetches pages.', match:/^(os\.(web|http)|web)(\.|$)/},
+  {id:'screen', label:'Screen and images', what:'Looks at the screen, windows, screenshots and pictures.', match:/^(os\.(window|clipboard)|shot|vision|image)(\.|$)/},
+  {id:'code', label:'Code and Git', what:'Works with git repositories and GitHub.', match:/^(os\.git|github)(\.|$)/},
+  {id:'tasks', label:'Tasks and schedules', what:'Plans work and runs it later or on a schedule.', match:/^(tasks|plan)(\.|$)/},
+  {id:'memory', label:'Memory', what:'Remembers facts, notes and lessons between chats.', match:/^memory(\.|$)/},
+  {id:'email', label:'Email', what:'Reads and drafts email.', match:/^os\.email(\.|$)/},
+  {id:'checks', label:'Checks', what:'Checks its own work before it says it is done.', match:/^verify(\.|$)/},
+  {id:'agent', label:'Skills and connections', what:'Finds and uses skills, tools and connected services.', match:/^(skill|tool|mcp\.(resource|prompt)|fusion|index|manifest)(\.|$)/},
+];
+const TOOL_GROUP_OTHER = {id:'other', label:'Other', what:'Everything else the agent can do.'};
+function toolGroupOf(family) {
+  if (!family) return null;
+  return TOOL_GROUPS.find((g) => g.match.test(family)) || TOOL_GROUP_OTHER;
+}
 function skpBuiltinTools() {
   if (!LIVE_CAPS || !Array.isArray(LIVE_CAPS.tools)) return null;
-  const byFamily = new Map();
+  const byGroup = new Map();
   LIVE_CAPS.tools.forEach((t) => {
     const name = t && typeof t.name === 'string' ? t.name : '';
     if (!name || (name.startsWith('mcp.') && !/^mcp\.(resource|prompt)\./.test(name))) return;
     const dot = name.lastIndexOf('.');
-    const family = dot < 0 ? '' : name.slice(0, dot);
-    if (!byFamily.has(family)) byFamily.set(family, []);
-    byFamily.get(family).push({name, description: typeof t.description === 'string' ? t.description : ''});
+    const group = toolGroupOf(dot < 0 ? '' : name.slice(0, dot));
+    const key = group ? group.id : '';
+    if (!byGroup.has(key)) byGroup.set(key, {group, tools: []});
+    byGroup.get(key).tools.push({name, description: typeof t.description === 'string' ? t.description : ''});
   });
-  return [...byFamily.entries()].sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([family, list]) => ({family, tools: list.sort((a, b) => a.name.localeCompare(b.name))}));
+  const order = (k) => k === '' ? -1 : k === 'other' ? TOOL_GROUPS.length : TOOL_GROUPS.findIndex((g) => g.id === k);
+  return [...byGroup.entries()].sort((a, b) => order(a[0]) - order(b[0]))
+    .map(([, v]) => ({family: v.group ? v.group.label : '', what: v.group ? v.group.what : '', groupId: v.group ? v.group.id : '',
+      tools: v.tools.sort((a, b) => a.name.localeCompare(b.name))}));
 }
 /* The Skills table's card and rows: the glyph the tool's transcript card wears, name, description. */
 function skpToolsHTML(groups) {
@@ -24050,7 +24077,8 @@ function skpToolsHTML(groups) {
   if (!groups.length) return '<div class="tk-empty set-empty"><span class="tk-ico tk-ico--lg" aria-hidden="true">' + ic('wand') + '</span><p>The agent lists no built-in tools.</p></div>';
   return '<div class="tk-list set-sklist set-tllist">'
     + '<div class="set-tlcols"><span></span><span>Name</span><span>Description</span></div>'
-    + groups.map((g) => (g.family ? '<div class="set-tlfam">' + esc(g.family) + '</div>' : '')
+    + groups.map((g) => (g.family ? '<div class="set-tlfam" data-tool-group="' + esc(g.groupId) + '"><span class="set-tlgn">' + esc(g.family) + '</span>'
+        + (g.what ? '<span class="set-tlwhat">' + esc(g.what) + '</span>' : '') + '</div>' : '')
       + g.tools.map((t) => '<div class="tk-li set-tlrow" data-tool-row="' + esc(t.name) + '">'
         + '<span class="set-tlic">' + ic(toolIcon(t.name)) + '</span>'
         + '<span class="t mono" title="' + esc(t.name) + '">' + esc(t.name) + '</span>'
