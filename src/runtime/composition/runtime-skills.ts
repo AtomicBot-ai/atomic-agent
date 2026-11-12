@@ -6,8 +6,58 @@ import type { SkillCatalogEntry } from "../../prompt/stable-prefix.js";
 import { SkillRegistry } from "../../skills/skill-registry.js";
 import { listEnabledPluginSkills } from "../../plugins/plugin-runtime.js";
 import { buildSkillCatalogSection } from "../../skills/skill-catalog.js";
-import { seedStarterSkillsIfMissing } from "../../skills/seed-starter-skills.js";
+import { listStarterSkillNames, seedStarterSkillsIfMissing } from "../../skills/seed-starter-skills.js";
 import { createProjectSkillTrustGate, projectTrustHint } from "../../skills/project-trust.js";
+import { runSkillCurator, skillCuratorAutoRunEnabled, skillCuratorPaths } from "../../skills/curator/index.js";
+import type { TaskStore } from "../../tasks/task-store.js";
+
+/** Text of every recurring task that can still run; a skill named in one is never archived. */
+export function recurringTaskTexts(taskStore: Pick<TaskStore, "list">): string[] {
+  return taskStore
+    .list({ status: ["pending", "running", "blocked"], limit: 10_000 })
+    .filter((task) => task.recurring)
+    .map((task) => task.userMessage);
+}
+
+/**
+ * The automatic skill curator pass (ATO-580): off unless
+ * `ATOMIC_AGENT_SKILL_CURATOR=1`, then at most once a week, in the
+ * background so boot never waits on it. Archived skills disappear from
+ * the catalog on the next refresh; `onArchived` triggers that refresh.
+ */
+export function startRuntimeSkillCurator(input: {
+  config: AtomicAgentConfig;
+  logger: StructuredLogger;
+  cronTexts: () => readonly string[];
+  onArchived?: () => Promise<void> | void;
+  env?: NodeJS.ProcessEnv;
+}): Promise<void> | null {
+  if (!skillCuratorAutoRunEnabled(input.env)) return null;
+  const { config, logger } = input;
+  return (async () => {
+    // Read the task list before the first await: the store may close on an early shutdown.
+    const cronTexts = input.cronTexts();
+    const result = await runSkillCurator({
+      skillsDir: config.paths.globalSkillsDir,
+      paths: skillCuratorPaths(config.paths.stateDir),
+      starterNames: await listStarterSkillNames(),
+      cronTexts,
+    });
+    if (!result.ran) return;
+    if (result.archived.length > 0 || result.stale.length > 0) {
+      logger.info("skill curator: unused agent-learned skills", {
+        archived: result.archived,
+        stale: result.stale,
+      });
+    }
+    for (const e of result.errors) logger.warn("skill curator: could not archive a skill", e);
+    if (result.archived.length > 0) await input.onArchived?.();
+  })().catch((err: unknown) => {
+    logger.warn("skill curator failed; skills were left as they were", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  });
+}
 
 export async function prepareRuntimeSkills(
   config: AtomicAgentConfig,

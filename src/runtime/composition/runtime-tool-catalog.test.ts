@@ -106,6 +106,8 @@ describe("runtime tool assembly phases and live MCP catalog", () => {
       expect(wired.trustConfigPaths).toEqual(getTrustConfigPaths(config.paths)); expect(wired.stateDir).toBe(config.paths.stateDir);
       // Skill scripts share the shell's passthrough list (ATO-877).
       expect(skillRegistration.mock.calls[0]?.[3]).toBe(config.tools.shell.envPassthrough);
+      // Skill history (ATO-580): skill uses reach the usage ledger.
+      expect(typeof skillRegistration.mock.calls[0]?.[5]).toBe("function");
       requests.set("session", "new request"); expect(wired.resolveOriginalRequest?.("session")).toBe("new request");
       wired.listRecentSessionDirs(7); expect(recent).toHaveBeenCalledWith(7);
       config.git.remoteSync = false; expect(wired.shellPolicy?.isGitRemoteSyncEnabled()).toBe(false);

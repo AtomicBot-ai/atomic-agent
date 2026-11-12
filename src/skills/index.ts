@@ -137,3 +137,22 @@ export type {
   SkillSourceKind,
   StageSkillOptions,
 } from "./clawhub/index.js";
+
+export {
+  archiveSkill,
+  listSkillVersions,
+  readSkillChanges,
+  restoreSkill,
+  runSkillCurator,
+  selectCuratorActions,
+  SKILL_CURATOR_LIMITS,
+  SkillChangeRecorder,
+  skillCuratorAutoRunEnabled,
+  skillCuratorPaths,
+} from "./curator/index.js";
+export type {
+  CuratorVerdict,
+  RunSkillCuratorResult,
+  SkillChangeEntry,
+  SkillCuratorPaths,
+} from "./curator/index.js";

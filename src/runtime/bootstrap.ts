@@ -4,7 +4,7 @@ import { createContextCompaction, logCompactionOutcome } from "./context-compact
 import { enhancePrompt, promptEnhancePartition } from "./prompt-enhancer.js";
 import { createBackgroundCompaction } from "./compaction-background.js";
 import { createWorkspaceLoader } from "./session-workspace.js";
-import { prepareRuntimeSkills } from "./composition/runtime-skills.js";
+import { prepareRuntimeSkills, recurringTaskTexts, startRuntimeSkillCurator } from "./composition/runtime-skills.js";
 import { createRuntimeToolRegistry, registerRuntimeCoreTools, registerRuntimeVisionTools, registerRuntimeImageTools, registerRuntimeVideoTools, connectRuntimeMcpCatalog, mcpGrammarHookFor, registerRuntimeFusionAndReadScope } from "./composition/runtime-tool-catalog.js";
 import { prepareRuntimeSessionStore, installRuntimeSessionDelete, createRuntimeSessionFactories } from "./composition/runtime-session-services.js";
 import { prepareRuntimeTurnState, createRuntimeTurnService } from "./composition/runtime-turn-service.js";
@@ -806,6 +806,8 @@ export async function createAgentRuntime(
     slotManager, llmComplete, logger, metrics, traceBus,
   });
   consolidatorJob?.start();
+  // Weekly archive of unused agent-learned skills (ATO-580); off by default.
+  void startRuntimeSkillCurator({ config, logger, cronTexts: () => recurringTaskTexts(taskStore), onArchived: refreshSkills });
 
   const runtime = {
     getSessionWorkspace(input: SessionState | string) {

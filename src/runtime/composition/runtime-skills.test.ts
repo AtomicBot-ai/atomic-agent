@@ -7,7 +7,9 @@ import type { CreateAgentRuntimeOptions } from "../runtime-contract.js";
 import { StructuredLogger } from "../../tracing/structured-logger.js";
 import { SkillRegistry } from "../../skills/skill-registry.js";
 import * as seeding from "../../skills/seed-starter-skills.js";
-import { prepareRuntimeSkills } from "./runtime-skills.js";
+import { prepareRuntimeSkills, recurringTaskTexts, startRuntimeSkillCurator } from "./runtime-skills.js";
+import { existsSync } from "node:fs";
+import { DAY_MS, SkillUsageLedger, skillCuratorPaths } from "../../skills/curator/index.js";
 
 const logger = new StructuredLogger({ level: "error", sinks: [] });
 
@@ -87,5 +89,46 @@ describe("runtime skill phases and live catalog ownership", () => {
     const refresh = vi.spyOn(SkillRegistry.prototype, "refresh");
     await expect(prepareRuntimeSkills(getConfig(), directory, logger)).rejects.toBe(failure);
     expect(refresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("automatic skill curator (ATO-580)", () => {
+  let directory: string;
+  beforeEach(async () => {
+    directory = await mkdtemp(join(tmpdir(), "atomic-runtime-curator-"));
+    vi.stubEnv("ATOMIC_AGENT_STATE_DIR", directory);
+    resetConfigCache();
+  });
+  afterEach(async () => {
+    vi.restoreAllMocks(); vi.unstubAllEnvs(); resetConfigCache();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  it("lists only recurring tasks that can still run", () => {
+    const list = vi.fn(() => [
+      { recurring: true, userMessage: "daily: use weekly-report" },
+      { recurring: false, userMessage: "one-off" },
+    ]);
+    expect(recurringTaskTexts({ list } as never)).toEqual(["daily: use weekly-report"]);
+    expect(list).toHaveBeenCalledWith(expect.objectContaining({ status: ["pending", "running", "blocked"] }));
+  });
+
+  it("stays off unless ATOMIC_AGENT_SKILL_CURATOR is set", () => {
+    const cronTexts = vi.fn(() => []);
+    expect(startRuntimeSkillCurator({ config: getConfig(), logger, cronTexts, env: {} })).toBeNull();
+    expect(cronTexts).not.toHaveBeenCalled();
+  });
+
+  it("archives an unused agent-learned skill and refreshes the catalog when on", async () => {
+    const config = getConfig();
+    const name = "learned-old";
+    await mkdir(join(config.paths.globalSkillsDir, name), { recursive: true });
+    await writeFile(join(config.paths.globalSkillsDir, name, "SKILL.md"), `---\nname: ${name}\ndescription: x\nversion: 1.0.0\n---\n`);
+    await new SkillUsageLedger(skillCuratorPaths(config.paths.stateDir).usageFile)
+      .markAgentCreated(name, Date.now() - 40 * DAY_MS);
+    const onArchived = vi.fn();
+    await startRuntimeSkillCurator({ config, logger, cronTexts: () => [], onArchived, env: { ATOMIC_AGENT_SKILL_CURATOR: "1" } });
+    expect(onArchived).toHaveBeenCalledTimes(1);
+    expect(existsSync(join(skillCuratorPaths(config.paths.stateDir).archiveDir, name, "SKILL.md"))).toBe(true);
   });
 });
