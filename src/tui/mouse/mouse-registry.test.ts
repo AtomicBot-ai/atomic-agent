@@ -97,6 +97,54 @@ describe("absoluteRect", () => {
     );
     expect(absoluteRect(offscreen)).toBeNull();
   });
+
+  it("follows a contentOffsetY that draws the children lower than their layout", () => {
+    // The chat log scrolls by drawing its column `offset` rows lower
+    // (`contentOffsetY={-offset}`); Yoga still places the row at top -4.
+    const viewport = node(
+      { left: 0, top: 0, width: 40, height: 5 },
+      undefined,
+      { overflowY: "hidden" },
+    );
+    const column = node(
+      { left: 0, top: -10, width: 40, height: 15 },
+      viewport,
+      { contentOffsetY: -6 },
+    );
+    const row = node({ left: 0, top: 6, width: 40, height: 1 }, column);
+    // -10 + 6 + 6 = row 2 on screen.
+    expect(absoluteRect(row)).toEqual({
+      left: 0,
+      top: 2,
+      width: 40,
+      height: 1,
+    });
+  });
+
+  it("clips a row that the content offset moves out of the viewport", () => {
+    const viewport = node(
+      { left: 0, top: 0, width: 40, height: 5 },
+      undefined,
+      { overflowY: "hidden", contentOffsetY: 3 },
+    );
+    // Laid out on row 1, drawn on row -2: gone.
+    const row = node({ left: 0, top: 1, width: 40, height: 1 }, viewport);
+    expect(absoluteRect(row)).toBeNull();
+  });
+
+  it("ignores a non-numeric content offset, as Ink does", () => {
+    const root = node({ left: 0, top: 0, width: 40, height: 5 }, undefined, {
+      contentOffsetX: Number.NaN,
+      contentOffsetY: "3",
+    });
+    const row = node({ left: 1, top: 1, width: 10, height: 1 }, root);
+    expect(absoluteRect(row)).toEqual({
+      left: 1,
+      top: 1,
+      width: 10,
+      height: 1,
+    });
+  });
 });
 
 describe("MouseTargetRegistry", () => {
