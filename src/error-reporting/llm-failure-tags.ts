@@ -44,6 +44,12 @@ export interface LlmFailureContext {
    */
   engineLivenessReason?: string;
   engineLock?: string;
+  /**
+   * The managed engine's port answered 401 while our engine's process
+   * was not there (`LocalPortTakenError`, ATO-1277): another program
+   * holds the port. Sent as `port_holder: other_process`.
+   */
+  portHeldByOther?: boolean;
 }
 
 /**
@@ -198,6 +204,8 @@ function safeCount(value: number): string {
  * clusters split into "crashed", "never started" and "external" (ATO-769),
  * and, for the managed engine, `engine_liveness`, `engine_liveness_reason`
  * and `engine_lock`: why the wait judged the process as it did (ATO-1275).
+ * A 401 on the managed port with our engine not running adds
+ * `port_holder: other_process` (ATO-1277).
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -223,6 +231,7 @@ export function sanitizeLlmFailureTags(
     tags.request_route = classifyRequestRoute(context.requestUrl);
     tags.port_class = classifyPortClass(context.requestUrl, context.managedPorts);
   }
+  if (context.portHeldByOther === true) tags.port_holder = "other_process";
   if (context.connectionRefused === true) {
     tags.local_engine ??= UNKNOWN;
     // An external server is the operator's process: we never look at it.

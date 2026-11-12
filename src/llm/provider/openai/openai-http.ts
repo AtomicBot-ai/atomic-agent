@@ -31,6 +31,11 @@ import {
   localBadRequestKind,
 } from "./local-bad-request.js";
 import { isToolSchemaErrorText } from "./tool-schema-rejection.js";
+import {
+  ATOMIC_CHAT_KEY_ADVICE,
+  atomicChatKeyMessage,
+  isAtomicChatKeyRefusal,
+} from "./atomic-chat-key.js";
 
 export type OpenAiHttpDeps = {
   baseUrl: string;
@@ -216,6 +221,11 @@ export function humanizeOpenAiHttpError(err: OpenAiHttpError): string {
     // Nothing was sent, so nothing was "rejected": say what is wrong with
     // the key instead of quoting a status the provider never answered.
     return `${who} can't use its API key: the key has a character API keys never contain (often a letter or quote picked up while pasting), so it was not sent. Re-enter the key in the Providers panel.`;
+  }
+  if (isAtomicChatKeyRefusal(err)) {
+    // ATO-1274: Atomic Chat checks a key only when its key protection is
+    // on, so this is that, not a dead key.
+    return `${atomicChatKeyMessage(err)} ${ATOMIC_CHAT_KEY_ADVICE}`;
   }
   if (err.keyProblem === "missing") {
     return `${who} needs an API key and none is set. Add the key in the Providers panel.`;

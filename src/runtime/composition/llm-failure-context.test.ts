@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { AtomicAgentConfig } from "../../config/index.js";
 import { attachFailingLink } from "../../llm/fallback/index.js";
-import { LocalEngineDownError, TransportError } from "../../llm/index.js";
+import { LlamaServerError, LocalEngineDownError, LocalPortTakenError, TransportError } from "../../llm/index.js";
 import { describeLlmFailure, type LlmFailureContextDeps } from "./llm-failure-context.js";
 
 /** Only the fields the description reads: the provider list and local-model mode. */
@@ -170,5 +170,20 @@ describe("describeLlmFailure", () => {
   it("a config read that throws still returns the outage numbers", () => {
     const d = { readConfig: () => { throw new Error("no config"); }, readDaemonPidState: vi.fn() };
     expect(describeLlmFailure({ error: new Error("x"), outage }, d)).toEqual({ outageWaitedMs: 30_000, outageAttempts: 4 });
+  });
+});
+
+describe("describeLlmFailure: a taken managed port (ATO-1277)", () => {
+  it("marks a LocalPortTakenError as a port held by another program", () => {
+    const url = "http://127.0.0.1:9931/completion";
+    const err = new LocalPortTakenError("local-llama", url, new LlamaServerError("llama-server returned http 401", 401, url));
+    const context = describeLlmFailure({ error: err }, deps(config({}), "no_pid"));
+    expect(context).toMatchObject({ portHeldByOther: true, daemonState: "no_pid", requestUrl: url });
+  });
+
+  it("a plain 401 carries no such mark", () => {
+    const url = "http://127.0.0.1:9931/completion";
+    const context = describeLlmFailure({ error: new LlamaServerError("llama-server returned http 401", 401, url) }, deps(config({}), "alive"));
+    expect(context.portHeldByOther).toBeUndefined();
   });
 });

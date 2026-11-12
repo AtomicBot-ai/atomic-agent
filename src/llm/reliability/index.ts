@@ -48,11 +48,19 @@ export {
   isAtomicChatNotRunning,
 } from "./atomic-chat-not-running.js";
 export {
+  LOCAL_PORT_TAKEN_ADVICE,
+  LOCAL_PORT_TAKEN_CODE,
+  LOCAL_PORT_TAKEN_MESSAGE,
+  LocalPortTakenError,
+  findLocalPortTaken,
+} from "./local-port-taken.js";
+export {
   LOCAL_OUT_OF_MEMORY_CODE,
   LocalOutOfMemoryError,
   isLocalOutOfMemory,
 } from "./local-out-of-memory.js";
 export {
+  ATOMIC_CHAT_KEY_REQUIRED_CODE,
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_PROVIDER_NOT_FOUND_CODE,
   LOCAL_REQUEST_INVALID_CODE,
@@ -62,6 +70,7 @@ export {
   LOCAL_SERVER_RECHECK_COMMAND,
   LOCAL_SERVER_RECHECK_HINT,
   classifyLocalServerError,
+  isUnreportedLocalServerFailure,
   localServerErrorLines,
   type ClassifyLocalServerErrorOptions,
   type LocalServerError,

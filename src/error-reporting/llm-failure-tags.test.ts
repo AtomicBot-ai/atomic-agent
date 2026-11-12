@@ -292,3 +292,18 @@ describe("llm_failure context through scrubber and envelope", () => {
     expect(payloadOf(buildEnvelope(DSN, bare, META).body).tags.local_engine).toBeUndefined();
   });
 });
+
+describe("port_holder (ATO-1277)", () => {
+  it("says other_process for a 401 on the managed port with our engine gone", () => {
+    expect(sanitizeLlmFailureTags({ providerId: "local-llama", daemonState: "no_pid", portHeldByOther: true })).toEqual({
+      provider_id: "local-llama",
+      daemon_state: "no_pid",
+      port_holder: "other_process",
+    });
+  });
+
+  it("is absent otherwise", () => {
+    expect(sanitizeLlmFailureTags({ providerId: "local-llama", daemonState: "alive" })?.port_holder).toBeUndefined();
+    expect(sanitizeLlmFailureTags({ providerId: "local-llama", portHeldByOther: false })?.port_holder).toBeUndefined();
+  });
+});

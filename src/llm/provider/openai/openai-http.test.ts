@@ -691,6 +691,44 @@ describe("credit-limit (402) recovery", () => {
   });
 });
 
+describe("humanizeOpenAiHttpError: Atomic Chat's API key protection (ATO-1274)", () => {
+  const atomicChat = (status: number, keyProblem?: "missing" | "non_ascii", label = "atomic-chat"): OpenAiHttpError =>
+    new OpenAiHttpError(
+      `openai provider ${status}: Unauthorized`,
+      status,
+      "http://127.0.0.1:1337/v1/chat/completions",
+      false,
+      null,
+      label,
+      undefined,
+      keyProblem !== undefined ? { keyProblem } : undefined,
+    );
+
+  it("says the key protection is on and where the key goes, keeping the status", () => {
+    for (const status of [401, 403]) {
+      const text = humanizeOpenAiHttpError(atomicChat(status));
+      expect(text).toContain(`Atomic Chat answered ${status}: its API key protection is on and it refused the agent's key.`);
+      expect(text).toContain("Local API Server settings");
+      expect(text).toContain("Providers panel");
+      expect(text).not.toContain("rejected the API key");
+    }
+  });
+
+  it("with no key sent it says the agent has none, not that a key was refused", () => {
+    const text = humanizeOpenAiHttpError(atomicChat(401, "missing"));
+    expect(text).toContain("the agent has no key for it");
+    expect(text).not.toContain("none is set");
+  });
+
+  it("a key that could not form a header keeps its own words", () => {
+    expect(humanizeOpenAiHttpError(atomicChat(401, "non_ascii"))).toContain("character API keys never contain");
+  });
+
+  it("another provider on the same port keeps the generic words", () => {
+    expect(humanizeOpenAiHttpError(atomicChat(401, undefined, "openai-compatible"))).toContain("rejected the API key (401)");
+  });
+});
+
 describe("humanizeOpenAiHttpError", () => {
   const mk = (status: number | null, timedOut = false): OpenAiHttpError =>
     new OpenAiHttpError(

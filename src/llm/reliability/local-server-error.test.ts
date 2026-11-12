@@ -4,7 +4,11 @@ import { LlamaServerError, readLlamaErrorBody } from "../llama-server-client.js"
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import { parseProviderErrorBody } from "../provider/openai/parse-provider-error-body.js";
 import { GrammarError, TransportError } from "./llm-failures.js";
+import { ATOMIC_CHAT_KEY_ADVICE } from "../provider/openai/atomic-chat-key.js";
+import { LOCAL_PORT_TAKEN_ADVICE, LOCAL_PORT_TAKEN_CODE, LOCAL_PORT_TAKEN_MESSAGE, LocalPortTakenError } from "./local-port-taken.js";
 import {
+  ATOMIC_CHAT_KEY_REQUIRED_CODE,
+  isUnreportedLocalServerFailure,
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_PROVIDER_NOT_FOUND_CODE,
   LOCAL_REQUEST_INVALID_CODE,
@@ -216,5 +220,104 @@ describe("classifyLocalServerError: OpenAI-compatible guards", () => {
     );
     expect(classifyLocalServerError(timedOut)).toBeNull();
     expect(classifyLocalServerError(inStream)).toBeNull();
+  });
+});
+
+/** A 401/403 from an OpenAI-compatible provider the way `httpErrorFromResponse` makes one. */
+function keyRefusal(
+  status: 401 | 403,
+  label: string,
+  url: string,
+  keyProblem?: "missing" | "non_ascii",
+): OpenAiHttpError {
+  return new OpenAiHttpError(
+    `openai provider ${status}: {"error":"Unauthorized"}`,
+    status,
+    url,
+    false,
+    null,
+    label,
+    undefined,
+    {
+      body: parseProviderErrorBody('{"error":"Unauthorized"}'),
+      ...(keyProblem !== undefined ? { keyProblem } : {}),
+    },
+  );
+}
+
+describe("classifyLocalServerError: Atomic Chat's API key protection (ATO-1274)", () => {
+  const URL = "http://127.0.0.1:1337/v1/chat/completions";
+
+  it("a 401 or 403 from the atomic-chat provider is atomic_chat_key_required, with its words", () => {
+    for (const status of [401, 403] as const) {
+      const verdict = classifyLocalServerError(keyRefusal(status, "atomic-chat", URL));
+      expect(verdict).toEqual({
+        code: ATOMIC_CHAT_KEY_REQUIRED_CODE,
+        status,
+        url: URL,
+        message: `Atomic Chat answered ${status}: its API key protection is on and it refused the agent's key.`,
+        advice: ATOMIC_CHAT_KEY_ADVICE,
+      });
+    }
+  });
+
+  it("says the agent has no key when it sent none", () => {
+    const verdict = classifyLocalServerError(keyRefusal(401, "atomic-chat", URL, "missing"));
+    expect(verdict?.code).toBe(ATOMIC_CHAT_KEY_REQUIRED_CODE);
+    expect(verdict?.message).toBe("Atomic Chat answered 401: its API key protection is on and the agent has no key for it.");
+  });
+
+  it("names the provider's API key and Atomic Chat's own setting", () => {
+    expect(ATOMIC_CHAT_KEY_ADVICE).toContain("Providers panel");
+    expect(ATOMIC_CHAT_KEY_ADVICE).toContain("ATOMIC_CHAT_API_KEY");
+    expect(ATOMIC_CHAT_KEY_ADVICE).toContain("Local API Server");
+  });
+
+  it("is found under the agent loop's wrapper", () => {
+    const wrapped = new TransportError("wrapped", 401, URL, { cause: keyRefusal(401, "atomic-chat", URL) });
+    expect(classifyLocalServerError(wrapped)?.code).toBe(ATOMIC_CHAT_KEY_REQUIRED_CODE);
+  });
+
+  it("a key that could not be sent (non-ASCII) keeps its own words", () => {
+    expect(classifyLocalServerError(keyRefusal(401, "atomic-chat", URL, "non_ascii"))).toBeNull();
+  });
+
+  it("other providers' 401/403 are unchanged, local or not", () => {
+    expect(classifyLocalServerError(keyRefusal(401, "lmstudio", "http://127.0.0.1:1234/v1/chat/completions"))).toBeNull();
+    expect(classifyLocalServerError(keyRefusal(401, "ollama", "http://127.0.0.1:11434/v1/chat/completions"))).toBeNull();
+    expect(classifyLocalServerError(keyRefusal(403, "openrouter", "https://openrouter.ai/api/v1/chat/completions"))).toBeNull();
+  });
+
+  it("is kept out of Sentry; other local-server codes are not", () => {
+    expect(isUnreportedLocalServerFailure(keyRefusal(401, "atomic-chat", URL))).toBe(true);
+    expect(isUnreportedLocalServerFailure(keyRefusal(401, "lmstudio", "http://127.0.0.1:1234/v1/chat/completions"))).toBe(false);
+    expect(isUnreportedLocalServerFailure(llamaHttp(404, "http://127.0.0.1:9931/completion"))).toBe(false);
+    expect(isUnreportedLocalServerFailure(new LocalPortTakenError("local-llama", "http://127.0.0.1:9931/completion"))).toBe(false);
+    expect(isUnreportedLocalServerFailure(new Error("boom"))).toBe(false);
+  });
+});
+
+describe("classifyLocalServerError: the managed port held by another program (ATO-1277)", () => {
+  const URL = "http://127.0.0.1:9931/completion";
+
+  it("a LocalPortTakenError is local_port_taken, before the 401 it wraps", () => {
+    const refusal = llamaHttp(401, URL);
+    const taken = new LocalPortTakenError("local-llama", URL, new TransportError("wrapped", 401, URL, { cause: refusal }));
+    expect(classifyLocalServerError(taken)).toEqual({
+      code: LOCAL_PORT_TAKEN_CODE,
+      status: 401,
+      url: URL,
+      message: LOCAL_PORT_TAKEN_MESSAGE,
+      advice: LOCAL_PORT_TAKEN_ADVICE,
+    });
+  });
+
+  it("a bare llama-server 401 still has no code (the engine reading decides, not the status)", () => {
+    expect(classifyLocalServerError(llamaHttp(401, URL))).toBeNull();
+  });
+
+  it("the advice names the real port setting and no command", () => {
+    expect(LOCAL_PORT_TAKEN_ADVICE).toContain("localModels.managed.port");
+    expect(LOCAL_PORT_TAKEN_ADVICE).not.toContain("atomic-agent");
   });
 });
