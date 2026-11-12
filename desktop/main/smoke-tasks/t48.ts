@@ -289,7 +289,7 @@ async function fitBadges(js: Js, check: Check): Promise<void> {
   const only = (id: string, word: string, re: RegExp) => one(id).length === 1 && one(id)[0]!.word === word && re.test(one(id)[0]!.title);
   check(
     "T48 (Д32): each local model wears one badge — Fits well, Tight fit, Too big or Installed — and its tooltip gives the figures",
-    only("smoke-fits", "Fits well", /wants 16 GB.*has 18 GB/) && only("smoke-tight", "Tight fit", /runs in 14 GB but wants 24 GB.*Expect it to be slow/)
+    only("smoke-fits", "Fits well", /wants 16 GB.*has 18 GB/) && only("smoke-tight", "Slow on 18 GB", /runs in 14 GB but wants 24 GB.*Expect it to be slow/)
       && only("smoke-big", "Too big", /needs at least 24 GB/) && only("smoke-small-installed", "Installed", /Installed on .*\(6\.2 GB\).*Fits well.*small model/)
       && (rows["local-embedding:smoke-emb"]?.badges ?? []).map((b) => b.word).join() === "Installed",
     show(rows),

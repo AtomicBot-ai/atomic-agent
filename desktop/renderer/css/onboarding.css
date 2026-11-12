@@ -485,3 +485,12 @@ body.electron.platform-linux #onboarding .ob-rail{padding-top:28px}
 #onboarding .ob-err.ob-engfail{flex-wrap:wrap}
 #onboarding .ob-err.ob-engfail b{font-weight:500}
 #onboarding .ob-engfail-acts{display:flex;gap:6px;margin-left:auto}
+/* ATO-492: what a model is for, one colour per purpose (Atomic Chat's four),
+   first on the name line; the grey tech chips a second line under the facts. */
+#onboarding .ob-badge-use.ob-use-everyday{background:var(--success-tint);color:var(--success)}
+#onboarding .ob-badge-use.ob-use-vision{background:var(--brand-wash);color:var(--blue)}
+#onboarding .ob-badge-use.ob-use-coding{background:color-mix(in srgb,var(--indigo) 14%,transparent);color:color-mix(in srgb,var(--indigo) 55%,var(--ink))}
+#onboarding .ob-badge-use.ob-use-reasoning{background:color-mix(in srgb,var(--reasoning) 14%,transparent);color:var(--reasoning)}
+#onboarding .ob-tech{display:flex;gap:4px;flex-wrap:nowrap;overflow:hidden;min-height:18px;margin-top:3px}
+#onboarding .ob-techchip{display:inline-flex;align-items:center;height:18px;padding:0 6px;border-radius:var(--r-badge);
+  background:var(--hover);color:var(--ink-3);font:500 var(--fs-micro)/1 var(--font-ui);white-space:nowrap;cursor:help}

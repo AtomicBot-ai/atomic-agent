@@ -303,3 +303,10 @@
 .llm-pane .llm-engfail b{font-size:var(--fs-ui);font-weight:600}
 .llm-pane .llm-engfail-detail{overflow-wrap:anywhere;opacity:.8}
 .llm-pane .llm-engfail-acts{display:flex;gap:6px;flex:none;align-self:center}
+/* ATO-492: the "what for" chip (one colour per purpose) and the grey tech chips after the blurb. */
+.llm-pane .tk-chip--use-everyday{background:var(--success-tint);color:var(--success)}
+.llm-pane .tk-chip--use-vision{background:var(--brand-wash);color:var(--blue)}
+.llm-pane .tk-chip--use-coding{background:color-mix(in srgb,var(--indigo) 14%,transparent);color:color-mix(in srgb,var(--indigo) 55%,var(--ink))}
+.llm-pane .tk-chip--use-reasoning{background:color-mix(in srgb,var(--reasoning) 14%,transparent);color:var(--reasoning)}
+.llm-pane .llm-techchip{display:inline-block;margin-left:6px;padding:0 5px;line-height:16px;border-radius:var(--r-badge);
+  background:var(--hover);color:var(--ink-3);font-size:var(--fs-micro);vertical-align:1px;cursor:help}
