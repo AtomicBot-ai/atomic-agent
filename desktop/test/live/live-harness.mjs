@@ -31,6 +31,7 @@ const EVIDENCE_REQUESTS = 8;
 
 const AGENT_ENTRY = join(REPO_DIR, 'dist', 'cli', 'index.js');
 const AGENT_SCHEMA = join(REPO_DIR, 'dist', 'config', 'config-schema.js');
+const AGENT_FIND_CHROME = join(REPO_DIR, 'dist', 'tools', 'browser', 'find-chrome-executable.js');
 
 /** Why this machine cannot run the tier, or null. Reported as a SKIP. */
 function standProblem() {
@@ -40,6 +41,31 @@ function standProblem() {
   if (!existsSync(join(DESKTOP_DIR, 'node_modules', '.bin', 'electron'))) return 'electron is missing: run npm install in desktop/';
   if (!existsSync(join(DESKTOP_DIR, 'out', 'main', 'main.js'))) return 'desktop/out is missing: run npm run build in desktop/';
   return null;
+}
+
+/* -------------------------------------------------------------- browser -- */
+/**
+ * The real browser for a scenario that asks for it (ATO-1376). The tier
+ * keeps the browser off by default (liveEnv), so every other scenario is
+ * unchanged. A browser scenario gets it on and headless, so nothing opens on
+ * the stand's screen, and the binary is found here with the agent's own
+ * lookup and handed over by path: the app runs with a throwaway HOME, where a
+ * per-user install would not be found.
+ *
+ * Returns `{ env }`, or `{ problem }` when this machine has no Chrome, Edge,
+ * Brave or Chromium; the scenario is then a SKIP with that reason, not a FAIL.
+ * `ATAG_LIVE_BROWSER` names a binary to use instead.
+ */
+export async function liveBrowser() {
+  let path = process.env.ATAG_LIVE_BROWSER || null;
+  if (path && !existsSync(path)) return { problem: `ATAG_LIVE_BROWSER points at a missing file: ${path}` };
+  if (!path) {
+    const { findChromeExecutable } = await import(pathToFileURL(AGENT_FIND_CHROME).href);
+    path = findChromeExecutable({ channel: 'chrome' })?.path ?? null;
+  }
+  if (!path) return { problem: 'no Chrome, Edge, Brave or Chromium on this machine: the browser scenario needs one' };
+  return { path, env: { ATOMIC_AGENT_BROWSER_ENABLED: 'true', ATOMIC_AGENT_BROWSER_HEADLESS: 'true',
+    ATOMIC_AGENT_BROWSER_EXECUTABLE_PATH: path } };
 }
 
 /* ------------------------------------------------------- throwaway dirs -- */
@@ -201,14 +227,26 @@ function saveEvidence(app, model, dirs) {
  * change `config` before it is written, drop files in the workspace, and
  * return extra environment for the launch. Returns `{ name, ok, secs }` plus
  * `skipped` or `error`.
+ *
+ * `browser: true` turns the real browser on, headless (see liveBrowser). A
+ * Chrome left running after the app closed fails the run through the same
+ * leftover sweep as any other process, since its profile sits in the run's
+ * directory.
  */
-export async function liveScenario(name, body, { setup, skip = null } = {}) {
+export async function liveScenario(name, body, { setup, skip = null, browser = false } = {}) {
   const t0 = Date.now();
   const secs = () => ((Date.now() - t0) / 1000).toFixed(0);
   console.log(`\n> ${name}`);
   if (skip) return { name, ok: true, skipped: skip, secs: '0' };
   const notReady = standProblem();
   if (notReady) return { name, ok: true, skipped: notReady, notReady: true, secs: '0' };
+  let browserEnv = null;
+  if (browser) {
+    const found = await liveBrowser();
+    if (found.problem) return { name, ok: true, skipped: found.problem, notReady: true, secs: '0' };
+    console.log(`   browser ${found.path} (headless)`);
+    browserEnv = found.env;
+  }
 
   let dirs = null;
   let model = null;
@@ -223,7 +261,7 @@ export async function liveScenario(name, body, { setup, skip = null } = {}) {
     writeFileSync(join(dirs.stateDir, 'config.json'), JSON.stringify(config, null, 2), { mode: 0o600 });
     const shim = writeAgentShim(dirs.base);
     app = await launch({ port: LIVE_PORT, stateDir: dirs.stateDir, workspace: dirs.workspace,
-      env: liveEnv(dirs, shim, extra) });
+      env: liveEnv(dirs, shim, { ...browserEnv, ...extra }) });
     await waitReady(app);
     await Promise.race([body({ app, model, ...dirs, write, read }), model.whenBroken]);
     if (model.broken) throw model.broken;
