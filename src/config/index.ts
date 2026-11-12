@@ -89,6 +89,16 @@ export {
 } from "./llm-run-mode-config.js";
 export type { DotenvLoadResult, DotenvReadFailure } from "./load-dotenv.js";
 export { DotenvWriterError, setDotenvKey } from "./dotenv-writer.js";
+export {
+  readSecretsStoreState,
+  type SecretsStoreKind,
+  type SecretsStoreState,
+} from "./secret-store.js";
+export {
+  moveSecretsToEnv,
+  moveSecretsToKeychain,
+  type SecretsMigrationResult,
+} from "./secrets-migration.js";
 export type { SetDotenvKeyResult } from "./dotenv-writer.js";
 export { addCustomModel, removeCustomModel } from "./custom-models-store.js";
 export {

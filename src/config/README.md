@@ -26,6 +26,7 @@ This area owns configuration and compatibility. Read [AGENTS.md](AGENTS.md) befo
 - [session-rail-config.ts](session-rail-config.ts)
 - [webhook-config.ts](webhook-config.ts)
 - [load-config.ts](load-config.ts)
+- [secret-store.ts](secret-store.ts) and [secrets-migration.ts](secrets-migration.ts): opt-in OS keychain for saved keys (see [compatibility](docs/compatibility.md))
 - [config-file.ts](config-file.ts)
 - [config-shape.ts](config-shape.ts)
 - [carry-unknown-config-keys.ts](carry-unknown-config-keys.ts)
