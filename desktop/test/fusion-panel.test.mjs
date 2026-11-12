@@ -1,9 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 const {
   FZP_REPROBE_MS, fzpKey, fzpNeedsProbe, fzpActionsFromList, fzpSpendText, fzpIsStuck,
   fzpRowExtrasHTML, fzpSteerFieldHTML, fzpNoteHTML, fzpSteerOutcome, fzpStopOutcome,
+  fzpNoteStarted, fzpForgetRows,
 } = createRequire(import.meta.url)('../renderer/fusion-panel.js');
 
 // ATO-568: one running Fusion worker's own Stop and Steer, under the composer.
@@ -40,6 +42,64 @@ test('Stop is disabled while it is sent and for good once it went through', () =
   const stopped = fzpRowExtrasHTML(row(), [], fresh({support: both('s-1'), stopped: {[key]: true}}), 0);
   assert.match(stopped, /data-act="fzp:stop:ui"[^>]* disabled>Stopped</);
   assert.match(stopped, /data-act="fzp:steer:ui"[^>]* disabled>Steer</);
+});
+
+// ATO-1329: the stop belongs to one run, the key to the chat and task id.
+const started = (over = {}) => ({taskId: 'ui', sessionId: 's-1', phase: 'started', role: 'worker', ...over});
+const stoppedRow = () => fresh({support: both('s-1'), stopped: {[fzpKey('s-1', 'ui')]: true}});
+const live = /data-act="fzp:stop:ui"[^>]*>Stop</;
+const spent = /data-act="fzp:stop:ui"[^>]* disabled>Stopped</;
+
+test('a task id used again after its stopped run ended gets Stop and Steer back', () => {
+  const st = stoppedRow();
+  assert.match(fzpRowExtrasHTML(row(), [], st, 0), spent);
+  fzpNoteStarted(st, started(), [row({done: true, phase: 'cancelled'})]);
+  const html = fzpRowExtrasHTML(row(), [], st, 0);
+  assert.match(html, live);
+  assert.match(html, /data-act="fzp:steer:ui"[^>]*>Steer</);
+  assert.doesNotMatch(html, /fzp:steer:ui"[^>]* disabled/);
+});
+
+test('a task id used again with no row left, as in a later turn, gets its controls back', () => {
+  const st = stoppedRow();
+  fzpNoteStarted(st, started(), []);
+  assert.match(fzpRowExtrasHTML(row(), [], st, 0), live);
+});
+
+test('a started frame for a worker stopped and still running does not bring Stop back', () => {
+  const st = stoppedRow();
+  fzpNoteStarted(st, started(), [row({done: false})]);
+  assert.match(fzpRowExtrasHTML(row(), [], st, 0), spent);
+  assert.match(fzpRowExtrasHTML(row(), [], st, 0), /data-act="fzp:steer:ui"[^>]* disabled>Steer</);
+});
+
+test('only a worker started frame of that chat and task id clears a stop', () => {
+  const frames = [
+    started({phase: 'tool'}), started({phase: 'usage'}), started({phase: 'cancelled'}),
+    started({role: 'orchestrator'}), started({sessionId: 's-2'}), started({taskId: 'api'}),
+    started({sessionId: undefined}),
+  ];
+  for (const e of frames) {
+    const st = stoppedRow();
+    fzpNoteStarted(st, e, []);
+    assert.equal(st.stopped[fzpKey('s-1', 'ui')], true, JSON.stringify(e));
+  }
+});
+
+test("a turn's end forgets its own rows' stops and leaves another chat's running worker stopped", () => {
+  const mine = fzpKey('s-1', 'ui');
+  const other = fzpKey('s-2', 'ui');
+  const st = fresh({stopped: {[mine]: true, [other]: true}});
+  fzpForgetRows(st, [row(), row({taskId: 'api'}), row({taskId: 'gone', sessionId: null})]);
+  assert.deepEqual(st.stopped, {[other]: true});
+});
+
+test('the renderer runs both resets at the moments they depend on', () => {
+  const source = readFileSync(new URL('../renderer/renderer.js', import.meta.url), 'utf8');
+  const started = source.indexOf('fzpNoteStarted(FZP, e, FZ.live)');
+  assert.ok(started > 0 && started < source.indexOf('FZ.live = fzReduceLive(FZ.live, e)'), 'read before the reducer overwrites the row');
+  const forgotten = source.indexOf('fzpForgetRows(FZP, FZ.live)');
+  assert.ok(forgotten > 0 && forgotten < source.indexOf('FZ.live = [];   // the fan-out readout belongs to the turn that is over'), 'read before the rows are dropped');
 });
 
 test('the Steer field opens under its own row only, labelled, with the draft kept', () => {
