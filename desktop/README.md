@@ -740,6 +740,13 @@ Honestly degraded, and labelled as such in the UI:
   mirror" field that writes the config key through the whole-file `config
   set`, refusing anything that is not an http(s) origin; empty writes the
   default. An unreachable huggingface.co says where that field is.
+  **Per-quant badges (ATO-450).** Main rates every listed quant with
+  `main/quant-fit.ts`, a port of the agent's `quant-fit.ts`: Fits well /
+  Tight fit / Too big, a speed line labelled "estimate" (Apple Silicon only,
+  from the chip's published memory bandwidth; off a Mac this process cannot
+  see the GPU, so the fit goes by RAM and no speed is shown), and the pick:
+  the most precise 4-bit-or-more quant that fits and answers at 20 tok/s or
+  more, moved to the front so both pick lists open on it as "Recommended".
   The pick list follows the TUI's `MouseListRow` contract rather than the
   Local pane's model rows: the first click on a file selects it, a second
   click on the selected one starts the download — the rows above it activate

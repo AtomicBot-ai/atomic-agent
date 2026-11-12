@@ -14840,7 +14840,7 @@ function obHfPickHTML() {
           + '" aria-selected="' + (on ? 'true' : 'false') + '">'
           + '<span class="mk"></span><span class="tk-radio' + (on ? ' on' : '') + '" aria-hidden="true"></span>'
           + '<span class="ob-rbody"><span class="t">' + esc(choice.filename) + '</span></span>'
-          + '<span class="ob-size">' + esc(choice.sizeLabel) + '</span></button>';
+          + '<span class="ob-size">' + esc(choice.sizeLabel) + '</span>' + hfChoiceBadgesHTML(choice) + '</button>';
       }).join('')
     + '</div>'
     + (repo && repo.hidden ? '<div class="ob-help">' + esc(String(repo.hidden).trim()) + '</div>' : '')
@@ -27977,7 +27977,7 @@ function llmHfPickHTML() {
         return '<button class="tuirow tk-li llm-row llm-hf-file' + (active ? ' on' : '') + '" data-llm-row="hf:' + esc(c.path) + '" data-act="llm:hf:row:' + at + '">'
           + '<span class="tk-radio' + (active ? ' on' : '') + '" aria-hidden="true"></span><span class="tk-ico tk-ico--sm">' + ic('file') + '</span>'
           + '<span class="body"><span class="t"><span class="llm-id mono">' + esc(c.filename) + '</span></span></span>'
-          + '<span class="llm-size">' + esc(c.sizeLabel) + '</span></button>';
+          + '<span class="llm-size">' + esc(c.sizeLabel) + '</span>' + hfChoiceBadgesHTML(c) + '</button>';
       }).join('') + '</div>'
     + (below > 0 ? '<p class="llm-counter">' + esc('↓ ' + below + ' more') + '</p>' : '')
     + (repo.hidden ? '<p class="llm-note">' + esc(repo.hidden) + '</p>' : '')
@@ -27989,6 +27989,18 @@ function llmHfPickHTML() {
       + '<button class="btn btn-p sm" data-act="llm:hf:add"' + (disk.ok ? '' : ' disabled') + '>' + ic('download') + 'Download</button></div>'
     + tuiHints(['j/k move', ['Enter download', 'llm:hf:add'], ['esc back', 'llm:hf:back']])
     + '</section>';
+}
+/* ATO-450: each quant's badges, when main rated the list (quant-fit.ts): the
+   pick, the fit in the catalogue's words, and the speed estimate, which says
+   it is one. An unrated list draws nothing extra. */
+function hfChoiceBadgesHTML(c) {
+  if (!c || !c.fit) return '';
+  const tone = c.fit.tier === 'fits' ? ' tk-chip--green' : c.fit.tier === 'tight' ? ' tk-chip--amber' : '';
+  return ' <span class="llm-hf-rate">'
+    + (c.recommended ? '<span class="tk-chip tk-chip--sm llm-badge" data-badge="recommended" title="The best quant for this computer">Recommended</span> ' : '')
+    + '<span class="tk-chip tk-chip--sm llm-badge' + tone + '" data-badge="' + esc(c.fit.tier) + '">' + esc(c.fit.label) + '</span>'
+    + (c.speed ? ' <span class="llm-hf-speed" title="Estimated from this computer\'s memory speed; real speed varies">' + esc(c.speed.label) + '</span>' : '')
+    + '</span>';
 }
 /* huggingface-fit.ts ramWarningFor, ported so the sentence matches the TUI's. */
 function llmHfRamWarning(fileSizeGb, hostRamGb) {
@@ -30787,6 +30799,8 @@ if (typeof window !== 'undefined') {
     repoId: LLMHF.repo ? LLMHF.repo.repoId : null, revision: LLMHF.repo ? LLMHF.repo.revision : null,
     choices: LLMHF.repo ? LLMHF.repo.choices.length : 0,
     first: LLMHF.repo && LLMHF.repo.choices[0] ? LLMHF.repo.choices[0].filename : null,
+    firstRecommended: !!(LLMHF.repo && LLMHF.repo.choices[0] && LLMHF.repo.choices[0].recommended),
+    badges: document.querySelectorAll('#settings [data-llm-row^="hf:"] .llm-hf-rate').length,
     filenames: LLMHF.repo ? LLMHF.repo.choices.map((c) => c.filename) : [],
     mmproj: LLMHF.repo && LLMHF.repo.mmproj ? LLMHF.repo.mmproj.path : null,
     hidden: LLMHF.repo ? LLMHF.repo.hidden : null, cursor:LLMHF.cursor, ram:LLMHF.ram,

@@ -110,6 +110,7 @@ import {
   type HuggingFaceRepoChoices,
 } from "./huggingface.js";
 import { syncHfEndpoint, writeHfMirror, type HfMirrorSources } from "./hf-mirror.js";
+import { quantMachine, rateRepoChoices } from "./quant-fit.js";   // ATO-450: a badge, a speed estimate and the pick per quant
 import { readWorkspace, startupWorkspace, writeWorkspace } from "./workspace-pref.js";
 import { probeLinuxSandbox, sandboxVerdict } from "./linux-sandbox.js";
 import { noteGpuCrash, readGpuState, setHardwareAcceleration, writeGpuState } from "./gpu-fallback.js";   // #680: the chosen folder survives a relaunch
@@ -1927,8 +1928,10 @@ function wireIpc(client: AgentClient): void {
     hfLookup = controller;
     try {
       syncHfEndpoint(hfMirrorSources());
-      const repo = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
+      const listed = await resolveHuggingFaceGgufChoices(ref, { signal: controller.signal });
       if (hfLookup !== controller) return { ok: false, cancelled: true, error: "cancelled" };
+      // ATO-450: rated for this machine, the pick first (the list opens on it).
+      const repo = rateRepoChoices(listed, quantMachine(process.platform, FAKE_RAM_GB ? FAKE_RAM_GB * 1024 ** 3 : totalmem()));
       hfLookup = null;
       A.hfLookupDone({ choices: repo.choices.length });
       return { ok: true, repo };
@@ -6893,6 +6896,7 @@ async function hfAndDeltaTest(
   type Hf = {
     open: boolean; step: string; reference: string; busy: boolean; error: string | null;
     repoId: string | null; revision: string | null; choices: number; first: string | null; filenames: string[];
+    firstRecommended?: boolean; badges?: number;
     mmproj: string | null; hidden: string | null; cursor: number; ram: number; pendingMmproj: string | null;
     rows: number; pulling: { id: string; phase?: string } | null; daemonPhase: string | null; confirm: string | null;
   };
@@ -7048,7 +7052,10 @@ async function hfAndDeltaTest(
     const rejects = /(^|[-_.])(?:f16|f32|bf16|fp16|fp32)(?=[-_.]|\.gguf$)|-\d{5}-of-\d{5}\.gguf$|(^|\/)mmproj[^/]*\.gguf$/i;
     check(
       "hf: choices are quant-ranked, windowed to 6, and hide what cannot be served",
-      qwen.step === "pick" && !!qwen.first && qwen.first.includes("Q4_K_XL")
+      // ATO-450: the pick for this machine may lead; Q4_K_XL then comes right after it.
+      qwen.step === "pick" && !!qwen.first
+        && (qwen.first.includes("Q4_K_XL") || (qwen.firstRecommended === true && (qwen.filenames[1] ?? "").includes("Q4_K_XL")))
+        && qwen.badges === painted
         && painted === Math.min(6, qwen.choices) && qwen.choices > 6
         && qwenBody.includes("↓ " + (qwen.choices - 6) + " more")
         && qwen.hidden === "1 more file hidden: 1 full-precision"
