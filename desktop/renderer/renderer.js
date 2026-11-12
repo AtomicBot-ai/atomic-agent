@@ -1190,7 +1190,8 @@ const SETTINGS_SECTIONS = [
   ['models','Models','cpu',['llm']],
   ['connections','Connections','plug',['mcp','telegram','composio']],
   ['memory','Memory','memory',['memory']],
-  ['tasks','Tasks','tasks',['tasks']],
+  // ATO-445: the agent's webhook routes sit beside Tasks, since each event becomes one (renderer/webhooks.js).
+  ['tasks','Tasks','tasks',['tasks','webhooks']],
   ['skills','Skills','skills',['skills']],
   // ATO-954: installed plugins (renderer/plugins-pane.js).
   ['plugins','Plugins','puzzle',['plugins']],
@@ -1200,7 +1201,7 @@ const SETTINGS_SECTIONS = [
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['memory','Memory'],
-                       ['tasks','Tasks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+                       ['tasks','Tasks'],['webhooks','Webhooks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -6128,6 +6129,53 @@ async function approvalRulesAct(v) {
   render();
   if (res && res.ok) toast('Rule deleted', 'Atomic Agent will ask about it again');
 }
+/* ATO-445: Settings › Tasks › Webhooks (renderer/webhooks.js). Read on
+   every entry to the pane; an agent without /api/webhooks says to update it. */
+const WHK = createWebhooks({
+  read: () => BR && BR.webhooks ? BR.webhooks() : {supported: false},
+  create: (body) => BR && BR.webhookCreate ? BR.webhookCreate(body) : {supported: false},
+  remove: (name) => BR && BR.webhookDelete ? BR.webhookDelete(name) : {supported: false},
+});
+let WHK_GEN = null;
+function webhooksShown() { return !!S.settings && settingsPaneId(S.settingsPane) === 'webhooks'; }
+async function webhooksLoad() {
+  if (WHK_GEN !== AGENT_GEN) { WHK_GEN = AGENT_GEN; WHK.reset(); }
+  const pending = WHK.load();
+  if (webhooksShown()) render();
+  await pending;
+  if (webhooksShown()) render();
+}
+function webhooksSection() { return webhooksHTML(WHK.state, {esc}); }
+async function webhooksAct(v) {
+  const st = WHK.state;
+  const arg = (p) => v.slice(p.length);
+  if (v === 'reload') { webhooksLoad(); return; }
+  if (v === 'new') WHK.openForm('github');
+  else if (v === 'cancel') WHK.closeForm();
+  else if (v.indexOf('preset:') === 0) WHK.setPreset(arg('preset:'));
+  else if (v === 'done') WHK.dismissCreated();
+  else if (v === 'keep') WHK.cancelDelete();
+  else if (v.indexOf('del:') === 0) WHK.askDelete(arg('del:'));
+  else if (v === 'copysecret') { if (st.created && st.created.secret) copyText(st.created.secret, 'Secret copied'); return; }
+  else if (v.indexOf('copyurl:') === 0) {
+    const name = arg('copyurl:');
+    const w = (st.data && st.data.webhooks.find((x) => x.name === name)) || null;
+    const url = st.created && st.created.name === name ? st.created.url : w ? whkUrl(st.baseUrl, w.path) : '';
+    if (url) copyText(url, 'Address copied');
+    return;
+  } else if (v === 'create') {
+    const pending = WHK.create();
+    render();
+    const res = await pending;
+    if (res && res.ok) toast('Webhook added', 'Copy its secret now: it is not shown again');
+  } else if (v.indexOf('delyes:') === 0) {
+    const pending = WHK.remove(arg('delyes:'));
+    render();
+    const res = await pending;
+    if (res && res.ok) toast('Webhook deleted', 'Its address stops answering');
+  } else return;
+  render();
+}
 async function refreshSkillList() {
   if (!BR || !BR.skillList) return;
   projectTrustCheck();
@@ -6180,6 +6228,8 @@ function settingsPaneEntered(opened) {
   if (['general', 'privacy'].includes(settingsPaneId(S.settingsPane)) && privacyEffective() === null && !PRIV.effectiveBusy) privacyRefresh();
   // ATO-1144: the saved approval rules, read again on every entry to Privacy.
   if (settingsPaneId(S.settingsPane) === 'privacy') approvalRulesLoad();
+  // ATO-445: the webhook routes, read again on every entry to the pane.
+  if (settingsPaneId(S.settingsPane) === 'webhooks') webhooksLoad();
   // Item 7 part B: the Skills / Memory / MCP tabs start their own 5 s poll and first load on entry.
   const pane = settingsPaneId(S.settingsPane);
   if (pane === 'skills') skillsTabEntered();
@@ -6202,6 +6252,7 @@ function settingsPane() {
   if (p === 'general') return generalPane();
   if (p === 'diagnostics') return diagnosticsPane();
   if (p === 'tasks') return tasksTab();
+  if (p === 'webhooks') return webhooksSection();
   if (p === 'privacy') return privacyPane();
   // Item 7 part B: the Skills, Memory and MCP tabs.
   if (p === 'skills') return skillsTab();
@@ -7023,6 +7074,7 @@ function act(a) {
   // ATO-1250: the folder-trust dialog and Settings › Skills' switch.
   if (k === 'ptrust') { projectTrustAct(v || ''); return; }
   if (k === 'arules') { approvalRulesAct(v || ''); return; }
+  if (k === 'whk') { webhooksAct(v || ''); return; }
   // ATO-1156: Continue from Claude Code / Codex (handoff.js). Opening it takes every other overlay
   // and the settings window down first, so Escape and the scrim close the sheet itself.
   if (k === 'handoff') { if (v === 'open') { close(); S.settings = null; } handoffAct(v || ''); render(); return; }
@@ -8254,6 +8306,8 @@ document.addEventListener('compositionend', (e) => {
 document.addEventListener('input', (e) => {
   // ATO-455: the rename box's text is drawn from RENAME.draft, so a repaint mid-typing keeps it.
   if (e.target.id === 'chat-rename') { RENAME.draft = e.target.value; return; }
+  // ATO-445: the webhook form's fields are drawn from WHK's state, so a repaint keeps them.
+  if (e.target.dataset && e.target.dataset.whkField) { WHK.type(e.target.dataset.whkField, e.target.value); return; }
   // ATO-568: a worker's Steer field keeps its text across repaints.
   if (typeof fzpInput === 'function' && fzpInput(e)) return;
   if (e.target.id === 'entry') {

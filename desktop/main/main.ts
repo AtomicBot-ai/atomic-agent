@@ -9,6 +9,7 @@ import { DESKTOP_STATE_SEEDED, DESKTOP_STATE_WAS_FRESH, SHARED_CONFIG_FROM_DESKT
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { registerDoctorDataIpc } from "./doctor-data.js";
+import { cleanWebhookCreate, webhookNameOk } from "./webhooks-ipc.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
@@ -1402,6 +1403,17 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("agent:approvalRuleDelete", async (_event, id: unknown) => {
     if (typeof id !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(id)) return { ok: false, error: "invalid rule id" };
     return client.deleteApprovalRule(id);
+  });
+  // ATO-445: Settings › Tasks › Webhooks (renderer/webhooks.js); fields checked in webhooks-ipc.ts.
+  ipcMain.handle("agent:webhooks", async () => {
+    try { return await client.webhooks(); } catch (err) { return { supported: true, ok: false, error: String(err) }; }
+  });
+  ipcMain.handle("agent:webhookCreate", async (_event, raw: unknown) => {
+    const clean = cleanWebhookCreate(raw);
+    return clean.ok ? client.createWebhook(clean.body) : { ok: false, error: clean.error };
+  });
+  ipcMain.handle("agent:webhookDelete", async (_event, name: unknown) => {
+    return webhookNameOk(name) ? client.deleteWebhook(name) : { ok: false, error: "invalid webhook name" };
   });
   resource("tasks", () => client.tasks());
   resource("sessions", () => client.sessions());
@@ -5969,10 +5981,10 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
+  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "webhooks", "skills", "plugins", "privacy", "import", "diagnostics"];
   const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
   const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", memory: "memory",
-    tasks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
+    tasks: "tasks", webhooks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));

@@ -93,6 +93,10 @@ contextBridge.exposeInMainWorld("atomic", {
   /** ATO-1144: the saved approval rules, and removing one of the global file's. */
   approvalRules: (sessionId?: string | null) => ipcRenderer.invoke("agent:approvalRules", sessionId),
   approvalRuleDelete: (id: string) => ipcRenderer.invoke("agent:approvalRuleDelete", id),
+  /** ATO-445: the agent's webhook routes: list, add (the reply holds the secret once), remove. */
+  webhooks: () => ipcRenderer.invoke("agent:webhooks"),
+  webhookCreate: (body: unknown) => ipcRenderer.invoke("agent:webhookCreate", body),
+  webhookDelete: (name: string) => ipcRenderer.invoke("agent:webhookDelete", name),
   tasks: () => ipcRenderer.invoke("agent:tasks"),
   sessions: () => ipcRenderer.invoke("agent:sessions"),
   models: () => ipcRenderer.invoke("agent:models"),
