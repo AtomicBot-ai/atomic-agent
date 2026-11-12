@@ -3,6 +3,7 @@ import { hasStrictFunctionTools } from "../adapters/tool-call-adapter.js";
 import { ensureJsonMention } from "./ensure-json-mention.js";
 import { filterCloudCompletionRequest } from "./sampling-filter.js";
 import {
+  defaultReasoningEffort,
   modelParamProfile,
   reasoningEffortField,
   resolveTemperature,
@@ -224,12 +225,20 @@ function assembleOpenAiChatBody(
     filtered.maxTokens ?? filtered.maxOutputTokens ?? maxOutputTokens;
   if (typeof cap === "number") body[profile.capField] = cap;
   // Reasoning effort, in the field this kind reads (`model-params.ts`);
-  // omitted for a kind without a known one rather than guessed.
-  if (filtered.reasoningEffort !== undefined) {
-    Object.assign(
-      body,
-      reasoningEffortField(options.providerKind, filtered.reasoningEffort),
-    );
+  // omitted for a kind without a known one rather than guessed. A turn
+  // that asked for none gets the model's own default where the service's
+  // overspends (Fable on OpenRouter, ATO-1368); `extraBody` and model
+  // params are merged later and still win.
+  // A request that asked for no thinking at all (the risk reviewer, context
+  // compaction) never gets the default: it would turn thinking on inside
+  // a small output cap.
+  const effort =
+    filtered.reasoningEffort ??
+    (options.providerKind === "openrouter" && !filtered.disableThinking
+      ? defaultReasoningEffort(defaultChatModel)
+      : undefined);
+  if (effort !== undefined) {
+    Object.assign(body, reasoningEffortField(options.providerKind, effort));
   }
   // The template's thinking switch, for a request that asked for none
   // (context compaction). Only a local server gets it: OpenAI and other

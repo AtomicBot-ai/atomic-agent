@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  defaultReasoningEffort,
   forgetLearnedModelParams,
   modelParamProfile,
   rememberAllowedTemperature,
@@ -150,4 +151,20 @@ describe("resolveTemperature", () => {
     expect(resolveTemperature(profile, 0, 0.2)).toBe(1);
     expect(resolveTemperature(profile, undefined, 0.2)).toBe(1);
   });
+});
+
+describe("defaultReasoningEffort (ATO-1368)", () => {
+  it.each(["anthropic/claude-fable-5.2", "claude-fable-5-2", "anthropic/claude-fable-5.3", "claude-fable-6"])(
+    "runs %s at medium unless asked otherwise",
+    (model) => {
+      expect(defaultReasoningEffort(model)).toBe("medium");
+    },
+  );
+
+  it.each(["anthropic/claude-fable-5", "anthropic/claude-fable-5.1", "anthropic/claude-opus-5.5", "openai/gpt-6.2-sol"])(
+    "leaves the service default for %s",
+    (model) => {
+      expect(defaultReasoningEffort(model)).toBeUndefined();
+    },
+  );
 });
