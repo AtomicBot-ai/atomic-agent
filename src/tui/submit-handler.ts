@@ -30,6 +30,7 @@ import {
   canTypeMessage,
   type TuiState,
 } from "./tui-state.js";
+import { pickerQuery, visiblePickerSessions } from "./session-rail/session-search.js";
 
 type Dispatch = (action: TuiAction) => void;
 
@@ -167,14 +168,23 @@ function handleSessionPickerSubmit(
   dispatch: Dispatch,
   callbacks: TuiAppCallbacks,
 ): void {
-  const entry = state.sessionPickerList[state.sessionPickerCursor];
+  // ATO-1153: the rows on screen, narrowed by the typed search if any.
+  const rows = visiblePickerSessions(state, callbacks.searchSessions);
+  const entry = rows[Math.min(state.sessionPickerCursor, rows.length - 1)];
   if (entry && callbacks.onSessionSwitchRequested) {
+    // The search is not a draft: put the draft back before the switch
+    // parks the buffer with the thread being left (ATO-37).
+    if (state.inputValue !== state.sessionPickerDraft) {
+      dispatch({ type: "input_changed", value: state.sessionPickerDraft });
+    }
     // No clear after this one: the switch has already parked the buffer
     // with the thread being left and put the target's own draft in it
     // (`session_switched`), and clearing now would throw that away.
     callbacks.onSessionSwitchRequested(entry.sessionId);
     return;
   }
+  // A search that matches nothing: Enter waits for a better one.
+  if (!entry && pickerQuery(state).trim().length > 0) return;
   dispatch({ type: "session_picker_closed" });
   dispatch({ type: "input_changed", value: "" });
 }

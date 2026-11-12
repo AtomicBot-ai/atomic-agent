@@ -633,6 +633,12 @@ export interface TuiState {
   sessionPickerList: readonly SessionPickerEntry[];
   /** Highlighted row in the picker. */
   sessionPickerCursor: number;
+  /**
+   * ATO-1153: the composer's text when the picker opened (the menu opens
+   * it with the draft still there, ATO-37). What is typed after it is the
+   * picker's search; the draft is put back on Esc and before a switch.
+   */
+  sessionPickerDraft: string;
   /** Theme picker overlay open (interactive `/theme` selection). */
   themePickerOpen: boolean;
   /** Highlighted row in the theme picker (index into `THEME_NAMES`). */
@@ -990,6 +996,7 @@ export function createInitialTuiState(
     sessionPickerOpen: false,
     sessionPickerList: [],
     sessionPickerCursor: 0,
+    sessionPickerDraft: "",
     themePickerOpen: false,
     themePickerCursor: 0,
     themePickerOriginal: "",

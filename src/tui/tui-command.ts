@@ -68,6 +68,7 @@ import { openUrlInBrowser } from "./open-url.js";
 import { detectKittyKeyboard } from "./detect-kitty-keyboard.js";
 import { setShiftEnterNewline } from "./shift-enter-support.js";
 import { makeTuiEventBus, TuiApp } from "./tui-app.js";
+import { createSessionPickerSearch } from "./session-rail/session-search.js";
 import { createHerdrReporter } from "./herdr-reporter.js";
 import {
   detectTerminalBackground,
@@ -508,6 +509,10 @@ export async function tuiCommand(args: string[]): Promise<number> {
         },
         onSessionPickerRequested: () => orchestrator.openSessionPicker(),
         onSessionSwitchRequested: (id) => orchestrator.switchSession(id),
+        // ATO-1153: the picker's search reads message text from the store.
+        searchSessions: createSessionPickerSearch((id) =>
+          runtime.sessionStore.listChatLines(id),
+        ),
         onSessionPinToggled: (id) => orchestrator.togglePinned(id),
         onSessionMoveRequested: (id, toIndex) =>
           orchestrator.moveSession(id, toIndex),
