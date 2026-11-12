@@ -1,10 +1,15 @@
+import { statSync } from "node:fs";
+import { homedir } from "node:os";
+import { basename, isAbsolute, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Box, Text } from "ink";
-import { type ReactElement } from "react";
+import { type ReactElement, useMemo } from "react";
 import { useTransientStatus } from "../hooks/use-transient-status.js";
 import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { MouseTarget, useMouseCommands } from "../mouse/mouse-context.js";
 import { splitUrlSegments } from "../render/linkify-text.js";
 import { theme } from "../theme/theme.js";
+import type { ToolCardEntry } from "../tui-state.js";
 
 interface ChatLinkButtonsProps {
   /**
@@ -13,8 +18,19 @@ interface ChatLinkButtonsProps {
    * text that shows as a link.
    */
   readonly text: string;
+  /**
+   * The message's tool cards. An ok `canvas.render` card carries the
+   * page it wrote in `details.canvas` (ATO-1137) even when the reply
+   * never repeats the path, so its chip comes from here.
+   */
+  readonly toolCards?: readonly ToolCardEntry[];
   /** How long `[opening…]` stays up before the label reverts. */
   readonly revertAfterMs?: number;
+  /**
+   * Whether a path is a regular file, for the local `.html` chips.
+   * Injectable for the tests; defaults to a `stat` of the real disk.
+   */
+  readonly isFile?: (path: string) => boolean;
 }
 
 /** Idle / just-fired. The badge doubles as the double-click guard. */
@@ -55,6 +71,119 @@ export function extractMessageUrls(text: string): readonly string[] {
     urls.push(segment.url);
   }
   return urls;
+}
+
+/** A local page a browser opens: `.html` / `.htm`, any case. */
+const LOCAL_HTML = /\.html?$/i;
+
+/** Characters that end a path token in prose, markdown and code spans. */
+const PATH_DELIMITERS = /[\s`'"()<>[\]{}]+/;
+
+/** Trailing sentence punctuation that is not part of a path. */
+const PATH_TRAILING_PUNCTUATION = /[.,;:!?]+$/;
+
+function defaultIsFile(path: string): boolean {
+  try {
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The local `.html` files a message names (ATO-1139): an absolute path,
+ * a `~/` path, a path relative to the working folder, or a `file://`
+ * link — whatever exists on disk as a regular file. This is how an
+ * artifact the agent wrote (a canvas page, a report) gets an `[open in
+ * browser]` chip. Web URLs are left to {@link extractMessageUrls}; a
+ * path that does not exist gets no chip, so the button never promises
+ * a page that is not there.
+ */
+export function extractLocalHtmlFiles(
+  text: string,
+  workingDir: string,
+  isFile: (path: string) => boolean = defaultIsFile,
+): readonly string[] {
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (const raw of text.split(PATH_DELIMITERS)) {
+    const token = raw.replace(PATH_TRAILING_PUNCTUATION, "");
+    if (!LOCAL_HTML.test(token)) continue;
+    let path: string | null;
+    if (token.toLowerCase().startsWith("file://")) {
+      try {
+        path = fileURLToPath(token);
+      } catch {
+        path = null;
+      }
+    } else if (token.includes("://")) {
+      path = null;
+    } else if (token.startsWith("~/")) {
+      path = resolve(homedir(), token.slice(2));
+    } else {
+      path = isAbsolute(token) ? token : resolve(workingDir, token);
+    }
+    if (path === null || seen.has(path)) continue;
+    seen.add(path);
+    if (isFile(path)) files.push(path);
+  }
+  return files;
+}
+
+/** A page the chat can open: its absolute path, and its title if known. */
+export interface LocalPage {
+  readonly path: string;
+  readonly title?: string;
+}
+
+/**
+ * The pages `canvas.render` wrote in this message (ATO-1137 / ATO-1139),
+ * read from its ok cards' `details.canvas = { path, title, … }`. Read
+ * defensively: `details` is untyped, and an older or newer tool shape
+ * simply yields nothing.
+ */
+export function canvasPagesFromToolCards(
+  cards: readonly ToolCardEntry[] | undefined,
+): readonly LocalPage[] {
+  const pages: LocalPage[] = [];
+  for (const card of cards ?? []) {
+    if (card.tool !== "canvas.render" || card.status !== "ok") continue;
+    const canvas = card.details?.["canvas"];
+    if (typeof canvas !== "object" || canvas === null) continue;
+    const { path, title } = canvas as { path?: unknown; title?: unknown };
+    if (typeof path !== "string" || !isAbsolute(path) || !LOCAL_HTML.test(path)) {
+      continue;
+    }
+    pages.push(
+      typeof title === "string" && title.trim().length > 0
+        ? { path, title: title.trim() }
+        : { path },
+    );
+  }
+  return pages;
+}
+
+/**
+ * The label of a local page's chip. One page in the message: `[open in
+ * browser]`, the message already says which. Several: each chip names
+ * its file, ellipsised like a hostname.
+ */
+export function localFileChipLabel(
+  path: string,
+  many: boolean,
+  title?: string,
+): string {
+  // A canvas names itself; its title is the better label when it fits.
+  if (title !== undefined && title.length <= MAX_LABEL_CHARS) {
+    return `open ${title} in browser`;
+  }
+  if (!many) return "open in browser";
+  const name = basename(path);
+  const short =
+    name.length <= MAX_LABEL_CHARS
+      ? name
+      : `${name.slice(0, MAX_LABEL_CHARS - 1)}…`;
+  return `open ${short} in browser`;
 }
 
 /**
@@ -100,16 +229,51 @@ export function linkChipLabel(url: string): string {
  */
 export function ChatLinkButtons({
   text,
+  toolCards,
   revertAfterMs = DEFAULT_REVERT_MS,
+  isFile = defaultIsFile,
 }: ChatLinkButtonsProps): ReactElement | null {
+  const mouse = useMouseCommands();
+  const workingDir = mouse?.getState().session.workingDir ?? process.cwd();
+  // Memoised: a finalised message re-renders on every chat repaint, and
+  // the file check is a `stat` per candidate path.
+  const files = useMemo((): readonly LocalPage[] => {
+    const pages = [...canvasPagesFromToolCards(toolCards)].filter((page) =>
+      isFile(page.path),
+    );
+    const seen = new Set(pages.map((page) => page.path));
+    for (const path of extractLocalHtmlFiles(text, workingDir, isFile)) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      pages.push({ path });
+    }
+    return pages;
+  }, [text, toolCards, workingDir, isFile]);
   const urls = extractMessageUrls(text);
-  if (urls.length === 0) return null;
-  const shown = urls.slice(0, MAX_LINK_CHIPS);
-  const hidden = urls.length - shown.length;
+  if (urls.length === 0 && files.length === 0) return null;
+  // Local pages first — an artifact the agent just made is the likelier
+  // click — then web links, under one cap for the single footer row.
+  const shownFiles = files.slice(0, MAX_LINK_CHIPS);
+  const shown = urls.slice(0, MAX_LINK_CHIPS - shownFiles.length);
+  const hidden = files.length + urls.length - shownFiles.length - shown.length;
   return (
     <Box flexDirection="row">
+      {shownFiles.map((page) => (
+        <LinkChip
+          key={page.path}
+          url={page.path}
+          label={localFileChipLabel(page.path, files.length > 1, page.title)}
+          local
+          revertAfterMs={revertAfterMs}
+        />
+      ))}
       {shown.map((url) => (
-        <LinkChip key={url} url={url} revertAfterMs={revertAfterMs} />
+        <LinkChip
+          key={url}
+          url={url}
+          label={`open ${linkChipLabel(url)}`}
+          revertAfterMs={revertAfterMs}
+        />
       ))}
       {hidden > 0 ? (
         <Box marginLeft={1} flexShrink={0}>
@@ -124,9 +288,15 @@ export function ChatLinkButtons({
 
 function LinkChip({
   url,
+  label: idleLabel,
+  local = false,
   revertAfterMs,
 }: {
+  /** The web URL, or the absolute path of a local page when `local`. */
   readonly url: string;
+  /** The idle text inside the brackets. */
+  readonly label: string;
+  readonly local?: boolean;
   readonly revertAfterMs: number;
 }): ReactElement {
   const mouse = useMouseCommands();
@@ -134,7 +304,7 @@ function LinkChip({
 
   const label = (
     <Text color={theme.colors.muted} dimColor={status === "idle"}>
-      {status === "idle" ? `[open ${linkChipLabel(url)}]` : "[opening…]"}
+      {status === "idle" ? `[${idleLabel}]` : "[opening…]"}
     </Text>
   );
 
@@ -153,7 +323,8 @@ function LinkChip({
             // chip, and letting it fall through would hand it to the
             // viewport wheel target behind the chat log.
             if (status !== "idle") return true;
-            mouse.callbacks.onOpenUrlRequested?.(url);
+            if (local) mouse.callbacks.onOpenLocalFileRequested?.(url);
+            else mouse.callbacks.onOpenUrlRequested?.(url);
             flash("opening");
             return true;
           }}

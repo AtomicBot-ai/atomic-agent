@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SpawnedTerminal, TerminalSpawn } from "./open-terminal-window.js";
 import {
+  buildOpenLocalHtmlCommand,
   buildOpenUrlCommand,
   canonicalHttpUrl,
+  openLocalHtmlInBrowser,
   openUrlInBrowser,
 } from "./open-url.js";
 
@@ -142,5 +144,79 @@ describe("openUrlInBrowser", () => {
       spawn,
     });
     expect(result).toEqual({ ok: false, reason: "open: EACCES" });
+  });
+});
+
+describe("buildOpenLocalHtmlCommand", () => {
+  it("opens an absolute html path with the platform opener", () => {
+    expect(buildOpenLocalHtmlCommand("/w/canvas/a.html", "darwin")).toEqual({
+      cmd: "open",
+      args: ["/w/canvas/a.html"],
+      label: "default browser",
+    });
+    expect(buildOpenLocalHtmlCommand("/w/a.HTM", "linux")).toEqual({
+      cmd: "xdg-open",
+      args: ["/w/a.HTM"],
+      label: "default browser",
+    });
+  });
+
+  it("quotes the start line verbatim on win32", () => {
+    expect(buildOpenLocalHtmlCommand("C:\\w\\my page.html", "win32")).toEqual({
+      cmd: "cmd.exe",
+      args: ["/c", 'start "" "C:\\w\\my page.html"'],
+      label: "default browser",
+      windowsVerbatimArguments: true,
+    });
+  });
+
+  it("refuses anything but an absolute html path", () => {
+    expect(buildOpenLocalHtmlCommand("canvas/a.html", "darwin")).toBeNull();
+    expect(buildOpenLocalHtmlCommand("/w/run.sh", "darwin")).toBeNull();
+    expect(buildOpenLocalHtmlCommand("/w/a.html.exe", "linux")).toBeNull();
+  });
+
+  it("refuses win32 paths cmd would expand or break out of", () => {
+    expect(buildOpenLocalHtmlCommand("C:\\w\\%PATH%.html", "win32")).toBeNull();
+    expect(buildOpenLocalHtmlCommand('C:\\w\\a".html', "win32")).toBeNull();
+  });
+});
+
+describe("openLocalHtmlInBrowser", () => {
+  it("spawns the opener for a page that exists", async () => {
+    const { child } = fakeChild("exit", 0);
+    const spawn = vi.fn(() => child) as unknown as TerminalSpawn;
+    const result = await openLocalHtmlInBrowser("/w/a.html", {
+      platform: "darwin",
+      spawn,
+      isFile: () => true,
+    });
+    expect(result).toEqual({ ok: true, label: "default browser" });
+    expect(spawn).toHaveBeenCalledWith("open", ["/w/a.html"], {
+      detached: true,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+  });
+
+  it("reports a missing page without spawning anything", async () => {
+    const spawn = vi.fn() as unknown as TerminalSpawn;
+    const result = await openLocalHtmlInBrowser("/w/gone.html", {
+      platform: "darwin",
+      spawn,
+      isFile: () => false,
+    });
+    expect(result).toEqual({ ok: false, reason: "file not found: /w/gone.html" });
+    expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it("refuses a non-html file without spawning anything", async () => {
+    const spawn = vi.fn() as unknown as TerminalSpawn;
+    const result = await openLocalHtmlInBrowser("/w/run.sh", {
+      platform: "linux",
+      spawn,
+      isFile: () => true,
+    });
+    expect(result.ok).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
   });
 });

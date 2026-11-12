@@ -842,6 +842,11 @@ export interface TuiAppCallbacks {
    * system message.
    */
   onOpenUrlRequested?(url: string): void;
+  /**
+   * An `[open in browser]` chip for a local `.html` page a message names
+   * (ATO-1139): open the absolute `path` in the OS default browser.
+   */
+  onOpenLocalFileRequested?(path: string): void;
 }
 
 export interface TuiAppProps {
