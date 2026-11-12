@@ -5,6 +5,7 @@ import { fetchOpenAiCompatModels } from "../../llm/provider/openai/fetch-openai-
 import { getProviderFactory } from "../../llm/provider/registry/provider-types.js";
 import { registerBuiltInProviderKinds } from "../../llm/provider/registry/register-built-in-providers.js";
 import {
+  cloudPresetForUrl,
   findProviderPreset,
   presetForEntryId,
   PROVIDER_PRESETS,
@@ -93,6 +94,42 @@ describe("PROVIDER_PRESETS", () => {
     for (const [id, baseUrl] of Object.entries(expected)) {
       expect(findProviderPreset(id)?.baseUrl, id).toBe(baseUrl);
     }
+  });
+
+  it("offers Azure OpenAI and Amazon Bedrock as per-account endpoints on Bearer", () => {
+    // ATO-468. Azure's v1 API needs no `api-version` and takes the key as
+    // Bearer; Bedrock's Mantle endpoint takes a Bedrock API key as Bearer
+    // and is the one that lists models. Both endpoints are the operator's
+    // own (resource, Region), so the wizard asks for the URL.
+    const azure = findProviderPreset("azure-openai");
+    expect(azure?.baseUrl).toBe("https://your-resource.openai.azure.com/openai");
+    expect(azure?.envVar).toBe("AZURE_OPENAI_API_KEY");
+    expect(azure?.perAccountEndpoint?.placeholder).toBe("your-resource");
+    const bedrock = findProviderPreset("bedrock");
+    expect(bedrock?.baseUrl).toBe("https://bedrock-mantle.us-east-1.api.aws");
+    expect(bedrock?.envVar).toBe("AWS_BEARER_TOKEN_BEDROCK");
+    expect(bedrock?.perAccountEndpoint?.placeholder).toBeUndefined();
+    for (const preset of [azure, bedrock]) {
+      expect(preset?.apiKeyHeader).toBeUndefined();
+      expect(preset?.local).toBeUndefined();
+      // The template's own host must match its pattern, or a saved entry
+      // that kept the default (Bedrock's us-east-1) would lose its class.
+      expect(
+        preset?.perAccountEndpoint?.hostPattern?.test(new URL(preset!.baseUrl).hostname),
+      ).toBe(true);
+    }
+  });
+
+  it("matches a saved per-account endpoint back to its cloud preset", () => {
+    expect(cloudPresetForUrl("https://my-team.openai.azure.com/openai")?.id).toBe("azure-openai");
+    expect(cloudPresetForUrl("https://my-team.services.ai.azure.com/openai")?.id).toBe("azure-openai");
+    expect(cloudPresetForUrl("https://bedrock-mantle.ap-south-1.api.aws")?.id).toBe("bedrock");
+    expect(cloudPresetForUrl("https://api.groq.com/openai/v1")?.id).toBe("groq");
+    // Plain http, lookalikes, local servers and junk match nothing.
+    expect(cloudPresetForUrl("http://my-team.openai.azure.com/openai")).toBeUndefined();
+    expect(cloudPresetForUrl("https://openai.azure.com.evil.example")).toBeUndefined();
+    expect(cloudPresetForUrl("http://localhost:11434")).toBeUndefined();
+    expect(cloudPresetForUrl("not a url")).toBeUndefined();
   });
 
   it("marks LM Studio as local", () => {

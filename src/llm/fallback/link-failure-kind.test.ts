@@ -325,3 +325,112 @@ describe("falloverCause", () => {
     expect(falloverCause(new LlamaServerError("boom", 503, "http://l"))).toBeUndefined();
   });
 });
+
+/**
+ * ATO-468: the bodies Azure OpenAI and Amazon Bedrock answer with, read
+ * the way the chain reads every OpenAI-compatible link. Shapes from the
+ * vendors' docs and a live probe of Bedrock Mantle (2026-11-12).
+ */
+describe("Azure OpenAI and Amazon Bedrock error shapes", () => {
+  const AZURE_401 = JSON.stringify({
+    error: {
+      code: "401",
+      message:
+        "Access denied due to invalid subscription key or wrong API endpoint. Make sure to provide a valid key for an active subscription and use a correct regional API endpoint for your resource.",
+    },
+  });
+  const AZURE_429 = JSON.stringify({
+    error: {
+      code: "429",
+      message:
+        "Requests to the ChatCompletions_Create Operation under Azure OpenAI API version v1 have exceeded token rate limit of your current OpenAI S0 pricing tier. Please retry after 6 seconds. Please go here: https://aka.ms/oai/quotaincrease if you would like to further increase the default rate limit.",
+    },
+  });
+  const AZURE_404 = JSON.stringify({
+    error: {
+      code: "DeploymentNotFound",
+      message:
+        "The API deployment for this resource does not exist. If you created the deployment within the last 5 minutes, please wait a moment and try again.",
+    },
+  });
+  const AZURE_FILTERED = JSON.stringify({
+    error: {
+      message:
+        "The response was filtered due to the prompt triggering Azure OpenAI's content management policy.",
+      type: null,
+      param: "prompt",
+      code: "content_filter",
+      status: 400,
+    },
+  });
+  const BEDROCK_401 = JSON.stringify({
+    error: {
+      code: "invalid_api_key",
+      message: "Invalid bearer token",
+      param: null,
+      type: "permission_denied_error",
+    },
+  });
+
+  it("reads Azure's 401 as a refused key, not an outage or billing", () => {
+    const err = withBody(401, AZURE_401, "azure-openai");
+    expect(isCredentialRejection(err)).toBe(true);
+    expect(falloverCause(err)).toBe("auth");
+    expect(isOutageFailure(err)).toBe(false);
+    expect(isBillingRefusal(err)).toBe(false);
+  });
+
+  it("reads Azure's token rate limit as a wait, never an empty account", () => {
+    const err = withBody(429, AZURE_429, "azure-openai");
+    expect(isBillingRefusal(err)).toBe(false);
+    expect(isOutageFailure(err)).toBe(true);
+    expect(falloverCause(err)).toBe("other");
+  });
+
+  it("reads a missing Azure deployment and a content filter as the link's no, not its key", () => {
+    const missing = withBody(404, AZURE_404, "azure-openai");
+    expect(isCredentialRejection(missing)).toBe(false);
+    expect(isOutageFailure(missing)).toBe(false);
+    expect(falloverCause(missing)).toBe("other");
+    const filtered = withBody(400, AZURE_FILTERED, "azure-openai");
+    expect(isCredentialRejection(filtered)).toBe(false);
+    expect(isOutageFailure(filtered)).toBe(false);
+    expect(isBillingRefusal(filtered)).toBe(false);
+  });
+
+  it("reads Bedrock's refused or expired key as a refused key, 401 or 403", () => {
+    expect(isCredentialRejection(withBody(401, BEDROCK_401, "bedrock"))).toBe(true);
+    for (const message of [
+      "Bearer Token has expired",
+      "The security token included in the request is invalid.",
+    ]) {
+      const err = withBody(403, JSON.stringify({ message }), "bedrock");
+      expect(isCredentialRejection(err), message).toBe(true);
+      expect(isBillingRefusal(err), message).toBe(false);
+      expect(isOutageFailure(err), message).toBe(false);
+    }
+  });
+
+  it("does not blame the key for Bedrock's model-access 403", () => {
+    const err = withBody(
+      403,
+      JSON.stringify({ message: "You don't have access to the model with the specified model ID." }),
+      "bedrock",
+    );
+    expect(isCredentialRejection(err)).toBe(false);
+    expect(isBillingRefusal(err)).toBe(false);
+    expect(isOutageFailure(err)).toBe(false);
+  });
+
+  it("reads Bedrock throttling and unavailability as an outage", () => {
+    for (const [status, message] of [
+      [429, "Too many tokens, please wait before trying again."],
+      [503, "Bedrock is unable to process your request."],
+    ] as const) {
+      const err = withBody(status, JSON.stringify({ message }), "bedrock");
+      expect(isOutageFailure(err), message).toBe(true);
+      expect(isBillingRefusal(err), message).toBe(false);
+      expect(falloverCause(err), message).toBe("other");
+    }
+  });
+});

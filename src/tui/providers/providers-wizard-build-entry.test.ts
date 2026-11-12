@@ -18,6 +18,24 @@ describe("buildProviderEntryFromWizard", () => {
     expect(built.useLocalEmbedding).toBe(false);
   });
 
+  it("saves an Azure preset with the operator's resource URL and its deployment as the model", () => {
+    // ATO-468: the preset's baseUrl is a template; the entry keeps the URL
+    // typed on the base URL step, the preset's env var, and Bearer auth.
+    const built = buildProviderEntryFromWizard({
+      kind: "openai-compatible",
+      presetId: "azure-openai",
+      chatModelId: "",
+      embeddingChoiceId: LOCAL_EMBEDDING_CHOICE_ID,
+      customChatModel: "my-gpt-deployment",
+      baseUrl: "https://my-team.openai.azure.com/openai/v1/",
+    });
+    expect(built.entry.id).toBe("azure-openai");
+    expect(built.entry.baseUrl).toBe("https://my-team.openai.azure.com/openai");
+    expect(built.entry.defaultChatModel).toBe("my-gpt-deployment");
+    expect(built.entry.apiKeyEnvVar).toBe("AZURE_OPENAI_API_KEY");
+    expect(built.entry.apiKeyHeader).toBeUndefined();
+  });
+
   it("keeps embeddings on local llama when sentinel is chosen", () => {
     const built = buildProviderEntryFromWizard({
       kind: "openrouter",

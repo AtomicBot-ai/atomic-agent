@@ -65,6 +65,23 @@ describe("classifyTransportHost", () => {
     expect(classifyTransportHost(url)).toBe("other");
   });
 
+  it.each([
+    "https://my-team.openai.azure.com/openai",
+    "https://my-team.services.ai.azure.com/openai/v1",
+    "https://bedrock-mantle.eu-west-1.api.aws/v1",
+    "https://bedrock-runtime.us-west-2.amazonaws.com/openai/v1",
+  ])("%s, a per-account preset endpoint, is known_cloud", (url) => {
+    expect(classifyTransportHost(url)).toBe("known_cloud");
+  });
+
+  it.each([
+    "https://openai.azure.com.example.com",
+    "https://bedrock-mantle.example.com",
+    "https://ec2-1-2-3-4.compute-1.amazonaws.com",
+  ])("%s, a lookalike of a per-account endpoint, is other", (url) => {
+    expect(classifyTransportHost(url)).toBe("other");
+  });
+
   it("returns undefined for an unparseable url", () => {
     expect(classifyTransportHost("not a url")).toBeUndefined();
   });

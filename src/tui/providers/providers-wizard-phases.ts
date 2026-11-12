@@ -110,12 +110,21 @@ function nextPhaseAfterApiKey(
   // before the key instead. Presets and Gemini know their endpoint (#69).
   if (
     kind === "openai-compatible" &&
-    !wizard.presetId &&
+    (!wizard.presetId || presetAsksBaseUrl(wizard.presetId)) &&
     wizard.mode === "configure"
   ) {
     return "base_url";
   }
   return "chat_model_line";
+}
+
+/**
+ * `true` for a preset whose endpoint is per account (an Azure resource,
+ * an AWS Region): its row opens on the base URL step, prefilled with the
+ * preset's template, instead of skipping it like every fixed endpoint.
+ */
+export function presetAsksBaseUrl(presetId: string): boolean {
+  return findProviderPreset(presetId)?.perAccountEndpoint !== undefined;
 }
 
 /**
@@ -279,7 +288,12 @@ export function advanceWizardPhase(
   if (phase === "base_url" && kind === "openai-compatible") {
     // Adding walks URL → key; a reconfigure run opened on the key screen
     // and edits the URL after it, so from there it proceeds to the model.
-    const next = wizard.mode === "configure" ? "chat_model_line" : "api_key";
+    // A keyless preset that asks for its URL (a local server on a port
+    // of its own choosing) has no key screen to walk to.
+    const keyless =
+      wizard.presetId !== null && !presetNeedsKeyScreen(wizard.presetId);
+    const next =
+      wizard.mode === "configure" || keyless ? "chat_model_line" : "api_key";
     return { ...wizard, ...PHASE_ENTRY, phase: next };
   }
   // `chat_model_line` is the last step for the compat/preset path: the
