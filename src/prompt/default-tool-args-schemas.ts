@@ -615,6 +615,22 @@ const DEFAULT_TOOL_ARGS_SCHEMAS: ReadonlyMap<string, Schema> = new Map<
       ["prompt"],
     ),
   ],
+  // ATO-1164: one of `path` / `html`, checked by `parseRenderHtmlArgs`.
+  [
+    "video.render_html",
+    obj(
+      {
+        path: stringSchema,
+        html: stringSchema,
+        duration: numberSchema,
+        fps: integerSchema,
+        width: integerSchema,
+        height: integerSchema,
+        output: stringSchema,
+      },
+      [],
+    ),
+  ],
 
   // ── mcp aggregates ───────────────────────────────────────────────────────
   [
