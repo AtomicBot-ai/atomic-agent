@@ -202,6 +202,10 @@ export function parseAgentConfig(
         : agent.smartApprovalModel,
       "agent.smartApprovalModel",
     ),
+    taintReview: parseBool(
+      agent.taintReview ?? readDefaults().taintReview,
+      "agent.taintReview",
+    ),
     prompt: parsePromptConfig(agent.prompt, readDefaults().prompt),
     tools: parseAgentToolsConfig(agent.tools, readDefaults().tools),
   };

@@ -24,6 +24,7 @@ export function createAgentDefaults(): UserAgentConfig {
     worldSnapshotMaxTokens: 8_000,
     smartApproval: false,
     smartApprovalModel: null,
+    taintReview: false,
     prompt: createPromptDefaults(),
     tools: { search: "auto" },
   };

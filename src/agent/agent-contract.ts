@@ -123,6 +123,12 @@ export interface AgentLoopDependencies {
    */
   forgetDeclinedApprovals?: (sessionId: string) => void;
   /**
+   * Forget the outside content the session read in its last turn
+   * (`ApprovalGate.clearUntrustedContent`, ATO-618). Called when a turn
+   * starts only: a steer leaves the outside text in the context.
+   */
+  clearUntrustedContent?: (sessionId: string) => void;
+  /**
    * Deny every approval `sessionId` is waiting on, as nobody's decision
    * (`ApprovalGate.denyPendingForSession`). The loop calls it once a
    * task's time limit passes during a step (ATO-1367).
