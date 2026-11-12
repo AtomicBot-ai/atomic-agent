@@ -1,6 +1,11 @@
 import Module, { createRequire } from "node:module";
 
 import type { Extractor, ExtractResult } from "./extractor-types.js";
+import {
+  assembleStreamOrder,
+  layoutPageText,
+  type PdfTextItem,
+} from "./pdf-layout.js";
 
 /**
  * Text-only PDF extractor backed by pdfjs-dist (Mozilla's library).
@@ -43,11 +48,14 @@ export const pdfExtractor: Extractor = async (input) => {
     try {
       const page = await doc.getPage(pageNum);
       const content = await page.getTextContent();
-      const pageText = assembleLines(content.items as PdfTextItem[]);
+      const text = pageText(
+        content.items as PdfTextItem[],
+        input.includeTables !== false,
+      );
       if (separators) {
-        chunks.push(`--- page ${pageNum} ---\n${pageText}`);
-      } else if (pageText.length > 0) {
-        chunks.push(pageText);
+        chunks.push(`--- page ${pageNum} ---\n${text}`);
+      } else if (text.length > 0) {
+        chunks.push(text);
       }
       extracted.push(pageNum);
     } catch (err) {
@@ -74,42 +82,17 @@ export const pdfExtractor: Extractor = async (input) => {
   return result;
 };
 
-interface PdfTextItem {
-  str: string;
-  transform?: readonly number[];
-  hasEOL?: boolean;
-  height?: number;
-  width?: number;
-}
-
 /**
- * pdfjs returns a flat list of glyph runs; there are no line objects. We
- * reconstruct lines by comparing the Y-component of each run's transform
- * matrix (index 5 in the 2D-affine form `[a, b, c, d, e, f]`). Runs with
- * the same Y land on the same line. Between lines we add `\n`; between
- * whitespace-separated runs on the same line we keep a single space.
+ * Page text in reading order (columns, table rows, paragraphs) from the
+ * run coordinates; see `pdf-layout.ts`. A layout bug must never cost the
+ * user the page, so any throw falls back to plain stream order.
  */
-function assembleLines(items: PdfTextItem[]): string {
-  if (items.length === 0) return "";
-  const lines: string[] = [];
-  let currentLine = "";
-  let lastY: number | null = null;
-
-  for (const item of items) {
-    const y = item.transform?.[5] ?? null;
-    if (lastY !== null && y !== null && Math.abs(y - lastY) > 1) {
-      lines.push(currentLine.trimEnd());
-      currentLine = "";
-    }
-    currentLine += item.str;
-    if (item.hasEOL) {
-      lines.push(currentLine.trimEnd());
-      currentLine = "";
-    }
-    lastY = y ?? lastY;
+function pageText(items: PdfTextItem[], tables: boolean): string {
+  try {
+    return layoutPageText(items, { tables });
+  } catch {
+    return assembleStreamOrder(items);
   }
-  if (currentLine.length > 0) lines.push(currentLine.trimEnd());
-  return lines.filter((l) => l.length > 0).join("\n");
 }
 
 function clampPageRange(
