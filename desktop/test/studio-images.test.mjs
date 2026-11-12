@@ -320,7 +320,8 @@ test('the local model hint says what Generate does: it loads a downloaded model 
   assert.equal(simgvLocalHint({ local: null }), '');
   const view = readFileSync(new URL('../renderer/studio/images-view.js', import.meta.url), 'utf8');
   assert.match(view, /runs on ' \+ esc\(simgMachine\(\)\) \+ simgvLocalHint\(model\)/);
-  assert.doesNotMatch(view, /load the model first/);
+  // \b: the old hint stays banned, while "Download the model first" (ATO-1395) passes.
+  assert.doesNotMatch(view, /\bload the model first/i);
 });
 
 test('the machine is "this Mac" only on macOS; Windows and Linux say "this computer" (ATO-1400)', () => {
@@ -522,7 +523,8 @@ test('the Images page downloads for the mode in use, and re-reads the catalog af
   P.page.act('mode:transform');
   P.page.act('download:flux');
   await settle();
-  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [['flux:q8', undefined], ['flux:q8', {workflow: 'transform'}]], 'create sends no workflow, another mode sends its own');
+  // The JSON round trip writes a missing options argument as null.
+  assert.deepEqual(JSON.parse(JSON.stringify(asked)), [['flux:q8', null], ['flux:q8', {workflow: 'transform'}]], 'create sends no workflow, another mode sends its own');
   const before = P.reads();
   P.page.onLocal({type: 'download', download: {id: 'flux:q8', state: 'cancelled'}});
   P.flush();
