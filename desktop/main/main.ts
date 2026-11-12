@@ -10,6 +10,7 @@ import { registerDoctorDataIpc } from "./doctor-data.js";
 import { NOTIFY_DEFAULTS, readNotifyConfig, TurnNotifier } from "./turn-notify.js";
 import { workspaceChangeBusy } from "./workspace-busy.js";
 import { detectSubscriptionCli, isSubscriptionCli } from "./subscription-cli-detect.js";
+import { openLoginTerminal } from "./subscription-cli-login.js";
 import { resetCoreForRedownload, seedBundledCore } from "./core-seed.js";
 import { engineBusy, retryWhileEngineBusy } from "./engine-busy-retry.js";
 import { coreUpdateNoticeVersion, readDismissedCoreUpdate, writeDismissedCoreUpdate } from "./core-update-notice.js";
@@ -2127,6 +2128,15 @@ function wireIpc(client: AgentClient): void {
   ipcMain.handle("cli:subscriptionStatus", (_event, cli: unknown) => {
     if (!isSubscriptionCli(cli)) return { ok: false, error: "cli must be claude or codex" };
     return { ok: true, status: detectSubscriptionCli(cli) };
+  });
+  /* ATO-845: "Sign in with Claude / ChatGPT" opens the system terminal with
+     the sign-in running (subscription-cli-login.ts). Only on that click, only
+     `claude` or `codex login`, with the detector's off-PATH binary when it
+     found one. The window polls cli:subscriptionStatus for the result. */
+  ipcMain.handle("cli:subscriptionLogin", async (_event, cli: unknown) => {
+    if (!isSubscriptionCli(cli)) return { ok: false, error: "cli must be claude or codex" };
+    const status = detectSubscriptionCli(cli);
+    return openLoginTerminal(cli, status.binPath);
   });
   ipcMain.handle("cli:removeProvider", (_event, id: unknown) => {
     if (typeof id !== "string") return { ok: false, error: "provider id required" };

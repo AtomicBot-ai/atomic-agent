@@ -218,6 +218,24 @@ const ANX = (() => {
     track('provider_setup_failed', props);
   }
 
+  /* ---------- ATO-845: signing in to a subscription CLI ----------
+     The funnel: the Sign in click, whether the system terminal opened, and
+     the sign-in the wizard then saw. Only the CLI name and fixed words. */
+  function subCli(cli) { return cli === 'claude' || cli === 'codex' ? cli : 'other'; }
+  function subStep(inOnboarding) { return inOnboarding ? 'onboarding' : 'settings'; }
+  function subscriptionLoginClicked(cli, inOnboarding) {
+    track('subscription_login_clicked', {cli: subCli(cli), step: subStep(inOnboarding)});
+  }
+  function subscriptionTerminalOpened(cli, inOnboarding, opened, detail) {
+    const props = {cli: subCli(cli), step: subStep(inOnboarding), opened: !!opened};
+    if (opened && detail) props.terminal = detail;
+    if (!opened) props.reason = detail || 'other';
+    track('subscription_terminal_opened', props);
+  }
+  function subscriptionLoginSucceeded(cli, inOnboarding, seconds) {
+    track('subscription_login_succeeded', {cli: subCli(cli), step: subStep(inOnboarding), seconds_to_sign_in: typeof seconds === 'number' ? seconds : null});
+  }
+
   /* ---------- MCP servers ---------- */
   function mcpAdded(ok) { track('mcp_server_added', {result: ok ? 'ok' : 'error'}); }
   function mcpAction(op) {
@@ -263,6 +281,6 @@ const ANX = (() => {
     track, via, viaNow, sanitizeAct, aroundAct, slashUsed, messageAction, attachmentAdded,
     apprShown, apprAnswered, apprClosed, modeVia, modeChanged, planHandoff, paneTick,
     obStep, obSkipped, modelPicked, ramBucket, endpointTested, providerStarted, providerFailed,
-    mcpAdded, mcpAction,
+    mcpAdded, mcpAction, subscriptionLoginClicked, subscriptionTerminalOpened, subscriptionLoginSucceeded,
   };
 })();
