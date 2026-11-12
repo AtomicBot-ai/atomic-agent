@@ -46,8 +46,9 @@ Validation:
 | ---------- | ---------------------------------------- | ------------------------- |
 | `global`   | `$ATOMIC_AGENT_STATE_DIR/skills/<name>/` | always, if present        |
 | `project`  | `./.atomic-agent/skills/<name>/`         | when no global skill has that name |
+| `global` (shared) | `~/.agents/skills/<name>/` (or `$ATOMIC_AGENT_SHARED_SKILLS_DIR`) | when no global, plugin or project skill has that name |
 
-A project-local skill cannot replace a global skill with the same `name`: the global copy is used and the project copy is skipped with a warning in the log. A checked-out repository therefore cannot swap out a skill the user installed, or inherit what that skill is trusted to do. Project skills with new names load normally. The `gog-workspace` setup check (`check-gog.sh` with no arguments) runs without an approval prompt only from the global copy; every other skill script, including any project copy, asks first.
+A project-local skill cannot replace a global skill with the same `name`: the global copy is used and the project copy is skipped with a warning in the log. A checked-out repository therefore cannot swap out a skill the user installed, or inherit what that skill is trusted to do. Project skills with new names load normally. The shared `~/.agents/skills` folder is where `npx skills` (vercel-labs/skills), Codex, Cline, Pi and Zed put skills installed "for all agents"; those skills are user-level (no folder trust) but have the lowest priority, follow global bans, and a skill folder linked there is confined to its own resolved folder. The `gog-workspace` setup check (`check-gog.sh` with no arguments) runs without an approval prompt only from the global copy (not a project or shared copy); every other skill script, including any project copy, asks first.
 
 ## Starter skills
 

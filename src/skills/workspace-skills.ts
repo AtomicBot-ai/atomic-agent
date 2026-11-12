@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { readdirSync, realpathSync } from "node:fs";
-import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import type { PluginSkillDir } from "../plugins/plugin-runtime.js";
 import { readUserConfigFileSync } from "../config/config-file.js";
@@ -10,6 +9,7 @@ import { isSkillEligibleForPlatform } from "./skill-loader.js";
 import { parseSkillFile } from "./skill-manifest.js";
 import { findProjectTrust, skillTrust, untrustedSkillReason } from "./project-trust.js";
 import { readWorkspaceFile, isWithinWorkspace } from "./workspace-files.js";
+import { sharedAgentSkillsDir } from "./shared-skills-dir.js";
 
 export interface WorkspaceSkill {
   record: SkillRecord;
@@ -49,17 +49,7 @@ export interface WorkspaceSkillsOptions {
   homeDir?: string | null;
 }
 
-/**
- * Folder that `npx skills` (vercel-labs/skills), Codex, Cline, Pi and Zed
- * use for skills installed "for all agents". Cloud discovery reads it with
- * the lowest priority (ATO-706).
- */
-export function sharedAgentSkillsDir(homeDir?: string | null, env: NodeJS.ProcessEnv = process.env): string | null {
-  if (homeDir === null) return null;
-  if (homeDir !== undefined) return resolve(homeDir, ".agents", "skills");
-  const override = env.ATOMIC_AGENT_SHARED_SKILLS_DIR?.trim();
-  return override ? resolve(override) : resolve(homedir(), ".agents", "skills");
-}
+export { sharedAgentSkillsDir };
 
 export function workspaceSkillBody(entry: WorkspaceSkill): string {
   return `Skill directory: ${entry.record.rootDir}\nResolve this skill's relative scripts/references against that directory.\n${entry.body}`;
@@ -92,9 +82,9 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
   let globalRoot = resolve(options.globalDir);
   try { globalRoot = realpathSync(globalRoot); } catch { /* Missing/error diagnostics are handled below. */ }
   // Skills installed "for all agents" are user-level, like global ones, but every
-  // Atomic and project copy wins over them. Cloud compatibility only, like the
-  // other agents' project folders.
-  const sharedDir = compatibility ? sharedAgentSkillsDir(options.homeDir) : null;
+  // Atomic and project copy wins over them. Read in local and cloud discovery
+  // alike, as the local registry does.
+  const sharedDir = sharedAgentSkillsDir(options.homeDir);
   let sharedRoot = sharedDir;
   try { if (sharedRoot) sharedRoot = realpathSync(sharedRoot); } catch { /* Missing/error diagnostics are handled below. */ }
   const byName = new Map<string, WorkspaceSkill[]>();
@@ -157,7 +147,8 @@ function loadSkills(workingDir: string, options: WorkspaceSkillsOptions, compati
           ...(source.source === "project" ? [untrustedSkillReason(skillTrust(trust, parsed.manifest.name))].filter((r): r is string => r !== null) : []),
           ...(parsed.disableModelInvocation ? ["disable-model-invocation"] : []),
         ];
-        const entry: WorkspaceSkill = { record: { manifest: parsed.manifest, manifestPath: file.path, rootDir: dirname(file.path), source: source.source },
+        const entry: WorkspaceSkill = { record: { manifest: parsed.manifest, manifestPath: file.path, rootDir: dirname(file.path), source: source.source,
+            ...("shared" in source ? { shared: true as const } : {}) },
           body: parsed.body, fingerprint: createHash("sha256").update(file.content).digest("hex"), disabledReasons: reasons, sources: [manifestPath],
           ...("shared" in source ? { shared: true as const } : {}) };
         const copies = byName.get(parsed.manifest.name) ?? [];

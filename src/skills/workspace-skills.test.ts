@@ -220,7 +220,7 @@ describe("session workspace skills and live policy", () => {
     expect(skills.entries.find(e => e.record.manifest.name === "banned")?.disabledReasons).toEqual(["disabled globally"]);
     expect(skills.diagnostics.join("\n")).toMatch(/config unreadable/);
   });
-  it("reads skills installed for all agents in ~/.agents/skills without folder trust, cloud only", () => {
+  it("reads skills installed for all agents in ~/.agents/skills without folder trust", () => {
     const path = put(shared(), "everywhere", "SHARED BODY");
     const found = load();
     const entry = found.entries.find(e => e.record.manifest.name === "everywhere");
@@ -229,8 +229,8 @@ describe("session workspace skills and live policy", () => {
     expect(entry?.shared).toBe(true);
     expect(entry?.disabledReasons).toEqual([]);
     expect(found.assertAvailable("everywhere").body).toContain("SHARED BODY");
-    // Local discovery keeps its own Atomic folders only.
-    expect(load(a, false).entries.some(e => e.record.manifest.name === "everywhere")).toBe(false);
+    // Local (non-compatibility) discovery reads the shared folder too.
+    expect(load(a, false).entries.find(e => e.record.manifest.name === "everywhere")?.shared).toBe(true);
     // Turning project skills off does not hide user-level shared skills.
     setProjectSkillsEnabled(a, false);
     expect(load().entries.find(e => e.record.manifest.name === "everywhere")?.disabledReasons).toEqual([]);
