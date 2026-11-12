@@ -15,6 +15,8 @@ function makeResult(
     currentVersion: "0.3.1",
     latestTag: "v0.3.2",
     latestVersion: "0.3.2",
+    updateRequired: false,
+    requiredReason: null,
     ...overrides,
   };
 }
@@ -112,6 +114,22 @@ describe("atomic-agent update", () => {
     expect(await updateCommand(["--check"], deps)).toBe(0);
     expect(stdout()).toMatch(/up to date \(0\.3\.1\)/);
     expect(runInstaller).not.toHaveBeenCalled();
+  });
+
+  it("--check says when the release policy requires the update (ATO-1125)", async () => {
+    check.mockResolvedValue(
+      makeResult({ updateRequired: true, requiredReason: "broken" }),
+    );
+    expect(await updateCommand(["--check"], deps)).toBe(0);
+    expect(stdout()).toMatch(/update available: 0\.3\.1 → 0\.3\.2/);
+    expect(stdout()).toMatch(/this version has a known problem; please update/);
+    expect(runInstaller).not.toHaveBeenCalled();
+  });
+
+  it("--check prints no policy line for an ordinary update", async () => {
+    check.mockResolvedValue(makeResult());
+    expect(await updateCommand(["--check"], deps)).toBe(0);
+    expect(stdout()).not.toMatch(/please update/);
   });
 
   it("--check reports the newer version and exits 0 without installing", async () => {
