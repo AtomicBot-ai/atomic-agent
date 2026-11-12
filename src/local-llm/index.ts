@@ -282,8 +282,11 @@ export {
   type EmbeddingMemoryVerdict,
 } from "./server/embedding-memory-gate.js";
 export {
+  explainManagedEngineLiveness,
   readManagedEngineLiveness,
   type ManagedEngineLiveness,
+  type ManagedEngineLivenessReason,
+  type ManagedEngineLivenessReport,
 } from "./server/engine-liveness.js";
 export {
   classifyPrefixReuse,

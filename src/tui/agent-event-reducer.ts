@@ -6,6 +6,7 @@ import { describeFailedAttempts, falloverSentence } from "../llm/fallback/index.
 import {
   LOCAL_SERVER_NOT_FOUND_CODE,
   classifyLocalServerError,
+  isAtomicChatNotRunning,
   isLocalEngineDown,
   isLocalOutOfMemory,
 } from "../llm/reliability/index.js";
@@ -19,6 +20,7 @@ import {
 } from "./detached-turns.js";
 import {
   formatAgentErrorForChat,
+  formatAtomicChatNotRunningForChat,
   formatLocalEngineDownForChat,
   formatLocalServerErrorForChat,
 } from "./chat/format-agent-error-for-chat.js";
@@ -777,6 +779,8 @@ function reduceAgentEvent(state: TuiState, event: AgentLoopEvent): TuiState {
         ? event.error.message
         : engineDown
         ? formatLocalEngineDownForChat()
+        : isAtomicChatNotRunning(event.error)
+        ? formatAtomicChatNotRunningForChat()
         : badRequest !== null
           ? formatLocalServerErrorForChat(badRequest, event.error.message)
           : formatAgentErrorForChat(

@@ -1,5 +1,6 @@
 import { formatLlamaTransportHint } from "../../llm/llama-server-health.js";
 import {
+  ATOMIC_CHAT_NOT_RUNNING_MESSAGE,
   LOCAL_ENGINE_DOWN_MESSAGE,
   LOCAL_CONTEXT_EXCEEDED_CODE,
   LOCAL_ENGINE_START_HINT,
@@ -201,6 +202,15 @@ export function formatAgentErrorForChat(
  */
 export function formatLocalEngineDownForChat(): string {
   return `Turn failed. ${LOCAL_ENGINE_DOWN_MESSAGE}\n  ${LOCAL_ENGINE_START_HINT}`;
+}
+
+/**
+ * A turn that ended because the Atomic Chat app refused the connection
+ * (`AtomicChatNotRunningError`, ATO-1278). The sentence already says what
+ * to do.
+ */
+export function formatAtomicChatNotRunningForChat(): string {
+  return `Turn failed. ${ATOMIC_CHAT_NOT_RUNNING_MESSAGE}`;
 }
 
 /** What the TUI adds under a full local context: the two commands that fix it. */

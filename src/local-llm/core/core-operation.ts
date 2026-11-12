@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, openSync, closeSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
+import { existsSync, mkdirSync, openSync, closeSync, readFileSync, statSync, writeFileSync, unlinkSync } from "node:fs";
+import { uptime } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { coreRoot } from "./core-state.js";
@@ -63,15 +64,120 @@ function acquire(dataDir: string): () => void {
 }
 
 /**
+ * What the engine operation lock looks like from disk, right now (read
+ * only: it never acquires, waits on or reclaims the lock).
+ *
+ *   - `free`              no lock file.
+ *   - `held`              another live process holds it: a model start or
+ *                         load, a stop, an engine switch or a Core/llama.cpp
+ *                         install is under way there.
+ *   - `held_self`         this very process holds it (the desktop's serve
+ *                         process starting a model while a turn runs).
+ *   - `writing`           the file exists but carries no pid yet, and is
+ *                         too young to be abandoned: an owner between its
+ *                         exclusive create and the pid write.
+ *   - `unreadable`        the file exists and cannot be read.
+ *   - `stale_dead_owner`  the recorded owner is gone (ESRCH).
+ *   - `stale_before_boot` written before this machine last booted: its owner
+ *                         cannot be alive, even if the pid now names an
+ *                         unrelated process (pids restart after a reboot).
+ *   - `stale_no_owner`    no usable pid in it, and older than the write
+ *                         window: an owner that died between create and write.
+ *
+ * Only `held`, `held_self`, `writing` and `unreadable` count as an operation
+ * in progress (`coreOperationInProgress`). The stale readings are for the
+ * outage wait and its diagnostics only: `acquire` keeps its own, stricter
+ * rule and reclaims nothing but a lock whose owner is certainly gone.
+ */
+export type CoreOperationLockState =
+  | "free"
+  | "held"
+  | "held_self"
+  | "writing"
+  | "unreadable"
+  | "stale_dead_owner"
+  | "stale_before_boot"
+  | "stale_no_owner";
+
+export interface CoreOperationLockProbes {
+  /** Wall clock, ms. */
+  now?: () => number;
+  /** When this machine last booted, wall clock ms. */
+  bootTimeMs?: () => number;
+  /** Signal 0 on `pid`: `alive` (including another user's process) or `dead`. */
+  pidLiveness?: (pid: number) => "alive" | "dead";
+}
+
+/**
+ * Slack on the boot-time comparison, so a lock written just after boot
+ * while the wall clock was still being corrected is never read as stale.
+ */
+const BOOT_TIME_SLACK_MS = 30_000;
+/**
+ * How long a lock may carry no pid before its owner is presumed gone. The
+ * owner writes its pid right after the exclusive create, in the same tick.
+ */
+const LOCK_WRITE_WINDOW_MS = 10_000;
+
+/** When this machine last booted, wall clock ms (`os.uptime` counts sleep). */
+export function machineBootTimeMs(): number {
+  return Date.now() - uptime() * 1000;
+}
+
+/**
+ * A file last written before this machine booted (with slack for a clock
+ * corrected just after boot): no process that wrote it can still be alive.
+ * `false` whenever the boot time is not a number.
+ */
+export function writtenBeforeBoot(mtimeMs: number, bootTimeMs: number): boolean {
+  return Number.isFinite(bootTimeMs) && Number.isFinite(mtimeMs) && mtimeMs < bootTimeMs - BOOT_TIME_SLACK_MS;
+}
+
+function defaultPidLiveness(pid: number): "alive" | "dead" {
+  try { process.kill(pid, 0); return "alive"; }
+  catch (err) { return (err as NodeJS.ErrnoException).code === "ESRCH" ? "dead" : "alive"; }
+}
+
+export function readCoreOperationLock(dataDir: string, probes: CoreOperationLockProbes = {}): CoreOperationLockState {
+  const path = join(coreRoot(dataDir), "operation.lock");
+  if (!existsSync(path)) return "free";
+  let raw: string;
+  let mtimeMs: number;
+  try {
+    raw = readFileSync(path, "utf8").trim();
+    mtimeMs = statSync(path).mtimeMs;
+  } catch (err) {
+    // Released between the existence check and the read.
+    return (err as NodeJS.ErrnoException).code === "ENOENT" ? "free" : "unreadable";
+  }
+  const now = (probes.now ?? Date.now)();
+  let bootTimeMs: number;
+  try { bootTimeMs = (probes.bootTimeMs ?? machineBootTimeMs)(); } catch { bootTimeMs = Number.NaN; }
+  if (writtenBeforeBoot(mtimeMs, bootTimeMs)) return "stale_before_boot";
+  const pid = Number(raw);
+  if (raw === "" || !Number.isInteger(pid) || pid < 1) {
+    return now - mtimeMs > LOCK_WRITE_WINDOW_MS ? "stale_no_owner" : "writing";
+  }
+  if (pid === process.pid) return "held_self";
+  return (probes.pidLiveness ?? defaultPidLiveness)(pid) === "dead" ? "stale_dead_owner" : "held";
+}
+
+/** Whether a lock reading means an engine operation may be under way. */
+export function lockMeansOperationInProgress(state: CoreOperationLockState): boolean {
+  return state === "held" || state === "held_self" || state === "writing" || state === "unreadable";
+}
+
+/**
  * A live process holds the engine operation lock right now: a model start or
  * load, a stop, an engine switch or a Core/llama.cpp install is under way, so
  * a model process that is missing at this moment may be about to appear.
  * Read only: it never acquires, waits on or reclaims the lock. A lock whose
- * owner is gone (ESRCH) is not an operation in progress.
+ * owner is gone (ESRCH), one written before the last boot and one that never
+ * got a pid are not an operation in progress (`readCoreOperationLock`,
+ * ATO-1275).
  */
 export function coreOperationInProgress(dataDir: string): boolean {
-  const path = join(coreRoot(dataDir), "operation.lock");
-  return existsSync(path) && !ownerIsDead(path);
+  return lockMeansOperationInProgress(readCoreOperationLock(dataDir));
 }
 
 /**

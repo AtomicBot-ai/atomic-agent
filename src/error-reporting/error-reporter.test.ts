@@ -32,6 +32,17 @@ describe("captureError", () => {
     expect(captured).toHaveLength(0);
   });
 
+  it("drops Atomic Chat not running, also when wrapped (ATO-1278)", () => {
+    const { client, captured } = fakeClient();
+    const inner = Object.assign(new Error("Atomic Chat is not running."), {
+      name: "AtomicChatNotRunningError",
+    });
+    captureError(client, inner, { source: "llm_failure", category: "transport" });
+    const wrapped = new Error("turn failed", { cause: inner });
+    captureError(client, wrapped, { source: "llm_failure", category: "transport" });
+    expect(captured).toHaveLength(0);
+  });
+
   it("captures a real error via the scrubber", () => {
     const { client, captured } = fakeClient();
     const err = Object.assign(new Error("transport boom"), {

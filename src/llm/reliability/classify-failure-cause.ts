@@ -13,6 +13,7 @@ import {
 import type { LlmFailureCategory } from "./failure-category.js";
 import { GrammarError, ModelError, ToolExecutionError } from "./llm-failures.js";
 import { isLocalEngineDown } from "./local-engine-down.js";
+import { isAtomicChatNotRunning } from "./atomic-chat-not-running.js";
 import { RequestTooLargeError } from "./request-too-large.js";
 import {
   LOCAL_CONTEXT_EXCEEDED_CODE,
@@ -71,6 +72,7 @@ const WEB_SEARCH_ERROR_NAMES = new Set([
 function pickCause(err: unknown, category: LlmFailureCategory): FailureCauseId {
   if (category === "cancelled") return "cancelled";
   if (isLocalEngineDown(err)) return "local_engine_down";
+  if (isAtomicChatNotRunning(err)) return "atomic_chat_not_running";
 
   const chain = causeChain(err);
   const webSearch = chain.find(isWebSearchError);
