@@ -14,6 +14,8 @@ npm run smoke:e2e -- --output /tmp/atomic-e2e-report
 
 [Harness](../../scripts/smoke-e2e.mjs) uses only Node built-ins. It creates temporary state and workspace directories, supplies a clean child environment without inherited cloud credentials, disables analytics/browser and background memory features in the fixture config, and binds an ephemeral loopback port. Workspaces are removed after the run; JSON request evidence and process output remain in the selected output directory. It neither downloads models nor loads `eval/.env`. Loopback binding must be allowed by the execution environment. TUI and the extended eval/native-provider runs below were performed separately and are not part of this command.
 
+Zero egress (ATO-1086): every child runs with [the network tripwire](../../scripts/net-intercept-preload.mjs) in `NODE_OPTIONS`, so Node grandchildren get it too. Any TCP, TLS, UDP or DNS attempt to a host other than this machine is refused before it leaves and logged; the last check requires none, and `report.json` lists them under `egress`. Non-Node child processes (curl, git, a browser) are not covered. The tripwire's own test is `scripts/net-intercept.test.ts` (part of `npm test`). Once the offline switch exists (ATO-1084), the fixture config should turn it on and a cloud provider should be added, so the same check proves the switch.
+
 The 13 assertions passed:
 
 - Sidecar boot/ping/version; malformed NDJSON recovery and unknown-request response.
