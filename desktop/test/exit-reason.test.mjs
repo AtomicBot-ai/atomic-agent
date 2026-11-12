@@ -89,3 +89,79 @@ test("agent rss and shares are buckets, never the figures", () => {
   assert.equal(R.shareBucket(1, 0), null);
   assert.equal(R.shareBucket(undefined, 4096), null);
 });
+
+// ATO-1285: most 0.0.7 exits were "other" / "none". More categories, and code/class/file words.
+test("start-up failures seen in agent logs get their own categories", () => {
+  const cases = [
+    ["!Error: The module '/x/better_sqlite3.node' was compiled against a different Node.js version using NODE_MODULE_VERSION 115", "native_module"],
+    ["!Error: \\?\\C:\\x\\better_sqlite3.node is not a valid Win32 application.", "native_module"],
+    ["!Error: EBUSY: resource busy or locked, rename 'state/config.json.tmp'", "file_locked"],
+    ["!Error: ENOSPC: no space left on device, write", "disk_full"],
+    ["!SyntaxError: Unexpected token } in JSON at position 120", "config_invalid"],
+    ["!Error: getaddrinfo ENOTFOUND openrouter.ai", "network"],
+    ["!Error [ERR_REQUIRE_ESM]: require() of ES Module not supported", "node_runtime"],
+    ["!serve failed: TypeError: Cannot read properties of undefined (reading 'x')", "uncaught"],
+  ];
+  for (const [line, want] of cases) assert.equal(R.lastErrorCategory([line]), want, line);
+  for (const c of cases.map((x) => x[1])) assert.ok(R.LAST_ERROR_CATEGORIES.includes(c));
+});
+
+test("a trace's frames do not hide the message above them; a bare trace is uncaught", () => {
+  const trace = [
+    "!Error: listen EADDRINUSE: address already in use 127.0.0.1:4317",
+    "!    at Server.setupListenHandle [as _listen2] (node:net:1872:16)",
+    "!    at listenInCluster (node:net:1920:12)",
+  ];
+  assert.equal(R.lastErrorCategory(trace), "port_in_use");
+  assert.equal(R.lastErrorCategory(["!boom", "!    at run (/x/y/serve-command.js:162:7)"]), "uncaught");
+});
+
+test("error facts are code, class and our file only, never message text or folders", () => {
+  const lines = [
+    "!my private prompt about my bank account",
+    "!TypeError: Cannot read properties of undefined (reading 'secretThing')",
+    "!    at parse (/Users/jane/Secret Project/bank-export-parser.js:3:1)",
+    "!    at loadConfig (/Applications/Atomic Agent.app/Contents/Resources/agent/atomic-agent:88:13)",
+    "!    at main (/Applications/Atomic Agent.app/Contents/Resources/agent/atomic-agent:162:7)",
+    "!code: 'ERR_INVALID_ARG_TYPE' for EMPLOYEE EXAMPLE",
+  ];
+  const f = R.lastErrorFacts(lines);
+  // The person's own file is skipped; the first frame in our bundle is named.
+  assert.deepEqual(f, { err_code: "ERR_INVALID_ARG_TYPE", err_type: "TypeError", err_file: "atomic-agent:88" });
+  const all = JSON.stringify(f);
+  for (const leak of ["jane", "Secret", "bank", "secretThing", "Users", "EMPLOYEE", "EXAMPLE"]) assert.ok(!all.includes(leak), leak);
+  assert.deepEqual(R.lastErrorFacts([]), { err_code: null, err_type: null, err_file: null });
+  // Every value fits the report's tag shape (sentry/scrub.ts safeTag).
+  for (const v of Object.values(f)) assert.match(v, /^[\w.:-]{1,64}$/);
+});
+
+test("a frame's file is named only for our bundle, Node and packages; a person's own file never", () => {
+  const file = (frame) => R.lastErrorFacts(["!Error: x", frame]).err_file;
+  assert.equal(file("!    at run (/Users/jane/bank-export-parser.js:3:1)"), "outside_app");
+  assert.equal(file("!    at C:\\Users\\jane\\my-skill\\index.mjs:9:2"), "outside_app");
+  assert.equal(file("!    at x (C:\\Program Files\\Atomic Agent\\resources\\agent\\atomic-agent.exe:12:3)"), "atomic-agent.exe:12");
+  assert.equal(file("!    at x (file:///tmp/build/cli.mjs:4410:9)"), "cli.mjs:4410");
+  assert.equal(file("!    at Server.setupListenHandle [as _listen2] (node:net:1872:16)"), "node:net:1872");
+  assert.equal(file("!    at open (/Users/jane/proj/node_modules/better-sqlite3/lib/database.js:65:9)"), "database.js:65");
+  // Only a frame line is a frame: a message that says "at host:port" is not one.
+  assert.equal(file("!connect ECONNREFUSED at 127.0.0.1:4317"), null);
+  // The errno family is a fixed list.
+  assert.equal(R.lastErrorFacts(["!EXAMPLE and EMPLOYEE are words"]).err_code, null);
+  assert.equal(R.lastErrorFacts(["!getaddrinfo EAI_AGAIN api.example.com"]).err_code, "EAI_AGAIN");
+});
+
+test("lines written are a bucket; each category has plain words or none", () => {
+  assert.equal(R.linesBucket(0), "0");
+  assert.equal(R.linesBucket(3), "1_5");
+  assert.equal(R.linesBucket(40), "6_50");
+  assert.equal(R.linesBucket(400), "gt_50");
+  assert.equal(R.linesBucket(null), null);
+  for (const c of R.LAST_ERROR_CATEGORIES) {
+    const s = R.lastErrorSentence(c);
+    if (c === "none" || c === "other") assert.equal(s, null);
+    else {
+      assert.equal(typeof s, "string", c);
+      assert.ok(!/\u2014/.test(s), "no em dash: " + c);
+    }
+  }
+});

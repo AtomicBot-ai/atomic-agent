@@ -263,7 +263,7 @@ import { buildLocalGgufModelDef, resolveLocalGgufFile } from "./local-gguf.js";
 // Analytics and error reporting (desktop/ANALYTICS.md): one-line hooks below, the logic in these folders.
 import * as A from "./analytics/index.js";
 import { AgentMemoryTracker } from "./agent-memory-sample.js";
-import { reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
+import { lastErrorCategory, lastErrorSentence, reportAgentExit, reportRendererError, wireProcessErrorReporting, wireWindowErrorReporting } from "./sentry/index.js";
 // ATO-229: app updates, only ever on a click (main/updater.ts).
 import { agentBusy, appUpdater, fakeUpdateArg, initAppUpdater } from "./updater.js";
 import { MOVE_PROMPT, offerMove, shouldOfferMove } from "./move-to-applications.js";
@@ -1168,6 +1168,17 @@ const AGENT_SAID_AT: number[] = [];
 const LAST_WORDS_MS = 30_000;
 /** ATO-763: how many AGENT_SAID lines the current agent wrote (reset as one starts), so an exit is judged on its own lines only. */
 let agentSaidSinceStart = 0;
+/** ATO-1285: every line the current agent wrote, INFO included, so a report can tell a silent death from one whose words were filtered. */
+let agentLinesSinceStart = 0;
+/** ATO-1285: the current agent's last error in plain words, for the card shown once the automatic restarts ran out. */
+function agentExitCause(): string | null {
+  const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
+  if (n === 0) return null;
+  const since = Date.now() - LAST_WORDS_MS;
+  const at = AGENT_SAID_AT.slice(-n);
+  const lines = AGENT_SAID.slice(-n).filter((_, i) => (at[i] ?? 0) >= since);
+  return lastErrorSentence(lastErrorCategory(lines));
+}
 /** ATO-1111: the running agent's last `[atomic-agent] memory …` sample, for the exit report. */
 const agentMemory = new AgentMemoryTracker();
 
@@ -3370,6 +3381,7 @@ function wireIpc(client: AgentClient): void {
       appendAgentLog(`${new Date().toISOString()} ${agentLogTag("stderr", level)} ${line}`);
     },
     armed: !SMOKE,
+    cause: agentExitCause,
   });
   client.on("chat", (event) => send("agent:chat", event));
   client.on("chat", (event) => turnNotifier.observe(event));
@@ -3428,7 +3440,7 @@ function wireIpc(client: AgentClient): void {
       const n = Math.min(agentSaidSinceStart, AGENT_SAID.length);
       const lines = n > 0 ? AGENT_SAID.slice(-n) : [];
       const at = n > 0 ? AGENT_SAID_AT.slice(-n) : [];
-      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting, agentMemory: agentMemory.latest() });
+      reportAgentExit(d, lines.filter((_, i) => (at[i] ?? 0) >= exitedAt - LAST_WORDS_MS), { freeMemBytes: exitFreeMem, quitting, agentMemory: agentMemory.latest(), linesSinceStart: agentLinesSinceStart });
     }, 300).unref?.();
   });
   let agentStateWas: string | undefined;
@@ -3436,6 +3448,7 @@ function wireIpc(client: AgentClient): void {
     // A start begins (not every status while it boots): the lines from here on are the new agent's.
     if (status?.state === "starting" && agentStateWas !== "starting") {
       agentSaidSinceStart = 0;
+      agentLinesSinceStart = 0;
       // ATO-1111: the last memory sample is the agent's that wrote it, not the next one's.
       agentMemory.reset();
     }
@@ -3450,6 +3463,7 @@ function wireIpc(client: AgentClient): void {
      write-only until a check fails. */
   client.on("log", (event: { stream?: string; line?: string; level?: AgentLogLevel }) => {
     const line = String(event.line ?? "");
+    agentLinesSinceStart += 1;
     agentMemory.observe(line);
     /* ATO-121: agent.log tagged every stderr line ERR, and serve's routine
        INFO lines filled this ring. A structured line is tagged with its own

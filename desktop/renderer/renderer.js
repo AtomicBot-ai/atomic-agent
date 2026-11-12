@@ -9495,7 +9495,10 @@ function autoRestartApply(n) {
   if (n.kind === 'restarted') {
     S.log.push({id:nid(), k:'system', text: esc(AGENT_RESTARTED_LINE)});
   } else if (n.kind === 'gave_up') {
-    S.log.push({id:nid(), k:'system', tone:'red', icon:'refresh', act:'restart-agent', text: esc(AGENT_GAVE_UP_LINE)});
+    /* ATO-1285: the cause, when the agent's last lines named one (main's lastErrorSentence),
+       and Collect logs beside Restart agent, so a crash at start-up has a way out other than relaunching. */
+    const cause = typeof n.cause === 'string' && n.cause ? ' ' + esc(n.cause) : '';
+    S.log.push({id:nid(), k:'system', tone:'red', icon:'refresh', act:'restart-agent', text: esc(AGENT_GAVE_UP_LINE) + cause});
   } else return;
   render();
 }
@@ -22159,7 +22162,9 @@ function sysRowHTML(m, times) {
   if (m.tone) return '<div class="sysrow tk-sysnotice"><span></span><div class="tk-notice tk-notice--' + m.tone + '">'
     + ic(m.icon || 'info') + '<span class="grow">' + m.text + rep + acts
     // ATO-767: the automatic restarts ran out; a full-size button, the same restart as the menu's.
-    + (m.act === 'restart-agent' ? ' <button class="btn btn-p sysact agent-restart-btn" data-act="agent:restart">Restart agent</button>' : '')
+    + (m.act === 'restart-agent' ? ' <button class="btn btn-p sysact agent-restart-btn" data-act="agent:restart">Restart agent</button>'
+      // ATO-1285: the support report (agent.log tail, settings with keys taken out), the same as Help › Save report for support.
+      + ' <button class="btn btn-s sysact agent-logs-btn" data-act="dump">Collect logs</button>' : '')
     + '</span></div></div>';
   // Fusion's first-switch intro is a block of its own (the tree mark, then paragraphs).
   if (m.fusionIntro) return '<div class="sysrow sys-block"><span></span><span class="sys-tx">' + m.text + rep + '</span></div>';
