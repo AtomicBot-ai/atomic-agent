@@ -86,7 +86,8 @@ export async function prepareRuntimeLocalProfile(
     );
   }
 
-  const llama = new LlamaServerClient();
+  // The logger is for the debug-level stream phase trace (ATO-1357).
+  const llama = new LlamaServerClient({ logger });
   const { profile, modelAlias, totalSlots } = await resolveModelProfile(
     options.overrides,
     llama,

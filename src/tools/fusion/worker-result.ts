@@ -527,9 +527,22 @@ export const WORKER_HINT_QUEUED =
   "the local server had no free slot: run fewer workers at once, or split the fan-out into smaller waves";
 export const WORKER_HINT_UNSERVED =
   "this worker ran alone and still got no token, so the local server never answered it: check that the daemon is alive and restart it before re-delegating — a narrower fan-out will not help";
-/** `WORKER_HINT_UNSERVED` for a worker that had company: the server's own slot table showed nothing working. */
+/**
+ * The server's own slot table answered and showed every slot idle, and
+ * the worker still got no token (ATO-1357, issue #490).
+ *
+ * That table is evidence about where the request is. llama.cpp parks a
+ * task it cannot place only while a slot is busy, and hands it the first
+ * slot that frees, so a server that answers `/slots` with nothing working
+ * is not holding this worker's request at all: it never arrived, or the
+ * agent stopped listening for it. Telling the operator to restart the
+ * daemon was the wrong remedy — in the field the server was fine and
+ * only restarting the agent helped. The next local worker after a cut
+ * is sent on fresh connections (`renewTransportPool`), so trying again
+ * is the first step.
+ */
 export const WORKER_HINT_IDLE_SERVER =
-  "every slot of the local server was idle and this worker still got no token, so the server never answered it: check that the daemon is alive and restart it before re-delegating — a narrower fan-out will not help";
+  "the local server was up with every slot idle, yet this worker's request never got a reply, so it most likely got stuck on the agent's side, not the server's: delegate again (the next local worker goes out on fresh connections), and if it keeps happening, restart the agent rather than the server — a narrower fan-out will not help";
 
 /**
  * The hint for a silent worker when nothing proves why it was silent.
@@ -610,9 +623,9 @@ export function queuedWorkerHint(input: {
       : workerHintNoFirstToken(input.waitMs);
   }
   if (occupancy === null) return workerHintNoFirstToken(input.waitMs);
-  if (occupancy.busy === 0) {
-    return input.ranAlone ? WORKER_HINT_UNSERVED : WORKER_HINT_IDLE_SERVER;
-  }
+  // Alone or not: a table that answered with nothing working says the
+  // server is up and does not have the request (ATO-1357).
+  if (occupancy.busy === 0) return WORKER_HINT_IDLE_SERVER;
   if (occupancy.busy >= occupancy.total && input.width > occupancy.total) {
     return WORKER_HINT_QUEUED;
   }

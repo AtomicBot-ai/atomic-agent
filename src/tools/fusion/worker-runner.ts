@@ -492,6 +492,13 @@ export interface WorkerRunnerDeps {
   steerWorker?: (sessionId: string, text: string) => boolean;
   /** Where running workers are registered for the person's stop / escalate. */
   liveWorkers?: FusionLiveWorkers;
+  /**
+   * Replace the process's HTTP connection pool before a local worker is
+   * sent after one was cut off and the server still answered
+   * (`renewTransportPool`, ATO-1357). Returns whether it did. Absent
+   * (tests, embedders), nothing is renewed.
+   */
+  renewLocalTransport?: () => boolean;
 }
 
 /** Escalations one worker may get, automatic and manual together. */
@@ -711,6 +718,12 @@ async function runOneTask(
     });
   }
 
+  // Read before the check below, which clears the mark when the server
+  // answers (ATO-1357): an answered check is exactly the case where the
+  // server is fine and the agent's own connections are the suspect.
+  const cutBeforeDispatch =
+    options.localLeg === true && deps.localLegHealth?.isSuspect() === true;
+
   // A local leg that went silent after a worker on it was cut off is not
   // sent another worker to wait out its queue budget on (ATO-917): the
   // server is asked first, and a server that does not answer fails the
@@ -752,6 +765,28 @@ async function runOneTask(
       summary: summarise(refused),
     });
     return refused;
+  }
+
+  // Ties the client's stream trace (keyed by session id) to the task.
+  if (options.localLeg === true) {
+    deps.logger?.info("fusion: local worker dispatched", {
+      taskId: task.id,
+      workerSessionId: session.id,
+      afterCut: cutBeforeDispatch,
+    });
+  }
+  // The server answered after a cut-off worker (ATO-1357, issue #490). In
+  // the field that was the state in which no later worker's request ever
+  // reached the server — nothing in its log, every slot idle — until the
+  // agent was restarted. Do the transport half of that restart here: the
+  // next request opens on fresh sockets, and nothing in flight is cut.
+  if (cutBeforeDispatch && deps.renewLocalTransport !== undefined) {
+    const renewed = deps.renewLocalTransport();
+    deps.logger?.info("fusion: fresh connections for the local leg after a cut-off worker", {
+      taskId: task.id,
+      workerSessionId: session.id,
+      renewed,
+    });
   }
 
   // `started` fires when the turn actually begins stepping, not when it
