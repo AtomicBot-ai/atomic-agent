@@ -3190,7 +3190,7 @@ function resendUser(id) {
 
 /* ATO-1299: whether the agent can take a turn back. Left true until an agent
    answers with its unknown-route 404; then every Regenerate resends. */
-const ROLLBACK = {supported: true, pending: false, stash: new Map()};
+const ROLLBACK = {supported: true, pending: false, stash: new Map(), cleared: {sid: null, n: 0}};
 /* A question the agent took back while its chat was not on screen (the
    person switched chats during the call): it lives only here until that
    chat is opened again, then waits in the composer (openSession). */
@@ -3206,9 +3206,24 @@ function rollbackStashBack(sid) {
   ctxDraftChanged();
   toast('Your question is back in the box', 'Its old answer was taken back. Send it when you are ready.');
 }
-/** How many questions (steers not counted) come before `m` in the log. */
+/* ATO-1420: Clear Transcript empties the window, not the agent's chat, so
+   the questions it took off screen still come before the next ones there.
+   Kept per chat in ROLLBACK.cleared and added by priorQuestions. A question
+   that never reached the agent is counted too: a count too high only makes
+   the agent refuse (and the window resend), never take back another one.
+   openSession draws the whole chat again and starts it from 0. */
+function rollbackNoteCleared(before, after, sid) {
+  const asks = (log) => (log || []).filter((x) => x.k === 'user' && !x.steered).length;
+  const hidden = Math.max(0, asks(before) - asks(after));
+  const was = ROLLBACK.cleared;
+  const key = sid || null;
+  ROLLBACK.cleared = {sid: key, n: (was.sid === key ? was.n : 0) + hidden};
+}
+/** How many questions (steers not counted) come before `m` in the agent's
+    chat: the ones in the log, and the ones Clear Transcript hid (ATO-1420). */
 function priorQuestions(m) {
-  let count = 0;
+  const c = ROLLBACK.cleared;
+  let count = c.sid && c.sid === S.agentSession ? c.n : 0;
   for (const x of S.log) {
     if (x === m) return count;
     if (x.k === 'user' && !x.steered) count++;
@@ -3275,7 +3290,11 @@ async function regenerateReply(id, fromFailure) {
      agent never stored must not match an earlier "continue" with a real
      answer. The count is of the questions before this one, so a question
      that never reached the agent cannot line up with the one before it. */
-  try { r = await BR.rollbackLastTurn(sid, String(m.text || ''), priorQuestions(m)); }
+  /* ATO-1420: and, when the window shows no answer to it (its turn
+     failed), a stored question that has one is never it, whatever the
+     count says. */
+  const unanswered = !S.log.slice(at + 1).some((x) => x.k === 'assistant' && !x.placeholder && String(x.text || '').trim());
+  try { r = await BR.rollbackLastTurn(sid, String(m.text || ''), priorQuestions(m), unanswered); }
   catch (err) { r = {ok: false, supported: true, error: String((err && err.message) || err)}; }
   finally { ROLLBACK.pending = false; }
   if (r && r.supported === false) { ROLLBACK.supported = false; resendUser(id); return; }
@@ -7031,7 +7050,10 @@ function act(a) {
                            agent keeps this chat and opening it again brings it back. An empty
                            new chat has nothing for the agent to remember, so it says only that. */
                         const kept = !!(S.agentSession || S.busy);
-                        S.log = liveClearedLog(); S.history = []; render(); chatToast('Window cleared', kept ? 'The agent still remembers this chat' : ''); return; }
+                        const before = S.log;
+                        S.log = liveClearedLog(); S.history = [];
+                        rollbackNoteCleared(before, S.log, S.agentSession);   // ATO-1420: the agent still has those questions
+                        render(); chatToast('Window cleared', kept ? 'The agent still remembers this chat' : ''); return; }
   if (a === 'stop') { close(); abort(); return; }
   if (a === 'sessmodel:apply') { applySessionModelStamp(); return; }
   /* Item 7C — the menu's `Steer the running turn`. There is no separate
@@ -20623,7 +20645,13 @@ async function openSession(id) {
     S.streamId = null;
   }
   // ATO-131: cleared while this loaded: as Clear leaves a chat that is open (its running turn's own rows stay).
-  if (OPEN_CLEARED === seq) { OPEN_CLEARED = 0; S.log = rebuilt ? liveClearedLog() : []; }
+  ROLLBACK.cleared = {sid: null, n: 0};   // ATO-1420: the whole chat is drawn again
+  if (OPEN_CLEARED === seq) {
+    OPEN_CLEARED = 0;
+    const loaded = S.log;
+    S.log = rebuilt ? liveClearedLog() : [];
+    rollbackNoteCleared(loaded, S.log, id);
+  }
   // item 6: a turn of this session is still running, but its stream is not in
   // this log any more (the user left and came back). The desktop cannot replay
   // a stream, so it shows the stored snapshot and says what is still happening
