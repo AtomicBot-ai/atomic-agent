@@ -58,6 +58,8 @@ export interface ProviderKeySubject {
   readonly kind: string;
   readonly baseUrl?: string;
   readonly apiKey?: string;
+  /** More keys for the same service (ATO-471); any one is a credential. */
+  readonly extraApiKeys?: readonly string[];
   readonly apiKeyEnvVar?: string;
   readonly apiKeyHeader?: string;
   readonly headers?: Readonly<Record<string, string>>;
@@ -139,6 +141,12 @@ function hasCredential(
             : {}),
         });
   if (typeof key === "string" && key.trim().length > 0) return true;
+  if (
+    Array.isArray(entry.extraApiKeys) &&
+    entry.extraApiKeys.some((k) => typeof k === "string" && k.trim().length > 0)
+  ) {
+    return true;
+  }
   const named = entry.apiKeyHeader?.trim().toLowerCase();
   // Read defensively: this runs on every fallback pick, and a hand-edited
   // config with a non-string header value must not stop every turn.

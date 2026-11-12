@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   deleteConfigPath,
+  formatConfigValue,
   isSafeConfigPath,
+  isSecretConfigKey,
   readConfigPath,
   writeConfigPath,
 } from "./config-paths.js";
@@ -57,5 +59,17 @@ describe("config path helpers reject prototype-reaching keys", () => {
     expect(isSafeConfigPath("__proto__")).toBe(false);
     expect(isSafeConfigPath("a.constructor.b")).toBe(false);
     expect(isSafeConfigPath("a.prototype")).toBe(false);
+  });
+});
+
+describe("secret masking for a list of keys (ATO-471)", () => {
+  it("treats extraApiKeys as secret and shows only how many keys there are", () => {
+    expect(isSecretConfigKey("llm.providers.groq.extraApiKeys")).toBe(true);
+    expect(formatConfigValue("extraApiKeys", ["gsk-a", "gsk-b"])).toBe('["***","***"]');
+  });
+
+  it("still masks a single key and leaves a budget number alone", () => {
+    expect(formatConfigValue("apiKey", "sk-x")).toBe("***");
+    expect(formatConfigValue("agent.tokenBudget", 5)).toBe("5");
   });
 });

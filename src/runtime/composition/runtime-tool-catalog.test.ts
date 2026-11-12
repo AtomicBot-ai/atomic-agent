@@ -371,4 +371,21 @@ describe("runtimeKnownSecrets (ATO-1077)", () => {
       { label: "mcp-remote-header", value: "Rr1Ss2Tt3Uu4" },
     ]);
   });
+
+  it("lists a provider's extra keys too (ATO-471)", () => {
+    const config = {
+      llm: {
+        activeTextProvider: "groq",
+        activeEmbeddingProvider: "groq",
+        providers: [
+          { id: "groq", kind: "openai-compatible", apiKey: "Aa1Bb2Cc3Dd4", extraApiKeys: ["Ee5Ff6Gg7Hh8", "Ii9Jj0Kk1Ll2"] },
+        ],
+      },
+    } as unknown as Parameters<typeof runtimeKnownSecrets>[0];
+    expect(runtimeKnownSecrets(config, {})).toEqual([
+      { label: "groq-key", value: "Aa1Bb2Cc3Dd4" },
+      { label: "groq-key", value: "Ee5Ff6Gg7Hh8" },
+      { label: "groq-key", value: "Ii9Jj0Kk1Ll2" },
+    ]);
+  });
 });

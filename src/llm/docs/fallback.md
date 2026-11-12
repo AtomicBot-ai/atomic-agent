@@ -11,6 +11,10 @@ The chain holds only links the person picked: the active provider plus `llm.fall
 
 The fallback breaker reads live chain configuration and partitions mutable state by session. Memory runners use distinct session identities; pinned worker turns bypass fallover. An appended local fallback is still omitted when no model weights are available, avoiding a wait for a daemon that cannot start; [availability](../../runtime/local-link-availability.ts) owns this check. Provider selection/probing is lazy and owns no periodic timer. A changed active provider affects subsequent resolution rather than a captured boot-time value.
 
+## Several keys per provider
+
+A provider entry may hold more keys besides `apiKey` (`extraApiKeys`, ATO-471). The [key pool](../fallback/key-pool.ts) is one more level inside a chain link: when the service refuses a key (`keyRefusalKind`: a rate limit, a refused key, an empty account) the same request goes out with the next key of that provider, and only when every key was refused does the error reach the chain. The pool stays on the key that last served until it is refused, so a turn does not hop between keys. Each refused key cools down on the breaker ladder (rate limit 1/5/15 min or the provider's longer `Retry-After`; refused key or empty account 30 min). That state is process-wide, keyed by provider id and a hash of the key, because a limit belongs to the key, not to a session. A stream's shared attempt budget still bounds one completion. One distinct key means no pool, and the single-key path is unchanged. Keys never appear in logs; the notice names a key by position.
+
 ## Streams and transport
 
 Opening/priming a stream can fail over before committed output. Once output is committed, restarting risks duplicating visible text or side effects. Cancellation must propagate as cancellation rather than advancing the provider chain.
@@ -19,6 +23,7 @@ Fallback completions and chunks carry servedTransport. Parsing and live reasonin
 
 ## Sources and tests
 
+- [Key pool](../fallback/key-pool.ts) and [its tests](../fallback/key-pool.test.ts), [HTTP rotation tests](../provider/openai/openai-http-key-rotation.test.ts).
 - [Breaker](../fallback/provider-fallback-chain.ts), [advance policy](../fallback/should-advance.ts), [config](../fallback/fallback-config.ts).
 - [Runtime seam](../../runtime/llm-fallback-seam.ts), [stream implementation](../provider/openai/openai-provider.ts), [stream retry tests](../provider/openai/openai-stream-retry.test.ts).
 - [Fallback seam tests](../../runtime/llm-fallback-seam.test.ts), [fallback integration](../fallback/fallback-e2e.integration.test.ts).

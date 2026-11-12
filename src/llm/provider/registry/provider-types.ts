@@ -40,6 +40,11 @@ export type LlmProviderConfigEntry = {
    * working after a restart. See `openai/openai-auth-headers.ts`.
    */
   apiKeyHeader?: string;
+  /**
+   * More keys for the same service, tried in order after `apiKey` when a
+   * key is refused (ATO-471, `llm/fallback/key-pool.ts`).
+   */
+  extraApiKeys?: string[];
   supportsTools?: boolean;
   supportsVision?: boolean;
   requestTimeoutMs?: number;

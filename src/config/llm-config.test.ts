@@ -831,3 +831,62 @@ describe("llm.activeEmbeddingProvider default", () => {
     ).toThrow(/llm\.activeEmbeddingProvider: unknown provider id "local-llama"/);
   });
 });
+
+describe("provider extraApiKeys (ATO-471)", () => {
+  const withEntry = (extraApiKeys: unknown) => ({
+    version: USER_CONFIG_VERSION,
+    llm: {
+      activeTextProvider: "groq",
+      activeEmbeddingProvider: "local-llama",
+      toolTransport: "auto" as const,
+      providers: [
+        {
+          id: "local-llama",
+          kind: "llama-server",
+          url: "http://127.0.0.1:19091",
+        },
+        {
+          id: "groq",
+          kind: "openai-compatible",
+          baseUrl: "https://api.groq.com/openai/v1",
+          defaultChatModel: "llama-3.3-70b-versatile",
+          apiKey: "gsk-main",
+          ...(extraApiKeys === undefined ? {} : { extraApiKeys }),
+        },
+      ],
+    },
+  });
+
+  const entry = (parsed: ReturnType<typeof parseUserConfigFile>) =>
+    parsed.llm?.providers.find((p) => p.id === "groq");
+
+  it("round-trips the extra keys in order", () => {
+    expect(
+      entry(parseUserConfigFile(withEntry(["gsk-two", "gsk-three"])))?.extraApiKeys,
+    ).toEqual(["gsk-two", "gsk-three"]);
+  });
+
+  it("drops blank lines and repeated keys, and reads an empty list as absent", () => {
+    expect(
+      entry(parseUserConfigFile(withEntry([" gsk-two ", "", "gsk-two"])))?.extraApiKeys,
+    ).toEqual(["gsk-two"]);
+    expect(entry(parseUserConfigFile(withEntry(["", "  "])))?.extraApiKeys).toBeUndefined();
+  });
+
+  it("is absent by default", () => {
+    expect(entry(parseUserConfigFile(withEntry(undefined)))?.extraApiKeys).toBeUndefined();
+  });
+
+  it("rejects anything that is not a list of strings, without echoing a value", () => {
+    for (const bad of ["gsk-two", [1], {}]) {
+      let message = "";
+      try {
+        parseUserConfigFile(withEntry(bad));
+      } catch (err) {
+        message = err instanceof Error ? err.message : String(err);
+      }
+      expect(message).toMatch(/extraApiKeys/);
+      expect(message).not.toContain("gsk-two");
+    }
+  });
+});

@@ -50,6 +50,7 @@ import {
   OPENAI_MAX_ATTEMPTS,
   type OpenAiAttemptBudget,
   type OpenAiHttpDeps,
+  type OpenAiKeyRotation,
 } from "./openai-http.js";
 import { isNetworkError } from "../../reliability/network-error.js";
 import { normaliseOpenAiChatResponse } from "./openai-normalise-response.js";
@@ -164,6 +165,13 @@ export interface OpenAiProviderOptions {
    * stderr line rather than recovering silently.
    */
   logger?: CreditLimitLogger;
+  /**
+   * The provider's key pool when it has more than one key (ATO-471):
+   * every request carries the pool's current key, and a refused key is
+   * swapped for the next before the error reaches the fallback chain.
+   * Absent: `apiKey` alone, as before.
+   */
+  keyPool?: OpenAiKeyRotation;
 }
 
 export class OpenAiProvider implements LlmProvider {
@@ -267,7 +275,17 @@ export class OpenAiProvider implements LlmProvider {
         const windows = parseRateLimitHeaders(headers);
         if (windows.length > 0) this.lastRateLimits = windows;
       },
+      ...(options.keyPool ? { keyPool: options.keyPool } : {}),
     };
+    const pool = options.keyPool;
+    if (pool) {
+      // Paths that send without the rotation wrapper (the model list
+      // probe) still carry the key in use rather than a refused primary.
+      Object.defineProperty(this.http, "apiKey", {
+        get: () => pool.current(),
+        enumerable: true,
+      });
+    }
   }
 
   /**

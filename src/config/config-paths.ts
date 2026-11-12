@@ -160,7 +160,14 @@ function editDistance(a: string, b: string): number {
  * non-empty string is the thing worth hiding — so masking is decided in
  * `formatConfigValue`, where the value is in hand.
  */
-const SECRET_NAMES = new Set(["secret", "token", "apikey", "password"]);
+const SECRET_NAMES = new Set([
+  "secret",
+  "token",
+  "apikey",
+  // `extraApiKeys` (ATO-471): a list of keys.
+  "apikeys",
+  "password",
+]);
 
 /**
  * True when a leaf's name suggests its value is a credential. Callers
@@ -179,6 +186,14 @@ export function isSecretConfigKey(key: string): boolean {
 export function formatConfigValue(key: string, value: unknown): string {
   if (isSecretConfigKey(key) && typeof value === "string" && value.length > 0) {
     return "***";
+  }
+  // A list of keys shows how many there are, never what they are.
+  if (
+    isSecretConfigKey(key) &&
+    Array.isArray(value) &&
+    value.some((item) => typeof item === "string" && item.length > 0)
+  ) {
+    return JSON.stringify(value.map(() => "***"));
   }
   return JSON.stringify(value);
 }

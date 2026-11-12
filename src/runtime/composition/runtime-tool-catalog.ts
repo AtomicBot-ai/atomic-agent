@@ -79,6 +79,7 @@ export function runtimeKnownSecrets(
   };
   for (const entry of config.llm?.providers ?? []) {
     add(`${entry.id}-key`, entry.apiKey);
+    for (const extra of entry.extraApiKeys ?? []) add(`${entry.id}-key`, extra);
     addHeaders(`${entry.id}-header`, entry.headers);
   }
   add("local-models-key", config.localModels?.apiKey);

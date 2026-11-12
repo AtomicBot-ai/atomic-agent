@@ -8,6 +8,8 @@ import {
 } from "../gemini/gemini-provider.js";
 import { LlamaServerProvider } from "../llama-server/llama-server-provider.js";
 import { OpenAiProvider } from "../openai/openai-provider.js";
+import { createKeyPool } from "../../fallback/key-pool.js";
+import type { StructuredLogger } from "../../../tracing/index.js";
 import type { ProviderCapabilities } from "../llm-provider.js";
 import { resolveCloudModelVision } from "../model-vision.js";
 import {
@@ -28,6 +30,24 @@ import {
 } from "./provider-types.js";
 
 let registered = false;
+
+/**
+ * The entry's key pool when it holds more than one distinct key: `apiKey`
+ * first, then `extraApiKeys` (ATO-471). Nothing for a single key, so that
+ * provider is built exactly as before.
+ */
+function keyPoolOption(
+  entry: LlmProviderConfigEntry,
+  logger: StructuredLogger,
+): { keyPool?: NonNullable<ReturnType<typeof createKeyPool>> } {
+  if (!entry.extraApiKeys || entry.extraApiKeys.length === 0) return {};
+  const keyPool = createKeyPool({
+    providerId: entry.id,
+    keys: [entry.apiKey ?? "", ...entry.extraApiKeys],
+    logger,
+  });
+  return keyPool ? { keyPool } : {};
+}
 
 /**
  * What the entry's `userModels[]` row for the model it serves says about
@@ -136,6 +156,7 @@ export function registerBuiltInProviderKinds(): void {
       providerKind: "openai-compatible",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
+      ...keyPoolOption(entry, ctx.logger),
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
@@ -171,6 +192,7 @@ export function registerBuiltInProviderKinds(): void {
       providerKind: "qwen-openai-compatible",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
+      ...keyPoolOption(entry, ctx.logger),
       defaultChatModel: entry.defaultChatModel,
       headers: entry.headers,
       apiKeyHeader: entry.apiKeyHeader,
@@ -196,6 +218,7 @@ export function registerBuiltInProviderKinds(): void {
       providerKind: "openrouter",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
+      ...keyPoolOption(entry, ctx.logger),
       defaultChatModel: model,
       headers: entry.headers,
       ...modelVisionOptions(entry, model),
@@ -230,6 +253,7 @@ export function registerBuiltInProviderKinds(): void {
       providerKind: "aimlapi",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
+      ...keyPoolOption(entry, ctx.logger),
       defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,
@@ -253,6 +277,7 @@ export function registerBuiltInProviderKinds(): void {
       providerKind: "gemini",
       baseUrl: entry.baseUrl,
       apiKey: entry.apiKey ?? "",
+      ...keyPoolOption(entry, ctx.logger),
       defaultChatModel: model,
       extraBody: entry.extraBody,
       maxOutputTokens: entry.maxOutputTokens,

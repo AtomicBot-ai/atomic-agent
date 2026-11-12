@@ -59,6 +59,13 @@ export type UserLlmProviderEntry = {
    * back to the per-kind defaults in `resolveLlmProviderApiKey`.
    */
   apiKeyEnvVar?: string;
+  /**
+   * More API keys for the same service, tried in order after the main
+   * key when it is rate-limited, refused or out of credit (ATO-471).
+   * Blank entries and duplicates of another key are ignored. Secrets,
+   * like `apiKey`: masked by `config get`/`list` and the log scrubber.
+   */
+  extraApiKeys?: string[];
   defaultChatModel?: string;
   defaultEmbeddingModel?: string;
   headers?: Record<string, string>;
@@ -261,6 +268,27 @@ function parseOptionalString(raw: unknown, field: string): string | undefined {
   return raw;
 }
 
+/**
+ * `extraApiKeys`: an array of strings. Blank strings are kept out rather
+ * than refused (a wizard or a hand edit may leave an empty line), and an
+ * empty result reads as absent. The message never echoes a value.
+ */
+function parseOptionalKeyList(raw: unknown, field: string): string[] | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (!Array.isArray(raw)) {
+    throw new ConfigValidationError(field, "expected array of strings");
+  }
+  const out: string[] = [];
+  raw.forEach((value, i) => {
+    if (typeof value !== "string") {
+      throw new ConfigValidationError(`${field}[${i}]`, "expected string");
+    }
+    const key = value.trim();
+    if (key.length > 0 && !out.includes(key)) out.push(key);
+  });
+  return out.length > 0 ? out : undefined;
+}
+
 function parseOptionalHeaders(
   raw: unknown,
   field: string,
@@ -320,6 +348,7 @@ export function parseLlmProviderEntry(
     ...(obj.modelModes == null ? {} : { modelModes: parseModelModes(obj.modelModes, `${field}.modelModes`, fromFile) }),
     url: parseOptionalString(obj.url, `${field}.url`),
     apiKey: parseOptionalString(obj.apiKey, `${field}.apiKey`),
+    extraApiKeys: parseOptionalKeyList(obj.extraApiKeys, `${field}.extraApiKeys`),
     model: parseOptionalString(obj.model, `${field}.model`),
     baseUrl: parseOptionalString(obj.baseUrl, `${field}.baseUrl`),
     apiKeyEnvVar: parseOptionalString(

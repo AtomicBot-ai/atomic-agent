@@ -480,6 +480,8 @@ export interface AtomicAgentConfig {
        * missing from this mirror of that shape.
        */
       apiKeyEnvVar?: string;
+      /** More keys for the same service, tried after `apiKey` (ATO-471). */
+      extraApiKeys?: string[];
       supportsTools?: boolean;
       supportsVision?: boolean;
       requestTimeoutMs?: number;
