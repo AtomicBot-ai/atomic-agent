@@ -17,7 +17,8 @@ const { CURATED_MODEL_META } = require("../out/main/model-catalog.js");
 const source = readFileSync(new URL("../renderer/renderer.js", import.meta.url), "utf8");
 const main = readFileSync(new URL("../main/main.ts", import.meta.url), "utf8");
 function fn(name) {
-  const at = source.indexOf("\nfunction " + name + "(");
+  const sync = source.indexOf("\nfunction " + name + "(");
+  const at = sync >= 0 ? sync : source.indexOf("\nasync function " + name + "(");
   assert.ok(at >= 0, name + " is a top-level function in renderer.js");
   return source.slice(at + 1, source.indexOf("\n}\n", at) + 2);
 }
@@ -106,22 +107,25 @@ function renderer(names, extra) {
     function llmRepaint() {}
     function dlFail(job, error, retry) { fails.push({ job, error, retry }); }
     function xpullRetry(owner) { return 'retry:' + owner.id; }
+    function render() {}
+    async function llmRefreshStatus() {}
+    function visionLanded() { return false; }
   `, c);
   for (const name of ["projectorSkippedText", ...names]) vm.runInContext(fn(name), c);
   return c;
 }
 
-test("the composer's pull that lost the projector offers no Switch and says text only", () => {
+test("the composer's pull that lost the projector offers no Switch and says text only", async () => {
   const c = renderer(["selPullFinished"]);
-  c.selPullFinished("gemma-4-e4b", { ok: true, projectorSkipped: true });
+  await c.selPullFinished("gemma-4-e4b", { ok: true, projectorSkipped: true });
   assert.equal(c.DL.ready, null);
   assert.equal(c.snapshots, 1, "the weights are on disk: the chip and the picker read the list again");
   assert.equal(c.toasts[0].tone, "bad");
   assert.match(c.toasts[0].text, /text only/);
-  c.selPullFinished("gemma-4-e4b", { ok: true });
+  await c.selPullFinished("gemma-4-e4b", { ok: true });
   assert.equal(c.DL.ready.id, "gemma-4-e4b", "a whole download still offers it");
   c.DL.ready = null;
-  c.selPullFinished("gemma-4-e4b", { ok: false, error: "killed" });
+  await c.selPullFinished("gemma-4-e4b", { ok: false, error: "killed" });
   assert.equal(c.DL.ready, null);
 });
 
