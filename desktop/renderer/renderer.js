@@ -24034,7 +24034,7 @@ const TOOL_GROUPS = [
   {id:'terminal', label:'Terminal', what:'Runs commands and programs on ' + THIS_MACHINE + '.', match:/^os\.(shell|proc)(\.|$)/},
   {id:'browser', label:'Browser', what:'Opens web pages and works in them, in its own browser.', match:/^browser(\.|$)/},
   {id:'web', label:'Web', what:'Searches the internet and fetches pages.', match:/^(os\.(web|http)|web)(\.|$)/},
-  {id:'screen', label:'Screen and images', what:'Takes screenshots and looks at pictures.', match:/^(shot|vision|image)(\.|$)/},
+  {id:'screen', label:'Screen and images', what:'Sees the screen and clicks and types on it, reads and makes pictures.', match:/^(os\.screen|shot|vision|image)(\.|$)/},
   {id:'apps', label:'Windows and clipboard', what:'Lists and switches app windows, reads and writes the clipboard.', match:/^os\.(window|clipboard)(\.|$)/},
   {id:'code', label:'Code and Git', what:'Works with git repositories and GitHub.', match:/^(os\.git|github)(\.|$)/},
   {id:'tasks', label:'Tasks and schedules', what:'Plans work and runs it later or on a schedule.', match:/^(tasks|plan)(\.|$)/},
