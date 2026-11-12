@@ -239,7 +239,12 @@ function assembleOpenAiChatBody(
       ? defaultReasoningEffort(defaultChatModel)
       : undefined);
   if (effort !== undefined) {
-    Object.assign(body, reasoningEffortField(options.providerKind, effort));
+    Object.assign(
+      body,
+      reasoningEffortField(options.providerKind, effort, defaultChatModel, {
+        disableThinking: filtered.disableThinking === true,
+      }),
+    );
   }
   // The template's thinking switch, for a request that asked for none
   // (context compaction). Only a local server gets it: OpenAI and other

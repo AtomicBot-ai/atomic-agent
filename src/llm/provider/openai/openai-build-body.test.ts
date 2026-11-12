@@ -709,6 +709,50 @@ describe("reasoning effort and the turn's output ceiling (F20)", () => {
   });
 });
 
+describe("reasoning effort on Gemini and AI/ML API (ATO-1359)", () => {
+  const bodyFor = (providerKind: string, model: string) =>
+    buildOpenAiChatBody({ prompt: "hi", reasoningEffort: "low", disableThinking: true }, model, false, undefined, undefined, undefined, undefined, { providerKind });
+
+  const thinkingBodyFor = (providerKind: string, model: string) =>
+    buildOpenAiChatBody({ prompt: "hi", reasoningEffort: "low" }, model, false, undefined, undefined, undefined, undefined, { providerKind });
+
+  it("switches thinking off on 2.5 Flash and Flash-Lite when the call wants none", () => {
+    for (const model of ["gemini-2.5-flash", "gemini-2.5-flash-lite", "models/gemini-2.5-flash", "gemini-2.5-flash-lite-preview-06-17"]) {
+      expect(bodyFor("gemini", model).reasoning_effort).toBe("none");
+    }
+  });
+
+  it("sends the asked effort on Flash-Lite when thinking is wanted", () => {
+    expect(thinkingBodyFor("gemini", "gemini-2.5-flash-lite").reasoning_effort).toBe("low");
+    expect(thinkingBodyFor("gemini", "gemini-2.5-flash").reasoning_effort).toBe("low");
+  });
+
+  it("bounds a Gemini thinking model's reasoning with reasoning_effort", () => {
+    for (const model of ["gemini-2.5-pro", "gemini-3-pro-preview", "models/gemini-3-flash-preview"]) {
+      const body = bodyFor("gemini", model);
+      expect(body.reasoning_effort).toBe("low");
+      expect(body).not.toHaveProperty("reasoning");
+      // The local-only template switch is still not sent to a cloud API.
+      expect(body).not.toHaveProperty("chat_template_kwargs");
+    }
+  });
+
+  it("leaves Gemini models that do not think, or are not chat reasoners, untouched", () => {
+    for (const model of ["gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.5-flash-image", "gemini-2.5-flash-preview-tts", "gemma-3-27b-it", "m"]) {
+      expect(bodyFor("gemini", model)).not.toHaveProperty("reasoning_effort");
+    }
+  });
+
+  it("sends reasoning_effort on AI/ML API only for OpenAI reasoning models", () => {
+    for (const model of ["o3-mini", "openai/o4-mini", "gpt-5", "openai/gpt-5-mini"]) {
+      expect(bodyFor("aimlapi", model).reasoning_effort).toBe("low");
+    }
+    for (const model of ["gpt-4o", "deepseek/deepseek-r1", "olmo-2", "m", "gpt-5-chat-latest", "openai/gpt-5-chat"]) {
+      expect(bodyFor("aimlapi", model)).not.toHaveProperty("reasoning_effort");
+    }
+  });
+});
+
 describe("buildOpenAiChatBody: the template's thinking switch", () => {
   const ask = (request: Parameters<typeof buildOpenAiChatBody>[0], options: Parameters<typeof buildOpenAiChatBody>[7], extraBody?: Record<string, unknown>) =>
     buildOpenAiChatBody(request, "m", false, extraBody, undefined, undefined, undefined, options);
