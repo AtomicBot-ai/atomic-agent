@@ -443,6 +443,7 @@ describe("browser tools on a fake backend", () => {
         .sort(),
     ).toEqual([
       "browser.click",
+      "browser.extract",
       "browser.navigate",
       "browser.read_aria",
       "browser.screenshot",

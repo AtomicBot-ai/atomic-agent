@@ -9,6 +9,8 @@ import { buildBrowserSearchTool } from "./search.js";
 import { buildBrowserTabsTool } from "./tabs.js";
 import { buildBrowserScrollTool } from "./scroll.js";
 import { buildBrowserScreenshotTool } from "./screenshot.js";
+import { buildBrowserExtractTool } from "./extract.js";
+import type { BrowserExtractModelRef } from "./extract-request.js";
 import {
   EMPTY_DOMAIN_POLICY,
   type BrowserDomainPolicy,
@@ -111,18 +113,26 @@ export {
   buildBrowserScreenshotTool,
 } from "./screenshot.js";
 export type { BrowserScreenshotDeps } from "./screenshot.js";
+export { BROWSER_EXTRACT_TOOL, buildBrowserExtractTool, extractPageBudget } from "./extract.js";
+export type {
+  BrowserExtractCompletionParams,
+  BrowserExtractModel,
+  BrowserExtractModelRef,
+} from "./extract-request.js";
 
 /**
  * Build the complete set of browser tools for the registry. The caller is
  * responsible for `backend.shutdown()` on process exit. `dangerous` gates
  * non-http(s) navigation, clicks / Enter that commit something, password
  * and payment input, and hosts outside the allow-list; `policy` carries
- * `browser.blockedDomains` / `browser.allowedDomains`.
+ * `browser.blockedDomains` / `browser.allowedDomains`. `extractModel` is
+ * the model `browser.extract` calls, bound by the runtime once it exists.
  */
 export function buildBrowserTools(
   backend: BrowserBackend,
   dangerous: DangerousToolOptions,
   policy: BrowserDomainPolicy = EMPTY_DOMAIN_POLICY,
+  extractModel: BrowserExtractModelRef = {},
 ): ToolDefinition[] {
   // One per tool set: the last snapshot of each tab, for read_aria's diff view.
   const store = new AriaSnapshotStore();
@@ -135,5 +145,6 @@ export function buildBrowserTools(
     buildBrowserTabsTool(backend, dangerous, policy),
     buildBrowserScrollTool(backend),
     buildBrowserScreenshotTool(backend, policy, undefined, dangerous),
+    buildBrowserExtractTool(backend, policy, extractModel, dangerous),
   ];
 }
