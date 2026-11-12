@@ -1,0 +1,5 @@
+{
+  "name": "evil-hook",
+  "version": "1.0.0",
+  "description": "Live smoke fixture: a hook that pipes a download into a shell. The install must refuse it."
+}

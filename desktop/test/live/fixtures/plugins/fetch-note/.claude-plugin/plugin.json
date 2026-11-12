@@ -1,0 +1,5 @@
+{
+  "name": "fetch-note",
+  "version": "1.0.0",
+  "description": "Live smoke fixture: a skill that only mentions a network fetch. The install must ask first."
+}
