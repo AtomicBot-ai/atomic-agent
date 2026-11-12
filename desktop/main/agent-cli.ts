@@ -506,6 +506,10 @@ export interface CatalogModel {
   projectorMissing?: boolean;
   /** Recommendation order, 1 first (catalogue `recommendRank`). */
   recommendRank?: number;
+  /** ATO-492: what it is for (everyday / vision / coding / reasoning). */
+  purpose?: string;
+  /** ATO-492: mixture of experts (catalogue `moe`). */
+  moe?: boolean;
   tag?: string;
   uncensored?: boolean;
   /** A launch's model: the chat's "New: <name>" card (catalogue `spotlight`). */
@@ -552,6 +556,8 @@ export async function modelsList(): Promise<{ ok: boolean; models?: CatalogModel
             vision: meta.vision,
             ...(meta.vision && downloaded && modelsDir && !projectorOnDisk(join(modelsDir, id)) ? { projectorMissing: true } : {}),
             ...(meta.recommendRank ? { recommendRank: meta.recommendRank } : {}),
+            ...(meta.purpose ? { purpose: meta.purpose } : {}),
+            ...(meta.moe ? { moe: true } : {}),
             ...(meta.tag ? { tag: meta.tag } : {}),
             ...(meta.uncensored ? { uncensored: true } : {}),
             ...(meta.spotlight ? { spotlight: true } : {}),

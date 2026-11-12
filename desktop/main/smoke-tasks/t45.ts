@@ -35,12 +35,14 @@ type Check = (name: string, ok: boolean, detail?: string) => void;
 const q = (v: unknown) => JSON.stringify(v);
 
 /* The local list at 18 GB: a best fit, a small model, reduced-refusal weights,
-   a tight fit, and two that will not run (one of them the model with no mark). */
+   a tight fit, and two that will not run (one of them the model with no mark).
+   ATO-492: small carries the catalogue's `moe` flag and unc has "-A2B" in its
+   name only, so the MoE chip is checked on both paths, not just the id. */
 const MODELS = [
-  { id: "qwen-smoke-t45-best", name: "Smoke Best 9B GGUF", description: "Balanced performance", size: "6.2 GB", sizeGb: 6.2, minRamGb: 8, recommendedRamGb: 16, downloaded: false },
-  { id: "qwen-smoke-t45-small", name: "Smoke Small 4B GGUF", description: "Quality-size sweet spot", size: "3.4 GB", sizeGb: 3.4, minRamGb: 6, recommendedRamGb: 8, downloaded: false },
-  { id: "qwen-smoke-t45-unc", name: "Smoke Unc 9B GGUF", description: "Reduced-refusal Smoke 9B (abliterated)", size: "6 GB", sizeGb: 6, minRamGb: 8, recommendedRamGb: 12, downloaded: false, uncensored: true, tag: "Use at your own risk" },
-  { id: "gemma-smoke-t45-tight", name: "Smoke Tight 26B GGUF", description: "Fast MoE with 256K context (QAT)", size: "15.4 GB", sizeGb: 15.4, minRamGb: 16, recommendedRamGb: 24, downloaded: false },
+  { id: "qwen-smoke-t45-best", name: "Smoke Best 9B GGUF", description: "Balanced performance", size: "6.2 GB", sizeGb: 6.2, minRamGb: 8, recommendedRamGb: 16, downloaded: false, purpose: "everyday", context: "256K", vision: true },
+  { id: "qwen-smoke-t45-small", name: "Smoke Small 4B GGUF", description: "Quality-size sweet spot", size: "3.4 GB", sizeGb: 3.4, minRamGb: 6, recommendedRamGb: 8, downloaded: false, moe: true },
+  { id: "qwen-smoke-t45-unc", name: "Smoke Unc 9B-A2B GGUF", description: "Reduced-refusal Smoke 9B (abliterated)", size: "6 GB", sizeGb: 6, minRamGb: 8, recommendedRamGb: 12, downloaded: false, uncensored: true, tag: "Use at your own risk" },
+  { id: "gemma-smoke-t45-tight-a4b", name: "Smoke Tight 26B GGUF", description: "Fast MoE with 256K context (QAT)", size: "15.4 GB", sizeGb: 15.4, minRamGb: 16, recommendedRamGb: 24, downloaded: false },
   { id: "qwen-smoke-t45-over", name: "Smoke Over 35B GGUF", description: "High quality reasoning", size: "22 GB", sizeGb: 22, minRamGb: 24, recommendedRamGb: 36, downloaded: false },
   { id: "muse-glimmer-30b", name: "Meta Muse Glimmer 30B GGUF", description: "Multimodal 30B MoE, generic tool calling", size: "18.6 GB", sizeGb: 18.6, minRamGb: 20, recommendedRamGb: 32, downloaded: false },
 ];
@@ -210,6 +212,7 @@ async function modelStep(run: Run, check: Check): Promise<void> {
         id: n.dataset.model,
         h: Math.round(n.getBoundingClientRect().height * 2) / 2,
         lines: n.querySelectorAll('.d > span').length,
+        tech: [...n.querySelectorAll('.d > .ob-tech .ob-techchip')].map((c) => (c.textContent || '').trim()),
         badges: [...n.querySelectorAll('.t .ob-badge')].map((b) => [(b.textContent || '').trim(), b.getAttribute('title') || '']),
         described: ((id) => { const el = id ? document.getElementById(id) : null; return el ? el.textContent : ''; })(n.getAttribute('aria-describedby')),
       })),
@@ -233,25 +236,36 @@ async function modelStep(run: Run, check: Check): Promise<void> {
     typeof r.want === "string" && r.explain === r.want && r.again === false,
     q({ explain: r.explain, want: r.want, again: r.again }),
   );
-  const rows = (r.rows ?? []) as Array<{ id: string; h: number; lines: number; badges: Array<[string, string]>; described: string }>;
+  const rows = (r.rows ?? []) as Array<{ id: string; h: number; lines: number; tech: string[]; badges: Array<[string, string]>; described: string }>;
   const byId = (id: string) => rows.find((x) => x.id === id);
   const badgesOf = (id: string) => q(byId(id)?.badges ?? null);
   check(
     "T45: a caution is a badge on the name line with its sentence as the tooltip — tight fit, small model, reduced refusals",
     rows.length === 4
-      && badgesOf("qwen-smoke-t45-best") === q([["Recommended", ""]])
-      && badgesOf("qwen-smoke-t45-small") === q([["Small model", r.small]])
+      && badgesOf("qwen-smoke-t45-best") === q([["Everyday use", ""], ["Recommended", ""]])
+      && badgesOf("qwen-smoke-t45-small") === q([["Simple tasks", r.small]])
       && badgesOf("qwen-smoke-t45-unc") === q([["Fewer refusals", "Fewer safety refusals: it may answer requests other models decline."]])
-      && badgesOf("gemma-smoke-t45-tight") === q([["Tight fit", "Tight fit on 18 GB. It will run slowly."]]),
+      && badgesOf("gemma-smoke-t45-tight-a4b") === q([["Slow on 18 GB", "Tight fit on 18 GB. It will run slowly."]]),
     q(rows),
   );
   check(
     "T45: the caution's sentence is also the row's description, so it reaches the keyboard and a screen reader",
     byId("qwen-smoke-t45-best")?.described === ""
       && byId("qwen-smoke-t45-small")?.described === r.small
-      && byId("gemma-smoke-t45-tight")?.described === "Tight fit on 18 GB. It will run slowly."
+      && byId("gemma-smoke-t45-tight-a4b")?.described === "Tight fit on 18 GB. It will run slowly."
       && byId("qwen-smoke-t45-unc")?.described === "Fewer safety refusals: it may answer requests other models decline.",
     q(rows.map((x) => [x.id, x.described])),
+  );
+  check(
+    "T45 (ATO-492): the facts an enthusiast reads are grey chips on a line of their own: context, reads images, MoE",
+    q(byId("qwen-smoke-t45-best")?.tech ?? null) === q(["256K context", "Reads images"])
+      && q(byId("gemma-smoke-t45-tight-a4b")?.tech ?? null) === q(["MoE"])
+      /* MoE three ways: the id's suffix (tight), the catalogue flag with no
+         suffix anywhere (small), and the suffix in the name only (unc, as
+         "qwen-3.5-35b" is "Qwen 3.5 35B-A3B"). */
+      && q(byId("qwen-smoke-t45-small")?.tech ?? null) === q(["MoE"])
+      && q(byId("qwen-smoke-t45-unc")?.tech ?? null) === q(["MoE"]),
+    q(rows.map((x) => [x.id, x.tech])),
   );
   check(
     "T45: every model card is the name and one facts line, so every card is the same height",

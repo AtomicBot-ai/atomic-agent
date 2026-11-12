@@ -14526,16 +14526,61 @@ function obGbWord(gb) { return (Math.round(gb * 10) / 10).toFixed(1).replace(/\.
  * nothing; the line above the list already says what it is ordered for.
  */
 function obModelRowLabel(model, isBest, noteId) {
+  const use = modelPurpose(model);
   return '<span class="ob-nm">' + esc(obModelName(model)) + '</span>'
+    + (use ? '<span class="ob-badge ob-badge-use ob-use-' + use.id + '" data-use="' + use.id + '">' + esc(use.word) + '</span>' : '')
     + (isBest ? '<span class="ob-badge ob-badge-best">Recommended</span>' : '')
     + obModelNoteBadge(model, noteId);
+}
+
+/* ATO-492 (Nadya, 15.10, as in Atomic Chat): what a model is for, in four
+   words a person chooses on, first on the name line. The catalogue's
+   `purpose` (desktop/main/model-catalog.ts); a model without one (anything
+   added from Hugging Face) gets no chip rather than a guess. */
+const MODEL_PURPOSES = {
+  everyday: 'Everyday use',
+  vision: 'Vision & knowledge',
+  coding: 'Coding',
+  reasoning: 'Math & reasoning',
+};
+function modelPurpose(model) {
+  const id = model && model.purpose;
+  return id && MODEL_PURPOSES[id] ? {id, word: MODEL_PURPOSES[id]} : null;
+}
+/* ATO-492: the facts an enthusiast reads, as small grey chips on their own
+   line: how much it can read at once, whether it reads images, and whether
+   only part of it works at a time (a mixture of experts, `-A3B` / `-A4B`,
+   which is why it stays quick for its size). Plain words, the engineering
+   term in the tooltip. */
+/* ATO-492: a mixture-of-experts model. The catalogue says so (`moe`); a
+   model from elsewhere (Hugging Face, a .gguf) is read by its "-A3B" style
+   suffix in the id OR the name, since the id does not always carry it
+   ("qwen-3.5-35b" is "Qwen 3.5 35B-A3B"). */
+function modelIsMoe(model) {
+  if (!model) return false;
+  if (model.moe === true) return true;
+  const suffix = /(?:^|[-_\s])a\d+(?:\.\d+)?b(?:$|[-_\s.])/i;
+  return suffix.test(String(model.id || '')) || suffix.test(String(model.name || ''));
+}
+function modelTechChips(model) {
+  if (!model) return [];
+  const out = [];
+  const ctx = String(model.context || model.contextLabel || '').trim();
+  if (ctx && ctx !== '-') out.push({word: ctx + ' context', title: 'How much text it can read at once: ' + ctx + ' tokens.'});
+  if (model.vision) out.push({word: 'Reads images', title: 'It can look at pictures and screenshots.'});
+  if (modelIsMoe(model)) out.push({word: 'MoE', title: 'Mixture of experts: only part of the model works on each word, so it stays quick for its size.'});
+  return out;
+}
+function modelTechChipsHTML(model, cls) {
+  return modelTechChips(model).map((c) => '<span class="' + cls + '" title="' + esc(c.title) + '">' + esc(c.word) + '</span>').join('');
 }
 
 /** The one caution a row may carry, or null: its badge word, its sentence and its tone. */
 function obModelNote(model) {
   const note = modelPickNote(model, OB.ram);
   if (!note || note.v === 'over') return null;
-  const word = note.v === 'tight' ? 'Tight fit' : note.text === SMALL_MODEL_CAUTION ? 'Small model'
+  // ATO-492: the badge says it in plain words; the sentence stays the tooltip.
+  const word = note.v === 'tight' ? 'Slow on ' + OB.ram + ' GB' : note.text === SMALL_MODEL_CAUTION ? 'Simple tasks'
     : note.text === UNCENSORED_NOTE ? UNCENSORED_WORD : note.text;
   return {word, text: note.text, warn: note.v === 'tight' || !!model.uncensored};
 }
@@ -14560,7 +14605,11 @@ function obModelNoteBadge(model, noteId) {
 function obModelRowDetail(model) {
   const facts = [modelBlurb(model), modelSizeWord(model), model.downloaded ? 'already on ' + THIS_MACHINE : '']
     .filter(Boolean).join(' · ');
-  return '<span>' + esc(facts) + '</span>';
+  /* ATO-492: the grey tech chips, a second line on every card (a <div>, so
+     the facts line stays the one `.d > span`). Every catalogue row has a
+     context, so the cards stay one height. */
+  return '<span>' + esc(facts) + '</span>'
+    + '<div class="ob-tech">' + modelTechChipsHTML(model, 'ob-techchip') + '</div>';
 }
 
 /* Calm (S7, U19): the words the wizard's local list says about a model, in
@@ -27063,7 +27112,8 @@ function llmFitBadge(m, ram) {
     why = 'About ' + need + ' GB to run, estimated from its file size; ' + THIS_MACHINE + ' has ' + have + ' GB.' + (fit.v === 'tight' ? ' ' + TIGHT_FIT_CAUTION : '');
   }
   if (isSmallModel(m)) why += ' ' + SMALL_MODEL_CAUTION;
-  const word = fit.v === 'comfortable' ? 'Fits well' : fit.v === 'tight' ? 'Tight fit' : 'Too big';
+  // ATO-492: "Tight fit" said nothing until hovered; the badge says what it means.
+  const word = fit.v === 'comfortable' ? 'Fits well' : fit.v === 'tight' ? 'Slow on ' + have + ' GB' : 'Too big';
   return {v: fit.v, word, tone: fit.v === 'comfortable' ? 'green' : fit.v === 'tight' ? 'amber' : '', title: word + '. ' + why};
 }
 /* ATO-491: the best-fit chip's reason, a line under its row: this machine's
@@ -27084,6 +27134,9 @@ function llmRowBadges(row) {
   if (!m) return [];
   const fit = row.kind === 'localTextModel' ? row.fit : null;
   const out = [];
+  // ATO-492: what it is for comes first, as in the wizard.
+  const use = row.kind === 'localTextModel' ? modelPurpose(m) : null;
+  if (use) out.push({key:'use', tone:'use-' + use.id, word:use.word, title:'Good for: ' + use.word + '.'});
   if (m.downloaded) {
     const size = modelSizeWord(m);
     out.push({key:'installed', tone:'line', word:'Installed', title:'Installed on ' + THIS_MACHINE + (size ? ' (' + size + ')' : '') + '.'
@@ -27148,7 +27201,9 @@ function llmRowHTML(row, index, cursor) {
         + (mem.spin ? '<span class="tk-spin"></span>' : '') + esc(mem.word) + '</span>' : '');
     return open + radio + modelMark(m.id, '')
       + '<span class="body"><span class="t">' + t + '</span>'
-      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : '')) + '</span>' : '')
+      + (row.sub ? '<span class="d llm-sub">' + esc(row.sub + (modelSizeWord(m) && !row.bestWhy ? ' · ' + modelSizeWord(m) : ''))
+        // ATO-492: the grey tech chips after the blurb, on the same line.
+        + (chat ? modelTechChipsHTML(m, 'llm-techchip') : '') + '</span>' : '')
       // ATO-491: the best fit's reason under its blurb (the size moves here, said once).
       + (row.bestWhy ? '<span class="llm-best-why">' + esc(row.bestWhy) + '</span>' : '')
       + (disk.ok ? '' : '<span class="llm-best-why llm-disk-why">' + esc(disk.text) + '</span>')

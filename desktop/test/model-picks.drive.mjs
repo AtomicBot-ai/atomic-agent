@@ -210,11 +210,11 @@ try {
     small.picks[0].best && /Qwen 3\.5 4B/.test(small.picks[0].name), small.picks[0].name);
   check('a small model says plainly what it gives up, in one badge',
     small.picks[0].lines.length === 1 && small.picks[0].notes.length === 1
-      && /^A small model: quick, but weaker at long multi-step work\.$/.test(small.picks[0].notes[0]) && /Small model/.test(small.picks[0].name),
+      && /^A small model: quick, but weaker at long multi-step work\.$/.test(small.picks[0].notes[0]) && /Simple tasks/.test(small.picks[0].name),
     JSON.stringify(small.picks[0]));
   check('a tight fit is named as one, with this Mac’s RAM',
-    small.picks.some((p) => /Tight fit/.test(p.name) && p.notes.some((l) => /^Tight fit on 8 GB\. It will run slowly\.$/.test(l))),
-    JSON.stringify(small.picks.find((p) => /Tight fit/.test(p.name)) || {}));
+    small.picks.some((p) => /Slow on 8 GB/.test(p.name) && p.notes.some((l) => /^Tight fit on 8 GB\. It will run slowly\.$/.test(l))),
+    JSON.stringify(small.picks.find((p) => /Slow on 8 GB/.test(p.name)) || {}));
   check('every row has one facts line and at most one caution badge',
     small.picks.every((p) => p.lines.length === 1 && p.notes.length <= 1), JSON.stringify(small.picks.map((p) => [p.lines.length, p.notes.length])));
   check('a model that will not run says how much RAM it wants',
