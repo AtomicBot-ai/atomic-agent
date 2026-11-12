@@ -68,6 +68,8 @@ export interface TurnLoopState {
    * a step that completes without a cut resets it.
    */
   truncationRetries: number;
+  /** Retries of one step after a provider's time limit ended its reply. */
+  midReplyTimeoutRetry: { stepIndex: number; attempts: number } | null;
   /** The step index already retried after a request-size refusal. */
   sizeRepackRetry: { stepIndex: number } | null;
   /** The loop's own estimate of the last prompt built, for the repack fallback. */
@@ -119,6 +121,7 @@ export function createTurnLoopState(): TurnLoopState {
     oomRestarts: 0,
     truncationRetry: null,
     truncationRetries: 0,
+    midReplyTimeoutRetry: null,
     sizeRepackRetry: null,
     lastPromptTokens: 0,
     lastBoundaryIndex: -1,

@@ -619,6 +619,19 @@ export function createTraceRecorder(
             reason: event.reason,
           });
           return;
+        case "reply_time_limit_retried":
+          push({
+            type: "reply_time_limit_retried",
+            seq: nextSeq(),
+            sessionId,
+            ts: now(),
+            turnIndex: currentTurnIndex,
+            stepIndex: event.stepIndex,
+            attempt: event.attempt,
+            budget: event.budget,
+            reason: event.reason,
+          });
+          return;
         case "empty_completion_recovered":
           push({
             type: "empty_completion_recovered",

@@ -144,7 +144,7 @@ export function truncationRetryMaxTokens(
 }
 
 /** Asked of every cap-bound retry: the way out of a long reply. */
-const WRITE_IN_PARTS =
+export const WRITE_IN_PARTS =
   'If you are writing a large file, write it in parts: create it with the first part, then add the rest with os.fs.write mode "append" in the next steps.';
 
 /**

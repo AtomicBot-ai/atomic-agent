@@ -43,6 +43,7 @@ export type TraceEvent =
   | TraceCompletionTruncated
   | TracePromptRepacked
   | TraceParseFailureRecovered
+  | TraceReplyTimeLimitRetried
   | TraceEmptyCompletionRecovered
   | TraceLessonDeprecated
   | TraceVoteApplied
@@ -340,6 +341,19 @@ export interface TraceProviderWaiting extends TraceEventBase {
  */
 export interface TraceParseFailureRecovered extends TraceEventBase {
   type: "parse_failure_recovered";
+  turnIndex: number;
+  stepIndex: number;
+  attempt: number;
+  budget: number;
+  reason: string;
+}
+
+/**
+ * A provider time limit ended a long reply and the step was retried with
+ * a notice asking for a shorter one.
+ */
+export interface TraceReplyTimeLimitRetried extends TraceEventBase {
+  type: "reply_time_limit_retried";
   turnIndex: number;
   stepIndex: number;
   attempt: number;
