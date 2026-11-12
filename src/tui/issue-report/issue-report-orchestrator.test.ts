@@ -283,4 +283,79 @@ describe("IssueReportOrchestrator", () => {
     expect(trace).toContain("private prompt");
     expect(trace).toContain("sess-1");
   });
+
+  describe("support details (ATO-1466)", () => {
+    const ID = "11111111-2222-4333-8444-555555555555";
+
+    it("adds surface, channel and the support id, and the toggles rebuild the body", async () => {
+      const { orchestrator, bus, api } = make({
+        readSupportId: () => ID,
+        analyticsEnabled: () => true,
+        installChannel: () => "curl_sh",
+      });
+      orchestrator.open();
+      await orchestrator.pick("errors", state);
+      const first = (
+        bus.last("issue_report_previewed") as {
+          preview: { includeSupportId: boolean; includeLogs: boolean };
+        }
+      ).preview;
+      expect(first.includeSupportId).toBe(true);
+      expect(first.includeLogs).toBe(true);
+
+      orchestrator.toggle("supportId");
+      orchestrator.toggle("logs");
+      const second = (
+        bus.last("issue_report_previewed") as {
+          preview: { includeSupportId: boolean; includeLogs: boolean };
+        }
+      ).preview;
+      expect(second.includeSupportId).toBe(false);
+      expect(second.includeLogs).toBe(false);
+      await orchestrator.send();
+      const body = api.calls.find((c) => c.op === "issue")!.body;
+      expect(body).toContain("terminal · installed via curl_sh");
+      expect(body).not.toContain(ID);
+      expect(body).not.toContain("Warnings and errors");
+    });
+
+    it("with analytics off the id is offered but unticked", async () => {
+      const { orchestrator, bus, api } = make({
+        readSupportId: () => ID,
+        analyticsEnabled: () => false,
+        installChannel: () => "dmg",
+      });
+      orchestrator.open();
+      await orchestrator.pick("errors", state);
+      const preview = (
+        bus.last("issue_report_previewed") as {
+          preview: { supportId: string; includeSupportId: boolean };
+        }
+      ).preview;
+      expect(preview.supportId).toBe(ID);
+      expect(preview.includeSupportId).toBe(false);
+      orchestrator.toggle("supportId");
+      await orchestrator.send();
+      expect(api.calls.find((c) => c.op === "issue")!.body).toContain(
+        `| **Support ID** | ${ID} |`,
+      );
+    });
+
+    it("cannot tick an id that does not exist", async () => {
+      const { orchestrator, bus } = make({
+        readSupportId: () => null,
+        analyticsEnabled: () => true,
+        installChannel: () => "unknown",
+      });
+      orchestrator.open();
+      await orchestrator.pick("errors", state);
+      orchestrator.toggle("supportId");
+      const preview = (
+        bus.last("issue_report_previewed") as {
+          preview: { includeSupportId: boolean };
+        }
+      ).preview;
+      expect(preview.includeSupportId).toBe(false);
+    });
+  });
 });

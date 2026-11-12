@@ -224,6 +224,12 @@ describe("dispatchSlashCommand", () => {
     expect(result.systemMessage).toBeUndefined();
   });
 
+  it("treats /bug as an alias of /report (ATO-1466)", () => {
+    const result = dispatchSlashCommand("/bug");
+    expect(result.triggerIssueReport).toBe(true);
+    expect(result.systemMessage).toBeUndefined();
+  });
+
   it("signals triggerDebugBundleDump for /dump", () => {
     const result = dispatchSlashCommand("/dump");
     expect(result.triggerDebugBundleDump).toBe(true);

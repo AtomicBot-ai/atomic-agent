@@ -56,6 +56,7 @@ export {
   resolveSharedInstallId,
   resolveSharedInstallIdPath,
 } from "./resolve-shared-install-id.js";
+export { readSupportId } from "./read-support-id.js";
 export {
   ANALYTICS_KILL_SWITCH_ENV,
   DO_NOT_TRACK_ENV,

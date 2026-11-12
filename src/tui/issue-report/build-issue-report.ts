@@ -35,6 +35,12 @@ export interface IssueReportFacts {
   approvalLevel: number;
   codingMode: string;
   capturedAt: string;
+  /** `terminal` (ATO-1466); the desktop builds its own issue body. */
+  surface?: string;
+  /** How this copy was installed (`curl_sh`, `dmg`, `deb`, …, `unknown`). */
+  installChannel?: string;
+  /** Local engine and its build (`atomic-core b1234`), or `cloud`. */
+  engine?: string | null;
 }
 
 export interface IssueReport {
@@ -56,8 +62,18 @@ export function buildIssueReport(input: {
   facts: IssueReportFacts;
   level: IssueReportLevel;
   redaction: RedactionContext;
+  /**
+   * The support id (anonymous install id, ATO-1466), shown in the
+   * header so a report can be matched to PostHog and Sentry. `null` or
+   * absent leaves it out: the operator unticked it, or analytics is off.
+   * Never put in the zip's snapshot.
+   */
+  supportId?: string | null;
+  /** `false` leaves the log section out of the issue (it stays in the zip). */
+  includeLogs?: boolean;
 }): IssueReport {
   const { snapshot, facts, level, redaction } = input;
+  const includeLogs = input.includeLogs ?? true;
   // Both reduced levels mask absolute paths: `redactPersonal` only knows
   // the home and working directories, so a path into another project —
   // or one the model mistyped, which end-to-end testing turned up — sails
@@ -94,7 +110,13 @@ export function buildIssueReport(input: {
     }));
 
   const title = buildTitle(lastRunStatus, safeFacts);
-  const header = buildHeader(title, safeFacts, level, snapshot);
+  const header = buildHeader(
+    title,
+    safeFacts,
+    level,
+    snapshot,
+    input.supportId ?? null,
+  );
   const sections: ReportSection[] = [];
 
   if (runs.length > 0) {
@@ -111,16 +133,18 @@ export function buildIssueReport(input: {
       collapsed: true,
     });
   }
-  sections.push({
-    title:
-      level === "errors"
-        ? `Warnings and errors (${logs.length})`
-        : `Logs (${logs.length})`,
-    body: logs.length > 0 ? logs.map(formatLog).join("\n") : "(none)",
-    fenced: true,
-    lang: "text",
-    collapsed: true,
-  });
+  if (includeLogs) {
+    sections.push({
+      title:
+        level === "errors"
+          ? `Warnings and errors (${logs.length})`
+          : `Logs (${logs.length})`,
+      body: logs.length > 0 ? logs.map(formatLog).join("\n") : "(none)",
+      fenced: true,
+      lang: "text",
+      collapsed: true,
+    });
+  }
 
   const filtered: Record<string, unknown> = {
     level,
@@ -205,6 +229,7 @@ function buildHeader(
   facts: IssueReportFacts,
   level: IssueReportLevel,
   snapshot: DebugBundleSnapshot,
+  supportId: string | null,
 ): string {
   const info = issueReportLevelInfo(level);
   const rows: [string, string][] = [
@@ -214,6 +239,16 @@ function buildHeader(
       "Provider",
       `${facts.providerLabel}${facts.textModel ? ` · ${facts.textModel}` : ""} (${facts.toolTransport})`,
     ],
+    ...(facts.engine ? [["Engine", facts.engine] as [string, string]] : []),
+    ...(facts.surface
+      ? [
+          [
+            "Surface",
+            `${facts.surface}${facts.installChannel ? ` · installed via ${facts.installChannel}` : ""}`,
+          ] as [string, string],
+        ]
+      : []),
+    ...(supportId ? [["Support ID", supportId] as [string, string]] : []),
     ["Approval level", `${facts.approvalLevel} · mode ${facts.codingMode}`],
     ["Last run", snapshot.lastRunStatus === null ? "—" : "see below"],
     ["Captured", facts.capturedAt],

@@ -753,6 +753,8 @@ export async function tuiCommand(args: string[]): Promise<number> {
         onIssueReportPickRequested: (level, state) =>
           void orchestrator.issueReport.pick(level, state),
         onIssueReportSendRequested: () => void orchestrator.issueReport.send(),
+        onIssueReportToggleRequested: (option) =>
+          orchestrator.issueReport.toggle(option),
         onIssueReportCloseRequested: () => orchestrator.issueReport.close(),
         onLocalModelsAutoRefreshStart: () =>
           orchestrator.localModels.startAutoRefresh(),

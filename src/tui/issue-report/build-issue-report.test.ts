@@ -259,4 +259,90 @@ describe("buildIssueReport", () => {
     });
     expect(report.title).toBe("Issue report from atomic-agent v0.5.6");
   });
+
+  describe("support details (ATO-1466)", () => {
+    const ID = "11111111-2222-4333-8444-555555555555";
+    const MORE: IssueReportFacts = {
+      ...FACTS,
+      surface: "terminal",
+      installChannel: "curl_sh",
+      engine: "atomic-core b1234",
+    };
+
+    it("puts version, OS, model, engine, surface, channel and id in the header", () => {
+      const report = buildIssueReport({
+        snapshot: snapshot(),
+        facts: MORE,
+        level: "errors",
+        redaction: { homeDir: HOME, workingDir: CWD },
+        supportId: ID,
+      });
+      expect(report.header).toContain("| **Version** | 0.5.6 |");
+      expect(report.header).toContain("darwin arm64");
+      expect(report.header).toContain("openrouter · ~/models/qwen3.gguf");
+      expect(report.header).toContain("| **Engine** | atomic-core b1234 |");
+      expect(report.header).toContain(
+        "| **Surface** | terminal · installed via curl_sh |",
+      );
+      expect(report.header).toContain(`| **Support ID** | ${ID} |`);
+      // The id is for the issue only, not the zip.
+      expect(JSON.stringify(report.snapshot)).not.toContain(ID);
+    });
+
+    it("leaves the id out when it is unticked or analytics is off", () => {
+      for (const supportId of [null, undefined]) {
+        const report = buildIssueReport({
+          snapshot: snapshot(),
+          facts: MORE,
+          level: "errors",
+          redaction: { homeDir: HOME, workingDir: CWD },
+          supportId,
+        });
+        expect(report.header).not.toContain("Support ID");
+        expect(report.header).not.toContain(ID);
+      }
+    });
+
+    it("drops the log section when the log tail is unticked", () => {
+      const report = buildIssueReport({
+        snapshot: snapshot(),
+        facts: MORE,
+        level: "scrubbed",
+        redaction: { homeDir: HOME, workingDir: CWD },
+        includeLogs: false,
+      });
+      const titles = report.sections.map((x) => x.title);
+      expect(titles.some((t) => t.startsWith("Logs"))).toBe(false);
+      expect(titles.some((t) => t.startsWith("Runtime feed"))).toBe(true);
+    });
+
+    it("scrubs a key, a Bearer token, an email and another user's home from the log tail", () => {
+      const KEY = `sk-ant-${"k".repeat(40)}`;
+      const BEARER = `Bearer ${"b".repeat(40)}`;
+      const snap = snapshot();
+      snap.logs = [
+        {
+          level: "error",
+          message: `call failed with ${KEY} and Authorization: ${BEARER} for alice@example.com in /Users/alice/proj/x.ts`,
+          timestamp: 9,
+        },
+      ];
+      for (const level of ["errors", "scrubbed"] as const) {
+        const report = buildIssueReport({
+          snapshot: snap,
+          facts: MORE,
+          level,
+          redaction: { homeDir: HOME, workingDir: CWD },
+          supportId: ID,
+        });
+        const md = report.sections.map(renderSection).join("\n");
+        expect(md).toContain("call failed with");
+        expect(md).not.toContain(KEY);
+        expect(md).not.toContain("b".repeat(40));
+        expect(md).not.toContain("alice@example.com");
+        expect(md).not.toContain("/Users/alice");
+        expect(md).not.toContain("Conversation");
+      }
+    });
+  });
 });

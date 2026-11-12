@@ -25,7 +25,16 @@ export interface IssueReportPreview {
   comments: number;
   /** Section titles that stay zip-only. */
   overflow: readonly string[];
+  /** The support id found on disk, `null` when there is none (ATO-1466). */
+  supportId?: string | null;
+  /** "Include support ID" — on by default, off with analytics off. */
+  includeSupportId?: boolean;
+  /** "Include log tail" — on by default. */
+  includeLogs?: boolean;
 }
+
+/** The two checkboxes of the confirm step (ATO-1466). */
+export type IssueReportToggle = "supportId" | "logs";
 
 export interface IssueReportState {
   step: IssueReportStep;

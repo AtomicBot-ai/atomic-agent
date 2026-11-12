@@ -35,6 +35,7 @@ function ctx(state: TuiState) {
     onQuit: vi.fn(),
     onIssueReportPickRequested: vi.fn(),
     onIssueReportSendRequested: vi.fn(),
+    onIssueReportToggleRequested: vi.fn(),
     onIssueReportCloseRequested: vi.fn(),
   };
   const c = {
@@ -163,5 +164,16 @@ describe("issue-report popup keys", () => {
       handleAppKey("x", KEY, c);
       expect(dispatch).toHaveBeenCalledWith({ type: "issue_report_closed" });
     }
+  });
+
+  it("i and l flip the checkboxes on the confirm step without sending (ATO-1466)", () => {
+    const { c, callbacks } = ctx(withReport(report("confirm")));
+    handleAppKey("i", KEY, c);
+    handleAppKey("l", KEY, c);
+    expect(callbacks.onIssueReportToggleRequested.mock.calls).toEqual([
+      ["supportId"],
+      ["logs"],
+    ]);
+    expect(callbacks.onIssueReportSendRequested).not.toHaveBeenCalled();
   });
 });
