@@ -62,6 +62,16 @@ describe("sanitizeLlmFailureTags", () => {
     });
   });
 
+  it("sends the managed engine's fault as a fixed word, never anything else (ATO-1279)", () => {
+    expect(sanitizeLlmFailureTags({ localEngine: "llama-server", localFault: "out_of_memory" })).toEqual({
+      local_engine: "llama-server",
+      local_fault: "out_of_memory",
+    });
+    expect(sanitizeLlmFailureTags({ localFault: "server_crashed" })).toEqual({ local_fault: "server_crashed" });
+    expect(sanitizeLlmFailureTags({ localFault: "GGML_ASSERT in /Users/me/src" })).toEqual({ local_fault: "unknown" });
+    expect(sanitizeLlmFailureTags({ localEngine: "external", localFault: "none" })).toEqual({ local_engine: "external" });
+  });
+
   it("returns undefined when there is nothing to tag", () => {
     expect(sanitizeLlmFailureTags(undefined)).toBeUndefined();
     expect(sanitizeLlmFailureTags({})).toBeUndefined();

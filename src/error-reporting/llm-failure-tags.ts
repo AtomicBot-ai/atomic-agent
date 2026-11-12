@@ -50,6 +50,12 @@ export interface LlmFailureContext {
    * holds the port. Sent as `port_holder: other_process`.
    */
   portHeldByOther?: boolean;
+  /**
+   * The managed engine's fault in its current run, read from its log by
+   * fixed strings (ATO-1279): `out_of_memory` / `server_crashed` /
+   * `decode_failed` / `none` / `unknown`. Sent as `local_fault`.
+   */
+  localFault?: string;
 }
 
 /**
@@ -89,6 +95,13 @@ const ENGINE_LOCK_STATES: ReadonlySet<string> = new Set([
   "stale_before_boot",
   "stale_no_owner",
   "probe_failed",
+]);
+const LOCAL_FAULTS: ReadonlySet<string> = new Set([
+  "out_of_memory",
+  "server_crashed",
+  "decode_failed",
+  "none",
+  "unknown",
 ]);
 const ENGINE_ALIVE: ReadonlyMap<string, LocalEngineAlive> = new Map([
   ["alive", "yes"],
@@ -206,6 +219,8 @@ function safeCount(value: number): string {
  * and `engine_lock`: why the wait judged the process as it did (ATO-1275).
  * A 401 on the managed port with our engine not running adds
  * `port_holder: other_process` (ATO-1277).
+ * A managed engine's failure adds `local_fault`, a fixed word read from
+ * its log (ATO-1279).
  */
 export function sanitizeLlmFailureTags(
   context: LlmFailureContext | undefined,
@@ -226,6 +241,9 @@ export function sanitizeLlmFailureTags(
   }
   if (context.daemonState !== undefined && tags.local_engine !== "external") {
     tags.daemon_state = fromVocabulary(context.daemonState, DAEMON_STATES);
+  }
+  if (context.localFault !== undefined && tags.local_engine !== "external") {
+    tags.local_fault = fromVocabulary(context.localFault, LOCAL_FAULTS);
   }
   if (context.requestUrl !== undefined) {
     tags.request_route = classifyRequestRoute(context.requestUrl);

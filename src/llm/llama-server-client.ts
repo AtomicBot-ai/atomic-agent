@@ -386,7 +386,7 @@ export class LlamaServerError extends Error {
      * that both surface as `status === null`.
      */
     public readonly code: string | undefined = undefined,
-    options?: { cause?: unknown; body?: LlamaErrorBody },
+    options?: { cause?: unknown; body?: LlamaErrorBody; midStream?: boolean },
   ) {
     super(message);
     this.name = "LlamaServerError";
@@ -394,7 +394,17 @@ export class LlamaServerError extends Error {
       (this as { cause?: unknown }).cause = options.cause;
     }
     if (options?.body !== undefined) this.body = options.body;
+    this.midStream = options?.midStream === true;
   }
+
+  /**
+   * The server ended a stream after answering it (ATO-1279): the
+   * connection broke while the body was being read, or llama-server
+   * reported an error event inside the stream. Never set for one of our
+   * own deadlines (`timedOut`) or for the caller's abort. The agent loop
+   * retries such a step once on a managed model that is still alive.
+   */
+  readonly midStream: boolean;
 
   /**
    * The reason code out of an HTTP error body, when llama.cpp sent one
@@ -1096,6 +1106,24 @@ export class LlamaServerClient {
         while (eventEnd !== -1) {
           const rawEvent = buffer.slice(0, eventEnd);
           buffer = buffer.slice(eventEnd + 2);
+          // llama-server reports a failure after the stream opened as an
+          // error event (ATO-1279), not as a status: read it as one
+          // instead of letting the stream end as an empty reply.
+          const streamError = parseSseErrorEvent(rawEvent);
+          if (streamError !== null) {
+            throw new LlamaServerError(
+              `llama-server reported an error mid-stream (http ${streamError.status})` +
+                (streamError.detail ? `: ${streamError.detail}` : ""),
+              streamError.status,
+              url,
+              false,
+              undefined,
+              {
+                ...(streamError.type !== undefined ? { body: { type: streamError.type } } : {}),
+                midStream: true,
+              },
+            );
+          }
           const parsed = parseSseEvent(rawEvent);
           if (parsed && takePromptProgress(parsed, request.onPromptProgress)) {
             eventEnd = buffer.indexOf("\n\n");
@@ -1155,7 +1183,21 @@ export class LlamaServerClient {
       }
       return finalResult;
     } catch (err) {
-      throw this.wrapTransportError(err, url, timedOut());
+      const wrapped = this.wrapTransportError(err, url, timedOut());
+      // The body was open and the connection broke under it: the server
+      // cut the reply, not our clock and not the caller (ATO-1279).
+      if (
+        reader !== null &&
+        !(err instanceof LlamaServerError) &&
+        !wrapped.timedOut &&
+        request.signal?.aborted !== true
+      ) {
+        throw new LlamaServerError(wrapped.message, wrapped.status, wrapped.url, false, wrapped.code, {
+          cause: err,
+          midStream: true,
+        });
+      }
+      throw wrapped;
     } finally {
       // Release the transport, whatever ended this generator.
       //
@@ -1785,6 +1827,56 @@ export class LlamaServerClient {
     throw lastError instanceof Error
       ? lastError
       : new LlamaServerError(String(lastError), null, url);
+  }
+}
+
+/**
+ * An error llama-server reported inside an open stream, or null. Two
+ * shapes: an `error:` event line carrying `{code, message, type}`, and a
+ * `data:` payload whose `error` is an object or a string. The status is
+ * the event's numeric `code`, else 500. The detail is capped like an
+ * HTTP error body's.
+ */
+export function parseSseErrorEvent(
+  rawEvent: string,
+): { status: number; detail: string; type?: string } | null {
+  for (const line of rawEvent.split("\n")) {
+    let payload: unknown;
+    if (line.startsWith("error:")) {
+      const text = line.slice(6).trim();
+      payload = tryParseJson(text);
+      if (payload === null || typeof payload !== "object") {
+        return { status: 500, detail: extractLlamaErrorDetail(typeof payload === "string" ? payload : text) };
+      }
+    } else if (line.startsWith("data:")) {
+      const parsed = tryParseJson(line.slice(5).trim());
+      if (parsed === null || typeof parsed !== "object" || !("error" in parsed)) continue;
+      payload = (parsed as { error?: unknown }).error;
+      if (typeof payload === "string") return { status: 500, detail: extractLlamaErrorDetail(payload) };
+      if (payload === null || typeof payload !== "object") continue;
+    } else {
+      continue;
+    }
+    // `{code, message, type}`, or the same wrapped in `error`.
+    const outer = payload as Record<string, unknown>;
+    const inner = outer["error"];
+    const record =
+      inner !== null && typeof inner === "object" ? (inner as Record<string, unknown>) : outer;
+    const code = record["code"];
+    const status =
+      typeof code === "number" && Number.isInteger(code) && code >= 400 && code < 600 ? code : 500;
+    const type = typeof record["type"] === "string" ? record["type"] : undefined;
+    const detail = extractLlamaErrorDetail(JSON.stringify({ error: record }));
+    return { status, detail, ...(type !== undefined ? { type } : {}) };
+  }
+  return null;
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
   }
 }
 

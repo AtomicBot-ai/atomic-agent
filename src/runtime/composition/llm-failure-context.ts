@@ -6,9 +6,13 @@ import { readFailingLink } from "../../llm/fallback/index.js";
 import { findLocalPortTaken } from "../../llm/reliability/local-port-taken.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import {
+  classifyLocalFault,
   explainManagedEngineLiveness,
   readChatDaemonPidState,
+  readLogTail,
+  resolveLogFilePath,
   type ChatDaemonPidState,
+  type LocalFaultTag,
   type ManagedEngineLiveness,
   type ManagedEngineLivenessReport,
 } from "../../local-llm/index.js";
@@ -28,12 +32,27 @@ export interface LlmFailureContextDeps {
    * as read (ATO-1275). Preferred over `readEngineLiveness` when given.
    */
   explainEngineLiveness?: (dataDir: string) => ManagedEngineLivenessReport;
+  /**
+   * The managed engine's fault in its current run, as a fixed word read
+   * from its log (ATO-1279). The log text stays on the machine. Absent
+   * means no `localFault` is reported.
+   */
+  readLocalFault?: (dataDir: string) => LocalFaultTag;
+}
+
+/** How much of the managed engine's log the fault tag reads. */
+const LOCAL_FAULT_LOG_BYTES = 64 * 1024;
+
+/** The current run's fault, by fixed strings, from the tail of the engine's log. */
+export function readLocalFaultFromLog(dataDir: string): LocalFaultTag {
+  return classifyLocalFault(readLogTail(resolveLogFilePath(dataDir), LOCAL_FAULT_LOG_BYTES).text);
 }
 
 const defaultDeps: LlmFailureContextDeps = {
   readConfig: getConfig,
   readDaemonPidState: readChatDaemonPidState,
   explainEngineLiveness: explainManagedEngineLiveness,
+  readLocalFault: readLocalFaultFromLog,
 };
 
 /**
@@ -84,6 +103,16 @@ export function describeLlmFailure(
   } catch {
     context.daemonState = "unknown";
   }
+  // Why the managed model failed, when its log says (out of memory, a
+  // crash): without it an alive engine answering 500 or cutting a stream
+  // has no cause in the report at all (ATO-1279).
+  if (context.providerId === MANAGED_LOCAL_LINK && deps.readLocalFault !== undefined) {
+    try {
+      context.localFault = deps.readLocalFault(config.paths.localModelsDataDir);
+    } catch {
+      context.localFault = "unknown";
+    }
+  }
   if (connectionRefused && deps.explainEngineLiveness !== undefined) {
     try {
       const report = deps.explainEngineLiveness(config.paths.localModelsDataDir);
@@ -102,6 +131,9 @@ export function describeLlmFailure(
   }
   return context;
 }
+
+/** The built-in managed local link, the only one whose log is ours to read. */
+const MANAGED_LOCAL_LINK = "local-llama";
 
 /** How far down `cause` the request URL is looked for. */
 const MAX_URL_CAUSE_DEPTH = 4;

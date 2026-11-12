@@ -579,6 +579,41 @@ export function recoverTurnStep(
   // buys a second helping of the same silence — see
   // `isOwnLlamaDeadlineExpiry`.
   const retryHint = verdict?.kind === "retry_after" ? verdict : null;
+  // The managed local model is running but cut this step's reply off
+  // mid-stream (ATO-1279): the connection broke while the body was read,
+  // or llama-server sent an error event (a 5xx) inside the stream. Not an
+  // outage to wait out, since the model is up; retry the step once. Same
+  // replay argument as the outage wait below: a completion failure throws
+  // before any tool is dispatched, so nothing of the step was committed.
+  // What the cut attempt had streamed was only a preview, and the
+  // surfaces already showed the failure (`step_error`). After the out-of-
+  // memory check above, which handles a cut that is a full memory, and
+  // never for a cancelled turn or one of our own deadlines. A second cut
+  // on the same step ends the turn instead of waiting.
+  let localStreamCutRepeated = false;
+  if (
+    category === "transport" &&
+    !cancelled &&
+    !creditRefused &&
+    deps.localEngineState !== undefined &&
+    isServerStreamCut(err)
+  ) {
+    const failingLink = readFailingLink(err);
+    if (deps.localEngineState(failingLink) === "alive") {
+      if (turn.localStreamCutRetry?.stepIndex !== i) {
+        turn.localStreamCutRetry = { stepIndex: i };
+        deps.logger?.warn("local model cut the reply mid-stream; retrying the step once", {
+          sessionId: state.id,
+          stepIndex: i,
+          error: runError.message,
+          ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+        });
+        runError = null;
+        return { kind: "retry_same" };
+      }
+      localStreamCutRepeated = true;
+    }
+  }
   // Before parking: is the thing we would wait for coming back at all?
   // A refused connection to the managed local model whose process is
   // certainly gone (pid dead, or none recorded, and no start, load or
@@ -655,6 +690,7 @@ export function recoverTurnStep(
     !cancelled &&
     !creditRefused &&
     !localEngineDown &&
+    !localStreamCutRepeated &&
     providerWaitCfg.enabled &&
     (isWaitableOutage(err) || retryHint !== null) &&
     turn.outageWaitedMs < providerWaitCfg.maxWaitMs
@@ -862,6 +898,27 @@ function findLlamaUnauthorized(err: unknown): LlamaServerError | null {
 function isServerErrorAnswer(err: unknown): boolean {
   if (!(err instanceof TransportError) && !(err instanceof LlamaServerError)) return false;
   return err.status !== null && err.status >= 500;
+}
+
+/**
+ * The server ended a stream it had answered (`LlamaServerError.midStream`):
+ * a broken connection, or a 5xx error event inside the stream. A 4xx
+ * event (a full context, say) keeps its own handling, and our own
+ * deadlines never carry the flag.
+ */
+function isServerStreamCut(err: unknown): boolean {
+  let current: unknown = err;
+  for (let depth = 0; depth < 8 && current instanceof Error; depth += 1) {
+    if (current instanceof LlamaServerError) {
+      return (
+        current.midStream &&
+        !current.timedOut &&
+        (current.status === null || current.status >= 500)
+      );
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return false;
 }
 
 /**
