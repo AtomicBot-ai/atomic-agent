@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  createWebCrawlDefaults,
   createWebFetchDefaults,
   createWebSearchDefaults,
+  parseWebCrawlConfig,
   parseWebFetchConfig,
   parseWebSearchConfig,
   parseWebSearchFallback,
@@ -199,7 +201,13 @@ describe("web configuration ownership and compatibility", () => {
         get search() { return noSearchDefaults(); },
         get fetch() { return noFetchDefaults(); },
       };
-      expect(parseUserConfigFile({ web: { search, fetch } }).web).toStrictEqual({ search, fetch });
+      // `web.crawl` (ATO-970) falls back to its own factory when the
+      // replaced defaults object carries none.
+      expect(parseUserConfigFile({ web: { search, fetch } }).web).toStrictEqual({
+        search,
+        fetch,
+        crawl: createWebCrawlDefaults(),
+      });
     } finally {
       USER_CONFIG_DEFAULTS.web = originalWeb;
     }
@@ -276,5 +284,41 @@ describe("web configuration ownership and compatibility", () => {
     } finally {
       USER_CONFIG_DEFAULTS.web = originalWeb;
     }
+  });
+});
+
+describe("web.crawl configuration (ATO-970)", () => {
+  const parseCrawl = (raw: Record<string, unknown>) =>
+    parseWebCrawlConfig(raw, createWebCrawlDefaults);
+
+  it("ships conservative defaults: one request a second, 50 pages, depth 2, robots.txt on", () => {
+    expect(createWebCrawlDefaults()).toEqual({
+      minDelayMs: 1_000,
+      maxPages: 50,
+      maxDepth: 2,
+      respectRobots: true,
+      robotsExemptHosts: [],
+      cacheTtlMinutes: 15,
+    });
+    expect(USER_CONFIG_DEFAULTS.web.crawl).toEqual(createWebCrawlDefaults());
+    expect(parseUserConfigFile({}).web.crawl).toEqual(createWebCrawlDefaults());
+  });
+
+  it("reads overrides and lower-cases exempt hosts", () => {
+    expect(
+      parseCrawl({ minDelayMs: 2_500, maxPages: 10, maxDepth: 0, respectRobots: false, robotsExemptHosts: [" MySite.dev "], cacheTtlMinutes: 0 }),
+    ).toEqual({ minDelayMs: 2_500, maxPages: 10, maxDepth: 0, respectRobots: false, robotsExemptHosts: ["mysite.dev"], cacheTtlMinutes: 0 });
+  });
+
+  it.each([
+    [{ maxPages: 0 }, "web.crawl.maxPages"],
+    [{ maxPages: 501 }, "web.crawl.maxPages"],
+    [{ maxDepth: 11 }, "web.crawl.maxDepth"],
+    [{ minDelayMs: -1 }, "web.crawl.minDelayMs"],
+    [{ respectRobots: "maybe" }, "web.crawl.respectRobots"],
+    [{ robotsExemptHosts: "mysite.dev" }, "web.crawl.robotsExemptHosts"],
+    [{ robotsExemptHosts: [""] }, "web.crawl.robotsExemptHosts[0]"],
+  ])("rejects %j at %s", (raw, field) => {
+    expect(thrownError(() => parseCrawl(raw))).toMatchObject({ field });
   });
 });

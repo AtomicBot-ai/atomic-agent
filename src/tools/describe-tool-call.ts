@@ -317,6 +317,7 @@ function phraseFor(name: string, a: Record<string, unknown>): Phrase {
       return P(V.focused, app ? clip(app, 40) : "a window");
     }
     case "os.web.fetch":
+    case "os.web.crawl":
     case "browser.navigate": {
       const u = str(a.url);
       return P(V.opened, u ? host(u) : "a web page");
@@ -445,7 +446,7 @@ function bucketOf(name: string): Bucket {
   if (/^os\.fs\.(write|edit|patch|move|trash|restore|archive\.extract)$/.test(name)) return "edit";
   if (name === "os.shell.run" || name.startsWith("os.git.") || name === "skill.run_script" || name === "verify.run") return "command";
   if (WEB_SEARCH.has(name)) return "web";
-  if (name === "os.web.fetch" || name === "browser.navigate" || name === "os.http.request") return "page";
+  if (name === "os.web.fetch" || name === "os.web.crawl" || name === "browser.navigate" || name === "os.http.request") return "page";
   if (name.startsWith("memory.")) return "memory";
   return "other";
 }

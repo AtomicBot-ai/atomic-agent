@@ -95,6 +95,12 @@ Checked snapshot of primitive USER_CONFIG_DEFAULTS values for config version 79.
 - `web.fetch.maxRetries` (default `2`).
 - `web.fetch.retryBaseDelayMs` (default `500`).
 - `web.fetch.retryMaxDelayMs` (default `5000`).
+- `web.crawl.minDelayMs` (default `1000`): smallest gap between two `os.web.crawl` requests to one host; a longer robots.txt `Crawl-delay` wins, up to 30 seconds.
+- `web.crawl.maxPages` (default `50`): hard cap on pages one crawl reads.
+- `web.crawl.maxDepth` (default `2`): hard cap on link depth from the start page.
+- `web.crawl.respectRobots` (default `true`): obey robots.txt.
+- `web.crawl.robotsExemptHosts` (default `[]`): your own sites, where robots.txt is not applied (`*.example.com` covers subdomains). The rate limit still applies.
+- `web.crawl.cacheTtlMinutes` (default `15`): how long fetched pages and robots.txt are reused.
 
 ## tools
 

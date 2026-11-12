@@ -627,6 +627,7 @@ describe("registerOsTools", () => {
         "os.shell.run",
         "os.web.search",
         "os.web.fetch",
+        "os.web.crawl",
         "os.window.focus",
         "os.window.list",
       ].sort(),

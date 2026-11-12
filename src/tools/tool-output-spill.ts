@@ -61,6 +61,7 @@ export const SPILL_TOOLS: ReadonlySet<string> = new Set([
   "os.proc.list",
   // Public pages read with GET and no auth headers (ATO-913).
   "os.web.fetch",
+  "os.web.crawl",
 ]);
 
 /** Largest file one result writes; longer output keeps its head and says so. */

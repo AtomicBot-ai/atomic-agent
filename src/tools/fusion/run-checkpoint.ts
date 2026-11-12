@@ -71,6 +71,7 @@ const REPEAT_SAFE_TOOLS: ReadonlySet<string> = new Set([
   "skill.view",
   "os.web.search",
   "os.web.fetch",
+  "os.web.crawl",
   "os.git.status",
   "os.git.log",
   "os.git.diff",

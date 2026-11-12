@@ -49,6 +49,7 @@ export const FIXED_CONFIG_BRANCHES: ReadonlySet<string> = new Set([
   "web.search.exa",
   "web.search.brave",
   "web.fetch",
+  "web.crawl",
   "projects",
   "tools",
   "tools.shell",

@@ -305,6 +305,17 @@ export const DEFAULT_TOOL_DESCRIPTORS_A: readonly ToolDescriptor[] = [
       '{"url":"https://docs.example.com/guide","extractMode":"text","maxChars":20000}',
     ],
   },
+  {
+    name: "os.web.crawl",
+    summary:
+      "Read several pages of one site: same-site links from the start URL (breadth first) plus its sitemap.xml, each page as markdown/text. Polite: about one request per second per site, backs off on 429, obeys robots.txt. Use for 'read the whole docs' or 'find every page about X on this site'; for one page use os.web.fetch.",
+    argsSchema: `{ url: string, maxPages?: number, maxDepth?: number, pathPrefix?: string, useSitemap?: boolean, extractMode?: "markdown" | "text", maxCharsPerPage?: number }`,
+    examples: [
+      '{"url":"https://docs.example.com/","pathPrefix":"/guide/","maxPages":30}',
+      '{"url":"https://example.com/pricing","maxDepth":1}',
+    ],
+    tier: "rare",
+  },
   // Appended rather than placed beside the other os.fs entries: the
   // frozen Git duplicates above are pinned by catalog position
   // (`tool-contract-conformance.test.ts`), and a rare tool renders as
