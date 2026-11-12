@@ -43,12 +43,14 @@ export function handleLlmLocalPaneKey(
     return true;
   }
 
-  // `x` stops the download in flight — chat first, then embedding — and
-  // keeps what it fetched: Enter on the row resumes it.
-  if (input === "x") {
+  // `p` pauses the download in flight — chat first, then embedding —
+  // and keeps what it fetched: Enter on the row resumes it. `x` cancels
+  // it and deletes the partial.
+  if (input === "p" || input === "x") {
     const kind = panel.pull ? "chat" : panel.embeddingPull ? "embedding" : null;
     if (!kind) return null;
-    callbacks.onLocalModelsPullCancelRequested?.(kind);
+    if (input === "p") callbacks.onLocalModelsPullPauseRequested?.(kind);
+    else callbacks.onLocalModelsPullCancelRequested?.(kind);
     return true;
   }
   // `G` / `U` are pane-wide and ignore the cursor row. On shift so `G`

@@ -15,7 +15,9 @@ import { apiKeyForUrl } from "../../local-llm/server/managed-api-key.js";
 import {
   DEFAULT_EMBEDDING_MODEL_ID,
   DEFAULT_LLAMACPP_MODEL_ID,
+  cancelDownloadJob,
   downloadBackend,
+  pauseDownloadJob,
   downloadJobId,
   listDownloadJobs,
   isDownloadJobStale,
@@ -289,6 +291,13 @@ export class LocalModelsOrchestrator {
     DownloadJobKind,
     { jobId: string; detach: () => void }
   >();
+  /**
+   * Jobs this TUI is stopping on the operator's word, and why. The
+   * watcher reads the worker's interim record (`cancelled`, or on
+   * Windows `interrupted`) through this, so a pause is reported as a
+   * pause and a stopped worker is never relaunched as if it had died.
+   */
+  private readonly stoppingDownloads = new Map<string, "pause" | "cancel">();
   /**
    * A ping the operator asked for on a channel that had no credentials
    * yet. Armed the moment the Integrations hub has them — the watch
@@ -703,11 +712,11 @@ export class LocalModelsOrchestrator {
           : "mmproj-only";
         const watched = await this.runDownloadJob("chat", id, workerMode, opts);
         if (watched.outcome === "detached") return;
-        if (watched.outcome === "cancelled") {
+        if (watched.outcome === "cancelled" || watched.outcome === "paused") {
           this.bus.emit({
             type: "local_models_pull_failed",
             kind: "chat",
-            error: describeCancelledPull(watched.job),
+            error: describeStoppedPull(watched.outcome, watched.job),
           });
           return;
         }
@@ -958,11 +967,16 @@ export class LocalModelsOrchestrator {
     modelId: string,
     mode: DownloadJobMode,
     opts?: PullOptions,
-  ): Promise<{ outcome: "done" | "cancelled" | "detached"; job: DownloadJob }> {
+  ): Promise<{
+    outcome: "done" | "cancelled" | "paused" | "detached";
+    job: DownloadJob;
+  }> {
     const dataDir = getConfig().paths.localModelsDataDir;
     const spawn = this.hooks?.spawnDownload ?? spawnDownloadWorker;
     let launched = spawn({ dataDir, kind, modelId, mode });
     const jobId = launched.job.id;
+    // A fresh pull is not the stop an earlier one was asked for.
+    this.stoppingDownloads.delete(jobId);
 
     this.watchedDownloads.get(kind)?.detach();
     let detached = false;
@@ -1058,6 +1072,13 @@ export class LocalModelsOrchestrator {
         }
         last = job;
         if (job.status === "running") continue;
+        const stopping = this.stoppingDownloads.get(jobId);
+        if (job.status === "paused" || (stopping === "pause" && job.status !== "done")) {
+          return { outcome: "paused", job };
+        }
+        if (stopping === "cancel" && job.status !== "done") {
+          return { outcome: "cancelled", job };
+        }
         this.reportNotified(job);
         if (job.status === "interrupted" && !respawned) {
           // Once: the worker died (or went silent) under a watcher that
@@ -1083,6 +1104,7 @@ export class LocalModelsOrchestrator {
     } finally {
       if (this.watchedDownloads.get(kind) === watch) {
         this.watchedDownloads.delete(kind);
+        this.stoppingDownloads.delete(jobId);
       }
       // A ping that never got its credentials was about *these*
       // downloads; it must not fire, months later, for some other one.
@@ -1242,11 +1264,26 @@ export class LocalModelsOrchestrator {
   }
 
   /**
-   * `x` in the Models tab: stop the download being watched, keeping
-   * its partial file. The watcher sees the worker's `cancelled` record
-   * and reports it with the resume hint.
+   * `x` in the Models tab: stop the download being watched and delete
+   * its partial file. The watcher reports it as cancelled.
    */
   async cancelPull(kind: DownloadJobKind): Promise<void> {
+    await this.stopPull(kind, "cancel");
+  }
+
+  /**
+   * `p` in the Models tab: stop the download being watched and keep its
+   * partial file. The job stays `paused` across restarts — nothing
+   * resumes it by itself — and Enter on the row continues it.
+   */
+  async pausePull(kind: DownloadJobKind): Promise<void> {
+    await this.stopPull(kind, "pause");
+  }
+
+  private async stopPull(
+    kind: DownloadJobKind,
+    how: "pause" | "cancel",
+  ): Promise<void> {
     const dataDir = getConfig().paths.localModelsDataDir;
     const watch = this.watchedDownloads.get(kind);
     const job = watch ? readDownloadJob(dataDir, watch.jobId) : null;
@@ -1258,13 +1295,24 @@ export class LocalModelsOrchestrator {
       return;
     }
     const stop = this.hooks?.stopDownload ?? stopDownloadWorker;
-    const result = await stop(dataDir, job);
-    if (result.outcome === "still-running" || result.outcome === "foreign") {
-      this.bus.emit({
-        type: "runtime_info",
-        line: `local-llm: could not stop download worker pid ${job.pid} (${result.outcome})`,
-      });
+    this.stoppingDownloads.set(job.id, how);
+    try {
+      const result =
+        how === "pause"
+          ? await pauseDownloadJob(dataDir, job, { stop })
+          : await cancelDownloadJob(dataDir, job, { stop });
+      if (result.outcome === "still-running" || result.outcome === "foreign") {
+        this.stoppingDownloads.delete(job.id);
+        this.bus.emit({
+          type: "runtime_info",
+          line: `local-llm: could not stop download worker pid ${job.pid} (${result.outcome})`,
+        });
+      }
+    } catch (e) {
+      this.stoppingDownloads.delete(job.id);
+      throw e;
     }
+    // Otherwise the watcher clears it once it has read the ending.
   }
 
   /**
@@ -1287,7 +1335,8 @@ export class LocalModelsOrchestrator {
    *
    * `cancelled` and a non-resumable `failed` (a 404, a full disk) are the
    * operator's to act on and are left alone; `models downloads` still
-   * lists them.
+   * lists them. So is `paused`: at launch it is named once, with how to
+   * resume it, and its partial file waits.
    */
   adoptBackgroundDownloads(opts?: { onlyRunning?: boolean }): void {
     const dataDir = getConfig().paths.localModelsDataDir;
@@ -1300,6 +1349,15 @@ export class LocalModelsOrchestrator {
       if (job.status === "running" && this.watchedDownloads.has(job.kind))
         continue;
       if (this.watchedDownloads.get(job.kind)?.jobId === job.id) continue;
+      if (job.status === "paused") {
+        if (!opts?.onlyRunning) {
+          this.bus.emit({
+            type: "runtime_info",
+            line: `local-llm: ${cleanLabel(job.label)} download is paused at ${job.percent}% — Enter on its row resumes it`,
+          });
+        }
+        continue;
+      }
       const adoptable = opts?.onlyRunning
         ? job.status === "running"
         : job.status === "running" ||
@@ -3123,11 +3181,11 @@ export class LocalModelsOrchestrator {
           opts,
         );
         if (watched.outcome === "detached") return;
-        if (watched.outcome === "cancelled") {
+        if (watched.outcome === "cancelled" || watched.outcome === "paused") {
           this.bus.emit({
             type: "local_models_pull_failed",
             kind: "embedding",
-            error: describeCancelledPull(watched.job),
+            error: describeStoppedPull(watched.outcome, watched.job),
           });
           return;
         }
@@ -3866,8 +3924,13 @@ function formatJobBytes(bytes: number): string {
     : `${Math.round(bytes / (1024 * 1024))} MB`;
 }
 
-function describeCancelledPull(job: DownloadJob): string {
-  return `download cancelled at ${job.percent}% — ${formatJobBytes(job.transferredBytes)} kept on disk; Enter resumes it`;
+function describeStoppedPull(
+  how: "cancelled" | "paused",
+  job: DownloadJob,
+): string {
+  return how === "paused"
+    ? `download paused at ${job.percent}% — ${formatJobBytes(job.transferredBytes)} kept on disk; Enter resumes it`
+    : "download cancelled — the partial file was deleted; p pauses instead and keeps it";
 }
 
 function describeProjectorFailure(def: LocalModelDef, error: string): string {

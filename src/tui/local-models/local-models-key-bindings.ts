@@ -117,13 +117,15 @@ export function handleLocalModelsTabKey(
 
   if (key.escape) return false;
 
-  // `x` stops the download in flight — chat first, then embedding —
-  // and keeps what it fetched: the row's Enter resumes it. Cursor-
-  // independent, like the other panel-wide keys.
-  if (input === "x") {
+  // `p` pauses the download in flight — chat first, then embedding —
+  // and keeps what it fetched: the row's Enter resumes it. `x` cancels
+  // it and deletes the partial. Cursor-independent, like the other
+  // panel-wide keys.
+  if (input === "p" || input === "x") {
     const kind = panel.pull ? "chat" : panel.embeddingPull ? "embedding" : null;
     if (!kind) return false;
-    callbacks.onLocalModelsPullCancelRequested?.(kind);
+    if (input === "p") callbacks.onLocalModelsPullPauseRequested?.(kind);
+    else callbacks.onLocalModelsPullCancelRequested?.(kind);
     return true;
   }
 

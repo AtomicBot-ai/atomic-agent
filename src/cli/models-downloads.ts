@@ -1,6 +1,5 @@
 import { getConfig } from "../config/index.js";
 import {
-  downloadJobId,
   downloadJobSilenceMs,
   isDownloadJobStale,
   listDownloadJobs,
@@ -9,11 +8,11 @@ import {
   removeDownloadJob,
   resolveDownloadsDir,
   runDownloadWorker,
-  stopDownloadWorker,
   type DownloadJob,
   type DownloadJobMode,
 } from "../local-llm/index.js";
 import { notifyDownloadOutcome } from "../notifications/index.js";
+import { runDownloadControl } from "./models-downloads-control.js";
 import { renderPullProgress } from "./pull-progress.js";
 
 /**
@@ -23,8 +22,9 @@ import { renderPullProgress } from "./pull-progress.js";
  * `local-llm/download-spawn.ts`), which survives the terminal that
  * started it, and returns at once.
  *
- * `models downloads` lists jobs; `models downloads cancel <id>` stops
- * one, keeping its partial file for a later resume. A foreground
+ * `models downloads` lists jobs; `models downloads pause <id>` stops
+ * one and keeps its partial file, `resume <id>` continues it, and
+ * `cancel <id>` stops it and deletes the partial. A foreground
  * `models pull` of a model whose worker is alive follows that worker's
  * progress instead of racing it for the same bytes.
  */
@@ -32,8 +32,10 @@ import { renderPullProgress } from "./pull-progress.js";
 /**
  * The detached worker's entry point: `models pull-worker <kind> <id>
  * <mode>`. Hidden from help — nothing invokes it but the spawner. A
- * SIGTERM (what `downloads cancel` sends) becomes an abort, so the
- * record ends as `cancelled` rather than as a dead `running` pid.
+ * SIGTERM (what `downloads pause` and `cancel` send) becomes an abort,
+ * so the record ends as `cancelled` rather than as a dead `running` pid;
+ * the command that sent it then rewrites it as `paused` or deletes the
+ * partial.
  */
 export async function runLocalModelsPullWorker(
   args: string[],
@@ -143,6 +145,8 @@ export function describeDownloadJob(
   } else if (job.status === "done" && job.mmprojError) {
     // Weights landed, projector did not: the model is usable, without vision.
     state = "done, text-only";
+  } else if (job.status === "paused") {
+    state = `paused ${job.percent}%`;
   } else if (job.status === "failed") {
     state = `failed: ${job.error ?? "unknown error"}${job.resumable ? " (resumes on next launch)" : ""}`;
   } else {
@@ -171,18 +175,20 @@ export function describeProjectorSkipped(
 }
 
 /**
- * `models downloads [cancel <job-or-model-id>] [clear]`.
+ * `models downloads [pause|resume|cancel <job-or-model-id>] [clear]`.
  */
 export async function runLocalModelsDownloads(args: string[]): Promise<number> {
   const dataDir = getConfig().paths.localModelsDataDir;
   const sub = args[0];
-  if (sub === "cancel") {
-    return cancelDownload(dataDir, args[1]);
+  if (sub === "pause" || sub === "resume" || sub === "cancel") {
+    return runDownloadControl(dataDir, sub, args[1]);
   }
   if (sub === "clear") {
     let n = 0;
     for (const job of listDownloadJobs(dataDir)) {
-      if (job.status === "running") continue;
+      // A paused job is not finished: its record is how it is listed
+      // and resumed.
+      if (job.status === "running" || job.status === "paused") continue;
       removeDownloadJob(dataDir, job.id);
       n += 1;
     }
@@ -190,7 +196,9 @@ export async function runLocalModelsDownloads(args: string[]): Promise<number> {
     return 0;
   }
   if (sub && sub !== "list") {
-    process.stderr.write("usage: models downloads [list|cancel <id>|clear]\n");
+    process.stderr.write(
+      "usage: models downloads [list|pause <id>|resume <id>|cancel <id>|clear]\n",
+    );
     return 2;
   }
   const jobs = listDownloadJobs(dataDir);
@@ -205,56 +213,9 @@ export async function runLocalModelsDownloads(args: string[]): Promise<number> {
     );
   }
   process.stdout.write(
-    `\nlogs: ${resolveDownloadsDir(dataDir)}/<job>.log · resume an interrupted one with 'models pull [--background] <id>'\n`,
+    `\nlogs: ${resolveDownloadsDir(dataDir)}/<job>.log · resume a paused or interrupted one with 'models downloads resume <id>'\n`,
   );
   return 0;
-}
-
-function findJob(dataDir: string, ref: string): DownloadJob | null {
-  return (
-    readDownloadJob(dataDir, ref) ??
-    readDownloadJob(dataDir, downloadJobId("chat", ref)) ??
-    readDownloadJob(dataDir, downloadJobId("embedding", ref))
-  );
-}
-
-async function cancelDownload(
-  dataDir: string,
-  ref: string | undefined,
-): Promise<number> {
-  if (!ref) {
-    process.stderr.write("usage: models downloads cancel <job-or-model-id>\n");
-    return 2;
-  }
-  const job = findJob(dataDir, ref);
-  if (!job) {
-    process.stderr.write(`no download job matches ${JSON.stringify(ref)}\n`);
-    return 1;
-  }
-  if (job.status !== "running") {
-    process.stdout.write(`${job.id} is not running (${job.status})\n`);
-    return 0;
-  }
-  const result = await stopDownloadWorker(dataDir, job);
-  switch (result.outcome) {
-    case "foreign":
-      process.stderr.write(
-        `download worker pid ${job.pid} belongs to another user; cannot stop it\n`,
-      );
-      return 1;
-    case "still-running":
-      process.stderr.write(
-        `sent stop to pid ${job.pid}, but it is still running\n`,
-      );
-      return 1;
-    default:
-      process.stdout.write(
-        `${job.id} stopped (${result.job.status}); ${formatBytes(
-          result.job.transferredBytes,
-        )} kept on disk — 'models pull ${job.modelId}' resumes it\n`,
-      );
-      return 0;
-  }
 }
 
 /**
@@ -319,7 +280,11 @@ export async function followDownloadJob(
         process.stderr.write(
           job.status === "failed"
             ? `background download failed: ${job.error ?? "unknown error"}${job.resumable ? ` — partial kept; run 'models pull ${job.modelId}' or relaunch the app to resume` : ""}\n`
-            : `background download ${job.status}; partial kept — run 'models pull ${job.modelId}' to resume\n`,
+            : job.status === "paused"
+              ? `background download paused; partial kept — run 'models downloads resume ${job.modelId}' to continue\n`
+              : job.status === "cancelled"
+                ? `background download cancelled — run 'models pull ${job.modelId}' to download it again\n`
+                : `background download ${job.status}; partial kept — run 'models pull ${job.modelId}' to resume\n`,
         );
         return 1;
       }

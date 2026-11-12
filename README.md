@@ -413,10 +413,12 @@ Big models can download in the background, detached from the terminal that start
 atomic-agent models pull --background qwen-3.5-35b   # returns at once; keeps running after the terminal closes
 atomic-agent models downloads                        # list background downloads, progress, interrupted ones
 atomic-agent models pull qwen-3.5-35b                # follow a running download in the foreground (Ctrl+C detaches)
-atomic-agent models downloads cancel qwen-3.5-35b    # stop it; what was fetched stays on disk
+atomic-agent models downloads pause qwen-3.5-35b     # stop it; what was fetched stays on disk
+atomic-agent models downloads resume qwen-3.5-35b    # continue a paused download from where it stopped
+atomic-agent models downloads cancel qwen-3.5-35b    # stop it and delete what was fetched
 ```
 
-The TUI runs every model download through the same worker. Quit mid-download (Ctrl+C, closing the window) and the download continues; open the TUI again and the chip picks it up where it is, and when the file lands the model is activated and the daemon started as if you had waited. A worker that died mid-way is resumed automatically on the next launch; one you cancelled is not. On the LLM tab's Local pane, `x` stops the download in flight and keeps what it fetched, and Enter on the row resumes it.
+The TUI runs every model download through the same worker. Quit mid-download (Ctrl+C, closing the window) and the download continues; open the TUI again and the chip picks it up where it is, and when the file lands the model is activated and the daemon started as if you had waited. A worker that died mid-way is resumed automatically on the next launch; one you paused or cancelled is not. On the LLM tab's Local pane, `p` pauses the download in flight and keeps what it fetched (Enter on the row resumes it, even after a restart), and `x` cancels it and deletes the partial file.
 
 The worker is a detached copy of the CLI writing its progress to `<stateDir>/models/downloads/<job>.json` and its log next to it, the same arrangement as the managed `llama-server` daemon. A worker that dies mid-way (a reboot, a `kill -9`) shows as `interrupted` in `models downloads`, and running the same `pull` again, with or without `--background`, resumes from the partial file. `pull --mmproj` also fetches a vision model's projector; `pull-embedding --background` works the same way for embedding models. `pull --run` does the whole job in the foreground: it downloads the model (with the projector on a vision model), makes it active and starts it, replacing a chat model that is already running.
 

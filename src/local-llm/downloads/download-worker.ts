@@ -8,6 +8,7 @@ import {
   type DownloadRetryInfo,
 } from "./download-file.js";
 import { initialDownloadJob } from "./download-job-seed.js";
+import { takeDownloadPauseRequest } from "./download-pause-request.js";
 import {
   writeDownloadJob,
   type DownloadJob,
@@ -356,11 +357,23 @@ export async function runDownloadWorker(
     return "done";
   } catch (err) {
     if (isAbortError(err) || input.signal?.aborted) {
+      // A pause is a stop the operator asked for by name: same abort,
+      // recorded as `paused` so nothing resumes it by itself. Either
+      // way the partial stays; a cancel's caller deletes it after.
+      const paused = takeDownloadPauseRequest(input.dataDir, job.id);
       persist(
-        { status: "cancelled", waiting: null, finishedAt: stamp() },
+        {
+          status: paused ? "paused" : "cancelled",
+          waiting: null,
+          finishedAt: stamp(),
+        },
         true,
       );
-      log(`[${stamp()}] cancelled — partial kept for resume`);
+      log(
+        paused
+          ? `[${stamp()}] paused — partial kept for resume`
+          : `[${stamp()}] cancelled — partial kept for resume`,
+      );
       return "cancelled";
     }
     const message = err instanceof Error ? err.message : String(err);

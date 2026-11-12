@@ -18,6 +18,7 @@ import {
 } from "../backend-paths.js";
 import { resolvePartialMetaPath, resolvePartialPath } from "./download-file.js";
 import { downloadJobId, readDownloadJob } from "./download-jobs.js";
+import { requestDownloadPause } from "./download-pause-request.js";
 import { initialDownloadJob, runDownloadWorker } from "./download-worker.js";
 import { getEmbeddingModelDef, getLocalModelDef } from "../catalog/models-catalog.js";
 
@@ -349,6 +350,50 @@ describe("download-worker", () => {
     expect(later?.status).toBe("running");
     releaseGate.release?.();
     expect(await pending).toBe("done");
+  });
+
+  it("ends paused, not cancelled, when a pause was asked for before the stop", async () => {
+    const releaseGate: { release: (() => void) | null } = { release: null };
+    const body = new ReadableStream({
+      async pull(controller) {
+        if (releaseGate.release === null) {
+          controller.enqueue(Buffer.from("ab"));
+          await new Promise<void>((resolve) => {
+            releaseGate.release = resolve;
+          });
+          controller.enqueue(Buffer.from("cd"));
+          return;
+        }
+        controller.close();
+      },
+    });
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(body, { status: 200, headers: { "content-length": "4" } }),
+    ) as typeof fetch;
+
+    const controller = new AbortController();
+    const jobId = downloadJobId("chat", CHAT.id);
+    const pending = runDownloadWorker({
+      dataDir,
+      kind: "chat",
+      modelId: CHAT.id,
+      mode: "gguf-only",
+      signal: controller.signal,
+      log: (l) => log.push(l),
+      writeIntervalMs: 0,
+    });
+    await waitFor(() => releaseGate.release !== null);
+    requestDownloadPause(dataDir, jobId);
+    controller.abort();
+    releaseGate.release?.();
+
+    await pending;
+    expect(readDownloadJob(dataDir, jobId)?.status).toBe("paused");
+    const dest = resolveModelFilePath(dataDir, CHAT.id, CHAT.filename);
+    expect(readFileSync(resolvePartialPath(dest), "utf-8")).toBe("ab");
+    // The request is consumed: a later stop is an ordinary cancel.
+    expect(existsSync(join(dataDir, "downloads", `${jobId}.pause`))).toBe(false);
   });
 
   it("ends cancelled when the signal fires, with the partial kept for resume", async () => {

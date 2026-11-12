@@ -388,10 +388,15 @@ export interface TuiAppCallbacks {
     mode?: "with-mmproj" | "gguf-only" | "mmproj-only",
   ): void;
   /**
-   * `x` in the Models tab: stop the download in flight for `kind`. The
-   * worker keeps its partial file, so Enter on the row resumes it.
+   * `x` in the Models tab: cancel the download in flight for `kind` and
+   * delete its partial file.
    */
   onLocalModelsPullCancelRequested?(kind: "chat" | "embedding"): void;
+  /**
+   * `p` in the Models tab: pause the download in flight for `kind`. The
+   * partial file is kept, so Enter on the row resumes it.
+   */
+  onLocalModelsPullPauseRequested?(kind: "chat" | "embedding"): void;
   onComposerEngineRequested?(engine: "atomic-core" | "llama-server", leg?: "orchestrator" | "worker"): void;
   onComposerFusionModelRequested?(leg: "orchestrator" | "worker", model: string): void;
   onLocalModelsEngineRequested?(engine: "atomic-core" | "llama-server"): void;
