@@ -29,6 +29,14 @@ const SIMG_RATIO = {
 };
 const SIMG_LOCAL_RATIOS = ['1:1', '4:5', '4:3', '16:9', '9:16'];
 
+/** What the copy calls the machine (renderer.js THIS_MACHINE): "this Mac" on macOS and
+    with no bridge, "this computer" on Windows and Linux (ATO-1400). */
+function simgMachine() {
+  const a = typeof globalThis !== 'undefined' ? globalThis.atomic : null;
+  return a && a.platform && a.platform !== 'darwin' ? 'this computer' : 'this Mac';
+}
+const simgMachineCap = () => { const s = simgMachine(); return s.charAt(0).toUpperCase() + s.slice(1); };
+
 /** Every model of a catalog answer, cloud first, each with its group. */
 function simgModels(catalog) {
   if (!catalog) return [];
@@ -59,7 +67,7 @@ const SIMG_MODE_VERB = {
 };
 
 /** The mode tabs for a model: each enabled or greyed with the reason.
-    `need` says why a greyed one is off: 'local' (only a model on this Mac runs it),
+    `need` says why a greyed one is off: 'local' (only a model on this machine runs it),
     'model' (this model cannot), 'pick' (no model chosen). */
 function simgModeTabs(model, catalog) {
   const locals = simgModels(catalog).filter((m) => m.group === 'local');
@@ -70,7 +78,7 @@ function simgModeTabs(model, catalog) {
     if (!ok) {
       const localCan = locals.some((m) => (m.modes || []).includes(id));
       need = model.group === 'cloud' && localCan ? 'local' : 'model';
-      why = need === 'local' ? 'Needs a model on this Mac' : model.name + ' cannot do this';
+      why = need === 'local' ? 'Needs a model on ' + simgMachine() : model.name + ' cannot do this';
     }
     return {id, label, ok, why, need};
   });
@@ -78,12 +86,12 @@ function simgModeTabs(model, catalog) {
 
 const simgList = (xs, conj) => (xs.length === 1 ? xs[0] : xs.slice(0, -1).join(', ') + ' ' + conj + ' ' + xs[xs.length - 1]);
 
-/** One hint line for the greyed modes: the ones a model on this Mac runs, then the
+/** One hint line for the greyed modes: the ones a model on this machine runs, then the
     ones the chosen model cannot do ("Nano Banana cannot inpaint, extend or upscale."). */
 function simgModeNote(tabs, model) {
   const out = [];
-  const off = tabs.filter((t) => !t.ok && t.why === 'Needs a model on this Mac').map((t) => t.label);
-  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on this Mac.');
+  const off = tabs.filter((t) => !t.ok && t.need === 'local').map((t) => t.label);
+  if (off.length) out.push(simgList(off, 'and') + (off.length === 1 ? ' needs' : ' need') + ' a model on ' + simgMachine() + '.');
   const cannot = model ? tabs.filter((t) => !t.ok && t.need === 'model').map((t) => SIMG_MODE_VERB[t.id]) : [];
   if (cannot.length) out.push(model.name + ' cannot ' + simgList(cannot, 'or') + '.');
   return out.join(' ');
@@ -92,7 +100,7 @@ function simgModeNote(tabs, model) {
 /** The hint line's words after a click on one greyed mode. */
 function simgModeWhy(tab, model) {
   if (!tab || tab.ok) return '';
-  if (tab.need === 'local') return tab.label + ' needs a model on this Mac.';
+  if (tab.need === 'local') return tab.label + ' needs a model on ' + simgMachine() + '.';
   if (tab.need === 'model' && model) return model.name + ' cannot ' + SIMG_MODE_VERB[tab.id] + '.';
   return 'Pick a model first.';
 }
@@ -312,7 +320,7 @@ function simgModelMeta(model) {
   if (!model) return '';
   if (model.group === 'local' || model.provider === 'local') {
     const dev = model.local && model.local.developer;
-    return (dev ? dev + ' · ' : '') + 'On this Mac';
+    return (dev ? dev + ' · ' : '') + 'On ' + simgMachine();
   }
   const maker = simgMaker(String(model.id || '').split('/')[0]);
   return (maker ? maker + ' · ' : '') + 'via OpenRouter';
@@ -395,7 +403,7 @@ function simgPinnedList(items, more) {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
+  module.exports = {SIMG_MODES, SIMG_MODE_HINT, simgMachine, simgMachineCap, simgModels, simgFindModel, simgDefaultModel, simgModeTabs, simgModeNote, simgModeWhy, simgOtherCan,
     simgRatios, simgRatioBox, simgRangeSize, simgModelDefaults, simgNormalize, simgBuildRequest, simgPriceParams,
     simgPriceLabel, simgGenerateLabel, simgEta, simgProgress, simgRecipeToForm, simgModelMeta, simgMaker, simgModelTags,
     simgLocalChips, simgModesLine, SIMG_PHASE_ORDER, simgFindPinned, simgPinnedList};
