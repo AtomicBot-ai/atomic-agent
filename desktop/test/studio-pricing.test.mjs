@@ -69,3 +69,21 @@ test("answers are cached for a day, failures are null, odd ids are not fetched",
   assert.equal(await pricing.price("../../etc", { kind: "image" }), null);
   assert.ok(!calls.some((u) => u.includes("..")));
 });
+
+test("ATO-814: a model billed per token gets its published rate, never a total", async () => {
+  const { imageTokenRateFromEndpoints } = require("../out/main/studio-pricing.js");
+  const rate = imageTokenRateFromEndpoints(fixture("openrouter-image-endpoints-tokens.json"));
+  assert.deepEqual(rate, { usd: null, maxUsd: null, basis: "30 USD per 1M output tokens", perToken: { usdPerMillion: 30, maxUsdPerMillion: null } });
+  assert.equal(imageTokenRateFromEndpoints(fixture("openrouter-image-endpoints-flux.json")), null, "priced per image: no token rate");
+  const two = imageTokenRateFromEndpoints({ endpoints: [
+    { pricing: [{ billable: "output_image", unit: "token", cost_usd: 3e-5 }] },
+    { pricing: [{ billable: "output_image", unit: "token", cost_usd: 4e-5 }, { billable: "input_image", unit: "token", cost_usd: 1e-6 }] },
+  ] });
+  assert.deepEqual(two.perToken, { usdPerMillion: 30, maxUsdPerMillion: 40 });
+  // Through StudioPricing: the per-image answer still wins, the token rate is the fallback.
+  const answers = { tokens: fixture("openrouter-image-endpoints-tokens.json") };
+  const pricing = new StudioPricing(async () => ({ ok: true, json: async () => answers.tokens }));
+  const p = await pricing.price("google/gemini-nano-banana-2.1", { kind: "image", count: 2 });
+  assert.equal(p.usd, null);
+  assert.equal(p.perToken.usdPerMillion, 30);
+});

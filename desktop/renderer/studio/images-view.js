@@ -232,7 +232,8 @@ function simgvFoot(IM) {
     lines.push('<div class="st-est">' + ic('cpu') + '<span><b>Free</b> · runs on ' + esc(simgMachine()) + simgvLocalHint(model) + '</span></div>');
     if (simgNotDownloaded(model)) lines.push(simgvDownload(IM, model));
   } else if (model && model.group === 'cloud') {
-    lines.push('<div class="st-est">' + ic('cloud') + '<span>Charged to your OpenRouter key</span></div>');
+    const rate = simgTokenRateLine(IM.price);
+    lines.push('<div class="st-est">' + ic('cloud') + '<span>' + esc(rate || 'Charged to your OpenRouter key') + '</span></div>');
   }
   if (IM.formMsg) lines.push('<div class="st-est warn" role="status">' + ic('info') + '<span>' + esc(IM.formMsg) + '</span></div>');
   const btn = live
@@ -389,6 +390,8 @@ function simgvRecipe(item) {
   if (r.resolution) kv.push(['Quality', r.resolution]);
   if (r.seed !== undefined) kv.push(['Seed', String(r.seed)]);
   if (r.steps) kv.push(['Steps', String(r.steps)]);
+  const cost = simgCostLabel(item);
+  if (cost) kv.push(['Cost', cost + ' (reported by OpenRouter)']);
   return '<div class="st-recipe"><h5>How this was made</h5><div class="p">' + esc(item.prompt || r.prompt || 'No prompt') + '</div>'
     + '<div class="st-kv">' + kv.map(([k, v]) => '<span>' + esc(k) + '</span><b>' + esc(v) + '</b>').join('') + '</div></div>';
 }
@@ -412,8 +415,11 @@ function simgvResult(IM, item) {
   const group = IM.items.filter((x) => simgJobOf(x.id) === simgJobOf(item.id));
   const n = group.findIndex((x) => x.id === item.id) + 1;
   const pos = group.length > 1 ? n + ' of ' + group.length + ' · ' : '';
+  const cost = simgCostLabel(item);
   const del = IM.delArmed === item.id;
-  return '<div class="st-vbar"><span class="st-glass">' + esc(pos + simgvAgo(item.createdAtMs)) + '</span><span class="st-sp"></span>'
+  return '<div class="st-vbar"><span class="st-glass">' + esc(pos + simgvAgo(item.createdAtMs)) + '</span>'
+    + (cost ? '<span class="st-glass" title="What OpenRouter reported for this picture">Cost ' + esc(cost) + '</span>' : '')
+    + '<span class="st-sp"></span>'
     + '<button class="st-glass' + (IM.recipe ? ' on' : '') + '" ' + SIMGV_A('recipe') + ' aria-pressed="' + !!IM.recipe + '">' + ic('info') + 'Recipe</button>'
     + '<button class="st-glass ic' + (item.pinned ? ' on' : '') + '" ' + SIMGV_A('pin') + ' title="' + (item.pinned ? 'Unpin' : 'Pin') + '" aria-pressed="' + !!item.pinned + '">' + ic('pin') + '</button>'
     + '<button class="st-glass' + (del ? ' danger' : ' ic') + '" ' + SIMGV_A('delete') + ' title="Delete from disk">' + ic('trash') + (del ? 'Delete for good?' : '') + '</button></div>'

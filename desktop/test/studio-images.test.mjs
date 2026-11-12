@@ -537,3 +537,17 @@ test('the Images page downloads for the mode in use, and re-reads the catalog af
   await settle();
   assert.equal(P.reads(), before + 2, 'the engine turning out unsupported re-reads the catalog');
 });
+
+test('ATO-814: the token-rate line and the reported cost, never invented', () => {
+  assert.equal(L.simgTokenRateLine(null), '');
+  assert.equal(L.simgTokenRateLine({usd: 0.04, maxUsd: null, basis: ''}), '');
+  assert.equal(L.simgTokenRateLine({usd: null, perToken: {usdPerMillion: 30, maxUsdPerMillion: null}}),
+    'Billed per token: $30 per 1M output tokens. The exact cost shows when it is done.');
+  assert.match(L.simgTokenRateLine({usd: null, perToken: {usdPerMillion: 30, maxUsdPerMillion: 40.5}}), /\$30–40\.50 per 1M/);
+  assert.equal(L.simgGenerateLabel({usd: null, perToken: {usdPerMillion: 30}}), 'Generate', 'no total on the button');
+  assert.equal(L.simgCostLabel({costUsd: null}), '');
+  assert.equal(L.simgCostLabel({}), '');
+  assert.equal(L.simgCostLabel({costUsd: 0.039}), '$0.039');
+  assert.equal(L.simgCostLabel({costUsd: 0.12}), '$0.12');
+  assert.equal(L.simgCostLabel({costUsd: 0.0042}), '$0.0042');
+});

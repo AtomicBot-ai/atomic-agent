@@ -102,3 +102,15 @@ test("errors reach the window as {code, message} in words a person can act on", 
   assert.match(describeStudioError("NO_KEY", "", true), /OpenRouter API key/);
   assert.equal(studioErrorBody(new Error("boom")).code, "FAILED");
 });
+
+test("ATO-814: a cloud item carries the cost the provider reported, a local one never does", () => {
+  const id = "c".repeat(32);
+  const cloud = (engine) => normalizeItem({ id, path: "/d/images/x.png", recipe: { engine, model: {} } }, "image");
+  assert.equal(cloud({ kind: "remote", provider: "openrouter", api: "openrouter-images", costUsd: 0.039 }).costUsd, 0.039);
+  assert.equal(cloud({ kind: "remote", provider: "openrouter", api: "openrouter-images" }).costUsd, null, "not reported: no number");
+  assert.equal(cloud({ kind: "remote", provider: "openrouter", api: "openrouter-images", costUsd: -1 }).costUsd, null);
+  assert.equal(cloud({ kind: "sd-cpp", costUsd: 0.5 }).costUsd, null, "a local picture costs nothing on a key");
+  // A request-level cost elsewhere in the recipe is not per picture: never shown on each one.
+  const batch = normalizeItem({ id, path: "/d/images/x.png", recipe: { usage: { cost: 0.12 }, costUsd: 0.12, engine: { kind: "remote", provider: "openrouter" }, model: {} } }, "image");
+  assert.equal(batch.costUsd, null);
+});
