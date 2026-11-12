@@ -155,7 +155,7 @@ function HubRow({
   const accent = selected ? theme.colors.accentSoft : undefined;
   const idLabel = truncate(formatHubIdentifier(row.identifier), 30).padEnd(32);
   const downloadsLabel = `↓${formatDownloads(row.downloads)}`.padEnd(9);
-  const badge = row.source === "clawhub" ? "claw" : "gh  ";
+  const badge = row.source === "clawhub" ? "claw" : row.source === "skills.sh" ? "sh  " : "gh  ";
   const badgeColor =
     row.source === "clawhub" ? theme.colors.accent : theme.colors.muted;
   return (

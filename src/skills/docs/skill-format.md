@@ -57,18 +57,18 @@ Atomic Agent ships with 17 starter skills that are auto-installed into the globa
 
 ```sh
 atomic-agent skill install <path|owner/repo[/path]|@owner/slug> [--force] [--yes] [--acknowledge-risk]
-                                        # install from a local folder, a GitHub tap, or ClawHub (@owner/slug)
+                                        # install from a local folder, a GitHub tap, ClawHub (@owner/slug) or skills.sh (skills.sh/owner/repo/skill)
 atomic-agent skill uninstall <name>     # remove an installed global skill
 atomic-agent skill list                 # list installed skills (project + global) with enabled/disabled state
 atomic-agent skill show <name>          # print SKILL.md for an installed skill
 atomic-agent skill enable <name>        # re-enable a previously disabled skill
 atomic-agent skill disable <name>       # hide a skill without removing its files
 atomic-agent skill browse [--source owner/repo]   # browse installable skills (ClawHub + configured taps)
-atomic-agent skill search <query>       # search ClawHub + configured taps
+atomic-agent skill search <query>       # search ClawHub + skills.sh + configured taps
 atomic-agent skill tap list|add <owner/repo>|remove <owner/repo>   # manage hub taps
 ```
 
-Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`).
+Local installation is a security scan, `SKILL.md` validation and `cp -r`. Skills can also be installed by name from the [ClawHub](https://clawhub.ai) registry (`@owner/slug`) or a configured GitHub tap (`owner/repo[/path]`). Search also asks [skills.sh](https://skills.sh) and shows its install counts; a skills.sh row (`skills.sh/owner/repo/skill`) is looked up in its GitHub repository and then installed like a tap skill, with the same download limits, scan and gate. skills.sh's search API is undocumented: any network or response-shape problem is a warning and the other sources still answer.
 
 ### Install security scan
 

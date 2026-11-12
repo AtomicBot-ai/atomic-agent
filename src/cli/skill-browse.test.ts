@@ -5,7 +5,7 @@ import { join } from "node:path";
 
 import { skillCommand } from "./skill.js";
 import { resetConfigCache } from "../config/index.js";
-import { browseHub, searchHub } from "../skills/hub/index.js";
+import { browseHub, searchHub, searchSkillsSh } from "../skills/hub/index.js";
 
 // `skill browse` / `skill search` (skill.ts handleBrowse / handleSearch):
 // only the GitHub-tap side is stubbed; ClawHub runs for real against a
@@ -14,8 +14,13 @@ vi.mock("../skills/hub/index.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../skills/hub/index.js")>()),
   browseHub: vi.fn(async () => ({ entries: [], errors: [] })),
   searchHub: vi.fn(async () => ({ entries: [], errors: [] })),
+  searchSkillsSh: vi.fn(async () => []),
 }));
 
+const SH_ROW = {
+  identifier: "skills.sh/o/r/sh-one", name: "sh-one", description: "o/r on skills.sh", version: "",
+  repo: "o/r", dir: "sh-one", source: "skills.sh" as const, downloads: 7,
+};
 const TAP_ROW = {
   identifier: "o/r/x", name: "x", description: "tap row", version: "1.0.0",
   repo: "o/r", dir: "x", source: "github" as const,
@@ -88,13 +93,23 @@ describe("skill browse / search", () => {
     ]);
   });
 
-  it("search asks ClawHub and the taps side by side, ClawHub's rows first", async () => {
+  it("search asks ClawHub, skills.sh and the taps side by side, ClawHub's rows first", async () => {
+    vi.mocked(searchSkillsSh).mockResolvedValueOnce([SH_ROW]);
     const { code, order } = await run(["search", "claw"]);
     expect(code).toBe(0);
     expect(order).toEqual(["clawhub asked", "taps asked", "clawhub answered"]);
+    expect(vi.mocked(searchSkillsSh).mock.calls[0]![1]).toBe("claw");
     expect(stdout.split("\n").filter(Boolean)).toEqual([
       "[claw]\t@me/claw-one\t↓5\tclaw row",
+      "[sh]\tskills.sh/o/r/sh-one\t↓7\to/r on skills.sh",
       "[gh]\to/r/x\t-\ttap row",
     ]);
+  });
+
+  it("search still succeeds when skills.sh has nothing (its failures are warnings)", async () => {
+    vi.mocked(searchSkillsSh).mockResolvedValueOnce([]);
+    const { code } = await run(["search", "claw"]);
+    expect(code).toBe(0);
+    expect(stdout).toContain("[gh]\to/r/x");
   });
 });

@@ -23,18 +23,19 @@ export interface HubSkillEntry {
   name: string;
   description: string;
   version: string;
-  /** `owner/repo` (GitHub) or publisher handle (ClawHub). */
+  /** `owner/repo` (GitHub, skills.sh) or publisher handle (ClawHub). */
   repo: string;
   /** Repo-relative skill dir, "" for root. */
   dir: string;
   /**
-   * Origin registry. Drives install routing (GitHub tap vs ClawHub
-   * registry) and the source badge in the TUI. Defaults to `github`.
+   * Origin registry. Drives install routing (GitHub tap, ClawHub
+   * registry, or skills.sh resolved to GitHub) and the source badge in
+   * the TUI. Defaults to `github`.
    */
-  source: "github" | "clawhub";
+  source: "github" | "clawhub" | "skills.sh";
   /**
-   * All-time download count. Present for ClawHub rows (the registry
-   * tracks it); `undefined` for GitHub taps which expose no such metric.
+   * All-time download count. Present for ClawHub rows and skills.sh
+   * install counts; `undefined` for GitHub taps which expose no such metric.
    */
   downloads?: number;
 }

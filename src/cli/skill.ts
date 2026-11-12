@@ -31,7 +31,10 @@ import {
   installSkillRouted,
   listStarterSkillNames,
   looksLikeClawHubIdentifier,
+  looksLikeSkillsShIdentifier,
   searchClawHub,
+  searchSkillsSh,
+  SkillsShClient,
   SkillHubInstallError,
   type HubSkillEntry,
   type ScanGateOptions,
@@ -157,7 +160,7 @@ async function handleInstall(args: string[]): Promise<number> {
   const source = args.find((a) => !a.startsWith("-"));
   if (!source) {
     process.stderr.write(
-      "usage: atomic-agent skill install <path|owner/repo[/path]> [--force] [--yes] [--acknowledge-risk]\n",
+      "usage: atomic-agent skill install <path|owner/repo[/path]|@owner/slug|skills.sh/owner/repo/skill> [--force] [--yes] [--acknowledge-risk]\n",
     );
     return 2;
   }
@@ -172,6 +175,11 @@ async function handleInstall(args: string[]): Promise<number> {
   // installer; a GitHub identifier (`owner/repo[/path]`) routes through
   // the tap installer; anything else is a local directory path. All
   // three run the same security scan and gate.
+  // A skills.sh row (`skills.sh/owner/repo/skill`) is looked up in its
+  // GitHub repo and then installed like a tap skill.
+  if (looksLikeSkillsShIdentifier(source)) {
+    return await handleSkillsShInstall(source, force, gate, config.paths.globalSkillsDir);
+  }
   if (looksLikeClawHubIdentifier(source)) {
     return await handleClawHubInstall(
       source,
@@ -283,6 +291,23 @@ async function handleClawHubInstall(
       force,
       ...gate,
     });
+    process.stdout.write(
+      `installed ${result.manifest.name} (v${result.manifest.version}) from ${identifier} — ${summarizeScan(result.scan)}\n`,
+    );
+    return 0;
+  } catch (err) {
+    return reportInstallError(err, gate, identifier);
+  }
+}
+
+async function handleSkillsShInstall(
+  identifier: string,
+  force: boolean,
+  gate: ScanGateOptions,
+  targetRoot: string,
+): Promise<number> {
+  try {
+    const result = await installSkillRouted({ identifier, source: "skills.sh", targetRoot, force, ...gate });
     process.stdout.write(
       `installed ${result.manifest.name} (v${result.manifest.version}) from ${identifier} — ${summarizeScan(result.scan)}\n`,
     );
@@ -480,14 +505,16 @@ async function handleSearch(args: string[]): Promise<number> {
     process.stderr.write("usage: atomic-agent skill search <query>\n");
     return 2;
   }
-  // ClawHub's search and the taps side by side, as in browse.
+  // ClawHub's search, skills.sh and the taps side by side, as in browse.
+  // A skills.sh failure is a warning only and never fails the search.
   const taps = configuredTaps();
   const client = new GithubSkillClient();
-  const [clawEntries, { entries, errors }] = await Promise.all([
+  const [clawEntries, shEntries, { entries, errors }] = await Promise.all([
     browseClawHubSafe(query),
+    searchSkillsSh(new SkillsShClient(), query, { warn: (m) => process.stderr.write(`WARN: ${m}\n`) }),
     searchHub(client, taps, query),
   ]);
-  return printHubEntries([...clawEntries, ...entries], errors);
+  return printHubEntries([...clawEntries, ...shEntries, ...entries], errors);
 }
 
 /**
@@ -525,7 +552,7 @@ function printHubEntries(
     identifier: string;
     version: string;
     description: string;
-    source?: "github" | "clawhub";
+    source?: "github" | "clawhub" | "skills.sh";
     downloads?: number;
   }>,
   errors: ReadonlyArray<{ repo: string; error: string }>,
@@ -534,9 +561,9 @@ function printHubEntries(
     process.stdout.write("(no skills found)\n");
   } else {
     for (const e of entries) {
-      const badge = e.source === "clawhub" ? "[claw]" : "[gh]";
-      // ClawHub tracks downloads; GitHub taps do not (dash keeps columns
-      // aligned). Raw integer so the output stays grep/awk-friendly.
+      const badge = e.source === "clawhub" ? "[claw]" : e.source === "skills.sh" ? "[sh]" : "[gh]";
+      // ClawHub tracks downloads and skills.sh installs; GitHub taps do
+      // not (dash keeps columns aligned). Raw integer so the output stays grep/awk-friendly.
       const downloads = e.downloads === undefined ? "-" : `↓${e.downloads}`;
       process.stdout.write(
         `${badge}\t${e.identifier}\t${downloads}\t${e.description}\n`,
