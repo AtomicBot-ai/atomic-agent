@@ -1196,11 +1196,13 @@ const SETTINGS_SECTIONS = [
   ['plugins','Plugins','puzzle',['plugins']],
   ['privacy','Privacy','lock',['privacy']],
   ['import','Import','import',['import']],
+  // Issue #996: the local model's speed (renderer/perf-panel.js).
+  ['performance','Performance','cpu',['performance']],
   ['diagnostics','Diagnostics','gauge',['diagnostics']],
 ];
 /* Every pane, in nav order: [pane id, the name it goes by]. */
 const SETTINGS_TABS = [['general','General'],['llm','Models'],['mcp','MCP servers'],['telegram','Telegram'],['composio','Composio'],['memory','Memory'],
-                       ['tasks','Tasks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['diagnostics','Diagnostics']];
+                       ['tasks','Tasks'],['skills','Skills'],['plugins','Plugins'],['privacy','Privacy'],['import','Import'],['performance','Performance'],['diagnostics','Diagnostics']];
 /* The section Settings reopens on (sidebar button, ⌘ ,, Escape): the last
    one shown, per viewer, like atag.theme; General the first time. */
 /* Calm (S5): which Settings disclosures are open, so a repaint keeps them. */
@@ -2256,6 +2258,8 @@ function render() {
   imageViewerFollowsChat();   // ATO-408: the picture viewer closes when its chat is left
   const exaHeld = exaKeyHold();   // ATO-328: the Exa key field being typed in survives the rebuild
   ANX.paneTick(S.settings ? settingsPaneId(S.settingsPane) : null);   // analytics: settings_pane_viewed
+  // Issue #996: the Performance poll runs only while its pane is on screen; every way Settings closes or moves on renders.
+  if (typeof perfFollow === 'function') perfFollow();
   // 13/14: a whole render paints everything a waiting stream frame would have.
   dropStreamPaint();
   renderToolbar(); renderSidebar(); renderContent();
@@ -6201,6 +6205,8 @@ function settingsPane() {
   const p = settingsPaneId(S.settingsPane);
   if (p === 'general') return generalPane();
   if (p === 'diagnostics') return diagnosticsPane();
+  // Issue #996: Settings › Performance (renderer/perf-panel.js).
+  if (p === 'performance') return perfPane();
   if (p === 'tasks') return tasksTab();
   if (p === 'privacy') return privacyPane();
   // Item 7 part B: the Skills, Memory and MCP tabs.
@@ -9526,6 +9532,8 @@ function applyStatus(st) {
        held in memory (the coding mode) is gone with it, so the generation
        moves here, before loadResources can confirm anything against it. */
     AGENT_GEN++;
+    // Issue #996: an answer the Performance pane was waiting for came from the old process.
+    if (typeof perfAgentRestarted === 'function') perfAgentRestarted();
     appSay('Connected · ' + S.live.workingDir);
     loadResources();
     drainOwed();   // Backlog 26: a queue owed while the agent was down

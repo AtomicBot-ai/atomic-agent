@@ -35,6 +35,7 @@ import { promisify } from "node:util";
 
 import { wireAgentAutoRestart } from "./agent-auto-restart-wire.js";
 import { AgentClient, APPROVAL_DECISIONS, probeRemoteAgent, type ProjectTrustAnswerBody } from "./agent-client.js";
+import { localPerformanceResult } from "./local-performance.js";
 import { wireAgentLiveIpc } from "./agent-live.js";
 import { wirePluginsIpc } from "./plugins-ipc.js";
 import { wireAttachmentIpc } from "./attachments-ipc.js";
@@ -1469,6 +1470,10 @@ function wireIpc(client: AgentClient): void {
       return { ok: false, error: err instanceof Error ? err.message : String(err) };
     }
   });
+
+  /* Issue #996 — Settings › Performance: the local model's speed. Always one
+     of ok / unsupported (404) / unreachable; never a throw into the window. */
+  ipcMain.handle("agent:localPerformance", () => localPerformanceResult(() => client.localPerformance()));
 
   /* ATO-568 — one Fusion worker's Stop and Steer, and the list the renderer
      feature-detects with. Errors come back as `error` text; the renderer
@@ -5969,10 +5974,10 @@ async function settingsTest(
   // The TUI's eight Manage tabs: the menu tree's `tab` nodes and their chords still open these panes.
   const TABS = ["tasks", "skills", "memory", "mcp", "llm", "telegram", "import", "privacy"];
   // Calm (S5): the window's own panes and nav sections, in nav order.
-  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "diagnostics"];
-  const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Diagnostics"];
+  const PANES = ["general", "llm", "mcp", "telegram", "composio", "memory", "tasks", "skills", "plugins", "privacy", "import", "performance", "diagnostics"];
+  const LABELS = ["General", "Models", "Connections", "Memory", "Tasks", "Skills", "Plugins", "Privacy", "Import", "Performance", "Diagnostics"];
   const SECTION_OF: Record<string, string> = { general: "general", llm: "models", mcp: "connections", telegram: "connections", composio: "connections", memory: "memory",
-    tasks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", diagnostics: "diagnostics" };
+    tasks: "tasks", skills: "skills", plugins: "plugins", privacy: "privacy", import: "import", performance: "performance", diagnostics: "diagnostics" };
 
   const groups = await js<string[]>("window.__menuGroups()");
   check("settings: menu groups are the TUI's minus Go and Observe", same(groups, GROUPS), JSON.stringify(groups));
