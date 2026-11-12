@@ -2,7 +2,7 @@ import { isSubscriptionCliSetupError } from "../../llm/provider/subscription-cli
 import type { AgentLoopDependencies, RunTurnOptions } from "../agent-contract.js";
 import type { SessionState } from "../../session/session-state.js";
 import type { ToolCallTransport } from "../../llm/provider/completion-types.js";
-import { CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
+import { AtomicChatNotRunningError, CancelledError, LlamaServerError, LlmFailure, LocalEngineDownError, TransportError, classifyFailure, isRequestSizeRejection } from "../../llm/index.js";
 import type { LlmFailureCategory, TruncationDetail } from "../../llm/index.js";
 import { readFailingLink } from "../../llm/fallback/failed-attempts.js";
 import { describeFailedLinks } from "../../llm/fallback/failed-links.js";
@@ -539,6 +539,12 @@ export function recoverTurnStep(
   // An engine that is alive or whose state is unknown keeps the wait
   // below, unchanged; so does every other link, an external server
   // included, because the runtime answers `unknown` for them.
+  //
+  // The Atomic Chat app's server (`atomic_chat_app`, ATO-1278) is judged
+  // the same way with less to read: nothing here starts that app, so a
+  // connection it refuses outright (`ECONNREFUSED`, not a reset, a timeout
+  // or an HTTP error) for a short start grace means it is not open. The
+  // grace covers an app that is still bringing its server up.
   let localEngineGone = false;
   let localEngineDown = false;
   if (
@@ -551,12 +557,29 @@ export function recoverTurnStep(
     isWaitableOutage(err)
   ) {
     const failingLink = readFailingLink(err);
-    localEngineGone = deps.localEngineState(failingLink) === "dead";
+    const engineState = deps.localEngineState(failingLink);
+    const atomicChatRefused =
+      engineState === "atomic_chat_app" && readErrnoCode(err) === "ECONNREFUSED";
+    localEngineGone = engineState === "dead" || atomicChatRefused;
     const graceSpent =
       !providerWaitCfg.enabled ||
       turn.outageWaitedMs >=
-        Math.min(LOCAL_ENGINE_RESTART_GRACE_MS, providerWaitCfg.maxWaitMs);
-    if (localEngineGone && graceSpent) {
+        Math.min(
+          atomicChatRefused ? ATOMIC_CHAT_START_GRACE_MS : LOCAL_ENGINE_RESTART_GRACE_MS,
+          providerWaitCfg.maxWaitMs,
+        );
+    if (atomicChatRefused && graceSpent) {
+      localEngineDown = true;
+      deps.logger?.warn("Atomic Chat is not running; ending the turn instead of waiting", {
+        sessionId: state.id,
+        stepIndex: i,
+        waitedMs: turn.outageWaitedMs,
+        error: runError.message,
+        causeCode: "ECONNREFUSED",
+        ...(failingLink !== undefined ? { providerId: failingLink } : {}),
+      });
+      runError = new AtomicChatNotRunningError(failingLink ?? "atomic-chat", err);
+    } else if (localEngineGone && graceSpent) {
       localEngineDown = true;
       const causeCode = readErrnoCode(err);
       deps.logger?.warn("local model is not running; ending the turn instead of waiting", {
@@ -862,6 +885,12 @@ function isOwnLlamaDeadlineExpiry(err: unknown): boolean {
 export const LOCAL_ENGINE_RESTART_GRACE_MS = 8_000;
 /** The retry interval while that process is gone. */
 const LOCAL_ENGINE_GONE_RETRY_MS = 2_000;
+/**
+ * How long a turn keeps retrying the Atomic Chat app's server while it
+ * refuses connections before it ends with `AtomicChatNotRunningError`
+ * (ATO-1278): two quick retries, for an app that is still starting.
+ */
+export const ATOMIC_CHAT_START_GRACE_MS = 4_000;
 
 /** First backoff after the provider stops answering. */
 const PROVIDER_WAIT_BASE_MS = 2_000;

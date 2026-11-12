@@ -143,6 +143,24 @@ describe("describeLlmFailure", () => {
       expect(readEngineLiveness).not.toHaveBeenCalled();
     });
 
+    it("carries why the engine was judged so, and the lock as read (ATO-1275)", () => {
+      const explainEngineLiveness = vi.fn(() => ({ state: "unknown" as const, reason: "lock_held" as const, lock: "held" as const }));
+      const d = { ...deps(config({}), "no_pid"), explainEngineLiveness };
+      expect(describeLlmFailure({ error: refusedError() }, d)).toMatchObject({
+        engineLiveness: "unknown",
+        engineLivenessReason: "lock_held",
+        engineLock: "held",
+      });
+      expect(explainEngineLiveness).toHaveBeenCalledWith("/state/models");
+    });
+
+    it("an explaining probe that throws reports unknown with no reason", () => {
+      const d = { ...deps(config({})), explainEngineLiveness: () => { throw new Error("EACCES"); } };
+      const context = describeLlmFailure({ error: refusedError() }, d);
+      expect(context.engineLiveness).toBe("unknown");
+      expect(context.engineLivenessReason).toBeUndefined();
+    });
+
     it("a liveness probe that throws reports unknown", () => {
       const d = { ...deps(config({})), readEngineLiveness: () => { throw new Error("EACCES"); } };
       expect(describeLlmFailure({ error: refusedError() }, d).engineLiveness).toBe("unknown");

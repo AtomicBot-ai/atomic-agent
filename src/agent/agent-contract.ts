@@ -29,8 +29,11 @@ import type { ProfileClippedEvent } from "./profile-clip-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ReviewStallSignal } from "./review-stall.js";
 
-/** See `AgentLoopDependencies.localEngineState`. */
-export type LocalEngineState = "alive" | "dead" | "unknown";
+/**
+ * See `AgentLoopDependencies.localEngineState`. `atomic_chat_app`: the link
+ * is served by the Atomic Chat desktop app, a process nothing here starts.
+ */
+export type LocalEngineState = "alive" | "dead" | "unknown" | "atomic_chat_app";
 
 /**
  * The answers to "the local model ran out of memory" (ATO-334): restart
@@ -176,7 +179,11 @@ export interface AgentLoopDependencies {
    * certainly gone (pid dead or none recorded, no start or load under way),
    * so the turn ends with `LocalEngineDownError` after a short restart
    * grace (`LOCAL_ENGINE_RESTART_GRACE_MS`) instead of waiting out the
-   * whole budget. `alive` and `unknown` keep the wait. `providerId` is the
+   * whole budget. `atomic_chat_app`: that link is the Atomic Chat app's
+   * server (ATO-1278), so a refused connection (`ECONNREFUSED`) that lasts
+   * through a short start grace (`ATOMIC_CHAT_START_GRACE_MS`) ends the
+   * turn with `AtomicChatNotRunningError`; any other failure there keeps
+   * the wait. `alive` and `unknown` keep the wait. `providerId` is the
    * failing link (`readFailingLink`), `undefined` when the error does not
    * say. Absent (embedders, tests) means `unknown` for every link.
    */

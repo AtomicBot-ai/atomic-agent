@@ -12,6 +12,7 @@ import {
 import {
   classifyFailure,
   classifyFailureCause,
+  isAtomicChatNotRunning,
   isLocalEngineDown,
   type FailureVerdict,
 } from "../llm/reliability/index.js";
@@ -891,7 +892,7 @@ export function buildStreamEventHook(
              the first link's, unless the turn ended on a local model
              that is not running, which is what the host can act on. */
           failure: failureFrame(
-            isLocalEngineDown(event.error)
+            isLocalEngineDown(event.error) || isAtomicChatNotRunning(event.error)
               ? classifyFailureCause(event.error, event.category)
               : classifyFailureCause(primary),
           ),

@@ -5,10 +5,11 @@ import { readErrnoCode } from "../../llm/errno-code.js";
 import { readFailingLink } from "../../llm/fallback/index.js";
 import { resolveLlmConfig } from "../../llm/provider/index.js";
 import {
+  explainManagedEngineLiveness,
   readChatDaemonPidState,
-  readManagedEngineLiveness,
   type ChatDaemonPidState,
   type ManagedEngineLiveness,
+  type ManagedEngineLivenessReport,
 } from "../../local-llm/index.js";
 import { resolveTurnLocalEngine } from "./runtime-turn-service.js";
 
@@ -21,12 +22,17 @@ export interface LlmFailureContextDeps {
    * engine. Asked for refused connections only.
    */
   readEngineLiveness?: (dataDir: string) => ManagedEngineLiveness;
+  /**
+   * The same reading with the branch that decided it and the engine lock
+   * as read (ATO-1275). Preferred over `readEngineLiveness` when given.
+   */
+  explainEngineLiveness?: (dataDir: string) => ManagedEngineLivenessReport;
 }
 
 const defaultDeps: LlmFailureContextDeps = {
   readConfig: getConfig,
   readDaemonPidState: readChatDaemonPidState,
-  readEngineLiveness: readManagedEngineLiveness,
+  explainEngineLiveness: explainManagedEngineLiveness,
 };
 
 /**
@@ -75,7 +81,16 @@ export function describeLlmFailure(
   } catch {
     context.daemonState = "unknown";
   }
-  if (connectionRefused && deps.readEngineLiveness !== undefined) {
+  if (connectionRefused && deps.explainEngineLiveness !== undefined) {
+    try {
+      const report = deps.explainEngineLiveness(config.paths.localModelsDataDir);
+      context.engineLiveness = report.state;
+      context.engineLivenessReason = report.reason;
+      context.engineLock = report.lock;
+    } catch {
+      context.engineLiveness = "unknown";
+    }
+  } else if (connectionRefused && deps.readEngineLiveness !== undefined) {
     try {
       context.engineLiveness = deps.readEngineLiveness(config.paths.localModelsDataDir);
     } catch {

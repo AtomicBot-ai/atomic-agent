@@ -137,6 +137,38 @@ describe("local refusal tags (ATO-421, ATO-769)", () => {
     expect(alive(undefined)).toBe("unknown");
   });
 
+  it("says why the managed engine was judged as it was, in fixed words only (ATO-1275)", () => {
+    expect(sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      connectionRefused: true,
+      engineLiveness: "unknown",
+      engineLivenessReason: "lock_held",
+      engineLock: "held",
+    })).toMatchObject({ engine_liveness: "unknown", engine_liveness_reason: "lock_held", engine_lock: "held" });
+    const odd = sanitizeLlmFailureTags({
+      localEngine: "atomic-core",
+      connectionRefused: true,
+      engineLiveness: "pid 4242",
+      engineLivenessReason: "EACCES /Users/someone/.atomic-agent",
+      engineLock: "/tmp/lock",
+    });
+    expect(odd).toMatchObject({ engine_liveness: "unknown", engine_liveness_reason: "unknown", engine_lock: "unknown" });
+    expect(JSON.stringify(odd)).not.toContain("someone");
+  });
+
+  it("an external engine carries no liveness reason tags", () => {
+    const tags = sanitizeLlmFailureTags({
+      localEngine: "external",
+      connectionRefused: true,
+      engineLiveness: "dead",
+      engineLivenessReason: "pid_dead",
+      engineLock: "free",
+    });
+    expect(tags?.engine_liveness).toBeUndefined();
+    expect(tags?.engine_liveness_reason).toBeUndefined();
+    expect(tags?.engine_lock).toBeUndefined();
+  });
+
   it("an external engine is never judged alive or dead", () => {
     expect(sanitizeLlmFailureTags({ localEngine: "external", connectionRefused: true, engineLiveness: "alive" })).toEqual({
       local_engine: "external",

@@ -42,6 +42,12 @@ export {
   isLocalEngineDown,
 } from "./local-engine-down.js";
 export {
+  ATOMIC_CHAT_NOT_RUNNING_CODE,
+  ATOMIC_CHAT_NOT_RUNNING_MESSAGE,
+  AtomicChatNotRunningError,
+  isAtomicChatNotRunning,
+} from "./atomic-chat-not-running.js";
+export {
   LOCAL_OUT_OF_MEMORY_CODE,
   LocalOutOfMemoryError,
   isLocalOutOfMemory,
