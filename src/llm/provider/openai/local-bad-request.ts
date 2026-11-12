@@ -21,7 +21,20 @@ export const INVALID_REQUEST_TYPE = "invalid_request_error";
  * available context size". Those still mean the context is full.
  */
 const CONTEXT_FULL_WORDING =
-  /exceeds? (?:the )?(?:available )?context|context (?:size|length|window)[^.]{0,40}(?:exceed|too (?:long|large|small))/i;
+  /exceed(?:s|ed)? (?:the )?(?:available |maximum |max )?context|context (?:size|length|window)[^.]{0,40}(?:exceed|too (?:long|large|small))|exceed_context_size/i;
+
+/**
+ * Ollama (ATO-1276) answers a prompt longer than its `num_ctx` without
+ * llama.cpp's typed body: its native API sends a plain string
+ * (`{"error":"..."}`), and its OpenAI-compatible route may file it under
+ * another `type`. Only these unmistakable sentences count there, so a
+ * bare 400 that names no reason still keeps its old wording:
+ * "exceeded max context length", "input length exceeds the context
+ * length", "exceeds maximum context length", or the llama.cpp type name
+ * quoted in the text.
+ */
+const UNTYPED_CONTEXT_FULL_WORDING =
+  /exceed(?:s|ed)? (?:the )?(?:maximum |max )?context (?:length|size|window)|exceed_context_size/i;
 
 /**
  * The kind of a 400 from a local server, or null for any other status
@@ -39,7 +52,7 @@ export function localBadRequestKind(
   if (type === INVALID_REQUEST_TYPE) {
     return CONTEXT_FULL_WORDING.test(text) ? "context_exceeded" : "invalid_request";
   }
-  return null;
+  return UNTYPED_CONTEXT_FULL_WORDING.test(text) ? "context_exceeded" : null;
 }
 
 /** What happened, in one sentence, per kind. */

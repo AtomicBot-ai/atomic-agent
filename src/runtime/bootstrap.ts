@@ -405,6 +405,9 @@ export async function createAgentRuntime(
 
   const modelContext = createRuntimeModelContext(config, providers);
   const { resolveModelPricing, observeContextWindow, raiseContextWindowTo, resolveCatalogContextWindow, resolveCurrentVisionProvider, visionOnLiveRoute } = modelContext;
+  // ATO-1276: an Ollama route learns its real window (`/api/show`) now,
+  // before the first turn sizes a prompt. Silent and non-blocking.
+  void modelContext.primeLocalContextWindow();
   registerRuntimeVisionTools({ config, toolRegistry, resolveCurrentVisionProvider, logger });
   registerRuntimeImageTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics });
   registerRuntimeVideoTools({ toolRegistry, dangerous, getAnalytics: observability.getAnalytics, emitAgentLoopEventFor });
