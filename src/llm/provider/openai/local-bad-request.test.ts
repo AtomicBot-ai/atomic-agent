@@ -118,7 +118,10 @@ describe("humanizeOpenAiHttpError: a typed 400 from a server on this machine (AT
       const text = humanizeOpenAiHttpError(http(400, "http://localhost:11434/v1/chat/completions", body, withBody));
       expect(text).toContain("The local Ollama server at localhost:11434 turned the request down (400).");
       expect(text).toContain("This local server doesn't accept tool calls.");
-      expect(text).toContain("pick a model that supports tools");
+      expect(text).toContain("Pick a model that supports tools, or turn on tool calling in the server.");
+      // Ollama is not llama-server: no --jinja advice (the server's own
+      // words are quoted after "The server said:", and name no flag).
+      expect(text).not.toContain("--jinja");
     }
   });
 

@@ -74,3 +74,21 @@ export const LOCAL_BAD_REQUEST_ADVICE: Readonly<Record<LocalBadRequestKind, stri
     "The model or the server may not support something the agent sent, such as tools or images. " +
     "Try another model, or update the server.",
 };
+
+/** The tools advice for a server that did not name `--jinja` (Ollama and others). */
+export const TOOLS_UNSUPPORTED_MODEL_ADVICE =
+  "Pick a model that supports tools, or turn on tool calling in the server.";
+
+/** Only llama-server's own refusal names the flag. */
+const JINJA_WORDING = /--jinja\b/i;
+
+/**
+ * The advice for a kind, chosen by the server's own words where one
+ * sentence does not fit every server: the `--jinja` advice is shown only
+ * when the server named that flag, so an Ollama user ("<model> does not
+ * support tools") is not told to restart llama-server.
+ */
+export function localBadRequestAdvice(kind: LocalBadRequestKind, text = ""): string {
+  if (kind === "tools_unsupported" && !JINJA_WORDING.test(text)) return TOOLS_UNSUPPORTED_MODEL_ADVICE;
+  return LOCAL_BAD_REQUEST_ADVICE[kind];
+}

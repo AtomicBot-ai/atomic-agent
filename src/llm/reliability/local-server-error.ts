@@ -2,8 +2,8 @@ import { LlamaServerError } from "../llama-server-client.js";
 import { llamaLegacyPortNote } from "../llama-default-port-note.js";
 import { OpenAiHttpError } from "../provider/openai/openai-http.js";
 import {
-  LOCAL_BAD_REQUEST_ADVICE,
   LOCAL_BAD_REQUEST_SENTENCE,
+  localBadRequestAdvice,
   localBadRequestKind,
   type LocalBadRequestKind,
 } from "../provider/openai/local-bad-request.js";
@@ -174,7 +174,7 @@ function badRequest(
     status: 400,
     url,
     message: LOCAL_BAD_REQUEST_SENTENCE[kind],
-    advice: LOCAL_BAD_REQUEST_ADVICE[kind],
+    advice: localBadRequestAdvice(kind, text),
   };
 }
 

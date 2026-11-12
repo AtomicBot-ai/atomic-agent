@@ -137,22 +137,26 @@ describe("classifyLocalServerError: 400 from a local server (ATO-707, ATO-737)",
 
   it("reads a server that takes no tool calls as local_tools_unsupported (ATO-1209)", () => {
     const ollamaString = JSON.stringify({ error: "registry.ollama.ai/library/gemma2:2b does not support tools" });
-    for (const err of [
+    const jinja = "Start llama-server with --jinja, or pick a model that supports tools.";
+    const model = "Pick a model that supports tools, or turn on tool calling in the server.";
+    for (const [err, advice] of [
       // llama.cpp: typed body, the words in the message.
-      llamaHttp(400, "http://127.0.0.1:9931/v1/chat/completions", JINJA_BODY),
+      [llamaHttp(400, "http://127.0.0.1:9931/v1/chat/completions", JINJA_BODY), jinja],
       // The same through the OpenAI-compatible client, wrapped the way the loop wraps it.
-      new TransportError("x", 400, "http://127.0.0.1:9931/v1/chat/completions", {
+      [new TransportError("x", 400, "http://127.0.0.1:9931/v1/chat/completions", {
         cause: openAiHttp(400, "http://127.0.0.1:9931/v1/chat/completions", JINJA_BODY),
-      }),
-      // Ollama: a plain string `error`, no type.
-      openAiHttp(400, "http://localhost:11434/v1/chat/completions", ollamaString),
-      openAiHttp(400, "http://localhost:11434/v1/chat/completions", "tool(s) not supported"),
-    ]) {
+      }), jinja],
+      // Ollama: a plain string `error`, no type, and no word of --jinja:
+      // it must not be told to restart llama-server.
+      [openAiHttp(400, "http://localhost:11434/v1/chat/completions", ollamaString), model],
+      [openAiHttp(400, "http://localhost:11434/v1/chat/completions", "tool(s) not supported"), model],
+    ] as const) {
       const verdict = classifyLocalServerError(err);
       expect(verdict?.code).toBe(LOCAL_TOOLS_UNSUPPORTED_CODE);
       expect(verdict?.status).toBe(400);
       expect(verdict?.message).toBe("This local server doesn't accept tool calls.");
-      expect(verdict?.advice).toBe("Start llama-server with --jinja, or pick a model that supports tools.");
+      expect(verdict?.advice).toBe(advice);
+      expect(verdict?.advice.includes("--jinja")).toBe(advice === jinja);
       expect(localServerErrorLines(verdict!)).toHaveLength(1);
     }
   });
