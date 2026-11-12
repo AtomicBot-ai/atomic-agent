@@ -98,6 +98,8 @@ export class McpClient {
   private readonly deps: McpClientDeps;
   private client: Client | null = null;
   private connecting = false;
+  /** Why the last `close()` happened, told to a call it cut short. */
+  private closeReason: string | null = null;
   private catalog: McpServerCatalog = {
     server: "",
     tools: [],
@@ -127,6 +129,7 @@ export class McpClient {
    */
   async connect(signal?: AbortSignal): Promise<void> {
     if (this.client) return;
+    this.closeReason = null;
     if (this.connecting) {
       throw new McpConnectError(
         this.config.name,
@@ -332,6 +335,15 @@ export class McpClient {
       }
       return res as Record<string, unknown>;
     } catch (err) {
+      // `close(reason)` cut this call short (a plugin's code was
+      // stopped): say why instead of the SDK's bare "Connection closed".
+      if (this.client !== client && this.closeReason) {
+        throw new McpRequestError(
+          this.config.name,
+          `tools/call:${rawName}`,
+          this.closeReason,
+        );
+      }
       if (err instanceof McpRequestError) throw err;
       throw new McpRequestError(
         this.config.name,
@@ -399,12 +411,14 @@ export class McpClient {
   /**
    * Tear down the transport. Idempotent — safe to call when the
    * client was never connected or already closed. Swallows
-   * close-time errors (best-effort).
+   * close-time errors (best-effort). `reason` becomes the error of a
+   * tool call still waiting on this server.
    */
-  async close(): Promise<void> {
+  async close(reason?: string): Promise<void> {
     const client = this.client;
     if (!client) return;
     this.client = null;
+    this.closeReason = reason ?? null;
     this.catalog = {
       server: this.config.name,
       tools: [],

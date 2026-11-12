@@ -723,6 +723,7 @@ export async function createAgentRuntime(
   let telegramChannelForShutdown: TelegramChannel | null = null;
   let discordChannelForShutdown: DiscordChannel | null = null;
   let swarmForShutdown: SwarmRegistry | null = null;
+  let stopPluginMcpWatch: (() => void) | null = null;
   const turnState = prepareRuntimeTurnState();
   const { pendingSessionNamings, turnsInFlight } = turnState;
   // In-flight `/enhance` passes; shutdown aborts them beside naming.
@@ -736,6 +737,7 @@ export async function createAgentRuntime(
     get telegramChannelForShutdown() { return telegramChannelForShutdown; },
     get discordChannelForShutdown() { return discordChannelForShutdown; },
     get swarmForShutdown() { return swarmForShutdown; },
+    get pluginMcpWatch() { return stopPluginMcpWatch; },
     get consolidatorJob() { return consolidatorJob; },
     get taskStore() { return taskStore; },
     get analytics() { return observability.getAnalytics(); },
@@ -745,6 +747,9 @@ export async function createAgentRuntime(
   const refreshSkills = skillCatalogState.createRefreshSkills(options);
 
   const refreshMcp = mcpCatalog.createRefreshMcp();
+  // "Stop its code" (and plugin off / removed) stops that plugin's live
+  // MCP servers now, not at the next start (ATO-1407).
+  stopPluginMcpWatch = mcpCatalog.watchPluginMcp(refreshMcp);
 
   const { reloadLlmProviders, reloadLlmProvider } = createRuntimeProviderReloads(
     logger, localProfile, connectedLocal, providerRegistry,

@@ -78,4 +78,10 @@ describe("atomic-agent plugin (ATO-954 additions)", () => {
     expect(await pluginCommand(["deny-code", "demo"])).toBe(0);
     expect(readPluginState(stateDir).plugins.demo?.runsCodeAccepted).toBe(false);
   });
+
+  it("deny-code says running servers stop now, with no restart caveat (ATO-1407)", async () => {
+    expect(await pluginCommand(["deny-code", "demo"])).toBe(0);
+    expect(out.at(-1)).toMatch(/stop now, in running agents too\.$/);
+    expect(out.at(-1)).not.toMatch(/restart/i);
+  });
 });

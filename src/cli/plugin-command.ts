@@ -307,11 +307,13 @@ function toggle(stateDir: string, args: string[], enabled: boolean): number {
       return 1;
     }
     if (!setPluginPartEnabled(stateDir, name, part, enabled)) { console.error(`plugin not installed: ${name}`); return 1; }
-    console.log(`${name} ${part} ${enabled ? "on" : "off"}. Restart running agents to pick up MCP server changes.`);
+    console.log(`${name} ${part} ${enabled ? "on" : "off"}.${!part.startsWith("mcp:") ? "" : enabled ? " Restart running agents to start it." : " Running agents stop it now."}`);
     return 0;
   }
   if (!setPluginEnabled(stateDir, name, enabled)) { console.error(`plugin not installed: ${name}`); return 1; }
-  console.log(`${name} ${enabled ? "enabled" : "disabled"}. Restart running agents to pick up its MCP servers.`);
+  console.log(enabled
+    ? `${name} enabled. Restart running agents to start its MCP servers.`
+    : `${name} disabled. Running agents stop its MCP servers now.`);
   return 0;
 }
 
@@ -320,7 +322,7 @@ function code(stateDir: string, name: string | undefined, allow: boolean): numbe
   if (!setPluginCodeAllowed(stateDir, name, allow)) { console.error(`plugin not installed: ${name}`); return 1; }
   console.log(allow
     ? `${name} may now run its local MCP servers, hooks and scripts and receive your keys. Restart running agents to start its servers.`
-    : `${name}'s hooks and scripts are off, and its local MCP servers and servers that read your keys won't start again. Any already running stop when the agent restarts.`);
+    : `${name}'s code is off: its hooks, scripts, local MCP servers and servers that read your keys stop now, in running agents too.`);
   return 0;
 }
 

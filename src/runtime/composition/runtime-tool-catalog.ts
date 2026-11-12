@@ -41,6 +41,7 @@ import { McpManager, buildMcpPromptGetTool, buildMcpPromptListTool, buildMcpReso
 import { DEFAULT_TOOL_DESCRIPTORS } from "../../prompt/tool-descriptors.js";
 import type { McpServerConfig } from "../../mcp/mcp-types.js";
 import { loadPluginMcpServers } from "../../plugins/plugin-mcp.js";
+import { createPluginMcpLiveStop } from "../../plugins/plugin-mcp-live.js";
 import type { ToolDescriptor } from "../../prompt/stable-prefix.js";
 import { filterToolDescriptorsByConfig } from "../filter-disabled-tools.js";
 import { readAtomicMailApiKey } from "../../atomic-mail/index.js";
@@ -378,8 +379,9 @@ export async function connectRuntimeMcpCatalog(input: {
     ...(config.mcp?.servers ?? []),
     ...(composioServerConfig ? [composioServerConfig] : []),
   ];
-  const pluginMcp = safePluginMcpServers(config.paths.stateDir, new Set(ownServers.map(s => s.name)), logger);
-  const mcpServerConfigs = [...ownServers, ...pluginMcp];
+  const ownServerNames = new Set(ownServers.map(s => s.name));
+  const pluginMcp = safePluginMcpServers(config.paths.stateDir, ownServerNames, logger);
+  const mcpServerConfigs = [...ownServers, ...pluginMcp.servers];
   const mcpEnabled = mcpServerConfigs.length > 0;
   const mcpManager = new McpManager(mcpServerConfigs, {
     toolRegistry,
@@ -618,7 +620,25 @@ export async function connectRuntimeMcpCatalog(input: {
     };
     return refreshMcp;
   };
-  return { mcpManager, getGrammar: () => grammar, effectiveToolDescriptors, createRefreshMcp };
+  /**
+   * Stop a plugin's running MCP servers the moment its state no longer
+   * allows them (code stopped, plugin or server off, plugin removed;
+   * ATO-1407), from this process or another (the CLI the desktop runs).
+   * Returns the unwatch; a no-op when no plugin server was started.
+   */
+  const watchPluginMcp = (refreshMcp: () => Promise<void>): (() => void) => {
+    if (pluginMcp.servers.length === 0) return () => {};
+    return createPluginMcpLiveStop({
+      stateDir: config.paths.stateDir,
+      manager: mcpManager,
+      started: pluginMcp.servers,
+      owners: pluginMcp.owners,
+      takenNames: ownServerNames,
+      refresh: refreshMcp,
+      logger,
+    }).watch();
+  };
+  return { mcpManager, getGrammar: () => grammar, effectiveToolDescriptors, createRefreshMcp, watchPluginMcp };
 }
 
 export function registerRuntimeFusionAndReadScope(input: {
@@ -772,13 +792,17 @@ export function registerRuntimeFusionAndReadScope(input: {
   });
 }
 
-function safePluginMcpServers(stateDir: string, taken: ReadonlySet<string>, logger: StructuredLogger): McpServerConfig[] {
+function safePluginMcpServers(
+  stateDir: string,
+  taken: ReadonlySet<string>,
+  logger: StructuredLogger,
+): { servers: McpServerConfig[]; owners: Record<string, string> } {
   try {
-    const { servers, skipped } = loadPluginMcpServers(stateDir, taken);
+    const { servers, skipped, owners } = loadPluginMcpServers(stateDir, taken);
     for (const s of skipped) logger.warn("plugin MCP server skipped", { plugin: s.plugin, server: s.server, reason: s.reason });
-    return servers;
+    return { servers, owners };
   } catch (err) {
     logger.warn("plugin MCP servers unavailable", { error: err instanceof Error ? err.message : String(err) });
-    return [];
+    return { servers: [], owners: {} };
   }
 }
