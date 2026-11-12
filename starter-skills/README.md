@@ -39,3 +39,4 @@ the global skills dir — it will be replaced on the next boot. Use a distinct
 | `imagemagick/` | Image edit / convert: resize, crop, format, montage | `brew install imagemagick` |
 | `docker/` | Manage containers / images / Compose stacks via `docker` CLI | `docker` installed + daemon running |
 | `pre-push-check/` | Before pushing code the agent wrote, asks three questions about it (what changed, what could break, how to check); `/skill disable pre-push-check` turns it off | none |
+| `release-check/` | Only on an explicit "prepare a release" request: clean build from a fresh checkout, package contents, metadata, stubs and secrets, edge cases, verdict tied to one commit hash; never sends code to another provider without asking | none |
