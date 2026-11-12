@@ -52,6 +52,7 @@ import { getConfig } from "../config/index.js";
 import { ProfileClipWarnings, reportProfileClip } from "./profile-clip-warning.js";
 import { HistoryTrimWarnings, reportHistoryTrim } from "./history-trim-warning.js";
 import { toolDisabledEvents } from "./tool-disabled-notice.js";
+import { PrefixDriftTracker, reportPrefixDrift } from "./prefix-drift-warning.js";
 import { CompactPromptLatch } from "../prompt/compact-prompt.js";
 
 /**
@@ -71,6 +72,8 @@ export class AgentLoop {
   private readonly profileClipWarnings = new ProfileClipWarnings();
   /** Once-per-cut notice that the packer left older history out (ATO-295). */
   private readonly historyTrimWarnings = new HistoryTrimWarnings();
+  /** Stable-prefix change between steps of a session, by section (ATO-316). */
+  private readonly prefixDrift = new PrefixDriftTracker();
   /**
    * Compact-prompt decision per session (ATO-1116): keeps the stable
    * prefix from flipping when a step cannot see the model's window.
@@ -620,6 +623,24 @@ export class AgentLoop {
                   prompt: event.prompt,
                   ...(this.deps.logger ? { logger: this.deps.logger } : {}),
                   emit: (trimmed) => this.deps.onEvent?.(trimmed),
+                });
+                // ATO-316: a prefix that moved between steps throws the
+                // KV cache away; say so now, not only in `trace replay`.
+                const mode = event.prompt.modelMode;
+                reportPrefixDrift({
+                  tracker: this.prefixDrift,
+                  sessionId: state.id,
+                  stepIndex: i,
+                  stablePrefix: event.prompt.stablePrefix,
+                  shapeKey: [
+                    options.providerId ?? mode?.providerId ?? "",
+                    mode?.modelId ?? "",
+                    mode?.mode ?? "",
+                    this.deps.isFusionMode?.() === true ? "fusion" : "",
+                  ].join("|"),
+                  ...(this.deps.prefixInvalidations ? { ledger: this.deps.prefixInvalidations } : {}),
+                  ...(this.deps.logger ? { logger: this.deps.logger } : {}),
+                  emit: (drift) => this.deps.onEvent?.(drift),
                 });
               }
             },

@@ -26,6 +26,7 @@ import type { TruncationRetry } from "./turn/truncation-recovery.js";
 import type { AgentMetrics } from "../tracing/agent-metrics.js";
 import type { StructuredLogger } from "../tracing/structured-logger.js";
 import type { ProfileClippedEvent } from "./profile-clip-warning.js";
+import type { PrefixDriftEvent, PrefixInvalidationLedger } from "./prefix-drift-warning.js";
 import type { HistoryTrimmedEvent } from "./history-trim-warning.js";
 import type { ToolDisabledEvent } from "./tool-disabled-notice.js";
 import type { ReviewStallSignal } from "./review-stall.js";
@@ -111,6 +112,13 @@ export interface AgentLoopDependencies {
    * (embedders, tests) means "not fusion", which gates nothing.
    */
   isFusionMode?: () => boolean;
+  /**
+   * What the runtime rebuilt on purpose (skills refreshed, MCP catalog
+   * rebuilt), so a prefix change it explains is labelled expected
+   * rather than warned about (ATO-316). Absent: every change that is
+   * not a model or route switch reads as unexpected.
+   */
+  prefixInvalidations?: PrefixInvalidationLedger;
   /**
    * Drop the fan-out approval a previous turn on this session earned.
    * See `approval/fanout-scope.ts`: the answer is scoped to one job.
@@ -951,6 +959,11 @@ export type AgentLoopEvent =
     }
   /** `### profile` was clipped at `memory.profile.maxTokens` (issue #407). */
   | ProfileClippedEvent
+  /**
+   * The stable prefix differs from the previous step of the same
+   * session (ATO-316): which sections, and whether the runtime caused it.
+   */
+  | PrefixDriftEvent
   /** The packer left older history out of the prompt (ATO-295). */
   | HistoryTrimmedEvent
   /**
