@@ -256,6 +256,7 @@ import { summarizeBootPaint, type BootPaintLog } from "./boot-paint.js";
 import { expandHome, fileManagerLabel, isAbsoluteOn, lastSegment, titleBarOverlayColors, TOOLBAR_HEIGHT, voiceSupported, windowChrome } from "./platform.js";
 import { openTarget, replyPathVerdict } from "./reply-paths.js";
 import { appWindows, createScreenMarksOverlay } from "./screen-overlay-window.js";
+import { isQuickEntryWindow, wireQuickEntry } from "./quick-entry-window.js";
 import { KEEPS_CRASHING, RenderRecovery } from "./render-recovery.js";
 import { imageDataUrl, imageRootsFor, openImage, readOpenedImage } from "./image-data-url.js";
 import { filePreview, previewRootsFor, previewTarget } from "./file-preview.js";
@@ -10619,6 +10620,22 @@ void app.whenReady().then(async () => {
   rebuildMenu();
   if (!SMOKE && !FIRST_RUN_PROBE) void syncTray();
   wireIpc(agent);
+  /* ATO-523: the global hotkey and its one-line box (quick-entry-window.ts).
+     Never in a smoke run or the probe; given back at the quit. */
+  const quickEntry = wireQuickEntry({
+    userData: app.getPath("userData"),
+    platform: process.platform,
+    smoke: SMOKE,
+    probe: FIRST_RUN_PROBE,
+    modelsTest: MODELS_TEST,
+    showMainWindow: () => {
+      openWindowAgain();
+      if (process.platform === "darwin") app.focus({ steal: true });
+      return win;
+    },
+    log: (line) => console.error(line),
+  });
+  app.once("will-quit", () => quickEntry.dispose());
   wireUpdater();
   watchCoreUpdates();
   // ATO-229: the first update check waits for the window (then ~10 s more, updater.ts).
@@ -10696,8 +10713,8 @@ void app.whenReady().then(async () => {
   });
 
   app.on("activate", () => {
-    // ATO-1018: a marks overlay is not a window of the app.
-    if (appWindows().length === 0) openWindowAgain();
+    // ATO-1018: a marks overlay is not a window of the app. ATO-523: nor is the quick-entry box.
+    if (appWindows().filter((w) => !isQuickEntryWindow(w)).length === 0) openWindowAgain();
   });
 });
 

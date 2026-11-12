@@ -6194,7 +6194,7 @@ function settingsPaneEntered(opened) {
   // ATO-720: the Model row reads `models status`; ask once on entry when the route uses a local model server.
   else if (pane === 'diagnostics' && BR && (engfRouteLocal() || selBackend() === 'custom')) llmRefreshStatus(true).then(diagRepaint);
   // ATO-328: General's Exa key row says whether a key is saved; read the names on every entry.
-  if (pane === 'general') exaKeyRefresh();
+  if (pane === 'general') { exaKeyRefresh(); quickEntryRefresh(); }   // ATO-523: and the quick entry shortcut's state
 }
 
 function settingsPane() {
@@ -6255,6 +6255,8 @@ function generalPane() {
         + '<button class="btn btn-s sm" data-act="workspace:choose"' + (BR ? '' : ' disabled') + '>Change…</button>'
       + '</div>'
       + tpNotifyRowHTML()
+      // ATO-523: the global hotkey's box and its combo (quick-entry-settings.js).
+      + quickEntryRowHTML(QE, {esc, setSwitchHTML})
       // ATO-464: finished turns fold their steps into one line unless this is on.
       + '<div class="tk-setrow">'
         + '<div class="body"><div class="t">Always show steps</div>'
@@ -7201,6 +7203,7 @@ function act(a) {
   if (a === 'notify:toggle') { close(); tpNotifyToggle(); return; }
   if (a === 'names:toggle') { close(); nameChatsSet(!nameChatsOn()); return; }
   // ATO-464: Settings › General › Always show steps (turn-summary.js).
+  if (a.startsWith('quickentry:')) { quickEntryAct(a.slice('quickentry:'.length)); return; }   // ATO-523 (quick-entry-settings.js)
   if (a === 'steps:always') { close(); stepsAlwaysSet(!STEPS.always); render(); return; }
   if (a === 'privacy:refresh') { close(); privacyRefresh(); return; }
   if (a.startsWith('privacy:readscope:')) { close(); readScopeSet(a.slice(18)); return; }
@@ -12000,6 +12003,8 @@ if (BR) {
     if ((command === 'send' || command === 'stop') && Date.now() - APPR_CHORD_AT < 600) return;
     ANX.via('menu'); act(command);
   });
+  // ATO-523: a text from the global hotkey's box starts a new chat (quick-entry-settings.js).
+  quickEntryBoot();
   BR.onLog((entry) => {
     if (!entry || !entry.line) return;
     /* ATO-121: one of the agent's structured lines comes with its own level

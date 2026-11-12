@@ -275,6 +275,19 @@ contextBridge.exposeInMainWorld("atomic", {
   foldersGet: () => ipcRenderer.invoke("app:foldersGet"),
   foldersSet: (value: unknown) => ipcRenderer.invoke("app:foldersSet", value),
   onMenu: (cb: (command: unknown) => void) => on("app:menu", cb),
+  /* ATO-523: the global hotkey's one-line box (main/quick-entry-window.ts).
+     The box's page: what it opened with, the draft kept while it is away,
+     Esc, Enter. The main window: "a text is waiting" and taking it once.
+     Settings › General: the switch and the combo. */
+  quickEntryOpened: () => ipcRenderer.invoke("app:quickEntryOpened"),
+  quickEntryDraft: (text: string) => ipcRenderer.send("app:quickEntryDraft", text),
+  quickEntryHide: () => ipcRenderer.send("app:quickEntryHide"),
+  quickEntrySubmit: (text: string) => ipcRenderer.invoke("app:quickEntrySubmit", text),
+  onQuickEntry: (cb: (payload: unknown) => void) => on("app:quickEntry", cb),
+  quickEntryTake: () => ipcRenderer.invoke("app:quickEntryTake"),
+  quickEntryGet: () => ipcRenderer.invoke("app:quickEntryGet"),
+  quickEntrySet: (patch: { enabled?: boolean; accelerator?: string }) => ipcRenderer.invoke("app:quickEntrySet", patch),
+  quickEntryPause: (paused: boolean) => ipcRenderer.invoke("app:quickEntryPause", paused),
   // ATO-1042: the starter model main fetches on a first launch (downloading, ready, failed).
   onStarterModel: (cb: (ev: unknown) => void) => on("app:starterModel", cb),
   starterGet: () => ipcRenderer.invoke("app:starterGet"),
