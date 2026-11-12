@@ -5,6 +5,7 @@ import { isPrimaryPress } from "../mouse/mouse-event.js";
 import { describeToolCall } from "../../tools/describe-tool-call.js";
 import { formatToolArgsBlock } from "../render/tool-args-preview.js";
 import { theme } from "../theme/theme.js";
+import { diffLineTone, diffToneColor, looksLikeUnifiedDiff } from "../diff-line-tone.js";
 import type { StreamingToolCall, ToolCardEntry } from "../tui-state.js";
 import { ToolCardPathChip, toolCardFilePath } from "./tool-card-path-chip.js";
 import {
@@ -112,6 +113,9 @@ export function ToolCard({
       </Box>
     );
   }
+  // ATO-563: an ok edit's result is its unified diff; + and - lines are coloured.
+  const resultDiff =
+    "status" in card && card.status === "ok" && looksLikeUnifiedDiff(card.summary);
   return (
     <Box flexDirection="column" marginBottom={1}>
       {header}
@@ -127,7 +131,7 @@ export function ToolCard({
           <>
             <Text color={theme.colors.muted}>result</Text>
             {splitLines(card.summary).map((line, idx) => (
-              <Text key={`s-${idx}`} color={color}>
+              <Text key={`s-${idx}`} color={resultDiff ? diffToneColor(diffLineTone(line), theme.colors, color) : color}>
                 {"  "}
                 {line}
               </Text>

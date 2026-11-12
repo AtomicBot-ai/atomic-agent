@@ -66,6 +66,7 @@ import { createTelegramPairingHandlers } from "./route-telegram-pairing.js";
 import { createSetActiveLlmHandler } from "./route-llm-active.js";
 import { createPanelPageHandler, createPanelScriptHandler } from "./route-panel.js";
 import { createSetSessionWorkingDirHandler } from "./session-working-dir.js";
+import { createRestoreFileHandler } from "./route-fs-restore.js";
 import { createReconnectMemoryEmbeddingsHandler } from "./route-memory-embeddings.js";
 import { createTelegramChannelHandler } from "./route-telegram-channel.js";
 
@@ -184,6 +185,8 @@ export function buildRouteTable(): RouteDefinition[] {
     { method: "POST", path: "/api/sessions/{id}/working-dir", handler: createSetSessionWorkingDirHandler() },
     // ATO-1298: take the last plain question and answer back, for a real retry.
     { method: "POST", path: "/api/sessions/{id}/rollback-last-turn", handler: createRollbackLastTurnHandler() },
+    // ATO-563: put back a file the agent replaced, from its saved copy (the desktop's Revert).
+    { method: "POST", path: "/api/sessions/{id}/fs/restore", handler: createRestoreFileHandler() },
     {
       method: "POST",
       path: "/api/sessions/{id}/steer",
