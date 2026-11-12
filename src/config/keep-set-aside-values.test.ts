@@ -74,6 +74,7 @@ describe("enum-like values a newer build wrote (ATO-1241)", () => {
     { key: "llm.runMode.fusion.isolation", future: "future-isolation-1241", reads: undefined, chosen: "worktree" },
     { key: "agent.tools.search", future: "future-search-1241", reads: "auto", chosen: "on" },
     { key: "agent.compaction.mode", future: "future-compaction-1241", reads: "auto", chosen: "model" },
+    { key: "agent.prompt.compact", future: "future-compact-1330", reads: "auto", chosen: "on" },
     { key: "tui.whileBusySubmit", future: "future-submit-1241", reads: "steer", chosen: "queue" },
   ];
 
