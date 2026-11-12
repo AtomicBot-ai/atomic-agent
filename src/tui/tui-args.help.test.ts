@@ -24,4 +24,8 @@ describe("parseTuiArgs --help", () => {
       expect(TUI_HELP).toContain(flag);
     }
   });
+
+  it("says a launch from home reopens the last session's folder", () => {
+    expect(TUI_HELP).toContain("launched from home, the folder of the last session");
+  });
 });

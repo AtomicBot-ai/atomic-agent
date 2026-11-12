@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { isSea } from "node:sea";
 import { render } from "ink";
 import React from "react";
@@ -75,6 +76,11 @@ import {
 } from "./theme/detect-terminal-background.js";
 import { resolveThemeName, setActiveTheme, THEMES } from "./theme/theme.js";
 import { formatStartupFusionNotice } from "./fusion-resume-notice.js";
+import {
+  formatRestoredWorkingDirNotice,
+  resolveStartupWorkingDir,
+} from "./startup-working-dir.js";
+import { readRecentWorkingDirs } from "../session/index.js";
 import type { InitialTuiLayoutOptions, TuiSessionInfo } from "./tui-state.js";
 import {
   loadUninstallPreview,
@@ -115,6 +121,17 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // when the TUI exits.
   const configNotices: string[] = [];
   setConfigNoticeSink((line) => configNotices.push(line));
+  // A bare launch from the home directory reopens the last session's
+  // folder (ATO-5); any other launch keeps the shell's folder. Decided
+  // before the runtime boots, because the runtime is built for one folder.
+  const startupDir = resolveStartupWorkingDir({
+    args,
+    cwd: parsed.workingDir,
+    homeDir: homedir(),
+    stateDir: getConfig().paths.stateDir,
+    recentDirs: () => readRecentWorkingDirs(getConfig().paths.sessionsDbFile),
+  });
+  const workingDir = startupDir.workingDir;
   // Theme selection BEFORE any Ink render or stdin listener (the first-run
   // flow and the main render). An explicit
   // `tui.theme` (a registered name) wins; otherwise `"auto"` (or an unknown
@@ -229,7 +246,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
   // emits its first transition.
   let orchestratorForChannelStatus: ChatOrchestrator | null = null;
   const runtime = await createAgentRuntime({
-    workingDir: parsed.workingDir,
+    workingDir,
     approvalLevel,
     traceDefault: true,
     // The TUI is the one entry point a person actually launches; the
@@ -267,7 +284,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
 
   const sessionInfo: TuiSessionInfo = {
     sessionId: null,
-    workingDir: parsed.workingDir,
+    workingDir,
     llamaUrl: config.localModels.url,
     browserChannel: config.browser.channel,
     browserHeadless: config.browser.headless,
@@ -528,7 +545,7 @@ export async function tuiCommand(args: string[]): Promise<number> {
           uninstallKeepDesktopData = choice.keepDesktopData;
           orchestrator.quit();
         },
-        onNewWindowRequested: () => openNewAgentWindow(parsed.workingDir, bus),
+        onNewWindowRequested: () => openNewAgentWindow(workingDir, bus),
         onOpenUrlRequested: (url) => openUrlFromChat(url, bus),
         onMemoryDumpRequested: () => orchestrator.dumpProfile(),
         onSkillCatalogRequested: () => orchestrator.dumpSkillCatalog(),
@@ -935,6 +952,12 @@ export async function tuiCommand(args: string[]): Promise<number> {
   });
   for (const line of configNotices) bus.emit({ type: "runtime_info", line });
   configNotices.length = 0;
+  if (startupDir.restored) {
+    bus.emit({
+      type: "system_message",
+      text: formatRestoredWorkingDirNotice(workingDir, homedir()),
+    });
+  }
 
   // Project skills and AGENTS.md/CLAUDE.md files of the opened folder load
   // only after the operator trusted them (ATO-298); ask once if any are new.

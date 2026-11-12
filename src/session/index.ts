@@ -4,6 +4,7 @@ export type {
   RecentWorkingDirRow,
   TurnEnding,
 } from "./session-store.js";
+export { readRecentWorkingDirs } from "./recent-working-dirs.js";
 export {
   currentTurnOwnerProbe,
   hostIdentity,
