@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { expandHome } from "../expand-home.js";
 import { BROWSER_BUNDLE_IDS } from "../screen/screen-protected.js";
 import { NESTED_SHELL_PROGRAMS, PREFIX_COMMANDS } from "./command-segments.js";
+import { liftSubstitutions } from "./command-substitution.js";
 import type { GuardVerdict } from "./guard-types.js";
 import { basenameCommand } from "./normalise.js";
 import { blankPrintedLiterals, outputStaysHere } from "./printed-literals.js";
@@ -37,7 +38,9 @@ import { lexShellLine, type ShellWord } from "./shell-line-lexer.js";
  *   `--args`, input from `xargs`). A bare `open -a "Google Chrome"`
  *   (start or bring forward) runs. The Linux / Windows openers
  *   (`xdg-open`, `gio open`, `wslview`, `start`, `explorer`,
- *   `rundll32 url.dll`, `sensible-browser`) the same way.
+ *   `rundll32 url.dll`, `sensible-browser`) the same way, `cmd /c
+ *   start` included. An operand built by a command substitution (`open
+ *   "$(python3 x.py)"`, backticks) or a variable counts as runtime-built.
  * - A browser binary run with arguments (`google-chrome <url>`,
  *   `…/Google Chrome.app/Contents/MacOS/Google Chrome --headless …`),
  *   `--version` / `--help` aside.
@@ -308,7 +311,16 @@ function hiddenOsascriptSource(text: string): string | null {
 function checkLineCommands(line: string, outer: CommandContext): GuardVerdict | null {
   if (outer.depth > 4) return null;
   const ctx = { ...outer, printsSafe: outer.printsSafe && outputStaysHere(line) };
-  const tokens = lexShellLine(line, "posix");
+  // `open "$(python3 x.py)"`: the lexer gives up on `$(…)` and backticks,
+  // which let a URL printed by a script reach the browser (ATO-1468).
+  // Lifted, the substitution reads as a word only known at run time, and
+  // the commands inside it are checked as lines of their own.
+  const lifted = liftSubstitutions(line);
+  for (const inner of lifted?.inner ?? []) {
+    const verdict = checkLineCommands(inner, { ...ctx, depth: ctx.depth + 1 });
+    if (verdict) return verdict;
+  }
+  const tokens = lexShellLine(lifted?.outer ?? line, "posix");
   if (tokens === null) return null;
   let words: ShellWord[] = [];
   const flush = (): GuardVerdict | null => {
@@ -413,6 +425,11 @@ function checkCommand(all: readonly ShellWord[], outer: CommandContext): GuardVe
     return checkOpener(args, ctx);
   }
   if (name === "gio" && args[0]?.text === "open") return checkOpener(args.slice(1), ctx);
+  if (name === "cmd" || name === "cmd.exe") {
+    // `cmd /c start https://…`: the words after `/c` (or `/k`) are a command.
+    const at = args.findIndex((a) => /^\/[ck]$/i.test(a.text));
+    return at === -1 ? null : checkCommand(args.slice(at + 1), ctx);
+  }
   if (["sensible-browser", "x-www-browser", "www-browser", "gnome-www-browser"].includes(name)) {
     return refuse("starting the default web browser");
   }
