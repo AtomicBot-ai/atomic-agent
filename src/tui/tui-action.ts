@@ -54,6 +54,8 @@ export type TuiAction =
       variant?: "normal" | "warn";
       /** See {@link ChatMessage.switchToSessionId}. */
       switchToSessionId?: string;
+      /** See {@link ChatMessage.action}. */
+      action?: "add-cloud-provider";
     }
   | {
       type: "agent_event";

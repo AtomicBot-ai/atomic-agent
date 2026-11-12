@@ -159,6 +159,24 @@ describe("RunModeOrchestrator.setMode", () => {
     );
   });
 
+  it("cloud with no cloud provider stays local and offers [add cloud provider]", async () => {
+    // ATO-1460: the plain sentence, and a chat line that keeps the way
+    // out on screen after the composer notice times out.
+    seed({ ...BOTH_LEGS, providers: [BOTH_LEGS!.providers[0]!] });
+    const app = harness();
+    await app.orchestrator.setMode("cloud");
+    expect(getConfig().llm?.runMode).toBeUndefined();
+    expect(app.setActive).not.toHaveBeenCalled();
+    const chat = app.actions.find((a) => a.type === "system_message");
+    expect(chat).toMatchObject({
+      text: expect.stringMatching(/^Cloud mode needs a cloud model/),
+      action: "add-cloud-provider",
+    });
+    expect(app.actions.find((a) => a.type === "composer_notice")).toMatchObject(
+      { text: (chat as { text: string }).text },
+    );
+  });
+
   it("cloud out of fusion clears the mode and moves the provider in the same write", async () => {
     seed({
       ...BOTH_LEGS,

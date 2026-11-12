@@ -12,9 +12,13 @@ export function describeRunModeDegradation(
 ): string {
   switch (degraded.reason) {
     case "no-cloud-provider":
+      // Plain words, no menu path: every surface that shows this line
+      // also offers the way to add one (the TUI's `[add cloud provider]`
+      // chip, the desktop's own button), so the sentence only has to say
+      // what is missing and what happens meanwhile (ATO-1460).
       return degraded.requested === "fusion"
-        ? "Fusion needs a cloud orchestrator — no cloud provider is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm)."
-        : "Cloud mode needs a cloud provider — none is configured. Staying on local. Add one in Manage → LLM → Cloud (or /llm).";
+        ? "Fusion needs a cloud model to plan the work. You don't have one yet, so answers come from the local model."
+        : "Cloud mode needs a cloud model. You don't have one yet, so answers come from the local model.";
     case "no-second-provider":
       // Either leg may be cloud or local; what fusion cannot do is run
       // both of them on the same provider.

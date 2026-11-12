@@ -99,12 +99,7 @@ export class RunModeOrchestrator {
         rm.orchestratorProviderId ??
         resolved.activeTextProvider;
       if (leg === null || leg === undefined) {
-        this.refuse(
-          describeRunModeDegradation({
-            reason: "no-cloud-provider",
-            requested: mode,
-          }),
-        );
+        this.refuseNoCloudProvider(mode);
         return;
       }
       const workerLeg =
@@ -137,12 +132,7 @@ export class RunModeOrchestrator {
         ? resolved.activeTextProvider
         : rm.orchestratorProviderId;
       if (leg === null) {
-        this.refuse(
-          describeRunModeDegradation({
-            reason: "no-cloud-provider",
-            requested: mode,
-          }),
-        );
+        this.refuseNoCloudProvider(mode);
         return;
       }
     } else {
@@ -301,6 +291,25 @@ export class RunModeOrchestrator {
       (p) => Boolean(resolveLlmProviderApiKey(p)) || usesExternalCliAuth(p),
     );
     return (keyed ?? cloud[0])?.id ?? null;
+  }
+
+  /**
+   * The cloud or Fusion pick that found no cloud provider (ATO-1460).
+   * Besides the usual notice it leaves one chat line with an
+   * `[add cloud provider]` button: the composer notice is gone in a few
+   * seconds, and the way out should stay on screen until it is taken.
+   */
+  private refuseNoCloudProvider(mode: RunModeName): void {
+    const line = describeRunModeDegradation({
+      reason: "no-cloud-provider",
+      requested: mode,
+    });
+    this.refuse(line);
+    this.deps.bus.emit({
+      type: "system_message",
+      text: line,
+      action: "add-cloud-provider",
+    });
   }
 
   private refuse(line: string): void {

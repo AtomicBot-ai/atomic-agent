@@ -182,6 +182,7 @@ export function reduceTuiState(state: TuiState, action: TuiAction): TuiState {
         ...(action.switchToSessionId
           ? { switchToSessionId: action.switchToSessionId }
           : {}),
+        ...(action.action ? { action: action.action } : {}),
       });
     case "session_created":
       return {

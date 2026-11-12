@@ -9,13 +9,13 @@ describe("describeRunModeDegradation", () => {
         reason: "no-cloud-provider",
         requested: "fusion",
       }),
-    ).toMatch(/^Fusion needs a cloud orchestrator/);
+    ).toMatch(/^Fusion needs a cloud model/);
     expect(
       describeRunModeDegradation({
         reason: "no-cloud-provider",
         requested: "cloud",
       }),
-    ).toMatch(/^Cloud mode needs a cloud provider/);
+    ).toMatch(/^Cloud mode needs a cloud model/);
   });
 
   it("names the missing second leg without prescribing its kind", () => {
@@ -28,12 +28,18 @@ describe("describeRunModeDegradation", () => {
     expect(line).not.toMatch(/llama-server|local workers/);
   });
 
-  it("always points at where to fix it", () => {
-    expect(
-      describeRunModeDegradation({
+  it("says it in plain words: no em dash, no menu path, no slash command", () => {
+    // The way to add a provider rides beside the line as a button
+    // (ATO-1460), so the sentence carries no directions of its own.
+    for (const requested of ["cloud", "fusion"] as const) {
+      const line = describeRunModeDegradation({
         reason: "no-cloud-provider",
-        requested: "fusion",
-      }),
-    ).toContain("Manage → LLM → Cloud");
+        requested,
+      });
+      expect(line).not.toContain("\u2014");
+      expect(line).not.toContain("Manage \u2192");
+      expect(line).not.toContain("/llm");
+      expect(line).toContain("answers come from the local model");
+    }
   });
 });
