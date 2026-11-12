@@ -1,11 +1,11 @@
 import { readFileSync, statSync } from "node:fs";
 import { resolvePidFilePath } from "../backend-paths.js";
 import {
-  lockMeansOperationInProgress,
   machineBootTimeMs,
-  readCoreOperationLock,
+  readCoreOperationLockForTurn,
+  turnLockMeansOperationInProgress,
   writtenBeforeBoot,
-  type CoreOperationLockState,
+  type CoreOperationTurnLockState,
 } from "../core/core-operation.js";
 import { classifyPidLiveness } from "./daemon-lifecycle.js";
 
@@ -22,7 +22,9 @@ import { classifyPidLiveness } from "./daemon-lifecycle.js";
  *               or llama.cpp/Core install holds the engine lock), or the pid
  *               file could not be read for another reason. A lock its owner
  *               left behind (gone, from before the last boot, or never given
- *               a pid) is not an operation under way (ATO-1275).
+ *               a pid) is not an operation under way (ATO-1275), nor is a
+ *               lock held longer than `CORE_OPERATION_STALE_MS` or one that
+ *               cannot be read (ATO-1433).
  *
  * Both managed engines keep the model process's pid in the same file:
  * llama-server writes its child's pid right after the spawn, Atomic Core
@@ -71,17 +73,17 @@ export interface ManagedEngineLivenessReport {
   state: ManagedEngineLiveness;
   reason: ManagedEngineLivenessReason;
   /** The engine operation lock as read (`probe_failed` when the read threw). */
-  lock: CoreOperationLockState | "probe_failed";
+  lock: CoreOperationTurnLockState | "probe_failed";
 }
 
 export interface ManagedEngineLivenessProbes {
-  operationLock?: (dataDir: string) => CoreOperationLockState;
+  operationLock?: (dataDir: string) => CoreOperationTurnLockState;
   pidLiveness?: (pid: number) => "alive" | "foreign" | "dead";
   /** When this machine last booted, wall clock ms. */
   bootTimeMs?: () => number;
 }
 
-const LOCK_REASON: Partial<Record<CoreOperationLockState, ManagedEngineLivenessReason>> = {
+const LOCK_REASON: Partial<Record<CoreOperationTurnLockState, ManagedEngineLivenessReason>> = {
   held: "lock_held",
   held_self: "lock_held_self",
   writing: "lock_writing",
@@ -99,21 +101,22 @@ export function readManagedEngineLiveness(
  * `readManagedEngineLiveness` with the branch that decided it and the lock
  * reading, for error reports. A lock left behind by an owner that is gone
  * (dead pid, written before the last boot, never given a pid) does not
- * hide a dead engine (ATO-1275); a lock a live process holds still does.
+ * hide a dead engine (ATO-1275); a lock a live process holds still does,
+ * until it is older than `CORE_OPERATION_STALE_MS` (ATO-1433).
  */
 export function explainManagedEngineLiveness(
   dataDir: string,
   probes: ManagedEngineLivenessProbes = {},
 ): ManagedEngineLivenessReport {
-  const operationLock = probes.operationLock ?? readCoreOperationLock;
+  const operationLock = probes.operationLock ?? readCoreOperationLockForTurn;
   const pidLiveness = probes.pidLiveness ?? classifyPidLiveness;
-  let lock: CoreOperationLockState;
+  let lock: CoreOperationTurnLockState;
   try {
     lock = operationLock(dataDir);
   } catch {
     return { state: "unknown", reason: "lock_probe_failed", lock: "probe_failed" };
   }
-  if (lockMeansOperationInProgress(lock)) {
+  if (turnLockMeansOperationInProgress(lock)) {
     return { state: "unknown", reason: LOCK_REASON[lock] ?? "lock_held", lock };
   }
   let raw: string;

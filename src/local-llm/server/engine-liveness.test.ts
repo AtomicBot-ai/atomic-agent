@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolvePidFilePath } from "../backend-paths.js";
-import { readCoreOperationLock as readCoreOperationLockForTest } from "../core/core-operation.js";
+import { CORE_OPERATION_STALE_MS, readCoreOperationLock as readCoreOperationLockForTest } from "../core/core-operation.js";
 import { explainManagedEngineLiveness, readManagedEngineLiveness } from "./engine-liveness.js";
 
 describe("readManagedEngineLiveness (ATO-772)", () => {
@@ -144,6 +144,36 @@ describe("explainManagedEngineLiveness (ATO-1275)", () => {
     expect(explainManagedEngineLiveness(dataDir, { bootTimeMs: () => Date.now() - 3 * HOUR })).toMatchObject({
       state: "alive",
       reason: "pid_alive",
+    });
+  });
+
+  it("a lock held longer than any honest operation does not hide a dead engine (ATO-1433)", () => {
+    // A pid that a crashed owner left on Windows, now naming another program.
+    writeLock(process.ppid);
+    age(lockPath(), CORE_OPERATION_STALE_MS + 60_000);
+    expect(explainManagedEngineLiveness(dataDir, { bootTimeMs: () => Date.now() - 30 * 24 * HOUR })).toEqual({
+      state: "no_pid",
+      reason: "no_pid_file",
+      lock: "stale_too_old",
+    });
+    writeFileSync(resolvePidFilePath(dataDir), String(deadPid()));
+    expect(explainManagedEngineLiveness(dataDir, { bootTimeMs: () => Date.now() - 30 * 24 * HOUR })).toMatchObject({
+      state: "dead",
+      reason: "pid_dead",
+      lock: "stale_too_old",
+    });
+  });
+
+  it("a fresh lock held by another live process still keeps the wait", () => {
+    writeLock(process.ppid);
+    expect(explainManagedEngineLiveness(dataDir)).toMatchObject({ state: "unknown", reason: "lock_held" });
+  });
+
+  it("an unreadable lock is not a start under way: the pid decides (ATO-1433)", () => {
+    expect(explainManagedEngineLiveness(dataDir, { operationLock: () => "unreadable" })).toEqual({
+      state: "no_pid",
+      reason: "no_pid_file",
+      lock: "unreadable",
     });
   });
 });
