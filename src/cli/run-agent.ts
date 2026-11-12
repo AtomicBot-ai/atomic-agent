@@ -155,6 +155,8 @@ export function formatCliApprovalPrompt(request: ApprovalRequest): string {
     options.push(
       siteGrantHost(request) !== null
         ? `s = allow ${describeCategoryGrant(request)} this session`
+        : request.grantKey !== undefined
+          ? `s = allow this kind to ${request.grantKey} this session`
         : "s = allow this kind this session",
     );
   }

@@ -894,6 +894,9 @@ function grantConfirmation(
   if (scope === "shape" && request.commandShape) {
     return `granted: ${request.commandShape} commands for this session`;
   }
+  if (request.grantKey !== undefined) {
+    return `granted: ${formatApprovalCategory(request.category)} to ${request.grantKey} for this session`;
+  }
   return `granted: ${formatApprovalCategory(request.category)} for this session`;
 }
 

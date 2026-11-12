@@ -554,3 +554,122 @@ describe("os.http.request retry state across attempts", () => {
     expect(calls.length).toBeLessThanOrEqual(8);
   });
 });
+
+describe("os.http.request cross-origin redirects (ATO-1182)", () => {
+  function walk(input: {
+    method: "GET" | "POST";
+    headers?: Record<string, string>;
+    results: CommandResult[];
+    calls: string[][];
+  }) {
+    return executeGuardedHttpRequest(
+      "https://a.example/submit",
+      {
+        method: input.method,
+        headers: input.headers ?? {},
+        body: input.method === "POST" ? "order=1" : undefined,
+        timeoutMs: 1000,
+        followRedirects: true,
+      },
+      {
+        runCommand: scriptedRunCommand(input.results, input.calls),
+        lookup: publicLookup,
+        cwd: "/tmp",
+        signal: new AbortController().signal,
+        maxResponseBytes: 100_000,
+        sleep: async () => {},
+      },
+    );
+  }
+
+  it.each([307, 308])(
+    "does not carry a POST body through a %i to another host",
+    async (status) => {
+      const calls: string[][] = [];
+      const response = await walk({
+        method: "POST",
+        results: [
+          makeResult({ stdout: stubStdout(status, "", "https://b.example/in") }),
+          makeResult({ stdout: stubStdout(200) }),
+        ],
+        calls,
+      });
+      expect(calls).toHaveLength(1);
+      expect(response.status).toBe(status);
+      expect(response.redirectNotFollowed).toBe("https://b.example/in");
+      expect(response.finalUrl).toBe("https://a.example/submit");
+    },
+  );
+
+  it("treats another port on the same host as another origin", async () => {
+    const calls: string[][] = [];
+    const response = await walk({
+      method: "POST",
+      results: [
+        makeResult({
+          stdout: stubStdout(307, "", "https://a.example:8443/submit"),
+        }),
+      ],
+      calls,
+    });
+    expect(calls).toHaveLength(1);
+    expect(response.redirectNotFollowed).toBe("https://a.example:8443/submit");
+  });
+
+  it("still follows a same-origin 307 with the body", async () => {
+    const calls: string[][] = [];
+    const response = await walk({
+      method: "POST",
+      results: [
+        makeResult({ stdout: stubStdout(307, "", "https://a.example/v2") }),
+        makeResult({ stdout: stubStdout(200) }),
+      ],
+      calls,
+    });
+    expect(response.status).toBe(200);
+    expect(response.redirectNotFollowed).toBeUndefined();
+    expect(calls.filter((a) => a.includes("--data-binary"))).toHaveLength(2);
+  });
+
+  it("follows a cross-origin GET without credential headers", async () => {
+    const calls: string[][] = [];
+    const response = await walk({
+      method: "GET",
+      headers: {
+        Authorization: "Bearer sk-live-123456",
+        Cookie: "sid=abc",
+        "X-Api-Key": "k-1",
+        "X-Custom-Token": "t-1",
+        Accept: "application/json",
+      },
+      results: [
+        makeResult({ stdout: stubStdout(302, "", "https://b.example/") }),
+        makeResult({ stdout: stubStdout(200) }),
+      ],
+      calls,
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    const sent = (args: string[]) =>
+      args.filter((_, i) => args[i - 1] === "-H");
+    // The first hop, to the origin the caller named, carries them all.
+    expect(sent(calls[0]!)).toContain("Authorization: Bearer sk-live-123456");
+    // The hop to another origin carries none of them.
+    expect(sent(calls[1]!)).toEqual(["Accept: application/json"]);
+  });
+
+  it("a 303 after a POST follows to another host as a bodyless GET", async () => {
+    const calls: string[][] = [];
+    const response = await walk({
+      method: "POST",
+      results: [
+        makeResult({ stdout: stubStdout(303, "", "https://b.example/done") }),
+        makeResult({ stdout: stubStdout(200) }),
+      ],
+      calls,
+    });
+    expect(response.status).toBe(200);
+    expect(calls).toHaveLength(2);
+    expect(calls[1]).not.toContain("--data-binary");
+  });
+});

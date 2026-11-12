@@ -66,6 +66,17 @@ export interface ApprovalRequest {
    */
   commandShape?: string;
   /**
+   * The narrower unit a session grant (`s`, scope `category`) covers for
+   * this request, when the whole category would be too broad. Set by
+   * `os.http.request` to the target's origin (`https://api.example.com`,
+   * ATO-1182): "allow for this session" on a POST to one host must not
+   * silence a later POST to any other host. With a key, a category grant
+   * is remembered for (category, key) only, and only a grant with the
+   * same key answers the request; a key-less whole-category grant does
+   * not. Absent means the grant covers the whole category, as before.
+   */
+  grantKey?: string;
+  /**
    * Parsed argv of a simple shell command (`["git", "status", "-s"]`),
    * the unit a saved rule's `commandPrefix` matches. Set only by the shell
    * tool, and only where `commandShape` is: a pipeline or a compound line
@@ -310,7 +321,13 @@ export class ApprovalGate {
    */
   private readonly grantsBySession = new Map<
     string,
-    { categories: Set<ApprovalCategory>; shapes: Set<string>; sites: Set<string> }
+    {
+      categories: Set<ApprovalCategory>;
+      shapes: Set<string>;
+      sites: Set<string>;
+      /** Category grants narrowed by `grantKey`, see `scopedGrantId`. */
+      scoped: Set<string>;
+    }
   >();
   /** Per-session prompt policies, keyed like the grants. See `SessionApprovalPolicy`. */
   private readonly policiesBySession = new Map<string, SessionApprovalPolicy>();
@@ -668,6 +685,14 @@ export class ApprovalGate {
         ? `auto-approved (session grant: ${host})`
         : null;
     }
+    if (request.grantKey !== undefined) {
+      // A keyed request (an HTTP call to one origin) is answered only by
+      // a grant for the same key, never by a whole-category grant.
+      if (grants.scoped.has(scopedGrantId(request.category, request.grantKey))) {
+        return `auto-approved (session grant: ${request.grantKey})`;
+      }
+      return null;
+    }
     if (grants.categories.has(request.category)) {
       return "auto-approved (session grant)";
     }
@@ -923,6 +948,10 @@ export class ApprovalGate {
     }
     const grants = this.grantsForSession(request.sessionId);
     if (scope === "category") {
+      if (request.grantKey !== undefined) {
+        grants.scoped.add(scopedGrantId(request.category, request.grantKey));
+        return;
+      }
       grants.categories.add(request.category);
       return;
     }
@@ -954,10 +983,11 @@ export class ApprovalGate {
     categories: Set<ApprovalCategory>;
     shapes: Set<string>;
     sites: Set<string>;
+    scoped: Set<string>;
   } {
     let entry = this.grantsBySession.get(sessionId);
     if (!entry) {
-      entry = { categories: new Set(), shapes: new Set(), sites: new Set() };
+      entry = { categories: new Set(), shapes: new Set(), sites: new Set(), scoped: new Set() };
       this.grantsBySession.set(sessionId, entry);
     }
     return entry;
@@ -1036,6 +1066,14 @@ export class ApprovalGate {
   pendingCount(): number {
     return this.pending.size;
   }
+}
+
+/**
+ * The id a key-narrowed category grant is stored under. NUL cannot occur
+ * in a category name or an origin, so two pairs never collide.
+ */
+function scopedGrantId(category: ApprovalCategory, key: string): string {
+  return `${category}\u0000${key}`;
 }
 
 /**
