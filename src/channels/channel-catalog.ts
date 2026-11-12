@@ -11,6 +11,8 @@
  */
 
 import type { ChannelDefinition } from "./channel.js";
+import { slackChannelDefinition } from "./slack/index.js";
 
 export const EXTRA_CHANNELS: readonly ChannelDefinition[] = [
+  slackChannelDefinition,
 ];
