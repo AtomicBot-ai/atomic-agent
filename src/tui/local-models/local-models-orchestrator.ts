@@ -796,6 +796,15 @@ export class LocalModelsOrchestrator {
     return !!active && active !== "local-llama";
   }
 
+  /**
+   * ATO-378: whether the memory model may run without a local chat model
+   * beside it. Managed mode on a cloud chat route only: on the local route
+   * a stopped chat model means the operator stopped it (`s`, Stop).
+   */
+  private embeddingRunsAlone(): boolean {
+    return getConfig().localModels.mode === "managed" && this.cloudRouteActive();
+  }
+
   private holdLanding(landing: HeldLanding): void {
     // One slot: of two held downloads the later one would have won anyway.
     if (this.heldLanding && this.heldLanding.jobId !== landing.jobId) {
@@ -1493,7 +1502,8 @@ export class LocalModelsOrchestrator {
     const cfg = getConfig();
     const dataDir = cfg.paths.localModelsDataDir;
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (chat.running) {
+    // On a cloud chat route only the memory model starts, never a chat one (ATO-378).
+    if (chat.running || this.embeddingRunsAlone()) {
       await this.startEmbeddingPairing();
       return;
     }
@@ -2964,7 +2974,11 @@ export class LocalModelsOrchestrator {
     const dataDir = cfg.paths.localModelsDataDir;
 
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (!chat.running) return;
+    // ATO-378 / ATO-1123: on a cloud chat route no local chat model runs,
+    // and the memory model runs alone (memory search embeds locally
+    // whatever the chat route).
+    const alone = !chat.running && this.embeddingRunsAlone();
+    if (!chat.running && !alone) return;
 
     const desired = this.buildEmbeddingStartOptions(cfg, dataDir);
     const embStatus = await getEmbeddingDaemonStatus(
@@ -3006,9 +3020,23 @@ export class LocalModelsOrchestrator {
 
     if (embStatus.running && !opts?.hotSwap) return;
 
+    // ATO-357: alone, the engine is never installed behind the operator's
+    // back. A local model's first start installs it, with its progress.
+    if (alone && !isBackendDownloaded(dataDir, cfg.localModels.managed.engine)) {
+      this.bus.emit({
+        type: "runtime_info",
+        line: "local-llm: the local engine is not installed yet — start a local model once to install it; memory search uses keywords until then",
+      });
+      return;
+    }
+
     // ATO-379: not started on a machine with little memory; recall stays on
     // keywords. Transient, so the opt-in is not touched (issue #465).
-    if (!embStatus.running && !(await holdEmbeddingForLowMemory(dataDir)).ok) {
+    // Alone, only the memory model's own floor applies.
+    const memory = !embStatus.running
+      ? await (alone ? holdEmbeddingForLowMemory(dataDir, { localChatRunning: false }) : holdEmbeddingForLowMemory(dataDir))
+      : null;
+    if (memory && !memory.ok) {
       this.noteLowMemoryEmbedding();
       return;
     }
@@ -3040,6 +3068,9 @@ export class LocalModelsOrchestrator {
       const { pid } = await this.trackCoreStart(this.operations.signal, signal =>
         startEmbeddingDaemon({ ...desired, signal, engine: cfg.localModels.managed.engine }));
       this.operations.signal?.throwIfAborted();
+      // Started alone on the cloud route: ours to stop at exit, as the
+      // one a cloud switch keeps (stopChatForCloudSelection).
+      if (alone) this.embeddingKeptForCloud = true;
       persistMemoryEmbeddingsEnabled(true);
       this.bus.emit({
         type: "runtime_info",
@@ -3228,7 +3259,8 @@ export class LocalModelsOrchestrator {
       resetConfigCache();
     }
     const chat = await getDaemonStatus(dataDir, cfg.localModels.managed.port);
-    if (!chat.running) {
+    // On a cloud chat route the memory model starts alone (ATO-378).
+    if (!chat.running && !this.embeddingRunsAlone()) {
       this.bus.emit({
         type: "runtime_info",
         line: "local-llm: chat daemon is down — press s to start chat+embedding together",
@@ -3529,6 +3561,9 @@ export class LocalModelsOrchestrator {
       cfg.llm?.activeTextProvider &&
       cfg.llm.activeTextProvider !== "local-llama"
     ) {
+      // ATO-378: no chat model on the cloud route, but the memory model
+      // when it is wanted, so memory search keeps its meaning-based half.
+      await this.startEmbeddingAloneAtLaunch();
       return;
     }
     if (cfg.localModels.mode !== "managed") return;
@@ -3589,6 +3624,31 @@ export class LocalModelsOrchestrator {
     // not run one, because the deferred pass below owns it.
     await this.startDaemon({ backendAlreadyChecked: true });
     this.scheduleBackendAutoUpdate(dataDir);
+  }
+
+  /**
+   * ATO-378, the launch on a cloud chat route: start the memory model
+   * alone when embeddings are on, a catalog model is picked and on disk,
+   * and the engine is installed. Nothing is downloaded (ATO-357) and
+   * nothing is said when one of these is missing: an ordinary launch.
+   * One found running (the desktop or an earlier session started it) is
+   * left as it is. Either way the runtime attaches memory to it now: it
+   * looked for the server once, as it booted.
+   */
+  private async startEmbeddingAloneAtLaunch(): Promise<void> {
+    if (!this.embeddingRunsAlone()) return;
+    const cfg = getConfig();
+    const dataDir = cfg.paths.localModelsDataDir;
+    if (!this.buildEmbeddingStartOptions(cfg, dataDir)) return;
+    const port = cfg.localModels.embeddings.port;
+    if (!(await getEmbeddingDaemonStatus(dataDir, port)).running) {
+      if (!isBackendDownloaded(dataDir, cfg.localModels.managed.engine)) return;
+      await this.ensureEmbeddingPaired();
+      if (this.operations.signal?.aborted) return;
+      if (!(await getEmbeddingDaemonStatus(dataDir, port)).running) return;
+      await this.refresh();
+    }
+    this.hooks?.onEmbeddingModelChanged?.();
   }
 
   /** How a start reports and persists what it did to a held port. */
